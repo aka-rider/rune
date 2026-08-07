@@ -102,8 +102,7 @@ pub(crate) const ALT_SUP: Mods = Mods {
 };
 
 /// One row per chord `keymap::resolve` binds (Save/quit chords excepted —
-/// see this module's doc comment). Every entry's `when` is `""`
-/// (unconditional): none of these chords are context-gated today.
+/// see this module's doc comment).
 pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     motion::CHAR_LEFT,
     motion::CHAR_RIGHT,
@@ -173,10 +172,8 @@ mod tests {
     use super::*;
     use crate::keymap::index;
 
-    /// Startup-gate stand-in (plan WP6.S4) — see `global::tests`'s
-    /// identical note.
     #[test]
-    fn editor_bindings_have_no_prefix_collision() {
+    fn editor_bindings_have_no_duplicate_key() {
         assert!(index::validate(EDITOR_BINDINGS).is_ok());
     }
 
@@ -193,7 +190,7 @@ mod tests {
         use crate::keymap::{KeyInput, resolve};
 
         for binding in EDITOR_BINDINGS {
-            let pattern = binding.keys.first().expect("every row is single-key here");
+            let pattern = binding.key;
             let code = match pattern.key {
                 KeyMatch::Code(code) => code,
                 KeyMatch::Printable => unreachable!("EDITOR_BINDINGS has no wildcard rows"),
@@ -211,30 +208,25 @@ mod tests {
         }
     }
 
-    /// Plan A3/WP6.S2: there is no existing cross-table keymap-union guard
-    /// to lean on (this codebase deliberately allows different tables —
-    /// vim vs. editor, global vs. editor — to reuse the same physical
-    /// key), so the reload chord's own safety net has to be a dedicated
-    /// test asserting no OTHER row in THIS table already claims `⌘R`,
-    /// under any `when` condition. `index::validate` (exercised above)
-    /// already rejects two rows sharing an identical `keys` sequence
-    /// outright regardless of `when` — this test asserts that fact
-    /// specifically for the reload binding, by identity, so a future
-    /// edit that removes or narrows `RELOAD`'s `when` clause can never
-    /// silently start shadowing (or being shadowed by) an unconditional
-    /// row.
+    /// There is no existing cross-table keymap-union guard to lean on (this
+    /// codebase deliberately allows different tables — vim vs. editor,
+    /// global vs. editor — to reuse the same physical key), so the reload
+    /// chord's own safety net has to be a dedicated test asserting no OTHER
+    /// row in THIS table already claims `⌘R`. `index::validate` (exercised
+    /// above) already rejects two rows sharing an identical key outright —
+    /// this test asserts that fact specifically for the reload binding, by
+    /// identity.
     #[test]
     fn reload_key_is_not_already_bound_elsewhere_in_the_editor_table() {
         let claimants: Vec<&'static str> = EDITOR_BINDINGS
             .iter()
-            .filter(|b| b.keys == editing::RELOAD.keys)
+            .filter(|b| b.key == editing::RELOAD.key)
             .map(|b| b.help)
             .collect();
         assert_eq!(
             claimants,
             vec![editing::RELOAD.help],
-            "⌘R must be claimed by exactly the reload binding, not shared \
-             with any other row regardless of `when`"
+            "⌘R must be claimed by exactly the reload binding, not shared with any other row"
         );
     }
 }

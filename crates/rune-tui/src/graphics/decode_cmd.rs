@@ -59,10 +59,10 @@ pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut
 /// panicked decode thread, a failed channel send): with no timeout or
 /// reaper anywhere in this pipeline, an explicit reload is the only way
 /// out of a wedge, so it must always be able to spawn a new attempt. A
-/// no-op for any non-image document, so the editor table's `⌘R` binding
-/// (gated on the `image` `when` atom for UX purposes only) can never do
-/// anything harmful even if that gate were bypassed. `ImageState::id` is
-/// never reallocated across this call, so the eventual transmit (`handle_
+/// no-op for any non-image document, so the editor table's `⌘R` binding can
+/// never do anything harmful even on a document `dispatch::Command::
+/// Reload`'s own gate somehow let through. `ImageState::id` is never
+/// reallocated across this call, so the eventual transmit (`handle_
 /// image_decoded`) necessarily retransmits under the SAME deterministic id
 /// the document opened with.
 pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects) {

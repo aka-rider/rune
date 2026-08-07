@@ -38,45 +38,39 @@ pub enum ExplorerCommand {
 /// entry).
 pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Up, Mods::NONE),
         cmd: ExplorerCommand::Up,
         help: "up",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Down, Mods::NONE),
         cmd: ExplorerCommand::Down,
         help: "down",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Home, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Home, Mods::NONE),
         cmd: ExplorerCommand::Top,
         help: "top",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::End, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::End, Mods::NONE),
         cmd: ExplorerCommand::Bottom,
         help: "bottom",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
         cmd: ExplorerCommand::Open,
         help: "open",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Backspace, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Backspace, Mods::NONE),
         cmd: ExplorerCommand::ParentDir,
         help: "up dir",
-        when: "",
         alias: false,
     },
     // Only reached when `EXPLORER_SEARCH_BINDINGS`'s own Escape row didn't
@@ -84,10 +78,9 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     // live search's first Escape ends the search; this row is what a
     // SECOND Escape (search already clear) falls through to.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: ExplorerCommand::Leave,
         help: "back to editor",
-        when: "",
         alias: false,
     },
 ];

@@ -162,97 +162,84 @@ const SUP: Mods = Mods {
 /// defect this table replaced the leader to avoid.
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('b'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('b'), CTRL),
         cmd: GlobalCommand::ToggleLeft,
         help: "explorer",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('b'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('b'), SUP),
         cmd: GlobalCommand::ToggleLeft,
         help: "explorer",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('t'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('t'), CTRL),
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('t'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('t'), SUP),
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
-        when: "",
         alias: true,
     },
     // `⌘R` deliberately has NO row here, unlike the other four focus
     // commands' pairs: `EDITOR_BINDINGS`' `RELOAD` chord already claims
-    // `⌘R` (re-decode the active image) gated on `when: "image"`. This
-    // table's rows are resolved unconditionally at stage 2, before any
-    // pane (including the editor) ever sees the key — `when` on a pane
-    // table only partitions collisions AMONG that pane's own rows, never
-    // against a stage-2 row, since `resolve_in` never consults `when` at
-    // all. Adding `⌘R` here would make Reload permanently unreachable by
-    // keyboard on an image document. `^R` is unaffected — nothing else in
-    // this crate binds it — so `FocusTitle` keeps only its `^` form.
+    // `⌘R` (reload the active image/embeds — `dispatch::Command::Reload`
+    // refuses with a status message when neither is present). This table's
+    // rows are resolved unconditionally at stage 2, before any pane
+    // (including the editor) ever sees the key, so adding `⌘R` here would
+    // shadow Reload entirely and make it unreachable by keyboard. `^R` is
+    // unaffected — nothing else in this crate binds it — so `FocusTitle`
+    // keeps only its `^` form.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('r'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('r'), CTRL),
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('s'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('s'), SUP),
         cmd: GlobalCommand::Save,
         help: "save",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::F1, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::F1, Mods::NONE),
         cmd: GlobalCommand::Help,
         help: "help",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('c'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('c'), CTRL),
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlC),
         help: "quit",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('d'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('d'), CTRL),
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlD),
         help: "quit",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('w'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('w'), CTRL),
         cmd: GlobalCommand::CloseFile,
         help: "close",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('n'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('n'), CTRL),
         cmd: GlobalCommand::NewDocument,
         help: "new",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('n'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('n'), SUP),
         cmd: GlobalCommand::NewDocument,
         help: "new",
-        when: "",
         alias: true,
     },
     // `^1`-`^9` switch to the tab at that position; `^0` is the TENTH tab,
@@ -262,73 +249,63 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     // — still fully discoverable through the F1 Help doc, just not repeated
     // ten times in the footer.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('1'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('1'), CTRL),
         cmd: GlobalCommand::TabSwitch(0),
         help: "tab 1",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('2'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('2'), CTRL),
         cmd: GlobalCommand::TabSwitch(1),
         help: "tab 2",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('3'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('3'), CTRL),
         cmd: GlobalCommand::TabSwitch(2),
         help: "tab 3",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('4'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('4'), CTRL),
         cmd: GlobalCommand::TabSwitch(3),
         help: "tab 4",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('5'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('5'), CTRL),
         cmd: GlobalCommand::TabSwitch(4),
         help: "tab 5",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('6'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('6'), CTRL),
         cmd: GlobalCommand::TabSwitch(5),
         help: "tab 6",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('7'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('7'), CTRL),
         cmd: GlobalCommand::TabSwitch(6),
         help: "tab 7",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('8'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('8'), CTRL),
         cmd: GlobalCommand::TabSwitch(7),
         help: "tab 8",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('9'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('9'), CTRL),
         cmd: GlobalCommand::TabSwitch(8),
         help: "tab 9",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('0'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('0'), CTRL),
         cmd: GlobalCommand::TabSwitch(9),
         help: "tab 10",
-        when: "",
         alias: true,
     },
     // `^p`/`⌘p` are unclaimed across all six binding tables (`GLOBAL`,
@@ -338,68 +315,59 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     // rows above, which differ) so the footer's hint row never jumps as
     // the state flips.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('p'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('p'), CTRL),
         cmd: GlobalCommand::ToggleReadOnly,
         help: "reading",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('p'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('p'), SUP),
         cmd: GlobalCommand::ToggleReadOnly,
         help: "reading",
-        when: "",
         alias: true,
     },
     // `^M` only — see the `Merge` variant's own doc for why `⌘M` has no row
     // (Ghostty steals it) and why `^M` doesn't collide with Enter here.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('m'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('m'), CTRL),
         cmd: GlobalCommand::Merge,
         help: "merge",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('e'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('e'), CTRL),
         cmd: GlobalCommand::ToggleMessages,
         help: "messages",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('e'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('e'), SUP),
         cmd: GlobalCommand::ToggleMessages,
         help: "messages",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Backspace, SUP)],
+        key: KeyPattern::new(KeyCode::Backspace, SUP),
         cmd: GlobalCommand::Trash,
         help: "trash",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Backspace, CTRL)],
+        key: KeyPattern::new(KeyCode::Backspace, CTRL),
         cmd: GlobalCommand::Trash,
         help: "trash",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('f'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('f'), CTRL),
         cmd: GlobalCommand::ToggleSearch,
         help: "search",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('f'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('f'), SUP),
         cmd: GlobalCommand::ToggleSearch,
         help: "search",
-        when: "",
         alias: true,
     },
     // Next/prev step through the current match list without needing the
@@ -409,45 +377,39 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     // `g`+ctrl|shift, is what actually fires under this crate's kitty
     // protocol request.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('g'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('g'), CTRL),
         cmd: GlobalCommand::SearchNext,
         help: "next match",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('g'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('g'), SUP),
         cmd: GlobalCommand::SearchNext,
         help: "next match",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('G'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('G'), CTRL),
         cmd: GlobalCommand::SearchPrev,
         help: "prev match",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('G'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('G'), SUP),
         cmd: GlobalCommand::SearchPrev,
         help: "prev match",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('F'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('F'), CTRL),
         cmd: GlobalCommand::ToggleFileSearch,
         help: "find file",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('F'), SUP)],
+        key: KeyPattern::new(KeyCode::Char('F'), SUP),
         cmd: GlobalCommand::ToggleFileSearch,
         help: "find file",
-        when: "",
         alias: true,
     },
     // Appended last deliberately: at narrow widths the footer clips the
@@ -456,10 +418,9 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     // in-file search feature claimed `^g` for `SearchNext` first (see
     // `GlobalCommand::TogglePin`'s own doc).
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('j'), CTRL)],
+        key: KeyPattern::new(KeyCode::Char('j'), CTRL),
         cmd: GlobalCommand::TogglePin,
         help: "pin",
-        when: "",
         alias: false,
     },
 ];
@@ -491,9 +452,7 @@ mod tests {
         );
         assert_eq!(resolve_in(GLOBAL_BINDINGS, sup_m), None);
         assert!(
-            GLOBAL_BINDINGS
-                .iter()
-                .all(|b| !b.keys.iter().any(|k| k.matches(sup_m))),
+            GLOBAL_BINDINGS.iter().all(|b| !b.key.matches(sup_m)),
             "no row should match sup+m"
         );
     }
@@ -509,16 +468,15 @@ mod tests {
     fn every_printable_binding_requires_a_modifier() {
         use crate::binding::KeyMatch;
         for binding in GLOBAL_BINDINGS {
-            for key in binding.keys {
-                if !matches!(key.key, KeyMatch::Code(KeyCode::Char(_))) {
-                    continue;
-                }
-                assert!(
-                    key.mods.ctrl || key.mods.sup,
-                    "{:?} has no ctrl/sup modifier and could shadow text input",
-                    key
-                );
+            let key = binding.key;
+            if !matches!(key.key, KeyMatch::Code(KeyCode::Char(_))) {
+                continue;
             }
+            assert!(
+                key.mods.ctrl || key.mods.sup,
+                "{:?} has no ctrl/sup modifier and could shadow text input",
+                key
+            );
         }
     }
 
@@ -554,7 +512,7 @@ mod tests {
         fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
             table
                 .iter()
-                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .filter(|b| b.key.matches(key))
                 .map(|b| b.help)
                 .collect()
         }
@@ -728,7 +686,7 @@ mod tests {
         fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
             table
                 .iter()
-                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .filter(|b| b.key.matches(key))
                 .map(|b| b.help)
                 .collect()
         }

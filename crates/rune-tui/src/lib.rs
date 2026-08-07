@@ -61,7 +61,6 @@ pub mod theme;
 pub mod title;
 pub mod trash;
 pub mod viewport;
-pub mod when;
 pub mod width;
 pub mod workspace;
 pub mod workspaceroot;

@@ -71,31 +71,27 @@ pub enum TabsCommand {
 /// not just this one.
 pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Up, Mods::NONE),
         cmd: TabsCommand::Up,
         help: "up",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Down, Mods::NONE),
         cmd: TabsCommand::Down,
         help: "down",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
         cmd: TabsCommand::Select,
         help: "open",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: TabsCommand::Leave,
         help: "back to editor",
-        when: "",
         alias: false,
     },
 ];

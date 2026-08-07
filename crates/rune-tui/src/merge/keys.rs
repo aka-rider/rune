@@ -41,66 +41,57 @@ pub enum MergeCommand {
 
 pub const MERGE_BINDINGS: &[Binding<MergeCommand>] = &[
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('['), Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Char('['), Mods::NONE),
         cmd: MergeCommand::PrevConflict,
         help: "prev conflict",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char(']'), Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Char(']'), Mods::NONE),
         cmd: MergeCommand::NextConflict,
         help: "next conflict",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('o'), Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Char('o'), Mods::NONE),
         cmd: MergeCommand::KeepOurs,
         help: "keep editor's side",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('O'), SHIFT)],
+        key: KeyPattern::new(KeyCode::Char('O'), SHIFT),
         cmd: MergeCommand::KeepOurs,
         help: "keep editor's side",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('t'), Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Char('t'), Mods::NONE),
         cmd: MergeCommand::KeepTheirs,
         help: "keep disk's side",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('T'), SHIFT)],
+        key: KeyPattern::new(KeyCode::Char('T'), SHIFT),
         cmd: MergeCommand::KeepTheirs,
         help: "keep disk's side",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('b'), Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Char('b'), Mods::NONE),
         cmd: MergeCommand::KeepBoth,
         help: "keep both (markers stay)",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('B'), SHIFT)],
+        key: KeyPattern::new(KeyCode::Char('B'), SHIFT),
         cmd: MergeCommand::KeepBoth,
         help: "keep both (markers stay)",
-        when: "",
         alias: true,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: MergeCommand::Exit,
         help: "close merge",
-        when: "",
         alias: false,
     },
 ];
@@ -206,24 +197,23 @@ mod tests {
     #[test]
     fn merge_keys_are_not_bound_in_the_global_table() {
         for binding in MERGE_BINDINGS {
-            for pattern in binding.keys {
-                let key = match pattern.key {
-                    crate::binding::KeyMatch::Code(code) => KeyInput {
-                        code,
-                        mods: pattern.mods,
-                    },
-                    crate::binding::KeyMatch::Printable => continue,
-                };
-                let claimants: Vec<&'static str> = GLOBAL_BINDINGS
-                    .iter()
-                    .filter(|b| b.keys.iter().any(|k| k.matches(key)))
-                    .map(|b| b.help)
-                    .collect();
-                assert!(
-                    claimants.is_empty(),
-                    "GLOBAL_BINDINGS would shadow merge key {key:?}: {claimants:?}"
-                );
-            }
+            let pattern = binding.key;
+            let key = match pattern.key {
+                crate::binding::KeyMatch::Code(code) => KeyInput {
+                    code,
+                    mods: pattern.mods,
+                },
+                crate::binding::KeyMatch::Printable => continue,
+            };
+            let claimants: Vec<&'static str> = GLOBAL_BINDINGS
+                .iter()
+                .filter(|b| b.key.matches(key))
+                .map(|b| b.help)
+                .collect();
+            assert!(
+                claimants.is_empty(),
+                "GLOBAL_BINDINGS would shadow merge key {key:?}: {claimants:?}"
+            );
         }
     }
 

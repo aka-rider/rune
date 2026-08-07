@@ -36,12 +36,6 @@ entry is deleted in the same commit that fixes it.
 
 ## Architecture
 
-### The `when`-clause DSL is decorative
-- **Where**: `crates/rune-tui/src/when.rs` (460 lines: lexer+parser+evaluator+`Context`), `evaluate`/`evaluate_cached` at lines 307-325 (zero production callers; only `when::parse` is used, from `keymap/index/validate.rs`); stale doc citation to nonexistent `keymap::index::resolve` at `when.rs:313` and `crates/rune-tui/src/binding.rs:100`; resolver `crates/rune-tui/src/binding.rs:142` never reads `binding.when`; ungated `Command::Reload` at `crates/rune-tui/src/dispatch.rs:477-480`
-- **Wrong**: `evaluate_cached` carries a global `OnceLock<Mutex<HashMap<..>>>` in a single-threaded UI and deep-clones the `Expr` per lookup, for a code path nothing calls. Real gates are hand-duplicated `is_some()` checks or missing entirely — `Command::Reload` fires `reload_image`/`reload_embeds` on any document with no `image` gate. Multi-key chord sequences never resolve anywhere.
-- **Instead**: thread `when::Context` through resolution and delete hand-rolled gates, OR delete `when.rs`/`Binding::when`/sequence support. Not both.
-- **Done when**: one of the two paths above is chosen and the dead half is removed.
-
 ### Keymap startup validation doesn't exist; registry test incomplete
 - **Where**: `crates/rune-tui/src/keymap/index/validate.rs:236-243` (`every_registered_binding_table_validates`, lists 6 tables); claimant helper at `crates/rune-tui/src/global.rs:547-569` lists 8 (includes `MERGE_BINDINGS` from `crates/rune-tui/src/merge/keys.rs`, `FILESEARCH_BINDINGS` from `crates/rune-tui/src/filesearch/keys.rs`)
 - **Wrong**: the registry test is the only thing validating binding tables (nothing calls `validate` at startup); it omits `MERGE_BINDINGS` and `FILESEARCH_BINDINGS`, both of which the claimant helper does enumerate, proving the omission is an oversight not a deliberate exclusion.
@@ -123,7 +117,7 @@ entry is deleted in the same commit that fixes it.
 - **Done when**: rune-md and rune-syntax call rune-core's implementation instead of their own.
 
 ### Stale/false comments (provable lies)
-- **Where**: `crates/rune-tui/src/when.rs:313` and `crates/rune-tui/src/binding.rs:100` (cite nonexistent `keymap::index::resolve`); "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-fuzz/Cargo.toml:16`, `Makefile:46` (cite deleted `crates/rune-md/TODO.md`); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4`, `crates/rune-md/src/element/doc.rs:413` (cite deleted per-crate `TODO.md`s)
+- **Where**: "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-fuzz/Cargo.toml:16`, `Makefile:46` (cite deleted `crates/rune-md/TODO.md`); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4`, `crates/rune-md/src/element/doc.rs:413` (cite deleted per-crate `TODO.md`s)
 - **Wrong**: comments cite functions and files that no longer exist.
 - **Instead**: fix or delete each citation when touched (per house rule, no `path:line` in comments either).
 - **Done when**: no comment in the tree cites a nonexistent symbol or deleted file.
