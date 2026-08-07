@@ -203,7 +203,11 @@ fn push_clean_region(
     let ours_clean = ours.get(ours_range).unwrap_or(&[]);
     let theirs_clean = theirs.get(theirs_range).unwrap_or(&[]);
     if !ours_clean.is_empty() || !theirs_clean.is_empty() {
-        hunks.push(classify_clean_region(ours_clean, theirs_clean, merged_clean));
+        hunks.push(classify_clean_region(
+            ours_clean,
+            theirs_clean,
+            merged_clean,
+        ));
     }
 }
 
@@ -237,7 +241,7 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     let mut i = 0usize;
 
     while i < conflicts.len() {
-        let block = &conflicts[i];
+        let Some(block) = conflicts.get(i) else { break };
         let ours_range = anchor_section(ours, ours_pos, &block.ours);
         let theirs_range = anchor_section(theirs, theirs_pos, &block.theirs);
 
@@ -248,7 +252,7 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
                 theirs,
                 ours_pos..o.start,
                 theirs_pos..t.start,
-                &cleans[i],
+                cleans.get(i).map_or(&[][..], Vec::as_slice),
             );
             hunks.push(Hunk::Conflict {
                 ours: ours.get(o.clone()).unwrap_or(&[]).to_vec(),
@@ -261,8 +265,9 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
         }
 
         let resync = ((i + 1)..conflicts.len()).find_map(|j| {
-            let o = anchor_section(ours, ours_pos, &conflicts[j].ours)?;
-            let t = anchor_section(theirs, theirs_pos, &conflicts[j].theirs)?;
+            let next = conflicts.get(j)?;
+            let o = anchor_section(ours, ours_pos, &next.ours)?;
+            let t = anchor_section(theirs, theirs_pos, &next.theirs)?;
             Some((j, o, t))
         });
 
@@ -376,7 +381,11 @@ fn flush_no_ancestor_clean(hunks: &mut Vec<Hunk>, clean_buf: &mut Vec<u8>) {
     }
 }
 
-fn flush_no_ancestor_conflict(hunks: &mut Vec<Hunk>, ours_buf: &mut Vec<u8>, theirs_buf: &mut Vec<u8>) {
+fn flush_no_ancestor_conflict(
+    hunks: &mut Vec<Hunk>,
+    ours_buf: &mut Vec<u8>,
+    theirs_buf: &mut Vec<u8>,
+) {
     if !ours_buf.is_empty() || !theirs_buf.is_empty() {
         hunks.push(Hunk::Conflict {
             ours: std::mem::take(ours_buf),
@@ -673,4 +682,3 @@ DDDD\n";
         );
     }
 }
-

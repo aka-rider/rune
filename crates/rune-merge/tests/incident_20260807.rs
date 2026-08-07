@@ -57,14 +57,20 @@ fn incident_corpus_localizes_to_one_conflict_after_the_clean_prefix() {
         hunks.len()
     );
     let Hunk::Clean(prefix) = &hunks[0] else {
-        panic!("expected the first hunk to be the clean prefix, got {:?}", hunks[0]);
+        panic!(
+            "expected the first hunk to be the clean prefix, got {:?}",
+            hunks[0]
+        );
     };
     let Hunk::Conflict {
         ours: c_ours,
         theirs: c_theirs,
     } = &hunks[1]
     else {
-        panic!("expected the second hunk to be the conflict, got {:?}", hunks[1]);
+        panic!(
+            "expected the second hunk to be the conflict, got {:?}",
+            hunks[1]
+        );
     };
 
     assert_eq!(prefix.len(), 34_358, "clean prefix should not have shrunk");
@@ -78,15 +84,24 @@ fn incident_corpus_localizes_to_one_conflict_after_the_clean_prefix() {
         2_409,
         "theirs-section should be the localized region, not the whole 36 767-byte file"
     );
-    assert!(!c_theirs.is_empty(), "theirs-section must carry real content, never empty");
+    assert!(
+        !c_theirs.is_empty(),
+        "theirs-section must carry real content, never empty"
+    );
 
     // Byte-faithfulness here means every returned run of bytes is a
     // verbatim substring of the input it claims to come from — not that
     // concatenating hunks reconstructs `ours` or `theirs` byte-for-byte,
     // since a clean region legitimately carries whichever side's change
     // diff3 auto-resolved there (3-way merge semantics, not a bug).
-    assert!(contains(&ours, c_ours), "ours-section not a verbatim substring of ours");
-    assert!(contains(&theirs, c_theirs), "theirs-section not a verbatim substring of theirs");
+    assert!(
+        contains(&ours, c_ours),
+        "ours-section not a verbatim substring of ours"
+    );
+    assert!(
+        contains(&theirs, c_theirs),
+        "theirs-section not a verbatim substring of theirs"
+    );
     assert!(
         contains(&ours, prefix) || contains(&theirs, prefix),
         "clean prefix not a verbatim substring of either side"
@@ -117,7 +132,11 @@ fn empty_ancestor_uses_the_2way_path_and_localizes() {
 
     let hunks = merge_hunks_no_ancestor(&ours, &theirs);
 
-    assert!(hunks.len() > 1, "expected more than one hunk, got {}", hunks.len());
+    assert!(
+        hunks.len() > 1,
+        "expected more than one hunk, got {}",
+        hunks.len()
+    );
     assert!(
         !hunks.iter().any(|h| matches!(
             h,
@@ -141,8 +160,14 @@ fn empty_ancestor_uses_the_2way_path_and_localizes() {
             }
         }
     }
-    assert_eq!(reconstructed_ours, ours, "hunks must reconstruct ours verbatim");
-    assert_eq!(reconstructed_theirs, theirs, "hunks must reconstruct theirs verbatim");
+    assert_eq!(
+        reconstructed_ours, ours,
+        "hunks must reconstruct ours verbatim"
+    );
+    assert_eq!(
+        reconstructed_theirs, theirs,
+        "hunks must reconstruct theirs verbatim"
+    );
 }
 
 /// Isolated regression for the exact boundary condition behind the
@@ -156,7 +181,11 @@ fn conflict_section_at_eof_without_trailing_newline_anchors() {
 
     let hunks = merge_hunks(ancestor, ours, theirs);
 
-    assert_eq!(hunks.len(), 2, "expected a clean prefix and one conflict, got {hunks:?}");
+    assert_eq!(
+        hunks.len(),
+        2,
+        "expected a clean prefix and one conflict, got {hunks:?}"
+    );
     assert_eq!(hunks[0], Hunk::Clean(b"shared\n".to_vec()));
     assert_eq!(
         hunks[1],
@@ -166,4 +195,3 @@ fn conflict_section_at_eof_without_trailing_newline_anchors() {
         }
     );
 }
-
