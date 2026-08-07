@@ -309,7 +309,7 @@ impl Db {
 /// `db_id`, never copied here: two tabs opened onto the SAME underlying file
 /// must see the one truth about what disk holds, or one tab's own save
 /// falsely raises the disk-conflict guard against the other's very next
-/// attempt (plan gap G7).
+/// attempt.
 pub struct DocDb {
     pub db_id: i64,
     /// Whether the NEXT save must go through `materialize`'s `bind_new`
@@ -357,8 +357,8 @@ impl DocDb {
 }
 
 /// This process's single CAS baseline for a store-bound file, shared by
-/// EVERY `Document` currently bound to its `db_id` (plan gap G7) — the fix
-/// for the false-conflict class where two tabs on one file each held an
+/// EVERY `Document` currently bound to its `db_id` — the fix for the
+/// false-conflict class where two tabs on one file each held an
 /// independent, silently-diverging copy of `expect_obs`. Lives in
 /// `App::file_bindings`, keyed by `db_id`; installed once, the moment the
 /// FIRST document binds that `db_id` (`db_ack::bind_file`'s own doc
@@ -369,8 +369,8 @@ impl DocDb {
 /// references `db_id` any longer (`App::prune_file_binding`).
 pub struct FileBinding {
     /// This process's current CAS baseline for `db_id` — updated from every
-    /// document's successful `materialize` ack's `saved` observation (plan
-    /// WP5.S6), and from a terminal merge/discard adoption
+    /// document's successful `materialize` ack's `saved` observation, and
+    /// from a terminal merge/discard adoption
     /// (`merge::landing::advance_expect_obs`). Seeded from the first
     /// `LoadResult::saved_obs` this `db_id` ever saw.
     pub expect_obs: ObsId,
@@ -443,6 +443,32 @@ impl crate::app::App {
 
     pub fn file_binding_mut(&mut self, db_id: i64) -> Option<&mut FileBinding> {
         self.file_bindings.get_mut(&db_id)
+    }
+
+    /// `id`'s bound `db_id`, or `None` when the document has no store
+    /// binding at all — the one place `doc(id).db.as_ref().map(|d| d.db_id)`
+    /// is spelled out, so every caller that only needs the id (never the
+    /// [`FileBinding`] itself, e.g. to prune it) shares this instead of
+    /// re-deriving it by hand.
+    pub fn doc_db_id(&self, id: DocumentId) -> Option<i64> {
+        self.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id))
+    }
+
+    /// `id`'s shared [`FileBinding`] — `None` when `id` has no store binding
+    /// (an untitled/unbound document) or, as an internal-inconsistency
+    /// case that should never occur, when it does but no entry was ever
+    /// joined for its `db_id`. The one chokepoint for "this document's
+    /// store binding, then its shared per-file baseline" — every caller
+    /// that used to hand-roll `doc(id).db.as_ref().map(...).and_then(|db_id|
+    /// file_binding(db_id))` shares this instead.
+    pub fn doc_file_binding(&self, id: DocumentId) -> Option<&FileBinding> {
+        self.file_binding(self.doc_db_id(id)?)
+    }
+
+    /// [`Self::doc_file_binding`]'s mutable counterpart.
+    pub fn doc_file_binding_mut(&mut self, id: DocumentId) -> Option<&mut FileBinding> {
+        let db_id = self.doc_db_id(id)?;
+        self.file_binding_mut(db_id)
     }
 
     /// Removes `db_id`'s shared baseline once no open `Document` references

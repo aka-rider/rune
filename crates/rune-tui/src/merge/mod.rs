@@ -214,7 +214,7 @@ fn set_last_sync(app: &mut App, doc: crate::document::DocumentId, kind: SyncKind
 /// store-less/degraded document simply skips it (there is no observation to
 /// retract there either), and a failed enqueue degrades the whole store.
 fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
-    let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|db| db.db_id)) else {
+    let Some(db_id) = app.doc_db_id(doc) else {
         return;
     };
     let Some(db) = app.db.as_ref() else { return };

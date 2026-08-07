@@ -58,7 +58,7 @@ pub fn handle_load_ack(
     binding_only: bool,
 ) {
     let Some(expect_obs) = load_result.saved_obs else {
-        let old_db_id = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id));
+        let old_db_id = app.doc_db_id(id);
         if let Some(doc) = app.doc_mut(id) {
             doc.db = None;
         }

@@ -81,9 +81,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 return;
             };
             let current_epoch = app
-                .doc(pending.doc)
-                .and_then(|d| d.db.as_ref().map(|db| db.db_id))
-                .and_then(|db_id| app.file_binding(db_id))
+                .doc_file_binding(pending.doc)
                 .map(|binding| binding.save_epoch);
             if pending.probe_epoch != current_epoch {
                 // Stale: a materialize publish landed between this probe's

@@ -289,7 +289,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
 /// external disk bytes. The baseline advances only at a TERMINAL success —
 /// the caller's Discard/clean-merge arms, or `exit_in_place` on completion.
 fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> bool {
-    let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|db| db.db_id)) else {
+    let Some(db_id) = app.doc_db_id(doc) else {
         return false;
     };
     let Some(db) = app.db.as_ref() else {
@@ -317,9 +317,7 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
 /// merge just read, while a SECOND external write in between still
 /// hash-mismatches into a fresh conflict.
 pub(super) fn advance_expect_obs(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
-    if let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|d| d.db_id))
-        && let Some(binding) = app.file_binding_mut(db_id)
-    {
+    if let Some(binding) = app.doc_file_binding_mut(doc) {
         binding.expect_obs = theirs_obs;
     }
 }

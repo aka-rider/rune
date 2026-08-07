@@ -117,17 +117,15 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         // scratch row racing to bind is claimed by exactly one document),
         // but the epoch/baseline below live on the SHARED `FileBinding` for
         // `db_id`, so every OTHER tab open on the same file sees the same
-        // advance a single tab's own save just produced (plan gap G7) — the
-        // false-conflict class this fixes: a second tab's next save must
-        // compare against the file's true current baseline, not a stale
-        // per-tab copy that never learned about this commit.
-        let db_id = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id));
+        // advance a single tab's own save just produced — closing the
+        // false-conflict class where a second tab's next save compares
+        // against a stale per-tab copy that never learned about this commit,
+        // instead of the file's true current baseline.
+        let db_id = app.doc_db_id(id);
         if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
             doc_db.bind_new = false;
         }
-        if let Some(db_id) = db_id
-            && let Some(binding) = app.file_binding_mut(db_id)
-        {
+        if let Some(binding) = app.doc_file_binding_mut(id) {
             // The publish just committed — any `Probe` issued before this
             // reply lands, by ANY document bound to `db_id`, is now
             // describing a disk that no longer exists; bumping the epoch
@@ -136,8 +134,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             binding.save_epoch = binding.save_epoch.wrapping_add(1);
         }
         if let Some(saved) = &mat.saved
-            && let Some(db_id) = db_id
-            && let Some(binding) = app.file_binding_mut(db_id)
+            && let Some(binding) = app.doc_file_binding_mut(id)
         {
             binding.expect_obs = saved.id;
             binding.pending_rebaseline_hash = None;
@@ -367,11 +364,10 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
     // unblocks it, and once it fires, EVERY document still open on this
     // file gets its own fresh probe — not just `id`, whose save happened to
     // be the one that resolved.
-    let db_id = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id));
-    let deferred_probe = db_id.is_some_and(|db_id| {
-        app.file_binding_mut(db_id)
-            .is_some_and(|binding| std::mem::take(&mut binding.pending_probe))
-    });
+    let db_id = app.doc_db_id(id);
+    let deferred_probe = app
+        .doc_file_binding_mut(id)
+        .is_some_and(|binding| std::mem::take(&mut binding.pending_probe));
     if deferred_probe && let Some(db_id) = db_id {
         for doc_id in app.documents_bound_to(db_id) {
             crate::db_enqueue::probe(app, doc_id);

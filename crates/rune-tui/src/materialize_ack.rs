@@ -59,9 +59,7 @@ pub(crate) fn handle_prepare_ack(
     // tab's own lost-bookkeeping commit produced the stash, this document's
     // OWN next save must recognize the same disk bytes as its own echo too.
     let expect_hash = app
-        .doc(id)
-        .and_then(|d| d.db.as_ref().map(|d| d.db_id))
-        .and_then(|db_id| app.file_binding(db_id))
+        .doc_file_binding(id)
         .and_then(|b| b.pending_rebaseline_hash.clone())
         .unwrap_or(prep.expect_hash);
     let vfs = Arc::clone(&app.vfs);
@@ -313,9 +311,7 @@ fn record_outcome(
                 // save leaves nothing here for the stash to protect, and
                 // `App::prune_file_binding` discards the shared entry (stash
                 // included) once no document references this `db_id` at all.
-                if let Some(db_id) = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id))
-                    && let Some(binding) = app.file_binding_mut(db_id)
-                {
+                if let Some(binding) = app.doc_file_binding_mut(id) {
                     binding.pending_rebaseline_hash =
                         Some(rune_db::hash_bytes(pending.content.as_bytes()));
                 }
