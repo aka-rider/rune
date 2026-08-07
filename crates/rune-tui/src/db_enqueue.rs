@@ -155,8 +155,30 @@ fn load_document_inner(
 /// sequence of tab switches back onto the same document must not stack
 /// redundant probes. The resulting `SyncState` lands as `OpOutcome::Sync`,
 /// handled in `db_dispatch::handle_db_event`.
+///
+/// Deferred instead of enqueued while `id.save_in_flight`: a save's publish
+/// invalidates whatever the disk looked like before it, so a probe issued
+/// now would only read the pre-save world and get dropped by the epoch
+/// check its ack lands into anyway (`db_dispatch`'s `OpOutcome::Sync` arm).
+/// `DocDb::pending_probe` records the request instead; `materialize_ack::
+/// handle_materialize_ack`'s tail re-calls this function once the save
+/// resolves, so the disk fact this document ends up with is read fresh
+/// from the POST-save world, exactly once.
 pub fn probe(app: &mut App, id: DocumentId) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
+        return;
+    }
+    let Some(doc) = app.doc(id) else { return };
+    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+        return;
+    };
+    if doc.file_path.is_none() {
+        return;
+    }
+    if doc.save_in_flight {
+        if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
+            doc_db.pending_probe = true;
+        }
         return;
     }
     if app
@@ -167,16 +189,11 @@ pub fn probe(app: &mut App, id: DocumentId) {
         return;
     }
     let Some(doc) = app.doc(id) else { return };
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
-        return;
-    };
-    if doc.file_path.is_none() {
-        return;
-    }
+    let save_epoch = doc.db.as_ref().map(|d| d.save_epoch).unwrap_or(0);
     let Some(db) = app.db.as_ref() else { return };
     match db.store.probe(db_id) {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::probe(id));
+            app.db_ops.insert(op_id, PendingOp::probe(id, save_epoch));
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
