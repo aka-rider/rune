@@ -244,8 +244,6 @@ Decoration (icons, bullets, quote bars, rules) is metadata riding alongside the 
 
 Images: reserved-row model (synthetic rows carry an `ImageRowRef`, never real span text); Kitty protocol only, gated on true-color capability; deterministic per-path IDs so a respawned pane's placeholders stay stable; teardown always emits a delete so no orphaned image survives the process.
 
-- **Maintain Visual Language Consistency** need to add new style or color? Read all existing styles first. Existing style already communicates the same information to the user? - re-use existing; Potential clash? - Modify styles to avoid the same color or formatting to have different meanings.
-
 Anchors: `DocMachine::rebuild`, `DocumentKind`, `SyntaxSpan`, `ScopeId`, `ParsedTree`, `PassBudget`, `RevealSm`, `ImageRowRef`, `VisualCol`, `wrap_to_display`.
 
 ## §15 Testing & Verification
