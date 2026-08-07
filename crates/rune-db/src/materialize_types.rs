@@ -74,19 +74,32 @@ pub enum MaterializeOutcome {
     /// The live target's hash disagreed with `expect` (an ordinary CAS
     /// refusal), or a concurrent creator won a `bind_new` race — no write
     /// was attempted; `data`/`stat` describe whatever is actually on disk
-    /// now.
+    /// now. `confirmed` carries the caller's own bracketed-read verdict
+    /// (stat-read-stat around this exact `data`) — a read caught
+    /// mid-external-rewrite must never masquerade as a stable fact.
     Conflict {
         data: Vec<u8>,
         origin: &'static str,
         stat: StatFacts,
+        confirmed: bool,
     },
-    /// The write committed with no race.
-    Committed { data: Vec<u8>, stat: StatFacts },
+    /// The write committed with no race. `confirmed` carries the caller's
+    /// own bracketed-stat verdict around the post-publish `stat` — a racer
+    /// landing between the publish and the stat must never let this
+    /// observation's blob and stat quietly disagree.
+    Committed {
+        data: Vec<u8>,
+        stat: StatFacts,
+        confirmed: bool,
+    },
     /// The write committed AND a racer's displaced bytes were captured in
-    /// the same atomic-swap window (F5).
+    /// the same atomic-swap window (F5). `confirmed` describes `stat` only —
+    /// `displaced`/`displaced_stat` are a one-shot read of the caller's own
+    /// private temp file, never contended, so bracketing buys nothing there.
     Raced {
         data: Vec<u8>,
         stat: StatFacts,
+        confirmed: bool,
         displaced: Vec<u8>,
         displaced_stat: StatFacts,
     },

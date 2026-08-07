@@ -15,12 +15,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: get structured hunks instead of parsing display form; at minimum scan inputs for the longest marker run and call `set_conflict_marker_length` so collision is unrepresentable, and anchor by consumed-byte accounting, not content search.
 - **Done when**: conflict segmentation no longer depends on parsing diffy's rendered text, or marker-length collision is provably unrepresentable and anchoring is position-accounted.
 
-### Failed stat recorded as a positive observation
-- **Where**: `crates/rune-db/src/observation.rs:113-133` (`StatFacts`, `stat_identity`), `crates/rune-db/src/probe.rs:77-80` (field-equality compare)
-- **Wrong**: `StatFacts { size: i64, mtime: String, .. }` are not `Option`; `stat_identity` returns `StatFacts::default()` (`size:0, mtime:""`) on `Err(_)`, discarding the failure. `probe` compares observation vs fresh stat by field equality, so two consecutive stat FAILURES compare equal and short-circuit "disk unchanged" — on the path that decides the DiskConflict guard before overwrite.
-- **Instead**: `stat_identity` returns `Result`/`Option<StatFacts>`; make failed-stat unrepresentable as an observation.
-- **Done when**: a failed stat cannot be stored or compared as a successful observation.
-
 ### `published_not_durable` honored at only 1 of 4 publish sites
 - **Where**: contract at `crates/rune-vfs/src/lib.rs:88`; honored at `crates/rune-tui/src/save/materialize.rs:294`; ignored at `crates/rune-db/src/rename_replace.rs:72`, `crates/rune-db/src/rename_bind.rs:35-40`, `crates/rune-tui/src/rename_create.rs:158`
 - **Wrong**: the predicate means the swap/rename already took effect and callers must never remove the temp (sole surviving copy of displaced bytes). Three call sites propagate the raw `io::Error` (or a stringified generic arm) without checking it, so a physically-successful rename can be reported as failed while UI/DB state disagrees with disk.
