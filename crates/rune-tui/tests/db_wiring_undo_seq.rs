@@ -27,7 +27,7 @@ use rune_tui::db::DbBridge;
 use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{db_from, doc_db_from, open_and_load, publish, temp_db_dir};
+use db_wiring_common::{bind_file_from, db_from, doc_db_from, open_and_load, publish, temp_db_dir};
 
 /// Delivers exactly one buffered `DbEvent` for `op_id` into `app` — the
 /// same shape `recv_ok` uses, but keeping the raw event instead of
@@ -74,6 +74,7 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
     );
     let id = app.active;
     app.doc_mut(id).unwrap().db = Some(doc_db);
+    bind_file_from(&mut app, &load);
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 

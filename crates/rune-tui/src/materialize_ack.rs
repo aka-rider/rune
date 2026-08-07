@@ -51,15 +51,18 @@ pub(crate) fn handle_prepare_ack(
         return;
     };
     // A baseline left unconfirmed by a prior commit whose observation was
-    // lost (`DocDb::pending_rebaseline_hash`'s own doc comment) stands in
-    // for `expect_hash` here — the DB's own lookup would otherwise still be
-    // answering off the stale row `expect_obs` never advanced past. Once a
-    // real observation lands, this returns `None` again and the DB's own
-    // hash is used as always.
+    // lost (`FileBinding::pending_rebaseline_hash`'s own doc comment) stands
+    // in for `expect_hash` here — the DB's own lookup would otherwise still
+    // be answering off the stale row `expect_obs` never advanced past. Once
+    // a real observation lands, this returns `None` again and the DB's own
+    // hash is used as always. Shared per file, not per document: whichever
+    // tab's own lost-bookkeeping commit produced the stash, this document's
+    // OWN next save must recognize the same disk bytes as its own echo too.
     let expect_hash = app
         .doc(id)
-        .and_then(|d| d.db.as_ref())
-        .and_then(|d| d.pending_rebaseline_hash.clone())
+        .and_then(|d| d.db.as_ref().map(|d| d.db_id))
+        .and_then(|db_id| app.file_binding(db_id))
+        .and_then(|b| b.pending_rebaseline_hash.clone())
         .unwrap_or(prep.expect_hash);
     let vfs = Arc::clone(&app.vfs);
     effects.cmds.push(materialize_vfs_cmd(
@@ -300,15 +303,20 @@ fn record_outcome(
                 // exactly `pending.content`, so a save that starts before
                 // the re-baseline load below lands must be able to
                 // recognize that as its own echo rather than manufacture a
-                // conflict against it (`DocDb::pending_rebaseline_hash`'s
-                // own doc comment). Stashed before the ack below, which may
-                // itself go on to drop this document's binding entirely
-                // (the re-baseline enqueue failing too) — dropping the
-                // whole `DocDb` discards this stash right along with it,
-                // which is correct: a binding that can no longer serve a
-                // save has nothing left for the stash to protect.
-                if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
-                    doc_db.pending_rebaseline_hash =
+                // conflict against it (`FileBinding::pending_rebaseline_hash`'s
+                // own doc comment). Stashed on the SHARED per-file entry, not
+                // this one document's own binding: any OTHER tab open on the
+                // same file needs to recognize the identical echo too.
+                // Stashed before the ack below, which may itself go on to
+                // drop this document's binding entirely (the re-baseline
+                // enqueue failing too) — a binding that can no longer serve a
+                // save leaves nothing here for the stash to protect, and
+                // `App::prune_file_binding` discards the shared entry (stash
+                // included) once no document references this `db_id` at all.
+                if let Some(db_id) = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id))
+                    && let Some(binding) = app.file_binding_mut(db_id)
+                {
+                    binding.pending_rebaseline_hash =
                         Some(rune_db::hash_bytes(pending.content.as_bytes()));
                 }
                 // WP7: the write already physically completed — only the

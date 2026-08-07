@@ -368,12 +368,12 @@ fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
         Some(db),
     );
     let id_a = app.active;
-    app.doc_mut(id_a).unwrap().db = Some(DocDb::new(1, 0, false, 0));
+    app.doc_mut(id_a).unwrap().db = Some(DocDb::new(1, false, 0));
     dirty_common::force_dirty(&mut app, id_a);
 
     let id_b = app.open_document(Buffer::new("second"));
     app.doc_mut(id_b).unwrap().bind_path(PathBuf::from("/b.md"));
-    app.doc_mut(id_b).unwrap().db = Some(DocDb::new(2, 0, false, 0));
+    app.doc_mut(id_b).unwrap().db = Some(DocDb::new(2, false, 0));
     dirty_common::force_dirty(&mut app, id_b);
 
     press(&mut app, ctrl_c());

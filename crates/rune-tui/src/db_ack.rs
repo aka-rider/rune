@@ -58,8 +58,12 @@ pub fn handle_load_ack(
     binding_only: bool,
 ) {
     let Some(expect_obs) = load_result.saved_obs else {
+        let old_db_id = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id));
         if let Some(doc) = app.doc_mut(id) {
             doc.db = None;
+        }
+        if let Some(db_id) = old_db_id {
+            app.prune_file_binding(db_id);
         }
         messages::error(
             app,
@@ -106,10 +110,17 @@ pub fn handle_load_ack(
     // re-settling the cache against.
     crate::materialize_ack::recompute_dirty(app, id);
 
+    // Joins the shared baseline for this `db_id` — seeded from THIS load
+    // only if no other document has bound it yet (`App::bind_file`'s own
+    // doc comment): a second tab opening the same file must never reset a
+    // baseline a sibling tab's own save has already advanced. Done BEFORE
+    // installing `doc.db` below: the join itself never touches `id`'s own
+    // document, so there is no reason to interleave it with the borrow that
+    // does.
+    app.bind_file(load_result.doc_id, expect_obs);
     let Some(doc) = app.doc_mut(id) else { return };
     doc.db = Some(DocDb::new(
         load_result.doc_id,
-        expect_obs,
         false, // bind_new: `id` is already bound to a path read straight off disk
         load_result.bridge_seq.unwrap_or(0),
     ));
@@ -150,7 +161,8 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
 /// still just a document that's gone, nothing to bind.
 pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
     let Some(doc) = app.doc_mut(id) else { return };
-    doc.db = Some(DocDb::new(row_id, 0, true, 0));
+    doc.db = Some(DocDb::new(row_id, true, 0));
+    app.bind_file(row_id, 0);
 }
 
 #[cfg(test)]
@@ -187,8 +199,8 @@ mod tests {
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
 
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, true, 0));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -246,8 +258,8 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, true, 0));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         let op_for_a = *app
@@ -297,8 +309,8 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, true, 0));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);

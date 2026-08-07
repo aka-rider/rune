@@ -22,6 +22,14 @@ use rune_vfs::Vfs;
 pub(crate) struct DbBootstrap {
     pub(crate) db: Option<Db>,
     pub(crate) doc_db: Option<DocDb>,
+    /// The CAS baseline `main` joins `App::file_bindings` with for `doc_db`'s
+    /// `db_id`, the same shared-per-file entry every later document bound to
+    /// this `db_id` (plan gap G7) reads and advances — never installed
+    /// directly on `doc_db` itself. `Some` alongside `doc_db` on every
+    /// construction path: a genuine baseline for a real `Load`, or `0` (the
+    /// same fabricated, never-queried value `doc_db`'s own `bind_new: true`
+    /// paths use) for a fresh scratch row.
+    pub(crate) expect_obs: Option<rune_db::ObsId>,
     /// `Some` whenever `rune-db`'s `Load` returned reconstructed content
     /// (which may or may not differ from the buffer `load_buffer` already
     /// read straight off disk) — `main` runs this through the same
@@ -207,7 +215,6 @@ pub(crate) fn bootstrap_db(
     let db = Db::new(store, bridge, degraded_at_open);
     let doc_db = DocDb::new(
         load_result.doc_id,
-        expect_obs,
         false, // bind_new: `file_existed` at the call site guarantees the target exists
         // last_known_seq: `load` may have already durably journaled a
         // cross-session-inheritance bridge edit under THIS session's own
@@ -230,6 +237,7 @@ pub(crate) fn bootstrap_db(
     DbBootstrap {
         db: Some(db),
         doc_db: Some(doc_db),
+        expect_obs: Some(expect_obs),
         recovered_content: Some(load_result.recovered),
         sync_kind: Some(sync_kind),
         banner,
@@ -432,7 +440,7 @@ pub(crate) fn bootstrap_new_file(
     };
 
     let db = Db::new(store, bridge, degraded_at_open);
-    let doc_db = DocDb::new(db_id, 0, /* bind_new */ true, 0);
+    let doc_db = DocDb::new(db_id, /* bind_new */ true, 0);
     let banner = if degraded_at_open {
         Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
     } else {
@@ -442,6 +450,7 @@ pub(crate) fn bootstrap_new_file(
     DbBootstrap {
         db: Some(db),
         doc_db: Some(doc_db),
+        expect_obs: Some(0),
         recovered_content: None,
         sync_kind: None,
         banner,

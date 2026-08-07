@@ -166,7 +166,7 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let (mut app, _bridge) = app_with_store("snapshot-row-id-not-scratch", vfs);
     let id = app.active;
-    app.doc_mut(id).unwrap().db = Some(DocDb::new(1, 0, true, 0));
+    app.doc_mut(id).unwrap().db = Some(DocDb::new(1, true, 0));
 
     // A bare, unrouted RowId ack with no matching db_ops entry at all must
     // be a harmless no-op — the fire-and-forget shape any snapshot ack

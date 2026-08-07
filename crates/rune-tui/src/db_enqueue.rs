@@ -156,14 +156,16 @@ fn load_document_inner(
 /// redundant probes. The resulting `SyncState` lands as `OpOutcome::Sync`,
 /// handled in `db_dispatch::handle_db_event`.
 ///
-/// Deferred instead of enqueued while `id.save_in_flight`: a save's publish
-/// invalidates whatever the disk looked like before it, so a probe issued
-/// now would only read the pre-save world and get dropped by the epoch
-/// check its ack lands into anyway (`db_dispatch`'s `OpOutcome::Sync` arm).
-/// `DocDb::pending_probe` records the request instead; `materialize_ack::
-/// handle_materialize_ack`'s tail re-calls this function once the save
-/// resolves, so the disk fact this document ends up with is read fresh
-/// from the POST-save world, exactly once.
+/// Deferred instead of enqueued while ANY document bound to the same
+/// `db_id` has a save in flight (plan gap G7: a save from one tab
+/// invalidates the disk for every tab open on that file, not only the one
+/// saving) — a probe issued now would only read the pre-save world and get
+/// dropped by the epoch check its ack lands into anyway (`db_dispatch`'s
+/// `OpOutcome::Sync` arm). The shared `FileBinding::pending_probe` records
+/// the request instead; `materialize_ack::handle_materialize_ack`'s tail
+/// re-calls this function, for every document still bound to `db_id`, once
+/// ANY of their saves resolves — so the disk fact each of them ends up with
+/// is read fresh from the POST-save world, exactly once.
 pub fn probe(app: &mut App, id: DocumentId) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -175,9 +177,9 @@ pub fn probe(app: &mut App, id: DocumentId) {
     if doc.file_path.is_none() {
         return;
     }
-    if doc.save_in_flight {
-        if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
-            doc_db.pending_probe = true;
+    if app.any_save_in_flight_for(db_id) {
+        if let Some(binding) = app.file_binding_mut(db_id) {
+            binding.pending_probe = true;
         }
         return;
     }
@@ -188,8 +190,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
     {
         return;
     }
-    let Some(doc) = app.doc(id) else { return };
-    let save_epoch = doc.db.as_ref().map(|d| d.save_epoch).unwrap_or(0);
+    let save_epoch = app.file_binding(db_id).map(|b| b.save_epoch).unwrap_or(0);
     let Some(db) = app.db.as_ref() else { return };
     match db.store.probe(db_id) {
         Ok(op_id) => {

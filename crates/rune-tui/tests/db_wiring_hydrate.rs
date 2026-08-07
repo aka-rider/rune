@@ -29,7 +29,8 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
 use db_wiring_common::{
-    app_with_store, db_from, doc_db_from, open_and_load, press, publish, recv_ok, temp_db_dir,
+    app_with_store, bind_file_from, db_from, doc_db_from, open_and_load, press, publish, recv_ok,
+    temp_db_dir,
 };
 
 /// Plan WP5 "Done when" (replaces the interactive manual gate): edits
@@ -61,6 +62,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     );
     let id_a = app_a.active;
     app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    bind_file_from(&mut app_a, &load_a);
     let len_a = app_a.doc(id_a).unwrap().buffer.len();
     app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(len_a);
     for ch in " world".chars() {
@@ -131,6 +133,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     );
     let id_b = app_b.active;
     app_b.doc_mut(id_b).unwrap().db = Some(doc_db_b);
+    bind_file_from(&mut app_b, &load_b);
     if let Some(bridge_edit) = bridge_edit {
         app_b.doc_mut(id_b).unwrap().journal.push(Step {
             edits: vec![bridge_edit],

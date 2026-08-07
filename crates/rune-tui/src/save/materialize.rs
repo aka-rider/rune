@@ -58,13 +58,18 @@ pub(super) fn materialize_now(
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    let Some((db_id, expect_obs, last_known_seq, bind_new)) = doc
+    let Some((db_id, last_known_seq, bind_new)) = doc
         .db
         .as_ref()
-        .map(|d| (d.db_id, d.expect_obs, d.last_known_seq, d.bind_new))
+        .map(|d| (d.db_id, d.last_known_seq, d.bind_new))
     else {
         return;
     };
+    // The CAS baseline is shared per file, not per document (plan gap G7) —
+    // read from `App::file_bindings`, never from a per-`Document` copy, so
+    // this save compares against whatever the LAST save on this file
+    // (whichever tab made it) actually advanced the baseline to.
+    let expect_obs = app.file_binding(db_id).map(|b| b.expect_obs).unwrap_or(0);
     let content: Arc<str> = Arc::from(doc.buffer.content());
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.materialize_prepare(db_id, expect_obs, bind_new);

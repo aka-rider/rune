@@ -5,7 +5,7 @@
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::Cursor;
-use rune_db::{MergePrepResult, ObsId, SyncKind};
+use rune_db::{AncestorRung, MergePrepResult, ObsId, SyncKind};
 
 use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
@@ -100,16 +100,24 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     }
 
-    let ancestor_text = match &prep.ancestor {
-        Some(bytes) => match String::from_utf8(bytes.clone()) {
-            Ok(text) => Some(text),
-            Err(_) => {
-                app.merge = MergeState::Inactive;
-                messages::error(app, UTF8_REFUSAL);
-                return;
-            }
+    // `ancestor_rung` is the single source of truth for whether there IS an
+    // ancestor to read at all — `Absent` always takes the honest 2-way path
+    // below regardless of what `prep.ancestor` happens to hold; `ancestor`
+    // itself stays only the bytes carrier for the `Lineage`/`SessionScoped`
+    // rungs, decoded here.
+    let ancestor_text = match prep.ancestor_rung {
+        AncestorRung::Absent => None,
+        AncestorRung::Lineage | AncestorRung::SessionScoped => match &prep.ancestor {
+            Some(bytes) => match String::from_utf8(bytes.clone()) {
+                Ok(text) => Some(text),
+                Err(_) => {
+                    app.merge = MergeState::Inactive;
+                    messages::error(app, UTF8_REFUSAL);
+                    return;
+                }
+            },
+            None => None,
         },
-        None => None,
     };
 
     let Some(active) = app.doc(doc) else {
@@ -309,8 +317,10 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
 /// merge just read, while a SECOND external write in between still
 /// hash-mismatches into a fresh conflict.
 pub(super) fn advance_expect_obs(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
-    if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
-        doc_db.expect_obs = theirs_obs;
+    if let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|d| d.db_id))
+        && let Some(binding) = app.file_binding_mut(db_id)
+    {
+        binding.expect_obs = theirs_obs;
     }
 }
 
@@ -516,8 +526,9 @@ mod tests {
         let doc = app.active;
         if let Some(d) = app.doc_mut(doc) {
             d.read_only = crate::document::ReadOnly::Always;
-            d.db = Some(crate::db::DocDb::new(1, 7, false, 0));
+            d.db = Some(crate::db::DocDb::new(1, false, 0));
         }
+        app.bind_file(1, 7);
         app.merge = MergeState::Pending {
             doc,
             generation: 0,
@@ -536,7 +547,7 @@ mod tests {
         assert_eq!(app.merge, MergeState::Inactive);
         assert_eq!(app.doc(doc).unwrap().buffer.content(), "hello");
         assert_eq!(app.doc(doc).unwrap().last_sync, None);
-        assert_eq!(app.doc(doc).unwrap().db.as_ref().unwrap().expect_obs, 7);
+        assert_eq!(app.file_binding(1).unwrap().expect_obs, 7);
         assert!(
             messages::newest_text(&app)
                 .unwrap_or_default()

@@ -82,13 +82,16 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             };
             let current_epoch = app
                 .doc(pending.doc)
-                .and_then(|d| d.db.as_ref().map(|db| db.save_epoch));
+                .and_then(|d| d.db.as_ref().map(|db| db.db_id))
+                .and_then(|db_id| app.file_binding(db_id))
+                .map(|binding| binding.save_epoch);
             if pending.probe_epoch != current_epoch {
                 // Stale: a materialize publish landed between this probe's
-                // issue and its own ack — the disk fact it carries no
-                // longer describes the current world, so it is dropped
-                // rather than trusted (mirrors the `MergePrep` ticket check
-                // below).
+                // issue and its own ack — by ANY document sharing this
+                // file's `db_id`, not only the one that issued the probe —
+                // so the disk fact it carries no longer describes the
+                // current world, and it is dropped rather than trusted
+                // (mirrors the `MergePrep` ticket check below).
                 return;
             }
             if let Some(doc) = app.doc_mut(pending.doc) {

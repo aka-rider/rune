@@ -85,15 +85,11 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
     {
         let doc = app.doc_mut(id_b).unwrap();
         doc.file_path = Some(std::path::PathBuf::from("/root/b.md"));
-        doc.db = Some(rune_tui::db::DocDb::new(
-            db_id_b.doc_id,
-            db_id_b.saved_obs.unwrap_or(0),
-            false,
-            0,
-        ));
+        doc.db = Some(rune_tui::db::DocDb::new(db_id_b.doc_id, false, 0));
         doc.viewport
             .set_size(rename_common::WIDTH, rename_common::HEIGHT - 1);
     }
+    app.bind_file(db_id_b.doc_id, db_id_b.saved_obs.unwrap_or(0));
 
     // Dirty and save BOTH documents, each up through a physically-committed
     // write whose `MaterializeRecord` ack has not landed yet.

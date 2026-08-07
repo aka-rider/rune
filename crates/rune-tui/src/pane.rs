@@ -558,7 +558,7 @@ mod tests {
             .expect("active doc exists")
             .saved_content = Arc::from("");
         app.doc_mut(app.active).expect("active doc exists").db =
-            Some(crate::db::DocDb::new(1, 0, true, 0));
+            Some(crate::db::DocDb::new(1, true, 0));
         app.db = Some(live_db());
 
         let mut effects = Effects::default();

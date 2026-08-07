@@ -231,12 +231,16 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
     // (a prior attempt's own commit, whose `MaterializeRecord` bookkeeping
     // never came back) — the disk holds exactly the buffer's own bytes.
     external_write(vfs.as_ref(), b"!hello");
+    let db_id = app
+        .doc(doc_id)
+        .and_then(|d| d.db.as_ref())
+        .expect("the document is store-bound")
+        .db_id;
     {
-        let doc_db = app
-            .doc_mut(doc_id)
-            .and_then(|d| d.db.as_mut())
-            .expect("the document is store-bound");
-        doc_db.pending_rebaseline_hash = Some(rune_db::hash_bytes(b"!hello"));
+        let binding = app
+            .file_binding_mut(db_id)
+            .expect("the file has a shared baseline");
+        binding.pending_rebaseline_hash = Some(rune_db::hash_bytes(b"!hello"));
         // `expect_obs` is deliberately left as the Load's own baseline — the
         // hash of the ORIGINAL "hello", never advanced — proving the stash,
         // not a coincidentally-matching `expect_obs`, is what lets this
@@ -251,12 +255,9 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
          conflict against bytes this session itself just wrote"
     );
     assert!(!app.doc(doc_id).unwrap().is_dirty());
-    let doc_db = app
-        .doc(doc_id)
-        .and_then(|d| d.db.as_ref())
-        .expect("still store-bound");
     assert_eq!(
-        doc_db.pending_rebaseline_hash, None,
+        app.file_binding(db_id).unwrap().pending_rebaseline_hash,
+        None,
         "a real observation landing must clear the stand-in"
     );
 }
@@ -281,11 +282,15 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_still_conflicts_on_foreign_by
     // stashed commit.
     external_write(vfs.as_ref(), b"someone else wrote this");
     {
-        let doc_db = app
-            .doc_mut(doc_id)
-            .and_then(|d| d.db.as_mut())
-            .expect("the document is store-bound");
-        doc_db.pending_rebaseline_hash = Some(rune_db::hash_bytes(b"!hello"));
+        let db_id = app
+            .doc(doc_id)
+            .and_then(|d| d.db.as_ref())
+            .expect("the document is store-bound")
+            .db_id;
+        let binding = app
+            .file_binding_mut(db_id)
+            .expect("the file has a shared baseline");
+        binding.pending_rebaseline_hash = Some(rune_db::hash_bytes(b"!hello"));
     }
 
     save_and_ack(&mut app, &bridge, doc_id);

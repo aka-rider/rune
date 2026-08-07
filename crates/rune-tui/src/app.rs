@@ -149,6 +149,15 @@ pub struct App {
     /// both facts in one value, rather than two maps keyed by the same op
     /// id, means a sweep can never drop one and keep the other.
     pub db_ops: HashMap<u64, crate::db::PendingOp>,
+    /// This process's shared CAS baseline per store-bound file, keyed by
+    /// `db_id` (plan gap G7): every `Document` bound to the same underlying
+    /// file reads and advances the SAME [`crate::db::FileBinding`] rather
+    /// than each carrying its own copy, which is what let one tab's own
+    /// save falsely raise the disk-conflict guard against a second tab's
+    /// very next attempt on that file. `crate::db::App::bind_file`/
+    /// `file_binding`/`file_binding_mut`/`prune_file_binding` are the only
+    /// chokepoints that touch this map.
+    pub file_bindings: HashMap<i64, crate::db::FileBinding>,
     /// Correlates an in-flight `MaterializeRecord` op id to the
     /// document whose disk write ALREADY physically completed before this
     /// op was even enqueued — the caller-side vfs work runs first, this
@@ -379,6 +388,7 @@ impl App {
             next_merge_gen: 0,
             db,
             db_ops: HashMap::new(),
+            file_bindings: HashMap::new(),
             published_ops: HashMap::new(),
             pending_materialize: HashMap::new(),
             db_banner: None,

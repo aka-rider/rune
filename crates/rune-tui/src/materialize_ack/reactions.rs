@@ -113,20 +113,34 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         // Once the bytes are published, the target exists, so the next save
         // is an overwrite — regardless of whether the bookkeeping that would
         // have supplied `saved` (and so a fresh CAS baseline) survived.
+        // `bind_new` stays on THIS document's own `DocDb` (never shared — a
+        // scratch row racing to bind is claimed by exactly one document),
+        // but the epoch/baseline below live on the SHARED `FileBinding` for
+        // `db_id`, so every OTHER tab open on the same file sees the same
+        // advance a single tab's own save just produced (plan gap G7) — the
+        // false-conflict class this fixes: a second tab's next save must
+        // compare against the file's true current baseline, not a stale
+        // per-tab copy that never learned about this commit.
+        let db_id = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id));
         if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
             doc_db.bind_new = false;
+        }
+        if let Some(db_id) = db_id
+            && let Some(binding) = app.file_binding_mut(db_id)
+        {
             // The publish just committed — any `Probe` issued before this
-            // reply lands is now describing a disk that no longer exists;
-            // bumping the epoch here is what makes `db_dispatch`'s
-            // `OpOutcome::Sync` arm drop such a stale reply instead of
-            // trusting it.
-            doc_db.save_epoch = doc_db.save_epoch.wrapping_add(1);
+            // reply lands, by ANY document bound to `db_id`, is now
+            // describing a disk that no longer exists; bumping the epoch
+            // here is what makes `db_dispatch`'s `OpOutcome::Sync` arm drop
+            // such a stale reply instead of trusting it.
+            binding.save_epoch = binding.save_epoch.wrapping_add(1);
         }
         if let Some(saved) = &mat.saved
-            && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
+            && let Some(db_id) = db_id
+            && let Some(binding) = app.file_binding_mut(db_id)
         {
-            doc_db.expect_obs = saved.id;
-            doc_db.pending_rebaseline_hash = None;
+            binding.expect_obs = saved.id;
+            binding.pending_rebaseline_hash = None;
         }
         // Resolved BEFORE the `saved: None` re-baseline below: that arm may
         // enqueue a `Load`, and a `Load` enqueue failure sweeps every
@@ -180,10 +194,20 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // store synchronously, but this also catches the store having
             // gone down for some other reason in between.
             let still_usable = app.db.as_ref().is_some_and(|db| !db.degraded);
-            if (!re_baselined || !still_usable)
-                && let Some(doc) = app.doc_mut(id)
-            {
-                doc.db = None;
+            if !re_baselined || !still_usable {
+                if let Some(doc) = app.doc_mut(id) {
+                    doc.db = None;
+                }
+                // `db_id` is this document's own binding as captured above
+                // `load_document_best_effort` may have already installed a
+                // FRESH `DocDb` on a successful re-baseline (still cleared
+                // right back out by the drop just above when the store
+                // itself turned out unusable) — either way, the `db_id` this
+                // save actually published under is what may have just lost
+                // its last referencing document.
+                if let Some(db_id) = db_id {
+                    app.prune_file_binding(db_id);
+                }
             }
         }
         if mat.raced {
@@ -336,14 +360,22 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         }
     }
     // The save this document's `save_in_flight` gated is resolved either
-    // way now — a `Probe` deferred against it (`db_enqueue::probe`'s own
-    // doc comment) can finally read the post-save world exactly once.
-    let deferred_probe = app
-        .doc_mut(id)
-        .and_then(|d| d.db.as_mut())
-        .is_some_and(|doc_db| std::mem::take(&mut doc_db.pending_probe));
-    if deferred_probe {
-        crate::db_enqueue::probe(app, id);
+    // way now — a `Probe` deferred against `db_id` (`db_enqueue::probe`'s
+    // own doc comment) can finally read the post-save world exactly once.
+    // The deferral flag lives on the SHARED `FileBinding`, not this one
+    // document's own `DocDb`: ANY save on this file resolving is what
+    // unblocks it, and once it fires, EVERY document still open on this
+    // file gets its own fresh probe — not just `id`, whose save happened to
+    // be the one that resolved.
+    let db_id = app.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id));
+    let deferred_probe = db_id.is_some_and(|db_id| {
+        app.file_binding_mut(db_id)
+            .is_some_and(|binding| std::mem::take(&mut binding.pending_probe))
+    });
+    if deferred_probe && let Some(db_id) = db_id {
+        for doc_id in app.documents_bound_to(db_id) {
+            crate::db_enqueue::probe(app, doc_id);
+        }
     }
     recompute_dirty(app, id);
     close_if_pending(app, id, mat.committed);

@@ -85,10 +85,20 @@ pub fn db_from(store: Store, bridge: Arc<DbBridge>, degraded: bool) -> Db {
 pub fn doc_db_from(load: &LoadResult) -> DocDb {
     DocDb::new(
         load.doc_id,
-        load.saved_obs.unwrap_or(0),
         false, // bind_new: the doc already exists on disk in every test here
         0,
     )
+}
+
+/// The [`doc_db_from`] counterpart for the shared per-file CAS baseline
+/// (plan gap G7): joins `App::file_bindings` for `load.doc_id`, seeded from
+/// `load.saved_obs`, exactly like `db_ack::handle_load_ack`'s own production
+/// call to `App::bind_file` does. Every test that installs a `doc_db_from`
+/// binding onto a live `App` must call this too, or that document's CAS
+/// baseline reads back as the unseeded default instead of what its own
+/// fixture `Load` actually observed.
+pub fn bind_file_from(app: &mut App, load: &LoadResult) {
+    app.bind_file(load.doc_id, load.saved_obs.unwrap_or(0));
 }
 
 pub fn press(app: &mut App, ch: char) {

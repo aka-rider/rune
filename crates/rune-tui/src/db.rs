@@ -302,18 +302,21 @@ impl Db {
 /// This document's handle onto the app-wide recovery store (plan WP1
 /// decision 5, split out of the pre-WP1 `AppDb`): the bound `documents` row
 /// id (`db_id`, formerly `doc_id` — renamed so it can't be confused with
-/// `DocumentId`, the in-process tab identity), this session's current CAS
-/// baseline, and the async-replica bookkeeping reconciling the LOCAL
-/// journal against the DURABLE one.
+/// `DocumentId`, the in-process tab identity) and the async-replica
+/// bookkeeping reconciling the LOCAL journal against the DURABLE one. The
+/// CAS baseline itself — `expect_obs`/`pending_rebaseline_hash`/`save_epoch`
+/// — lives on [`FileBinding`], shared by every `Document` bound to the same
+/// `db_id`, never copied here: two tabs opened onto the SAME underlying file
+/// must see the one truth about what disk holds, or one tab's own save
+/// falsely raises the disk-conflict guard against the other's very next
+/// attempt (plan gap G7).
 pub struct DocDb {
     pub db_id: i64,
-    /// This session's current CAS baseline for `db_id` — updated from
-    /// every successful `materialize` ack's `saved` observation (plan
-    /// WP5.S6). Seeded from `LoadResult::saved_obs` at hydration.
-    pub expect_obs: ObsId,
     /// Whether the NEXT save must go through `materialize`'s `bind_new`
     /// (create-only, `rename_excl`) path rather than the CAS-overwrite path
-    /// — true until the first successful create commits.
+    /// — true until the first successful create commits. Never shared: a
+    /// scratch row a create is still racing to bind is, by construction,
+    /// claimed by exactly one `Document`.
     pub bind_new: bool,
     /// The highest durable journal seq (`events.seq`) this session has SEEN
     /// acknowledged so far for this document — a conservative stand-in for
@@ -332,46 +335,15 @@ pub struct DocDb {
     /// arriving with a stale generation means a later edit already
     /// superseded it, so it's ignored.
     pub snapshot_generation: u32,
-    /// Set when a write physically committed but the observation that would
-    /// have advanced `expect_obs` was lost to a failing writer — `expect_obs`
-    /// itself is left untouched (it may be the only row this session has
-    /// ever recorded), so a save starting before the re-baseline `Load`
-    /// lands would otherwise CAS-compare the disk against that stale row and
-    /// manufacture a conflict against bytes THIS session just wrote. Holds
-    /// the hash of exactly those bytes so such a save recognizes the disk as
-    /// its own echo; disk content that disagrees with it still conflicts
-    /// normally — this is never a license to adopt someone else's bytes.
-    /// Cleared the moment a real observation lands again.
-    pub pending_rebaseline_hash: Option<String>,
-    /// This session's save epoch for `db_id` — bumped exactly once, inside
-    /// `materialize_ack::handle_materialize_ack`'s committed branch, the
-    /// moment a publish's `MaterializeRecord` ack lands. A `Probe` records
-    /// this value onto its own `PendingOp` at issue time
-    /// (`PendingOp::probe_epoch`'s own doc comment); the ack handler drops
-    /// a reply whose recorded epoch no longer matches, since a publish
-    /// landing in between means the disk it read is stale.
-    pub save_epoch: u32,
-    /// Set by `db_enqueue::probe` when a probe was skipped because
-    /// `save_in_flight` was true at the moment it was asked for — a save's
-    /// publish invalidates whatever the disk looked like before it, so
-    /// probing anyway would only end up dropped by the epoch check above.
-    /// Consumed (taken and cleared) by `handle_materialize_ack`'s own tail
-    /// once the save this deferral was waiting on resolves, issuing the
-    /// probe fresh against the post-save world exactly once.
-    pub pending_probe: bool,
 }
 
 impl DocDb {
-    pub fn new(db_id: i64, expect_obs: ObsId, bind_new: bool, last_known_seq: i64) -> DocDb {
+    pub fn new(db_id: i64, bind_new: bool, last_known_seq: i64) -> DocDb {
         DocDb {
             db_id,
-            expect_obs,
             bind_new,
             last_known_seq,
             snapshot_generation: 0,
-            pending_rebaseline_hash: None,
-            save_epoch: 0,
-            pending_probe: false,
         }
     }
 
@@ -381,5 +353,134 @@ impl DocDb {
     /// comment); `MoveUndoPos`/`CreateSnapshot` no longer read this at all.
     pub(crate) fn resolve_append_ack(&mut self, seq: i64) {
         self.last_known_seq = self.last_known_seq.max(seq);
+    }
+}
+
+/// This process's single CAS baseline for a store-bound file, shared by
+/// EVERY `Document` currently bound to its `db_id` (plan gap G7) — the fix
+/// for the false-conflict class where two tabs on one file each held an
+/// independent, silently-diverging copy of `expect_obs`. Lives in
+/// `App::file_bindings`, keyed by `db_id`; installed once, the moment the
+/// FIRST document binds that `db_id` (`db_ack::bind_file`'s own doc
+/// comment), and joined — never reseeded — by every later document binding
+/// the same `db_id`, so a second tab opening the file adopts whatever the
+/// first tab's own saves have already advanced it to rather than resetting
+/// it from its own possibly-older `Load`. Pruned once no open `Document`
+/// references `db_id` any longer (`App::prune_file_binding`).
+pub struct FileBinding {
+    /// This process's current CAS baseline for `db_id` — updated from every
+    /// document's successful `materialize` ack's `saved` observation (plan
+    /// WP5.S6), and from a terminal merge/discard adoption
+    /// (`merge::landing::advance_expect_obs`). Seeded from the first
+    /// `LoadResult::saved_obs` this `db_id` ever saw.
+    pub expect_obs: ObsId,
+    /// Set when a write physically committed but the observation that would
+    /// have advanced `expect_obs` was lost to a failing writer — `expect_obs`
+    /// itself is left untouched (it may be the only row this session has
+    /// ever recorded), so a save starting before the re-baseline `Load`
+    /// lands would otherwise CAS-compare the disk against that stale row and
+    /// manufacture a conflict against bytes a session just wrote. Holds
+    /// the hash of exactly those bytes so such a save recognizes the disk as
+    /// its own echo; disk content that disagrees with it still conflicts
+    /// normally — this is never a license to adopt someone else's bytes.
+    /// Cleared the moment a real observation lands again.
+    pub pending_rebaseline_hash: Option<String>,
+    /// This process's save epoch for `db_id` — bumped exactly once, inside
+    /// `materialize_ack::handle_materialize_ack`'s committed branch, the
+    /// moment ANY document bound to `db_id` gets a publish's
+    /// `MaterializeRecord` ack. A `Probe` records this value onto its own
+    /// `PendingOp` at issue time (`PendingOp::probe_epoch`'s own doc
+    /// comment); the ack handler drops a reply whose recorded epoch no
+    /// longer matches, since a publish landing in between — from ANY tab on
+    /// this file — means the disk the probe read is stale. Shared exactly
+    /// because the disk fact it echoes is a fact about the FILE, not about
+    /// whichever tab happened to trigger the publish.
+    pub save_epoch: u32,
+    /// Set by `db_enqueue::probe` when a probe was skipped because a save
+    /// was in flight — for ANY document bound to `db_id` — at the moment it
+    /// was asked for; that save's publish invalidates whatever the disk
+    /// looked like before it, so probing anyway would only end up dropped by
+    /// the epoch check above. Consumed (taken and cleared) by
+    /// `handle_materialize_ack`'s own tail once a save for `db_id` resolves
+    /// — REGARDLESS of which tab's save it was — which then re-issues a
+    /// fresh probe for every document still open on `db_id`, so the disk
+    /// fact every one of them ends up with is read from the POST-save world,
+    /// exactly once per document.
+    pub pending_probe: bool,
+}
+
+impl FileBinding {
+    pub fn new(expect_obs: ObsId) -> FileBinding {
+        FileBinding {
+            expect_obs,
+            pending_rebaseline_hash: None,
+            save_epoch: 0,
+            pending_probe: false,
+        }
+    }
+}
+
+impl crate::app::App {
+    /// Joins `db_id`'s shared [`FileBinding`], seeding it from
+    /// `seed_expect_obs` only if no document has ever bound this `db_id`
+    /// before — called exactly once per document, at the moment it installs
+    /// its OWN `DocDb` for `db_id` (`db_ack::handle_load_ack`/`handle_
+    /// create_scratch_ack`). A SECOND document binding the same `db_id`
+    /// finds the entry already present and adopts it as-is: by the writer
+    /// thread's own strict FIFO order, this document's fresh `Load` can
+    /// never observe a baseline OLDER than what a sibling document's own
+    /// earlier save already advanced the shared entry to, so joining rather
+    /// than reseeding never regresses it.
+    pub fn bind_file(&mut self, db_id: i64, seed_expect_obs: ObsId) {
+        self.file_bindings
+            .entry(db_id)
+            .or_insert_with(|| FileBinding::new(seed_expect_obs));
+    }
+
+    pub fn file_binding(&self, db_id: i64) -> Option<&FileBinding> {
+        self.file_bindings.get(&db_id)
+    }
+
+    pub fn file_binding_mut(&mut self, db_id: i64) -> Option<&mut FileBinding> {
+        self.file_bindings.get_mut(&db_id)
+    }
+
+    /// Removes `db_id`'s shared baseline once no open `Document` references
+    /// it any longer — called after every transition that can leave a
+    /// `db_id` unreferenced (a close, or a document dropping its own `db`
+    /// binding entirely), so a long session opening and closing many files
+    /// never grows `file_bindings` unboundedly. A no-op while at least one
+    /// document still names `db_id`.
+    pub fn prune_file_binding(&mut self, db_id: i64) {
+        let still_referenced = self
+            .documents
+            .values()
+            .any(|d| d.db.as_ref().is_some_and(|db| db.db_id == db_id));
+        if !still_referenced {
+            self.file_bindings.remove(&db_id);
+        }
+    }
+
+    /// Whether ANY document currently bound to `db_id` has a save in
+    /// flight — the shared-file counterpart to a single document's own
+    /// `save_in_flight`: a probe against a file another tab is mid-publish
+    /// to would only read a soon-to-be-stale disk state and get dropped by
+    /// the epoch check anyway (`db_enqueue::probe`'s own doc comment).
+    pub fn any_save_in_flight_for(&self, db_id: i64) -> bool {
+        self.documents
+            .values()
+            .any(|d| d.db.as_ref().is_some_and(|db| db.db_id == db_id) && d.save_in_flight)
+    }
+
+    /// Every currently-open document bound to `db_id` — used to re-issue a
+    /// deferred probe for every tab a save's completion just unblocked
+    /// (`materialize_ack::handle_materialize_ack`'s tail), not merely the
+    /// one document whose OWN save happened to resolve.
+    pub fn documents_bound_to(&self, db_id: i64) -> Vec<DocumentId> {
+        self.documents
+            .iter()
+            .filter(|(_, d)| d.db.as_ref().is_some_and(|db| db.db_id == db_id))
+            .map(|(&id, _)| id)
+            .collect()
     }
 }
