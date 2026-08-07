@@ -134,24 +134,50 @@ fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<i64
     .map_err(Error::from)
 }
 
+/// `doc_id`'s newest recorded observation's own blob hash, of ANY confirmed
+/// status — deliberately unlike [`newest_confirmed_size`], since a shrink
+/// hypothesis this function helps validate is itself recorded unconfirmed
+/// and must still be visible as "the thing sighted last time".
+fn newest_observation_hash(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<String>, Error> {
+    tx.query_row(
+        "SELECT blob_hash FROM observations WHERE doc_id=?1 ORDER BY id DESC LIMIT 1",
+        params![doc_id],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(Error::from)
+}
+
 /// Folds the suspicious-shrink gate into a bracket's own `confirmed` verdict:
 /// a bracket-stable read (`bracket_confirmed`) that is empty or radically
-/// shrunk relative to `doc_id`'s newest CONFIRMED observation is still
-/// downgraded to unconfirmed — the destructive-async-reset pattern a stable
-/// stat bracket alone cannot see, since the file's identity can legitimately
-/// change across an ordinary external rewrite. An unstable bracket is never
-/// upgraded by this check; it stays unconfirmed regardless of length.
+/// shrunk relative to `doc_id`'s newest CONFIRMED observation does not
+/// automatically inherit that confirmation — the destructive-async-reset
+/// pattern a stable stat bracket alone cannot see, since the file's
+/// identity can legitimately change across an ordinary external rewrite.
+/// A shrink is a HYPOTHESIS the first time it's sighted (recorded
+/// unconfirmed, so nothing downstream trusts it yet) and VALIDATED the
+/// moment an independent bracketed read sights byte-identical content again
+/// (`new_hash` equal to the newest recorded observation's hash, whatever its
+/// own confirmed status) — a legitimate external rewrite that shrank the
+/// file settles on the same bytes across two separate reads, while a
+/// transient mid-rewrite artifact does not repeat identically. An unstable
+/// bracket is never upgraded by this check; it stays unconfirmed regardless
+/// of length.
 pub fn confirm_against_history(
     tx: &Transaction<'_>,
     doc_id: i64,
     bracket_confirmed: bool,
     new_len: usize,
+    new_hash: &str,
 ) -> Result<bool, Error> {
     if !bracket_confirmed {
         return Ok(false);
     }
     let baseline = newest_confirmed_size(tx, doc_id)?;
-    Ok(!baseline.is_some_and(|before| rune_core::is_suspicious_shrink(before as usize, new_len)))
+    if !baseline.is_some_and(|before| rune_core::is_suspicious_shrink(before as usize, new_len)) {
+        return Ok(true);
+    }
+    Ok(newest_observation_hash(tx, doc_id)?.is_some_and(|prior| prior == new_hash))
 }
 
 /// The correlation/origin facts [`observe_disk`] needs —
@@ -187,9 +213,11 @@ pub fn observe_disk(
     now: SystemTime,
 ) -> Result<observation::Observation, Error> {
     let bracket = bracketed_read(vfs, path).map_err(Error::Io)?;
+    let hash = observation::hash_bytes(&bracket.data);
     let at = format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
-        let confirmed = confirm_against_history(tx, doc_id, bracket.confirmed, bracket.data.len())?;
+        let confirmed =
+            confirm_against_history(tx, doc_id, bracket.confirmed, bracket.data.len(), &hash)?;
         observation::observe_from_stat_tx(
             tx,
             session_id,
@@ -211,7 +239,52 @@ pub fn observe_disk(
 mod tests {
     use super::*;
     use crate::observation::ObservationMeta;
-    use rune_vfs::{Mem, OpKind};
+    use rune_vfs::{DirEntry, Mem, OpKind, Stat};
+
+    /// Wraps a `Mem`, delegating every `Vfs` method to it verbatim EXCEPT
+    /// `stat`, which always fails — a stat that never recovers, unlike
+    /// `Mem::fail_next`'s one-shot injection, so a bracket's retry loop
+    /// genuinely exhausts every attempt against a persistently unavailable
+    /// stat.
+    struct AlwaysFailStatVfs {
+        inner: Mem,
+    }
+
+    impl Vfs for AlwaysFailStatVfs {
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.inner.read(path)
+        }
+        fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<std::path::PathBuf> {
+            self.inner.write_durable(path, bytes)
+        }
+        fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+            self.inner.exchange(a, b)
+        }
+        fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
+            self.inner.rename_excl(old, new)
+        }
+        fn remove(&self, path: &Path) -> io::Result<()> {
+            self.inner.remove(path)
+        }
+        fn trash(&self, path: &Path) -> io::Result<()> {
+            self.inner.trash(path)
+        }
+        fn stat(&self, _path: &Path) -> io::Result<Stat> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "stat always fails",
+            ))
+        }
+        fn resolve(&self, path: &Path) -> io::Result<std::path::PathBuf> {
+            self.inner.resolve(path)
+        }
+        fn mkdir_all(&self, path: &Path) -> io::Result<()> {
+            self.inner.mkdir_all(path)
+        }
+        fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+            self.inner.read_dir(path)
+        }
+    }
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
@@ -255,15 +328,16 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    /// A stat failure never confirms — `StatFacts::default()` on error
-    /// compares equal to itself, which is exactly the bug this bracket must
-    /// not reproduce. `Mem::fail_next(OpKind::Stat, ..)` fires once, so only
-    /// the bracket's FIRST stat fails; the retry loop still needs the second
-    /// attempt's own pair of stats to succeed and agree for `confirmed` to
-    /// come back `true` — proving a failed stat is excluded from, not
-    /// silently absorbed into, the comparison.
+    /// A TRANSIENT stat failure never confirms the attempt it hits, but the
+    /// bracket's retry recovers: `Mem::fail_next(OpKind::Stat, ..)` fires
+    /// once, so only the bracket's FIRST stat fails; the retry loop still
+    /// needs the second attempt's own pair of stats to succeed and agree
+    /// for `confirmed` to come back `true` — proving a failed stat is
+    /// excluded from, not silently absorbed into, the comparison
+    /// (`StatFacts::default()` on error compares equal to itself, which is
+    /// exactly the bug this bracket must not reproduce).
     #[test]
-    fn a_failed_stat_never_confirms_the_bracket() {
+    fn a_transient_stat_failure_is_excluded_from_the_comparison_and_the_retry_recovers() {
         let vfs = Mem::new();
         let path = Path::new("/doc.md");
         publish(&vfs, path, b"hello");
@@ -273,6 +347,23 @@ mod tests {
         assert!(
             bracket.confirmed,
             "the retry must recover once the injected stat failure is consumed"
+        );
+    }
+
+    /// A stat failure that PERSISTS across every bounded attempt — unlike
+    /// `Mem::fail_next`'s one-shot injection — must exhaust the retry loop
+    /// and never confirm: `StatFacts::default()` on error compares equal to
+    /// itself, which is exactly the bug this bracket must not reproduce.
+    #[test]
+    fn stat_failures_that_persist_across_every_attempt_never_confirm() {
+        let vfs = AlwaysFailStatVfs { inner: Mem::new() };
+        let path = Path::new("/doc.md");
+        publish(&vfs.inner, path, b"hello");
+
+        let bracket = bracketed_read(&vfs, path).expect("bracketed_read");
+        assert!(
+            !bracket.confirmed,
+            "a stat that never recovers must exhaust the retry loop unconfirmed"
         );
     }
 
@@ -326,16 +417,10 @@ mod tests {
         assert!(bracket.confirmed);
     }
 
-    #[test]
-    fn confirm_against_history_downgrades_an_empty_read_against_confirmed_history() {
-        let mut conn = open();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let tx = conn.transaction().expect("tx");
-        let doc_id = seed_doc(&tx);
-        let hash = seed_blob(&tx, "a whole paragraph of real content");
+    fn seed_confirmed(tx: &Transaction<'_>, doc_id: i64, session_id: i64, content: &str) {
+        let hash = seed_blob(tx, content);
         observation::record_observation(
-            &tx,
+            tx,
             doc_id,
             session_id,
             ObservationMeta {
@@ -345,18 +430,127 @@ mod tests {
                 confirmed: Some(true),
             },
             &StatFacts {
-                size: 34,
+                size: content.len() as i64,
                 mtime: "t".to_string(),
                 ..Default::default()
             },
             "t",
         )
         .expect("seed confirmed observation");
+    }
 
-        let confirmed = confirm_against_history(&tx, doc_id, true, 0).expect("confirm");
+    /// A shrink's FIRST sighting is a hypothesis, not a fact: even a
+    /// perfectly bracket-stable empty read against non-empty confirmed
+    /// history is downgraded to unconfirmed the first time it's seen.
+    #[test]
+    fn confirm_against_history_downgrades_the_first_sighting_of_a_shrink() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        seed_confirmed(&tx, doc_id, session_id, "a whole paragraph of real content");
+
+        let empty_hash = observation::hash_bytes(b"");
+        let confirmed =
+            confirm_against_history(&tx, doc_id, true, 0, &empty_hash).expect("confirm");
         assert!(
             !confirmed,
-            "an empty read against non-empty confirmed history must downgrade to unconfirmed"
+            "the first sighting of a shrink against confirmed history is only a hypothesis"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// A shrink's SECOND identical sighting validates the hypothesis: once
+    /// an independent bracketed read has already recorded the shrunk
+    /// content once (however unconfirmed), a fresh read that sees the exact
+    /// same bytes again is a legitimate external rewrite settling, not a
+    /// transient artifact, and confirms.
+    #[test]
+    fn confirm_against_history_validates_a_second_identical_shrink_sighting() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        seed_confirmed(&tx, doc_id, session_id, "a whole paragraph of real content");
+
+        let shrunk_hash = seed_blob(&tx, "short");
+        observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            ObservationMeta {
+                blob_hash: &shrunk_hash,
+                seq: None,
+                origin: "probe",
+                confirmed: Some(false),
+            },
+            &StatFacts {
+                size: 5,
+                mtime: "t2".to_string(),
+                ..Default::default()
+            },
+            "t2",
+        )
+        .expect("seed first shrink hypothesis");
+
+        let confirmed =
+            confirm_against_history(&tx, doc_id, true, 5, &shrunk_hash).expect("confirm");
+        assert!(
+            confirmed,
+            "a second bracketed read of byte-identical shrunk content validates the hypothesis"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// A transient mid-rewrite empty read never confirms even when a LATER
+    /// read restores the original content — the restoration isn't a
+    /// shrink at all (so it confirms on its own, unrelated grounds), but
+    /// the earlier empty sighting itself is never revisited or upgraded.
+    #[test]
+    fn confirm_against_history_never_confirms_a_transient_empty_read_via_restoration() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        let original = "a whole paragraph of real content";
+        seed_confirmed(&tx, doc_id, session_id, original);
+
+        let empty_hash = seed_blob(&tx, "");
+        let empty_confirmed =
+            confirm_against_history(&tx, doc_id, true, 0, &empty_hash).expect("confirm empty");
+        assert!(
+            !empty_confirmed,
+            "the transient empty read stays unconfirmed"
+        );
+        observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            ObservationMeta {
+                blob_hash: &empty_hash,
+                seq: None,
+                origin: "probe",
+                confirmed: Some(false),
+            },
+            &StatFacts {
+                size: 0,
+                mtime: "t2".to_string(),
+                ..Default::default()
+            },
+            "t2",
+        )
+        .expect("record the empty hypothesis");
+
+        let restored_hash = observation::hash_bytes(original.as_bytes());
+        let restored_confirmed =
+            confirm_against_history(&tx, doc_id, true, original.len(), &restored_hash)
+                .expect("confirm restored");
+        assert!(
+            restored_confirmed,
+            "restoring the original content is not a shrink and confirms on its own"
         );
         tx.commit().expect("commit");
     }
@@ -367,7 +561,8 @@ mod tests {
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
 
-        let confirmed = confirm_against_history(&tx, doc_id, false, 100).expect("confirm");
+        let confirmed =
+            confirm_against_history(&tx, doc_id, false, 100, "irrelevant").expect("confirm");
         assert!(!confirmed);
         tx.commit().expect("commit");
     }

@@ -126,7 +126,7 @@ pub fn load(
     // `probe::probe`'s fresh reads apply, now shared via
     // `confirm_against_history` rather than reimplemented here.
     let disk_confirmed = retry::with_retry(conn, |tx| {
-        bracket::confirm_against_history(tx, doc_id, read.confirmed, data.len())
+        bracket::confirm_against_history(tx, doc_id, read.confirmed, data.len(), &hash)
     })?;
 
     // BEFORE recording anything below — must reflect GENUINE prior history,

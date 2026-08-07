@@ -444,4 +444,45 @@ mod tests {
         assert_eq!(result.theirs, None);
         assert_eq!(result.theirs_obs, None);
     }
+
+    /// A legitimate external tool condensing a large file to a fraction of
+    /// its size, in one atomic publish (never a still-mutating churn), must
+    /// resolve within `merge_prep`'s own bounded re-probes rather than
+    /// staying `unstable` forever: the first internal probe sights the
+    /// shrink as an unconfirmed hypothesis, and the second — reading the
+    /// now-quiescent disk again — sees byte-identical content and confirms
+    /// it, so `merge_prep` serves the shrunk content as Theirs.
+    #[test]
+    fn merge_prep_serves_a_legitimate_shrink_confirmed_by_a_second_identical_sighting() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        let long_content = b"a very long paragraph of real disk content, unabridged";
+        publish(&vfs, path, long_content);
+
+        let loaded = crate::load::load(
+            &mut conn,
+            &vfs,
+            session_id,
+            &|_, _| false,
+            path,
+            SystemTime::now(),
+        )
+        .expect("load");
+        let doc_id = loaded.doc_id;
+
+        vfs.save_atomic(path, b"short").expect("publish shrink");
+
+        let result =
+            merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
+
+        assert!(
+            !result.unstable,
+            "a stable, legitimate shrink must resolve, not stay unstable forever"
+        );
+        assert_eq!(result.sync.kind, crate::sync::SyncKind::DiskAhead);
+        assert_eq!(result.theirs, Some(b"short".to_vec()));
+    }
 }
