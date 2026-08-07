@@ -96,6 +96,68 @@ pub fn classify_sync(
     }
 }
 
+/// The own-history echo check: a `Diverged` verdict is downgraded to
+/// `BufferAhead` when `theirs`' hash was INDEPENDENTLY recorded before —
+/// some OTHER observation of `doc_id` (any session) already carries the
+/// same hash with `origin` `save`/`resolve`, or as a confirmed load/probe
+/// sighting — AND that earlier occurrence shares a recorded lineage with
+/// the derived `ancestor` (`lineage::common_ancestor`, walking
+/// `supersedes`). Kills the cross-session echo shape (G7): two sessions
+/// (tabs) on the same file each derive `ancestor_at` scoped to their own
+/// agreement history, so session A's save is never session B's ancestor —
+/// without this check, B rediscovering A's own save via a plain probe,
+/// while B's own buffer has since edited further, misclassifies as a
+/// foreign conflict against content rune itself produced.
+///
+/// Deliberately excludes `theirs`' own row from the existence check: a
+/// fresh, first-ever sighting of some content is always self-confirmed
+/// (bracket.rs's own bracket just settled on it), so without the exclusion
+/// EVERY divergence — including a genuine stranger's rewrite — would
+/// trivially "match its own history" and vacuously promote. Requiring an
+/// INDEPENDENT prior sighting is what makes this a real echo test rather
+/// than a no-op.
+///
+/// Only ever promotes to `BufferAhead`, never `Clean`: the exact-hash-match
+/// case (`theirs.hash == ancestor.hash`) is already resolved to
+/// `BufferAhead` by `classify_sync` before `Diverged` is ever reached, so no
+/// distinct equal-to-baseline case actually arises here.
+///
+/// A known, accepted trade-off: `supersedes` records TEMPORAL succession
+/// ("what was newest right before this sighting"), not true content
+/// derivation, so an external tool that restores bytes matching an OLDER
+/// hash rune once wrote can also share a lineage with the current ancestor
+/// and get promoted here, even though the restore is a genuine external
+/// change. This never loses bytes (the blob is retained, and the buffer
+/// stays exactly as dirty as it already was) — it only suppresses a merge
+/// invitation that would otherwise have been shown; a save afterward still
+/// CAS-compares against the disk's real current hash and refuses normally
+/// if it has moved again since.
+fn own_history_echo(
+    tx: &Transaction<'_>,
+    doc_id: i64,
+    ancestor: Option<&Version>,
+    theirs: Option<&Version>,
+) -> Result<Option<SyncKind>, Error> {
+    let (Some(ancestor), Some(theirs)) = (ancestor, theirs) else {
+        return Ok(None);
+    };
+    let (Some(ancestor_id), Some(theirs_id)) = (ancestor.obs, theirs.obs) else {
+        return Ok(None);
+    };
+    let is_own_write: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM observations WHERE doc_id=?1 AND blob_hash=?2 AND id!=?3 AND (origin IN ('save','resolve') OR confirmed=1))",
+        params![doc_id, theirs.hash, theirs_id],
+        |r| r.get(0),
+    )?;
+    if !is_own_write {
+        return Ok(None);
+    }
+    let lca = crate::lineage::common_ancestor(tx, ancestor_id, theirs_id)?;
+    Ok(lca
+        .filter(|l| l.id == ancestor_id)
+        .map(|_| SyncKind::BufferAhead))
+}
+
 /// Compares the journal reconstruction, the newest recorded observation
 /// (ANY origin, ANY session — "theirs"), and the derived ancestor for
 /// `doc_id`, AS SEEN BY `session_id`.
@@ -136,6 +198,12 @@ pub fn sync_with_theirs(
     });
 
     let mut kind = classify_sync(ancestor.as_ref(), &ours, theirs.as_ref());
+
+    if kind == SyncKind::Diverged
+        && let Some(promoted) = own_history_echo(tx, doc_id, ancestor.as_ref(), theirs.as_ref())?
+    {
+        kind = promoted;
+    }
 
     if kind == SyncKind::DiskAhead {
         let unwound: bool = tx.query_row(
@@ -183,6 +251,318 @@ mod tests {
         )
         .expect("seed doc");
         tx.last_insert_rowid()
+    }
+
+    /// Task WP-C(2), the G7 cross-session echo shape: session A's own save
+    /// (`H_shared`) predates this session's own ancestor (`L`); a LATER
+    /// confirmed sighting (`M`, unrelated content) chains from `L`, and a
+    /// STILL LATER sighting rediscovers `H_shared` again, chaining from
+    /// `M`. `theirs` (the rediscovery) is reachable from `L` via that
+    /// chain, and `H_shared` was independently recorded before `theirs`
+    /// itself existed (session A's row) — the non-vacuous echo shape this
+    /// check exists for. Without it this classifies `Diverged`, a foreign
+    /// conflict against content rune itself (a different session) wrote.
+    #[test]
+    fn own_history_echo_promotes_a_cross_session_rediscovery_to_buffer_ahead() {
+        let mut conn = open();
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        let stat = observation::StatFacts {
+            size: 1,
+            mtime: "t".to_string(),
+            ..Default::default()
+        };
+
+        let hash_shared = crate::blob::put_blob(&tx, b"shared content").expect("seed blob");
+        let save_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_a,
+            observation::ObservationMeta {
+                blob_hash: &hash_shared,
+                seq: Some(0),
+                origin: "save",
+                confirmed: Some(true),
+            },
+            &stat,
+            "t0",
+        )
+        .expect("seed session a's save");
+
+        let hash_l = crate::blob::put_blob(&tx, b"session b ancestor").expect("seed blob");
+        let ancestor_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_b,
+            observation::ObservationMeta {
+                blob_hash: &hash_l,
+                seq: Some(0),
+                origin: "load",
+                confirmed: None,
+            },
+            &stat,
+            "t1",
+        )
+        .expect("seed session b's ancestor");
+
+        let hash_mid = crate::blob::put_blob(&tx, b"unrelated midpoint").expect("seed blob");
+        let mid_id = observation::insert_observation_row(
+            &tx,
+            doc_id,
+            session_b,
+            observation::ObservationMeta {
+                blob_hash: &hash_mid,
+                seq: None,
+                origin: "probe",
+                confirmed: Some(true),
+            },
+            &stat,
+            "t2",
+            Some(ancestor_id),
+        )
+        .expect("seed midpoint");
+
+        let theirs_id = observation::insert_observation_row(
+            &tx,
+            doc_id,
+            session_b,
+            observation::ObservationMeta {
+                blob_hash: &hash_shared,
+                seq: None,
+                origin: "probe",
+                confirmed: Some(true),
+            },
+            &stat,
+            "t3",
+            Some(mid_id),
+        )
+        .expect("seed rediscovery");
+        let _ = save_id;
+
+        let ancestor = Version {
+            hash: hash_l,
+            obs: Some(ancestor_id),
+        };
+        let theirs = Version {
+            hash: hash_shared,
+            obs: Some(theirs_id),
+        };
+
+        let promoted = own_history_echo(&tx, doc_id, Some(&ancestor), Some(&theirs))
+            .expect("own_history_echo");
+        assert_eq!(promoted, Some(SyncKind::BufferAhead));
+        tx.commit().expect("commit");
+    }
+
+    /// A fresh, first-ever sighting of some content must never "match its
+    /// own history" merely because it is itself confirmed — the exclusion
+    /// of `theirs`' own row from the existence check must hold even when
+    /// that row is reachable from the ancestor by construction (a genuine
+    /// stranger's single rewrite always looks exactly like this).
+    #[test]
+    fn own_history_echo_does_not_promote_a_first_ever_sighting() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        let stat = observation::StatFacts {
+            size: 1,
+            mtime: "t".to_string(),
+            ..Default::default()
+        };
+        let hash_l = crate::blob::put_blob(&tx, b"ancestor").expect("seed blob");
+        let ancestor_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_l,
+                seq: Some(0),
+                origin: "load",
+                confirmed: None,
+            },
+            &stat,
+            "t1",
+        )
+        .expect("seed ancestor");
+
+        let hash_stranger = crate::blob::put_blob(&tx, b"a stranger's rewrite").expect("seed blob");
+        let theirs_id = observation::insert_observation_row(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_stranger,
+                seq: None,
+                origin: "probe",
+                confirmed: Some(true),
+            },
+            &stat,
+            "t2",
+            Some(ancestor_id),
+        )
+        .expect("seed the stranger's own first sighting");
+
+        let ancestor = Version {
+            hash: hash_l,
+            obs: Some(ancestor_id),
+        };
+        let theirs = Version {
+            hash: hash_stranger,
+            obs: Some(theirs_id),
+        };
+
+        let promoted = own_history_echo(&tx, doc_id, Some(&ancestor), Some(&theirs))
+            .expect("own_history_echo");
+        assert_eq!(
+            promoted, None,
+            "a hash with no independent prior sighting must stay Diverged, even though it is reachable from the ancestor and confirmed"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// The negative case the plan calls out explicitly: a hash that matches
+    /// this document's own history (confirmed, so `is_own_write` is true)
+    /// but shares NO recorded lineage with the current ancestor — two
+    /// disconnected roots for the same document, the shape a legacy or
+    /// pre-migration row can leave behind — must stay `Diverged`.
+    #[test]
+    fn own_history_echo_does_not_promote_a_disconnected_hash_match() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        let hash_a = crate::blob::put_blob(&tx, b"ancestor content").expect("seed blob a");
+        let ancestor_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_a,
+                seq: Some(0),
+                origin: "load",
+                confirmed: None,
+            },
+            &observation::StatFacts {
+                size: 1,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
+            "t",
+        )
+        .expect("seed ancestor");
+
+        let hash_b = crate::blob::put_blob(&tx, b"disconnected content").expect("seed blob b");
+        let theirs_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_b,
+                seq: None,
+                origin: "probe",
+                confirmed: Some(true),
+            },
+            &observation::StatFacts {
+                size: 1,
+                mtime: "t2".to_string(),
+                ..Default::default()
+            },
+            "t2",
+        )
+        .expect("seed theirs");
+
+        let ancestor = Version {
+            hash: hash_a,
+            obs: Some(ancestor_id),
+        };
+        let theirs = Version {
+            hash: hash_b,
+            obs: Some(theirs_id),
+        };
+
+        let promoted = own_history_echo(&tx, doc_id, Some(&ancestor), Some(&theirs))
+            .expect("own_history_echo");
+        assert_eq!(
+            promoted, None,
+            "a hash matching history but sharing no recorded lineage with the ancestor must stay Diverged"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// An UNCONFIRMED sighting of a hash never satisfies `is_own_write`,
+    /// even with an ancestor present — an untrusted read decides nothing,
+    /// including whether it is an echo of our own history.
+    #[test]
+    fn own_history_echo_does_not_promote_an_unconfirmed_theirs() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        let hash_a = crate::blob::put_blob(&tx, b"ancestor content").expect("seed blob a");
+        let ancestor_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_a,
+                seq: Some(0),
+                origin: "load",
+                confirmed: None,
+            },
+            &observation::StatFacts {
+                size: 1,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
+            "t",
+        )
+        .expect("seed ancestor");
+
+        let hash_b = crate::blob::put_blob(&tx, b"unconfirmed content").expect("seed blob b");
+        let theirs_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_b,
+                seq: None,
+                origin: "watch",
+                confirmed: Some(false),
+            },
+            &observation::StatFacts {
+                size: 1,
+                mtime: "t2".to_string(),
+                ..Default::default()
+            },
+            "t2",
+        )
+        .expect("seed theirs");
+
+        let ancestor = Version {
+            hash: hash_a,
+            obs: Some(ancestor_id),
+        };
+        let theirs = Version {
+            hash: hash_b,
+            obs: Some(theirs_id),
+        };
+
+        let promoted = own_history_echo(&tx, doc_id, Some(&ancestor), Some(&theirs))
+            .expect("own_history_echo");
+        assert_eq!(promoted, None);
+        tx.commit().expect("commit");
     }
 
     #[test]
