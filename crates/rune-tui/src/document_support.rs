@@ -84,9 +84,12 @@ pub enum Hydration {
 /// is not a legitimate recovery — it is the "destructive
 /// async edit" pattern (a watcher/IME/dictation reset caught mid-write), and
 /// adopting it would silently discard content the user can see on screen.
-/// `disk_content` empty has nothing to protect, so it never trips this.
+/// Thin wrapper over the shared chokepoint (`rune_core::is_suspicious_shrink`)
+/// every fresh-read-vs-trusted-history comparison in the app now goes
+/// through, so hydration's own guard and the disk-read confirmation gate in
+/// `rune-db` can never drift apart on what counts as suspicious.
 pub(crate) fn is_suspicious_shrink(disk_content: &str, recovered: &str) -> bool {
-    !disk_content.is_empty() && recovered.len() * 2 < disk_content.len()
+    rune_core::is_suspicious_shrink(disk_content.len(), recovered.len())
 }
 
 #[cfg(test)]

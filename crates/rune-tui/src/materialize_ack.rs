@@ -90,24 +90,30 @@ pub enum MaterializeVfsOutcome {
     Error(String),
     /// The live target (or, for `bind_new`, a concurrent creator's file)
     /// didn't match `expect` — no write was attempted; `data`/`stat`
-    /// describe whatever is actually on disk now.
+    /// describe whatever is actually on disk now. `confirmed` is the
+    /// bracketed read's own verdict — a racer caught mid-external-rewrite
+    /// must never masquerade as a stable fact.
     Conflict {
         data: Vec<u8>,
         origin: &'static str,
         stat: StatFacts,
+        confirmed: bool,
         resolved_path: PathBuf,
     },
-    /// The write committed with no race.
+    /// The write committed with no race. `confirmed` is the bracketed
+    /// post-publish stat's own verdict.
     Committed {
         data: Vec<u8>,
         stat: StatFacts,
+        confirmed: bool,
         resolved_path: PathBuf,
     },
     /// The write committed AND a racer's displaced bytes were captured in
-    /// the same atomic-swap window (F5).
+    /// the same atomic-swap window (F5). `confirmed` describes `stat` only.
     Raced {
         data: Vec<u8>,
         stat: StatFacts,
+        confirmed: bool,
         displaced: Vec<u8>,
         displaced_stat: StatFacts,
         resolved_path: PathBuf,
@@ -183,6 +189,7 @@ pub(crate) fn handle_materialize_vfs_done(
             data,
             origin,
             stat,
+            confirmed,
             resolved_path,
         } => {
             record_outcome(
@@ -190,13 +197,19 @@ pub(crate) fn handle_materialize_vfs_done(
                 id,
                 &pending,
                 &resolved_path,
-                MaterializeOutcome::Conflict { data, origin, stat },
+                MaterializeOutcome::Conflict {
+                    data,
+                    origin,
+                    stat,
+                    confirmed,
+                },
                 false,
             );
         }
         MaterializeVfsOutcome::Committed {
             data,
             stat,
+            confirmed,
             resolved_path,
         } => {
             record_outcome(
@@ -204,13 +217,18 @@ pub(crate) fn handle_materialize_vfs_done(
                 id,
                 &pending,
                 &resolved_path,
-                MaterializeOutcome::Committed { data, stat },
+                MaterializeOutcome::Committed {
+                    data,
+                    stat,
+                    confirmed,
+                },
                 true,
             );
         }
         MaterializeVfsOutcome::Raced {
             data,
             stat,
+            confirmed,
             displaced,
             displaced_stat,
             resolved_path,
@@ -223,6 +241,7 @@ pub(crate) fn handle_materialize_vfs_done(
                 MaterializeOutcome::Raced {
                     data,
                     stat,
+                    confirmed,
                     displaced,
                     displaced_stat,
                 },

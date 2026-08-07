@@ -192,11 +192,23 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     }
 }
 
+/// The bound on how many times the CAS check re-reads the live target while
+/// it disagrees with `expect_hash` before treating the mismatch as a stable
+/// conflict (plan Task 4) — a transient window (an external writer that
+/// wrote then reverted inside the gap) must never raise the disk-conflict
+/// guard from a single read.
+const CAS_VERIFY_ATTEMPTS: u32 = 2;
+
 /// The `vfs` dance itself, factored out of `materialize_vfs_cmd` so it is
 /// plain, synchronous, testable logic. Mirrors the steps the pre-WP7
 /// `rune-db::materialize`/`materialize_overwrite`/`materialize_create` used
 /// to run on the writer thread, verbatim in shape, just against the
-/// CALLER's own `vfs` instead.
+/// CALLER's own `vfs` instead. Every fresh read of the live target is
+/// bracketed (`rune_db::bracketed_read`) — a racer caught mid-external-
+/// rewrite must never become a trusted `Conflict` capture — and every stat
+/// of OUR OWN just-published bytes is bracketed too (`rune_db::
+/// bracketed_stat`), so a racer landing between the publish and the stat can
+/// never let the resulting observation's blob and stat quietly disagree.
 pub(crate) fn run_materialize_vfs(
     vfs: &dyn Vfs,
     path: &Path,
@@ -225,10 +237,11 @@ pub(crate) fn run_materialize_vfs(
         };
         return match vfs.rename_excl(&temp, &resolved) {
             Ok(()) => {
-                let stat = rune_db::stat_identity(vfs, &resolved);
+                let bracket = rune_db::bracketed_stat(vfs, &resolved);
                 MaterializeVfsOutcome::Committed {
                     data: data.to_vec(),
-                    stat,
+                    stat: bracket.stat,
+                    confirmed: bracket.confirmed,
                     resolved_path: resolved,
                 }
             }
@@ -237,16 +250,14 @@ pub(crate) fn run_materialize_vfs(
                 // genuinely unneeded (the winner's bytes are what get
                 // recorded), safe to discard.
                 let _ = vfs.remove(&temp);
-                match vfs.read(&resolved) {
-                    Ok(live) => {
-                        let stat = rune_db::stat_identity(vfs, &resolved);
-                        MaterializeVfsOutcome::Conflict {
-                            data: live,
-                            origin: "probe",
-                            stat,
-                            resolved_path: resolved,
-                        }
-                    }
+                match rune_db::bracketed_read(vfs, &resolved) {
+                    Ok(bracket) => MaterializeVfsOutcome::Conflict {
+                        data: bracket.data,
+                        origin: "probe",
+                        stat: bracket.stat,
+                        confirmed: bracket.confirmed,
+                        resolved_path: resolved,
+                    },
                     Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
                 }
             }
@@ -275,9 +286,13 @@ pub(crate) fn run_materialize_vfs(
         return force_publish(vfs, &resolved, data);
     }
 
-    // Step 1: unconditional read+hash of the live target.
-    let live_data = match vfs.read(&resolved) {
-        Ok(d) => d,
+    // Step 1-2: bracketed read+hash of the live target, re-verified
+    // (bounded) while it disagrees with `expect_hash` — a stable mismatch
+    // after every attempt is a real conflict; a mismatch that stops
+    // reproducing on a later attempt was a transient window, and the save
+    // proceeds against the CURRENT live content instead of refusing it.
+    let mut bracket = match rune_db::bracketed_read(vfs, &resolved) {
+        Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // An ordinary overwrite-intent save must never silently
             // (re)create a file the caller didn't explicitly ask to.
@@ -285,14 +300,23 @@ pub(crate) fn run_materialize_vfs(
         }
         Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
     };
-
-    // Step 2: live hash != expect -> refuse, no write.
-    if rune_db::hash_bytes(&live_data) != expect_hash {
-        let stat = rune_db::stat_identity(vfs, &resolved);
+    let mut attempts = 1;
+    while rune_db::hash_bytes(&bracket.data) != expect_hash && attempts < CAS_VERIFY_ATTEMPTS {
+        bracket = match rune_db::bracketed_read(vfs, &resolved) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return MaterializeVfsOutcome::Missing;
+            }
+            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+        };
+        attempts += 1;
+    }
+    if rune_db::hash_bytes(&bracket.data) != expect_hash {
         return MaterializeVfsOutcome::Conflict {
-            data: live_data,
+            data: bracket.data,
             origin: "probe",
-            stat,
+            stat: bracket.stat,
+            confirmed: bracket.confirmed,
             resolved_path: resolved,
         };
     }
@@ -319,19 +343,22 @@ pub(crate) fn run_materialize_vfs(
     }
 
     // Step 4: temp now holds what USED TO be at `resolved` (the displaced
-    // bytes, never unlinked by the swap) — read+hash it.
+    // bytes, never unlinked by the swap) — read+hash it. `temp` is our own
+    // private scratch path, never contended, so a plain read/stat suffices;
+    // only `resolved`'s own post-publish stat needs bracketing.
     let displaced = match vfs.read(&temp) {
         Ok(d) => d,
         Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
     };
-    let stat = rune_db::stat_identity(vfs, &resolved);
+    let stat_bracket = rune_db::bracketed_stat(vfs, &resolved);
     if rune_db::hash_bytes(&displaced) != expect_hash {
         // F5 swap-race: a writer raced us inside the atomic-swap window.
         let displaced_stat = rune_db::stat_identity(vfs, &temp);
         let _ = vfs.remove(&temp);
         return MaterializeVfsOutcome::Raced {
             data: data.to_vec(),
-            stat,
+            stat: stat_bracket.stat,
+            confirmed: stat_bracket.confirmed,
             displaced,
             displaced_stat,
             resolved_path: resolved,
@@ -342,7 +369,8 @@ pub(crate) fn run_materialize_vfs(
     let _ = vfs.remove(&temp);
     MaterializeVfsOutcome::Committed {
         data: data.to_vec(),
-        stat,
+        stat: stat_bracket.stat,
+        confirmed: stat_bracket.confirmed,
         resolved_path: resolved,
     }
 }
@@ -369,11 +397,15 @@ fn force_publish(vfs: &dyn Vfs, resolved: &Path, data: &[u8]) -> MaterializeVfsO
 
     if !dest_existed {
         return match vfs.rename_excl(&temp, resolved) {
-            Ok(()) => MaterializeVfsOutcome::Committed {
-                data: data.to_vec(),
-                stat: rune_db::stat_identity(vfs, resolved),
-                resolved_path: resolved.to_path_buf(),
-            },
+            Ok(()) => {
+                let bracket = rune_db::bracketed_stat(vfs, resolved);
+                MaterializeVfsOutcome::Committed {
+                    data: data.to_vec(),
+                    stat: bracket.stat,
+                    confirmed: bracket.confirmed,
+                    resolved_path: resolved.to_path_buf(),
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // A concurrent creator filled the destination between our
                 // existence read and this publish — it genuinely exists
@@ -420,14 +452,15 @@ fn capture_and_swap_publish(
         Ok(d) => d,
         Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
     };
-    let stat = rune_db::stat_identity(vfs, resolved);
+    let stat_bracket = rune_db::bracketed_stat(vfs, resolved);
     let displaced_stat = rune_db::stat_identity(vfs, temp);
     // The displaced bytes are already read into `displaced` above; a failed
     // cleanup here just leaks a scratch file, never loses them.
     let _ = vfs.remove(temp);
     MaterializeVfsOutcome::Raced {
         data: data.to_vec(),
-        stat,
+        stat: stat_bracket.stat,
+        confirmed: stat_bracket.confirmed,
         displaced,
         displaced_stat,
         resolved_path: resolved.to_path_buf(),
@@ -455,3 +488,9 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
     let deadline = std::time::Instant::now() + SNAPSHOT_DEBOUNCE;
     app.snapshot_timer.arm(id, generation, deadline);
 }
+
+// Kept in a sibling file: this module's own vfs dance stays under the
+// 500-line budget on its own merits.
+#[cfg(test)]
+#[path = "materialize_tests.rs"]
+mod tests;
