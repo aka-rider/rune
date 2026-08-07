@@ -61,8 +61,11 @@ fn readout_text(state: &FileSearchState) -> Option<String> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::filesearch::{Candidate, walk};
+    use crate::runtime::CmdKind;
     use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, Vfs};
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     fn app() -> App {
@@ -75,9 +78,10 @@ mod tests {
     #[test]
     fn readout_shows_scanning_while_the_walk_is_pending() {
         let mut app = app();
+        app.root = PathBuf::from("/root");
         let mut effects = crate::runtime::Effects::default();
+
         crate::filesearch::open(&mut app, &mut effects);
-        app.filesearch.as_mut().expect("open").walk_pending = true;
 
         assert_eq!(
             readout_text(app.filesearch.as_ref().expect("open")),
@@ -86,15 +90,106 @@ mod tests {
     }
 
     #[test]
-    fn readout_shows_matched_over_total_once_not_pending() {
+    fn readout_shows_matched_over_total_once_the_scan_reply_lands() {
         let mut app = app();
+        app.root = PathBuf::from("/root");
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
+        let generation = app.filesearch.as_ref().expect("open").generation;
+
+        crate::filesearch::handle_scanned(
+            &mut app,
+            generation,
+            Ok(walk::ScanResult {
+                files: Vec::new(),
+                truncated: false,
+            }),
+            &mut effects,
+        );
 
         assert_eq!(
             readout_text(app.filesearch.as_ref().expect("open")),
             Some("0/0".to_string())
         );
+    }
+
+    /// The plan's own WP3.S4 acceptance case, driven end to end: `open`
+    /// pushes the scan `Cmd` — inspected, never executed inline — and only
+    /// once its reply is hand-delivered does the list settle into
+    /// recents-then-walk order with the deduped path counted once, and the
+    /// readout leave `scanning…` for a real `matched/total`.
+    #[test]
+    fn hand_delivered_scan_reply_lists_recents_then_walk_and_dedups_by_path() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/root/a.md"), b"a")
+            .expect("seed a.md");
+        vfs.save_atomic(Path::new("/root/b.md"), b"b")
+            .expect("seed b.md");
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(vfs), None);
+        app.frame_width = 120;
+        app.frame_height = 34;
+        app.root = PathBuf::from("/root");
+        let mut effects = crate::runtime::Effects::default();
+
+        crate::filesearch::open(&mut app, &mut effects);
+        assert!(
+            effects.cmds.iter().any(|c| c.kind() == CmdKind::ReadDir),
+            "open pushes the scan Cmd rather than running it inline"
+        );
+        assert_eq!(
+            readout_text(app.filesearch.as_ref().expect("open")),
+            Some("scanning\u{2026}".to_string())
+        );
+
+        let generation = app.filesearch.as_ref().expect("open").generation;
+        if let Some(state) = app.filesearch.as_mut() {
+            state.recents.push(Candidate {
+                path: PathBuf::from("/root/a.md"),
+                display: "a.md".to_string(),
+                in_tree: true,
+                mru_rank: Some(0),
+            });
+        }
+
+        crate::filesearch::handle_scanned(
+            &mut app,
+            generation,
+            Ok(walk::ScanResult {
+                files: vec![PathBuf::from("/root/a.md"), PathBuf::from("/root/b.md")],
+                truncated: false,
+            }),
+            &mut effects,
+        );
+
+        let state = app.filesearch.as_ref().expect("still open");
+        assert_eq!(
+            state
+                .walk
+                .iter()
+                .map(|c| c.path.clone())
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from("/root/b.md")],
+            "a.md is already covered by a recent, so it's dropped from walk"
+        );
+        assert_eq!(state.results.len(), 2);
+        assert_eq!(
+            state
+                .results
+                .first()
+                .and_then(|r| state.candidate(r.candidate_idx))
+                .map(|c| c.path.clone()),
+            Some(PathBuf::from("/root/a.md")),
+            "recents occupy the low flat indices, ahead of walk"
+        );
+        assert_eq!(
+            state
+                .results
+                .get(1)
+                .and_then(|r| state.candidate(r.candidate_idx))
+                .map(|c| c.path.clone()),
+            Some(PathBuf::from("/root/b.md"))
+        );
+        assert_eq!(readout_text(state), Some("2/2".to_string()));
     }
 
     #[test]

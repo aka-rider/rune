@@ -217,6 +217,21 @@ pub enum Msg {
         generation: u64,
         result: Result<Vec<String>, String>,
     },
+    /// The fuzzy file finder's ignore-aware workspace walk completed —
+    /// `filesearch::open`'s own `Cmd`, delivered by [`filesearch_cmd::
+    /// filesearch_scan_cmd`] and routed to `filesearch::handle_scanned`.
+    /// `generation` echoes `FileSearchState::generation`; a reply whose
+    /// generation no longer matches (the finder closed and reopened since
+    /// this scan was issued) is dropped, the same shape `Msg::DirLoaded`
+    /// uses. A scan failure (the resolved root vanished, or resolved to
+    /// something other than a directory) rides the same `Err` channel
+    /// rather than `Msg::Error`/`Msg::Warning` directly, so a stale failure
+    /// is discarded exactly like a stale success instead of always
+    /// surfacing a message nobody's still waiting on.
+    FileSearchScanned {
+        generation: u64,
+        result: Result<crate::filesearch::walk::ScanResult, String>,
+    },
     Quit,
 }
 
@@ -620,6 +635,13 @@ mod md_fence;
 // 500-line budget.
 mod snapshot_timer;
 pub use snapshot_timer::SnapshotTimer;
+
+// The fuzzy file finder's workspace-walk `Cmd` — split out for the same
+// 500-line-budget reason as the three modules above; `filesearch::open` is
+// its only caller, reached through `runtime::` like every other `Cmd`
+// constructor in this file.
+mod filesearch_cmd;
+pub(crate) use filesearch_cmd::filesearch_scan_cmd;
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {
