@@ -72,12 +72,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: generalize `SnapshotTimer` (single thread, Mutex+Condvar, rearm-to-earliest) to a keyed deadline map; bound the worker pool.
 - **Done when**: no `Cmd` does a bare `thread::sleep`, and `spawn_cmd` is bounded.
 
-### Bootstrap bypasses the update/apply chokepoints
-- **Where**: `crates/rune-tui/src/runtime/bootstrap.rs` — writes `App` state outside `update` (e.g. `first_paint_highlight` at line 112), hand-rolls its own `Effects` discharge draining, self-described as "a tripwire for the next one" (line 148)
-- **Wrong**: duplicates `runtime::apply`'s discharge order by hand instead of calling it, so bootstrap and the runtime can drift out of sync.
-- **Instead**: route bootstrap through `apply`.
-- **Done when**: bootstrap has no state write outside `update`/`apply`.
-
 ### `Instant::now()` inside `update`
 - **Where**: `crates/rune-tui/src/save/materialize.rs:345,355` (`schedule_snapshot_debounce`)
 - **Wrong**: computes a deadline via `std::time::Instant::now()` directly, bypassing the injected `Clock` seam everything else in the runtime honors.

@@ -440,6 +440,19 @@ fn apply(
     let is_resize = matches!(msg, Msg::Resize(_, _));
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);
+    discharge(&mut effects, guard, tx, save_handles)?;
+    if is_resize {
+        crate::graphics::redetect(app, guard);
+    }
+    Ok(())
+}
+
+fn discharge(
+    effects: &mut Effects,
+    guard: &mut Guard,
+    tx: &mpsc::Sender<Msg>,
+    save_handles: &mut Vec<thread::JoinHandle<()>>,
+) -> io::Result<()> {
     for raw in effects.raw.drain(..) {
         guard.write_raw(&raw)?;
     }
@@ -448,9 +461,6 @@ fn apply(
     }
     if effects.force_redraw {
         guard.force_redraw();
-    }
-    if is_resize {
-        crate::graphics::redetect(app, guard);
     }
     Ok(())
 }
