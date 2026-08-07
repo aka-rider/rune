@@ -53,7 +53,14 @@ pub struct Observation {
     pub nlink: Option<i64>,
     /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
     pub origin: String,
-    /// The `saved_obs` this row's adoption replaced, if any.
+    /// The one lineage edge every observation may carry, pointing at the
+    /// prior row this one succeeds: for an adoption (`materialize::
+    /// commit_save`, `adopt::adopt_equal`/`resolve_adopt`), the `saved_obs`
+    /// baseline the adoption replaced; for a CONFIRMED fresh disk sighting
+    /// (`observe_from_stat_tx`, when `confirmed == Some(true)`) whose hash
+    /// differs from what was newest a moment before, that prior newest row.
+    /// `None` for a legacy/root row, or a sighting that matched the hash
+    /// already newest (nothing to chain to).
     pub supersedes: Option<i64>,
     pub at: String,
     /// `None` for legacy/unclassified rows, `Some(true/false)` for a confirmed/unconfirmed sighting — which reads earn which is later work.
@@ -147,8 +154,10 @@ pub struct ObservationMeta<'a> {
     pub confirmed: Option<bool>,
 }
 
-/// Inserts a new `observations` row. Pure SQLite — the caller has already
-/// done any disk I/O and blob storage this observation reports on.
+/// Inserts a new `observations` row with no lineage edge. Pure SQLite — the
+/// caller has already done any disk I/O and blob storage this observation
+/// reports on. Every caller that DOES know a predecessor to record instead
+/// goes through [`insert_observation_row`] directly.
 pub fn record_observation(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -157,9 +166,25 @@ pub fn record_observation(
     stat: &StatFacts,
     at: &str,
 ) -> Result<ObsId, Error> {
+    insert_observation_row(tx, doc_id, session_id, meta, stat, at, None)
+}
+
+/// The one INSERT every observation row goes through, `supersedes` included
+/// — shared by [`record_observation`] (no edge), [`observe_from_stat_tx`]
+/// (the confirmed-sighting edge), and `adopt::record_adoption_tx` (the
+/// adoption edge), so the row shape can never drift between the three.
+pub(crate) fn insert_observation_row(
+    tx: &Transaction<'_>,
+    doc_id: i64,
+    session_id: i64,
+    meta: ObservationMeta<'_>,
+    stat: &StatFacts,
+    at: &str,
+    supersedes: Option<ObsId>,
+) -> Result<ObsId, Error> {
     tx.execute(
-        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at, confirmed) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at, confirmed) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![
             doc_id,
             session_id,
@@ -171,11 +196,31 @@ pub fn record_observation(
             stat.device,
             stat.nlink,
             meta.origin,
+            supersedes,
             at,
             meta.confirmed
         ],
     )?;
     Ok(tx.last_insert_rowid())
+}
+
+/// The lineage edge a CONFIRMED fresh sighting records: the doc's own prior
+/// newest observation, but only when `new_hash` actually differs from it —
+/// a re-confirmation of the same content chains to nothing new. Unconfirmed
+/// sightings never chain at all (`confirmed != Some(true)`): a read that
+/// isn't trusted as a stable fact earns no lineage claim either.
+fn confirmed_sighting_supersedes(
+    tx: &Transaction<'_>,
+    doc_id: i64,
+    confirmed: Option<bool>,
+    new_hash: &str,
+) -> Result<Option<ObsId>, Error> {
+    if confirmed != Some(true) {
+        return Ok(None);
+    }
+    Ok(newest_observation(tx, doc_id)?
+        .filter(|prior| prior.blob_hash != new_hash)
+        .map(|prior| prior.id))
 }
 
 /// Bundles the disk-sourced payload with the correlation/origin facts that
@@ -216,7 +261,8 @@ pub(crate) fn observe_from_stat_tx(
     input: ObserveInput<'_>,
 ) -> Result<Observation, Error> {
     let hash = crate::blob::put_blob(tx, input.data)?;
-    let id = record_observation(
+    let supersedes = confirmed_sighting_supersedes(tx, doc_id, input.confirmed, &hash)?;
+    let id = insert_observation_row(
         tx,
         doc_id,
         session_id,
@@ -228,6 +274,7 @@ pub(crate) fn observe_from_stat_tx(
         },
         stat,
         at,
+        supersedes,
     )?;
     Ok(Observation {
         id,
@@ -241,7 +288,7 @@ pub(crate) fn observe_from_stat_tx(
         device: stat.device,
         nlink: stat.nlink,
         origin: input.origin.to_string(),
-        supersedes: None,
+        supersedes,
         at: at.to_string(),
         confirmed: input.confirmed,
     })

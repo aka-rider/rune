@@ -166,10 +166,14 @@ CREATE TABLE IF NOT EXISTS observations (
 	device     INTEGER,
 	nlink      INTEGER,
 	origin     TEXT    NOT NULL CHECK(origin IN ('load','save','watch','probe','resolve','swap')),
-	-- supersedes: the saved_obs this row's adoption REPLACED (NULL if there
-	-- was none) — recorded by every adoption primitive in the SAME tx as the
-	-- saved_obs move, so a resolve-abandon can restore the exact prior
-	-- baseline later.
+	-- supersedes: the one lineage edge a row may carry, always recorded in
+	-- the SAME tx as the row itself. Two distinct producers feed it: every
+	-- adoption primitive points it at the saved_obs baseline the adoption
+	-- REPLACED (so a resolve-abandon can restore the exact prior baseline
+	-- later); observe_from_stat_tx points a CONFIRMED fresh sighting at
+	-- whatever observation was newest a moment before it, when the two
+	-- hashes differ (a re-confirmation of unchanged content chains to
+	-- nothing new). NULL means a legacy/root row with no known predecessor.
 	supersedes INTEGER REFERENCES observations(id),
 	at        TEXT    NOT NULL,
 	-- confirmed: NULL means legacy or not yet classified, 1 means a

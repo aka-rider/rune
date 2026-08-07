@@ -41,6 +41,7 @@ mod gc;
 mod inherit;
 mod journal;
 mod journal_append;
+mod lineage;
 mod load;
 mod load_anchor;
 mod materialize;
@@ -83,7 +84,7 @@ pub use materialize::{
     DocSession, MatResult, MaterializeOutcome, MaterializePrep, prepare_materialize,
     record_materialize_outcome,
 };
-pub use merge_prep::MergePrepResult;
+pub use merge_prep::{AncestorRung, MergePrepResult};
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};

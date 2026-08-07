@@ -38,26 +38,8 @@ pub(crate) fn record_adoption_tx(
         .optional()?
         .flatten();
 
-    tx.execute(
-        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at, confirmed) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
-        params![
-            doc_id,
-            session_id,
-            meta.blob_hash,
-            meta.seq,
-            stat.size,
-            stat.mtime,
-            stat.inode,
-            stat.device,
-            stat.nlink,
-            meta.origin,
-            supersedes,
-            at,
-            meta.confirmed
-        ],
-    )?;
-    let new_id = tx.last_insert_rowid();
+    let new_id =
+        observation::insert_observation_row(tx, doc_id, session_id, meta, stat, at, supersedes)?;
 
     tx.execute(
         "INSERT INTO session_documents(session_id, doc_id, saved_obs) VALUES(?1,?2,?3) \
