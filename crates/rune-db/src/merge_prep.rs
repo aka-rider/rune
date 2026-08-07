@@ -31,6 +31,26 @@ use crate::sync::SyncState;
 /// pacing: each retry is an immediate fresh bracketed read, never a sleep.
 const MERGE_PREP_MAX_ATTEMPTS: u32 = 3;
 
+/// Which rung of the ancestor ladder (module doc) produced
+/// [`MergePrepResult::ancestor`] — so the caller can present the truth
+/// honestly instead of treating every `None` the same way `landing.rs`'s
+/// `unwrap_or("")` used to (silently substituting an empty ancestor).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AncestorRung {
+    /// Walking the observations' own `supersedes` lineage found a common
+    /// ancestor between this session's CAS baseline and theirs — possibly
+    /// fresher or more precise than the session-scoped derivation below,
+    /// since it can see edges recorded by adoptions this session's own
+    /// journal position never correlates to.
+    Lineage,
+    /// The lineage walk found nothing (no baseline, no theirs observation,
+    /// or no intersecting edge) — today's fallback: `sync_with_theirs`'s
+    /// own session-scoped, seq-correlated `ancestor_at` derivation.
+    SessionScoped,
+    /// Neither rung produced anything: there is no ancestor to show.
+    Absent,
+}
+
 /// `MergePrep`'s result: the freshly classified [`SyncState`] plus the
 /// actual ancestor/theirs bytes it was classified from. `theirs`/
 /// `theirs_obs` are `Some` exactly when `sync.theirs` is `Some` — which
@@ -43,6 +63,9 @@ const MERGE_PREP_MAX_ATTEMPTS: u32 = 3;
 pub struct MergePrepResult {
     pub sync: SyncState,
     pub ancestor: Option<Vec<u8>>,
+    /// Which rung of the ladder [`Self::ancestor`] came from — `Absent`
+    /// exactly when `ancestor` is `None`.
+    pub ancestor_rung: AncestorRung,
     pub theirs: Option<Vec<u8>>,
     pub theirs_obs: Option<ObsId>,
     /// `true` when disk kept disagreeing with itself across every re-probe
@@ -89,6 +112,7 @@ pub fn merge_prep(
         return Ok(MergePrepResult {
             sync,
             ancestor: None,
+            ancestor_rung: AncestorRung::Absent,
             theirs: None,
             theirs_obs: None,
             unstable: true,
@@ -105,18 +129,53 @@ pub fn merge_prep(
         Some(version) => Some(blob::get_blob(conn, &version.hash)?),
         None => None,
     };
-    let ancestor = match &sync.ancestor {
-        Some(version) => Some(blob::get_blob(conn, &version.hash)?),
-        None => None,
-    };
+    let (ancestor, ancestor_rung) = resolve_ancestor(conn, session_id, doc_id, &sync, theirs_obs)?;
 
     Ok(MergePrepResult {
         sync,
         ancestor,
+        ancestor_rung,
         theirs,
         theirs_obs,
         unstable: false,
     })
+}
+
+/// The ancestor ladder: (i) walk the `supersedes` lineage between this
+/// session's CAS baseline and `theirs_obs` for a common ancestor — sees
+/// edges recorded by ANY adoption or confirmed sighting, not only this
+/// session's own seq-correlated agreements; (ii) failing that, fall back to
+/// `sync`'s own session-scoped `ancestor_at` derivation (today's rule); (iii)
+/// failing THAT, report absence explicitly rather than ever substituting an
+/// empty ancestor.
+fn resolve_ancestor(
+    conn: &mut Connection,
+    session_id: i64,
+    doc_id: i64,
+    sync: &SyncState,
+    theirs_obs: Option<ObsId>,
+) -> Result<(Option<Vec<u8>>, AncestorRung), Error> {
+    let baseline = retry::with_retry(conn, |tx| {
+        observation::saved_obs_for(tx, session_id, doc_id)
+    })?;
+    if let (Some(baseline), Some(theirs_id)) = (baseline, theirs_obs) {
+        let lca = retry::with_retry(conn, |tx| {
+            crate::lineage::common_ancestor(tx, baseline.id, theirs_id)
+        })?;
+        if let Some(node) = lca {
+            return Ok((
+                Some(blob::get_blob(conn, &node.blob_hash)?),
+                AncestorRung::Lineage,
+            ));
+        }
+    }
+    match &sync.ancestor {
+        Some(version) => Ok((
+            Some(blob::get_blob(conn, &version.hash)?),
+            AncestorRung::SessionScoped,
+        )),
+        None => Ok((None, AncestorRung::Absent)),
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +194,73 @@ mod tests {
     fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
         let temp = vfs.write_durable(path, bytes).expect("write_durable");
         vfs.rename_excl(&temp, path).expect("publish");
+    }
+
+    /// Task WP-C(3): when this session's own CAS baseline was adopted with
+    /// no correlated seq (so `ancestor_at`'s session-scoped derivation can
+    /// never find it — `sync.ancestor` stays `None`), but that SAME
+    /// baseline is still reachable from the fresh `theirs` sighting via the
+    /// observations' own `supersedes` lineage, the ladder's rung (i) must
+    /// still surface it rather than reporting absence.
+    #[test]
+    fn merge_prep_ancestor_ladder_prefers_lineage_over_an_absent_session_scoped_ancestor() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"baseline content");
+
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+
+        let stat = observation::StatFacts {
+            size: 1,
+            mtime: "t".to_string(),
+            ..Default::default()
+        };
+        let hash_baseline = {
+            let tx = conn.transaction().expect("tx");
+            let h = crate::blob::put_blob(&tx, b"baseline content").expect("seed blob");
+            tx.commit().expect("commit");
+            h
+        };
+        // Adopted with NO correlated seq: `ancestor_at` requires `seq IS
+        // NOT NULL`, so this baseline can never surface through the
+        // session-scoped rung no matter the journal position.
+        crate::adopt::record_adoption(
+            &mut conn,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_baseline,
+                seq: None,
+                origin: "resolve",
+                confirmed: Some(true),
+            },
+            &stat,
+            SystemTime::now(),
+        )
+        .expect("seed baseline adoption");
+
+        let temp = vfs
+            .write_durable(path, b"theirs content")
+            .expect("write_durable");
+        vfs.exchange(&temp, path).expect("exchange");
+        let result =
+            merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
+
+        assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
+        assert_eq!(
+            result.sync.ancestor, None,
+            "the session-scoped rung must find nothing"
+        );
+        assert_eq!(result.ancestor, Some(b"baseline content".to_vec()));
+        assert_eq!(result.ancestor_rung, AncestorRung::Lineage);
     }
 
     /// Plan WP3 "Done when" (a): a diverged fixture's `MergePrep` reports
