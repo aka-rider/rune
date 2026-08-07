@@ -158,7 +158,10 @@ pub struct CodeFenceM {
     pub first_line: usize,
     pub last_line: usize,
     pub language: String,
-    pub fence_open: Option<ByteRange>,
+    pub fence_open: ByteRange,
+    /// Absent while the fence is unterminated — the shape every fence has
+    /// as it is being typed — in which case every line past the opening
+    /// one is content.
     pub fence_close: Option<ByteRange>,
     pub content_lines: Vec<ByteRange>,
 }
@@ -257,7 +260,9 @@ pub struct FrontmatterM {
     pub range: ByteRange,
     pub first_line: usize,
     pub last_line: usize,
-    pub open: Option<ByteRange>,
+    pub open: ByteRange,
+    /// Absent only for a degenerate single-line node, whose one line is
+    /// already claimed as `open`.
     pub close: Option<ByteRange>,
     pub content_lines: Vec<ByteRange>,
 }

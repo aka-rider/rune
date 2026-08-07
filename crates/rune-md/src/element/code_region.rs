@@ -60,11 +60,11 @@ pub struct CodeRegion {
 /// Frontmatter is the third kind, and the one that is published
 /// unconditionally where a fence is not: its `---` delimiter lines are part
 /// of its rows, so a frontmatter block whose body is blank still has rows a
-/// consumer must paint a background over. A fence with no content lines
-/// describes no bytes and is dropped instead.
+/// consumer must paint a background over.
 ///
-/// A region carrying an empty `info` is still emitted; only a region with no
-/// content lines at all is dropped, since it describes no bytes.
+/// A region carrying an empty `info` is still emitted. For the fence and
+/// indented-code kinds only, a region with no content lines at all is
+/// dropped, since it describes no bytes.
 pub(crate) fn collect(blocks: &[Block], buf: &Buffer, out: &mut Vec<CodeRegion>) {
     for block in blocks {
         match block {
