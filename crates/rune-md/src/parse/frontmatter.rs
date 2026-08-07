@@ -2,7 +2,7 @@
 //! delimiter implies, and the split of a comrak `FrontMatter` node into its
 //! two delimiter lines and the body between them.
 
-use super::{ScanHint, line_end_at};
+use super::ScanHint;
 use crate::element::block::FrontmatterM;
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
@@ -32,51 +32,36 @@ pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> boo
 /// Split a `FrontMatter` node into its opening delimiter line, its body
 /// lines, and its closing delimiter line.
 ///
-/// The node's range stops at the last byte of the closing delimiter — the
-/// newline after it belongs to no block — so `range`'s own last line IS the
-/// closing delimiter line, and every line strictly between the two
-/// delimiters is body. `close` exists only when those two lines are
-/// distinct, so a degenerate single-line node can never have its one line
-/// claimed twice.
+/// Frontmatter, unlike a fence, has no unterminated shape to guard against:
+/// comrak emits a `FrontMatter` node only once it has matched a closing
+/// delimiter, and `is_valid_frontmatter_close` independently re-verifies
+/// that the node's own last line IS that delimiter before the extension's
+/// output is trusted at all. Only with BOTH of those holding does a last
+/// line distinct from the first prove a closing delimiter line exists —
+/// relax either and this starts claiming an arbitrary last line as a
+/// delimiter.
 ///
-/// Body lines are one range each, never one contiguous span: a collapsed
-/// range would swallow the `\n` bytes that separate them, which a consumer
-/// reconstructing the body supplies itself.
+/// The node's range stops at the last byte of the closing delimiter — the
+/// newline after it belongs to no block — so every line strictly between
+/// the two delimiters is body. A degenerate single-line node yields no
+/// close, so its one line can never be claimed twice.
 pub(super) fn build(
     content: &str,
     starts: &[usize],
     range: ByteRange,
     hint: &ScanHint,
 ) -> FrontmatterM {
-    let len = content.len();
     let first_line = super::line_at(starts, range.start);
-    let last_line = super::line_at(starts, range.end.saturating_sub(1).max(range.start));
-
-    // The first line starts at `range.start`, every later line at its own
-    // `hint`-derived content start — the same split `parse::block`'s fenced
-    // arm makes, and for the same reason: a node's sourcepos already bakes
-    // in any container prefix on its first line but nowhere else.
-    let open = Some(ByteRange::new(range.start, line_end_at(len, starts, first_line)).clamp(len));
-    let close = (last_line > first_line).then(|| {
-        ByteRange::new(
-            hint.start_for_line(starts, last_line),
-            line_end_at(len, starts, last_line),
-        )
-        .clamp(len)
-    });
-    let content_lines = ((first_line + 1)..last_line)
-        .map(|l| {
-            ByteRange::new(hint.start_for_line(starts, l), line_end_at(len, starts, l)).clamp(len)
-        })
-        .collect();
+    let last_line = super::last_line_of(starts, range);
+    let lines = super::delimited::split(content, starts, range, hint, last_line > first_line);
 
     FrontmatterM {
         sm: RevealSm::new(RevealState::Revealed),
         range,
         first_line,
         last_line,
-        open,
-        close,
-        content_lines,
+        open: lines.open,
+        close: lines.close,
+        content_lines: lines.content_lines,
     }
 }
