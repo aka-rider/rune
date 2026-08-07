@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use diffy::MergeOptions;
+use diffy::{DiffOptions, MergeOptions};
 
 /// A classified region of a 3-way merge, in document order. Concatenating
 /// `Clean` bytes and `Conflict::ours` bytes for each hunk reconstructs the
@@ -13,9 +13,11 @@ use diffy::MergeOptions;
 ///
 /// Byte-faithfulness: `Clean` bytes come verbatim from whichever
 /// input contributed them; `Conflict` bytes come verbatim from the
-/// respective `ours`/`theirs` inputs. Any region that cannot be re-anchored
-/// this way degrades to a single whole-file `Conflict` rather than trusting
-/// diffy's reserialized bytes (R5 fallback).
+/// respective `ours`/`theirs` inputs. A section that cannot be re-anchored
+/// widens its own conflict to swallow whatever lies between it and the next
+/// point where anchoring resumes, rather than trusting diffy's reserialized
+/// bytes there; only when nothing downstream anchors either does the whole
+/// remaining file collapse into one `Conflict`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hunk {
     /// Resolved bytes for this region — verbatim from ours or theirs.
@@ -32,9 +34,9 @@ pub enum Hunk {
 /// Performs a 3-way merge and returns the result as classified hunks.
 ///
 /// Infallible and never empty: diffy's conflict case (`Err`) is not an
-/// error, it is the conflict-marker payload used to locate boundaries; any
-/// anchoring failure degrades to one whole-file [`Hunk::Conflict`] rather
-/// than losing data.
+/// error, it is the conflict-marker payload used to locate boundaries; an
+/// anchoring failure widens only the affected conflict rather than losing
+/// data or discarding localization elsewhere in the file.
 pub fn merge_hunks(ancestor: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
     match MergeOptions::new().merge_bytes(ancestor, ours, theirs) {
         Ok(merged) => vec![classify_clean(ours, theirs, &merged)],
@@ -152,13 +154,6 @@ fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
     (cleans, conflicts)
 }
 
-/// A conflict block's sections re-anchored as byte ranges in the original
-/// `ours`/`theirs` inputs.
-struct Anchor {
-    ours: Range<usize>,
-    theirs: Range<usize>,
-}
-
 /// Finds `needle` verbatim in `haystack`, returning its byte offset.
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
@@ -170,47 +165,70 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Anchors one conflict section into `input` starting no earlier than
 /// `search_from`, advancing the cursor so later blocks search forward only
 /// (matches diff3's document-ordered, non-overlapping sections).
+///
+/// diffy's diff3 marker text is line-oriented and newline-terminates every
+/// line it writes, including a section's final line when that line is also
+/// the input's last line and the input itself has no trailing newline. A
+/// verbatim search for the section as diffy wrote it then falls one byte
+/// short at end-of-input. When the plain search fails, retry once with that
+/// synthesized trailing newline stripped, accepting the match only when it
+/// lands exactly at the end of `input` — the one place a missing trailing
+/// newline can produce this mismatch.
 fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<Range<usize>> {
     if section.is_empty() {
         return Some(search_from..search_from);
     }
     let haystack = input.get(search_from..)?;
-    let idx = find_subslice(haystack, section)?;
+    if let Some(idx) = find_subslice(haystack, section) {
+        let start = search_from + idx;
+        return Some(start..start + section.len());
+    }
+    let trimmed = section.strip_suffix(b"\n")?;
+    let idx = find_subslice(haystack, trimmed)?;
     let start = search_from + idx;
-    Some(start..start + section.len())
+    let end = start + trimmed.len();
+    (end == input.len()).then_some(start..end)
+}
+
+/// Pushes the clean region between the last resolved position and the
+/// upcoming conflict, unless both sides are empty there.
+fn push_clean_region(
+    hunks: &mut Vec<Hunk>,
+    ours: &[u8],
+    theirs: &[u8],
+    ours_range: Range<usize>,
+    theirs_range: Range<usize>,
+    merged_clean: &[u8],
+) {
+    let ours_clean = ours.get(ours_range).unwrap_or(&[]);
+    let theirs_clean = theirs.get(theirs_range).unwrap_or(&[]);
+    if !ours_clean.is_empty() || !theirs_clean.is_empty() {
+        hunks.push(classify_clean_region(
+            ours_clean,
+            theirs_clean,
+            merged_clean,
+        ));
+    }
 }
 
 /// Maps diff3 output boundaries back to verbatim ours/theirs bytes,
 /// returning the classified hunk sequence. Only called when diffy reports
-/// at least one conflict; an empty `conflicts` list here is treated the
-/// same as a failed anchor — degrade to one whole-file conflict rather
-/// than assume clean.
+/// at least one conflict; an empty `conflicts` list here has no boundary to
+/// re-anchor at all, so it degrades to one whole-file conflict rather than
+/// assume clean.
+///
+/// Each conflict block is anchored independently, searching forward from
+/// wherever the previous block left off. When a block's ours or theirs
+/// section fails to anchor, the clean text and any further conflict blocks
+/// between it and the next block that DOES anchor on both sides are folded
+/// into that one widened conflict — the run of blocks that could not be
+/// individually localized becomes one conflict spanning exactly that run,
+/// leaving every other boundary in the file untouched. If nothing further
+/// ever anchors, the widened conflict runs to the end of both inputs.
 fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     let (cleans, conflicts) = parse_diff3(diff3_output);
 
-    let mut anchors = Vec::with_capacity(conflicts.len());
-    let mut ours_search = 0usize;
-    let mut theirs_search = 0usize;
-    let mut valid = !conflicts.is_empty();
-
-    for block in &conflicts {
-        let Some(ours_range) = anchor_section(ours, ours_search, &block.ours) else {
-            valid = false;
-            break;
-        };
-        let Some(theirs_range) = anchor_section(theirs, theirs_search, &block.theirs) else {
-            valid = false;
-            break;
-        };
-        ours_search = ours_range.end;
-        theirs_search = theirs_range.end;
-        anchors.push(Anchor {
-            ours: ours_range,
-            theirs: theirs_range,
-        });
-    }
-
-    if !valid {
+    if conflicts.is_empty() {
         return vec![Hunk::Conflict {
             ours: ours.to_vec(),
             theirs: theirs.to_vec(),
@@ -220,32 +238,73 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     let mut hunks = Vec::new();
     let mut ours_pos = 0usize;
     let mut theirs_pos = 0usize;
+    let mut i = 0usize;
 
-    for (i, clean) in cleans.iter().enumerate() {
-        let (ours_clean_end, theirs_clean_end) = match anchors.get(i) {
-            Some(a) => (a.ours.start, a.theirs.start),
-            None => (ours.len(), theirs.len()),
-        };
+    while i < conflicts.len() {
+        let Some(block) = conflicts.get(i) else { break };
+        let ours_range = anchor_section(ours, ours_pos, &block.ours);
+        let theirs_range = anchor_section(theirs, theirs_pos, &block.theirs);
 
-        let ours_clean = ours.get(ours_pos..ours_clean_end).unwrap_or(&[]);
-        let theirs_clean = theirs.get(theirs_pos..theirs_clean_end).unwrap_or(&[]);
-
-        if !ours_clean.is_empty() || !theirs_clean.is_empty() {
-            hunks.push(classify_clean_region(ours_clean, theirs_clean, clean));
+        if let (Some(o), Some(t)) = (ours_range, theirs_range) {
+            push_clean_region(
+                &mut hunks,
+                ours,
+                theirs,
+                ours_pos..o.start,
+                theirs_pos..t.start,
+                cleans.get(i).map_or(&[][..], Vec::as_slice),
+            );
+            hunks.push(Hunk::Conflict {
+                ours: ours.get(o.clone()).unwrap_or(&[]).to_vec(),
+                theirs: theirs.get(t.clone()).unwrap_or(&[]).to_vec(),
+            });
+            ours_pos = o.end;
+            theirs_pos = t.end;
+            i += 1;
+            continue;
         }
 
-        ours_pos = ours_clean_end;
-        theirs_pos = theirs_clean_end;
+        let resync = ((i + 1)..conflicts.len()).find_map(|j| {
+            let next = conflicts.get(j)?;
+            let o = anchor_section(ours, ours_pos, &next.ours)?;
+            let t = anchor_section(theirs, theirs_pos, &next.theirs)?;
+            Some((j, o, t))
+        });
 
-        if let Some(a) = anchors.get(i) {
-            hunks.push(Hunk::Conflict {
-                ours: ours.get(a.ours.clone()).unwrap_or(&[]).to_vec(),
-                theirs: theirs.get(a.theirs.clone()).unwrap_or(&[]).to_vec(),
-            });
-            ours_pos = a.ours.end;
-            theirs_pos = a.theirs.end;
+        match resync {
+            Some((j, o, t)) => {
+                hunks.push(Hunk::Conflict {
+                    ours: ours.get(ours_pos..o.start).unwrap_or(&[]).to_vec(),
+                    theirs: theirs.get(theirs_pos..t.start).unwrap_or(&[]).to_vec(),
+                });
+                hunks.push(Hunk::Conflict {
+                    ours: ours.get(o.clone()).unwrap_or(&[]).to_vec(),
+                    theirs: theirs.get(t.clone()).unwrap_or(&[]).to_vec(),
+                });
+                ours_pos = o.end;
+                theirs_pos = t.end;
+                i = j + 1;
+            }
+            None => {
+                hunks.push(Hunk::Conflict {
+                    ours: ours.get(ours_pos..).unwrap_or(&[]).to_vec(),
+                    theirs: theirs.get(theirs_pos..).unwrap_or(&[]).to_vec(),
+                });
+                ours_pos = ours.len();
+                theirs_pos = theirs.len();
+                i = conflicts.len();
+            }
         }
     }
+
+    push_clean_region(
+        &mut hunks,
+        ours,
+        theirs,
+        ours_pos..ours.len(),
+        theirs_pos..theirs.len(),
+        cleans.last().map_or(&[][..], Vec::as_slice),
+    );
 
     if hunks.is_empty() {
         hunks.push(Hunk::Clean(ours.to_vec()));
@@ -266,6 +325,72 @@ fn classify_clean_region(ours_clean: &[u8], theirs_clean: &[u8], merged_clean: &
             ours: ours_clean.to_vec(),
             theirs: theirs_clean.to_vec(),
         }
+    }
+}
+
+/// Performs a 2-way merge for when there is no known common ancestor.
+///
+/// A 3-way diff3 with a synthesized empty ancestor cannot localize:
+/// diffy's diff3 classifies a region as changed by comparing each side
+/// against the ancestor, so an empty ancestor makes the entirety of both
+/// `ours` and `theirs` count as changed, collapsing to one whole-file
+/// conflict regardless of how much `ours` and `theirs` actually agree.
+/// This instead runs a direct line diff between `ours` and `theirs`:
+/// matching lines are `Clean`, and every differing run becomes a
+/// `Conflict` — there is no ancestor to say which side is the "real"
+/// change, so any disagreement is presented as one. diffy's line slices
+/// are literal borrows of the input, so no re-anchoring is needed here.
+pub fn merge_hunks_no_ancestor(ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
+    let patch = DiffOptions::new()
+        .set_context_len(usize::MAX)
+        .create_patch_bytes(ours, theirs);
+
+    let mut hunks = Vec::new();
+    let mut clean_buf = Vec::new();
+    let mut ours_buf = Vec::new();
+    let mut theirs_buf = Vec::new();
+
+    for line in patch.hunks().iter().flat_map(|h| h.lines()) {
+        match line {
+            diffy::Line::Context(bytes) => {
+                flush_no_ancestor_conflict(&mut hunks, &mut ours_buf, &mut theirs_buf);
+                clean_buf.extend_from_slice(bytes);
+            }
+            diffy::Line::Delete(bytes) => {
+                flush_no_ancestor_clean(&mut hunks, &mut clean_buf);
+                ours_buf.extend_from_slice(bytes);
+            }
+            diffy::Line::Insert(bytes) => {
+                flush_no_ancestor_clean(&mut hunks, &mut clean_buf);
+                theirs_buf.extend_from_slice(bytes);
+            }
+        }
+    }
+    flush_no_ancestor_clean(&mut hunks, &mut clean_buf);
+    flush_no_ancestor_conflict(&mut hunks, &mut ours_buf, &mut theirs_buf);
+
+    if hunks.is_empty() {
+        hunks.push(Hunk::Clean(ours.to_vec()));
+    }
+    hunks
+}
+
+fn flush_no_ancestor_clean(hunks: &mut Vec<Hunk>, clean_buf: &mut Vec<u8>) {
+    if !clean_buf.is_empty() {
+        hunks.push(Hunk::Clean(std::mem::take(clean_buf)));
+    }
+}
+
+fn flush_no_ancestor_conflict(
+    hunks: &mut Vec<Hunk>,
+    ours_buf: &mut Vec<u8>,
+    theirs_buf: &mut Vec<u8>,
+) {
+    if !ours_buf.is_empty() || !theirs_buf.is_empty() {
+        hunks.push(Hunk::Conflict {
+            ours: std::mem::take(ours_buf),
+            theirs: std::mem::take(theirs_buf),
+        });
     }
 }
 
@@ -497,5 +622,63 @@ mod tests {
         assert_eq!(conflicts[0].theirs, b"theirs-line\n");
         assert!(cleans[0].is_empty());
         assert!(cleans[1].is_empty());
+    }
+
+    // A hand-built diff3 payload whose first conflict section names text
+    // that appears nowhere in `ours` (an anchor failure unrelated to the
+    // trailing-newline case), followed by a second conflict block that
+    // anchors normally. The widened fallback must swallow only the first
+    // block plus the clean text up to where the second block re-anchors —
+    // not the whole file — leaving the second conflict and the trailing
+    // clean region exactly as localized as they would be without any
+    // failure at all.
+    #[test]
+    fn unanchorable_section_widens_only_its_own_run() {
+        let ours = b"AAAA\nBBBB\nshared\nCCCC\nDDDD\n";
+        let theirs = b"AAAA\nXXXX\nshared\nYYYY\nDDDD\n";
+        let diff3_output: &[u8] = b"AAAA\n\
+<<<<<<< ours\nZZZZ\n||||||| ancestor\nanc1\n=======\nXXXX\n>>>>>>> theirs\n\
+shared\n\
+<<<<<<< ours\nCCCC\n||||||| ancestor\nanc2\n=======\nYYYY\n>>>>>>> theirs\n\
+DDDD\n";
+
+        let hunks = parse_hunks(ours, theirs, diff3_output);
+
+        assert_eq!(
+            hunks,
+            vec![
+                Hunk::Conflict {
+                    ours: b"AAAA\nBBBB\nshared\n".to_vec(),
+                    theirs: b"AAAA\nXXXX\nshared\n".to_vec(),
+                },
+                Hunk::Conflict {
+                    ours: b"CCCC\n".to_vec(),
+                    theirs: b"YYYY\n".to_vec(),
+                },
+                Hunk::Clean(b"DDDD\n".to_vec()),
+            ]
+        );
+    }
+
+    // Same shape, but nothing downstream ever re-anchors either: the
+    // widened conflict has no resync point to stop at, so it is the
+    // genuine last resort — the whole remaining file, not an arbitrary
+    // truncation.
+    #[test]
+    fn unanchorable_section_with_no_resync_runs_to_end_of_input() {
+        let ours = b"AAAA\nBBBB\n";
+        let theirs = b"AAAA\nXXXX\n";
+        let diff3_output: &[u8] =
+            b"AAAA\n<<<<<<< ours\nZZZZ\n||||||| ancestor\nanc\n=======\nXXXX\n>>>>>>> theirs\n";
+
+        let hunks = parse_hunks(ours, theirs, diff3_output);
+
+        assert_eq!(
+            hunks,
+            vec![Hunk::Conflict {
+                ours: b"AAAA\nBBBB\n".to_vec(),
+                theirs: b"AAAA\nXXXX\n".to_vec(),
+            }]
+        );
     }
 }

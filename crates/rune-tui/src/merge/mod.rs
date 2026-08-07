@@ -104,10 +104,10 @@ pub(crate) fn exit_in_place(app: &mut App) {
         return;
     };
     let unresolved = blocks.iter().filter(|b| !b.resolved).count();
-    if let Some(d) = app.doc_mut(doc) {
-        d.display_name = saved_display_name;
-    }
     if unresolved == 0 {
+        if let Some(d) = app.doc_mut(doc) {
+            d.display_name = saved_display_name;
+        }
         // A completed merge (including all-[B]oth, whose kept markers
         // the user explicitly chose) leaves the buffer strictly ahead
         // of the disk bytes it just reconciled with — recording that
@@ -120,6 +120,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // genuinely reconciled the buffer with the disk bytes the merge
         // read, so only now does the save-CAS baseline advance to them.
         landing::advance_expect_obs(app, doc, theirs_obs);
+        messages::info(app, "merge complete — \u{2318}S to save");
     } else {
         // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
         // quit auto-exit) retracts the entry-time resolve observation:
@@ -131,14 +132,69 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // document classifies `Diverged` again and `^M` re-enters a real
         // merge. The save-CAS baseline was never advanced on this path,
         // so a ⌘S still CAS-refuses into the disk-conflict guard.
-        enqueue_resolve_abandon(app, doc);
+        abandon_active(
+            app,
+            doc,
+            saved_display_name,
+            format!("merge closed — {unresolved} unresolved marker block(s) remain"),
+        );
     }
-    let message = if unresolved == 0 {
-        "merge complete — \u{2318}S to save".to_string()
-    } else {
-        format!("merge closed — {unresolved} unresolved marker block(s) remain")
-    };
+}
+
+/// The shared unresolved-retirement path: restores the document's display
+/// name, retracts the entry-time resolve observation, and posts `message`.
+/// Used by [`exit_in_place`] (Esc, `^M` toggle-off, an unresolved auto-exit)
+/// and by [`retract_active_on_convergence`] (nothing resolved yet, and a
+/// later probe says the divergence that prompted the merge is gone).
+fn abandon_active(
+    app: &mut App,
+    doc: crate::document::DocumentId,
+    saved_display_name: Option<String>,
+    message: impl Into<String>,
+) {
+    if let Some(d) = app.doc_mut(doc) {
+        d.display_name = saved_display_name;
+    }
+    enqueue_resolve_abandon(app, doc);
     messages::info(app, message);
+}
+
+/// Extends the entry-time "file on disk matches — nothing to merge"
+/// check (`landing::handle_merge_prep_ack`) to an already-`Active` merge:
+/// when nothing has been resolved yet and a later probe finds disk no
+/// longer diverged from this session's own reconstruction, whatever
+/// prompted the merge is gone — a clean exit beats leaving a stale
+/// conflict UI up, and there is no resolver progress to lose. A no-op
+/// once any block has been resolved, or for any document other than the
+/// one `Active` names.
+pub(crate) fn retract_active_on_convergence(
+    app: &mut App,
+    doc: crate::document::DocumentId,
+    kind: SyncKind,
+) {
+    if kind.is_disk_divergent() {
+        return;
+    }
+    let nothing_resolved_yet = matches!(
+        &app.merge,
+        MergeState::Active { doc: d, blocks, .. }
+            if *d == doc && blocks.iter().all(|b| !b.resolved)
+    );
+    if !nothing_resolved_yet {
+        return;
+    }
+    let MergeState::Active {
+        saved_display_name, ..
+    } = std::mem::take(&mut app.merge)
+    else {
+        return;
+    };
+    abandon_active(
+        app,
+        doc,
+        saved_display_name,
+        "disk settled — nothing left to merge",
+    );
 }
 
 /// The one place merge outcomes record a document's fresh sync
@@ -243,5 +299,137 @@ pub(crate) fn toggle(app: &mut App, effects: &mut Effects) {
         exit_in_place(app);
     } else {
         begin(app, MergeIntent::Merge, effects);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app_with(content: &str) -> App {
+        App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    fn active_with_blocks(doc: crate::document::DocumentId, blocks: Vec<Block>) -> MergeState {
+        MergeState::Active {
+            doc,
+            conflicts: blocks
+                .iter()
+                .map(|_| Conflict {
+                    ours: "ours".to_string(),
+                    theirs: "theirs".to_string(),
+                })
+                .collect(),
+            blocks,
+            cur: 0,
+            saved_display_name: Some("saved-name".to_string()),
+            theirs_obs: 7,
+        }
+    }
+
+    /// A probe finding disk still diverged is not convergence — the
+    /// `Active` merge, and any blocks resolved so far, are untouched.
+    #[test]
+    fn retract_active_on_convergence_is_a_noop_while_still_divergent() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.merge = active_with_blocks(
+            doc,
+            vec![Block {
+                start: 0,
+                end: 5,
+                resolved: false,
+            }],
+        );
+
+        retract_active_on_convergence(&mut app, doc, SyncKind::Diverged);
+
+        assert!(matches!(app.merge, MergeState::Active { .. }));
+    }
+
+    /// Any block already resolved means there is resolver progress to
+    /// lose — convergence must not silently discard it, even once disk
+    /// stops looking diverged.
+    #[test]
+    fn retract_active_on_convergence_is_a_noop_once_anything_is_resolved() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.merge = active_with_blocks(
+            doc,
+            vec![
+                Block {
+                    start: 0,
+                    end: 5,
+                    resolved: true,
+                },
+                Block {
+                    start: 5,
+                    end: 9,
+                    resolved: false,
+                },
+            ],
+        );
+
+        retract_active_on_convergence(&mut app, doc, SyncKind::Clean);
+
+        assert!(matches!(app.merge, MergeState::Active { .. }));
+    }
+
+    /// Nothing resolved yet, and a later probe says disk no longer
+    /// diverges: the merge exits cleanly with its own explanatory
+    /// message, restoring the display name exactly like `exit_in_place`'s
+    /// own unresolved-retirement path does.
+    #[test]
+    fn retract_active_on_convergence_exits_cleanly_with_nothing_resolved() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        if let Some(d) = app.doc_mut(doc) {
+            d.display_name = Some("original".to_string());
+        }
+        app.merge = active_with_blocks(
+            doc,
+            vec![Block {
+                start: 0,
+                end: 5,
+                resolved: false,
+            }],
+        );
+
+        retract_active_on_convergence(&mut app, doc, SyncKind::BufferAhead);
+
+        assert_eq!(app.merge, MergeState::Inactive);
+        assert_eq!(
+            app.doc(doc).unwrap().display_name,
+            Some("saved-name".to_string())
+        );
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("disk settled — nothing left to merge")
+        );
+    }
+
+    /// A convergence probe for a DIFFERENT document must never touch this
+    /// one's active merge.
+    #[test]
+    fn retract_active_on_convergence_ignores_a_different_document() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.merge = active_with_blocks(
+            doc,
+            vec![Block {
+                start: 0,
+                end: 5,
+                resolved: false,
+            }],
+        );
+        let other = app.open_document(Buffer::new("other"));
+
+        retract_active_on_convergence(&mut app, other, SyncKind::Clean);
+
+        assert!(matches!(app.merge, MergeState::Active { .. }));
     }
 }

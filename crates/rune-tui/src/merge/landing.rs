@@ -121,11 +121,28 @@ pub(crate) fn handle_merge_prep_ack(
     // bytes). The user may have kept typing during the round trip.
     let ours_text = active.buffer.content().to_string();
 
-    let hunks = rune_merge::merge_hunks(
-        ancestor_text.as_deref().unwrap_or("").as_bytes(),
-        ours_text.as_bytes(),
-        theirs_text.as_bytes(),
-    );
+    // No ancestor means no shared basis to classify a change against — a
+    // 3-way diff with an empty stand-in ancestor cannot tell that at all
+    // (every byte of both sides would count as "new", collapsing to one
+    // whole-file conflict no matter how much `ours` and `theirs` actually
+    // agree). A direct line diff between the two texts is the honest
+    // substitute: it localizes on whatever they share, and treats every
+    // remaining difference as a conflict since there is no ancestor to
+    // say which side is the "real" change.
+    let hunks = match &ancestor_text {
+        Some(text) => rune_merge::merge_hunks(
+            text.as_bytes(),
+            ours_text.as_bytes(),
+            theirs_text.as_bytes(),
+        ),
+        None => {
+            messages::info(
+                app,
+                "no saved ancestor for this file — showing all differences as conflicts",
+            );
+            rune_merge::merge_hunks_no_ancestor(ours_text.as_bytes(), theirs_text.as_bytes())
+        }
+    };
     let Ok((buffer_text, blocks, conflicts)) = build_marker_buffer(&hunks) else {
         app.merge = MergeState::Inactive;
         messages::error(app, UTF8_REFUSAL);
@@ -298,7 +315,12 @@ pub(super) fn advance_expect_obs(app: &mut App, doc: DocumentId, theirs_obs: Obs
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::*;
     use rune_core::buffer::Buffer;
@@ -386,6 +408,54 @@ mod tests {
             theirs_obs: Some(theirs_obs),
             unstable: false,
         }
+    }
+
+    /// An absent ancestor (`prep.ancestor: None`) must be presented
+    /// honestly — a message-pane notice explaining there is no saved
+    /// ancestor — and must not degrade to a whole-file conflict: the
+    /// no-ancestor 2-way path still localizes on whatever `ours` and
+    /// `theirs` share.
+    #[test]
+    fn absent_ancestor_notifies_and_localizes_via_the_2way_path() {
+        let mut app = app_with("shared-start\nours-only\nshared-end\n");
+        let doc = app.active;
+        app.merge = MergeState::Pending {
+            doc,
+            generation: 0,
+            intent: MergeIntent::Merge,
+        };
+
+        let mut effects = Effects::default();
+        handle_merge_prep_ack(
+            &mut app,
+            doc,
+            Some(0),
+            diverged_prep(b"shared-start\ntheirs-only\nshared-end\n", 3),
+            &mut effects,
+        );
+
+        assert!(
+            messages::log_text(&app).contains("no saved ancestor"),
+            "expected the absent-ancestor notice, got {:?}",
+            messages::log_text(&app)
+        );
+        let MergeState::Active { blocks, .. } = &app.merge else {
+            panic!("expected an Active merge, got {:?}", app.merge);
+        };
+        assert_eq!(
+            blocks.len(),
+            1,
+            "expected exactly one localized conflict, not a whole-file collapse"
+        );
+        let buffer = app.doc(doc).unwrap().buffer.content().to_string();
+        assert!(
+            buffer.starts_with("shared-start\n"),
+            "clean prefix lost: {buffer:?}"
+        );
+        assert!(
+            buffer.ends_with("shared-end\n"),
+            "clean suffix lost: {buffer:?}"
+        );
     }
 
     /// A "nothing to merge" refusal still carries a fresh authoritative

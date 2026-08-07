@@ -77,19 +77,31 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // after-update reconciler (a message always arrives to drive
             // this — the known "reconcilers only run when a message
             // arrives" gap doesn't apply).
-            if let Some(pending) = app.db_ops.remove(&op_id)
-                && let Some(doc) = app.doc_mut(pending.doc)
-            {
-                let current_epoch = doc.db.as_ref().map(|d| d.save_epoch);
-                if pending.probe_epoch == current_epoch {
-                    doc.last_sync = Some(state.kind);
-                }
-                // Stale otherwise: a materialize publish landed between
-                // this probe's issue and its own ack — the disk fact it
-                // carries no longer describes the current world, so it is
-                // dropped rather than trusted (mirrors the `MergePrep`
-                // ticket check below).
+            let Some(pending) = app.db_ops.remove(&op_id) else {
+                return;
+            };
+            let current_epoch = app
+                .doc(pending.doc)
+                .and_then(|d| d.db.as_ref().map(|db| db.save_epoch));
+            if pending.probe_epoch != current_epoch {
+                // Stale: a materialize publish landed between this probe's
+                // issue and its own ack — the disk fact it carries no
+                // longer describes the current world, so it is dropped
+                // rather than trusted (mirrors the `MergePrep` ticket check
+                // below).
+                return;
             }
+            if let Some(doc) = app.doc_mut(pending.doc) {
+                doc.last_sync = Some(state.kind);
+            }
+            // Two self-retractions ride the same confirmed classification:
+            // a `DiskConflict` Guard raised by an earlier save's CAS
+            // mismatch, and an `Active` merge nothing has been resolved on
+            // yet — both exist only because disk once looked diverged, and
+            // both should let go the moment a later probe says it no
+            // longer does.
+            crate::guard::retract_disk_conflict_on_convergence(app, pending.doc, state.kind);
+            crate::merge::retract_active_on_convergence(app, pending.doc, state.kind);
         }
         DbEvent::Ok {
             id: op_id,
