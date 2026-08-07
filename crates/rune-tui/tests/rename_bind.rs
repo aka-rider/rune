@@ -373,3 +373,64 @@ fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
         "a store-bound create ack must clear the untitled display_name override"
     );
 }
+
+/// A9: naming a STORE-BOUND pathless draft into a collision must reach the
+/// very same footer-only refusal a no-store draft gets
+/// (`a_colliding_draft_name_refuses_in_the_footer_with_no_guard`, above) —
+/// never the unanswerable `RenameCollision` Guard, since there is no CAS
+/// baseline for a target this draft has never claimed — and, like
+/// `rename::draft_collision_refusal`'s own pairing with `return_to_title`,
+/// must leave the user able to retype immediately: focus back in the
+/// title, not stranded in the Editor with the old placeholder name still
+/// showing.
+#[test]
+fn a_colliding_store_bound_draft_name_refuses_in_the_footer_and_returns_focus_to_the_title() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
+        .expect("seed the fixture's own bootstrap Load target");
+    // An absolute spelling at the vfs root, mirroring `a_colliding_draft_
+    // name_refuses_in_the_footer_with_no_guard`'s own fixture above: a
+    // pathless draft's create target joins `explorer::initial_root`, not
+    // this fixture's own `/root` document directory.
+    let existing = Path::new("/taken.md");
+    mem.save_atomic(existing, b"someone else's file")
+        .expect("seed");
+    let (mut app, bridge) = rename_common::draft_app_with_store(&mem);
+
+    send(&mut app, ctrl('r'));
+    type_text(&mut app, "taken");
+    send(&mut app, plain(KeyCode::Enter));
+
+    // WP7: the store-backed create is a three-hop round trip —
+    // `MaterializePrepare`'s ack spawns the caller-side `vfs` `Cmd`
+    // (`handle_prepare_ack`), which itself replies with a `Msg` that
+    // enqueues `MaterializeRecord`.
+    let prep_evt = rename_common::next_event(&bridge);
+    let mut effects = send(&mut app, rune_tui::runtime::Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    send(&mut app, vfs_done);
+
+    let record_evt = rename_common::next_event(&bridge);
+    send(&mut app, rune_tui::runtime::Msg::Db(record_evt));
+
+    assert!(
+        app.guard.is_none(),
+        "a store-bound draft collision must never raise a guard"
+    );
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("already exists")),
+        "got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "the user must be returned straight to the title to retype the name"
+    );
+    assert_eq!(mem.read(existing).unwrap(), b"someone else's file");
+}

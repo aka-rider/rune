@@ -87,21 +87,35 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
 /// `Load` arm needs both to decide, on the ack, whether adopting the
 /// recovered content is still safe (see [`crate::db_ack::handle_load_ack`]'s
-/// docs). A degraded store enqueues nothing — there is no trustworthy
-/// recovery journal to bind this document to either way.
-pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
+/// docs). `binding_only` is carried onto that `PendingOp` verbatim — see
+/// `PendingOp::binding_only`'s own doc comment for why a re-baseline call
+/// must set it. A degraded store enqueues nothing — there is no
+/// trustworthy recovery journal to bind this document to either way.
+///
+/// Returns whether the op was actually enqueued: a re-baseline caller
+/// (`materialize_ack::reactions`) must drop `id`'s existing `db` binding
+/// on `false` rather than leave it standing with a baseline it can no
+/// longer refresh; the other call sites, which have no binding yet to
+/// protect, are unaffected either way.
+pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: bool) -> bool {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
+        return false;
     }
-    let Some(doc) = app.doc(id) else { return };
+    let Some(doc) = app.doc(id) else { return false };
     let issued_version = doc.buffer.version();
-    let Some(db) = app.db.as_ref() else { return };
+    let Some(db) = app.db.as_ref() else {
+        return false;
+    };
     match db.store.load(path) {
         Ok(op_id) => {
             app.db_ops
-                .insert(op_id, PendingOp::load(id, issued_version));
+                .insert(op_id, PendingOp::load(id, issued_version, binding_only));
+            true
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => {
+            crate::materialize_ack::on_store_failure(app, e.to_string());
+            false
+        }
     }
 }
 

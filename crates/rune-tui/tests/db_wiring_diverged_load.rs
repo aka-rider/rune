@@ -114,7 +114,7 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
     let id_b = app_b.active;
     let issued_version = Some(app_b.doc(id_b).unwrap().buffer.version());
 
-    handle_load_ack(&mut app_b, id_b, load_b, issued_version);
+    handle_load_ack(&mut app_b, id_b, load_b, issued_version, false);
 
     let doc_b = app_b.doc(id_b).unwrap();
     assert_eq!(

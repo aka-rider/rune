@@ -18,26 +18,42 @@ use rune_db::LoadResult;
 ///
 /// A `None` `saved_obs` (should not occur — see `LoadResult::saved_obs`'s
 /// own doc comment) installs nothing and surfaces a status message instead
-/// of binding a document to a recovery row with no CAS baseline.
+/// of binding a document to a recovery row with no CAS baseline — and drops
+/// any `db` binding `id` already had, rather than leave a stale one
+/// standing: this ack is explicitly declining to install a fresh one, so a
+/// document may never be left bound to a baseline this reply refused to
+/// supply.
 ///
-/// Otherwise, `recovered` is adopted into the buffer, through
-/// [`crate::document::Document::hydrate`], ONLY when `issued_version` still
-/// equals the buffer's CURRENT version — `Load` is asynchronous, so the
-/// user may have typed into the buffer during the round trip, and
-/// clobbering those keystrokes to complete a recovery binding would violate
-/// the Prime Directive. When the version has moved on, `DocDb` is still
-/// installed (this document's own recovery journal is real and should be
-/// used going forward), but the buffer bytes are left exactly as the user
-/// last typed them — this session's baseline simply anchors from the disk
-/// content `db_enqueue::load_document`'s caller already read, same as
-/// `recovered == disk_content` would.
+/// Otherwise, when `binding_only` is `false`, `recovered` is adopted into
+/// the buffer, through [`crate::document::Document::hydrate`], ONLY when
+/// `issued_version` still equals the buffer's CURRENT version — `Load` is
+/// asynchronous, so the user may have typed into the buffer during the
+/// round trip, and clobbering those keystrokes to complete a recovery
+/// binding would violate the Prime Directive. When the version has moved
+/// on, `DocDb` is still installed (this document's own recovery journal is
+/// real and should be used going forward), but the buffer bytes are left
+/// exactly as the user last typed them — this session's baseline simply
+/// anchors from the disk content `db_enqueue::load_document`'s caller
+/// already read, same as `recovered == disk_content` would.
+///
+/// `binding_only` (`PendingOp::binding_only`'s own doc comment) skips
+/// hydration outright, version match or not: a re-baseline `Load` is never
+/// a recovery attempt, and the ordinary "⌘S then wait" round trip is fast
+/// enough that the version-match guard above would otherwise let a STALE
+/// recovery row (a previous session's journal for a deleted-then-recreated
+/// path) silently replace the user's live buffer the instant this ack
+/// lands.
 pub fn handle_load_ack(
     app: &mut App,
     id: DocumentId,
     load_result: LoadResult,
     issued_version: Option<u64>,
+    binding_only: bool,
 ) {
     let Some(expect_obs) = load_result.saved_obs else {
+        if let Some(doc) = app.doc_mut(id) {
+            doc.db = None;
+        }
         messages::error(
             app,
             "crash recovery unavailable for this tab: load returned no baseline observation",
@@ -47,7 +63,7 @@ pub fn handle_load_ack(
 
     let refusal = {
         let Some(doc) = app.doc_mut(id) else { return };
-        if issued_version == Some(doc.buffer.version()) {
+        if !binding_only && issued_version == Some(doc.buffer.version()) {
             match doc.hydrate(&load_result.disk_content, &load_result.recovered) {
                 crate::document::Hydration::Refused(reason) => Some(reason),
                 crate::document::Hydration::NoChange | crate::document::Hydration::Adopted => None,

@@ -180,6 +180,17 @@ pub struct PendingOp {
     /// generation counter rather than a plain flag, since more than one
     /// merge attempt can be in flight in sequence for the same document).
     pub merge_gen: Option<u32>,
+    /// True iff this `Load` was issued to re-baseline an already-live
+    /// document's `DocDb` (the save-ack re-baseline in `materialize_ack::
+    /// reactions`, and the lost-create-race hand-off) rather than to
+    /// recover a document the user just opened. A recovery `Load` is
+    /// meant to adopt whatever the store recovered; a re-baseline `Load`
+    /// exists only to install a fresh CAS baseline against content this
+    /// session already knows about, so `db_ack::handle_load_ack` must
+    /// never let it hydrate the buffer — doing so would silently replace
+    /// the user's own typing with a stale recovery row's content the
+    /// instant the round trip lands.
+    pub binding_only: bool,
 }
 
 impl PendingOp {
@@ -190,16 +201,18 @@ impl PendingOp {
             mints_scratch: false,
             is_probe: false,
             merge_gen: None,
+            binding_only: false,
         }
     }
 
-    pub fn load(doc: DocumentId, issued_version: u64) -> PendingOp {
+    pub fn load(doc: DocumentId, issued_version: u64, binding_only: bool) -> PendingOp {
         PendingOp {
             doc,
             issued_version: Some(issued_version),
             mints_scratch: false,
             is_probe: false,
             merge_gen: None,
+            binding_only,
         }
     }
 
@@ -210,6 +223,7 @@ impl PendingOp {
             mints_scratch: true,
             is_probe: false,
             merge_gen: None,
+            binding_only: false,
         }
     }
 
@@ -220,6 +234,7 @@ impl PendingOp {
             mints_scratch: false,
             is_probe: true,
             merge_gen: None,
+            binding_only: false,
         }
     }
 
@@ -230,6 +245,7 @@ impl PendingOp {
             mints_scratch: false,
             is_probe: false,
             merge_gen: Some(generation),
+            binding_only: false,
         }
     }
 }

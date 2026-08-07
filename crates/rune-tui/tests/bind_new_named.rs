@@ -22,8 +22,8 @@ use rune_tui::runtime::{CmdKind, Msg};
 use rune_vfs::{Mem, Vfs};
 
 use rename_common::{
-    UNPUBLISHED_BODY, active_path, rename_to, send, sup, wait_for_load, wait_for_materialize_prep,
-    wait_for_materialize_record,
+    UNPUBLISHED_BODY, active_path, rename_to, send, sup, type_text, wait_for_load,
+    wait_for_materialize_prep, wait_for_materialize_record,
 };
 
 /// ⌘S on a named-but-unpublished document creates the file with the
@@ -298,15 +298,22 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
 }
 
 /// A refused create's `pending_bind_path` must never survive to bind a
-/// LATER, unrelated successful create: `^R` into a collision, THEN `^R`
-/// again into a fresh name — the document must end up bound to the SECOND
-/// name, never the first, refused one.
+/// LATER, unrelated successful create. `^R` into a collision, refused,
+/// THEN a plain ⌘S — never a second `^R`, which would route through
+/// `bind_new_now` and unconditionally overwrite `pending_bind_path` before
+/// the commit ever consumes the stale one, masking the leak this test
+/// exists to catch. ⌘S instead goes through `materialize_now`, which never
+/// touches `pending_bind_path` at all: if the first refusal left it
+/// standing, the commit below would bind this document to the REFUSED
+/// name (`taken.md`) while the bytes it actually just wrote landed at the
+/// document's own, never-touched path (`nope.md`).
 #[test]
 fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(Path::new("/root/taken.md"), b"already here")
         .expect("a file already sits at the first rename target");
     let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
+    let id = app.active;
 
     // First attempt: collides, refused.
     rename_to(&mut app, "taken");
@@ -322,8 +329,17 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
     let record_evt = wait_for_materialize_record(&bridge);
     send(&mut app, Msg::Db(record_evt));
 
-    // Second attempt: a fresh, uncontested name.
-    rename_to(&mut app, "success");
+    // The refusal returns focus to the title, still holding the refused
+    // name — `Esc` leaves it without re-committing, exactly like any other
+    // manual cancel, so the second attempt below is a genuine plain save,
+    // never a second attempt at the same refused rename.
+    send(
+        &mut app,
+        rename_common::plain(rune_tui::keymap::KeyCode::Escape),
+    );
+
+    // Second attempt: a plain save of the document's OWN path.
+    send(&mut app, sup('s'));
     let prep_evt = wait_for_materialize_prep(&bridge);
     let mut effects = send(&mut app, Msg::Db(prep_evt));
     let cmd = effects
@@ -339,8 +355,83 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
     let path = active_path(&app).expect("the document must now be bound");
     assert_eq!(
         path,
-        Path::new("/root/success.md"),
-        "must bind to the SECOND, successful create's own path, never the first refused one"
+        Path::new("/root/nope.md"),
+        "must bind to the document's OWN path — the one the bytes actually went to — \
+         never the first, refused rename target"
     );
     assert_eq!(mem.read(&path).unwrap(), UNPUBLISHED_BODY.as_bytes());
+    assert_eq!(
+        mem.read(Path::new("/root/taken.md")).unwrap(),
+        b"already here",
+        "the refused target must stay exactly as it was"
+    );
+    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    assert!(!doc_db.bind_new, "the create just committed");
+}
+
+/// Blocker 3 regression (moved out of `materialize_ack::reactions`'s own
+/// internal test module, A2 — the observable property is "the next ⌘S
+/// still writes the file", not `doc.db`'s internal shape): `record_outcome`'s
+/// "the store vanished entirely mid-flight" synthetic-commit arm builds a
+/// `MatResult { committed: true, ..Default::default() }` — `saved: None`.
+/// With no store left to re-baseline from, the document's binding must be
+/// dropped rather than left standing with a stale `expect_obs` that would
+/// make the very next save's `materialize_prepare` immediately `NotFound`.
+/// Simulated by dropping `app.db` between the caller-side `vfs` write
+/// committing and its `MaterializeRecord` bookkeeping landing — the exact
+/// window `record_outcome`'s doc comment describes.
+#[test]
+fn a_synthesized_commit_with_no_store_left_drops_the_binding_and_the_next_save_still_lands() {
+    let mem = Arc::new(Mem::new());
+    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
+    let id = app.active;
+
+    send(&mut app, sup('s'));
+    let prep_evt = wait_for_materialize_prep(&bridge);
+    let mut effects = send(&mut app, Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+
+    // The store vanishes entirely mid-flight, after the write already
+    // committed but before its bookkeeping lands.
+    app.db = None;
+    send(&mut app, vfs_done);
+
+    assert_eq!(
+        mem.read(Path::new("/root/nope.md")).expect("file created"),
+        UNPUBLISHED_BODY.as_bytes(),
+        "the write itself already committed before the store vanished"
+    );
+    assert!(
+        !app.doc(id).unwrap().is_dirty(),
+        "the just-published bytes must still count as saved"
+    );
+    assert!(
+        app.doc(id).unwrap().db.is_none(),
+        "a binding that can never serve its next save must be dropped, not left dangling"
+    );
+
+    // A second save, now routed through the no-store direct-vfs fallback,
+    // must still land — the Prime Directive holds even once the binding
+    // is gone.
+    type_text(&mut app, "!");
+    let mut effects = send(&mut app, sup('s'));
+    let save_cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("a dropped binding must fall back to the no-store save Cmd");
+    let save_done = save_cmd.run().expect("the save Cmd must reply");
+    send(&mut app, save_done);
+
+    assert_eq!(
+        mem.read(Path::new("/root/nope.md")).unwrap(),
+        format!("{UNPUBLISHED_BODY}!").as_bytes(),
+        "the second save must still reach disk despite the dropped binding"
+    );
+    assert!(!app.doc(id).unwrap().is_dirty());
 }

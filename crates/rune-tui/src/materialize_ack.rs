@@ -272,7 +272,17 @@ fn record_outcome(
                 // DB bookkeeping is lost. Report the save as successful
                 // FIRST (clearing this document's in-flight/pending state)
                 // so the subsequent whole-store degrade doesn't also flag
-                // it as a failed save.
+                // it as a failed save. The store is marked degraded HERE,
+                // ahead of that call, so its own re-baseline attempt
+                // (`handle_materialize_ack`'s `saved: None` arm) sees a
+                // store it already knows is unusable and drops the binding
+                // directly rather than enqueueing a `Load` doomed to fail
+                // the same way — which would otherwise call `on_store_
+                // failure` a second time for this one error and post its
+                // banner+error pair twice.
+                if let Some(db) = app.db.as_mut() {
+                    db.degraded = true;
+                }
                 handle_materialize_ack(
                     app,
                     id,
