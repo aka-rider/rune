@@ -2,8 +2,8 @@
 //! `DocDb { bind_new: true }` — a named file that does not exist on disk
 //! yet, the shape a launch onto a not-yet-existing positional leaves
 //! behind. `rename_common::unsaved_named_app_with_store` is the shared
-//! fixture; the three end-to-end tests here drive it through the same
-//! public entry points a user reaches (⌘S, `^R`).
+//! fixture; the end-to-end tests here drive it through the same public
+//! entry points a user reaches (⌘S, `^R`).
 
 #![allow(
     clippy::unwrap_used,
@@ -31,8 +31,6 @@ use rename_common::{
 #[test]
 fn cmd_s_creates_the_file_and_clears_bind_new() {
     let mem = Arc::new(Mem::new());
-    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
-        .expect("seed");
     let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
     let id = app.active;
 
@@ -73,8 +71,6 @@ fn cmd_s_creates_the_file_and_clears_bind_new() {
 #[test]
 fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
     let mem = Arc::new(Mem::new());
-    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
-        .expect("seed");
     mem.save_atomic(Path::new("/root/nope.md"), b"racer bytes")
         .expect("a concurrent creator wins first");
     let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
@@ -94,6 +90,16 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
 
     let record_evt = wait_for_materialize_record(&bridge);
     send(&mut app, Msg::Db(record_evt));
+
+    // The hand-off seeds `last_sync = Diverged` the instant the race is
+    // detected — before the Load round trip even lands — so `^M` is a
+    // genuine escape hatch during the window a slower writer thread would
+    // otherwise leave the user stuck with only the plain error message.
+    assert_eq!(
+        app.doc(id).unwrap().last_sync,
+        Some(rune_db::SyncKind::Diverged),
+        "the A2 branch must seed Diverged so the merge route is reachable"
+    );
 
     // The A2 route hands the document off to an ordinary Load to install a
     // real CAS baseline instead of raising an unanswerable Guard.
@@ -119,6 +125,68 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
         !doc_db.bind_new,
         "the document must come out of bind_new bound to the file's own row"
     );
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        UNPUBLISHED_BODY,
+        "the user's typed body must never be clobbered by the hand-off's Load"
+    );
+}
+
+/// The hand-off must never fire when another live document in this session
+/// is already bound to the very path the race collided on — that other
+/// document's row may carry this-session history, which `hydrate` would
+/// replace this buffer's typing with. Instead the refusal stays plain, with
+/// the actionable message telling the user their buffer is intact and `^R`
+/// is the way out, and `bind_new` stays `true` so a later ⌘S keeps retrying
+/// create-only semantics rather than ever falling back to a direct-vfs
+/// overwrite of a file this session has never observed.
+#[test]
+fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/nope.md"), b"racer bytes")
+        .expect("a concurrent creator wins first");
+    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
+    let id = app.active;
+
+    // A second, unrelated live document already bound to the racer's path.
+    let other = app.open_document(rune_core::buffer::Buffer::new("other tab's body"));
+    app.doc_mut(other).unwrap().file_path = Some(std::path::PathBuf::from("/root/nope.md"));
+
+    send(&mut app, sup('s'));
+
+    let prep_evt = wait_for_materialize_prep(&bridge);
+    let mut effects = send(&mut app, Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    send(&mut app, vfs_done);
+
+    let record_evt = wait_for_materialize_record(&bridge);
+    send(&mut app, Msg::Db(record_evt));
+
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("^R")),
+        "got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+    assert!(
+        app.doc(id).unwrap().buffer.content() == UNPUBLISHED_BODY,
+        "the buffer must stay exactly as typed"
+    );
+    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    assert!(
+        doc_db.bind_new,
+        "no hand-off happened, so bind_new must stay true"
+    );
+    assert!(
+        !app.db_ops
+            .values()
+            .any(|p| p.doc == id && p.issued_version.is_some()),
+        "no Load must have been enqueued for the colliding document"
+    );
 }
 
 /// `^R` + a new name on a never-published document creates the new name
@@ -127,10 +195,10 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
 #[test]
 fn rename_on_a_never_published_document_creates_at_the_new_name() {
     let mem = Arc::new(Mem::new());
-    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
-        .expect("seed");
-    mem.save_atomic(Path::new("/other.md"), b"unrelated")
-        .expect("seed an unrelated root file so a root-joined target would be a real collision");
+    mem.save_atomic(Path::new("/fresh.md"), b"unrelated")
+        .expect(
+            "seed the root-joined target so a wrongly root-joined create would actually collide",
+        );
     let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
 
     rename_to(&mut app, "fresh");
@@ -163,4 +231,116 @@ fn rename_on_a_never_published_document_creates_at_the_new_name() {
         mem.read(Path::new("/root/nope.md")).is_err(),
         "the old, never-published name must never be created"
     );
+}
+
+/// `^R` + a new name that ALREADY exists (A3's own lost-create-race): the
+/// EEXIST refusal must never route through the `lost_create_race`
+/// hand-off — `bind_new_now` deliberately leaves `file_path` at the OLD,
+/// never-published name (`/root/nope.md`) until the publish commits, so a
+/// hand-off keyed off `file_path` would enqueue a `Load` for a file that
+/// has never existed. The refusal must stay plain, no `Load` enqueued, no
+/// store degrade, and the old name stays uncreated.
+#[test]
+fn rename_to_an_existing_name_never_hands_off_to_load() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/taken.md"), b"already here")
+        .expect("a file already sits at the rename target");
+    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
+    let id = app.active;
+
+    rename_to(&mut app, "taken");
+
+    let prep_evt = wait_for_materialize_prep(&bridge);
+    let mut effects = send(&mut app, Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    send(&mut app, vfs_done);
+
+    let record_evt = wait_for_materialize_record(&bridge);
+    send(&mut app, Msg::Db(record_evt));
+
+    assert_eq!(
+        mem.read(Path::new("/root/taken.md")).expect("still there"),
+        b"already here",
+        "the existing file must survive untouched"
+    );
+    assert!(
+        mem.read(Path::new("/root/nope.md")).is_err(),
+        "the never-published old name must never be created by the refused attempt"
+    );
+    assert!(
+        !app.db_ops
+            .values()
+            .any(|p| p.doc == id && p.issued_version.is_some()),
+        "a rename-route EEXIST must never enqueue a Load for the old, never-existing name"
+    );
+    assert!(
+        !app.db.as_ref().unwrap().degraded,
+        "a plain rename collision must never degrade the store"
+    );
+    assert!(
+        app.guard.is_none(),
+        "a rename-create collision has no CAS baseline to raise a Guard against"
+    );
+    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    assert!(
+        doc_db.bind_new,
+        "the document must stay bind_new — no naming attempt has succeeded yet"
+    );
+    assert!(
+        app.doc(id).unwrap().pending_bind_path.is_none(),
+        "a refused create must clear pending_bind_path"
+    );
+}
+
+/// A refused create's `pending_bind_path` must never survive to bind a
+/// LATER, unrelated successful create: `^R` into a collision, THEN `^R`
+/// again into a fresh name — the document must end up bound to the SECOND
+/// name, never the first, refused one.
+#[test]
+fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/taken.md"), b"already here")
+        .expect("a file already sits at the first rename target");
+    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
+
+    // First attempt: collides, refused.
+    rename_to(&mut app, "taken");
+    let prep_evt = wait_for_materialize_prep(&bridge);
+    let mut effects = send(&mut app, Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    send(&mut app, vfs_done);
+    let record_evt = wait_for_materialize_record(&bridge);
+    send(&mut app, Msg::Db(record_evt));
+
+    // Second attempt: a fresh, uncontested name.
+    rename_to(&mut app, "success");
+    let prep_evt = wait_for_materialize_prep(&bridge);
+    let mut effects = send(&mut app, Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    send(&mut app, vfs_done);
+    let record_evt = wait_for_materialize_record(&bridge);
+    send(&mut app, Msg::Db(record_evt));
+
+    let path = active_path(&app).expect("the document must now be bound");
+    assert_eq!(
+        path,
+        Path::new("/root/success.md"),
+        "must bind to the SECOND, successful create's own path, never the first refused one"
+    );
+    assert_eq!(mem.read(&path).unwrap(), UNPUBLISHED_BODY.as_bytes());
 }

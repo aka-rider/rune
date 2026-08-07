@@ -236,10 +236,11 @@ pub const UNPUBLISHED_BODY: &str = "unpublished body";
 /// `mem` — work package A's fixture: a document that already knows its
 /// name (unlike [`draft_app_with_store`]'s pathless shape) but has never
 /// been published, the state a named launch onto a not-yet-existing path
-/// leaves behind. The caller must seed `/root/seed.md` first — this
-/// borrows a real `doc_id` off it the same way `draft_app_with_store`
-/// does, since a document with no file yet has no `documents` row of its
-/// own to load.
+/// leaves behind. Binds to a genuine scratch row (`path=''`, `CreateScratch`)
+/// rather than borrowing a seeded file's real `documents` row — the same
+/// row shape `handle_materialize_ack`'s own comment cites as having no CAS
+/// baseline to raise `[M]`/`[D]` against, which is exactly the shape this
+/// fixture needs to exercise the lost-create-race hand-off honestly.
 ///
 /// The buffer starts empty, exactly like `loader::load_buffer`'s own
 /// nonexistent-path case, then types [`UNPUBLISHED_BODY`] through the
@@ -252,15 +253,13 @@ pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     let bridge = DbBridge::bootstrap();
     let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
 
-    store
-        .load(Path::new("/root/seed.md"))
-        .expect("enqueue load");
-    let load = match next_event(&bridge) {
+    store.create_scratch().expect("enqueue create_scratch");
+    let row_id = match next_event(&bridge) {
         DbEvent::Ok {
-            result: OpOutcome::Load(load),
+            result: OpOutcome::RowId(row_id),
             ..
-        } => *load,
-        other => panic!("expected a Load ack, got {other:?}"),
+        } => row_id,
+        other => panic!("expected a RowId ack, got {other:?}"),
     };
 
     let mut app = App::new(
@@ -269,12 +268,7 @@ pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut().db = Some(DocDb::new(
-        load.doc_id,
-        load.saved_obs.unwrap_or(0),
-        true,
-        0,
-    ));
+    app.active_doc_mut().db = Some(DocDb::new(row_id, 0, true, 0));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     type_text(&mut app, UNPUBLISHED_BODY);
@@ -317,7 +311,10 @@ pub fn send(app: &mut App, msg: Msg) -> Effects {
     effects
 }
 
-/// Types `text` into the focused title field, one key at a time.
+/// Types `text` into whatever pane is currently focused, one key at a
+/// time — the title field for `rename_to`/`type_new_name`'s callers, or the
+/// editor buffer for `unsaved_named_app_with_store`'s own call (no `^r`
+/// precedes it, so focus is still the Editor).
 pub fn type_text(app: &mut App, text: &str) {
     for ch in text.chars() {
         send(app, plain(KeyCode::Char(ch)));
