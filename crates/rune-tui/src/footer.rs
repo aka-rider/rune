@@ -191,7 +191,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
                 &[]
             }
         }
-        GuardKind::DiskConflict { .. } => {
+        GuardKind::DiskConflict => {
             let name = app
                 .doc(prompt.doc)
                 .map(|doc| doc.file_name().to_string())

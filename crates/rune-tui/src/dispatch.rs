@@ -471,7 +471,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::Cut => clipboard::cut(app, app.active, effects),
         Command::Paste => clipboard::paste(effects, PasteTarget::Document(app.active)),
         Command::Save => {
-            let _ = save::trigger_save(app, app.active, effects);
+            let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
         }
         Command::FollowLink => navigate::follow(app, effects),
         Command::Reload => {

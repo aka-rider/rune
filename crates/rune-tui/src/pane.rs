@@ -150,7 +150,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.set_focus_pane(Pane::Tabs, effects);
         }
         GlobalCommand::Save => {
-            let _ = save::trigger_save(app, app.active, effects);
+            let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
         }
         // Mints/toggles the generated Help virtual document — a
         // direct, same-tick call, no I/O involved. The hoisted

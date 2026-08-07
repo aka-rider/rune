@@ -18,6 +18,7 @@ use crate::app::App;
 use crate::document::DocumentId;
 use crate::materialize_ack::{self, MaterializeVfsOutcome};
 use crate::runtime::Effects;
+use crate::save::SaveMode;
 
 /// The snapshot-autosave debounce window (plan WP5.S6).
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -36,6 +37,7 @@ pub(crate) struct PendingMaterialize {
     pub(crate) bind_new: bool,
     pub(crate) db_id: i64,
     pub(crate) seq: i64,
+    pub(crate) mode: SaveMode,
 }
 
 /// WP7 step (a): enqueues `MaterializePrepare` — a plain, non-blocking
@@ -52,6 +54,7 @@ pub(super) fn materialize_now(
     id: DocumentId,
     path: PathBuf,
     version: u64,
+    mode: SaveMode,
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
@@ -80,6 +83,7 @@ pub(super) fn materialize_now(
                     bind_new,
                     db_id,
                     seq: last_known_seq,
+                    mode,
                 },
             );
         }
@@ -158,6 +162,10 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
                     bind_new: true,
                     db_id,
                     seq,
+                    // `bind_new` never reaches the mode-dependent branch —
+                    // the create path has no CAS baseline to compare either
+                    // way.
+                    mode: SaveMode::Normal,
                 },
             );
         }
@@ -196,6 +204,7 @@ pub(crate) fn run_materialize_vfs(
     content: &str,
     expect_hash: &str,
     bound_path: Option<&str>,
+    mode: SaveMode,
 ) -> MaterializeVfsOutcome {
     let data = content.as_bytes();
 
@@ -260,6 +269,10 @@ pub(crate) fn run_materialize_vfs(
             Ok(_) => {}
             Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
         }
+    }
+
+    if mode == SaveMode::Force {
+        return force_publish(vfs, &resolved, data);
     }
 
     // Step 1: unconditional read+hash of the live target.
@@ -331,6 +344,93 @@ pub(crate) fn run_materialize_vfs(
         data: data.to_vec(),
         stat,
         resolved_path: resolved,
+    }
+}
+
+/// `SaveMode::Force`'s publish: existence-aware (`exchange` when the
+/// destination is there to swap with, `rename_excl` when it has vanished —
+/// the same ladder `Vfs::save_atomic` composes, chosen explicitly here
+/// instead of implicitly so the swap side can hand its displaced bytes on
+/// rather than discard them) and never CAS-gated — there is no hash this
+/// mode refuses on. Existence is read, not merely stated, because a
+/// `RENAME_SWAP` needs both paths to exist: a blind `exchange` would fail
+/// exactly when the user most needs the save to go through.
+fn force_publish(vfs: &dyn Vfs, resolved: &Path, data: &[u8]) -> MaterializeVfsOutcome {
+    let dest_existed = match vfs.read(resolved) {
+        Ok(_) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+
+    let temp = match vfs.write_durable(resolved, data) {
+        Ok(t) => t,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+
+    if !dest_existed {
+        return match vfs.rename_excl(&temp, resolved) {
+            Ok(()) => MaterializeVfsOutcome::Committed {
+                data: data.to_vec(),
+                stat: rune_db::stat_identity(vfs, resolved),
+                resolved_path: resolved.to_path_buf(),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // A concurrent creator filled the destination between our
+                // existence read and this publish — it genuinely exists
+                // now, so swap onto it rather than reporting a failure the
+                // user has no way to retry out of; the temp we already
+                // wrote is still exactly what needs publishing.
+                capture_and_swap_publish(vfs, resolved, &temp, data)
+            }
+            // Deliberately NOT removed: the temp is the only place the
+            // user's just-written bytes still physically exist.
+            Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
+        };
+    }
+
+    capture_and_swap_publish(vfs, resolved, &temp, data)
+}
+
+/// The swap half of [`force_publish`]: publishes via `exchange`, then reads
+/// `temp` back — the swap deposits whatever WAS at `resolved` there, never
+/// unlinking it — and reports that as displaced, unconditionally. No hash
+/// gate anywhere in this function: whatever the swap actually displaced is
+/// what gets captured, following the same unconditional-capture shape
+/// `rune-db`'s own user-confirmed destructive rename uses.
+fn capture_and_swap_publish(
+    vfs: &dyn Vfs,
+    resolved: &Path,
+    temp: &Path,
+    data: &[u8],
+) -> MaterializeVfsOutcome {
+    match vfs.exchange(temp, resolved) {
+        Ok(()) => {}
+        Err(e) if rune_vfs::published_not_durable(&e) => {
+            // The swap already took effect; only the durability
+            // confirmation failed. `resolved` already holds the new bytes —
+            // keep going and capture what it displaced, same as the CAS
+            // path's own handling of this error shape.
+        }
+        // Deliberately NOT removed: the temp is the only place the user's
+        // just-written bytes still physically exist.
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    }
+
+    let displaced = match vfs.read(temp) {
+        Ok(d) => d,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+    let stat = rune_db::stat_identity(vfs, resolved);
+    let displaced_stat = rune_db::stat_identity(vfs, temp);
+    // The displaced bytes are already read into `displaced` above; a failed
+    // cleanup here just leaks a scratch file, never loses them.
+    let _ = vfs.remove(temp);
+    MaterializeVfsOutcome::Raced {
+        data: data.to_vec(),
+        stat,
+        displaced,
+        displaced_stat,
+        resolved_path: resolved.to_path_buf(),
     }
 }
 
