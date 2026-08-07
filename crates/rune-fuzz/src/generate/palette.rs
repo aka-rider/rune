@@ -38,6 +38,13 @@ pub(super) static SEEDS: &[(&str, &str)] = &[
         DOC_PATH,
         "# Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n",
     ),
+    // The only seed whose document opens with a frontmatter delimiter, so a
+    // session can edit — and destroy — the YAML code region frontmatter
+    // publishes. Every other markdown seed leaves that path unvisited.
+    (
+        DOC_PATH,
+        "---\ntitle: seed\ndraft: true\n---\n\n# Heading\n\nbody text\n",
+    ),
     // WP7.S3: non-markdown seeds, opened at a path `rune_ts::lang::resolve`
     // recognises — these exercise `DocumentKind::Code`, whole-document
     // tree-sitter highlighting, and (for `notes.md`) fenced-code highlight
