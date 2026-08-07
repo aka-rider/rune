@@ -147,6 +147,7 @@ entry is deleted in the same commit that fixes it.
 
 ### Files over 500 lines
 - **Where** (recomputed from the live tree; comment purge below will change these numbers):
+  - `crates/rune-db/src/sync.rs` — 873 (new WP-C: own-history echo + its tests pushed this over; split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 868 (test file)
   - `crates/rune-tui/src/global.rs` — 809
   - `crates/rune-tui/src/pane.rs` — 800
@@ -162,6 +163,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 544
   - `crates/rune-vfs/src/mem.rs` — 536
   - `crates/rune-tui/src/dispatch.rs` — 526
+  - `crates/rune-db/src/observation.rs` — 522 (new WP-C: the `supersedes` lineage-edge computation pushed this over; split candidate: move its own `#[cfg(test)]` module to `observation_tests.rs`)
   - `crates/rune-syntax/src/wrap/mod.rs` — 513
   - `crates/rune-tui/src/footer.rs` — 512
   - `crates/rune-md/src/catalogue.rs` — 512
@@ -171,7 +173,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/merge/landing.rs` — 503
   - `crates/rune-fuzz/src/script/decode.rs` — 503
   - `crates/rune-merge/src/hunks.rs` — 501
-- **Wrong**: 24 source files exceed the 500-line house rule, none ledgered.
+- **Wrong**: 26 source files exceed the 500-line house rule, none ledgered.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 
