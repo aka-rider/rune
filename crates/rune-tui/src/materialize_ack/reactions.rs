@@ -34,6 +34,22 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
     quit_if_pending(app, id, pending_version, false);
 }
 
+/// Detects "a `bind_new` create lost the race": a concurrent writer's file
+/// is already sitting at this document's own intended path when a create
+/// was attempted. Returns that path — the caller's cue to hand the
+/// document off to an ordinary `Load`, the only transition out of
+/// `bind_new` that installs a real CAS baseline — for `handle_materialize_
+/// ack` to route around the unanswerable `DiskConflict` Guard this refusal
+/// would otherwise raise.
+fn lost_create_race(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::path::PathBuf> {
+    mat.fresh.as_ref()?;
+    let doc = app.doc(id)?;
+    if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
+        return None;
+    }
+    doc.file_path.clone()
+}
+
 /// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
 /// WP7's `MaterializeRecord`): advances `saved_version`/`DocDb::expect_obs`/
 /// `bind_new` on a commit, surfaces each `MatResult` outcome as status text,
@@ -64,11 +80,16 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 app.title.seed(&name);
             }
         }
+        // Once the bytes are published, the target exists, so the next save
+        // is an overwrite — regardless of whether the bookkeeping that would
+        // have supplied `saved` (and so a fresh CAS baseline) survived.
+        if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
+            doc_db.bind_new = false;
+        }
         if let Some(saved) = &mat.saved
             && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
         {
             doc_db.expect_obs = saved.id;
-            doc_db.bind_new = false;
         }
         if let Some(doc) = app.doc_mut(id) {
             match pending_version {
@@ -90,6 +111,24 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         }
         if mat.missing {
             messages::error(app, "save failed: file no longer exists");
+        } else if let Some(path) = lost_create_race(app, id, &mat) {
+            // A create lost the race: `[S]ave anyway` would only re-run
+            // `rename_excl` into the same EEXIST forever, and `[M]erge`/
+            // `[D]iscard` would probe against the scratch row's `path=''`
+            // and see nothing to merge — there is no CAS baseline to raise a
+            // Guard against. Instead take the document through the same
+            // transition an ordinary bound document already has:
+            // `db_ack::handle_load_ack` installs `bind_new: false` with a
+            // real baseline, even when it declines to hydrate because the
+            // buffer moved on, so the user's typing is never clobbered. The
+            // abandoned scratch row still holds everything typed so far and
+            // will surface as a recoverable draft on the next bare launch —
+            // that is correct, it is genuinely unsaved work at this instant.
+            messages::error(
+                app,
+                "save failed: the target was created by something else; your changes are unsaved",
+            );
+            crate::db_enqueue::load_document(app, id, &path);
         } else {
             messages::error(
                 app,
@@ -246,5 +285,49 @@ pub(crate) fn retire_quit_wait(app: &mut App, id: DocumentId) {
     if intent.pending.is_empty() {
         app.quit_intent = None;
         app.should_quit = true;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::db::DocDb;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    /// A1 regression: `record_outcome`'s two synthetic-commit arms (a
+    /// vanished store, and a `materialize_record` enqueue failure after the
+    /// bytes already published) build `MatResult { committed: true,
+    /// ..Default::default() }` — `saved: None`. Before A1 the `bind_new`
+    /// clear lived inside `if let Some(saved) = &mat.saved`, so this exact
+    /// shape left `bind_new` stuck `true` even though the file the next
+    /// save's `rename_excl` would target already exists.
+    #[test]
+    fn a_synthesized_commit_with_no_saved_observation_still_clears_bind_new() {
+        let mut app = App::new(
+            Buffer::new("body"),
+            Some(std::path::PathBuf::from("/root/nope.md")),
+            Arc::new(Mem::new()),
+            None,
+        );
+        let id = app.active;
+        app.doc_mut(id).unwrap().db = Some(DocDb::new(1, 0, true, 0));
+
+        handle_materialize_ack(
+            &mut app,
+            id,
+            MatResult {
+                committed: true,
+                ..Default::default()
+            },
+        );
+
+        let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+        assert!(
+            !doc_db.bind_new,
+            "committed alone must clear bind_new, even with no saved observation"
+        );
     }
 }

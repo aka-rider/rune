@@ -16,6 +16,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
 use rune_tui::app::{self, App};
@@ -61,6 +63,76 @@ pub fn app_with(mem: &Arc<Mem>) -> App {
 /// unambiguous.
 pub fn next_event(bridge: &DbBridge) -> DbEvent {
     bridge.wait_for_bootstrap_event(|_| true)
+}
+
+/// How long [`wait_for`] gives the writer thread to post a matching event
+/// before failing the test outright — long enough for the real writer
+/// thread under load, short enough that a stuck wait fails fast instead of
+/// hanging the whole suite.
+const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The bounded counterpart to [`next_event`]: once a test starts waiting
+/// for a SPECIFIC outcome rather than "whatever comes next" (typing
+/// enqueues its own `AppendEdit` acks ahead of the reply a test actually
+/// wants), `wait_for_bootstrap_event`'s predicate already skips past those
+/// — this only adds the missing timeout, so a predicate that never matches
+/// fails the test with a clear message instead of blocking it forever. The
+/// blocking wait itself runs on a helper thread so a non-matching `pred`
+/// leaves that thread parked rather than this one.
+fn wait_for(
+    bridge: &Arc<DbBridge>,
+    what: &'static str,
+    pred: impl FnMut(&DbEvent) -> bool + Send + 'static,
+) -> DbEvent {
+    let bridge = Arc::clone(bridge);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(bridge.wait_for_bootstrap_event(pred));
+    });
+    rx.recv_timeout(EVENT_TIMEOUT)
+        .unwrap_or_else(|_| panic!("timed out after {EVENT_TIMEOUT:?} waiting for {what}"))
+}
+
+/// Waits for the `MaterializePrepare` ack — the CAS-decision reply that
+/// spawns the caller-side `vfs` `Cmd` (the `Save` `Cmd` the materialize
+/// dance's first hop always produces).
+pub fn wait_for_materialize_prep(bridge: &Arc<DbBridge>) -> DbEvent {
+    wait_for(bridge, "a MaterializePrepare ack", |evt| {
+        matches!(
+            evt,
+            DbEvent::Ok {
+                result: OpOutcome::MaterializePrep(_),
+                ..
+            }
+        )
+    })
+}
+
+/// Waits for the `MaterializeRecord` ack that commits (or refuses) a save.
+pub fn wait_for_materialize_record(bridge: &Arc<DbBridge>) -> DbEvent {
+    wait_for(bridge, "a MaterializeRecord ack", |evt| {
+        matches!(
+            evt,
+            DbEvent::Ok {
+                result: OpOutcome::Materialize(_),
+                ..
+            }
+        )
+    })
+}
+
+/// Waits for a `Load` ack — the lost-create-race route's hand-off to an
+/// ordinary load once a `bind_new` create loses the race.
+pub fn wait_for_load(bridge: &Arc<DbBridge>) -> DbEvent {
+    wait_for(bridge, "a Load ack", |evt| {
+        matches!(
+            evt,
+            DbEvent::Ok {
+                result: OpOutcome::Load(_),
+                ..
+            }
+        )
+    })
 }
 
 /// The same `App`, but bound to a REAL in-memory `Store` sharing `mem` as
@@ -148,6 +220,64 @@ pub fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     ));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
+    (app, bridge)
+}
+
+/// The body [`unsaved_named_app_with_store`] types into its document — the
+/// bytes the loader would have found on disk had the launch actually
+/// published anything, i.e. none: the fixture starts the buffer EMPTY
+/// (`loader::load_buffer`'s own "a nonexistent path opens an empty
+/// buffer") and types this in through the public key path afterward, so
+/// the document is dirty because the user typed, not because a field was
+/// poked.
+pub const UNPUBLISHED_BODY: &str = "unpublished body";
+
+/// A path-set, `bind_new: true`, store-bound app whose file is ABSENT from
+/// `mem` — work package A's fixture: a document that already knows its
+/// name (unlike [`draft_app_with_store`]'s pathless shape) but has never
+/// been published, the state a named launch onto a not-yet-existing path
+/// leaves behind. The caller must seed `/root/seed.md` first — this
+/// borrows a real `doc_id` off it the same way `draft_app_with_store`
+/// does, since a document with no file yet has no `documents` row of its
+/// own to load.
+///
+/// The buffer starts empty, exactly like `loader::load_buffer`'s own
+/// nonexistent-path case, then types [`UNPUBLISHED_BODY`] through the
+/// ordinary key path — a document seeded non-empty here would come out of
+/// `Document::new` already clean (`saved_content` is captured from the
+/// INITIAL buffer), which would make every ⌘S downstream a silent no-op.
+pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
+    let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+    let bridge = DbBridge::bootstrap();
+    let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
+
+    store
+        .load(Path::new("/root/seed.md"))
+        .expect("enqueue load");
+    let load = match next_event(&bridge) {
+        DbEvent::Ok {
+            result: OpOutcome::Load(load),
+            ..
+        } => *load,
+        other => panic!("expected a Load ack, got {other:?}"),
+    };
+
+    let mut app = App::new(
+        Buffer::new(""),
+        Some(PathBuf::from("/root/nope.md")),
+        vfs,
+        Some(Db::new(store, Arc::clone(&bridge), false)),
+    );
+    app.active_doc_mut().db = Some(DocDb::new(
+        load.doc_id,
+        load.saved_obs.unwrap_or(0),
+        true,
+        0,
+    ));
+    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
+    app.sync_view();
+    type_text(&mut app, UNPUBLISHED_BODY);
     (app, bridge)
 }
 
