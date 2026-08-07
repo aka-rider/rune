@@ -54,7 +54,6 @@ pub(super) fn rank(state: &mut FileSearchState) {
         .map(|s| ResultRow {
             indices: indices_for(s.candidate_idx, recents, walk, &pattern, matcher, charbuf),
             candidate_idx: s.candidate_idx,
-            score: s.score,
         })
         .collect();
 }

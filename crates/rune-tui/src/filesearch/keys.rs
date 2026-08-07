@@ -18,7 +18,7 @@ use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::pane::Pane;
 use crate::runtime::Effects;
 
-use super::{after_cursor_move, cancel, close, recompute};
+use super::{after_cursor_move, cancel, close, reset_and_recompute};
 
 const SHIFT: Mods = Mods {
     shift: true,
@@ -138,12 +138,12 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
                 if let Some(state) = app.filesearch.as_mut() {
                     state.query.push(c);
                 }
-                recompute(app, effects);
+                reset_and_recompute(app, effects);
             }
         }
         FileSearchCommand::Erase => {
             erase(app);
-            recompute(app, effects);
+            reset_and_recompute(app, effects);
         }
         FileSearchCommand::Up => nav_move(app, -1, effects),
         FileSearchCommand::Down => nav_move(app, 1, effects),
@@ -174,12 +174,13 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
 /// instead of re-reading it, mirroring `explorer_keys::open_selected`'s own
 /// promote branch. Otherwise opens through the same tab-cap-respecting
 /// chokepoint the Explorer's own `Open` uses (`workspace::
-/// open_path_checked`). Either way this is a plain [`close`], not
-/// [`cancel`]: a successful open IS the finder's own "done", not something
-/// to undo by restoring `return_to`. A read failure is already reported by
-/// `open_path_checked` itself; nothing selected (an empty result list, the
-/// cursor past the end) reports through the message log and leaves the
-/// finder open rather than swallowing the keystroke.
+/// open_path_checked`) — [`close`] runs only AFTER that succeeds, never
+/// before: closing first and reading second would strand the user with the
+/// finder gone, focus wherever `close` happened to leave it, and `return_to`
+/// lost the moment a read fails. A read failure is already reported by
+/// `open_path_checked` itself and leaves the finder open so the user can
+/// pick another candidate; nothing selected (an empty result list, the
+/// cursor past the end) reports through the message log the same way.
 fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some(path) = selected_path(app) else {
         crate::messages::info(app, "no file selected");
@@ -195,8 +196,8 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         return;
     }
 
-    close(app);
     if crate::workspace::open_path_checked(app, &path, effects).is_some() {
+        close(app);
         app.set_focus_pane(Pane::Editor, effects);
     }
 }
@@ -233,8 +234,9 @@ fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
 /// The finder's visible result-row count, read straight from
 /// `layout::geometry`'s `explorer_inner` (the rect the finder replaces the
 /// Explorer's own content in) minus the one row the query bar occupies —
-/// same derivation shape as `explorer::visible_rows`.
-fn page_amount(app: &App) -> isize {
+/// same derivation shape as `explorer::visible_rows`. `pub(super)`: also
+/// `recompute_core`'s own follow-the-cursor scroll math (`mod.rs`) needs it.
+pub(super) fn page_amount(app: &App) -> isize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     (crate::layout::geometry(area, app).explorer_inner.height as isize)
         .saturating_sub(1)
@@ -263,7 +265,7 @@ pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
     if let Some(state) = app.filesearch.as_mut() {
         state.query.push_str(&sanitized);
     }
-    recompute(app, effects);
+    reset_and_recompute(app, effects);
 }
 
 #[cfg(test)]
@@ -416,5 +418,44 @@ mod tests {
             "nothing selected must never close the finder"
         );
         assert_eq!(crate::messages::newest_text(&app), Some("no file selected"));
+    }
+
+    /// Finding 11: a candidate whose path fails to read must not strand the
+    /// user — the finder must stay open (its own `return_to` still intact)
+    /// with the read failure reported, rather than closing before the read
+    /// is even attempted and leaving focus wherever `close` happened to
+    /// land it.
+    #[test]
+    fn enter_on_a_candidate_that_fails_to_read_leaves_the_finder_open_with_a_message() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        let generation = app.filesearch.as_ref().expect("open").generation;
+        crate::filesearch::handle_recents_loaded(
+            &mut app,
+            generation,
+            Ok(vec![Candidate {
+                path: PathBuf::from("/root/missing.md"),
+                display: "missing.md".to_string(),
+                in_tree: true,
+                mru_rank: None,
+            }]),
+            &mut effects,
+        );
+
+        assert_eq!(
+            handle_key(&mut app, enter_key(), &mut effects),
+            KeyOutcome::Consumed
+        );
+
+        assert!(
+            app.filesearch.is_some(),
+            "a failed open must leave the finder open rather than stranding the user"
+        );
+        assert_eq!(app.focus(), crate::pane::Pane::Explorer);
+        assert!(
+            crate::messages::newest_text(&app).is_some_and(|m| m.contains("could not open")),
+            "the read failure must be reported"
+        );
     }
 }

@@ -452,3 +452,148 @@ fn mru_rank_breaks_a_score_tie() {
         "the lower (more recent) mru_rank must sort first on a score tie"
     );
 }
+
+/// Finding 3: a late data reply (the walk landing here) must not steal the
+/// cursor away from a row the user already arrowed onto and is reading the
+/// preview of — it re-finds the SAME PATH in the freshly rebuilt list
+/// rather than snapping back to row 0.
+#[test]
+fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_same_path() {
+    let mut app = app();
+    app.root = PathBuf::from("/root");
+    let mut effects = Effects::default();
+    open(&mut app, &mut effects);
+    let generation = app.filesearch.as_ref().expect("open").generation;
+    handle_recents_loaded(
+        &mut app,
+        generation,
+        Ok(vec![
+            candidate("/root/a.md", true),
+            candidate("/root/b.md", true),
+            candidate("/root/c.md", true),
+        ]),
+        &mut effects,
+    );
+    if let Some(state) = app.filesearch.as_mut() {
+        state.nav.cursor = 2;
+    }
+    let selected_before = selected_candidate(&app).map(|c| c.path.clone());
+    assert_eq!(
+        selected_before,
+        Some(PathBuf::from("/root/c.md")),
+        "test setup: row 2 names c.md"
+    );
+
+    handle_scanned(
+        &mut app,
+        generation,
+        Ok(walk::ScanResult {
+            files: vec![PathBuf::from("/root/d.md")],
+            truncated: false,
+        }),
+        &mut effects,
+    );
+
+    let state = app.filesearch.as_ref().expect("still open");
+    let selected_after = state
+        .results
+        .get(state.nav.cursor)
+        .and_then(|row| candidate_at(state, row.candidate_idx))
+        .map(|c| c.path.clone());
+    assert_eq!(
+        selected_after,
+        Some(PathBuf::from("/root/c.md")),
+        "a late walk reply must not steal the cursor off the user's own selection"
+    );
+}
+
+/// Finding 3: a query edit is the opposite case — it always resets the
+/// cursor to the top of the freshly filtered list, even though a data
+/// reply (above) must not.
+#[test]
+fn a_query_edit_recompute_resets_the_cursor_to_the_top() {
+    let mut app = app();
+    let mut effects = Effects::default();
+    open(&mut app, &mut effects);
+    let generation = app.filesearch.as_ref().expect("open").generation;
+    handle_recents_loaded(
+        &mut app,
+        generation,
+        Ok(vec![
+            candidate("/root/a.md", true),
+            candidate("/root/b.md", true),
+        ]),
+        &mut effects,
+    );
+    if let Some(state) = app.filesearch.as_mut() {
+        state.nav.cursor = 1;
+        state.query = "b".to_string();
+    }
+
+    reset_and_recompute(&mut app, &mut effects);
+
+    let state = app.filesearch.as_ref().expect("still open");
+    assert_eq!(
+        state.nav.cursor, 0,
+        "a query edit always resets the cursor to the top of the freshly filtered list"
+    );
+}
+
+/// Finding 6: `recompute` must fire the preview request only when the
+/// selected PATH actually changed — two consecutive query edits whose top
+/// hit is the same path must push exactly one preview `Cmd` total, not one
+/// per keystroke. `preview_awaiting` is cleared by hand between the two
+/// edits specifically so `explorer_preview`'s own in-flight dedup can't
+/// mask a `recompute` that (incorrectly) fires on every keystroke — this
+/// test exercises `recompute`'s OWN changed-path gate, not the downstream
+/// one.
+#[test]
+fn two_query_edits_with_the_same_top_hit_push_exactly_one_preview_cmd_total() {
+    let mut app = app();
+    app.root = PathBuf::from("/root");
+    let mut effects = Effects::default();
+    open(&mut app, &mut effects);
+    let generation = app.filesearch.as_ref().expect("open").generation;
+    handle_recents_loaded(
+        &mut app,
+        generation,
+        Ok(vec![
+            candidate("/root/apple.md", true),
+            candidate("/root/notebook.md", true),
+        ]),
+        &mut effects,
+    );
+    effects.cmds.clear();
+
+    if let Some(state) = app.filesearch.as_mut() {
+        state.query = "n".to_string();
+    }
+    reset_and_recompute(&mut app, &mut effects);
+    let read_file_cmds_after_first_edit = effects
+        .cmds
+        .iter()
+        .filter(|c| c.kind() == crate::runtime::CmdKind::ReadFile)
+        .count();
+    assert_eq!(
+        read_file_cmds_after_first_edit, 1,
+        "the top hit changed (apple.md -> notebook.md), so exactly one preview read is queued"
+    );
+    effects.cmds.clear();
+    app.explorer
+        .preview_awaiting
+        .remove(std::path::Path::new("/root/notebook.md"));
+
+    if let Some(state) = app.filesearch.as_mut() {
+        state.query = "no".to_string();
+    }
+    reset_and_recompute(&mut app, &mut effects);
+
+    assert!(
+        effects
+            .cmds
+            .iter()
+            .all(|c| c.kind() != crate::runtime::CmdKind::ReadFile),
+        "the top hit did not change between the two edits (still notebook.md), \
+         so no second preview read must be queued"
+    );
+}

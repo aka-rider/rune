@@ -48,12 +48,11 @@ pub struct Candidate {
 }
 
 /// One ranked row in the finder's result list: which candidate it names,
-/// its match score, and the matched-grapheme byte indices a later work
-/// package fills in — `score`/`indices` sit at their zero value until
-/// fuzzy ranking lands.
+/// and the matched CHAR indices (`nucleo_matcher::Utf32Str` positions, not
+/// byte offsets) `render::filesearch` bolds — empty until a non-empty query
+/// runs the candidate through `rank::rank`.
 pub struct ResultRow {
     pub candidate_idx: usize,
-    pub score: u32,
     pub indices: Vec<u32>,
 }
 
@@ -105,7 +104,6 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     app.next_filesearch_gen = app.next_filesearch_gen.wrapping_add(1);
     let generation = app.next_filesearch_gen;
     let root = resolve_root(app);
-    let walk_pending = !root.as_os_str().is_empty();
     app.filesearch = Some(FileSearchState {
         query: String::new(),
         nav: listnav::List { cursor: 0, top: 0 },
@@ -114,22 +112,17 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
         root: root.clone(),
         recents: Vec::new(),
         walk: Vec::new(),
-        walk_pending,
+        walk_pending: true,
         walk_truncated: false,
         results: Vec::new(),
         matcher: Matcher::new(Config::DEFAULT.match_paths()),
         charbuf: Vec::new(),
     });
-    // A4: skipped outright when even `explorer::initial_root`'s own "."
-    // fallback resolved to nothing — recents-only is still a useful finder,
-    // there just isn't a workspace tree to walk.
-    if walk_pending {
-        effects.cmds.push(crate::runtime::filesearch_scan_cmd(
-            Arc::clone(&app.vfs),
-            root.clone(),
-            generation,
-        ));
-    }
+    effects.cmds.push(crate::runtime::filesearch_scan_cmd(
+        Arc::clone(&app.vfs),
+        root.clone(),
+        generation,
+    ));
     app.set_focus_pane(Pane::Explorer, effects);
 
     if let Some(db) = app.db.as_ref() {
@@ -144,11 +137,14 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     }
 }
 
-/// A4's own root ladder: `app.root` takes priority over `explorer::
-/// initial_root`'s active-document-directory preference, since the finder
-/// searches the WORKSPACE, not wherever the current document happens to
-/// live — falling back to `initial_root` only when `app.root` is itself
-/// unresolved (still the startup default, an empty `PathBuf`).
+/// A4's own root ladder: `app.root`, when the user has resolved a workspace
+/// root, is authoritative. When it's still the startup default (an empty
+/// `PathBuf`), this falls back to `explorer::initial_root`'s own ladder —
+/// which itself prefers the ACTIVE DOCUMENT'S OWN DIRECTORY over `app.root`.
+/// So an unresolved `app.root` does not mean the finder walks "the
+/// workspace": it walks wherever the currently active document happens to
+/// live, only falling back to `app.root`/`.` when that document has no path
+/// of its own.
 fn resolve_root(app: &App) -> PathBuf {
     if app.root.as_os_str().is_empty() {
         return crate::explorer::initial_root(app);
@@ -261,18 +257,52 @@ pub(crate) fn handle_recents_loaded(
     recompute(app, effects);
 }
 
-/// The recompute-over-cache chokepoint every query edit (and every
-/// `recents`/`walk` load) funnels through — an empty query lists in-tree
-/// recents (MRU order) then out-of-tree recents (MRU order), then `walk`
-/// files in whatever order they arrived; a non-empty query fuzzy-ranks
-/// through [`rank::rank`] (all scoring and highlight-index computation
-/// happens there, never in render). Either way the cursor resets to the
-/// top of the freshly computed list — a stale cursor position could point
-/// at the wrong row, or past the end of a now-shorter one, the same reason
-/// `search::recompute` always clears its own `current` — and
-/// [`after_cursor_move`] then requests a preview of whatever landed there,
-/// which is why every caller already threads `effects` through.
+/// Query-edit recompute (`keys::apply`'s `Type`/`Erase` arms, `keys::
+/// paste`): the caller itself just changed the FILTER, so a cursor left
+/// where it was could now name a completely unrelated row (or point past
+/// the end of a shorter list) — always jumps back to the top of the freshly
+/// filtered/ranked list. Shares the change-only preview trigger with
+/// [`recompute`] below (`recompute_core`'s own doc explains why).
+pub(crate) fn reset_and_recompute(app: &mut App, effects: &mut Effects) {
+    recompute_core(app, effects, false);
+}
+
+/// The recompute-over-cache chokepoint every `recents`/`walk` data reply
+/// funnels through (`handle_recents_loaded`, `handle_scanned`) — an empty
+/// query lists in-tree recents (MRU order) then out-of-tree recents (MRU
+/// order), then `walk` files in whatever order they arrived; a non-empty
+/// query fuzzy-ranks through [`rank::rank`] (all scoring and highlight-index
+/// computation happens there, never in render). Unlike [`reset_and_
+/// recompute`], a data reply did not come from the user changing anything —
+/// re-finds the path that was selected before the rebuild and keeps the
+/// cursor on it, falling back to the top only once that path is gone from
+/// the fresh results. A late reply must never snap the cursor (and the live
+/// preview riding it) away from a row the user already arrowed onto.
 pub(crate) fn recompute(app: &mut App, effects: &mut Effects) {
+    recompute_core(app, effects, true);
+}
+
+/// The shared rebuild `reset_and_recompute`/`recompute` both funnel
+/// through: rebuilds `results` from the live query, repositions the cursor
+/// per `preserve_selection`, then fires [`after_cursor_move`] iff the
+/// SELECTED PATH actually changed across the rebuild — comparing paths
+/// (not row indices, not query strings) is what lets two edits that
+/// happen to share the same top hit skip a redundant preview request,
+/// and what lets a data reply that reshuffles indices still recognize the
+/// user's own selection survived.
+fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool) {
+    if app.filesearch.is_none() {
+        return;
+    }
+    let previous_path = selected_candidate(app).map(|c| c.path.clone());
+    let restore_path = if preserve_selection {
+        previous_path.clone()
+    } else {
+        None
+    };
+    let height = keys::page_amount(app).max(1) as usize;
+    let margin = (height / 4).min(4);
+
     let Some(state) = app.filesearch.as_mut() else {
         return;
     };
@@ -281,17 +311,33 @@ pub(crate) fn recompute(app: &mut App, effects: &mut Effects) {
     } else {
         rank::rank(state);
     }
-    if let Some(state) = app.filesearch.as_mut() {
-        state.nav.cursor = 0;
-        state.nav.top = 0;
+
+    let len = state.results.len();
+    let cursor = restore_path
+        .and_then(|path| find_row_for_path(state, &path))
+        .unwrap_or(0);
+    state.nav.cursor = cursor;
+    state.nav.follow(len, height, margin, 0);
+
+    let selected_now = selected_candidate(app).map(|c| c.path.clone());
+    if selected_now != previous_path {
+        after_cursor_move(app, effects);
     }
-    after_cursor_move(app, effects);
+}
+
+/// The row (if any) whose candidate names `path` in the just-rebuilt
+/// `state.results` — [`recompute_core`]'s own lookup for relocating a
+/// preserved selection after a rebuild that may have reordered everything
+/// around it.
+fn find_row_for_path(state: &FileSearchState, path: &Path) -> Option<usize> {
+    state.results.iter().position(|row| {
+        candidate_by(&state.recents, &state.walk, row.candidate_idx).is_some_and(|c| c.path == path)
+    })
 }
 
 /// The empty-query listing: in-tree recents (MRU order) then out-of-tree
 /// recents (MRU order), then `walk` files in scan order — capped at
-/// [`RESULT_CAP`]. No score, no highlight indices: nothing was matched
-/// against.
+/// [`RESULT_CAP`]. No highlight indices: nothing was matched against.
 fn list_all(state: &mut FileSearchState) {
     let mut order: Vec<usize> = Vec::with_capacity(state.recents.len() + state.walk.len());
     order.extend(
@@ -317,7 +363,6 @@ fn list_all(state: &mut FileSearchState) {
         .into_iter()
         .map(|candidate_idx| ResultRow {
             candidate_idx,
-            score: 0,
             indices: Vec::new(),
         })
         .collect();
