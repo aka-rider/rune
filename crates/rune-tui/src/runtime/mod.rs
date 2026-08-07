@@ -217,6 +217,21 @@ pub enum Msg {
         generation: u64,
         result: Result<Vec<String>, String>,
     },
+    /// The fuzzy file finder's recents load, requested once per finder-open
+    /// (`filesearch::open`) and delivered by [`filesearch_recents_cmd::
+    /// load_filesearch_recents_cmd`]. `generation` echoes `FileSearchState::
+    /// generation` minted at the request — `filesearch::
+    /// handle_recents_loaded` drops a reply whose generation no longer
+    /// matches (a close-then-reopen since issued it), the same shape
+    /// `Msg::SearchHistory` uses. A reader `Err` still carries this variant
+    /// (with an `Err` result) rather than folding into `Msg::Error`, for the
+    /// same reason `SearchHistory` does: a stale reply is discarded exactly
+    /// like a fresh one instead of always surfacing a message regardless of
+    /// generation.
+    FileSearchRecentsLoaded {
+        generation: u64,
+        result: Result<Vec<crate::filesearch::Candidate>, String>,
+    },
     Quit,
 }
 
@@ -620,6 +635,11 @@ mod md_fence;
 // 500-line budget.
 mod snapshot_timer;
 pub use snapshot_timer::SnapshotTimer;
+
+// The fuzzy file finder's recents-load `Cmd` constructor — split out for
+// the same reason `highlight_cmd`/`snapshot_timer` were (500-line budget).
+mod filesearch_recents_cmd;
+pub use filesearch_recents_cmd::load_filesearch_recents_cmd;
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {

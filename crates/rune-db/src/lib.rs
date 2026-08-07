@@ -71,7 +71,7 @@ mod writer_lifecycle;
 mod writer_ops;
 
 pub use adopt::{adopt_equal, resolve_abandon, resolve_adopt};
-pub use document::{DocRef, open_path};
+pub use document::{DocRef, open_path, recent_paths};
 pub use error::Error;
 pub use journal::{
     EditRow, Step, append_edit, current_seq, edits_in_range, move_undo_pos, redo_peek, undo_peek,

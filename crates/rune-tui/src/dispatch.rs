@@ -168,6 +168,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::SearchHistory { generation, result } => {
             crate::search::handle_history_loaded(app, generation, result)
         }
+        Msg::FileSearchRecentsLoaded { generation, result } => {
+            crate::filesearch::handle_recents_loaded(app, generation, result, effects)
+        }
         Msg::Quit => {
             app.should_quit = true;
         }

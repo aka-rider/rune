@@ -8,14 +8,17 @@
 //! keystroke aimed at the finder never falls through and mutates the
 //! document buffer underneath it.
 
+use std::path::PathBuf;
+
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
 use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::pane::Pane;
 use crate::runtime::Effects;
 
-use super::{cancel, recompute};
+use super::{cancel, candidate_at, close, recompute};
 
 const SHIFT: Mods = Mods {
     shift: true,
@@ -157,14 +160,34 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
                 state.nav.last(len);
             }
         }
-        // Every result list is empty until a later work package's Cmds
-        // populate `recents`/`walk`, so there is never anything to open yet
-        // — feedback rather than a silently swallowed Enter.
-        FileSearchCommand::Open => {
-            crate::messages::info(app, "no file selected");
-        }
+        FileSearchCommand::Open => open_selected(app, effects),
         FileSearchCommand::Cancel => cancel(app, effects),
     }
+}
+
+/// `Enter`: opens the selected candidate through the same tab-cap-respecting
+/// chokepoint the Explorer's own `Open` uses (`workspace::
+/// open_path_checked`) — a plain [`close`], not [`cancel`], since a
+/// successful open IS the finder's own "done", not something to undo by
+/// restoring `return_to`. A read failure is already reported by
+/// `open_path_checked` itself; nothing selected (an empty result list, the
+/// cursor past the end) reports through the message log and leaves the
+/// finder open rather than swallowing the keystroke.
+fn open_selected(app: &mut App, effects: &mut Effects) {
+    let Some(path) = selected_path(app) else {
+        crate::messages::info(app, "no file selected");
+        return;
+    };
+    close(app);
+    if crate::workspace::open_path_checked(app, &path, effects).is_some() {
+        app.set_focus_pane(Pane::Editor, effects);
+    }
+}
+
+fn selected_path(app: &App) -> Option<PathBuf> {
+    let state = app.filesearch.as_ref()?;
+    let row = state.results.get(state.nav.cursor)?;
+    candidate_at(state, row.candidate_idx).map(|c| c.path.clone())
 }
 
 /// Erases one GRAPHEME CLUSTER, not one `char` — the same reasoning
@@ -232,9 +255,10 @@ pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::filesearch::Candidate;
     use crate::focus::{self, FocusTarget};
     use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, Vfs};
     use std::sync::Arc;
 
     fn app() -> App {
@@ -247,6 +271,13 @@ mod tests {
     fn char_key(c: char) -> KeyInput {
         KeyInput {
             code: KeyCode::Char(c),
+            mods: Mods::NONE,
+        }
+    }
+
+    fn enter_key() -> KeyInput {
+        KeyInput {
+            code: KeyCode::Enter,
             mods: Mods::NONE,
         }
     }
@@ -314,5 +345,60 @@ mod tests {
         assert!(app.filesearch.is_none());
         assert_eq!(app.active, second);
         assert_eq!(app.focus(), crate::pane::Pane::Editor);
+    }
+
+    #[test]
+    fn enter_opens_the_selected_candidate_and_returns_to_the_editor() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(std::path::Path::new("/root/a.md"), b"hello world")
+            .expect("seed file");
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        app.frame_width = 120;
+        app.frame_height = 34;
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        let generation = app.filesearch.as_ref().expect("open").generation;
+        crate::filesearch::handle_recents_loaded(
+            &mut app,
+            generation,
+            Ok(vec![Candidate {
+                path: PathBuf::from("/root/a.md"),
+                display: "a.md".to_string(),
+                in_tree: true,
+                mru_rank: None,
+            }]),
+            &mut effects,
+        );
+
+        assert_eq!(
+            handle_key(&mut app, enter_key(), &mut effects),
+            KeyOutcome::Consumed
+        );
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(app.focus(), crate::pane::Pane::Editor);
+        assert_eq!(
+            app.active_doc().file_path.as_deref(),
+            Some(std::path::Path::new("/root/a.md"))
+        );
+    }
+
+    #[test]
+    fn enter_with_nothing_selected_reports_and_stays_open() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+
+        assert_eq!(
+            handle_key(&mut app, enter_key(), &mut effects),
+            KeyOutcome::Consumed
+        );
+
+        assert!(
+            app.filesearch.is_some(),
+            "nothing selected must never close the finder"
+        );
+        assert_eq!(crate::messages::newest_text(&app), Some("no file selected"));
     }
 }

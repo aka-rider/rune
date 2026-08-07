@@ -35,6 +35,10 @@ pub enum ReaderRequestKind {
     /// consulted to make a decision, so it belongs on this thread exactly
     /// like `GetBlob`.
     RecentSearches { limit: u32 },
+    /// The `limit` most recently opened real-file document paths, newest
+    /// first — the fuzzy file finder's own MRU list, exactly as
+    /// stale-tolerant and non-decision-input as `RecentSearches`.
+    RecentDocuments { limit: u32 },
 }
 
 /// The reply to a [`ReaderRequestKind`].
@@ -48,6 +52,8 @@ pub enum ReaderReply {
     Blob(Vec<u8>),
     /// `RecentSearches`'s reply: MRU-first query strings.
     RecentSearches(Vec<String>),
+    /// `RecentDocuments`'s reply: MRU-first document paths.
+    RecentDocuments(Vec<String>),
 }
 
 struct Request {
@@ -184,6 +190,9 @@ fn execute(conn: &Connection, kind: ReaderRequestKind) -> Result<ReaderReply, Er
         ReaderRequestKind::RecentSearches { limit } => {
             crate::search_history::recent(conn, limit).map(ReaderReply::RecentSearches)
         }
+        ReaderRequestKind::RecentDocuments { limit } => {
+            crate::document::recent_paths(conn, limit).map(ReaderReply::RecentDocuments)
+        }
     }
 }
 
@@ -297,6 +306,53 @@ mod tests {
                 .is_err(),
             "query after shutdown must return an error, not block"
         );
+
+        drop(bootstrap);
+    }
+
+    /// Pins the `RecentDocuments` request all the way through the real
+    /// reader thread — `recent_paths` itself is unit-tested against a bare
+    /// `Connection` in `document.rs`, but only this test proves the
+    /// `ReaderRequestKind`/`ReaderReply` wiring around it is actually
+    /// correct end to end.
+    #[test]
+    fn recent_documents_round_trips_through_the_reader() {
+        let uri = "file:rune-db-reader-test-recentdocuments?mode=memory&cache=shared";
+        let mut bootstrap = Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .expect("bootstrap shared memdb");
+        crate::schema::apply(&bootstrap).expect("apply schema");
+
+        let vfs = rune_vfs::Mem::new();
+        let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        crate::document::open_path(
+            &mut bootstrap,
+            &vfs,
+            std::path::Path::new("/doc/a.md"),
+            base,
+        )
+        .expect("open a");
+        crate::document::open_path(
+            &mut bootstrap,
+            &vfs,
+            std::path::Path::new("/doc/b.md"),
+            base + std::time::Duration::from_secs(10),
+        )
+        .expect("open b");
+
+        let handle = spawn(uri).expect("spawn reader");
+        let reply = handle
+            .query(ReaderRequestKind::RecentDocuments { limit: 10 })
+            .expect("recent documents");
+        assert_eq!(
+            reply,
+            ReaderReply::RecentDocuments(vec!["/doc/b.md".to_string(), "/doc/a.md".to_string()])
+        );
+        handle.shutdown();
 
         drop(bootstrap);
     }
