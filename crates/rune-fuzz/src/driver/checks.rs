@@ -79,6 +79,21 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
     invariant::wrap_rt(content, &view.wrap, &line_lens)
 }
 
+/// The `^1`-`^0` chord that jumps straight to the tab at `idx`
+/// (`GlobalCommand::TabSwitch`) — `^0` names the TENTH tab, matching the
+/// digit the tab strip itself prints. `None` past the tenth tab, which no
+/// chord names at all.
+fn tab_switch_key(idx: usize) -> Option<KeyInput> {
+    const DIGITS: [char; 10] = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+    Some(KeyInput {
+        code: KeyCode::Char(*DIGITS.get(idx)?),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    })
+}
+
 /// Hands the keyboard back to the editor before the end-of-session
 /// undo/redo drive begins, using the same keys a user would press — never
 /// by poking `App` directly. `⌘Z` reaching the SEEDED document (not just
@@ -86,16 +101,21 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// property they assert: per-pane routing means
 /// an unfocused editor correctly ignores `⌘Z` (only `Editor`'s own keymap
 /// binds `Command::Undo`), and a modal correctly captures every key at
-/// stage 1 before any pane sees it. Three preconditions are reachable at
+/// stage 1 before any pane sees it. Four preconditions are reachable at
 /// session end today: `^b` (`GlobalCommand::FocusExplorer`) leaves the
 /// Explorer focused — `^x` was retired as the explorer chord once the
 /// held-space leader took over as the primary way in — an Explorer
-/// `Enter` on a path missing from the fuzz `Mem` posts an error message; and
+/// `Enter` on a path missing from the fuzz `Mem` posts an error message;
 /// `F1` (`GlobalCommand::Help`)
 /// switches `app.active` itself to the virtual Help document —
 /// `UNDO-TOTAL`/`REDO-TOTAL` compare against the ORIGINAL seed content,
 /// which the Help document can never match (it isn't even the same
-/// document, let alone journaled the seed's edits). Each press runs
+/// document, let alone journaled the seed's edits); and a Tabs-pane
+/// `Enter` (`TabsCommand::Select`) activates whatever tab its cursor sits
+/// on, which is just as likely to be the untitled draft `App::new` mints
+/// before the seed is ever opened — a real, editable, journaled document
+/// whose own undo converges perfectly well to an origin content that is
+/// simply not the seed's. Each press runs
 /// through `step_and_check`, so every per-step invariant still applies
 /// and a violation here still stops the session, same as any other step.
 ///
@@ -103,16 +123,13 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// without touching a buffer byte. Then
 /// `F1` again, only while the Help document is active — `workspace::
 /// toggle_help`'s own docs say this switches back to whatever was active
-/// right before Help was last activated, ORDINARILY the seeded document
-/// (this driver never OPENS more than one non-Help document). That is not
-/// an absolute guarantee: a quit-chord's dirty-close Guard, armed on a
-/// document other than the one currently active, can discard the seeded
-/// document entirely (`[D]iscard`) before this runs — `toggle_help`'s own
-/// fallback then has nowhere else to switch to and lands back on Help
-/// (`TODO-fuzz-undo-total-dirty-close-discard.md`, fixed: the caller,
-/// `drive_end_of_session_checks`, now checks `seed_doc` still exists BEFORE
-/// calling this function at all, so that case never reaches this `F1`
-/// press in the first place). Then, only while focus is `Pane::Title`,
+/// right before Help was last activated, which is NOT necessarily the
+/// seeded document: `App::new` mints an untitled draft before the seed is
+/// ever opened and `⌘N` can mint further ones, so a session always has at
+/// least two non-Help documents this could land on. Pinning the seed as
+/// active is the tab-switch step's job below; this press exists only to
+/// leave the Help document, which binds no editing key at all. Then, only
+/// while focus is `Pane::Title`,
 /// plain `Escape` — NEVER `^B` there, and deliberately BEFORE
 /// the generic `^B` branch below: `^B` (`GlobalCommand::ToggleLeft`) is a
 /// TOGGLE, and pressing it while the title is focused would (after the
@@ -194,6 +211,29 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
             return true;
         }
     }
+    // `⌘Z` reaches whichever document is ACTIVE, so the seed merely being
+    // open is not the precondition — it has to be the one under the
+    // keyboard. A session's own keys can leave another one there: a Tabs
+    // `Enter` on the untitled draft `App::new` mints before the seed is
+    // opened, a `⌘N` draft, an Explorer selection. `^1`-`^0` is the one
+    // chord that names a tab positionally from any pane, and it lands focus
+    // on the Editor itself, so it doubles as the restore below. Driven
+    // BEFORE the merge and reading-view restores, both of which describe
+    // the active document and would otherwise be read off the wrong one.
+    if state.app.active != state.seed_doc
+        && let Some(idx) = state
+            .app
+            .tabs
+            .order
+            .iter()
+            .position(|&t| t == state.seed_doc)
+        && let Some(key) = tab_switch_key(idx)
+    {
+        let (msg, tag) = key_step(key);
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
     if state.app.focus() != Pane::Editor {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Char('b'),
@@ -256,18 +296,26 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
 /// point the session stopped at (`invariant::redo_total`'s docs).
 /// Skipped once a violation already stopped the session, or the session
 /// tore itself down via quit (G15: a torn-down model must not receive
-/// more input). Also skipped once the seeded document
-/// itself no longer exists (`TODO-fuzz-undo-total-dirty-close-discard.md`):
-/// a quit-chord's dirty-close Guard, armed on a document other than the one
-/// currently active, can legitimately discard the seed via its own
-/// `[D]iscard` key — production working exactly as designed (the
-/// per-document dirty gate has no "but it's not the active one" exception).
-/// A discarded document has no undo history left to prove anything about;
-/// driving `restore_editor_focus`'s `F1` press in that state would only
-/// land back on Help (its own fallback has nothing else to switch to), and
-/// `UNDO-TOTAL`/`REDO-TOTAL` would then be comparing the seed against a
-/// document that was never the seed to begin with. This is the driver's
-/// own precondition to maintain, not a relaxation of either checker.
+/// more input).
+///
+/// Also skipped whenever the drive would not be running on the SEEDED
+/// document. Both checkers compare against the content THIS session was
+/// seeded with, while `⌘Z` reaches whichever document is active — run them
+/// on any other one and they measure real convergence against the wrong
+/// operand: an untitled draft undone to `journal_pos == 0` is legitimately
+/// empty, and reporting that as a failed `UNDO-TOTAL` says nothing about
+/// undo at all. `restore_editor_focus` drives the seed back to active
+/// first; this gate is what makes the guarantee hold unconditionally,
+/// whatever keys the session ended on and whatever document they left
+/// active.
+///
+/// The seed can also be gone outright before any of this runs — a
+/// quit-chord's dirty-close Guard, armed on a document other than the one
+/// currently active, legitimately discards it via `[D]iscard`, production
+/// working exactly as designed (the per-document dirty gate has no "but
+/// it's not the active one" exception). A discarded document has no undo
+/// history left to prove anything about and no tab to switch back to, so
+/// that case leaves before spending a single restore keystroke on it.
 pub(super) fn drive_end_of_session_checks(
     state: &mut State,
     prev: &mut Snapshot,
@@ -278,6 +326,7 @@ pub(super) fn drive_end_of_session_checks(
         && !state.app.should_quit
         && state.app.documents.contains_key(&state.seed_doc)
         && !restore_editor_focus(state, prev, outcome)
+        && state.app.active == state.seed_doc
     {
         let pre_undo = prev.clone();
         let bound = pre_undo.journal_len.saturating_add(8);
