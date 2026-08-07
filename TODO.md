@@ -10,10 +10,11 @@ entry is deleted in the same commit that fixes it.
 ## Data-safety
 
 ### rune-merge scrapes diffy's rendered conflict markers
-- **Where**: `crates/rune-merge/src/hunks.rs:39` (`merge_bytes` call), `crates/rune-merge/src/hunks.rs:109-183` (`parse_diff3`, `find_subslice`, `anchor_section`)
+- **Where**: `crates/rune-merge/src/hunks.rs:41` (`merge_bytes` call), `crates/rune-merge/src/hunks.rs:111-192` (`parse_diff3`, `find_subslice`, `anchor_section`)
 - **Wrong**: `parse_diff3` re-parses diffy's rendered `<<<<<<<`/`=======`/`>>>>>>>` output by line-prefix matching, and `anchor_section` re-anchors each section by first-occurrence substring search. A document already containing marker-shaped lines can mis-segment (bytes reassigned across Clean/Conflict hunks) or mis-anchor on repeated lines — both silent, on a data-destructive path.
 - **Instead**: get structured hunks instead of parsing display form; at minimum scan inputs for the longest marker run and call `set_conflict_marker_length` so collision is unrepresentable, and anchor by consumed-byte accounting, not content search.
 - **Done when**: conflict segmentation no longer depends on parsing diffy's rendered text, or marker-length collision is provably unrepresentable and anchoring is position-accounted.
+- **Update 2026-08-07 (WP-D)**: a real anchor failure (diffy's diff3 marker text newline-terminates a section's final line even when the source input has no trailing newline there) was root-caused and fixed with a bounded trailing-newline retry, and a failed anchor now widens only its own run of conflicts instead of collapsing the whole file (see `parse_hunks`). The repeated-marker-line collision risk this entry originally raised is untouched by that fix and remains open.
 
 ### `published_not_durable` honored at only 1 of 4 publish sites
 - **Where**: contract at `crates/rune-vfs/src/lib.rs:88`; honored at `crates/rune-tui/src/save/materialize.rs:294`; ignored at `crates/rune-db/src/rename_replace.rs:72`, `crates/rune-db/src/rename_bind.rs:35-40`, `crates/rune-tui/src/rename_create.rs:158`
@@ -170,7 +171,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-syntax/src/syntax.rs` — 505
   - `crates/rune-tui/src/merge/landing.rs` — 503
   - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-merge/src/hunks.rs` — 501
+  - `crates/rune-merge/src/hunks.rs` — 676 (grew past the threshold in WP-D fixing the anchoring bug; the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
 - **Wrong**: 24 source files exceed the 500-line house rule, none ledgered.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
