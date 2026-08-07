@@ -132,4 +132,98 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
         "expected the disk-changed hint, got {:?}",
         footer_text(&app_b)
     );
+    assert!(
+        rune_tui::messages::newest_text(&app_b)
+            .is_some_and(|s| s.contains("recovered unsaved changes") && s.contains("disk")),
+        "G0: a bridged-and-diverged load must post an open-time banner, got {:?}",
+        rune_tui::messages::newest_text(&app_b)
+    );
+}
+
+/// The control: a dead session's own draft bridged onto disk content that
+/// has NOT moved (`Inherited::Bridged`, not `Diverged` — same shape
+/// `db_wiring_hydrate.rs`'s restart test exercises) installs the draft dirty
+/// exactly like the diverged case above, but must NEVER post the G0 banner —
+/// this is an ordinary unsaved edit, not a recovered draft whose baseline
+/// disk has moved out from under.
+#[test]
+fn bridged_load_without_disk_divergence_posts_no_g0_banner() {
+    let dir = temp_db_dir("bridged-load-no-divergence");
+    let db_path = dir.join("rune-v1.db");
+    let doc_path = Path::new("/doc.md");
+
+    let mem = Mem::new();
+    publish(&mem, doc_path, b"shared content");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (store_a, bridge_a, load_a) = open_and_load(&db_path, Arc::clone(&vfs), doc_path);
+    let db_a = db_from(store_a, bridge_a, false);
+    let doc_db_a = doc_db_from(&load_a);
+
+    let mut app_a = App::new(
+        Buffer::new(load_a.recovered.clone()),
+        Some(doc_path.to_path_buf()),
+        Arc::clone(&vfs),
+        Some(db_a),
+    );
+    let id_a = app_a.active;
+    app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(0);
+    for ch in "UNSAVED ".chars() {
+        press(&mut app_a, ch);
+    }
+
+    let store_a = app_a.db.take().expect("app_a has a store").store;
+    store_a.shutdown();
+
+    // Disk is deliberately left untouched — the dead session's own baseline
+    // still matches it, so this is `Inherited::Bridged`, never `Diverged`.
+
+    let bridge_b = rune_tui::db::DbBridge::bootstrap();
+    let (store_b, _warning) =
+        Store::open(&db_path, Arc::clone(&vfs), bridge_b.on_event()).expect("open store b");
+    store_b.set_liveness_check(Arc::new(|_pid, _started_at| false));
+    let op_id = store_b.load(doc_path).expect("enqueue load b");
+    let load_b = match bridge_b.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
+        DbEvent::Fatal { .. } => true,
+    }) {
+        DbEvent::Ok {
+            result: OpOutcome::Load(r),
+            ..
+        } => *r,
+        DbEvent::Ok { result, .. } => panic!("unexpected reply to Load: {result:?}"),
+        DbEvent::Err { error, .. } => panic!("load b failed: {error}"),
+        DbEvent::Fatal { error } => panic!("writer b fatal during load: {error}"),
+    };
+    assert_eq!(
+        load_b.sync.kind,
+        SyncKind::BufferAhead,
+        "test setup: an unmoved disk with a bridged unsaved edit is BufferAhead, never Diverged"
+    );
+
+    let db_b = db_from(store_b, bridge_b, false);
+    let mut app_b = App::new(
+        Buffer::new(load_b.disk_content.clone()),
+        Some(doc_path.to_path_buf()),
+        Arc::clone(&vfs),
+        Some(db_b),
+    );
+    let id_b = app_b.active;
+    let issued_version = Some(app_b.doc(id_b).unwrap().buffer.version());
+
+    handle_load_ack(&mut app_b, id_b, load_b, issued_version, false);
+
+    assert_eq!(
+        app_b.doc(id_b).unwrap().buffer.content(),
+        "UNSAVED shared content",
+        "the bridged draft must still be adopted"
+    );
+    assert!(app_b.doc(id_b).unwrap().is_dirty());
+    assert_eq!(
+        rune_tui::messages::posts(&app_b),
+        0,
+        "no divergence to report — the G0 banner must not fire, got {:?}",
+        rune_tui::messages::newest_text(&app_b)
+    );
 }
