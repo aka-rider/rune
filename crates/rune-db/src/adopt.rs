@@ -39,8 +39,8 @@ pub(crate) fn record_adoption_tx(
         .flatten();
 
     tx.execute(
-        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at, confirmed) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![
             doc_id,
             session_id,
@@ -53,7 +53,8 @@ pub(crate) fn record_adoption_tx(
             stat.nlink,
             meta.origin,
             supersedes,
-            at
+            at,
+            meta.confirmed
         ],
     )?;
     let new_id = tx.last_insert_rowid();
@@ -78,6 +79,7 @@ pub(crate) fn record_adoption_tx(
         origin: meta.origin.to_string(),
         supersedes,
         at: at.to_string(),
+        confirmed: meta.confirmed,
     })
 }
 
@@ -124,6 +126,7 @@ pub fn adopt_equal(
             blob_hash: &source.blob_hash,
             seq: Some(head_seq),
             origin: "resolve",
+            confirmed: None,
         },
         &stat,
         now,
@@ -170,6 +173,7 @@ pub fn resolve_adopt(
             blob_hash: &source.blob_hash,
             seq: Some(seq),
             origin: "resolve",
+            confirmed: None,
         },
         &stat,
         now,
@@ -275,6 +279,7 @@ mod tests {
                 blob_hash: &hash_1,
                 seq: Some(1),
                 origin: "save",
+                confirmed: None,
             },
             &test_stat(),
             SystemTime::now(),
@@ -334,6 +339,7 @@ mod tests {
                 blob_hash: &hash_1,
                 seq: Some(1),
                 origin: "save",
+                confirmed: None,
             },
             &test_stat(),
             SystemTime::now(),

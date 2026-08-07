@@ -82,6 +82,7 @@ fn anchor_on_disk_tx(
             blob_hash: hash,
             seq: Some(ctx.load_seq),
             origin: "load",
+            confirmed: None,
         },
         ctx.live_stat,
         &crate::session::format_rfc3339_nanos(ctx.now),
@@ -154,6 +155,7 @@ fn anchor_diverged(
                 blob_hash: &baseline.blob_hash,
                 seq: Some(ctx.load_seq),
                 origin: "load",
+                confirmed: None,
             },
             &baseline.stat(),
             &crate::session::format_rfc3339_nanos(ctx.now),
@@ -173,6 +175,7 @@ fn anchor_diverged(
                 blob_hash: ctx.disk_hash,
                 seq: None,
                 origin: "load",
+                confirmed: None,
             },
             ctx.live_stat,
             &crate::session::format_rfc3339_nanos(ctx.now),
@@ -306,6 +309,7 @@ mod tests {
             origin: "load".to_string(),
             supersedes: None,
             at: "t".to_string(),
+            confirmed: None,
         };
 
         let outcome = anchor_first_load(

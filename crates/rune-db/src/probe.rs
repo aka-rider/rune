@@ -100,6 +100,7 @@ pub fn probe(
                     data: &data,
                     seq: None,
                     origin: "probe",
+                    confirmed: None,
                 },
                 now,
             )?
