@@ -170,6 +170,15 @@ pub struct PendingOp {
     /// stacking redundant ones on every rapid tab switch would grow the
     /// store unboundedly for no new information).
     pub is_probe: bool,
+    /// `Some(save_epoch)` iff this op is a `Probe` — the issuing document's
+    /// `DocDb::save_epoch` at enqueue time. The `OpOutcome::Sync` ack
+    /// handler compares this against `DocDb::save_epoch` as it stands when
+    /// the reply lands: a materialize publishing in between means the disk
+    /// this probe read is no longer the current one, and the reply is
+    /// dropped rather than trusted — the same generation-echo shape
+    /// `merge_gen` below uses, scoped to one document's own save lineage
+    /// instead of a single app-wide counter.
+    pub probe_epoch: Option<u32>,
     /// `Some(generation)` iff this op is a `MergePrep` (plan WP3.S1/S5) — the
     /// generation `merge::begin` minted for this attempt at enqueue time.
     /// The landing handler (`merge::handle_merge_prep_ack`) compares this
@@ -200,6 +209,7 @@ impl PendingOp {
             issued_version: None,
             mints_scratch: false,
             is_probe: false,
+            probe_epoch: None,
             merge_gen: None,
             binding_only: false,
         }
@@ -211,6 +221,7 @@ impl PendingOp {
             issued_version: Some(issued_version),
             mints_scratch: false,
             is_probe: false,
+            probe_epoch: None,
             merge_gen: None,
             binding_only,
         }
@@ -222,17 +233,19 @@ impl PendingOp {
             issued_version: None,
             mints_scratch: true,
             is_probe: false,
+            probe_epoch: None,
             merge_gen: None,
             binding_only: false,
         }
     }
 
-    pub fn probe(doc: DocumentId) -> PendingOp {
+    pub fn probe(doc: DocumentId, save_epoch: u32) -> PendingOp {
         PendingOp {
             doc,
             issued_version: None,
             mints_scratch: false,
             is_probe: true,
+            probe_epoch: Some(save_epoch),
             merge_gen: None,
             binding_only: false,
         }
@@ -244,6 +257,7 @@ impl PendingOp {
             issued_version: None,
             mints_scratch: false,
             is_probe: false,
+            probe_epoch: None,
             merge_gen: Some(generation),
             binding_only: false,
         }
@@ -329,6 +343,22 @@ pub struct DocDb {
     /// normally — this is never a license to adopt someone else's bytes.
     /// Cleared the moment a real observation lands again.
     pub pending_rebaseline_hash: Option<String>,
+    /// This session's save epoch for `db_id` — bumped exactly once, inside
+    /// `materialize_ack::handle_materialize_ack`'s committed branch, the
+    /// moment a publish's `MaterializeRecord` ack lands. A `Probe` records
+    /// this value onto its own `PendingOp` at issue time
+    /// (`PendingOp::probe_epoch`'s own doc comment); the ack handler drops
+    /// a reply whose recorded epoch no longer matches, since a publish
+    /// landing in between means the disk it read is stale.
+    pub save_epoch: u32,
+    /// Set by `db_enqueue::probe` when a probe was skipped because
+    /// `save_in_flight` was true at the moment it was asked for — a save's
+    /// publish invalidates whatever the disk looked like before it, so
+    /// probing anyway would only end up dropped by the epoch check above.
+    /// Consumed (taken and cleared) by `handle_materialize_ack`'s own tail
+    /// once the save this deferral was waiting on resolves, issuing the
+    /// probe fresh against the post-save world exactly once.
+    pub pending_probe: bool,
 }
 
 impl DocDb {
@@ -340,6 +370,8 @@ impl DocDb {
             last_known_seq,
             snapshot_generation: 0,
             pending_rebaseline_hash: None,
+            save_epoch: 0,
+            pending_probe: false,
         }
     }
 

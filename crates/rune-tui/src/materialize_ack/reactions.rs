@@ -115,6 +115,12 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         // have supplied `saved` (and so a fresh CAS baseline) survived.
         if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
             doc_db.bind_new = false;
+            // The publish just committed — any `Probe` issued before this
+            // reply lands is now describing a disk that no longer exists;
+            // bumping the epoch here is what makes `db_dispatch`'s
+            // `OpOutcome::Sync` arm drop such a stale reply instead of
+            // trusting it.
+            doc_db.save_epoch = doc_db.save_epoch.wrapping_add(1);
         }
         if let Some(saved) = &mat.saved
             && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
@@ -328,6 +334,16 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 );
             }
         }
+    }
+    // The save this document's `save_in_flight` gated is resolved either
+    // way now — a `Probe` deferred against it (`db_enqueue::probe`'s own
+    // doc comment) can finally read the post-save world exactly once.
+    let deferred_probe = app
+        .doc_mut(id)
+        .and_then(|d| d.db.as_mut())
+        .is_some_and(|doc_db| std::mem::take(&mut doc_db.pending_probe));
+    if deferred_probe {
+        crate::db_enqueue::probe(app, id);
     }
     recompute_dirty(app, id);
     close_if_pending(app, id, mat.committed);

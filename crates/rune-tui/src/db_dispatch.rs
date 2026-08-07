@@ -80,7 +80,15 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             if let Some(pending) = app.db_ops.remove(&op_id)
                 && let Some(doc) = app.doc_mut(pending.doc)
             {
-                doc.last_sync = Some(state.kind);
+                let current_epoch = doc.db.as_ref().map(|d| d.save_epoch);
+                if pending.probe_epoch == current_epoch {
+                    doc.last_sync = Some(state.kind);
+                }
+                // Stale otherwise: a materialize publish landed between
+                // this probe's issue and its own ack — the disk fact it
+                // carries no longer describes the current world, so it is
+                // dropped rather than trusted (mirrors the `MergePrep`
+                // ticket check below).
             }
         }
         DbEvent::Ok {
