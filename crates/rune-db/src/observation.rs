@@ -63,7 +63,11 @@ pub struct Observation {
     /// already newest (nothing to chain to).
     pub supersedes: Option<i64>,
     pub at: String,
-    /// `None` for legacy/unclassified rows, `Some(true/false)` for a confirmed/unconfirmed sighting — which reads earn which is later work.
+    /// `None` for a legacy/unclassified row; `Some(true)` for a sighting
+    /// trusted as a stable fact (only such a row may short-circuit a probe,
+    /// serve as a merge Theirs, or become a CAS baseline); `Some(false)`
+    /// for a sighting that failed classification (an unstable bracket, or a
+    /// shrink not yet independently re-sighted) and decides nothing.
     pub confirmed: Option<bool>,
 }
 
@@ -150,7 +154,8 @@ pub struct ObservationMeta<'a> {
     pub seq: Option<i64>,
     /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
     pub origin: &'a str,
-    /// Carried straight to the `confirmed` column — `None` for every caller in this crate today (classification is later work).
+    /// Carried straight to the `confirmed` column — see [`Observation::confirmed`]
+    /// for what each value means.
     pub confirmed: Option<bool>,
 }
 
@@ -240,7 +245,8 @@ pub struct ObserveInput<'a> {
     pub seq: Option<i64>,
     /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
     pub origin: &'a str,
-    /// Carried straight to the `confirmed` column — `None` for every caller in this crate today (classification is later work).
+    /// Carried straight to the `confirmed` column — see [`Observation::confirmed`]
+    /// for what each value means.
     pub confirmed: Option<bool>,
 }
 
