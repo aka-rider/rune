@@ -48,9 +48,13 @@ pub struct Candidate {
 }
 
 /// One ranked row in the finder's result list: which candidate it names,
-/// and the matched CHAR indices (`nucleo_matcher::Utf32Str` positions, not
-/// byte offsets) `render::filesearch` bolds — empty until a non-empty query
-/// runs the candidate through `rank::rank`.
+/// and the matched `nucleo_matcher::Utf32Str` positions `render::
+/// filesearch` bolds — empty until a non-empty query runs the candidate
+/// through `rank::rank`. `Utf32Str`'s unit is NOT stable across strings:
+/// it is raw UTF-8 byte offsets when every grapheme's leading codepoint is
+/// ASCII (which includes NFD names like "café.md"), grapheme positions
+/// otherwise — the render side re-derives that same branch decision per
+/// string rather than assuming one unit.
 pub struct ResultRow {
     pub candidate_idx: usize,
     pub indices: Vec<u32>,
