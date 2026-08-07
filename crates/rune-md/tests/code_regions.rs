@@ -257,3 +257,100 @@ fn a_markdown_document_with_no_code_has_no_regions() {
 
     assert!(regions.is_empty());
 }
+
+#[test]
+fn frontmatter_is_a_yaml_code_region() {
+    // Frontmatter carries no info string a document could tag — its language
+    // is implied by the `---` delimiter that opened it.
+    let (buf, regions) = markdown_regions("---\ntitle: x\ndraft: true\n---\n\n# H\n");
+
+    assert_eq!(
+        regions.len(),
+        1,
+        "frontmatter must yield exactly one region"
+    );
+    let region = &regions[0];
+    assert_eq!(region.info, "yaml");
+    assert_eq!(
+        region.content.len(),
+        2,
+        "one range per physical body line, delimiters excluded"
+    );
+    assert_eq!(reconstructed(&buf, region), "title: x\ndraft: true");
+}
+
+#[test]
+fn frontmatter_rows_cover_its_delimiter_lines() {
+    // Lines 0..=3 are the opening `---`, two body lines, the closing `---`.
+    // A consumer painting a background behind the region needs all four.
+    let (_buf, regions) = markdown_regions("---\ntitle: x\ndraft: true\n---\n\n# H\n");
+
+    assert_eq!(
+        regions[0].rows,
+        0..4,
+        "rows must include both delimiter lines"
+    );
+}
+
+#[test]
+fn blank_bodied_frontmatter_still_publishes_a_region() {
+    // The one region deliberately published with nothing to highlight: its
+    // delimiter lines are part of its rows, so dropping it would silently
+    // erase the background from a document that visibly has frontmatter.
+    let (buf, regions) = markdown_regions("---\n\n---\n");
+
+    assert_eq!(
+        regions.len(),
+        1,
+        "a blank body still leaves rows to paint a background over"
+    );
+    assert_eq!(regions[0].rows, 0..3);
+    assert_eq!(reconstructed(&buf, &regions[0]), "");
+}
+
+#[test]
+fn two_thematic_breaks_at_the_top_are_not_frontmatter() {
+    // `---` immediately followed by `---` is two thematic breaks, never an
+    // empty frontmatter block — the boundary of what counts as frontmatter
+    // at all, decided by the parser rather than by the collection.
+    let (_buf, regions) = markdown_regions("---\n---\n# H\n");
+
+    assert!(
+        regions.is_empty(),
+        "two thematic breaks must never be reported as code, got {} region(s)",
+        regions.len()
+    );
+}
+
+#[test]
+fn unterminated_frontmatter_produces_no_region() {
+    let (_buf, regions) = markdown_regions("---\ntitle: x\n# H\n");
+
+    assert!(
+        regions.is_empty(),
+        "an unclosed `---` is a thematic break plus text, not code"
+    );
+}
+
+#[test]
+fn a_thematic_break_mid_document_is_not_a_region() {
+    let (_buf, regions) = markdown_regions("# H\n\n---\n\ntext\n");
+
+    assert!(
+        regions.is_empty(),
+        "only a `---` opening the document can be frontmatter"
+    );
+}
+
+#[test]
+fn frontmatter_precedes_a_later_fence_in_document_order() {
+    let (_buf, regions) = markdown_regions("---\na: 1\n---\n\n```rust\nfn f() {}\n```\n");
+
+    assert_eq!(regions.len(), 2);
+    assert_eq!(regions[0].info, "yaml");
+    assert_eq!(regions[1].info, "rust");
+    assert!(
+        regions[0].rows.end <= regions[1].rows.start,
+        "regions must be ordered by position"
+    );
+}

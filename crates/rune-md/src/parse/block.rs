@@ -4,8 +4,8 @@
 use super::blockquote::blockquote_markers;
 use super::{ScanHint, line_end_at, node_range};
 use crate::element::block::{
-    Block, BlockquoteM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM, ListM, ParagraphM,
-    VerbatimKind, VerbatimM,
+    Block, BlockquoteM, CodeFenceM, HeadingM, HrM, ListItemM, ListM, ParagraphM, VerbatimKind,
+    VerbatimM,
 };
 use crate::element::inline::Inline;
 use comrak::nodes::{AstNode, ListType, NodeValue};
@@ -324,10 +324,9 @@ fn build_block<'a>(
         // (verification round 5 — see that function's docs) by re-
         // parsing the whole document with the extension disabled instead
         // — so `range` here is always genuine.
-        BlockKind::FrontMatter => Some(Block::Frontmatter(FrontmatterM {
-            sm: RevealSm::new(RevealState::Revealed),
-            range,
-        })),
+        BlockKind::FrontMatter => Some(Block::Frontmatter(super::frontmatter::build(
+            content, starts, range, hint,
+        ))),
         BlockKind::Table => {
             super::table::build_table(content, starts, node, hint, range).or_else(|| {
                 // `build_table` returns `None` on anything unexpected: a
@@ -455,17 +454,4 @@ fn underline_of_setext_heading(
 /// Half-open byte-range overlap check.
 fn ranges_overlap(a: ByteRange, b: ByteRange) -> bool {
     a.start < b.end && b.start < a.end
-}
-
-/// True if `range`'s own last line — as comrak (via our conversion)
-/// reports it — is genuinely a closing `"---"` line: the sanity check
-/// `parse::frontmatter_extension_is_safe` uses to decide whether a
-/// `FrontMatter` node's reported range can be trusted at all (see that
-/// function's docs for the comrak-internal desync it exists to detect).
-pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> bool {
-    let Some(text) = content.get(range.start..range.end) else {
-        return false;
-    };
-    let trimmed = text.strip_suffix('\n').unwrap_or(text);
-    trimmed.rsplit('\n').next() == Some("---")
 }

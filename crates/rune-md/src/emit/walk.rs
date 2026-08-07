@@ -21,7 +21,7 @@ use super::walk_inline::emit_inlines;
 use super::{
     Accounted, EmitOut, assert_invariant, claim_visible, hide_range, push_span_split_by_line,
 };
-use crate::element::block::{Block, CodeFenceM, ListItemM};
+use crate::element::block::{Block, CodeFenceM, FrontmatterM, ListItemM};
 use crate::parse::line_at;
 use rune_syntax::SyntaxSpan;
 use rune_syntax::element::{ByteRange, RevealState};
@@ -85,6 +85,47 @@ fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut E
             line,
             code_fence_scope(),
             RevealState::Rendered,
+            out.spans,
+            out.accounted,
+        );
+    }
+}
+
+/// The `---` delimiter lines and the body between them carry different
+/// scopes: the body is a code region like a fence's content, the delimiters
+/// are not. Each piece is already exactly one physical line's range,
+/// computed at parse time — never re-derived from `fm.range` as one
+/// contiguous multi-line span, for the reason `emit_code_fence` documents.
+fn emit_frontmatter(content: &str, starts: &[usize], fm: &FrontmatterM, out: &mut EmitOut) {
+    if let Some(open) = fm.open {
+        push_span_split_by_line(
+            content,
+            starts,
+            open,
+            frontmatter_scope(),
+            RevealState::Revealed,
+            out.spans,
+            out.accounted,
+        );
+    }
+    for &line in &fm.content_lines {
+        push_span_split_by_line(
+            content,
+            starts,
+            line,
+            code_fence_scope(),
+            RevealState::Revealed,
+            out.spans,
+            out.accounted,
+        );
+    }
+    if let Some(close) = fm.close {
+        push_span_split_by_line(
+            content,
+            starts,
+            close,
+            frontmatter_scope(),
+            RevealState::Revealed,
             out.spans,
             out.accounted,
         );
@@ -341,17 +382,7 @@ pub(crate) fn emit_block(
                 super::decor::push_hr_decor(out, hr.line);
             }
         }
-        Block::Frontmatter(fm) => {
-            push_span_split_by_line(
-                content,
-                starts,
-                fm.range,
-                frontmatter_scope(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-        }
+        Block::Frontmatter(fm) => emit_frontmatter(content, starts, fm, out),
         Block::Verbatim(v) => {
             // MAJOR fix (verification round 9): `v.content_lines` — never
             // `v.range` directly — the same reason `emit_code_fence`

@@ -8,6 +8,7 @@
 mod block;
 mod blockquote;
 mod embed;
+pub(crate) mod frontmatter;
 mod inline;
 mod table;
 
@@ -106,7 +107,7 @@ pub fn options() -> Options<'static> {
     opts.extension.tasklist = true;
     opts.extension.table = true;
     opts.extension.wikilinks_title_after_pipe = true;
-    opts.extension.front_matter_delimiter = Some("---".to_owned());
+    opts.extension.front_matter_delimiter = Some(frontmatter::DELIMITER.to_owned());
     opts.extension.autolink = true;
     opts
 }
@@ -269,7 +270,7 @@ fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) 
             ) =>
         {
             let range = node_range(content, starts, first);
-            block::is_valid_frontmatter_close(content, range)
+            frontmatter::is_valid_frontmatter_close(content, range)
         }
         _ => true,
     }

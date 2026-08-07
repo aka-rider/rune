@@ -241,14 +241,25 @@ impl HrM {
     }
 }
 
-/// YAML frontmatter. Pinned Revealed with a dim style (Phase-1 policy) —
-/// there is no delimiter to conceal, so it ignores `ctx.grant` entirely
-/// (the reveal-policy table: "Frontmatter, Verbatim | pinned Revealed (no
-/// Decide)").
+/// YAML frontmatter, with its `---` delimiter lines tracked apart from the
+/// body between them: the body is a code region, highlighted as YAML like
+/// any fence's content, while the delimiters are not — a single contiguous
+/// range could not tell the two apart. Pinned Revealed, ignoring
+/// `ctx.grant` entirely (the reveal-policy table: "Frontmatter, Verbatim |
+/// pinned Revealed (no Decide)"), so nothing here is ever concealed.
+///
+/// `content_lines` is one `ByteRange` per body line, never collapsed into a
+/// single span — the same per-line shape, for the same reasons, as
+/// `CodeFenceM::content_lines`.
 #[derive(Clone, Debug)]
 pub struct FrontmatterM {
     pub sm: RevealSm,
     pub range: ByteRange,
+    pub first_line: usize,
+    pub last_line: usize,
+    pub open: Option<ByteRange>,
+    pub close: Option<ByteRange>,
+    pub content_lines: Vec<ByteRange>,
 }
 
 impl FrontmatterM {

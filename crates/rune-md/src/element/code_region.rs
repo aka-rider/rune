@@ -30,11 +30,12 @@ use rune_core::buffer::Buffer;
 /// grammars but not for indentation-sensitive ones, which lose most of their
 /// structure to it.
 pub struct CodeRegion {
-    /// A fence's info string, or the detected language name for a `Code`
-    /// document. Empty means "nothing to highlight against" — the region
-    /// still exists, because a consumer that paints a background cares only
-    /// that the bytes are code, not whether a highlighter can be found for
-    /// them.
+    /// A fence's info string, the detected language name for a `Code`
+    /// document, or — for frontmatter — the language its opening delimiter
+    /// implies, which is never read from the document at all. Empty means
+    /// "nothing to highlight against" — the region still exists, because a
+    /// consumer that paints a background cares only that the bytes are code,
+    /// not whether a highlighter can be found for them.
     pub info: String,
     /// One buffer range per physical content line, container-prefix-free.
     pub content: Vec<Range<usize>>,
@@ -55,6 +56,12 @@ pub struct CodeRegion {
 /// `VerbatimKind::IndentedCode`, which is what distinguishes them from the
 /// other verbatim passthroughs (tables, HTML, math, unrecognized nodes) that
 /// are emphatically NOT code.
+///
+/// Frontmatter is the third kind, and the one that is published
+/// unconditionally where a fence is not: its `---` delimiter lines are part
+/// of its rows, so a frontmatter block whose body is blank still has rows a
+/// consumer must paint a background over. A fence with no content lines
+/// describes no bytes and is dropped instead.
 ///
 /// A region carrying an empty `info` is still emitted; only a region with no
 /// content lines at all is dropped, since it describes no bytes.
@@ -90,6 +97,11 @@ pub(crate) fn collect(blocks: &[Block], buf: &Buffer, out: &mut Vec<CodeRegion>)
                     rows,
                 });
             }
+            Block::Frontmatter(fm) => out.push(CodeRegion {
+                info: crate::parse::frontmatter::LANGUAGE.to_string(),
+                content: fm.content_lines.iter().map(|l| l.start..l.end).collect(),
+                rows: fm.first_line..fm.last_line.saturating_add(1),
+            }),
             Block::Blockquote(bq) => collect(&bq.children, buf, out),
             Block::List(list) => {
                 for item in &list.items {
