@@ -20,50 +20,13 @@
 
 mod highlight_common;
 
-use highlight_common::{all_spans, app_for, region_tree_source, type_one_char_at_end};
+use highlight_common::{
+    all_spans, app_for, region_tree_source, settle_after_insert, settle_highlight,
+    type_one_char_at_end,
+};
 use rune_core::cursor::CursorSet;
-use rune_tui::app::{self, App};
+use rune_tui::app;
 use rune_tui::runtime::{Effects, Msg};
-
-/// Runs the document's pending highlight to completion through the real
-/// message path: schedule (by typing one character), run the `Cmd` inline,
-/// deliver its reply. The state it leaves behind is read back through
-/// `all_spans`, the same query the renderer uses.
-fn settle_highlight(app: &mut App) {
-    let mut effects = Effects::default();
-    type_one_char_at_end(app, &mut effects);
-    assert_eq!(
-        effects.cmds.len(),
-        1,
-        "expected exactly one scheduled highlight cmd"
-    );
-    let msg = effects
-        .cmds
-        .remove(0)
-        .run()
-        .expect("a highlight cmd always replies with Some(Msg::Highlighted)");
-    let Msg::Highlighted { .. } = &msg else {
-        panic!("expected a Msg::Highlighted reply, got {msg:?}");
-    };
-    let mut effects = Effects::default();
-    app::update(app, msg, &mut effects);
-}
-
-/// Schedules a highlight by inserting `text` at `at` — a version bump the
-/// caller controls, unlike the append `type_one_char_at_end` performs — and
-/// settles the reply.
-fn settle_after_insert(app: &mut App, at: usize, text: &str) {
-    let id = app.active;
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(at);
-    let mut effects = Effects::default();
-    app::update(app, Msg::Paste(text.to_string()), &mut effects);
-    for cmd in effects.cmds.drain(..) {
-        if let Some(msg) = cmd.run() {
-            let mut settled = Effects::default();
-            app::update(app, msg, &mut settled);
-        }
-    }
-}
 
 /// Every span a settled document would paint, as the exact source text each
 /// one selects. Comparing TEXT rather than offsets is what lets the same
