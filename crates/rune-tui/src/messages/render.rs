@@ -37,7 +37,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let Some(view) = app.messages.doc.view.as_ref() else {
         return;
     };
-    let mut rows = render::build_rows(app, &app.messages.doc, view);
+    let mut rows = render::build_rows(app, &app.messages.doc, None, view);
     apply_severity_colours(&mut rows, &app.theme, &app.messages.ranges);
     render::blit(&rows, content_area, frame);
 }

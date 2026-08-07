@@ -342,13 +342,19 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     // answers only ever CLOSED left a single-document session with no
     // reachable exit at all.
     if let Some(doc) = unpreserved_dirty_docs(app).into_iter().next() {
-        let _ = guard::set_guard(
+        if guard::set_guard(
             app,
             GuardPrompt {
                 doc,
                 kind: GuardKind::DirtyQuit,
             },
-        );
+        ) == guard::GuardRaise::Displaced
+        {
+            messages::warn(
+                app,
+                "quit confirmation dropped \u{2014} a prompt is already showing",
+            );
+        }
         return;
     }
 

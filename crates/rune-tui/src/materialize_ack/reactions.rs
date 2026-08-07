@@ -330,10 +330,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // Plan WP6.S4: a genuine CAS conflict — the fresh disk
             // observation `record_fresh_from_stat` already recorded — offers
             // the disk-conflict Guard so the user can act on it directly
-            // rather than needing to know `^M` exists. A refused raise (a
-            // Guard already up) leaves the message just posted above as the
-            // only feedback, which is still correct — `set_guard`'s
-            // `#[must_use]` return says exactly that happened.
+            // rather than needing to know `^M` exists.
             if mat.fresh.is_some() {
                 // `merge::begin`'s own fast pre-check (plan Gotchas `[R3]`)
                 // reads `last_sync` as a hint only — this CAS refusal IS
@@ -346,13 +343,19 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 if let Some(doc) = app.doc_mut(id) {
                     doc.last_sync = Some(rune_db::SyncKind::Diverged);
                 }
-                let _ = guard::set_guard(
+                if guard::set_guard(
                     app,
                     GuardPrompt {
                         doc: id,
                         kind: GuardKind::DiskConflict,
                     },
-                );
+                ) == guard::GuardRaise::Displaced
+                {
+                    messages::warn(
+                        app,
+                        "disk-conflict confirmation dropped \u{2014} a prompt is already showing",
+                    );
+                }
             }
         }
     }

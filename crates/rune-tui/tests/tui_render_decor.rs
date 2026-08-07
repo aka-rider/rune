@@ -28,7 +28,7 @@ use tui_render_common::app_for;
 fn rows_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<Vec<render::Cell>> {
     let app = app_for(content, cursor_offset, focused);
     let view = app.active_doc().view.as_ref().expect("synced view");
-    render::build_rows(&app, app.active_doc(), view)
+    render::build_rows(&app, app.active_doc(), Some(app.active), view)
 }
 
 /// (a) A concealed `# h` row's own decor prefix carries `buf_offset == -1`
@@ -251,7 +251,7 @@ tail paragraph\n";
     app.sync_view();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
 
     let list_scope = scope_table()
         .resolve("markup.list")

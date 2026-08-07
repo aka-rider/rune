@@ -28,7 +28,7 @@ pub(super) fn should_sample(step: usize) -> bool {
 /// sync — mirrors `Snapshot::capture`'s own `cells` derivation.
 fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
     match &app.active_doc().view {
-        Some(view) => render::build_rows(app, app.active_doc(), view),
+        Some(view) => render::build_rows(app, app.active_doc(), Some(app.active), view),
         None => Vec::new(),
     }
 }
@@ -54,7 +54,7 @@ pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
     let rebuilt_rows = {
         let doc = app.active_doc();
         let forced = doc.doc.force_rebuild(&doc.buffer);
-        render::build_rows(app, app.active_doc(), &forced)
+        render::build_rows(app, app.active_doc(), Some(app.active), &forced)
     };
     if let Some(v) = invariant::sync_idempotent_rebuild(&production_rows, &rebuilt_rows) {
         return Some(v);

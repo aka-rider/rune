@@ -17,21 +17,29 @@ use crate::runtime::Effects;
 use crate::save::{self, SaveMode, SaveStart};
 use crate::workspace;
 
+/// Whether [`set_guard`] actually raised its prompt. `#[must_use]` because a
+/// caller that assumes `Raised` always was (`rename.rs`'s `Collision` entry
+/// in particular) would otherwise wait forever on a prompt that never
+/// appeared, and a `Displaced` a caller drops without telling the user
+/// leaves whatever it was arming (a Trash/DirtyQuit confirmation) silently
+/// gone.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardRaise {
+    Raised,
+    Displaced,
+}
+
 /// The one chokepoint that raises a new Guard prompt, replacing the old
 /// `banner::set_modal`: never displaces a prompt already up — with the old
 /// modal error banner gone, a Guard is the only thing that can ever be up,
-/// so "never displace" now simply means "only while none is up". Returns
-/// whether the prompt was actually raised, `#[must_use]` because a caller
-/// that assumes it always was (`rename.rs`'s `Collision` entry in
-/// particular) would otherwise wait forever on a prompt that never
-/// appeared.
-#[must_use]
-pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> bool {
+/// so "never displace" now simply means "only while none is up".
+pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> GuardRaise {
     if app.guard.is_some() {
-        return false;
+        return GuardRaise::Displaced;
     }
     app.guard = Some(prompt);
-    true
+    GuardRaise::Raised
 }
 
 /// The SOLE writer of `app.guard = None` — every dismissal path routes
@@ -420,7 +428,10 @@ mod tests {
     fn set_guard_raises_onto_an_empty_slot() {
         let mut app = app();
         let doc = app.active;
-        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+            GuardRaise::Raised
+        );
         assert!(matches!(
             app.guard,
             Some(GuardPrompt {
@@ -431,23 +442,29 @@ mod tests {
     }
 
     /// `set_guard` never displaces a prompt already up — with the old modal
-    /// error banner gone, this is the whole priority rule — the `false`
-    /// return is what lets `rename.rs` notice and stay `Idle` rather than
-    /// wait on a prompt that was never raised.
+    /// error banner gone, this is the whole priority rule — the
+    /// `Displaced` return is what lets `rename.rs` notice and stay `Idle`
+    /// rather than wait on a prompt that was never raised.
     #[test]
     fn set_guard_refuses_to_replace_an_existing_prompt() {
         let mut app = app();
         let doc = app.active;
-        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
-        assert!(!set_guard(
-            &mut app,
-            prompt(
-                doc,
-                GuardKind::RenameCollision {
-                    target: "b.md".to_string(),
-                }
-            )
-        ));
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+            GuardRaise::Raised
+        );
+        assert_eq!(
+            set_guard(
+                &mut app,
+                prompt(
+                    doc,
+                    GuardKind::RenameCollision {
+                        target: "b.md".to_string(),
+                    }
+                )
+            ),
+            GuardRaise::Displaced
+        );
         assert!(matches!(
             app.guard,
             Some(GuardPrompt {
@@ -462,7 +479,10 @@ mod tests {
     fn clear_guard_empties_the_slot() {
         let mut app = app();
         let doc = app.active;
-        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+            GuardRaise::Raised
+        );
         clear_guard(&mut app);
         assert!(app.guard.is_none());
     }
@@ -473,7 +493,10 @@ mod tests {
     fn retract_disk_conflict_on_convergence_is_a_noop_while_still_divergent() {
         let mut app = app();
         let doc = app.active;
-        assert!(set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)));
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)),
+            GuardRaise::Raised
+        );
 
         retract_disk_conflict_on_convergence(&mut app, doc, rune_db::SyncKind::Diverged);
 
@@ -493,7 +516,10 @@ mod tests {
     fn retract_disk_conflict_on_convergence_clears_the_prompt() {
         let mut app = app();
         let doc = app.active;
-        assert!(set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)));
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)),
+            GuardRaise::Raised
+        );
 
         retract_disk_conflict_on_convergence(&mut app, doc, rune_db::SyncKind::Clean);
 
@@ -510,7 +536,10 @@ mod tests {
     fn retract_disk_conflict_on_convergence_touches_only_its_own_kind_and_doc() {
         let mut app = app();
         let doc = app.active;
-        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+            GuardRaise::Raised
+        );
 
         retract_disk_conflict_on_convergence(&mut app, doc, rune_db::SyncKind::Clean);
 
@@ -542,15 +571,18 @@ mod tests {
                 kind: rune_vfs::FileKind::File,
             },
         };
-        assert!(set_guard(
-            &mut app,
-            prompt(
-                doc,
-                GuardKind::RenameCollision {
-                    target: "b.md".to_string(),
-                }
-            )
-        ));
+        assert_eq!(
+            set_guard(
+                &mut app,
+                prompt(
+                    doc,
+                    GuardKind::RenameCollision {
+                        target: "b.md".to_string(),
+                    }
+                )
+            ),
+            GuardRaise::Raised
+        );
         clear_guard(&mut app);
         assert!(app.guard.is_none());
         assert_eq!(app.rename, crate::rename::RenameState::Idle);

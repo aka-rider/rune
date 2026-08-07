@@ -165,3 +165,14 @@ fn an_ordinary_commit_reports_confirmed() {
         other => panic!("expected a plain commit, got {other:?}"),
     }
 }
+
+#[test]
+fn debounce_deadline_is_measured_from_the_injected_clock() {
+    use crate::pointer::Clock;
+    let clock = crate::pointer::ManualClock::new();
+    clock.advance(std::time::Duration::from_secs(100));
+
+    let deadline = debounce_deadline(&clock);
+
+    assert_eq!(deadline, clock.now() + SNAPSHOT_DEBOUNCE);
+}

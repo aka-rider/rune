@@ -388,7 +388,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                     },
                 },
             );
-            if raised {
+            if raised == guard::GuardRaise::Raised {
                 app.rename = RenameState::Collision {
                     doc: doc_id,
                     from,
@@ -397,6 +397,13 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                 };
             } else {
                 app.rename = RenameState::Idle;
+                messages::warn(
+                    app,
+                    format!(
+                        "rename to {} refused \u{2014} a prompt is already showing",
+                        display_name(&to)
+                    ),
+                );
             }
         }
         Ok(RenameOutcome::Refused { .. }) => {

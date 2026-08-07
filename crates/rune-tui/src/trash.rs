@@ -66,13 +66,19 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
         return;
     }
 
-    let _ = guard::set_guard(
+    if guard::set_guard(
         app,
         GuardPrompt {
             doc: app.active,
             kind: GuardKind::Trash { path },
         },
-    );
+    ) == guard::GuardRaise::Displaced
+    {
+        messages::warn(
+            app,
+            "trash confirmation dropped \u{2014} a prompt is already showing",
+        );
+    }
 }
 
 /// The trash guard's `[Y]es` answer: refuses a second commit while one is
