@@ -138,9 +138,9 @@ fn display_spans(
     avail_w: usize,
     row_bg: Option<Color>,
 ) -> Vec<Span<'static>> {
-    let matched: HashSet<usize> = indices.iter().map(|&i| i as usize).collect();
     let dir_end = display.rfind('/').map(|i| i + 1).unwrap_or(0);
     let graphemes: Vec<(usize, &str)> = display.grapheme_indices(true).collect();
+    let matched_graphemes = grapheme_match_mask(display, &graphemes, indices);
     let total_w = display_width(display);
     let (start, truncated) = fit_suffix(&graphemes, total_w, avail_w);
 
@@ -157,7 +157,11 @@ fn display_spans(
         } else {
             file_style
         };
-        let style = if matched.contains(&grapheme_idx) {
+        let style = if matched_graphemes
+            .get(grapheme_idx)
+            .copied()
+            .unwrap_or(false)
+        {
             base.add_modifier(Modifier::BOLD)
         } else {
             base
@@ -165,6 +169,33 @@ fn display_spans(
         spans.push(Span::styled((*g).to_string(), style));
     }
     spans
+}
+
+/// Maps nucleo's `indices` onto a per-grapheme bold mask, mirroring
+/// `Utf32Str::new`'s own branch choice (nucleo-matcher 0.3.1, default
+/// features): when every grapheme's leading codepoint is ASCII, nucleo
+/// matches against the display string's raw UTF-8 BYTES — a whole-ASCII
+/// name always takes this path, and so does an NFD name whose combining
+/// marks all trail an ASCII base (routine on macOS/APFS: "é" as `e` +
+/// U+0301) since the base codepoint alone is what survives nucleo's own
+/// per-grapheme reduction — so `indices` there are byte offsets, matched
+/// against each grapheme's own starting byte. Otherwise (a grapheme led by
+/// a non-ASCII codepoint, e.g. precomposed "é" or CJK) nucleo matches one
+/// codepoint per grapheme and `indices` are grapheme POSITIONS directly.
+fn grapheme_match_mask(display: &str, graphemes: &[(usize, &str)], indices: &[u32]) -> Vec<bool> {
+    let matched: HashSet<usize> = indices.iter().map(|&i| i as usize).collect();
+    let ascii_reduced = display.is_ascii()
+        || graphemes
+            .iter()
+            .all(|(_, g)| g.chars().next().is_some_and(|c| c.is_ascii()));
+    if ascii_reduced {
+        graphemes
+            .iter()
+            .map(|(byte_off, _)| matched.contains(byte_off))
+            .collect()
+    } else {
+        (0..graphemes.len()).map(|i| matched.contains(&i)).collect()
+    }
 }
 
 /// The longest SUFFIX of `graphemes` (grapheme-boundary cuts only) that
@@ -457,5 +488,59 @@ mod tests {
                 candidate.display
             );
         }
+    }
+
+    /// Finding 4: nucleo's `indices` are CHAR positions into the display
+    /// string, not grapheme positions — an NFD-decomposed filename (routine
+    /// on macOS/APFS) makes the two diverge. A query matching the ASCII
+    /// tail of an NFD name must bold exactly those trailing graphemes, not
+    /// shift onto the wrong character or vanish.
+    #[test]
+    fn nfd_decomposed_filename_bolds_the_matching_ascii_tail_graphemes() {
+        let nfd_name = "cafe\u{0301}.md"; // "café.md", "e" + combining acute
+        let mut app = seeded_app(&[]);
+        let mut effects = crate::runtime::Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        let generation = app.filesearch.as_ref().expect("open").generation;
+        crate::filesearch::handle_recents_loaded(
+            &mut app,
+            generation,
+            Ok(vec![candidate("/root/cafe.md", nfd_name)]),
+            &mut effects,
+        );
+        if let Some(state) = app.filesearch.as_mut() {
+            state.query = "md".to_string();
+        }
+        crate::filesearch::recompute(&mut app, &mut effects);
+        let state = app.filesearch.as_ref().expect("still open");
+        let row = state
+            .results
+            .first()
+            .expect("query \"md\" matches the NFD filename's ascii tail");
+
+        let spans = display_spans(nfd_name, &row.indices, &app.theme, 80, None);
+        let bold_graphemes: Vec<String> = spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::BOLD))
+            .map(|s| s.content.to_string())
+            .collect();
+        assert_eq!(bold_graphemes, vec!["m".to_string(), "d".to_string()]);
+
+        let non_bold_graphemes: Vec<String> = spans
+            .iter()
+            .filter(|s| !s.style.add_modifier.contains(Modifier::BOLD))
+            .map(|s| s.content.to_string())
+            .collect();
+        assert_eq!(
+            non_bold_graphemes,
+            vec![
+                "c".to_string(),
+                "a".to_string(),
+                "f".to_string(),
+                "e\u{0301}".to_string(),
+                ".".to_string(),
+            ],
+            "the NFD e + combining-acute grapheme stays intact as one unmatched span"
+        );
     }
 }

@@ -59,12 +59,19 @@ enum Step {
 /// descended (`Vfs::read_dir` reports it as a plain file), matching the
 /// Explorer's own blindness to it.
 pub fn scan(vfs: &dyn Vfs, root: &Path) -> ScanResult {
+    scan_with_caps(vfs, root, MAX_SCAN_FILES, MAX_SCAN_DEPTH)
+}
+
+/// [`scan`]'s real body, with the file/depth caps as parameters so tests can
+/// pin cap-boundary behavior (exactly-at-cap vs. one-over) without building
+/// `MAX_SCAN_FILES`-sized trees.
+fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize) -> ScanResult {
     let mut files = Vec::new();
     let mut truncated = false;
     let mut matchers: Vec<Gitignore> = Vec::new();
     let mut stack = vec![Step::Enter(root.to_path_buf(), 0)];
 
-    while let Some(step) = stack.pop() {
+    'walk: while let Some(step) = stack.pop() {
         let (dir, depth) = match step {
             Step::Leave => {
                 matchers.pop();
@@ -92,20 +99,17 @@ pub fn scan(vfs: &dyn Vfs, root: &Path) -> ScanResult {
                 continue;
             }
             if entry.is_dir {
-                if depth + 1 > MAX_SCAN_DEPTH {
+                if depth + 1 > max_depth {
                     truncated = true;
                     continue;
                 }
                 children.push(entry.path.clone());
-            } else if files.len() < MAX_SCAN_FILES {
+            } else if files.len() < max_files {
                 files.push(entry.path.clone());
             } else {
                 truncated = true;
+                break 'walk;
             }
-        }
-        if files.len() >= MAX_SCAN_FILES {
-            truncated = true;
-            break;
         }
         // Pushed in reverse so the LIFO stack still visits them in
         // `vfs.read_dir`'s own dirs-first, case-sensitive order.
@@ -266,16 +270,33 @@ mod tests {
     }
 
     #[test]
-    fn the_file_cap_truncates_and_reports_it() {
+    fn exactly_the_file_cap_is_not_reported_as_truncated() {
         let vfs = Mem::new();
-        for i in 0..(MAX_SCAN_FILES + 5) {
+        for i in 0..8 {
             put(&vfs, &format!("/root/f{i:06}.txt"), "x");
         }
 
-        let result = scan(&vfs, Path::new("/root"));
+        let mut result = scan_with_caps(&vfs, Path::new("/root"), 8, MAX_SCAN_DEPTH);
+        result.files.sort();
 
-        assert_eq!(result.files.len(), MAX_SCAN_FILES);
-        assert!(result.truncated);
+        assert_eq!(result.files.len(), 8);
+        assert!(
+            !result.truncated,
+            "a walk that finishes exactly at the cap dropped nothing"
+        );
+    }
+
+    #[test]
+    fn one_file_over_the_cap_is_reported_as_truncated() {
+        let vfs = Mem::new();
+        for i in 0..9 {
+            put(&vfs, &format!("/root/f{i:06}.txt"), "x");
+        }
+
+        let result = scan_with_caps(&vfs, Path::new("/root"), 8, MAX_SCAN_DEPTH);
+
+        assert_eq!(result.files.len(), 8);
+        assert!(result.truncated, "the ninth file was actually dropped");
     }
 
     #[test]

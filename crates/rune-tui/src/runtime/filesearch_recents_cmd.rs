@@ -46,7 +46,11 @@ fn load(
         .map_err(|e| e.to_string())?;
     let paths = match reply {
         rune_db::ReaderReply::RecentDocuments(paths) => paths,
-        _ => return Err("unexpected reader reply".to_string()),
+        rune_db::ReaderReply::Pong
+        | rune_db::ReaderReply::Blob(_)
+        | rune_db::ReaderReply::RecentSearches(_) => {
+            return Err("unexpected reader reply".to_string());
+        }
     };
     // A `documents` row can outlive the file it named (deleted, renamed out
     // from under the store) — `vfs.stat` here is the existence filter, the
