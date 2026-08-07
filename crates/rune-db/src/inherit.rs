@@ -208,6 +208,7 @@ mod tests {
                     blob_hash: &observation::hash_bytes(b"session A's content"),
                     seq: Some(0),
                     origin: "load",
+                    confirmed: None,
                 },
                 &observation::StatFacts {
                     mtime: "t".to_string(),
@@ -290,6 +291,7 @@ mod tests {
                     blob_hash: &disk_hash,
                     seq: Some(0),
                     origin: "load",
+                    confirmed: None,
                 },
                 &observation::StatFacts {
                     mtime: "t".to_string(),

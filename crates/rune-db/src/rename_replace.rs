@@ -441,6 +441,7 @@ mod tests {
                     blob_hash: &blob_hash,
                     seq: Some(0),
                     origin: "load",
+                    confirmed: None,
                 },
                 &StatFacts {
                     size: 6,

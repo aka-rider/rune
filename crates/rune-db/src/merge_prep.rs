@@ -174,6 +174,7 @@ mod tests {
                     blob_hash: &empty_hash,
                     seq: Some(0),
                     origin: "load",
+                    confirmed: None,
                 },
                 &crate::observation::StatFacts {
                     mtime: "t".to_string(),

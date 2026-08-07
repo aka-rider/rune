@@ -128,6 +128,7 @@ pub(crate) fn capture_and_rebind(
                 data: displaced_bytes,
                 seq: None,
                 origin: "swap",
+                confirmed: None,
             },
         )?;
 

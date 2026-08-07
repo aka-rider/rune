@@ -245,6 +245,7 @@ mod tests {
                 blob_hash: &hash,
                 seq: None,
                 origin: "watch",
+                confirmed: None,
             },
             &crate::observation::StatFacts {
                 size: 1,
@@ -282,6 +283,7 @@ mod tests {
                 blob_hash: &load_hash,
                 seq: Some(0),
                 origin: "load",
+                confirmed: None,
             },
             &crate::observation::StatFacts {
                 size: load_blob.len() as i64,
@@ -317,6 +319,7 @@ mod tests {
                 blob_hash: &resolve_hash,
                 seq: Some(1),
                 origin: "resolve",
+                confirmed: None,
             },
             &crate::observation::StatFacts {
                 size: resolve_blob.len() as i64,
@@ -428,6 +431,7 @@ mod tests {
                 blob_hash: &empty_hash,
                 seq: Some(0),
                 origin: "load",
+                confirmed: None,
             },
             &crate::observation::StatFacts {
                 mtime: "t".to_string(),
@@ -464,6 +468,7 @@ mod tests {
                 blob_hash: &hello_hash,
                 seq: Some(1),
                 origin: "resolve",
+                confirmed: None,
             },
             &crate::observation::StatFacts {
                 size: 5,

@@ -177,6 +177,7 @@ pub(crate) fn record_fresh_from_stat(
                 data,
                 seq: None,
                 origin,
+                confirmed: None,
             },
         )
     })
@@ -230,6 +231,7 @@ fn commit_save_from_stat(
                 blob_hash: &hash,
                 seq: Some(facts.seq),
                 origin: "save",
+                confirmed: None,
             },
             facts.stat,
             &at,
