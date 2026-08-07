@@ -5,9 +5,6 @@
 
 /// Buffer Space — raw byte positions in the UTF-8 document.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BufferOffset(pub usize);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BufferPoint {
     /// 0-indexed model line number.
     pub line: usize,
@@ -72,9 +69,7 @@ mod tests {
 
     #[test]
     fn coordinate_types_hold_their_fields() {
-        let bo = BufferOffset(10);
         let bp = BufferPoint { line: 1, col: 5 };
-        assert_eq!(bo, BufferOffset(10));
         assert_eq!(bp.line, 1);
         assert_eq!(bp.col, 5);
 

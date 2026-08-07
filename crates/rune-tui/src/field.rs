@@ -345,11 +345,7 @@ impl TextField {
 /// never reach `Buffer::apply_edits` mid-codepoint.
 fn clamp_boundary(content: &str, offset: usize, window: &Range<usize>) -> usize {
     let clamped = offset.max(window.start).min(window.end);
-    let mut i = clamped;
-    while i > window.start && !content.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
+    content.floor_char_boundary(clamped)
 }
 
 #[cfg(test)]

@@ -90,20 +90,10 @@ const HEAD_LINES: usize = 5;
 const TAIL_BYTES: usize = 4096;
 const MAX_LINE: usize = 256;
 
-/// Walks a byte offset backward to the nearest `char` boundary at or before
-/// it, since indexing a `str` at an arbitrary byte offset panics on a
-/// multi-byte boundary.
-fn floor_boundary(s: &str, mut idx: usize) -> usize {
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
-}
-
 /// Truncates `line` to at most `MAX_LINE` bytes, cutting on a char
 /// boundary, then lowercases it.
 fn cap_and_lower(line: &str) -> String {
-    let end = floor_boundary(line, line.len().min(MAX_LINE));
+    let end = line.floor_char_boundary(line.len().min(MAX_LINE));
     line.get(..end).unwrap_or("").to_lowercase()
 }
 
@@ -174,7 +164,7 @@ fn try_emacs_form(line: &str) -> Option<Detected> {
 /// Extracts a UTF-8-safe tail slice of at most `TAIL_BYTES` bytes from the
 /// end of `content`.
 fn safe_tail(content: &str) -> &str {
-    let start = floor_boundary(content, content.len().saturating_sub(TAIL_BYTES));
+    let start = content.floor_char_boundary(content.len().saturating_sub(TAIL_BYTES));
     content.get(start..).unwrap_or("")
 }
 
@@ -253,7 +243,7 @@ fn from_shebang(content: &str) -> Option<Detected> {
         return None;
     }
     let first_line = content.lines().next().unwrap_or("");
-    let end = floor_boundary(first_line, first_line.len().min(MAX_LINE));
+    let end = first_line.floor_char_boundary(first_line.len().min(MAX_LINE));
     let capped = first_line.get(..end).unwrap_or("");
     let interpreter = shebang_interpreter(capped)?;
     let name = interpreter_basename(interpreter)?;

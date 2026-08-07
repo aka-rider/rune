@@ -73,12 +73,16 @@ fn build_spans(
     theme: &Theme,
 ) -> Vec<Span<'static>> {
     let len = name.len();
-    let mut bounds = vec![0usize, snap(name, split), snap(name, len)];
+    let mut bounds = vec![
+        0usize,
+        name.floor_char_boundary(split),
+        name.floor_char_boundary(len),
+    ];
     if let Some((start, end, cursor)) = selection {
-        bounds.push(snap(name, start));
-        bounds.push(snap(name, end));
-        bounds.push(snap(name, cursor));
-        bounds.push(snap(name, next_grapheme_end(name, cursor)));
+        bounds.push(name.floor_char_boundary(start));
+        bounds.push(name.floor_char_boundary(end));
+        bounds.push(name.floor_char_boundary(cursor));
+        bounds.push(name.floor_char_boundary(next_grapheme_end(name, cursor)));
     }
     bounds.sort_unstable();
     bounds.dedup();
@@ -124,17 +128,6 @@ fn base_style(at: usize, split: usize, always_bright: bool, theme: &Theme) -> St
     } else {
         Style::new().fg(theme.chrome.subtle)
     }
-}
-
-/// Clamps `at` into `0..=name.len()` and walks it down to the nearest
-/// `char` boundary, so a boundary derived from selection/cursor math can
-/// never split `name.get` mid-codepoint (gotcha 14).
-fn snap(name: &str, at: usize) -> usize {
-    let mut i = at.min(name.len());
-    while i > 0 && !name.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
 }
 
 /// The byte offset just past the cursor's own grapheme cluster — a

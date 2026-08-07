@@ -76,28 +76,6 @@ pub(crate) fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
     }
 }
 
-/// The nearest char boundary at or BEFORE `idx` — a safe, stable-Rust
-/// equivalent of the nightly-only `str::floor_char_boundary`. Never panics:
-/// `is_char_boundary` is a plain byte-position check, and a UTF-8 char is
-/// at most 4 bytes, so the loop always terminates within a few iterations.
-fn floor_char_boundary(s: &str, idx: usize) -> usize {
-    let mut idx = idx.min(s.len());
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
-}
-
-/// The nearest char boundary at or AFTER `idx` — the stable-Rust
-/// equivalent of the nightly-only `str::ceil_char_boundary`.
-fn ceil_char_boundary(s: &str, idx: usize) -> usize {
-    let mut idx = idx.min(s.len());
-    while idx < s.len() && !s.is_char_boundary(idx) {
-        idx += 1;
-    }
-    idx
-}
-
 /// Every byte of every line is accounted for exactly once: either as part
 /// of a VISIBLE span (pushed by `push_span_split_by_line`) or as a hidden
 /// delimiter range (`hide_range`). `accounted[line]` is the union of both,
@@ -315,8 +293,8 @@ pub(crate) fn push_span_split_by_line(
                 let (s, e, text) = match content.get(s..e) {
                     Some(text) => (s, e, text),
                     None => {
-                        let snapped_s = floor_char_boundary(content, s);
-                        let snapped_e = ceil_char_boundary(content, e);
+                        let snapped_s = content.floor_char_boundary(s);
+                        let snapped_e = content.ceil_char_boundary(e);
                         let snapped_ok = snapped_s == s && snapped_e == e;
                         assert_invariant(snapped_ok, || {
                             format!(

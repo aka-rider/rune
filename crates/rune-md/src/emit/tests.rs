@@ -112,8 +112,8 @@ fn push_span_split_by_line_asserts_on_non_char_boundary_span() {
 fn floor_and_ceil_char_boundary_snap_outward_never_split_a_char() {
     let content = "a日b👍c";
     for idx in 0..=content.len() {
-        let f = floor_char_boundary(content, idx);
-        let c = ceil_char_boundary(content, idx);
+        let f = content.floor_char_boundary(idx);
+        let c = content.ceil_char_boundary(idx);
         assert!(
             content.is_char_boundary(f),
             "floor({idx}) = {f} not a boundary"

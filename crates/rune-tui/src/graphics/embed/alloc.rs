@@ -32,7 +32,7 @@ impl EmbedAllocator {
     /// past it — the mtime-respawn contract requires the base id to stay
     /// unchanged across a respawn (plan gotcha 3).
     pub fn alloc_free_id(&mut self, key: &str) -> u32 {
-        let mut id = rune_image::alloc_id(key);
+        let mut id = rune_image::alloc_id(key.as_bytes());
         loop {
             match self.by_id.get(&id) {
                 Some(existing) if existing != key => id = probe_next(id),
@@ -78,7 +78,7 @@ mod tests {
         let mut alloc = EmbedAllocator::new();
         // Force a collision: seed the natural id of "/vault/y.png" under a
         // different key first, so "/vault/y.png" itself must probe past it.
-        let natural = rune_image::alloc_id("/vault/y.png");
+        let natural = rune_image::alloc_id(b"/vault/y.png");
         alloc.by_id.insert(natural, "someone-else".to_string());
         let id = alloc.alloc_free_id("/vault/y.png");
         assert_ne!(id, natural);
