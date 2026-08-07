@@ -10,12 +10,14 @@ use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_vfs::Vfs;
 
-/// The result of [`bootstrap_db`] — everything `bootstrap` needs to finish
-/// constructing `App` with a hydrated recovery store (plan WP5.S2/S4,
-/// re-split in WP1 alongside `AppDb` -> `Db`/`DocDb`, plan decision 5):
-/// `db` wires onto `App` directly (`App::new`'s 4th argument); `doc_db`
-/// installs on the initial document afterward, since `App::new` only knows
-/// about the app-wide half.
+/// The result of [`bootstrap_db`] (an existing path, loaded off disk) or
+/// [`bootstrap_new_file`] (a positional naming a path that doesn't exist
+/// yet, bound to a fresh scratch row instead) — everything `bootstrap`
+/// needs to finish constructing `App` with a hydrated recovery store (plan
+/// WP5.S2/S4, re-split in WP1 alongside `AppDb` -> `Db`/`DocDb`, plan
+/// decision 5): `db` wires onto `App` directly (`App::new`'s 4th
+/// argument); `doc_db` installs on the initial document afterward, since
+/// `App::new` only knows about the app-wide half.
 #[derive(Default)]
 pub(crate) struct DbBootstrap {
     pub(crate) db: Option<Db>,
@@ -29,9 +31,12 @@ pub(crate) struct DbBootstrap {
     /// This `Load`'s [`rune_db::SyncKind`] (see `Document::last_sync`'s
     /// own doc comment) — render/hint state only, `main` installs it onto
     /// the active document the same way `db_ack::handle_load_ack` does for
-    /// every later per-document reload. `None` only when `load` itself
-    /// never ran (every early-return branch above `bootstrap_db`'s
-    /// `Store::load` call).
+    /// every later per-document reload. `None` whenever `rune_db::load`
+    /// itself never ran: every early-return branch above `bootstrap_db`'s
+    /// `Store::load` call, AND every successful [`bootstrap_new_file`]
+    /// outcome — a missing-path launch binds a fresh scratch row instead of
+    /// loading anything, so there is no `Load` on that path at all, not
+    /// even on success.
     pub(crate) sync_kind: Option<rune_db::SyncKind>,
     /// The persistent degraded-store status banner (plan WP5.S2), or
     /// `None` when the store opened clean.
@@ -40,9 +45,9 @@ pub(crate) struct DbBootstrap {
 
 /// Resolves the recovery store's file path from `$HOME` (threaded in rather
 /// than read from the environment directly, so this is exercisable against
-/// a temp directory in tests) — shared by [`bootstrap_db`] and
-/// [`bootstrap_untitled_db`] so the two launch shapes can never disagree on
-/// where the one database file lives.
+/// a temp directory in tests) — the one place [`open_store`] (in turn
+/// shared by every bootstrap shape) computes it, so no launch shape can
+/// ever disagree on where the one database file lives.
 fn db_path_for(home: Option<&Path>) -> Option<PathBuf> {
     match home {
         Some(home) if !home.as_os_str().is_empty() => Some(

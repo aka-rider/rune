@@ -168,6 +168,117 @@ fn launch_nonexistent_path_is_recovery_backed() {
     );
 }
 
+/// The property that separates a missing-path launch from an untitled
+/// draft: `file_path` stays `Some(the path)`, not `None`. Multi-positional
+/// on purpose (a real, existing second file) so this also pins that the
+/// `DocDb` lands on the FIRST positional's document — the one bootstrap
+/// actually binds a scratch row to — and not on the extra tab that opens
+/// through the ordinary async `Load` path.
+#[test]
+fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
+    let vfs = Mem::new();
+    vfs.save_atomic(Path::new("/vault/other.md"), b"other")
+        .expect("seed other.md");
+    let home = ScratchHome::new("missing-multi");
+
+    let app = bootstrap(
+        Arc::new(vfs),
+        vec![
+            OsString::from("/vault/missing.md"),
+            OsString::from("/vault/other.md"),
+        ]
+        .into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed");
+
+    assert_eq!(app.documents.len(), 2);
+    let active = app.doc(app.active).expect("active doc exists");
+    assert_eq!(
+        active.file_path.as_deref(),
+        Some(Path::new("/vault/missing.md")),
+        "the recovery-backed missing-path document must keep its intended name, \
+         not fall back to an untitled draft"
+    );
+    assert!(
+        active.db.as_ref().is_some_and(|db| db.bind_new),
+        "the first positional's document must bind the fresh scratch row"
+    );
+
+    let other = app
+        .documents
+        .values()
+        .find(|d| d.file_path.as_deref() == Some(Path::new("/vault/other.md")))
+        .expect("the second positional opened its own tab");
+    assert!(
+        other.db.is_none(),
+        "the DocDb from bootstrap_new_file must land on the first positional's \
+         document, never on an extra tab"
+    );
+}
+
+/// The plan's deliberate rejection of a `gc_empty_scratch` sweep inside
+/// `bootstrap_new_file`: a second concurrent launch sharing this `$HOME`
+/// must never sweep away another (still-running) session's freshly minted,
+/// not-yet-journaled scratch row. Seeds exactly that row directly, without
+/// going through `bootstrap` at all, then confirms a missing-path launch
+/// leaves it standing.
+#[test]
+fn launch_missing_first_positional_never_sweeps_another_sessions_empty_scratch_row() {
+    let home = ScratchHome::new("missing-path-no-gc");
+    let db_path = home
+        .0
+        .join("Library")
+        .join("Application Support")
+        .join("rune")
+        .join(rune_db::db_file_name(rune_db::SCHEMA_VERSION));
+
+    let other_sessions_row_id = {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let bridge = rune_tui::db::DbBridge::bootstrap();
+        let (store, _warning) = rune_db::Store::open(&db_path, Arc::clone(&vfs), bridge.on_event())
+            .expect("open store");
+
+        let create_op = store.create_scratch().expect("enqueue create_scratch");
+        let db_id = match bridge.wait_for_bootstrap_event(|evt| match evt {
+            rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == create_op,
+            rune_db::DbEvent::Fatal { .. } => true,
+        }) {
+            rune_db::DbEvent::Ok {
+                result: rune_db::OpOutcome::RowId(id),
+                ..
+            } => id,
+            other => panic!("expected a CreateScratch ack, got {other:?}"),
+        };
+
+        store.shutdown();
+        db_id
+    };
+
+    let vfs = Mem::new();
+    let _app = bootstrap(
+        Arc::new(vfs),
+        vec![OsString::from("/vault/missing.md")].into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed for a missing-path launch");
+
+    let raw = rusqlite::Connection::open(&db_path).expect("open db file directly");
+    let still_present: bool = raw
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            [other_sessions_row_id],
+            |r| r.get(0),
+        )
+        .expect("check the other session's row");
+    assert!(
+        still_present,
+        "bootstrap_new_file must never sweep another session's empty scratch row"
+    );
+}
+
 /// Removing `launch_nonexistent_path_sets_a_banner` must not delete the
 /// honest degraded signal for the case that actually has no store to bind
 /// to: `home: None` short-circuits `open_store` to the `$HOME`-unset arm
