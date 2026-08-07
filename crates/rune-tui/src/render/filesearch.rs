@@ -2,16 +2,24 @@
 //! content while `App::filesearch` is open: row 0 is the query row, reusing
 //! `render::search::build_spans` (the search bar's own chokepoint) rather
 //! than forking the prompt/caret/readout logic; the remaining rows are the
-//! ranked result list — empty until a later work package's `Cmd`s populate
-//! `recents`/`walk`.
+//! ranked result list, styled purely from the precomputed `ResultRow::
+//! indices` `update`'s own `recompute` chokepoint already computed — this
+//! module never scores or ranks anything itself.
+
+use std::collections::HashSet;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
-use crate::filesearch::FileSearchState;
+use crate::filesearch::{FileSearchState, ResultRow, candidate_at};
+use crate::pane::Pane;
+use crate::theme::Theme;
+use crate::width::display_width;
 
 /// Pure function of `&App`, drawing into the same rect `explorer::draw`
 /// would otherwise fill (`render::draw_left_pane`'s own branch). A no-op if
@@ -35,14 +43,169 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     );
     frame.render_widget(Paragraph::new(Line::from(spans)), bar_area);
 
-    // The result rows themselves are empty in this work package — nothing
-    // has populated `recents`/`walk` yet, so there is nothing further to
-    // paint below the query row.
+    let rows_height = area.height.saturating_sub(1);
+    if rows_height == 0 {
+        return;
+    }
+    let rows_area = Rect::new(area.x, area.y + 1, area.width, rows_height);
+    let lines = result_lines(app, state, rows_height as usize, area.width as usize);
+    frame.render_widget(Paragraph::new(lines), rows_area);
+}
+
+/// The result rows themselves: an explicit "no matches" feedback row for a
+/// non-empty query nothing matched (never a blank pane — house rule: silent
+/// input swallowing is architecturally unsound), otherwise the nav-windowed
+/// slice of `state.results`.
+fn result_lines(
+    app: &App,
+    state: &FileSearchState,
+    rows: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    if state.results.is_empty() && !state.query.trim().is_empty() {
+        return vec![Line::from(Span::styled(
+            "no matches",
+            Style::new().fg(app.theme.chrome.subtle),
+        ))];
+    }
+
+    let focused = app.focus() == Pane::Explorer;
+    let window = state.nav.window(state.results.len(), rows);
+    let start = window.start;
+    let visible = state.results.get(window).unwrap_or(&[]);
+    visible
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let selected = start + i == state.nav.cursor;
+            result_line(app, state, row, selected, focused, width)
+        })
+        .collect()
+}
+
+/// One result row: a `›`-prefixed cursor row (full-row background rect,
+/// only while the Explorer pane is actually focused) or a plain two-space
+/// gutter; the candidate's own display string styled by [`display_spans`].
+fn result_line(
+    app: &App,
+    state: &FileSearchState,
+    row: &ResultRow,
+    selected: bool,
+    focused: bool,
+    width: usize,
+) -> Line<'static> {
+    let row_bg = (selected && focused).then_some(app.theme.chrome.selection_bg);
+    let prefix = if selected { "\u{203a} " } else { "  " };
+    let mut spans = vec![Span::styled(
+        prefix.to_string(),
+        with_bg(app.theme.chrome.file_normal, row_bg),
+    )];
+
+    if let Some(candidate) = candidate_at(state, row.candidate_idx) {
+        let avail = width.saturating_sub(display_width(prefix));
+        spans.extend(display_spans(
+            &candidate.display,
+            &row.indices,
+            &app.theme,
+            avail,
+            row_bg,
+        ));
+    }
+
+    let content_w: usize = spans.iter().map(|s| display_width(&s.content)).sum();
+    if width > content_w {
+        spans.push(Span::styled(
+            " ".repeat(width - content_w),
+            with_bg(app.theme.chrome.file_normal, row_bg),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Styles one candidate's `display` string: the directory portion (up to
+/// and including the last `/`) dimmed, the filename portion in the `text`
+/// hue — no blue, reserved for a directory row the finder's results (files
+/// only) never show — and every grapheme `indices` names rendered bold on
+/// top of whichever base colour it falls under. Left-truncates to `avail_w`
+/// cells (leading `…`, tail kept, the `truncate_root`/`truncate_tail_to_
+/// width` idiom) by taking a SUFFIX of the already-styled grapheme list,
+/// so a truncated row's surviving bold/dim styling never has to be
+/// re-derived from a byte offset shifted by the cut.
+fn display_spans(
+    display: &str,
+    indices: &[u32],
+    theme: &Theme,
+    avail_w: usize,
+    row_bg: Option<Color>,
+) -> Vec<Span<'static>> {
+    let matched: HashSet<usize> = indices.iter().map(|&i| i as usize).collect();
+    let dir_end = display.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let graphemes: Vec<(usize, &str)> = display.grapheme_indices(true).collect();
+    let total_w = display_width(display);
+    let (start, truncated) = fit_suffix(&graphemes, total_w, avail_w);
+
+    let dim_style = with_bg(Style::new().fg(theme.chrome.subtle), row_bg);
+    let file_style = with_bg(theme.chrome.file_normal, row_bg);
+
+    let mut spans = Vec::with_capacity(graphemes.len() - start + 1);
+    if truncated {
+        spans.push(Span::styled("\u{2026}".to_string(), dim_style));
+    }
+    for (grapheme_idx, (byte_off, g)) in graphemes.iter().enumerate().skip(start) {
+        let base = if *byte_off < dir_end {
+            dim_style
+        } else {
+            file_style
+        };
+        let style = if matched.contains(&grapheme_idx) {
+            base.add_modifier(Modifier::BOLD)
+        } else {
+            base
+        };
+        spans.push(Span::styled((*g).to_string(), style));
+    }
+    spans
+}
+
+/// The longest SUFFIX of `graphemes` (grapheme-boundary cuts only) that
+/// fits `avail_w` cells alongside a leading `…` when `total_w` overruns it
+/// — the styling-aware sibling of `width::truncate_tail_to_width`, which
+/// this can't reuse directly since it needs to keep each surviving
+/// grapheme's own index (for the bold-matched lookup), not just the
+/// resulting string.
+fn fit_suffix(graphemes: &[(usize, &str)], total_w: usize, avail_w: usize) -> (usize, bool) {
+    if total_w <= avail_w {
+        return (0, false);
+    }
+    let ellipsis_w = display_width("\u{2026}");
+    let budget = avail_w.saturating_sub(ellipsis_w);
+    let mut used = 0usize;
+    let mut start = graphemes.len();
+    for (i, (_, g)) in graphemes.iter().enumerate().rev() {
+        let w = display_width(g);
+        if used + w > budget {
+            break;
+        }
+        used += w;
+        start = i;
+    }
+    (start, true)
+}
+
+fn with_bg(style: Style, bg: Option<Color>) -> Style {
+    match bg {
+        Some(color) => style.bg(color),
+        None => style,
+    }
 }
 
 /// The query row's right-aligned readout: `matched/total` ordinarily, or
 /// `scanning…` while a walk `Cmd` is in flight, with a `+truncated` suffix
-/// when the walk hit its cap.
+/// when the walk hit its cap. `matched` is `state.results.len()` — the
+/// count actually shown, post the finder's own result cap — against
+/// `total`, the full candidate pool, so a cap (either the result cap on a
+/// broad match, or a walk truncation) stays visible as `matched < total`
+/// without a second counter to keep in sync.
 fn readout_text(state: &FileSearchState) -> Option<String> {
     if state.walk_pending {
         return Some("scanning\u{2026}".to_string());
@@ -58,7 +221,7 @@ fn readout_text(state: &FileSearchState) -> Option<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::filesearch::{Candidate, walk};
@@ -204,6 +367,95 @@ mod tests {
                 let cell = buf.cell((x, y)).expect("cell in bounds");
                 assert_eq!(cell.symbol(), " ");
             }
+        }
+    }
+
+    fn candidate(path: &str, display: &str) -> Candidate {
+        Candidate {
+            path: PathBuf::from(path),
+            display: display.to_string(),
+            in_tree: true,
+            mru_rank: None,
+        }
+    }
+
+    fn seeded_app(files: &[(&str, &str)]) -> App {
+        let mem = Mem::new();
+        for (path, content) in files {
+            mem.save_atomic(Path::new(path), content.as_bytes())
+                .expect("seed file");
+        }
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(mem), None);
+        app.frame_width = 120;
+        app.frame_height = 34;
+        app.root = PathBuf::from("/root");
+        app
+    }
+
+    /// WP4.S4: a query with zero matches renders an explicit "no matches"
+    /// feedback row rather than a blank pane.
+    #[test]
+    fn a_query_with_no_matches_renders_an_explicit_empty_state_row() {
+        let mut app = seeded_app(&[("/root/a.md", "a")]);
+        let mut effects = crate::runtime::Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        let generation = app.filesearch.as_ref().expect("open").generation;
+        crate::filesearch::handle_recents_loaded(
+            &mut app,
+            generation,
+            Ok(vec![candidate("/root/a.md", "a.md")]),
+            &mut effects,
+        );
+        if let Some(state) = app.filesearch.as_mut() {
+            state.query = "zzzzzznomatch".to_string();
+        }
+        crate::filesearch::recompute(&mut app, &mut effects);
+        let state = app.filesearch.as_ref().expect("still open");
+        assert!(state.results.is_empty(), "test setup: nothing matches");
+
+        let lines = result_lines(&app, state, 5, 40);
+        let text: String = lines
+            .first()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .unwrap_or_default();
+        assert_eq!(text, "no matches");
+    }
+
+    /// WP4.S4: two visible rows matching the same query have disjoint,
+    /// per-row-correct bold spans — pins the `indices.clear()` requirement
+    /// (`rank::rank`'s own doc): a callee that forgot to clear would leak
+    /// the first row's matched positions into the second row's bold set.
+    #[test]
+    fn multi_row_highlight_indices_are_disjoint_and_per_row_correct() {
+        let mut app = seeded_app(&[("/root/note-a.md", "a"), ("/root/note-b.md", "b")]);
+        let mut effects = crate::runtime::Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        let generation = app.filesearch.as_ref().expect("open").generation;
+        crate::filesearch::handle_recents_loaded(
+            &mut app,
+            generation,
+            Ok(vec![
+                candidate("/root/note-a.md", "note-a.md"),
+                candidate("/root/note-b.md", "note-b.md"),
+            ]),
+            &mut effects,
+        );
+        if let Some(state) = app.filesearch.as_mut() {
+            state.query = "note".to_string();
+        }
+        crate::filesearch::recompute(&mut app, &mut effects);
+        let state = app.filesearch.as_ref().expect("still open");
+        assert_eq!(state.results.len(), 2, "both candidates match \"note\"");
+
+        for row in &state.results {
+            let candidate = candidate_at(state, row.candidate_idx).expect("row names a candidate");
+            assert_eq!(
+                row.indices,
+                vec![0, 1, 2, 3],
+                "each row's own indices must name ITS OWN \"note\" prefix, \
+                 not a leaked copy from the other row: {}",
+                candidate.display
+            );
         }
     }
 }

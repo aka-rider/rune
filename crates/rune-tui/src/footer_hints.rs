@@ -10,6 +10,8 @@ use ratatui::text::Span;
 use crate::app::App;
 use crate::document::ReadOnly;
 use crate::explorer_keys::EXPLORER_BINDINGS;
+use crate::filesearch::keys::FILESEARCH_BINDINGS;
+use crate::focus::{self, FocusTarget};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
 use crate::pane::Pane;
@@ -77,6 +79,22 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             .filter(|b| !hint_suppressed(app, b.cmd))
             .map(|b| (b.label(), b.help, true)),
     );
+
+    // The finder is never a `Pane` (chrome stays `Explorer` throughout), so
+    // this has to be checked ahead of the `app.focus()` match below, or its
+    // rows would always read as ordinary Explorer hints. Reflection over
+    // `FILESEARCH_BINDINGS` keeps this from drifting out of step with the
+    // table `filesearch::keys::handle_key` actually resolves against;
+    // aliased rows are skipped, same as `GLOBAL_BINDINGS` above.
+    if focus::target(app) == FocusTarget::FileSearch {
+        entries.extend(
+            FILESEARCH_BINDINGS
+                .iter()
+                .filter(|b| !b.alias)
+                .map(|b| (b.label(), b.help, true)),
+        );
+        return entries;
+    }
 
     match app.focus() {
         Pane::Explorer => {
@@ -453,6 +471,29 @@ mod tests {
         assert!(
             entries.iter().any(|(label, _, _)| *label == rename_label),
             "expected a rename hint for ReadOnly::No, got {entries:?}"
+        );
+    }
+
+    /// While the fuzzy file finder is open, the default hints reflect
+    /// `FILESEARCH_BINDINGS`, not the ordinary Explorer table — even though
+    /// `app.focus()` itself still reads `Pane::Explorer` throughout.
+    #[test]
+    fn filesearch_open_shows_its_own_hints_not_the_explorer_s() {
+        let mut app = app_with("hello");
+        app.frame_width = 120;
+        app.frame_height = 34;
+        let mut effects = crate::runtime::Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        assert_eq!(app.focus(), Pane::Explorer, "test setup");
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            entries.iter().any(|(_, help, _)| *help == "type to filter"),
+            "expected the finder's own hints, got {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|(_, help, _)| *help == "up dir"),
+            "the Explorer's own hint must not leak in while the finder is open: {entries:?}"
         );
     }
 }

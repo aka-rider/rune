@@ -18,7 +18,7 @@ use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::pane::Pane;
 use crate::runtime::Effects;
 
-use super::{cancel, candidate_at, close, recompute};
+use super::{after_cursor_move, cancel, close, recompute};
 
 const SHIFT: Mods = Mods {
     shift: true,
@@ -145,31 +145,38 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
             erase(app);
             recompute(app, effects);
         }
-        FileSearchCommand::Up => nav_move(app, -1),
-        FileSearchCommand::Down => nav_move(app, 1),
-        FileSearchCommand::PageUp => nav_move(app, -page_amount(app)),
-        FileSearchCommand::PageDown => nav_move(app, page_amount(app)),
+        FileSearchCommand::Up => nav_move(app, -1, effects),
+        FileSearchCommand::Down => nav_move(app, 1, effects),
+        FileSearchCommand::PageUp => nav_move(app, -page_amount(app), effects),
+        FileSearchCommand::PageDown => nav_move(app, page_amount(app), effects),
         FileSearchCommand::Top => {
             if let Some(state) = app.filesearch.as_mut() {
                 state.nav.first();
             }
+            after_cursor_move(app, effects);
         }
         FileSearchCommand::Bottom => {
             if let Some(state) = app.filesearch.as_mut() {
                 let len = state.results.len();
                 state.nav.last(len);
             }
+            after_cursor_move(app, effects);
         }
         FileSearchCommand::Open => open_selected(app, effects),
         FileSearchCommand::Cancel => cancel(app, effects),
     }
 }
 
-/// `Enter`: opens the selected candidate through the same tab-cap-respecting
+/// `Enter`: opens the selected candidate. If the nav cursor's own live
+/// preview already loaded this exact file (`app.explorer.preview`, the
+/// SAME slot the Explorer's own preview uses — the finder rides that
+/// machinery rather than inventing a second one), promotes it in place
+/// instead of re-reading it, mirroring `explorer_keys::open_selected`'s own
+/// promote branch. Otherwise opens through the same tab-cap-respecting
 /// chokepoint the Explorer's own `Open` uses (`workspace::
-/// open_path_checked`) — a plain [`close`], not [`cancel`], since a
-/// successful open IS the finder's own "done", not something to undo by
-/// restoring `return_to`. A read failure is already reported by
+/// open_path_checked`). Either way this is a plain [`close`], not
+/// [`cancel`]: a successful open IS the finder's own "done", not something
+/// to undo by restoring `return_to`. A read failure is already reported by
 /// `open_path_checked` itself; nothing selected (an empty result list, the
 /// cursor past the end) reports through the message log and leaves the
 /// finder open rather than swallowing the keystroke.
@@ -178,6 +185,16 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         crate::messages::info(app, "no file selected");
         return;
     };
+
+    if let Some(id) = app.explorer.preview
+        && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(path.as_path())
+    {
+        close(app);
+        crate::explorer_preview::promote(app, id);
+        app.set_focus_pane(Pane::Editor, effects);
+        return;
+    }
+
     close(app);
     if crate::workspace::open_path_checked(app, &path, effects).is_some() {
         app.set_focus_pane(Pane::Editor, effects);
@@ -185,9 +202,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
 }
 
 fn selected_path(app: &App) -> Option<PathBuf> {
-    let state = app.filesearch.as_ref()?;
-    let row = state.results.get(state.nav.cursor)?;
-    candidate_at(state, row.candidate_idx).map(|c| c.path.clone())
+    super::selected_candidate(app).map(|c| c.path.clone())
 }
 
 /// Erases one GRAPHEME CLUSTER, not one `char` — the same reasoning
@@ -203,7 +218,7 @@ fn erase(app: &mut App) {
     }
 }
 
-fn nav_move(app: &mut App, delta: isize) {
+fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
     let height = page_amount(app).max(1) as usize;
     let margin = (height / 4).min(4);
     let Some(state) = app.filesearch.as_mut() else {
@@ -212,6 +227,7 @@ fn nav_move(app: &mut App, delta: isize) {
     let len = state.results.len();
     state.nav.move_by(delta, len);
     state.nav.follow(len, height, margin, 0);
+    after_cursor_move(app, effects);
 }
 
 /// The finder's visible result-row count, read straight from

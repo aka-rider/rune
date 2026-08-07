@@ -43,6 +43,22 @@ pub enum Pane {
 /// currently has focus — the quit chords and Save in particular must keep
 /// working while the Explorer/Tabs stub panes own it.
 pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: &mut Effects) {
+    // Captured BEFORE either hoisted gate below runs: `ToggleLeft`'s own
+    // show/hide decision must reflect what was ACTUALLY painted the moment
+    // this chord was pressed, not a layout that already changed underneath
+    // it. The fuzzy file finder paints the left column via a `layout::
+    // resolve` override that never touches `App::splits` — so closing an
+    // open finder (the close-gate below, which lands focus back on the
+    // Editor) leaves the raw `Split` flag exactly as bare as it was before
+    // the finder ever opened. Re-deriving `layout_mode()` AFTER that close
+    // would read that bare flag and conclude the column was never shown,
+    // making `ToggleLeft` re-show it and steal focus right back — this
+    // capture is what keeps that from happening.
+    let left_painted_before = matches!(
+        app.layout_mode(),
+        crate::focus::LayoutMode::Split { .. } | crate::focus::LayoutMode::ExplorerOnly
+    );
+
     // ONE hoisted gate, deliberately before the match:
     // a global chord pressed while the title is focused commits the typed
     // name FIRST, so ⌘S can never save under the old name and the edit is
@@ -89,18 +105,15 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // The single left-column toggle (Enter/Escape rework): painted this
         // frame ⇒ hide it and hand focus to the Editor; not painted ⇒ show
         // it, focus the Explorer, and land the cursor on the active
-        // document's own file. Reads `layout_mode()`, never the raw
+        // document's own file. Reads `left_painted_before` (`layout_mode()`
+        // captured above, before this press's own effects), never the raw
         // `Split` flag, so a frame too narrow to actually paint the column
         // (flag still `shown`, nothing on screen — the exact shadow state
         // `focus::LayoutMode` exists to close) is treated as hidden, and a
         // press there shows rather than uselessly re-hiding an already
         // invisible column.
         GlobalCommand::ToggleLeft => {
-            let visible = matches!(
-                app.layout_mode(),
-                crate::focus::LayoutMode::Split { .. } | crate::focus::LayoutMode::ExplorerOnly
-            );
-            if visible {
+            if left_painted_before {
                 app.splits.left.hide();
                 crate::focus::reconcile(app, effects);
             } else {
@@ -713,6 +726,43 @@ mod tests {
         assert!(
             messages::newest_text(&app).is_some(),
             "a message was posted"
+        );
+    }
+
+    /// Regression: `^B` pressed while the finder is open, on a column
+    /// whose OWN `Split` was never actually shown (the finder paints it via
+    /// `layout::resolve`'s override alone), must land on the Editor and
+    /// leave the column collapsed — not close the finder via the hoisted
+    /// close-gate and then immediately re-show the column and steal focus
+    /// back to the Explorer, which is what re-deriving `layout_mode()`
+    /// AFTER the close used to do (a fuzz-caught `UNDO-TOTAL` stall: focus
+    /// stuck off the Editor at session end, so no `⌘Z` could ever reach the
+    /// journal).
+    #[test]
+    fn toggle_left_while_filesearch_is_open_on_a_never_shown_column_lands_on_the_editor() {
+        let mut app = app();
+        app.frame_width = 120;
+        app.frame_height = 34;
+        assert!(
+            !app.splits.left.is_shown(),
+            "test setup: column never shown"
+        );
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        assert!(app.filesearch.is_some(), "test setup: finder open");
+        assert_eq!(
+            app.focus(),
+            Pane::Explorer,
+            "test setup: finder's own override"
+        );
+
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(app.focus(), Pane::Editor);
+        assert!(
+            !app.splits.left.is_shown(),
+            "the column must stay collapsed — its own Split was never really shown"
         );
     }
 

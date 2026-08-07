@@ -523,6 +523,33 @@ pub(super) const TRASH_KEY: KeyInput = KeyInput {
     },
 };
 
+/// `^⇧F` (`GlobalCommand::ToggleFileSearch`, primary binding) — the fuzzy
+/// file finder's own chord. Without this, the finder's whole open/typing/
+/// close surface (and the close-gate/focus invariants it must hold under
+/// every other global command) was reachable only through `cluster_monkey_
+/// burst`'s ~0.4%-of-16-mods-per-key odds, the same reachability gap
+/// `CTRL_B_KEY`/`CTRL_T_KEY` closed for the Explorer/Tabs panes.
+pub(super) const FILESEARCH_KEY_CTRL: KeyInput = KeyInput {
+    code: KeyCode::Char('F'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
+/// `⌘⇧F`, the same command's alias binding.
+pub(super) const FILESEARCH_KEY_SUP: KeyInput = KeyInput {
+    code: KeyCode::Char('F'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
+
 /// Unmodified printable-letter keys for the Explorer type-to-search feature
 /// (`explorer_search.rs`): `KeyPattern::printable`'s wildcard row matches
 /// any non-control `Char` under `Mods::NONE`, so this

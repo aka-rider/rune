@@ -20,7 +20,13 @@ use crate::runtime::Effects;
 use crate::workspace;
 
 pub(crate) mod keys;
+mod rank;
 pub(crate) mod walk;
+
+#[cfg(test)]
+mod preview_tests;
+#[cfg(test)]
+mod tests;
 
 /// The displayed-result cap (plan A5, VS Code's own figure) — the readout's
 /// `matched/total` keeps the true count visible even once a query (or, once
@@ -72,12 +78,13 @@ pub struct FileSearchState {
     pub walk_pending: bool,
     pub walk_truncated: bool,
     pub results: Vec<ResultRow>,
-    // Scoring/highlighting are wired up once candidates actually exist; kept
-    // here now so a whole finder session amortizes one matcher's internal
-    // scratch allocation instead of minting a fresh one per keystroke.
-    #[allow(dead_code)]
+    /// The nucleo matcher's own long-lived scratch space, held for the
+    /// whole finder session (`rank`, the only reader) rather than minted
+    /// per keystroke. Private: render never touches it (all matching
+    /// happens in `update`, never in render).
     matcher: Matcher,
-    #[allow(dead_code)]
+    /// Reusable `Utf32Str::new` scratch buffer, same reasoning as
+    /// `matcher` above.
     charbuf: Vec<char>,
 }
 
@@ -176,12 +183,47 @@ pub(crate) fn cancel(app: &mut App, effects: &mut Effects) {
 /// Resolves a `ResultRow::candidate_idx` into the `Candidate` it names:
 /// `0..recents.len()` addresses `recents`, the remainder addresses `walk` —
 /// the two backing lists `recompute` draws its combined ordering from,
-/// never physically merged into one `Vec`.
-pub(crate) fn candidate_at(state: &FileSearchState, idx: usize) -> Option<&Candidate> {
-    match idx.checked_sub(state.recents.len()) {
-        None => state.recents.get(idx),
-        Some(walk_idx) => state.walk.get(walk_idx),
+/// never physically merged into one `Vec`. The explicit-slices shape below
+/// is the chokepoint both this and `rank` (which only ever has the two
+/// slices, not a whole `&FileSearchState`, mid-recompute) route through.
+fn candidate_by<'a>(
+    recents: &'a [Candidate],
+    walk: &'a [Candidate],
+    idx: usize,
+) -> Option<&'a Candidate> {
+    match idx.checked_sub(recents.len()) {
+        None => recents.get(idx),
+        Some(walk_idx) => walk.get(walk_idx),
     }
+}
+
+pub(crate) fn candidate_at(state: &FileSearchState, idx: usize) -> Option<&Candidate> {
+    candidate_by(&state.recents, &state.walk, idx)
+}
+
+/// The candidate the nav cursor currently names, or `None` when the finder
+/// is closed or nothing is selected (an empty result list, a cursor past
+/// the end). The one place both `keys::open_selected` and
+/// [`after_cursor_move`] resolve "what's selected right now" from, so the
+/// two can never disagree about it.
+pub(crate) fn selected_candidate(app: &App) -> Option<&Candidate> {
+    let state = app.filesearch.as_ref()?;
+    let row = state.results.get(state.nav.cursor)?;
+    candidate_at(state, row.candidate_idx)
+}
+
+/// Requests a live preview of whatever the nav cursor currently selects —
+/// the finder's own counterpart of `explorer_keys`'s nav handlers, riding
+/// the SAME shared core (`explorer_preview::request_preview`) rather than a
+/// parallel reply path. Called after every nav command (`keys::apply`) and
+/// from [`recompute`] whenever a keystroke re-ranks the list and the top
+/// hit (or the whole list) changes under an unmoved cursor. A no-op with
+/// nothing selected — typing into an empty result list requests nothing.
+pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
+    let Some(path) = selected_candidate(app).map(|c| c.path.clone()) else {
+        return;
+    };
+    crate::explorer_preview::request_preview(app, &path, effects);
 }
 
 /// Applies a `Msg::FileSearchRecentsLoaded` reply: dropped outright when the
@@ -220,21 +262,37 @@ pub(crate) fn handle_recents_loaded(
 }
 
 /// The recompute-over-cache chokepoint every query edit (and every
-/// `recents`/`walk` load) funnels through — a non-empty query has no
-/// ranking yet (a later work package's job); an empty query lists in-tree
+/// `recents`/`walk` load) funnels through — an empty query lists in-tree
 /// recents (MRU order) then out-of-tree recents (MRU order), then `walk`
-/// files in whatever order they arrived (empty until a later work
-/// package's `Cmd` populates it), capped at [`RESULT_CAP`]. `effects` is
-/// threaded through from day one because a later work package's ranking
-/// also triggers a preview request when the selection changes.
-pub(crate) fn recompute(app: &mut App, _effects: &mut Effects) {
+/// files in whatever order they arrived; a non-empty query fuzzy-ranks
+/// through [`rank::rank`] (all scoring and highlight-index computation
+/// happens there, never in render). Either way the cursor resets to the
+/// top of the freshly computed list — a stale cursor position could point
+/// at the wrong row, or past the end of a now-shorter one, the same reason
+/// `search::recompute` always clears its own `current` — and
+/// [`after_cursor_move`] then requests a preview of whatever landed there,
+/// which is why every caller already threads `effects` through.
+pub(crate) fn recompute(app: &mut App, effects: &mut Effects) {
     let Some(state) = app.filesearch.as_mut() else {
         return;
     };
-    if !state.query.trim().is_empty() {
-        state.results = Vec::new();
-        return;
+    if state.query.trim().is_empty() {
+        list_all(state);
+    } else {
+        rank::rank(state);
     }
+    if let Some(state) = app.filesearch.as_mut() {
+        state.nav.cursor = 0;
+        state.nav.top = 0;
+    }
+    after_cursor_move(app, effects);
+}
+
+/// The empty-query listing: in-tree recents (MRU order) then out-of-tree
+/// recents (MRU order), then `walk` files in scan order — capped at
+/// [`RESULT_CAP`]. No score, no highlight indices: nothing was matched
+/// against.
+fn list_all(state: &mut FileSearchState) {
     let mut order: Vec<usize> = Vec::with_capacity(state.recents.len() + state.walk.len());
     order.extend(
         state
@@ -332,324 +390,5 @@ fn display_relative(root: &Path, path: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(rel) => rel.display().to_string(),
         Err(_) => path.display().to_string(),
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-    use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
-    use std::sync::Arc;
-
-    fn app() -> App {
-        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.frame_width = 120;
-        app.frame_height = 34;
-        app
-    }
-
-    /// The load-bearing ordering: opening on a fresh app whose left column
-    /// was never shown must still land the finder open with the Explorer
-    /// focused — this pins that `app.filesearch` is assigned BEFORE
-    /// `set_focus_pane` runs.
-    #[test]
-    fn open_on_a_never_shown_left_column_still_opens_and_focuses_explorer() {
-        let mut app = app();
-        assert!(!app.splits.left.is_shown(), "test setup: column hidden");
-        let mut effects = Effects::default();
-
-        open(&mut app, &mut effects);
-
-        assert!(app.filesearch.is_some());
-        assert_eq!(app.focus(), Pane::Explorer);
-    }
-
-    #[test]
-    fn open_is_a_no_op_when_already_open() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let generation_before = app.filesearch.as_ref().map(|s| s.generation);
-
-        open(&mut app, &mut effects);
-
-        assert_eq!(
-            app.filesearch.as_ref().map(|s| s.generation),
-            generation_before
-        );
-    }
-
-    #[test]
-    fn cancel_restores_the_document_that_was_active_before_open() {
-        let mut app = app();
-        let second = app.open_document(Buffer::new("second"));
-        crate::workspace::switch_to(&mut app, second);
-        let mut effects = Effects::default();
-
-        open(&mut app, &mut effects);
-        cancel(&mut app, &mut effects);
-
-        assert!(app.filesearch.is_none());
-        assert_eq!(
-            app.active, second,
-            "return_to is the doc active at open time"
-        );
-        assert_eq!(app.focus(), Pane::Editor);
-    }
-
-    #[test]
-    fn cancel_falls_back_to_the_editor_when_return_to_no_longer_exists() {
-        let mut app = app();
-        let second = app.open_document(Buffer::new("second"));
-        crate::workspace::switch_to(&mut app, second);
-        let mut effects = Effects::default();
-
-        open(&mut app, &mut effects);
-        let return_to = app.filesearch.as_ref().map(|s| s.return_to).expect("open");
-        assert_eq!(return_to, second, "test setup: return_to names `second`");
-
-        crate::workspace::request_close(&mut app, second, &mut effects);
-        assert!(app.doc(second).is_none(), "test setup: closed for real");
-
-        cancel(&mut app, &mut effects);
-
-        assert!(app.filesearch.is_none());
-        assert_eq!(app.focus(), Pane::Editor);
-    }
-
-    fn candidate(path: &str, in_tree: bool) -> Candidate {
-        Candidate {
-            path: PathBuf::from(path),
-            display: path.to_string(),
-            in_tree,
-            mru_rank: None,
-        }
-    }
-
-    /// Pins the plan's own empty-query ordering: in-tree recents first (MRU
-    /// order preserved), then out-of-tree recents (MRU order preserved) —
-    /// even though the reply itself arrives with the two interleaved.
-    #[test]
-    fn recents_loaded_orders_in_tree_before_out_of_tree_preserving_mru() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
-
-        let recents = vec![
-            candidate("/outside/z.md", false),
-            candidate("/root/a.md", true),
-            candidate("/root/b.md", true),
-        ];
-
-        handle_recents_loaded(&mut app, generation, Ok(recents), &mut effects);
-
-        let state = app.filesearch.as_ref().expect("still open");
-        let ordered: Vec<&std::path::Path> = state
-            .results
-            .iter()
-            .map(|row| {
-                candidate_at(state, row.candidate_idx)
-                    .expect("row names a real candidate")
-                    .path
-                    .as_path()
-            })
-            .collect();
-        assert_eq!(
-            ordered,
-            vec![
-                std::path::Path::new("/root/a.md"),
-                std::path::Path::new("/root/b.md"),
-                std::path::Path::new("/outside/z.md"),
-            ]
-        );
-    }
-
-    /// A close-then-reopen mints a fresh generation (`open`'s own contract);
-    /// a reply still carrying the OLD generation must never populate the
-    /// new session's `recents`.
-    #[test]
-    fn recents_loaded_reply_is_dropped_after_a_close_then_reopen_mints_a_new_generation() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let stale_generation = app.filesearch.as_ref().expect("open").generation;
-        close(&mut app);
-        open(&mut app, &mut effects);
-        let fresh_generation = app.filesearch.as_ref().expect("reopen").generation;
-        assert_ne!(
-            stale_generation, fresh_generation,
-            "test setup: reopen must mint a new generation"
-        );
-
-        handle_recents_loaded(
-            &mut app,
-            stale_generation,
-            Ok(vec![candidate("/root/a.md", true)]),
-            &mut effects,
-        );
-
-        assert!(
-            app.filesearch
-                .as_ref()
-                .expect("still open")
-                .recents
-                .is_empty(),
-            "a stale reply must never populate the fresh session's recents"
-        );
-    }
-
-    #[test]
-    fn recents_loaded_err_reply_posts_a_message_and_leaves_recents_empty() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
-
-        handle_recents_loaded(&mut app, generation, Err("boom".to_string()), &mut effects);
-
-        assert!(
-            app.filesearch
-                .as_ref()
-                .expect("still open")
-                .recents
-                .is_empty()
-        );
-        assert_eq!(
-            crate::messages::newest_text(&app),
-            Some("recent files not loaded: boom")
-        );
-    }
-
-    #[test]
-    fn open_pushes_the_walk_cmd_and_marks_it_pending() {
-        let mut app = app();
-        app.root = PathBuf::from("/root");
-        let mut effects = Effects::default();
-
-        open(&mut app, &mut effects);
-
-        assert!(
-            app.filesearch.as_ref().is_some_and(|s| s.walk_pending),
-            "walk_pending is set the moment the Cmd is issued"
-        );
-        assert!(
-            effects
-                .cmds
-                .iter()
-                .any(|c| c.kind() == crate::runtime::CmdKind::ReadDir),
-            "the scan Cmd is pushed, never run inline"
-        );
-    }
-
-    #[test]
-    fn handle_scanned_drops_a_reply_whose_generation_no_longer_matches() {
-        let mut app = app();
-        app.root = PathBuf::from("/root");
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let stale_generation = app.filesearch.as_ref().expect("open").generation;
-        cancel(&mut app, &mut effects);
-        open(&mut app, &mut effects); // mints a fresh generation
-
-        handle_scanned(
-            &mut app,
-            stale_generation,
-            Ok(walk::ScanResult {
-                files: vec![PathBuf::from("/root/a.md")],
-                truncated: false,
-            }),
-            &mut effects,
-        );
-
-        assert!(
-            app.filesearch.as_ref().is_some_and(|s| s.walk.is_empty()),
-            "a stale reply must never populate the live session's walk results"
-        );
-        assert!(
-            app.filesearch.as_ref().is_some_and(|s| s.walk_pending),
-            "the live session's own still-in-flight scan is untouched"
-        );
-    }
-
-    #[test]
-    fn handle_scanned_dedups_walk_against_recents_keeping_the_recents_mru_rank() {
-        let mut app = app();
-        app.root = PathBuf::from("/root");
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
-        if let Some(state) = app.filesearch.as_mut() {
-            state.recents.push(Candidate {
-                path: PathBuf::from("/root/a.md"),
-                display: "a.md".to_string(),
-                in_tree: true,
-                mru_rank: Some(0),
-            });
-        }
-
-        handle_scanned(
-            &mut app,
-            generation,
-            Ok(walk::ScanResult {
-                files: vec![PathBuf::from("/root/a.md"), PathBuf::from("/root/b.md")],
-                truncated: false,
-            }),
-            &mut effects,
-        );
-
-        let state = app.filesearch.as_ref().expect("still open");
-        assert_eq!(
-            state
-                .walk
-                .iter()
-                .map(|c| c.path.clone())
-                .collect::<Vec<_>>(),
-            vec![PathBuf::from("/root/b.md")],
-            "the path already covered by a recent is dropped from walk, not duplicated"
-        );
-        assert_eq!(state.recents.first().and_then(|c| c.mru_rank), Some(0));
-        assert!(!state.walk_pending);
-        assert_eq!(
-            state
-                .results
-                .first()
-                .and_then(|r| candidate_at(state, r.candidate_idx)),
-            state.recents.first(),
-            "recents occupy the low flat indices"
-        );
-        assert_eq!(
-            state
-                .results
-                .get(1)
-                .and_then(|r| candidate_at(state, r.candidate_idx)),
-            state.walk.first(),
-            "walk results follow recents in the flat listing"
-        );
-    }
-
-    #[test]
-    fn handle_scanned_error_clears_pending_and_posts_a_message() {
-        let mut app = app();
-        app.root = PathBuf::from("/root");
-        let mut effects = Effects::default();
-        open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
-
-        handle_scanned(
-            &mut app,
-            generation,
-            Err("workspace root vanished".to_string()),
-            &mut effects,
-        );
-
-        assert!(app.filesearch.as_ref().is_some_and(|s| !s.walk_pending));
-        assert!(app.filesearch.as_ref().is_some_and(|s| s.walk.is_empty()));
-        assert!(
-            crate::messages::newest_text(&app).is_some(),
-            "a message was posted"
-        );
     }
 }
