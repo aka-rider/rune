@@ -4,7 +4,7 @@
 
 **Platform**: macOS (Apple Silicon with ANE). Potentially Linux but out of scope for now. No Windows is supported or planned.
 
-**Designing a feature or touching persistence/UI code? Read `CONSTITUTION.md` first.** Every article is binding.
+**Read `CONSTITUTION.md` before contributing anything.** Every rule in it is binding.
 
 ## Map
 
@@ -45,19 +45,5 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 - **User-centric**: every user action must have feedback; every interaction must be pleasant. Design the architecture so that silent input swallowing is architecturally unsound. Pay attention to application performance.
 - **GUI-first**: take a step to design the UI, validate the solution from a UX standpoint — are there better alternatives?
 - **Who does it better**: in doubt? `/research` the best-in-class solutions from Zed, Helix, Neovim, Visual Studio Code, Emacs, etc.
-- **Never cite a `path:line` or even `path` location in a code comment.** `foo/bar.rs:210` rots the moment either file moves. A bare filename or module path (`cluster.rs`, `driver::checks`) is tolerated but discouraged — replace it with a description of the invariant when you touch the comment. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments.
-- **Code never cites `CONSTITUTION.md`.** State the invariant in the comment itself, in its own words — a `§N`-style reference rots the moment an article is renumbered or split, and hides the actual rule behind a lookup.
+- **Comment discipline is governed by `CONSTITUTION.md`** (comments article) — that includes never citing a `path:line` or a `§`-style reference; code never cites this file or that one.
 - Keep a source file **under 500** lines. When you push one over, record it in `TODO.md` with the reason and a named split candidate.
-
-## The Unbreakables (digest — full articles in CONSTITUTION.md)
-
-- Write the user's bytes verbatim — no normalized line endings / trailing newline / BOM / encoding. §6
-- Write user content only through a durable temp write + atomic `exchange`/`rename_excl` publish; unsaved work goes to the recovery store, never the user's file. §1, §2
-- Refuse, don't guess, at the buffer boundary; clamp only at the caller's boundary. An empty async reset is never a user deletion. §6, §7
-- Edit/cursor offsets are BYTES; display widths are TERMINAL CELLS over whole grapheme clusters (`unicode-width`), never bytes and never `char`s. §6
-- Halt with a surfaced error, never `panic`/`unwrap`/`expect` — a panic loses the unsaved buffer. The workspace denies those lints; do not `allow` them in production code. §9
-- Reach the filesystem only through the injected `Vfs`. §1
-- Capture displaced bytes as a durable blob before they're ever discarded. §3
-- A crash in linked tree-sitter C is not a Rust panic and no lint can see it — never construct an `InputEdit`, every parse is a full parse. §9
-- `update` is the sole writer of synchronous state; a `Cmd` exists only for work that leaves the thread. §10
-- A superseded async reply is killed by a generation/version echo, never by resolving live state on arrival. §10
