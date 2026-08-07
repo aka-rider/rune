@@ -65,6 +65,16 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     }
 
+    // Task WP-A(2ii): disk kept disagreeing with itself across every
+    // bounded re-probe — never serve an unstable/unconfirmed Theirs. Distinct
+    // from the F4 refusal below: this is disk actively changing, not a
+    // `classify_sync` inconsistency.
+    if prep.unstable {
+        app.merge = MergeState::Inactive;
+        messages::error(app, "disk is changing — try again");
+        return;
+    }
+
     // Review fix F4: `sync.kind` claiming `DiskAhead`/`Diverged` with no
     // `theirs` version at all is an inconsistency `classify_sync` should
     // never produce — surfaced as a clean refusal, no `0`/empty-`Vec`
@@ -342,6 +352,7 @@ mod tests {
             ancestor: None,
             theirs: None,
             theirs_obs: None,
+            unstable: false,
         };
 
         let mut effects = Effects::default();
@@ -371,6 +382,7 @@ mod tests {
             ancestor: None,
             theirs: Some(theirs.to_vec()),
             theirs_obs: Some(theirs_obs),
+            unstable: false,
         }
     }
 
@@ -399,6 +411,7 @@ mod tests {
             ancestor: None,
             theirs: None,
             theirs_obs: None,
+            unstable: false,
         };
 
         let mut effects = Effects::default();
