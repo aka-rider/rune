@@ -193,69 +193,6 @@ pub(crate) fn format_rfc3339_nanos(t: SystemTime) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{nanos:09}Z")
 }
 
-/// Parses the exact fixed-width shape [`format_rfc3339_nanos`] produces
-/// (`YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`, always UTC, always 9-digit
-/// nanoseconds) — deliberately NOT a general RFC3339 parser: every `at`
-/// column this crate ever reads back was written by this same function, so
-/// a strict fixed-width parse is both simpler and a stronger corruption
-/// check than a lenient one. Returns `None` on any deviation (wrong length,
-/// non-numeric field, out-of-range component) rather than panicking — used
-/// by `journal::append_edit`'s coalescing elapsed-time check,
-/// where a parse failure just means "don't coalesce", not a hard error.
-pub(crate) fn parse_rfc3339_nanos(s: &str) -> Option<SystemTime> {
-    if s.len() != 30 || s.as_bytes().get(29) != Some(&b'Z') {
-        return None;
-    }
-    let year: i64 = s.get(0..4)?.parse().ok()?;
-    (s.get(4..5)? == "-").then_some(())?;
-    let month: u32 = s.get(5..7)?.parse().ok()?;
-    (s.get(7..8)? == "-").then_some(())?;
-    let day: u32 = s.get(8..10)?.parse().ok()?;
-    (s.get(10..11)? == "T").then_some(())?;
-    let hour: i64 = s.get(11..13)?.parse().ok()?;
-    (s.get(13..14)? == ":").then_some(())?;
-    let minute: i64 = s.get(14..16)?.parse().ok()?;
-    (s.get(16..17)? == ":").then_some(())?;
-    let second: i64 = s.get(17..19)?.parse().ok()?;
-    (s.get(19..20)? == ".").then_some(())?;
-    let nanos: u32 = s.get(20..29)?.parse().ok()?;
-
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || !(0..24).contains(&hour)
-        || !(0..60).contains(&minute)
-        || !(0..60).contains(&second)
-    {
-        return None;
-    }
-
-    let days = days_from_civil(year, month, day);
-    let secs_of_day = hour * 3600 + minute * 60 + second;
-    let total_secs = days.checked_mul(86_400)?.checked_add(secs_of_day)?;
-
-    if total_secs >= 0 {
-        Some(SystemTime::UNIX_EPOCH + std::time::Duration::new(total_secs as u64, nanos))
-    } else {
-        let before = std::time::Duration::new(total_secs.unsigned_abs(), 0);
-        SystemTime::UNIX_EPOCH
-            .checked_sub(before)
-            .map(|t| t + std::time::Duration::new(0, nanos))
-    }
-}
-
-/// Proleptic Gregorian (year, month, day) to days-since-epoch
-/// (1970-01-01) — the exact inverse of [`civil_from_days`] (Howard
-/// Hinnant's `days_from_civil`, the same well-known algorithm).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400; // [0, 399]
-    let mp = if m > 2 { m - 3 } else { m + 9 }; // [0, 11]
-    let doy = (153 * i64::from(mp) + 2) / 5 + i64::from(d) - 1; // [0, 365]
-    let doe = yoe * 365 + yoe.div_euclid(4) - yoe.div_euclid(100) + doy; // [0, 146096]
-    era * 146_097 + doe - 719_468
-}
-
 /// Days-since-epoch (1970-01-01) to a proleptic Gregorian (year, month,
 /// day). `z` may be negative (dates before the epoch).
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -326,30 +263,6 @@ mod tests {
             format_rfc3339_nanos(SystemTime::UNIX_EPOCH),
             "1970-01-01T00:00:00.000000000Z"
         );
-    }
-
-    #[test]
-    fn parse_rfc3339_nanos_round_trips_format_output() {
-        for t in [
-            SystemTime::UNIX_EPOCH,
-            SystemTime::UNIX_EPOCH + std::time::Duration::new(1_704_164_645, 123_456_789),
-            SystemTime::now(),
-        ] {
-            let formatted = format_rfc3339_nanos(t);
-            let parsed = parse_rfc3339_nanos(&formatted).expect("must parse own output");
-            assert_eq!(
-                format_rfc3339_nanos(parsed),
-                formatted,
-                "round trip through parse must reproduce the same formatted instant"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_rfc3339_nanos_rejects_garbage() {
-        assert!(parse_rfc3339_nanos("not a timestamp").is_none());
-        assert!(parse_rfc3339_nanos("2024-01-02T03:04:05.123456789").is_none()); // missing Z
-        assert!(parse_rfc3339_nanos("2024-13-02T03:04:05.123456789Z").is_none()); // month 13
     }
 
     #[test]

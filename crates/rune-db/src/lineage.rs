@@ -1,82 +1,83 @@
-//! The shared lineage-walk primitive over `observations.supersedes`: every
-//! adoption records the CAS baseline it replaced, and every confirmed fresh
-//! sighting that differs in hash from what was previously newest records
-//! that prior newest (`observation.rs`'s own doc on `Observation::
-//! supersedes`) — one edge per row, so the whole table forms a forest of
-//! single-parent chains. [`common_ancestor`] is the one place that forest is
-//! walked to answer "do these two observations share a recorded history",
-//! consumed by `sync.rs`'s own-history echo check and `merge_prep.rs`'s
-//! ancestor ladder alike, so the walk-and-bound behavior can never drift
-//! between the two.
+//! The shared lineage primitive over `observations.parent_a`/`parent_b`:
+//! every adoption records the CAS baseline it replaced, a resolve/merge
+//! records the disk-side observation it reconciled against, and a CONFIRMED
+//! fresh sighting that differs in hash from what was previously newest
+//! records that prior newest (`Observation::parent_a`/`parent_b` carry the
+//! per-edge meanings) — two edges per row at most, forming a DAG rather
+//! than v1's single-parent forest. [`is_ancestor`] and [`common_ancestor`]
+//! are the two ways that DAG is queried — the own-history echo check and
+//! the merge-prep ancestor ladder share them, so the walk behavior can
+//! never drift between the two.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
 use crate::observation::{self, ObsId, Observation};
 
-/// Bounds how many `supersedes` hops a lineage walk follows before giving up
-/// — generous enough for any realistic session history, but bounded so a
-/// pathological chain (or, in principle, a cycle a bug somewhere else
-/// introduced) can never spin unboundedly. Mirrors `bracket.rs`'s own
-/// bounded-retry convention.
-const LINEAGE_WALK_MAX_HOPS: u32 = 256;
-
-/// `id`'s own `supersedes` chain, closest first: `id` itself, then its
-/// `supersedes`, then that row's `supersedes`, and so on, bounded by
-/// [`LINEAGE_WALK_MAX_HOPS`]. A chain longer than the bound is truncated —
-/// the caller reads a truncated walk finding no match as "no edge found
-/// within the bound", never as proof no such edge exists at all.
-fn lineage_chain(tx: &Transaction<'_>, id: ObsId) -> Result<Vec<ObsId>, Error> {
-    let mut chain = Vec::new();
-    let mut cur = Some(id);
-    let mut hops = 0u32;
-    while let Some(cur_id) = cur {
-        if hops >= LINEAGE_WALK_MAX_HOPS {
-            break;
-        }
-        chain.push(cur_id);
-        cur = tx
-            .query_row(
-                "SELECT supersedes FROM observations WHERE id=?1",
-                params![cur_id],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten();
-        hops += 1;
-    }
-    Ok(chain)
+/// The recursive-CTE body shared by [`is_ancestor`] and [`common_ancestor`]:
+/// starting from `param` (a bound-parameter placeholder), walks every
+/// reachable `parent_a`/`parent_b` edge upward, self-joining against
+/// `cte_name` (the enclosing `WITH RECURSIVE` clause's own name — each
+/// caller names its own, so two independent walks in one query never
+/// collide). Every parent id a row can carry always refers to an
+/// EARLIER-inserted row (the FK target already existed when the edge was
+/// recorded), so the walk is acyclic by construction — no hop bound is
+/// needed the way v1's single-parent walk carried one.
+fn ancestors_of_clause(cte_name: &str, param: &str) -> String {
+    format!(
+        "SELECT {param}
+         UNION
+         SELECT o.parent_a FROM observations o JOIN {cte_name} ON o.id = {cte_name}.id WHERE o.parent_a IS NOT NULL
+         UNION
+         SELECT o.parent_b FROM observations o JOIN {cte_name} ON o.id = {cte_name}.id WHERE o.parent_b IS NOT NULL"
+    )
 }
 
-/// The closest common ancestor of `a` and `b` along their own `supersedes`
-/// chains (each bounded by [`LINEAGE_WALK_MAX_HOPS`]) — `Some(a)` when `a`
-/// is on `b`'s own chain (or the reverse), `None` when the two bounded walks
-/// never intersect at all. Since every row has at most one `supersedes`
-/// parent, the two chains are each a straight root-ward path, so the first
-/// node encountered while walking `b` that also appears in `a`'s own chain
-/// is exactly the closest node ancestral to both — the answer is the same
-/// regardless of which side is walked first.
+/// Whether `ancestor` is `of` itself, or reachable from `of` by following
+/// `parent_a`/`parent_b` edges upward any number of hops.
+pub fn is_ancestor(tx: &Transaction<'_>, ancestor: ObsId, of: ObsId) -> Result<bool, Error> {
+    let clause = ancestors_of_clause("anc", "?1");
+    let sql = format!(
+        "WITH RECURSIVE anc(id) AS ({clause}) SELECT EXISTS(SELECT 1 FROM anc WHERE id = ?2)"
+    );
+    tx.query_row(&sql, params![of, ancestor], |r| r.get(0))
+        .map_err(Error::from)
+}
+
+/// The closest common ancestor of `a` and `b`: the full ancestor sets of
+/// each (via [`ancestors_of_clause`]) intersected, then the intersection's
+/// member with the LARGEST id — ids are assigned in insertion order, and a
+/// parent edge always points at an earlier id, so within either ancestor
+/// set a larger id is always strictly closer to that set's own starting
+/// point; the largest id common to both sets is therefore the nearest node
+/// ancestral to both. `None` when the two ancestor sets never intersect at
+/// all.
 pub fn common_ancestor(
     tx: &Transaction<'_>,
     a: ObsId,
     b: ObsId,
 ) -> Result<Option<Observation>, Error> {
-    let chain_a = lineage_chain(tx, a)?;
-    let chain_b = lineage_chain(tx, b)?;
-    let seen: std::collections::HashSet<ObsId> = chain_a.into_iter().collect();
-    for id in chain_b {
-        if seen.contains(&id) {
-            return observation::get_observation(tx, id).map(Some);
-        }
+    let clause_a = ancestors_of_clause("anc_a", "?1");
+    let clause_b = ancestors_of_clause("anc_b", "?2");
+    let sql = format!(
+        "WITH RECURSIVE anc_a(id) AS ({clause_a}), anc_b(id) AS ({clause_b}) \
+         SELECT MAX(id) FROM anc_a WHERE id IN (SELECT id FROM anc_b)"
+    );
+    let found: Option<ObsId> = tx
+        .query_row(&sql, params![a, b], |r| r.get(0))
+        .optional()?
+        .flatten();
+    match found {
+        Some(id) => observation::get_observation(tx, id).map(Some),
+        None => Ok(None),
     }
-    Ok(None)
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use crate::observation::{ObservationMeta, StatFacts};
+    use crate::observation::{ObservationMeta, ParentEdges, StatFacts};
     use rusqlite::Connection;
     use std::time::SystemTime;
 
@@ -100,7 +101,7 @@ mod tests {
         doc_id: i64,
         session_id: i64,
         content: &str,
-        supersedes: Option<ObsId>,
+        parent_a: Option<ObsId>,
     ) -> ObsId {
         let hash = crate::blob::put_blob(tx, content.as_bytes()).expect("seed blob");
         observation::insert_observation_row(
@@ -119,7 +120,10 @@ mod tests {
                 ..Default::default()
             },
             "t",
-            supersedes,
+            ParentEdges {
+                a: parent_a,
+                b: None,
+            },
         )
         .expect("seed observation")
     }
@@ -191,7 +195,7 @@ mod tests {
         let found = common_ancestor(&tx, a, b).expect("common_ancestor");
         assert_eq!(
             found, None,
-            "two roots with no shared supersedes edge must not falsely intersect"
+            "two roots with no shared parent edge must not falsely intersect"
         );
         tx.commit().expect("commit");
     }
@@ -211,6 +215,71 @@ mod tests {
             .expect("common_ancestor")
             .expect("some");
         assert_eq!(found.id, root);
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    fn is_ancestor_of_self_is_true() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        let a = seed_obs(&tx, doc_id, session_id, "one", None);
+
+        assert!(is_ancestor(&tx, a, a).expect("is_ancestor"));
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    fn is_ancestor_true_across_a_two_parent_join() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        let a = seed_obs(&tx, doc_id, session_id, "one", None);
+        let b = seed_obs(&tx, doc_id, session_id, "two", None);
+        let hash = crate::blob::put_blob(&tx, b"joined").expect("seed blob");
+        let joined = observation::insert_observation_row(
+            &tx,
+            doc_id,
+            session_id,
+            ObservationMeta {
+                blob_hash: &hash,
+                seq: None,
+                origin: "resolve",
+                confirmed: Some(true),
+            },
+            &StatFacts {
+                size: 6,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
+            "t",
+            ParentEdges {
+                a: Some(a),
+                b: Some(b),
+            },
+        )
+        .expect("seed two-parent join");
+
+        assert!(is_ancestor(&tx, a, joined).expect("is_ancestor via parent_a"));
+        assert!(is_ancestor(&tx, b, joined).expect("is_ancestor via parent_b"));
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    fn is_ancestor_false_for_disconnected_nodes() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        let a = seed_obs(&tx, doc_id, session_id, "one", None);
+        let b = seed_obs(&tx, doc_id, session_id, "two", None);
+
+        assert!(!is_ancestor(&tx, a, b).expect("is_ancestor"));
         tx.commit().expect("commit");
     }
 }

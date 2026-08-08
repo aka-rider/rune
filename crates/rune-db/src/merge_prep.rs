@@ -37,7 +37,7 @@ const MERGE_PREP_MAX_ATTEMPTS: u32 = 3;
 /// `unwrap_or("")` used to (silently substituting an empty ancestor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AncestorRung {
-    /// Walking the observations' own `supersedes` lineage found a common
+    /// Walking the observations' own parent-edge lineage found a common
     /// ancestor between this session's CAS baseline and theirs — possibly
     /// fresher or more precise than the session-scoped derivation below,
     /// since it can see edges recorded by adoptions this session's own
@@ -141,7 +141,7 @@ pub fn merge_prep(
     })
 }
 
-/// The ancestor ladder: (i) walk the `supersedes` lineage between this
+/// The ancestor ladder: (i) walk the parent-edge lineage between this
 /// session's CAS baseline and `theirs_obs` for a common ancestor — sees
 /// edges recorded by ANY adoption or confirmed sighting, not only this
 /// session's own seq-correlated agreements; (ii) failing that, fall back to
@@ -200,7 +200,7 @@ mod tests {
     /// no correlated seq (so `ancestor_at`'s session-scoped derivation can
     /// never find it — `sync.ancestor` stays `None`), but that SAME
     /// baseline is still reachable from the fresh `theirs` sighting via the
-    /// observations' own `supersedes` lineage, the ladder's rung (i) must
+    /// observations' own parent-edge lineage, the ladder's rung (i) must
     /// still surface it rather than reporting absence.
     #[test]
     fn merge_prep_ancestor_ladder_prefers_lineage_over_an_absent_session_scoped_ancestor() {
@@ -244,6 +244,7 @@ mod tests {
             },
             &stat,
             SystemTime::now(),
+            None,
         )
         .expect("seed baseline adoption");
 

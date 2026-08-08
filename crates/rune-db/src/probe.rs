@@ -133,7 +133,7 @@ pub fn probe(
     if state.kind == SyncKind::Clean {
         // Auto-adopt only when there is something to heal: stacking a fresh
         // 'resolve' adoption on every clean probe tick would grow
-        // observations/supersedes unboundedly.
+        // observations/parent_a unboundedly.
         let should_adopt = retry::with_retry(conn, |tx| {
             let cur = observation::saved_obs_for(tx, session_id, doc_id)?;
             Ok::<bool, Error>(match cur {

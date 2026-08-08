@@ -225,6 +225,7 @@ mod tests {
                     ..Default::default()
                 },
                 "t",
+                None,
             )
             .expect("adopt load");
             crate::journal::append_edit(
@@ -308,6 +309,7 @@ mod tests {
                     ..Default::default()
                 },
                 "t",
+                None,
             )
             .expect("adopt load");
             crate::journal::append_edit(
@@ -378,6 +380,7 @@ mod tests {
                     ..Default::default()
                 },
                 "t",
+                None,
             )
             .expect("adopt load");
             tx.commit().expect("commit");

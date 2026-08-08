@@ -73,7 +73,7 @@ use crate::diag::background_note;
 /// never in place. The one exception is a nullable column added to an
 /// existing table, which lands in place without a bump; see the module
 /// doc's additive-column exception.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The filename `rune-v{SCHEMA_VERSION}.db` uses, isolated so tests and the
 /// GC (WP6) can match it without recomputing the format string.

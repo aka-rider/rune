@@ -100,14 +100,14 @@ pub fn classify_sync(
 /// `BufferAhead` when `theirs`' hash was INDEPENDENTLY recorded before —
 /// some OTHER observation of `doc_id` (any session) already carries the
 /// same hash with `origin` `save`/`resolve`, or as a confirmed load/probe
-/// sighting — AND that earlier occurrence shares a recorded lineage with
-/// the derived `ancestor` (`lineage::common_ancestor`, walking
-/// `supersedes`). Kills the cross-session echo shape (G7): two sessions
-/// (tabs) on the same file each derive `ancestor_at` scoped to their own
-/// agreement history, so session A's save is never session B's ancestor —
-/// without this check, B rediscovering A's own save via a plain probe,
-/// while B's own buffer has since edited further, misclassifies as a
-/// foreign conflict against content rune itself produced.
+/// sighting — AND `ancestor` is an ancestor of `theirs` in the observations'
+/// own parent-edge DAG (`lineage::is_ancestor`). Kills the cross-session
+/// echo shape (G7): two sessions (tabs) on the same file each derive
+/// `ancestor_at` scoped to their own agreement history, so session A's save
+/// is never session B's ancestor — without this check, B rediscovering A's
+/// own save via a plain probe, while B's own buffer has since edited
+/// further, misclassifies as a foreign conflict against content rune itself
+/// produced.
 ///
 /// Deliberately excludes `theirs`' own row from the existence check: a
 /// fresh, first-ever sighting of some content is always self-confirmed
@@ -122,16 +122,16 @@ pub fn classify_sync(
 /// `BufferAhead` by `classify_sync` before `Diverged` is ever reached, so no
 /// distinct equal-to-baseline case actually arises here.
 ///
-/// A known, accepted trade-off: `supersedes` records TEMPORAL succession
-/// ("what was newest right before this sighting"), not true content
-/// derivation, so an external tool that restores bytes matching an OLDER
-/// hash rune once wrote can also share a lineage with the current ancestor
-/// and get promoted here, even though the restore is a genuine external
-/// change. This never loses bytes (the blob is retained, and the buffer
-/// stays exactly as dirty as it already was) — it only suppresses a merge
-/// invitation that would otherwise have been shown; a save afterward still
-/// CAS-compares against the disk's real current hash and refuses normally
-/// if it has moved again since.
+/// A known, accepted trade-off: a parent edge records TEMPORAL succession
+/// ("what was newest, or what was reconciled against, right before this
+/// sighting"), not true content derivation, so an external tool that
+/// restores bytes matching an OLDER hash rune once wrote can also share a
+/// lineage with the current ancestor and get promoted here, even though the
+/// restore is a genuine external change. This never loses bytes (the blob
+/// is retained, and the buffer stays exactly as dirty as it already was) —
+/// it only suppresses a merge invitation that would otherwise have been
+/// shown; a save afterward still CAS-compares against the disk's real
+/// current hash and refuses normally if it has moved again since.
 fn own_history_echo(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -152,10 +152,8 @@ fn own_history_echo(
     if !is_own_write {
         return Ok(None);
     }
-    let lca = crate::lineage::common_ancestor(tx, ancestor_id, theirs_id)?;
-    Ok(lca
-        .filter(|l| l.id == ancestor_id)
-        .map(|_| SyncKind::BufferAhead))
+    let contained = crate::lineage::is_ancestor(tx, ancestor_id, theirs_id)?;
+    Ok(contained.then_some(SyncKind::BufferAhead))
 }
 
 /// Compares the journal reconstruction, the newest recorded observation
@@ -323,7 +321,10 @@ mod tests {
             },
             &stat,
             "t2",
-            Some(ancestor_id),
+            observation::ParentEdges {
+                a: Some(ancestor_id),
+                b: None,
+            },
         )
         .expect("seed midpoint");
 
@@ -339,7 +340,10 @@ mod tests {
             },
             &stat,
             "t3",
-            Some(mid_id),
+            observation::ParentEdges {
+                a: Some(mid_id),
+                b: None,
+            },
         )
         .expect("seed rediscovery");
         let _ = save_id;
@@ -406,7 +410,10 @@ mod tests {
             },
             &stat,
             "t2",
-            Some(ancestor_id),
+            observation::ParentEdges {
+                a: Some(ancestor_id),
+                b: None,
+            },
         )
         .expect("seed the stranger's own first sighting");
 
@@ -428,11 +435,17 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// The negative case worth pinning explicitly: a hash that matches
-    /// this document's own history (confirmed, so `is_own_write` is true)
-    /// but shares NO recorded lineage with the current ancestor — two
-    /// disconnected roots for the same document, the shape a legacy or
-    /// pre-migration row can leave behind — must stay `Diverged`.
+    /// Exercises the CONTAINMENT half specifically: `theirs`' hash IS
+    /// independently, trustedly recorded elsewhere (`is_own_write` is
+    /// genuinely true, via `independent_id` below — a real, non-vacuous
+    /// trust-gate pass, unlike the OLD version of this test, which had no
+    /// independent `hash_b` row at all and passed only because the trust
+    /// gate had nothing to see), but that independent sighting — like
+    /// `theirs` itself — shares NO recorded lineage with the current
+    /// ancestor: two disconnected roots for the same document, the shape a
+    /// legacy or pre-migration row can leave behind. Must stay `Diverged`.
+    /// Mutation-checked: with the containment check deleted (promoting
+    /// unconditionally once the trust gate passes), this test goes red.
     #[test]
     fn own_history_echo_does_not_promote_a_disconnected_hash_match() {
         let mut conn = open();
@@ -481,6 +494,28 @@ mod tests {
         )
         .expect("seed theirs");
 
+        // The independent, TRUSTED prior sighting of `hash_b` — a real root
+        // with no lineage to `ancestor_id` at all, distinct from `theirs_id`
+        // (excluded by `own_history_echo`'s own `id != theirs_id` guard).
+        let _independent_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_b,
+                seq: None,
+                origin: "save",
+                confirmed: None,
+            },
+            &observation::StatFacts {
+                size: 1,
+                mtime: "t3".to_string(),
+                ..Default::default()
+            },
+            "t3",
+        )
+        .expect("seed independent trusted sighting");
+
         let ancestor = Version {
             hash: hash_a,
             obs: Some(ancestor_id),
@@ -499,9 +534,14 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// An UNCONFIRMED sighting of a hash never satisfies `is_own_write`,
-    /// even with an ancestor present — an untrusted read decides nothing,
-    /// including whether it is an echo of our own history.
+    /// Exercises the TRUST GATE half specifically: `theirs` itself chains
+    /// from `ancestor` via `parent_a` (so containment alone WOULD promote
+    /// it), but the only other sighting of its hash (`independent_id`) is
+    /// UNCONFIRMED and not a `save`/`resolve` — an untrusted read decides
+    /// nothing, including whether it is an echo of our own history. Must
+    /// stay `Diverged`. Mutation-checked: with the trust gate deleted
+    /// (`is_own_write` forced `true`), containment alone finds `ancestor_id`
+    /// on `theirs_id`'s chain and this test goes red.
     #[test]
     fn own_history_echo_does_not_promote_an_unconfirmed_theirs() {
         let mut conn = open();
@@ -531,7 +571,9 @@ mod tests {
         .expect("seed ancestor");
 
         let hash_b = crate::blob::put_blob(&tx, b"unconfirmed content").expect("seed blob b");
-        let theirs_id = observation::record_observation(
+        // Chains from `ancestor_id` — containment alone (with no trust gate)
+        // would find it.
+        let theirs_id = observation::insert_observation_row(
             &tx,
             doc_id,
             session_id,
@@ -547,8 +589,33 @@ mod tests {
                 ..Default::default()
             },
             "t2",
+            observation::ParentEdges {
+                a: Some(ancestor_id),
+                b: None,
+            },
         )
         .expect("seed theirs");
+
+        // The ONLY other sighting of `hash_b` — untrusted (unconfirmed,
+        // never `save`/`resolve`), so the trust gate must refuse it.
+        let _independent_id = observation::record_observation(
+            &tx,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash_b,
+                seq: None,
+                origin: "watch",
+                confirmed: Some(false),
+            },
+            &observation::StatFacts {
+                size: 1,
+                mtime: "t3".to_string(),
+                ..Default::default()
+            },
+            "t3",
+        )
+        .expect("seed independent untrusted sighting");
 
         let ancestor = Version {
             hash: hash_a,

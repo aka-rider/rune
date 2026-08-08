@@ -90,6 +90,7 @@ fn anchor_on_disk_tx(
         },
         ctx.live_stat,
         &crate::session::format_rfc3339_nanos(ctx.now),
+        None,
     )?;
     Ok(())
 }
@@ -166,6 +167,7 @@ fn anchor_diverged(
             },
             &baseline.stat(),
             &crate::session::format_rfc3339_nanos(ctx.now),
+            None,
         )?;
 
         let bridge_seq = bridge_edit_tx(tx, ctx, &h0_content, draft)?;
@@ -315,7 +317,8 @@ mod tests {
             device: None,
             nlink: None,
             origin: "load".to_string(),
-            supersedes: None,
+            parent_a: None,
+            parent_b: None,
             at: "t".to_string(),
             confirmed: None,
         };

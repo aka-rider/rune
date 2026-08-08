@@ -53,15 +53,21 @@ pub struct Observation {
     pub nlink: Option<i64>,
     /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
     pub origin: String,
-    /// The one lineage edge every observation may carry, pointing at the
-    /// prior row this one succeeds: for an adoption (`materialize::
-    /// commit_save`, `adopt::adopt_equal`/`resolve_adopt`), the `saved_obs`
-    /// baseline the adoption replaced; for a CONFIRMED fresh disk sighting
+    /// The version DAG's first lineage edge, pointing at the prior row this
+    /// one succeeds: for an adoption (`materialize::commit_save`,
+    /// `adopt::adopt_equal`/`resolve_adopt`), the `saved_obs` baseline the
+    /// adoption replaced; for a CONFIRMED fresh disk sighting
     /// (`observe_from_stat_tx`, when `confirmed == Some(true)`) whose hash
     /// differs from what was newest a moment before, that prior newest row.
     /// `None` for a legacy/root row, or a sighting that matched the hash
     /// already newest (nothing to chain to).
-    pub supersedes: Option<i64>,
+    pub parent_a: Option<i64>,
+    /// The version DAG's second lineage edge — the disk-side observation a
+    /// two-parent join reconciled against: `adopt::resolve_adopt`'s own
+    /// `obs` argument (theirs, being resolved), or `materialize`'s swap-race
+    /// capture when a save's publish raced a concurrent external write.
+    /// `None` for every one-parent row.
+    pub parent_b: Option<i64>,
     pub at: String,
     /// `None` for a legacy/unclassified row; `Some(true)` for a sighting
     /// trusted as a stable fact (only such a row may short-circuit a probe,
@@ -92,7 +98,7 @@ pub fn hash_bytes(data: &[u8]) -> String {
     crate::blob::hex_sha256(data)
 }
 
-const OBS_COLUMNS: &str = "id, doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at, confirmed";
+const OBS_COLUMNS: &str = "id, doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, parent_a, parent_b, at, confirmed";
 
 fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
     Ok(Observation {
@@ -107,9 +113,10 @@ fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
         device: row.get(8)?,
         nlink: row.get(9)?,
         origin: row.get(10)?,
-        supersedes: row.get(11)?,
-        at: row.get(12)?,
-        confirmed: row.get(13)?,
+        parent_a: row.get(11)?,
+        parent_b: row.get(12)?,
+        at: row.get(13)?,
+        confirmed: row.get(14)?,
     })
 }
 
@@ -159,6 +166,16 @@ pub struct ObservationMeta<'a> {
     pub confirmed: Option<bool>,
 }
 
+/// The two lineage edges a row may carry (the `parent_a`/`parent_b`
+/// columns), bundled so [`insert_observation_row`] takes the same
+/// argument count it always has — see [`StatFacts`]'s doc for why this
+/// crate bundles rather than growing a function's raw parameter list.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ParentEdges {
+    pub a: Option<ObsId>,
+    pub b: Option<ObsId>,
+}
+
 /// Inserts a new `observations` row with no lineage edge. Pure SQLite — the
 /// caller has already done any disk I/O and blob storage this observation
 /// reports on. Every caller that DOES know a predecessor to record instead
@@ -171,13 +188,22 @@ pub fn record_observation(
     stat: &StatFacts,
     at: &str,
 ) -> Result<ObsId, Error> {
-    insert_observation_row(tx, doc_id, session_id, meta, stat, at, None)
+    insert_observation_row(
+        tx,
+        doc_id,
+        session_id,
+        meta,
+        stat,
+        at,
+        ParentEdges::default(),
+    )
 }
 
-/// The one INSERT every observation row goes through, `supersedes` included
-/// — shared by [`record_observation`] (no edge), [`observe_from_stat_tx`]
-/// (the confirmed-sighting edge), and `adopt::record_adoption_tx` (the
-/// adoption edge), so the row shape can never drift between the three.
+/// The one INSERT every observation row goes through, `parent_a`/`parent_b`
+/// included — shared by [`record_observation`] (no edge),
+/// [`observe_from_stat_tx`] (the confirmed-sighting edge), and
+/// `adopt::record_adoption_tx` (the adoption edges), so the row shape can
+/// never drift between the three.
 pub(crate) fn insert_observation_row(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -185,11 +211,11 @@ pub(crate) fn insert_observation_row(
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     at: &str,
-    supersedes: Option<ObsId>,
+    parents: ParentEdges,
 ) -> Result<ObsId, Error> {
     tx.execute(
-        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at, confirmed) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, parent_a, parent_b, at, confirmed) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![
             doc_id,
             session_id,
@@ -201,7 +227,8 @@ pub(crate) fn insert_observation_row(
             stat.device,
             stat.nlink,
             meta.origin,
-            supersedes,
+            parents.a,
+            parents.b,
             at,
             meta.confirmed
         ],
@@ -214,7 +241,7 @@ pub(crate) fn insert_observation_row(
 /// a re-confirmation of the same content chains to nothing new. Unconfirmed
 /// sightings never chain at all (`confirmed != Some(true)`): a read that
 /// isn't trusted as a stable fact earns no lineage claim either.
-fn confirmed_sighting_supersedes(
+fn confirmed_sighting_parent(
     tx: &Transaction<'_>,
     doc_id: i64,
     confirmed: Option<bool>,
@@ -267,7 +294,7 @@ pub(crate) fn observe_from_stat_tx(
     input: ObserveInput<'_>,
 ) -> Result<Observation, Error> {
     let hash = crate::blob::put_blob(tx, input.data)?;
-    let supersedes = confirmed_sighting_supersedes(tx, doc_id, input.confirmed, &hash)?;
+    let parent_a = confirmed_sighting_parent(tx, doc_id, input.confirmed, &hash)?;
     let id = insert_observation_row(
         tx,
         doc_id,
@@ -280,7 +307,10 @@ pub(crate) fn observe_from_stat_tx(
         },
         stat,
         at,
-        supersedes,
+        ParentEdges {
+            a: parent_a,
+            b: None,
+        },
     )?;
     Ok(Observation {
         id,
@@ -294,7 +324,8 @@ pub(crate) fn observe_from_stat_tx(
         device: stat.device,
         nlink: stat.nlink,
         origin: input.origin.to_string(),
-        supersedes,
+        parent_a,
+        parent_b: None,
         at: at.to_string(),
         confirmed: input.confirmed,
     })

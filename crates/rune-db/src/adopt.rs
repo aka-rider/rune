@@ -14,13 +14,16 @@ use crate::retry;
 
 /// The shared one-tx BODY behind every path that moves `saved_obs` to a
 /// NEWLY-inserted observation: a fresh row is inserted (tagged
-/// `session_id`), `supersedes` is set to whatever `session_id`'s
-/// `saved_obs` held immediately before (`None` if none), and
-/// `session_documents.saved_obs` advances to the new row. Runs entirely
-/// inside the CALLER's already-open tx — `materialize::commit_save` calls
-/// this directly inside its own save tx (observation + saved_obs + re-Bind
-/// must commit atomically together there); [`record_adoption`] below wraps
-/// it in its own transaction for standalone callers.
+/// `session_id`), `parent_a` is set to whatever `session_id`'s `saved_obs`
+/// held immediately before (`None` if none), `parent_b` is the caller's own
+/// second lineage edge (the disk-side observation a resolve/merge or a
+/// racing save reconciled against — `None` for an adoption with nothing to
+/// reconcile), and `session_documents.saved_obs` advances to the new row.
+/// Runs entirely inside the CALLER's already-open tx — `materialize::
+/// commit_save` calls this directly inside its own save tx (observation +
+/// saved_obs + re-Bind must commit atomically together there);
+/// [`record_adoption`] below wraps it in its own transaction for standalone
+/// callers.
 pub(crate) fn record_adoption_tx(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -28,8 +31,9 @@ pub(crate) fn record_adoption_tx(
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     at: &str,
+    parent_b: Option<ObsId>,
 ) -> Result<Observation, Error> {
-    let supersedes: Option<i64> = tx
+    let parent_a: Option<i64> = tx
         .query_row(
             "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
             params![session_id, doc_id],
@@ -38,8 +42,18 @@ pub(crate) fn record_adoption_tx(
         .optional()?
         .flatten();
 
-    let new_id =
-        observation::insert_observation_row(tx, doc_id, session_id, meta, stat, at, supersedes)?;
+    let new_id = observation::insert_observation_row(
+        tx,
+        doc_id,
+        session_id,
+        meta,
+        stat,
+        at,
+        observation::ParentEdges {
+            a: parent_a,
+            b: parent_b,
+        },
+    )?;
 
     tx.execute(
         "INSERT INTO session_documents(session_id, doc_id, saved_obs) VALUES(?1,?2,?3) \
@@ -59,7 +73,8 @@ pub(crate) fn record_adoption_tx(
         device: stat.device,
         nlink: stat.nlink,
         origin: meta.origin.to_string(),
-        supersedes,
+        parent_a,
+        parent_b,
         at: at.to_string(),
         confirmed: meta.confirmed,
     })
@@ -76,10 +91,11 @@ pub(crate) fn record_adoption(
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     now: SystemTime,
+    parent_b: Option<ObsId>,
 ) -> Result<Observation, Error> {
     let at = crate::session::format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
-        record_adoption_tx(tx, doc_id, session_id, meta, stat, &at)
+        record_adoption_tx(tx, doc_id, session_id, meta, stat, &at, parent_b)
     })
 }
 
@@ -115,6 +131,7 @@ pub fn adopt_equal(
         },
         &stat,
         now,
+        None,
     )
 }
 
@@ -133,7 +150,10 @@ pub fn adopt_equal(
 /// strict FIFO order, so by the time THIS op runs, that install edit has
 /// already committed; resolving `journal::current_seq` fresh, inside this
 /// same transaction, yields exactly that edit's seq (the journal head at
-/// this instant) without the caller ever needing to wait for its ack.
+/// this instant) without the caller ever needing to wait for its ack. The
+/// new resolve row's `parent_b` is set to `obs` itself — the disk-side
+/// observation this resolution reconciled against — completing the
+/// two-parent join alongside `parent_a`'s prior `saved_obs` baseline.
 pub fn resolve_adopt(
     conn: &mut Connection,
     session_id: i64,
@@ -164,6 +184,7 @@ pub fn resolve_adopt(
         },
         &stat,
         now,
+        Some(obs),
     )
 }
 
@@ -192,8 +213,8 @@ pub fn resolve_abandon(conn: &mut Connection, session_id: i64, doc_id: i64) -> R
             return Ok(()); // no session_documents row, or saved_obs NULL — nothing adopted yet
         };
 
-        let (supersedes, origin): (Option<i64>, String) = tx.query_row(
-            "SELECT supersedes, origin FROM observations WHERE id=?1",
+        let (parent_a, origin): (Option<i64>, String) = tx.query_row(
+            "SELECT parent_a, origin FROM observations WHERE id=?1",
             params![current],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
@@ -208,7 +229,7 @@ pub fn resolve_abandon(conn: &mut Connection, session_id: i64, doc_id: i64) -> R
         // to observations(id), so deleting first would violate that FK.
         tx.execute(
             "UPDATE session_documents SET saved_obs=?1 WHERE session_id=?2 AND doc_id=?3",
-            params![supersedes, session_id, doc_id],
+            params![parent_a, session_id, doc_id],
         )?;
         tx.execute("DELETE FROM observations WHERE id=?1", params![current])?;
         Ok(())
@@ -270,6 +291,7 @@ mod tests {
             },
             &test_stat(),
             SystemTime::now(),
+            None,
         )
         .expect("first adoption");
 
@@ -283,7 +305,7 @@ mod tests {
             SystemTime::now(),
         )
         .expect("adopt_equal");
-        assert_eq!(resolved.supersedes, Some(first.id));
+        assert_eq!(resolved.parent_a, Some(first.id));
 
         resolve_abandon(&mut conn, session_id, doc_id).expect("resolve_abandon");
 
@@ -330,6 +352,7 @@ mod tests {
             },
             &test_stat(),
             SystemTime::now(),
+            None,
         )
         .expect("save adoption");
 

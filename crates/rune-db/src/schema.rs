@@ -37,10 +37,11 @@ use crate::Error;
 /// The canonical, complete schema for a fresh database. Applied once, in a
 /// single batch, to either a brand-new file or a freshly-created in-memory
 /// database — this crate never patches a partial/legacy shape in place
-/// (there is no migration path; see the module doc). [`apply`] additionally
-/// runs [`ensure_additive_columns`], which is the one place a nullable
-/// column may be added to an already-existing table under this same,
-/// unbumped version — see the module doc's carve-out.
+/// (there is no migration path; see the module doc). A nullable column added
+/// to an already-existing table under this same, unbumped version — the
+/// module doc's carve-out — lands directly in `SCHEMA` above; no additive
+/// upgrade machinery is needed for a filename this crate itself has always
+/// used unmodified.
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
 	id           INTEGER PRIMARY KEY,
@@ -166,23 +167,39 @@ CREATE TABLE IF NOT EXISTS observations (
 	device     INTEGER,
 	nlink      INTEGER,
 	origin     TEXT    NOT NULL CHECK(origin IN ('load','save','watch','probe','resolve','swap')),
-	-- supersedes: the one lineage edge a row may carry, always recorded in
-	-- the SAME tx as the row itself. Two distinct producers feed it: every
-	-- adoption primitive points it at the saved_obs baseline the adoption
-	-- REPLACED (so a resolve-abandon can restore the exact prior baseline
-	-- later); observe_from_stat_tx points a CONFIRMED fresh sighting at
-	-- whatever observation was newest a moment before it, when the two
-	-- hashes differ (a re-confirmation of unchanged content chains to
-	-- nothing new). NULL means a legacy/root row with no known predecessor.
-	supersedes INTEGER REFERENCES observations(id),
+	-- parent_a/parent_b: the version DAG's two lineage edges a row may
+	-- carry, always recorded in the SAME tx as the row itself. parent_a is
+	-- v1's single lineage edge, kept unrenamed in spirit: every adoption
+	-- primitive points it at the saved_obs baseline the adoption REPLACED (so a
+	-- resolve-abandon can restore the exact prior baseline later);
+	-- observe_from_stat_tx points a CONFIRMED fresh sighting at whatever
+	-- observation was newest a moment before it, when the two hashes differ
+	-- (a re-confirmation of unchanged content chains to nothing new).
+	-- parent_b is the second parent a two-parent join records: the disk-side
+	-- observation a resolve/merge or a racing save reconciled against.
+	-- NULL in either column means no such edge — a legacy/root row, or a
+	-- one-parent join, carries no parent_b at all.
+	parent_a INTEGER REFERENCES observations(id),
+	parent_b INTEGER REFERENCES observations(id),
 	at        TEXT    NOT NULL,
 	-- confirmed: NULL means legacy or not yet classified, 1 means a
-	-- confirmed sighting, 0 an unconfirmed one. Storage only here — which
-	-- reads earn which value is a later work item; this column is the
-	-- additive, same-filename exception the module doc describes.
+	-- confirmed sighting, 0 an unconfirmed one.
 	confirmed INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_observations_doc ON observations(doc_id, id);
+
+CREATE TABLE IF NOT EXISTS merges (
+	id          INTEGER PRIMARY KEY,
+	doc_id      INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+	session_id  INTEGER NOT NULL REFERENCES sessions(id),
+	base_obs    INTEGER REFERENCES observations(id),
+	theirs_obs  INTEGER NOT NULL REFERENCES observations(id),
+	marker_hash TEXT    NOT NULL REFERENCES blobs(hash),
+	blocks      TEXT    NOT NULL,
+	state       TEXT    NOT NULL CHECK(state IN ('active','completed','abandoned')),
+	created_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_merges_doc ON merges(doc_id, id);
 
 CREATE TABLE IF NOT EXISTS search_history (
 	query        TEXT PRIMARY KEY,
@@ -201,48 +218,8 @@ CREATE TABLE IF NOT EXISTS search_history (
 /// safe to call on every open, not just first creation.
 pub fn apply(conn: &Connection) -> Result<(), Error> {
     conn.execute_batch(SCHEMA)?;
-    ensure_additive_columns(conn)?;
     conn.pragma_update(None, "user_version", crate::versioning::SCHEMA_VERSION)?;
     Ok(())
-}
-
-/// The ONE chokepoint for the module doc's additive-column carve-out: for
-/// every `(table, column, column_ddl)` this crate has ever added after that
-/// table's original shape, checks `pragma table_info` and issues an
-/// `ALTER TABLE … ADD COLUMN` only when the column is actually absent. A
-/// brand-new database already has the column from [`SCHEMA`] above, so this
-/// is a no-op there; an existing database on disk gets it exactly once, the
-/// next time any binary new enough to know about it calls [`apply`]. Each
-/// add is its own single DDL statement — SQLite applies a single statement
-/// atomically, so there is no partial-column state to guard against, and no
-/// existing row's data is ever rewritten by a nullable column showing up.
-fn ensure_additive_columns(conn: &Connection) -> Result<(), Error> {
-    const ADDITIVE_COLUMNS: &[(&str, &str, &str)] = &[("observations", "confirmed", "INTEGER")];
-
-    for (table, column, ddl_type) in ADDITIVE_COLUMNS {
-        if !has_column(conn, table, column)? {
-            conn.execute_batch(&format!(
-                "ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
-            ))?;
-        }
-    }
-    Ok(())
-}
-
-/// Whether `table` already has a column named `column`, via `pragma
-/// table_info` — the only reliable way to ask SQLite this without risking an
-/// error from a redundant `ALTER TABLE ADD COLUMN` (SQLite has no `ADD
-/// COLUMN IF NOT EXISTS`).
-fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, Error> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(1)?;
-        if name == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 #[cfg(test)]
@@ -253,54 +230,8 @@ mod tests {
     use super::*;
     use crate::observation::{self, ObservationMeta, StatFacts};
 
-    /// Mirrors this crate's `observations` shape (and its FK dependencies)
-    /// exactly as it stood before the `confirmed` column existed — the
-    /// fixture the upgrade tests below apply [`apply`] against, standing in
-    /// for a real `rune-v1.db` file a still-running old binary wrote to.
-    /// Deliberately NOT the full [`SCHEMA`]: `session_documents`/
-    /// `snapshots`/`events`/`search_history` play no part in the additive-
-    /// column upgrade under test, and `apply`'s `CREATE TABLE IF NOT EXISTS`
-    /// creates them fresh regardless of whether this fixture does.
-    const PRE_CHANGE_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS documents (
-    id           INTEGER PRIMARY KEY,
-    path         TEXT    NOT NULL DEFAULT '',
-    inode        INTEGER,
-    device       INTEGER,
-    kind         TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
-    created_at   TEXT    NOT NULL,
-    last_seen_at TEXT    NOT NULL
-);
-CREATE TABLE IF NOT EXISTS blobs (
-    hash    TEXT PRIMARY KEY,
-    content BLOB NOT NULL
-);
-CREATE TABLE IF NOT EXISTS sessions (
-    id              INTEGER PRIMARY KEY,
-    pid             INTEGER NOT NULL,
-    proc_started_at TEXT    NOT NULL,
-    opened_at       TEXT    NOT NULL
-);
-CREATE TABLE IF NOT EXISTS observations (
-    id         INTEGER PRIMARY KEY,
-    doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    session_id INTEGER NOT NULL REFERENCES sessions(id),
-    blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
-    seq        INTEGER,
-    size       INTEGER,
-    mtime      TEXT,
-    inode      INTEGER,
-    device     INTEGER,
-    nlink      INTEGER,
-    origin     TEXT    NOT NULL CHECK(origin IN ('load','save','watch','probe','resolve','swap')),
-    supersedes INTEGER REFERENCES observations(id),
-    at         TEXT    NOT NULL
-);
-"#;
-
     /// Seeds one `documents` row, one `sessions` row, and one `blobs` row —
-    /// the minimum an `observations` row's FKs need, on either the current
-    /// or the pre-change shape (identical on both).
+    /// the minimum an `observations` row's FKs need.
     fn seed_minimal(conn: &Connection) -> (i64, i64, String) {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
@@ -312,95 +243,6 @@ CREATE TABLE IF NOT EXISTS observations (
             crate::session::establish_session(conn, SystemTime::now()).expect("seed session");
         let hash = crate::blob::put_blob(conn, b"content").expect("seed blob");
         (doc_id, session_id, hash)
-    }
-
-    #[test]
-    fn fresh_database_has_the_confirmed_column() {
-        let conn = Connection::open_in_memory().expect("open");
-        apply(&conn).expect("apply");
-        assert!(
-            has_column(&conn, "observations", "confirmed").expect("check column"),
-            "a fresh database must have the confirmed column from SCHEMA directly"
-        );
-    }
-
-    #[test]
-    fn apply_upgrades_a_pre_change_database_idempotently_with_data_intact() {
-        let conn = Connection::open_in_memory().expect("open");
-        conn.execute_batch(PRE_CHANGE_SCHEMA)
-            .expect("apply pre-change shape");
-        assert!(
-            !has_column(&conn, "observations", "confirmed").expect("check column"),
-            "the fixture must not already have the column apply() is meant to add"
-        );
-
-        let (doc_id, session_id, hash) = seed_minimal(&conn);
-        conn.execute(
-            "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at) \
-             VALUES(?1,?2,?3,NULL,1,'t',NULL,NULL,NULL,'load','t')",
-            rusqlite::params![doc_id, session_id, hash],
-        )
-        .expect("seed pre-change observation row");
-        let obs_id = conn.last_insert_rowid();
-
-        apply(&conn).expect("apply must upgrade the pre-change shape");
-        assert!(
-            has_column(&conn, "observations", "confirmed").expect("check column"),
-            "apply() must have added the confirmed column"
-        );
-        let read_hash: String = conn
-            .query_row(
-                "SELECT blob_hash FROM observations WHERE id=?1",
-                rusqlite::params![obs_id],
-                |r| r.get(0),
-            )
-            .expect("row must survive the upgrade untouched");
-        assert_eq!(read_hash, hash, "existing row data must be unrewritten");
-
-        // Idempotent: a second apply() on an already-upgraded database is a
-        // no-op, not an error (there is no `ADD COLUMN IF NOT EXISTS`, so a
-        // naive re-add would fail here if `has_column`'s guard were wrong).
-        apply(&conn).expect("a second apply() must not error");
-        let read_hash_again: String = conn
-            .query_row(
-                "SELECT blob_hash FROM observations WHERE id=?1",
-                rusqlite::params![obs_id],
-                |r| r.get(0),
-            )
-            .expect("row must still be present after the second apply()");
-        assert_eq!(read_hash_again, hash, "data must still be intact");
-    }
-
-    #[test]
-    fn a_raw_insert_omitting_confirmed_still_works_after_upgrade() {
-        // Simulates an old binary that has never heard of the confirmed
-        // column, inserting into an ALREADY-upgraded database — the
-        // module doc's concurrent-old-binary coexistence claim.
-        let conn = Connection::open_in_memory().expect("open");
-        conn.execute_batch(PRE_CHANGE_SCHEMA)
-            .expect("apply pre-change shape");
-        let (doc_id, session_id, hash) = seed_minimal(&conn);
-        apply(&conn).expect("apply must upgrade the pre-change shape");
-
-        conn.execute(
-            "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at) \
-             VALUES(?1,?2,?3,NULL,1,'t',NULL,NULL,NULL,'probe','t')",
-            rusqlite::params![doc_id, session_id, hash],
-        )
-        .expect("an old-shape INSERT naming only pre-change columns must still succeed");
-        let obs_id = conn.last_insert_rowid();
-
-        let confirmed: Option<bool> = conn
-            .query_row(
-                "SELECT confirmed FROM observations WHERE id=?1",
-                rusqlite::params![obs_id],
-                |r| r.get(0),
-            )
-            .expect("row must be readable");
-        assert_eq!(
-            confirmed, None,
-            "a column the old-shape INSERT never named must default to NULL"
-        );
     }
 
     #[test]
