@@ -40,19 +40,14 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
         // simply not armed (the user presses `^w` again once it's
         // dismissed) — nothing waits on this Guard, unlike the rename
         // machine's.
-        if guard::set_guard(
+        let _ = guard::set_guard_or_warn(
             app,
             GuardPrompt {
                 doc: id,
                 kind: GuardKind::DirtyClose,
             },
-        ) == guard::GuardRaise::Displaced
-        {
-            crate::messages::warn(
-                app,
-                "close confirmation dropped \u{2014} a prompt is already showing",
-            );
-        }
+            "close confirmation dropped \u{2014} a prompt is already showing",
+        );
     } else {
         let _ = close_now(app, id, effects);
     }

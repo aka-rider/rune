@@ -343,19 +343,14 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 if let Some(doc) = app.doc_mut(id) {
                     doc.last_sync = Some(rune_db::SyncKind::Diverged);
                 }
-                if guard::set_guard(
+                let _ = guard::set_guard_or_warn(
                     app,
                     GuardPrompt {
                         doc: id,
                         kind: GuardKind::DiskConflict,
                     },
-                ) == guard::GuardRaise::Displaced
-                {
-                    messages::warn(
-                        app,
-                        "disk-conflict confirmation dropped \u{2014} a prompt is already showing",
-                    );
-                }
+                    "disk-conflict confirmation dropped \u{2014} a prompt is already showing",
+                );
             }
         }
     }

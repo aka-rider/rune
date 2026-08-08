@@ -342,19 +342,14 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     // answers only ever CLOSED left a single-document session with no
     // reachable exit at all.
     if let Some(doc) = unpreserved_dirty_docs(app).into_iter().next() {
-        if guard::set_guard(
+        let _ = guard::set_guard_or_warn(
             app,
             GuardPrompt {
                 doc,
                 kind: GuardKind::DirtyQuit,
             },
-        ) == guard::GuardRaise::Displaced
-        {
-            messages::warn(
-                app,
-                "quit confirmation dropped \u{2014} a prompt is already showing",
-            );
-        }
+            "quit confirmation dropped \u{2014} a prompt is already showing",
+        );
         return;
     }
 
@@ -572,6 +567,56 @@ mod tests {
         assert!(!app.should_quit, "the first press only arms the confirm");
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
         assert!(app.should_quit, "the second matching press quits");
+    }
+
+    /// The quit chord, resolved through `App::update`'s real `Msg::Key`
+    /// dispatch, never reaches `handle_quit_key` at all while a Guard is
+    /// already showing (`dispatch::handle_key`'s Stage 1 routes every key
+    /// to the existing prompt first) — so a foreign Guard already up is
+    /// exercised by calling `handle_quit_key` directly, exactly the real
+    /// entry point `Command::QuitConfirm` resolves to; the two paths only
+    /// ever differ by that already-showing-prompt short circuit, never by
+    /// what `handle_quit_key` itself does. A DirtyQuit raise attempt against
+    /// an occupied slot must warn and leave the original prompt alone,
+    /// rather than silently dropping the quit intent.
+    #[test]
+    fn quit_chord_while_a_different_guard_is_up_warns_and_preserves_it() {
+        let mut app = app();
+        app.doc_mut(app.active)
+            .expect("active doc exists")
+            .saved_content = Arc::from("");
+        assert!(app.active_doc().db.is_none(), "test setup: no db binding");
+        let other_doc = app.active;
+        assert_eq!(
+            crate::guard::set_guard(
+                &mut app,
+                GuardPrompt {
+                    doc: other_doc,
+                    kind: GuardKind::DiskConflict,
+                },
+            ),
+            crate::guard::GuardRaise::Raised,
+            "test setup: pre-arm a foreign guard"
+        );
+
+        let mut effects = Effects::default();
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+
+        assert!(!app.should_quit);
+        assert!(
+            matches!(
+                app.guard,
+                Some(GuardPrompt {
+                    kind: GuardKind::DiskConflict,
+                    ..
+                })
+            ),
+            "the pre-existing prompt must survive unchanged"
+        );
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            Some("quit confirmation dropped \u{2014} a prompt is already showing")
+        );
     }
 
     /// `NewDocument` mints a new untitled draft, activates it, and focuses

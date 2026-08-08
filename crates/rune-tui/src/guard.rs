@@ -42,6 +42,18 @@ pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> GuardRaise {
     GuardRaise::Raised
 }
 
+/// [`set_guard`] plus its callers' shared reaction to `Displaced`: post
+/// `refused` to the message log and return the raise so a caller that
+/// needs to know which one happened (`rename.rs`'s `Collision` entry) can
+/// still branch on it, without also warning a second time itself.
+pub fn set_guard_or_warn(app: &mut App, prompt: GuardPrompt, refused: &str) -> GuardRaise {
+    let raise = set_guard(app, prompt);
+    if raise == GuardRaise::Displaced {
+        messages::warn(app, refused);
+    }
+    raise
+}
+
 /// The SOLE writer of `app.guard = None` — every dismissal path routes
 /// here, including `set_guard`'s own indirect callers once the previous
 /// state must go.
@@ -586,5 +598,50 @@ mod tests {
         clear_guard(&mut app);
         assert!(app.guard.is_none());
         assert_eq!(app.rename, crate::rename::RenameState::Idle);
+    }
+
+    /// `set_guard_or_warn` is the shared reaction every call site now goes
+    /// through: on `Displaced` it posts exactly the caller's `refused` text
+    /// and leaves the pre-existing prompt untouched.
+    #[test]
+    fn set_guard_or_warn_posts_refused_text_and_preserves_the_existing_prompt() {
+        let mut app = app();
+        let doc = app.active;
+        assert_eq!(
+            set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)),
+            GuardRaise::Raised
+        );
+
+        let raise = set_guard_or_warn(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            "some confirmation dropped \u{2014} a prompt is already showing",
+        );
+
+        assert_eq!(raise, GuardRaise::Displaced);
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DiskConflict,
+                ..
+            })
+        ));
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("some confirmation dropped \u{2014} a prompt is already showing")
+        );
+    }
+
+    /// `set_guard_or_warn` raising onto an empty slot never warns — the
+    /// warning is strictly a `Displaced` reaction.
+    #[test]
+    fn set_guard_or_warn_raises_silently_onto_an_empty_slot() {
+        let mut app = app();
+        let doc = app.active;
+
+        let raise = set_guard_or_warn(&mut app, prompt(doc, GuardKind::DirtyClose), "unused");
+
+        assert_eq!(raise, GuardRaise::Raised);
+        assert_eq!(messages::newest_text(&app), None);
     }
 }

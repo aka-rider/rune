@@ -66,19 +66,14 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
         return;
     }
 
-    if guard::set_guard(
+    let _ = guard::set_guard_or_warn(
         app,
         GuardPrompt {
             doc: app.active,
             kind: GuardKind::Trash { path },
         },
-    ) == guard::GuardRaise::Displaced
-    {
-        messages::warn(
-            app,
-            "trash confirmation dropped \u{2014} a prompt is already showing",
-        );
-    }
+        "trash confirmation dropped \u{2014} a prompt is already showing",
+    );
 }
 
 /// The trash guard's `[Y]es` answer: refuses a second commit while one is
@@ -203,4 +198,66 @@ pub(crate) fn display_name(path: &Path) -> String {
         || path.to_string_lossy().into_owned(),
         |n| n.to_string_lossy().into_owned(),
     )
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::guard::{GuardRaise, set_guard};
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+
+    fn app() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.active_doc_mut().file_path = Some(PathBuf::from("/doc.md"));
+        app
+    }
+
+    /// The trash chord, resolved through `App::update`'s real `Msg::Key`
+    /// dispatch, never reaches `request_trash` at all while a Guard is
+    /// already showing (`dispatch::handle_key`'s Stage 1 routes every key
+    /// to the existing prompt first) — so a foreign Guard already up is
+    /// exercised by calling `request_trash` directly, exactly the real
+    /// entry point `GlobalCommand::Trash` resolves to; the two paths only
+    /// ever differ by that already-showing-prompt short circuit, never by
+    /// what `request_trash` itself does. Raising `Trash` against an
+    /// occupied slot must warn and leave the original prompt alone, rather
+    /// than silently dropping the trash intent.
+    #[test]
+    fn trash_chord_while_a_different_guard_is_up_warns_and_preserves_it() {
+        let mut app = app();
+        let doc = app.active;
+        assert_eq!(
+            set_guard(
+                &mut app,
+                GuardPrompt {
+                    doc,
+                    kind: GuardKind::DiskConflict,
+                },
+            ),
+            GuardRaise::Raised,
+            "test setup: pre-arm a foreign guard"
+        );
+
+        let mut effects = Effects::default();
+        request_trash(&mut app, &mut effects);
+
+        assert!(
+            matches!(
+                app.guard,
+                Some(GuardPrompt {
+                    kind: GuardKind::DiskConflict,
+                    ..
+                })
+            ),
+            "the pre-existing prompt must survive unchanged"
+        );
+        assert!(app.trash_pending.is_none(), "no trash was armed");
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("trash confirmation dropped \u{2014} a prompt is already showing")
+        );
+    }
 }
