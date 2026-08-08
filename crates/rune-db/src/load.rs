@@ -497,4 +497,68 @@ mod tests {
             "saved_obs (CAS baseline) must be A's own H0, not disk's H1"
         );
     }
+
+    /// End-to-end regression pinning the user-facing bug: session A opens a
+    /// file and never edits it; A dies; the file is rewritten externally;
+    /// session B loads it. B must get the current disk content as a
+    /// non-divergent adoption (A never had anything unsaved to inherit),
+    /// AND B's own journal reconstruction must equal what B's buffer holds
+    /// — the assertion that would have caught a returned string not backed
+    /// by a matching journal entry.
+    #[test]
+    fn dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees() {
+        use rune_vfs::Vfs;
+
+        let mut conn = open();
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"original content");
+
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+        load(
+            &mut conn,
+            &vfs,
+            session_a,
+            &always_alive,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session a load");
+
+        vfs.save_atomic(path, b"rewritten externally")
+            .expect("external atomic swap");
+
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let result = load(
+            &mut conn,
+            &vfs,
+            session_b,
+            &always_dead,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session b load");
+
+        assert_eq!(result.disk_content, "rewritten externally");
+        assert_eq!(
+            result.recovered, "rewritten externally",
+            "a session that never edited leaves nothing to inherit"
+        );
+        assert_ne!(
+            result.sync.kind,
+            crate::sync::SyncKind::Diverged,
+            "nothing unsaved means a clean adoption, not a divergence"
+        );
+
+        let reconstructed = retry::with_retry(&mut conn, |tx| {
+            crate::snapshot::recover_document(tx, session_b, result.doc_id)
+        })
+        .expect("recover_document");
+        assert_eq!(
+            reconstructed, result.recovered,
+            "session b's own journal must reconstruct to exactly what its buffer holds"
+        );
+    }
 }

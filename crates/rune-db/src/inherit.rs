@@ -79,6 +79,13 @@ pub(crate) enum Inherited {
     },
 }
 
+fn unsaved_against(baseline: Option<&Observation>, draft: &str) -> bool {
+    match baseline {
+        None => true,
+        Some(b) => b.blob_hash != observation::hash_bytes(draft.as_bytes()),
+    }
+}
+
 /// Looks for a DIFFERENT, now-confirmed-dead session's unsaved content for
 /// `doc_id`. Called ONLY from `load`'s `!has_history` branch, before this
 /// session has written anything of its own.
@@ -125,6 +132,9 @@ pub(crate) fn find_inheritable_draft(
     };
     if observation::hash_bytes(recovered_draft.as_bytes()) == disk_hash {
         return Ok(Inherited::Disk); // never actually diverged from disk
+    }
+    if !unsaved_against(other_baseline.as_ref(), &recovered_draft) {
+        return Ok(Inherited::Disk);
     }
 
     match other_baseline {
@@ -323,6 +333,120 @@ mod tests {
         match inherited {
             Inherited::Bridged { draft } => assert_eq!(draft, "UNSAVED shared content"),
             _ => panic!("disk unchanged since the dead session's baseline -> expected Bridged"),
+        }
+    }
+
+    /// Regression: a dead session whose reconstruction equals its OWN
+    /// baseline (it never edited anything) has nothing unsaved to inherit,
+    /// even when disk has since moved on to content that baseline never
+    /// saw — the divergence is some OTHER tool's doing, not this session's.
+    #[test]
+    fn dead_session_with_no_unsaved_edit_yields_disk_even_when_disk_moved_on() {
+        let mut conn = open();
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::snapshot::create_snapshot(
+                &tx,
+                session_a,
+                SystemTime::now(),
+                doc_id,
+                "session A's content",
+                0,
+            )
+            .expect("anchor snapshot");
+            adopt::record_adoption_tx(
+                &tx,
+                doc_id,
+                session_a,
+                observation::ObservationMeta {
+                    blob_hash: &observation::hash_bytes(b"session A's content"),
+                    seq: Some(0),
+                    origin: "load",
+                    confirmed: None,
+                },
+                &observation::StatFacts {
+                    mtime: "t".to_string(),
+                    ..Default::default()
+                },
+                "t",
+            )
+            .expect("adopt load");
+            tx.commit().expect("commit");
+        }
+
+        let disk_content = "disk moved on independently";
+        let disk_hash = observation::hash_bytes(disk_content.as_bytes());
+
+        let inherited = find_inheritable_draft(&mut conn, &always_dead, doc_id, &disk_hash)
+            .expect("find_inheritable_draft");
+
+        match inherited {
+            Inherited::Disk => {}
+            _ => panic!(
+                "expected Disk — the dead session's reconstruction matches ITS OWN baseline, nothing unsaved"
+            ),
+        }
+    }
+
+    #[test]
+    fn dead_session_with_no_recorded_baseline_still_adopts_negative_control() {
+        let mut conn = open();
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+
+        let disk_content = "session A's content";
+        let disk_hash = observation::hash_bytes(disk_content.as_bytes());
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::snapshot::create_snapshot(
+                &tx,
+                session_a,
+                SystemTime::now(),
+                doc_id,
+                disk_content,
+                0,
+            )
+            .expect("anchor snapshot");
+            crate::journal::append_edit(
+                &tx,
+                session_a,
+                SystemTime::now(),
+                doc_id,
+                &[AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "UNSAVED ".to_string(),
+                }],
+                &[],
+                &[],
+            )
+            .expect("append_edit");
+            tx.commit().expect("commit");
+        }
+
+        let inherited = find_inheritable_draft(&mut conn, &always_dead, doc_id, &disk_hash)
+            .expect("find_inheritable_draft");
+        match inherited {
+            Inherited::Bridged { draft } => assert_eq!(draft, "UNSAVED session A's content"),
+            _ => {
+                panic!("no recorded baseline must still be treated as unsaved -> expected Bridged")
+            }
         }
     }
 }
