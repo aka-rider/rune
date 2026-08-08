@@ -13,6 +13,9 @@ build:
 
 test:
 	$(CARGO) test --workspace
+	# Cargo feature unification already arms strict-invariants on rune-md for the
+	# whole --workspace run above (rune-fuzz requests it), but this isolated
+	# invocation stays so the suite still proves out if that unification ever goes away.
 	$(CARGO) test -p rune-md --features strict-invariants
 
 lint:
@@ -40,10 +43,6 @@ perf-guard:
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_many_fence_markdown_document
 
-# `-p rune-fuzz` (NOT --workspace) is load-bearing: under --workspace, cargo
-# feature-unifies rune-md's dev-dependency on itself and compiles rune-md with
-# `strict-invariants`, whose known-open comrak sourcepos panics
-# (crates/rune-md/TODO.md) would drown the session fuzzer in non-bugs.
 # `--test human_session` + `--exact` for the same reason as perf-guard.
 # Debug profile on purpose: keeps the buffer/undo/render debug_asserts armed.
 test-fuzz:

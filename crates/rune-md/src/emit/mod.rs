@@ -21,19 +21,19 @@
 //! style stack — no `InlineMarks` bitfield").
 //!
 //! Every producer-bug invariant this module checks (a duplicate visible
-//! claim in `push_span_split_by_line`) is gated on [`STRICT_INVARIANTS`],
+//! claim in `push_span_split_by_line`) is gated on `assert_invariant`,
 //! never on `cfg(debug_assertions)`: an ORDINARY shipped build — including
 //! an unoptimized debug one a developer might run directly — must degrade
 //! gracefully on a producer bug, never panic on a real user's document.
 //! Only a test run (or a build that explicitly opts
-//! in via the `strict-invariants` feature) is allowed to treat the
-//! violation as fatal. Graceful degradation itself (skip an already-claimed
-//! visible byte) runs in EVERY build unconditionally — `STRICT_INVARIANTS`
-//! only gates whether a detected violation additionally panics. The
-//! sibling check over an overlapping HIDDEN range moved to `rune-syntax`'s
-//! `syntax::build_line_conversions` (WP3), gated by that crate's own,
-//! separately-defined `STRICT_INVARIANTS` — each crate's gate governs only
-//! its own invariants.
+//! in via this crate's own `strict-invariants` feature) is allowed to treat
+//! the violation as fatal. Graceful degradation itself (skip an
+//! already-claimed visible byte) runs in EVERY build unconditionally —
+//! the strict-invariants gate only decides whether a detected violation
+//! additionally panics. The sibling check over an overlapping HIDDEN range
+//! moved to `rune-syntax`'s `syntax::build_line_conversions` (WP3), gated
+//! by that crate's own `strict-invariants` feature — each crate's gate
+//! governs only its own invariants.
 
 // `pub(crate)`, not private: `crate::table::render`/`crate::table::layout`
 // (siblings of `emit`, not descendants) resolve table cell/border text
@@ -50,31 +50,12 @@ mod walk_inline;
 use crate::element::block::Block;
 use crate::icons::IconSet;
 use crate::parse::{line_at, line_end_at, line_starts};
+use rune_core::assert_invariant;
 use rune_syntax::element::{ByteRange, RevealState};
 use rune_syntax::syntax::TableRowInfo;
 use rune_syntax::{
     CellMap, LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping,
 };
-
-/// See the module docs: `true` only in test builds or when the
-/// `strict-invariants` feature is explicitly enabled. `cfg!()` folds this
-/// to a compile-time literal, so an `if STRICT_INVARIANTS { assert!(...) }`
-/// guard compiles away entirely (dead code, zero cost) in an ordinary
-/// shipped build.
-pub(crate) const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
-
-/// The chokepoint every "this should never happen, but let's be sure"
-/// producer-bug check in this crate routes through (the duplicate- and
-/// invalid-span checks in `push_span_split_by_line`) — a single place that
-/// decides whether a violation panics, so no call site has to repeat the
-/// `if STRICT_INVARIANTS { assert!(...) }` boilerplate (or risk getting it
-/// wrong). `msg` is a closure so the `format!` cost is paid only when the
-/// check is actually active.
-pub(crate) fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
-    if STRICT_INVARIANTS {
-        assert!(cond, "{}", msg());
-    }
-}
 
 /// Every byte of every line is accounted for exactly once: either as part
 /// of a VISIBLE span (pushed by `push_span_split_by_line`) or as a hidden
@@ -181,7 +162,7 @@ pub(crate) fn claim_visible(
 
     let requested_len = end.saturating_sub(start);
     let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
-    assert_invariant(kept_len == requested_len, || {
+    assert_invariant!(kept_len == requested_len, || {
         format!(
             "line {line}: visible claim [{start},{end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
             requested_len - kept_len
@@ -296,7 +277,7 @@ pub(crate) fn push_span_split_by_line(
                         let snapped_s = content.floor_char_boundary(s);
                         let snapped_e = content.ceil_char_boundary(e);
                         let snapped_ok = snapped_s == s && snapped_e == e;
-                        assert_invariant(snapped_ok, || {
+                        assert_invariant!(snapped_ok, || {
                             format!(
                                 "line {line}: span [{s},{e}) is not on a char boundary — producer bug; snapped outward to [{snapped_s},{snapped_e})"
                             )

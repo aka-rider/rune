@@ -146,7 +146,7 @@ impl CursorSet {
     /// that breaks the invariant is caught in tests instead of handing back
     /// a look-alike cursor.
     pub fn primary(&self) -> Cursor {
-        assert_invariant(!self.cursors.is_empty(), || {
+        assert_invariant!(!self.cursors.is_empty(), || {
             "CursorSet::cursors must never be empty".to_string()
         });
         self.cursors.first().copied().unwrap_or(Cursor {
@@ -219,7 +219,7 @@ impl CursorSet {
         // `cp` holds `self.cursors.len()` elements and the guard above
         // already returned for `len() <= 1`, so at least 2 remain here —
         // `iter.next()` always yields `Some`.
-        assert_invariant(!cp.is_empty(), || {
+        assert_invariant!(!cp.is_empty(), || {
             "CursorSet::merge: cp must be non-empty past the len()<=1 guard".to_string()
         });
         let mut iter = cp.into_iter();

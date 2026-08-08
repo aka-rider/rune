@@ -5,36 +5,9 @@
 use ratatui::Frame;
 use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
+use rune_core::assert_invariant;
 
 use super::Cell;
-
-/// Mirrors `rune-syntax`'s and `rune-md`'s own identically-named
-/// `STRICT_INVARIANTS`/`assert_invariant` chokepoint: `true` only in test
-/// builds or when this crate's own `strict-invariants` feature is
-/// explicitly enabled. Kept as a local copy rather than a shared helper —
-/// each crate's gate governs only its own producer-bug invariants.
-const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
-
-/// The chokepoint every "this should never happen, but let's be sure"
-/// blit-layer check in this module routes through — production code must
-/// never `panic!`/`assert!`/`unwrap`, so an ordinary build (including a
-/// plain `cargo run`) must degrade gracefully on an invariant violation
-/// rather than take down the user's session; only a test run or an
-/// explicit opt-in feature treats it as fatal.
-///
-/// Deliberately NOT the same shape as `crates/rune-syntax/src/syntax.rs`'s
-/// or `crate::layout`'s identically-named `assert_invariant` — those take a
-/// plain `bool`. This one takes a lazy closure instead, because this
-/// module's checks sit in the per-cell render hot path: re-deriving a
-/// symbol's width to compare against it costs a Unicode table walk per cell
-/// per frame, and an eagerly evaluated `bool` argument would pay that cost
-/// on every cell of every frame in an ordinary (non-strict) build, only to
-/// throw the answer away since `STRICT_INVARIANTS` is `false` there.
-fn assert_invariant(cond: impl FnOnce() -> bool, msg: impl FnOnce() -> String) {
-    if STRICT_INVARIANTS {
-        assert!(cond(), "{}", msg());
-    }
-}
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left
 /// corner, clipping to `area`'s bounds.
@@ -58,8 +31,8 @@ fn assert_invariant(cond: impl FnOnce() -> bool, msg: impl FnOnce() -> String) {
 /// ratatui's own `CellWidth for str` derives for the same symbol —
 /// `rune_syntax::wrap::grapheme_width`'s doc comment states that as the
 /// chokepoint's own invariant (with one documented, narrow exception — a
-/// LONE zero-width rune clamped to a reserved width of 1, see that doc and
-/// `TODO/TODO.md`), and the `assert_invariant` call below enforces exactly
+/// LONE zero-width rune clamped to a reserved width of 1, see that doc),
+/// and the `assert_invariant` call below enforces exactly
 /// that (narrowed the same way) at every cell this loop writes; a producer
 /// bug that lets the two drift apart in any OTHER way would corrupt the row
 /// exactly as the pre-fix MAX-rule divergence once did, so this is
@@ -77,8 +50,8 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
             if x >= right {
                 break;
             }
-            assert_invariant(
-                || {
+            assert_invariant!(
+                {
                     let declared = usize::from(cell.width);
                     let ratatui_width = cell.text.cell_width() as usize;
                     declared == ratatui_width
@@ -92,8 +65,7 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                         // only here: `declared == 1` (never a wide-cell
                         // mismatch, so `blit`'s continuation-reset loop
                         // above never runs for it) with `ratatui_width ==
-                        // 0` on a single-`char` symbol. Recorded, with the
-                        // measured evidence, in `TODO/TODO.md`.
+                        // 0` on a single-`char` symbol.
                         || (declared == 1
                             && ratatui_width == 0
                             && cell.text.chars().count() == 1)

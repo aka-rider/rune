@@ -6,21 +6,8 @@
 use std::ops::Range;
 
 use crate::scope::ScopeId;
+use rune_core::assert_invariant;
 use rune_core::coords::{BufferPoint, SyntaxPoint};
-
-/// Mirrors `rune-md`'s own `STRICT_INVARIANTS`/`assert_invariant`
-/// chokepoint: `true` only in test builds or when this
-/// crate's own `strict-invariants` feature is explicitly enabled. Kept as a
-/// local copy rather than a shared helper — each crate's gate governs only
-/// its own producer-bug invariants, and `rune-syntax` must stand alone
-/// without depending back on `rune-md`.
-const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
-
-pub(crate) fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
-    if STRICT_INVARIANTS {
-        assert!(cond, "{}", msg());
-    }
-}
 
 /// Per-visual-char buffer offset, `-1` for decorative/padding cells with no
 /// buffer correspondence. `rune-md`'s synthesized table-border rows already
@@ -73,7 +60,7 @@ impl SyntaxSpan {
         let end = range.end.min(len).max(start);
         let snapped_start = content.floor_char_boundary(start);
         let snapped_end = content.ceil_char_boundary(end).max(snapped_start);
-        assert_invariant(
+        assert_invariant!(
             snapped_start == range.start && snapped_end == range.end,
             || {
                 format!(
@@ -316,7 +303,7 @@ fn clamp_col(col: usize, hidden: &[HiddenRange]) -> usize {
 /// ranges sharing at least one byte. Adjacent-but-touching ranges
 /// (`end == next.start`) are NOT an overlap. Sorts a local copy rather than
 /// requiring the caller to hand back ordered input — this runs only behind
-/// the `STRICT_INVARIANTS`-gated assert in `build_line_conversions`
+/// the strict-invariants-gated assert in `build_line_conversions`
 /// (test-only cost), so the extra sort is free in every shipped build.
 /// Used only there: every hidden-range producer in this crate is expected
 /// to already emit disjoint ranges, so an overlap here means a producer bug
@@ -341,7 +328,7 @@ fn has_overlap(intervals: &[(usize, usize)]) -> bool {
 /// separate findings on this branch belonged to), the delta accumulation
 /// below can no longer double-count it — merging happens UNCONDITIONALLY
 /// in every build, so a producer bug degrades gracefully instead of
-/// panicking; the `STRICT_INVARIANTS` assert above is what surfaces the
+/// panicking; the strict-invariants assert above is what surfaces the
 /// producer bug, in tests only. Sorting
 /// lives HERE (not in each caller) so "unsorted intervals" can't
 /// legitimately reach a caller that forgot to sort first — both current
@@ -375,8 +362,8 @@ pub fn merge_overlapping(input: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 /// hidden AT MOST ONCE by construction: overlapping/touching ranges are
 /// merged before the deltas are summed (see `merge_overlapping`), so a
 /// producer bug that hands back overlapping ranges degrades to a
-/// (test-asserted, see `has_overlap` and this module's own `STRICT_INVARIANTS`)
-/// coordinate inaccuracy rather than a doubly-counted delta corrupting
+/// (test-asserted, see `has_overlap` and this module's own strict-invariants
+/// gate) coordinate inaccuracy rather than a doubly-counted delta corrupting
 /// every position past it on the line.
 pub(crate) fn build_line_conversions(
     starts: &[usize],
@@ -395,7 +382,7 @@ pub(crate) fn build_line_conversions(
         // (or a build that opts in via the `strict-invariants` feature),
         // via the shared `assert_invariant` chokepoint. The merge two
         // lines below runs unconditionally regardless.
-        assert_invariant(!has_overlap(&rel), || {
+        assert_invariant!(!has_overlap(&rel), || {
             format!("line {line}: overlapping hidden ranges from a producer bug: {rel:?}")
         });
 
@@ -432,7 +419,7 @@ mod tests {
     /// The structural-hardening chokepoint: overlapping input intervals
     /// merge into the minimal disjoint set covering the SAME bytes exactly
     /// once — an overlapping-range producer bug degrades to a coordinate
-    /// inaccuracy (caught separately by the `STRICT_INVARIANTS`-gated
+    /// inaccuracy (caught separately by the strict-invariants-gated
     /// assert below, in tests), never a doubly-counted delta.
     #[test]
     fn merge_overlapping_intervals_counts_each_byte_once() {
@@ -459,15 +446,15 @@ mod tests {
         assert!(!has_overlap(&[]));
     }
 
-    /// Proves the `STRICT_INVARIANTS`-gated assert in
+    /// Proves the strict-invariants-gated assert in
     /// `build_line_conversions` is actually wired to fire on overlapping
     /// input — the two prior findings on this branch (a fence's ranges
     /// colliding with its container's marker ranges) were both this exact
     /// shape, and would have tripped this assertion in tests immediately
     /// instead of silently corrupting coordinate conversion. Unlike the
-    /// old `debug_assert!`-based version, `STRICT_INVARIANTS` is tied to
-    /// `cfg(test)` (not `cfg(debug_assertions)`), so this fires in a
-    /// `--release` test run too (the assert is test-only, not
+    /// old `debug_assert!`-based version, the strict-invariants gate is
+    /// tied to `cfg(test)` (not `cfg(debug_assertions)`), so this fires in
+    /// a `--release` test run too (the assert is test-only, not
     /// profile-only — a `cargo test --release` run must still catch this).
     #[test]
     #[should_panic(expected = "overlapping hidden ranges")]

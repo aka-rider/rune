@@ -135,7 +135,7 @@ fn app_with(content: &str) -> App {
 /// `Buffer::apply_edits` as two separate touching edits — this test's
 /// own `step.edits.len() == 1` assertion below catches that directly.
 /// Redoing that same two-edit `Step` is what actually trips
-/// `undo::reapply`'s `STRICT_INVARIANTS`-gated assertion in production
+/// `undo::reapply`'s strict-invariants-gated assertion in production
 /// (the earlier pure-deletion edit's negative shift collapses the
 /// later edit's post-edit `start` onto it) — not reproduced by THIS
 /// test, since this crate's own test build does not compile `rune-core`

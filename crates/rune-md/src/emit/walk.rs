@@ -18,11 +18,10 @@ use super::style::{
 };
 use super::table::emit_table;
 use super::walk_inline::emit_inlines;
-use super::{
-    Accounted, EmitOut, assert_invariant, claim_visible, hide_range, push_span_split_by_line,
-};
+use super::{Accounted, EmitOut, claim_visible, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, FrontmatterM, ListItemM};
 use crate::parse::line_at;
+use rune_core::assert_invariant;
 use rune_syntax::element::{ByteRange, RevealState};
 use rune_syntax::{ScopeId, SyntaxSpan};
 
@@ -238,7 +237,7 @@ fn push_task_checkbox(
     let Some(bytes) = content.get(task.start..task.end) else {
         return;
     };
-    assert_invariant(task.len() == 3, || {
+    assert_invariant!(task.len() == 3, || {
         format!(
             "task checkbox range [{},{}) is {} bytes, not the 3-byte \"[ ]\"/\"[x]\" ListItemM::task's own docs promise — producer bug",
             task.start,

@@ -26,10 +26,5 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      # Deliberately NON-BLOCKING: the strict-invariants feature turns upstream
-      # comrak sourcepos self-inconsistencies into panics. They are filed
-      # against comrak, not ours to fix, and must not gate a branch. Kept in CI
-      # so a regression on OUR side is still visible in the log.
-      - name: Strict invariants (non-blocking)
-        continue-on-error: true
+      - name: Strict invariants
         run: cargo test -p rune-md --features strict-invariants

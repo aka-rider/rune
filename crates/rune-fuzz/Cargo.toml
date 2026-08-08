@@ -5,22 +5,21 @@ edition.workspace = true
 
 [dependencies]
 # strict-invariants on purpose: a dependency does NOT inherit cfg(test), so
-# without this feature rune-core's STRICT_INVARIANTS-gated checks (e.g.
+# without this feature rune-core's strict-invariants-gated checks (e.g.
 # undo::reapply's duplicate-post-edit-start check) silently compile out of
 # the fuzzer, and the session fuzzer exists specifically to catch producer
-# bugs those checks detect. Unlike rune-md/rune-syntax below, rune-core has
-# no known-open false-positive invariants, so this is safe to enable broadly.
+# bugs those checks detect.
 rune-core = { path = "../rune-core", features = ["strict-invariants"] }
 rune-db = { path = "../rune-db" }
-# NOT strict-invariants: rune-md's known-open comrak sourcepos panics
-# (crates/rune-md/TODO.md) would drown the fuzzer in non-bugs — see the
-# Makefile's test-fuzz target comment for why this crate is deliberately
-# excluded from --workspace strict builds. `fuzz-hooks` is a separate,
-# narrower feature that exposes ONLY `DocMachine::force_rebuild` (no
+# `fuzz-hooks` exposes ONLY `DocMachine::force_rebuild` (no
 # `assert_invariant` consequences) — `SYNC-IDEMPOTENT` (`driver/checks.rs`)
 # needs a cache-bypassed rebuild to check WP16's memoized `snapshot()`
-# against a genuine one, not a memo hit.
-rune-md = { path = "../rune-md", features = ["fuzz-hooks"] }
+# against a genuine one, not a memo hit. `strict-invariants` (mirrors
+# rune-core above) also turns on `rune-syntax/strict-invariants`
+# transitively (rune-md's own Cargo.toml) — the fuzzer traverses
+# rune-md/rune-syntax snapshots and must not silently compile out their
+# span-coverage/duplicate-claim asserts either.
+rune-md = { path = "../rune-md", features = ["fuzz-hooks", "strict-invariants"] }
 rune-syntax = { path = "../rune-syntax" }
 # strict-invariants on purpose (mirrors rune-core above): `LAYOUT-TILES`
 # (`invariant/pane.rs`) exercises `layout::geometry` at every width the

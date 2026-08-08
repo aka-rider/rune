@@ -18,7 +18,7 @@ pub mod pivot;
 pub mod render;
 pub mod wrapped;
 
-use crate::emit::assert_invariant;
+use rune_core::assert_invariant;
 use rune_syntax::{CellMap, ScopeId, SyntaxSpan};
 
 /// One visible char's provenance inside a table's rendered row: the
@@ -120,7 +120,7 @@ pub fn row_spans(
         let s = starts.get(i).copied().unwrap_or(line_start);
         let e = ends.get(i).copied().unwrap_or(s);
         let cell_map: CellMap = run.iter().map(|c| c.buf).collect();
-        assert_invariant(cell_map.len() == text.chars().count(), || {
+        assert_invariant!(cell_map.len() == text.chars().count(), || {
             "row_spans: cell_map length must equal the run's own visible char count".to_string()
         });
         spans.push(SyntaxSpan::Substituted {
@@ -131,15 +131,15 @@ pub fn row_spans(
         });
     }
 
-    assert_invariant(
+    assert_invariant!(
         spans.first().is_none_or(|s| s.range().start == line_start),
         || "row_spans: first span must start exactly at line_start".to_string(),
     );
-    assert_invariant(
+    assert_invariant!(
         spans.last().is_none_or(|s| s.range().end == line_end),
         || "row_spans: last span must end exactly at line_start + line_len".to_string(),
     );
-    assert_invariant(
+    assert_invariant!(
         spans.windows(2).all(|w| match (w.first(), w.get(1)) {
             (Some(a), Some(b)) => a.range().end == b.range().start,
             _ => true,
@@ -166,7 +166,7 @@ pub fn extra_row_spans(
     runs.iter()
         .map(|(text, run, scope)| {
             let cell_map: CellMap = run.iter().map(|c| c.buf).collect();
-            assert_invariant(cell_map.len() == text.chars().count(), || {
+            assert_invariant!(cell_map.len() == text.chars().count(), || {
                 "extra_row_spans: cell_map length must equal the run's own visible char count"
                     .to_string()
             });

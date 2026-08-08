@@ -35,7 +35,8 @@ pub use width::{
 
 use width::next_grapheme;
 
-use crate::syntax::{SyntaxLine, SyntaxSpan, assert_invariant};
+use crate::syntax::{SyntaxLine, SyntaxSpan};
+use rune_core::assert_invariant;
 
 #[derive(Clone, Debug, Default)]
 pub struct WrapSegment {
@@ -262,7 +263,7 @@ fn slice_spans(
                 let cm_len = cell_map.len();
                 let clamped_start = start_runes.min(cm_len);
                 let clamped_end = end_runes.min(cm_len).max(clamped_start);
-                assert_invariant(
+                assert_invariant!(
                     clamped_start == start_runes && clamped_end == end_runes,
                     || {
                         format!(
