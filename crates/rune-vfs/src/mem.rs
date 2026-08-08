@@ -39,6 +39,10 @@ struct MemFile {
     /// hardlink-fork warning path (consumed by `rune-db` observation/load)
     /// has a test double capable of exercising `nlink > 1` (WP1.S6).
     nlink: u64,
+    /// The `FileKind` `Vfs::stat` reports. Defaults to `File`; settable via
+    /// `Mem::set_kind` so tests can model a FIFO/socket/device node
+    /// (`FileKind::Other`) without a real filesystem.
+    kind: FileKind,
 }
 
 struct MemState {
@@ -267,6 +271,22 @@ impl Mem {
             None => Err(not_found(path, "set_nlink")),
         }
     }
+
+    /// Sets the `FileKind` `Vfs::stat` reports for `path`: lets a
+    /// test model a FIFO, socket, or device node — `Mem` otherwise only
+    /// ever represents `FileKind::File`/`Dir`. No-op (`Ok`) is not returned
+    /// for a missing path — the caller gets `NotFound`, matching every
+    /// other `Mem` primitive's shape.
+    pub fn set_kind(&self, path: &Path, kind: FileKind) -> io::Result<()> {
+        let mut state = self.lock_state();
+        match state.files.get_mut(path) {
+            Some(f) => {
+                f.kind = kind;
+                Ok(())
+            }
+            None => Err(not_found(path, "set_kind")),
+        }
+    }
 }
 
 impl Default for Mem {
@@ -359,6 +379,7 @@ impl Vfs for Mem {
                 device: 1,
                 mod_tick,
                 nlink: 1,
+                kind: FileKind::File,
             },
         );
         Ok(temp)
@@ -472,7 +493,7 @@ impl Vfs for Mem {
                     // (defaulting to 1), so a test can drive the hardlink-fork
                     // warning path (WP1.S6).
                     nlink: Some(f.nlink),
-                    kind: FileKind::File,
+                    kind: f.kind,
                 })
             })
         };

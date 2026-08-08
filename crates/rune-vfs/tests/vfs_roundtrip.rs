@@ -218,30 +218,39 @@ fn mem_fail_next_save_error_kind() {
     vfs.save_atomic(&path, b"data").expect("should succeed");
 }
 
-/// Finding 10: `Mem::write_durable` must match `Disk`'s
-/// `OpenOptions::create_new(true)` collision behavior — a second
-/// `write_durable` for the same destination (same deterministic temp name)
-/// must error `AlreadyExists`, never silently overwrite the first temp's
-/// bytes (the mirror of `disk_regression_preexisting_temp_not_deleted_on_
-/// conflict` below, so this failure mode is testable against `Mem` too).
+/// `temp_name`'s process-wide counter makes every `write_durable`
+/// call mint a distinct temp regardless of destination, so two consecutive
+/// calls for the SAME destination no longer collide — the fix for the "a
+/// kept temp wedges every later save of that path" defect. Both temps stay
+/// independently readable with their own bytes, and their names share the
+/// `.{basename}.rune-tmp-{pid}-` prefix while differing only in the
+/// trailing counter.
 #[test]
-fn mem_write_durable_errors_already_exists_on_temp_collision() {
+fn mem_write_durable_never_collides_across_two_calls_for_the_same_destination() {
     let vfs = Mem::new();
     let path = PathBuf::from("collision_test");
 
     let temp1 = vfs
         .write_durable(&path, b"first")
         .expect("first write_durable");
-
-    let err = vfs
+    let temp2 = vfs
         .write_durable(&path, b"second")
-        .expect_err("temp collision must error");
-    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        .expect("second write_durable must not collide");
 
-    let content = vfs.read(&temp1).expect("first temp still readable");
+    assert_ne!(temp1, temp2);
+    let prefix = ".collision_test.rune-tmp-";
+    for temp in [&temp1, &temp2] {
+        let name = temp.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.starts_with(prefix), "{name} must start with {prefix}");
+    }
+
     assert_eq!(
-        &content, b"first",
-        "the first temp's bytes must be untouched by the failed second write_durable"
+        vfs.read(&temp1).expect("first temp still readable"),
+        b"first"
+    );
+    assert_eq!(
+        vfs.read(&temp2).expect("second temp still readable"),
+        b"second"
     );
 }
 
@@ -249,11 +258,14 @@ fn mem_write_durable_errors_already_exists_on_temp_collision() {
 // REGRESSION TESTS for review fixes
 // ============================================================================
 
-/// Fix 1: Pre-existing temp file from crashed save must not be deleted on failure.
-/// Create a temp file manually, then attempt save to a path that would use that temp.
-/// The temp should still exist after the failed save.
+/// `temp_name` mints `.{basename}.rune-tmp-{pid}-{n}`, so a
+/// leftover temp from a crashed session (built here without the counter
+/// suffix, exactly as a pid-only leftover would look) never collides with
+/// the next save's own temp — the "a kept temp wedges every later save of
+/// that path" defect the counter fixes. The save must succeed, and the
+/// leftover residue must be left completely untouched.
 #[test]
-fn disk_regression_preexisting_temp_not_deleted_on_conflict() {
+fn disk_regression_preexisting_temp_no_longer_blocks_a_new_save() {
     let tmp = std::env::temp_dir().join(format!("rune-vfs-preexist-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("create temp dir");
@@ -261,29 +273,44 @@ fn disk_regression_preexisting_temp_not_deleted_on_conflict() {
     let vfs = Disk;
     let path = tmp.join("doc.md");
     let pid = std::process::id();
-    let temp_path = tmp.join(format!(".doc.md.rune-tmp-{}", pid));
+    let stale_temp = tmp.join(format!(".doc.md.rune-tmp-{}", pid));
 
     // Pre-create a temp file (simulating crash residue).
-    fs::write(&temp_path, b"old displaced bytes").expect("write pre-existing temp");
+    fs::write(&stale_temp, b"old displaced bytes").expect("write pre-existing temp");
 
-    // Attempt to save: create_new should fail with EEXIST.
     let result = vfs.save_atomic(&path, b"new content");
     assert!(
-        result.is_err(),
-        "save should fail when temp already exists (EEXIST)"
+        result.is_ok(),
+        "a stale leftover temp must not block a new save: {result:?}"
+    );
+    assert_eq!(
+        fs::read(&path).expect("read saved doc"),
+        b"new content",
+        "the new save must have taken effect"
     );
 
-    // The pre-existing temp file must still exist (not deleted).
+    // The pre-existing temp file must still exist, completely untouched —
+    // the new save minted its own, differently-named temp instead.
     assert!(
-        temp_path.exists(),
-        "pre-existing temp file should NOT be deleted on conflict"
+        stale_temp.exists(),
+        "pre-existing temp file should NOT be touched by an unrelated save"
     );
-
-    // Verify its content is unchanged.
-    let content = fs::read(&temp_path).expect("read pre-existing temp");
+    let content = fs::read(&stale_temp).expect("read pre-existing temp");
     assert_eq!(
         &content, b"old displaced bytes",
         "pre-existing temp content must be preserved"
+    );
+
+    let prefix = format!(".doc.md.rune-tmp-{}-", pid);
+    let leftover_new_style: Vec<_> = fs::read_dir(&tmp)
+        .expect("read dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with(&prefix))
+        .collect();
+    assert!(
+        leftover_new_style.is_empty(),
+        "the new save's own temp must be cleaned up after a successful publish: {leftover_new_style:?}"
     );
 
     let _ = fs::remove_dir_all(&tmp);

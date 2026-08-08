@@ -12,14 +12,21 @@
 //! session fuzzer).
 
 mod disk;
+mod etag;
 mod mem;
+mod publish;
+mod sighting;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 use std::{io, process};
 
 pub use disk::Disk;
+pub use etag::{Etag, etag_of};
 pub use mem::{Mem, OpKind};
+pub use publish::{PutCondition, PutOutcome, put};
+pub use sighting::{GetRefusal, Sighting, get};
 
 /// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping
 /// `e` itself reachable as [`std::error::Error::source`] — so a caller can
@@ -237,54 +244,35 @@ pub trait Vfs {
     /// way). Kept only so existing callers (the plain `super+s` save path)
     /// keep working unchanged through this work package.
     fn save_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        let dest = self.resolve(path)?;
-        let dest_existed = self.stat(&dest).is_ok();
-        let temp = self.write_durable(&dest, bytes)?;
-
-        let publish = if dest_existed {
-            self.exchange(&temp, &dest)
-        } else {
-            self.rename_excl(&temp, &dest)
-        };
-
-        match publish {
-            Ok(()) => {
-                if dest_existed {
-                    // The swap displaced the old content onto `temp`; this
-                    // convenience has no caller to hand it to, so it's
-                    // discarded here — see the doc comment above.
+        let (outcome, temp) =
+            publish::put_and_temp(self, path, bytes, PutCondition::Force { expect: None })?;
+        match outcome {
+            PutOutcome::Committed { durable: true, .. }
+            | PutOutcome::Raced { durable: true, .. } => {
+                // This convenience has no caller to hand displaced bytes to,
+                // so whatever the swap displaced is discarded here — see the
+                // doc comment above.
+                if let Some(temp) = temp {
                     let _ = self.remove(&temp);
                 }
                 Ok(())
             }
-            Err(e) if published_not_durable(&e) => {
-                // WP1.S1/S2: the publish already took effect — `dest` holds
-                // the new bytes and `temp` is now the SOLE surviving copy of
-                // whatever `dest` held before this call (the swap displaced
-                // it there, and nothing else ever reads `temp` back for the
-                // caller). Removing it here would discard the sole surviving
-                // copy of displaced content, so it is kept —
-                // the same deliberate keep-temp-on-error shape
-                // `rune-db::materialize` already uses around its own
-                // `exchange` call. The error message says so, and the
-                // marker is carried onto the re-wrapped error too, so a
-                // caller further up can still observe it.
+            PutOutcome::Committed { durable: false, .. }
+            | PutOutcome::Raced { durable: false, .. } => {
+                // The publish already took effect but its durability could
+                // not be confirmed — `put_and_temp` kept the temp holding
+                // the displaced content on disk rather than remove it; the
+                // marker is carried onto the re-wrapped error so a caller
+                // further up can still observe it.
                 Err(wrap_io_published(
-                    e,
-                    format!(
-                        "save published but durability could not be confirmed; \
-                         the prior content is preserved at {}",
-                        temp.display()
-                    ),
+                    io::Error::other("durability could not be confirmed after publish"),
+                    "save published but durability could not be confirmed; \
+                     the prior content is preserved on a sibling temp file",
                 ))
             }
-            Err(e) => {
-                // The publish never took effect (`dest` is unchanged): the
-                // temp holds nothing that isn't also still safe on `dest`,
-                // so removing it is the original, non-destructive behavior.
-                let _ = self.remove(&temp);
-                Err(e)
-            }
+            PutOutcome::Missing | PutOutcome::Conflict { .. } => Err(io::Error::other(
+                "save_atomic: an unconditional Force publish reported Missing or Conflict",
+            )),
         }
     }
 }
@@ -310,9 +298,15 @@ pub(crate) fn sort_dir_entries(entries: &mut [DirEntry]) {
 }
 
 /// The sibling temp filename a durable write uses for `path`:
-/// `.{basename}.rune-tmp-{pid}`, in `path`'s own parent directory (so the
-/// eventual `exchange`/`rename_excl` publish is same-volume). Shared by
-/// `Disk` and `Mem` so both backends produce the same temp-name shape.
+/// `.{basename}.rune-tmp-{pid}-{n}`, in `path`'s own parent directory (so
+/// the eventual `exchange`/`rename_excl` publish is same-volume). `n` comes
+/// from a process-wide counter so two temps for the same `path` in the same
+/// process never collide even when a prior one was never cleaned up (a
+/// pid-only name would otherwise wedge every later save of that path on a
+/// leftover crash residue). Shared by `Disk` and `Mem` so both backends
+/// produce the same temp-name shape.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn temp_name(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or(Path::new("")).to_path_buf();
     let basename = path
@@ -320,5 +314,6 @@ pub(crate) fn temp_name(path: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let pid = process::id();
-    parent.join(format!(".{basename}.rune-tmp-{pid}"))
+    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(".{basename}.rune-tmp-{pid}-{n}"))
 }

@@ -80,15 +80,7 @@ pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<Vec<u8>, Error> 
 /// second copy — the same hash space `blobs.hash`/`observations.blob_hash`
 /// both live in.
 pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let sum = hasher.finalize();
-    let mut out = String::with_capacity(sum.len() * 2);
-    for byte in sum {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    rune_vfs::etag_of(bytes).to_string()
 }
 
 #[cfg(test)]
