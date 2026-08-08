@@ -108,7 +108,11 @@ fn alloc_id_matches_golden() {
         let output = &case["output"];
         let path = as_str(input, "path");
         let want = as_i64(output, "id");
-        assert_eq!(i64::from(alloc_id(path)), want, "alloc_id({path:?})");
+        assert_eq!(
+            i64::from(alloc_id(path.as_bytes())),
+            want,
+            "alloc_id({path:?})"
+        );
     }
 }
 

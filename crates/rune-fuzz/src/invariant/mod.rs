@@ -92,10 +92,7 @@ pub fn trunc(s: &str, n: usize) -> String {
     if s.len() <= n {
         return s.to_string();
     }
-    let mut end = n;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = s.floor_char_boundary(n);
     match s.get(..end) {
         Some(head) => format!("{head}…"),
         None => s.to_string(),

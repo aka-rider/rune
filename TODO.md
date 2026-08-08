@@ -74,41 +74,17 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: one lazy `assert_invariant` in `rune-core`, re-exported by every crate.
 - **Done when**: one definition exists and all call sites take a closure.
 
-### `floor/ceil_char_boundary` hand-rolled 8×
-- **Where**: `crates/rune-syntax/src/syntax.rs:32,42` (comments say "nightly-only" — false since Rust 1.86), `crates/rune-md/src/emit/mod.rs:83,93`, `crates/rune-core/src/buffer/lineindex.rs:77`, `crates/rune-ts/src/detect.rs:97`, `crates/rune-tui/src/field.rs:349`, `crates/rune-tui/src/render/title.rs:134`, `crates/rune-tui/src/commands/nav.rs:96`, `crates/rune-fuzz/src/invariant/mod.rs:95`
-- **Wrong**: hand-rolled boundary-snapping loops reimplement `str::floor_char_boundary`/`ceil_char_boundary`, stable since Rust 1.86 (toolchain here is 1.97.1); some comments still call it nightly-only.
-- **Instead**: delete all, call std.
-- **Done when**: no hand-rolled char-boundary loop remains.
-
 ### Typed errors flattened to String
 - **Where**: ~9 `map_err(|e| e.to_string())` at Cmd boundaries across `runtime/mod.rs`, `save.rs`, `trash.rs`, `rename_create.rs`, `graphics/*`; inside `rune-db::Error` (`crates/rune-db/src/error.rs:17,37,49,60`): `ReplayFailed(String)`, `CorruptPayload(String)`, `SessionEstablish(String)` stringify their sources while `Sqlite(rusqlite::Error)` proves the crate can hold typed sources
 - **Wrong**: stringifying erases the `ErrorKind`/error type that `rune-vfs::WrappedIo` and `rusqlite::Error` deliberately preserve.
 - **Instead**: typed variants; a small `Cause` enum in `Msg::Error`.
 - **Done when**: no Cmd-boundary error is stringified before it reaches its handler, and `rune-db::Error`'s String variants hold typed sources.
 
-### Newline-scanning reimplemented 5×
-- **Where**: `crates/rune-core/src/buffer/lineindex.rs:115` (`compute_line_starts`) and `:88` (`update_line_starts`), `crates/rune-md/src/parse/mod.rs:30` (`line_starts`), `crates/rune-syntax/src/wrap/mod.rs:314` (byte scan); rune-fuzz copies are deliberate independent oracles — label and keep, not part of this entry
-- **Wrong**: four independent implementations of the same line-start scan.
-- **Instead**: one `line_starts` in `rune-core`, called everywhere else.
-- **Done when**: rune-md and rune-syntax call rune-core's implementation instead of their own.
-
 ### Stale/false comments (provable lies)
 - **Where**: `crates/rune-tui/src/when.rs:313` and `crates/rune-tui/src/binding.rs:100` (cite nonexistent `keymap::index::resolve`); "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-fuzz/Cargo.toml:16`, `Makefile:46` (cite deleted `crates/rune-md/TODO.md`); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4`, `crates/rune-md/src/element/doc.rs:413` (cite deleted per-crate `TODO.md`s)
 - **Wrong**: comments cite functions and files that no longer exist.
 - **Instead**: fix or delete each citation when touched (per house rule, no `path:line` in comments either).
 - **Done when**: no comment in the tree cites a nonexistent symbol or deleted file.
-
-### Vestigial `BufferOffset` newtype
-- **Where**: `crates/rune-core/src/coords.rs:8` (`BufferOffset`, zero users outside its own decl/test); `crates/rune-core/src/coords.rs:26` (`VisualCol`, used in exactly one file: `crates/rune-tui/src/commands/multi.rs`)
-- **Wrong**: every real offset in the codebase is bare `usize`; the newtype's claimed "mix-up is unrepresentable" benefit doesn't hold if nothing uses it.
-- **Instead**: adopt the newtypes for real (thread them through the offset-bearing APIs), or delete them.
-- **Done when**: `BufferOffset`/`VisualCol` are either genuinely load-bearing or gone.
-
-### Image ID minted via `to_string_lossy`
-- **Where**: `crates/rune-tui/src/workspace/mod.rs:270` (`rune_image::alloc_id(&resolved.to_string_lossy())`)
-- **Wrong**: two distinct non-UTF-8 paths can lossy-convert to the same string and collide on the same image ID.
-- **Instead**: derive the ID from the path's bytes, not its lossy string form.
-- **Done when**: no two distinct paths can produce the same image ID.
 
 ### O(file) per keystroke is the deliberate design ceiling
 - **Where**: `crates/rune-core/src/buffer/mod.rs`, `crates/rune-core/src/buffer/lineindex.rs`, `crates/rune-tui/src/commands/edit_core.rs`, `crates/rune-tui/src/materialize_ack.rs`; perf-guarded by `crates/rune-tui/tests/perf_guard.rs:92` (`keystroke_view_cost_under_budget_on_a_5k_line_code_document`)
@@ -152,12 +128,6 @@ entry is deleted in the same commit that fixes it.
 - **Wrong**: 31 source files exceed the 500-line house rule, none ledgered.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
-
-### Test-only field on production type
-- **Where**: `crates/rune-tui/src/highlight/mod.rs:76,239-240` (`#[cfg(test)] resolve_calls: Cell<usize>` on `HighlightState`)
-- **Wrong**: a test-only field lives on a production type (mild — properly `#[cfg(test)]`-gated, unlike rune-db's test hooks which are the model to follow).
-- **Instead**: move call-counting to a test-only wrapper or harness.
-- **Done when**: `HighlightState` carries no `#[cfg(test)]` field.
 
 ### Comment purge (the refactor itself)
 - **Where**: `crates/rune-tui` broadly — comments are roughly a third of the crate, rustdoc included

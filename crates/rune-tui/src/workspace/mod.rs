@@ -267,7 +267,7 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
 /// `WIDTHxHEIGHT` before any decode `Cmd` exists at all (WP5).
 fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
     let dims = rune_image::probe_dimensions(&bytes).map(|(w, h, _)| (w, h));
-    let id = rune_image::alloc_id(&resolved.to_string_lossy());
+    let id = rune_image::alloc_id(resolved.as_os_str().as_encoded_bytes());
     let bytes_len = bytes.len() as u64;
     let file_name = resolved
         .file_name()

@@ -222,7 +222,7 @@ fn a_live_image_document_renders_a_placeholder_cell_with_the_allocated_id() {
     app.sync_view();
 
     let expected_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
-    let expected = rune_image::alloc_id("/vault/x.png");
+    let expected = rune_image::alloc_id(b"/vault/x.png");
     assert_eq!(
         expected_id, expected,
         "test setup: id must be deterministic"

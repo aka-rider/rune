@@ -66,14 +66,6 @@ pub struct HighlightState {
     /// Read back after storing a reply to drive a status line, unless that
     /// same reply also timed out (timeout wins and is shown instead).
     pub truncated: bool,
-    /// Test-only instrumentation: counts how many times
-    /// `resolve_region_sources` actually rebuilt this document's region
-    /// sources — the full-text reconstruction the in-flight/version gates in
-    /// `schedule_highlight` must skip whenever a highlight is already
-    /// running. Per-`Document`, not a shared global, so parallel tests never
-    /// interfere with each other's count.
-    #[cfg(test)]
-    pub resolve_calls: std::cell::Cell<usize>,
 }
 
 /// One code region's highlight state: where its bytes live, and whichever of
@@ -235,10 +227,29 @@ fn resolve_region_sources(app: &mut App, id: DocumentId) -> Vec<RegionSource> {
     };
     let view = doc.view();
     #[cfg(test)]
-    doc.highlight
-        .resolve_calls
-        .set(doc.highlight.resolve_calls.get() + 1);
+    test_support::record_resolve_call();
     region_sources(doc.buffer.content(), &view.code_regions)
+}
+
+/// Test-only call-counting for `resolve_region_sources`, kept off
+/// `HighlightState` itself: a thread-local rather than a struct field, since
+/// the default test harness gives each `#[test]` its own thread, so every
+/// test starts counting from zero regardless of test ordering.
+#[cfg(test)]
+mod test_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        static RESOLVE_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record_resolve_call() {
+        RESOLVE_CALLS.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(super) fn resolve_call_count() -> usize {
+        RESOLVE_CALLS.with(Cell::get)
+    }
 }
 
 /// The ONE writer of `HighlightState::regions`.

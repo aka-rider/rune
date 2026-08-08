@@ -92,11 +92,7 @@ pub fn prev_rune_offset(buf: &Buffer, offset: usize) -> usize {
         return 0;
     }
     let content = buf.content();
-    let mut i = offset.min(content.len()).saturating_sub(1);
-    while i > 0 && !content.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
+    content.floor_char_boundary(offset.min(content.len()).saturating_sub(1))
 }
 
 pub fn next_rune_offset(buf: &Buffer, offset: usize) -> usize {

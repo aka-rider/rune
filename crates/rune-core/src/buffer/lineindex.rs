@@ -70,16 +70,7 @@ impl Buffer {
         // mid-UTF-8 when replayed against a line holding wide characters.
         // Snapping here rather than at each call site is what makes an
         // out-of-boundary cursor unrepresentable instead of merely unlikely.
-        self.floor_char_boundary(offset)
-    }
-
-    /// The largest offset `<= offset` that is a valid char boundary.
-    fn floor_char_boundary(&self, offset: usize) -> usize {
-        let mut o = offset.min(self.content.len());
-        while o > 0 && !self.content.is_char_boundary(o) {
-            o -= 1;
-        }
-        o
+        self.content.floor_char_boundary(offset)
     }
 
     /// An incremental `line_starts` rebuild scanning `edits` right-to-left
@@ -112,7 +103,8 @@ impl Buffer {
     }
 }
 
-pub(super) fn compute_line_starts(content: &str) -> Vec<usize> {
+/// A line ends at `\n`, nothing else.
+pub fn line_starts(content: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in content.bytes().enumerate() {
         if b == b'\n' {
@@ -125,7 +117,7 @@ pub(super) fn compute_line_starts(content: &str) -> Vec<usize> {
 
 /// The invariant every `Buffer::line_starts` must uphold: non-empty, with
 /// `line_starts[0] == 0`. Checked wherever `line_starts` is built or
-/// rebuilt (`compute_line_starts`, `update_line_starts`) rather than only
+/// rebuilt (`line_starts`, `update_line_starts`) rather than only
 /// documented — via the `STRICT_INVARIANTS`-gated `assert_invariant`
 /// chokepoint, so a future change that reintroduces the malformed-empty
 /// state (a derived `Default` producing `line_starts: vec![]`, the exact

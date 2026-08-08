@@ -47,7 +47,7 @@ fn schedule_highlight_skips_resolving_sources_while_one_is_already_in_flight() {
         "a call while in_flight is set must not dispatch a second cmd"
     );
     assert_eq!(
-        doc.highlight.resolve_calls.get(),
+        test_support::resolve_call_count(),
         0,
         "the source reconstruction must not run while a highlight is already \
          in flight — the in-flight gate must be checked BEFORE resolving"
@@ -66,10 +66,9 @@ fn schedule_highlight_resolves_and_dispatches_when_no_highlight_is_in_flight() {
     let mut effects = Effects::default();
     super::schedule_highlight(&mut app, id, &mut effects);
 
-    let doc = app.doc(id).expect("doc");
     assert_eq!(effects.cmds.len(), 1, "expected exactly one dispatched cmd");
     assert_eq!(
-        doc.highlight.resolve_calls.get(),
+        test_support::resolve_call_count(),
         1,
         "sources must be resolved exactly once for the call that dispatches"
     );

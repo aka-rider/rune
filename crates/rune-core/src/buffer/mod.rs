@@ -21,6 +21,8 @@ use std::fmt;
 
 mod lineindex;
 
+pub use lineindex::line_starts;
+
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {
@@ -115,7 +117,7 @@ impl Default for Buffer {
 impl Buffer {
     pub fn new(content: impl Into<String>) -> Buffer {
         let content = content.into();
-        let line_starts = lineindex::compute_line_starts(&content);
+        let line_starts = lineindex::line_starts(&content);
         Buffer {
             content,
             line_starts,

@@ -28,13 +28,7 @@ use std::borrow::Cow;
 /// sourcepos-to-byte-range conversion alike — there is no second, comrak-
 /// only line model to keep in sync with this one.
 pub fn line_starts(src: &str) -> Vec<usize> {
-    let mut starts = vec![0usize];
-    for (i, b) in src.bytes().enumerate() {
-        if b == b'\n' {
-            starts.push(i + 1);
-        }
-    }
-    starts
+    rune_core::buffer::line_starts(src)
 }
 
 /// A length-preserving PARSE-TIME view of `content`, fed to comrak

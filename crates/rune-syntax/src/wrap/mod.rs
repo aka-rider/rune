@@ -309,12 +309,7 @@ mod tests {
     /// (WP3: `rune-syntax` must stand up without depending on `rune-md`);
     /// these tests exercise `WrapMap`'s own contract only, not concealment.
     fn plain_lines(content: &str) -> Vec<SyntaxLine> {
-        let mut starts = vec![0usize];
-        for (i, b) in content.bytes().enumerate() {
-            if b == b'\n' {
-                starts.push(i + 1);
-            }
-        }
+        let starts = rune_core::buffer::line_starts(content);
         starts
             .iter()
             .enumerate()
