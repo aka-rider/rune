@@ -24,12 +24,6 @@ entry is deleted in the same commit that fixes it.
 
 ## Architecture
 
-### The `when`-clause DSL is decorative
-- **Where**: `crates/rune-tui/src/when.rs` (460 lines: lexer+parser+evaluator+`Context`), `evaluate`/`evaluate_cached` at lines 307-325 (zero production callers; only `when::parse` is used, from `keymap/index/validate.rs`); stale doc citation to nonexistent `keymap::index::resolve` at `when.rs:313` and `crates/rune-tui/src/binding.rs:100`; resolver `crates/rune-tui/src/binding.rs:142` never reads `binding.when`; ungated `Command::Reload` at `crates/rune-tui/src/dispatch.rs:477-480`
-- **Wrong**: `evaluate_cached` carries a global `OnceLock<Mutex<HashMap<..>>>` in a single-threaded UI and deep-clones the `Expr` per lookup, for a code path nothing calls. Real gates are hand-duplicated `is_some()` checks or missing entirely — `Command::Reload` fires `reload_image`/`reload_embeds` on any document with no `image` gate. Multi-key chord sequences never resolve anywhere.
-- **Instead**: thread `when::Context` through resolution and delete hand-rolled gates, OR delete `when.rs`/`Binding::when`/sequence support. Not both.
-- **Done when**: one of the two paths above is chosen and the dead half is removed.
-
 ### Shadow state
 - **Where**: (a) `Document.save_in_flight` at `crates/rune-tui/src/document/mod.rs:130,341,371,383,403`, written directly by a test at `crates/rune-tui/src/merge/landing.rs:472`; (b) `is_dirty_cached` (`document/mod.rs:142`) vs `is_dirty` (`document/mod.rs:360-361`) vs `is_dirty_now` (`crates/rune-tui/src/materialize_ack.rs:408`)
 - **Wrong**: (a) `save_in_flight` duplicates `save_pending.is_some()`; being `pub` let a test manufacture an "impossible" state by writing it directly. (b) two accessors exist where picking the wrong one is a per-call-site correctness decision, for a compare the code's own comment calls "length check + memcmp, microsecond-scale" — the cache buys only a staleness hazard.
@@ -69,7 +63,7 @@ entry is deleted in the same commit that fixes it.
 - **Done when**: no Cmd-boundary error is stringified before it reaches its handler, and `rune-db::Error`'s String variants hold typed sources.
 
 ### Stale/false comments (provable lies)
-- **Where**: `crates/rune-tui/src/when.rs:313` and `crates/rune-tui/src/binding.rs:100` (cite nonexistent `keymap::index::resolve`); "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4` (cite deleted per-crate `TODO.md`s)
+- **Where**: "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4` (cite deleted per-crate `TODO.md`s)
 - **Wrong**: comments cite functions and files that no longer exist.
 - **Instead**: fix or delete each citation when touched (per house rule, no `path:line` in comments either).
 - **Done when**: no comment in the tree cites a nonexistent symbol or deleted file.

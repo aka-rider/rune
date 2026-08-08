@@ -76,50 +76,43 @@ pub enum ExplorerSearchCommand {
     Cancel,
 }
 
-/// Esc/Backspace are listed FIRST and gated `when: "explorer_search"`: while
-/// a search is running they must beat `EXPLORER_BINDINGS`'s own Esc/
-/// Backspace rows (Esc is unbound there; Backspace means `ParentDir`) —
-/// `explorer_keys::handle_key`'s own `is_some()` guard is what actually
-/// enforces that gate (this crate's `when` clauses are declarative
-/// documentation, not something `resolve_in` itself consults), so the
-/// clause honest rather than doing the gating itself.
+/// Esc/Backspace are listed FIRST: while a search is running they must beat
+/// `EXPLORER_BINDINGS`'s own Esc/Backspace rows (Esc is unbound there;
+/// Backspace means `ParentDir`) — `explorer_keys::handle_key`'s own
+/// `is_some()` guard is what enforces that, checked before `EXPLORER_
+/// BINDINGS` is even consulted.
 ///
-/// `Type` is the ONE row with `when: ""` (unconditional): binding two rows,
-/// `Mods::NONE` and `Mods::SHIFT`, is what lets a shifted capital letter
-/// (which arrives as `Char('A')` with `shift` set, not a lowercase `Char('a')`
-/// with a separate shift flag) match at all — `resolve_in` only ever
-/// matches a single-element `keys` slice, so this can't be folded into one
-/// row that ignores `mods` the way `KeyPattern::matches`'s whole-`Mods`
-/// equality is deliberately never allowed to. The shift row is marked
-/// `alias: true` so the footer's default hints don't advertise two chords
-/// for what a user experiences as the same "just type" affordance.
+/// Binding two `Type` rows, `Mods::NONE` and `Mods::SHIFT`, is what lets a
+/// shifted capital letter (which arrives as `Char('A')` with `shift` set,
+/// not a lowercase `Char('a')` with a separate shift flag) match at all —
+/// `resolve_in` matches on one exact `KeyPattern`, so this can't be folded
+/// into one row that ignores `mods` the way `KeyPattern::matches`'s whole-
+/// `Mods` equality is deliberately never allowed to. The shift row is
+/// marked `alias: true` so the footer's default hints don't advertise two
+/// chords for what a user experiences as the same "just type" affordance.
 pub const EXPLORER_SEARCH_BINDINGS: &[Binding<ExplorerSearchCommand>] = &[
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: ExplorerSearchCommand::Cancel,
         help: "cancel search",
-        when: "explorer_search",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Backspace, Mods::NONE)],
+        key: KeyPattern::new(KeyCode::Backspace, Mods::NONE),
         cmd: ExplorerSearchCommand::Erase,
         help: "erase search char",
-        when: "explorer_search",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::printable(Mods::NONE)],
+        key: KeyPattern::printable(Mods::NONE),
         cmd: ExplorerSearchCommand::Type,
         help: "search by name",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::printable(SHIFT)],
+        key: KeyPattern::printable(SHIFT),
         cmd: ExplorerSearchCommand::Type,
         help: "search by name",
-        when: "",
         alias: true,
     },
 ];

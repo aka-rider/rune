@@ -13,6 +13,7 @@ use rune_core::cursor::{Cursor, CursorSet};
 use rune_tui::app::{App, update};
 use rune_tui::document::DocumentId;
 use rune_tui::graphics::ImageStatus;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::testgrid;
 use rune_vfs::{Mem, Vfs};
@@ -423,5 +424,54 @@ fn the_geometry_variant_and_build_rows_agree_on_cell_count_for_an_image_row() {
     assert_eq!(
         from_build_rows, from_geometry,
         "build_rows and the geometry-only mouse path must draw the same cell count"
+    );
+}
+
+/// Review finding (formerly-silent `Command::Reload`): once a markdown
+/// document's only embed has finished decoding (`ImageStatus::Live`, no
+/// `in_flight` left to reschedule), `⌘R` must refuse with the same status
+/// message an embed-less document gets — `Document::has_reloadable_graphics`
+/// is the single predicate `dispatch::Command::Reload`'s gate and `reload_
+/// embeds`'s own rescheduling both read, so neither can drift from the
+/// other into a reload that silently does nothing.
+#[test]
+fn super_r_on_a_document_with_only_live_embeds_refuses_with_a_message() {
+    let (mut app, id) = app_with_embed("![caption](x.png)\n");
+    discover_and_decode(&mut app);
+    assert_eq!(
+        app.doc(id)
+            .expect("doc")
+            .embeds
+            .images
+            .get("x.png")
+            .expect("embed tracked")
+            .status,
+        ImageStatus::Live,
+        "the embed must have finished decoding before this test's own assertion means anything"
+    );
+
+    let mut effects = Effects::default();
+    update(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('r'),
+            mods: Mods {
+                sup: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut effects,
+    );
+
+    assert!(
+        !effects
+            .cmds
+            .iter()
+            .any(|c| c.kind() == CmdKind::ImageDecode),
+        "no decode Cmd may be armed for an all-Live embed set"
+    );
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some("nothing to reload")
     );
 }

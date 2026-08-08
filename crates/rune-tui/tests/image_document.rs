@@ -425,11 +425,12 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
     );
 }
 
-/// Plan WP6.S2: `⌘R` on an ordinary (non-image) document must not do
-/// anything — the reload command's own no-op guard, exercised through the
-/// real key pipeline against the markdown document `App::new` starts on.
+/// `⌘R` on an ordinary (non-image, no-embed) document must not decode or
+/// retransmit anything — only refuse with a status message — exercised
+/// through the real key pipeline against the markdown document `App::new`
+/// starts on.
 #[test]
-fn super_r_on_a_non_image_document_is_a_no_op() {
+fn super_r_on_a_non_image_document_refuses_with_a_message() {
     let (mut app, _image_id) = app_with_image();
     let markdown_id = app
         .documents
@@ -453,6 +454,9 @@ fn super_r_on_a_non_image_document_is_a_no_op() {
         &mut effects,
     );
 
-    assert!(effects.cmds.is_empty());
-    assert!(effects.raw.is_empty());
+    assert!(effects.raw.is_empty(), "nothing to decode or retransmit");
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some("nothing to reload")
+    );
 }

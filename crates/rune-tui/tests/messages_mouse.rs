@@ -49,7 +49,7 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
     );
 
     for binding in copy_bindings {
-        let pattern = binding.keys.first().expect("Copy is a single-key binding");
+        let pattern = binding.key;
         let KeyMatch::Code(code) = pattern.key else {
             panic!("Copy's binding is not a plain key code");
         };

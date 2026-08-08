@@ -475,8 +475,12 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         }
         Command::FollowLink => navigate::follow(app, effects),
         Command::Reload => {
-            crate::graphics::reload_image(app, app.active, effects);
-            crate::graphics::reload_embeds(app, app.active, effects);
+            if app.active_doc().has_reloadable_graphics() {
+                crate::graphics::reload_image(app, app.active, effects);
+                crate::graphics::reload_embeds(app, app.active, effects);
+            } else {
+                crate::messages::info(app, "nothing to reload");
+            }
         }
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a

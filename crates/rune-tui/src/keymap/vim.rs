@@ -51,44 +51,37 @@ pub enum VimCommand {
 
 const NONE: Mods = Mods::NONE;
 
-/// `h`/`j`/`k`/`l`/`i`, all unconditional (`when: ""`) for now — a `mode`-
-/// gated version (`when: "mode == \"normal\""`) is the natural next step
-/// once a real normal/insert distinction exists to gate on (`when::
-/// Context::mode` already carries that field, ready for it).
+/// `h`/`j`/`k`/`l`/`i` — every row unconditional, since `EnterInsert` is not
+/// yet wired to a real mode change (this module's doc comment).
 pub const VIM_BINDINGS: &[Binding<VimCommand>] = &[
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('h'), NONE)],
+        key: KeyPattern::new(KeyCode::Char('h'), NONE),
         cmd: VimCommand::Left,
         help: "left",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('j'), NONE)],
+        key: KeyPattern::new(KeyCode::Char('j'), NONE),
         cmd: VimCommand::Down,
         help: "down",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('k'), NONE)],
+        key: KeyPattern::new(KeyCode::Char('k'), NONE),
         cmd: VimCommand::Up,
         help: "up",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('l'), NONE)],
+        key: KeyPattern::new(KeyCode::Char('l'), NONE),
         cmd: VimCommand::Right,
         help: "right",
-        when: "",
         alias: false,
     },
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('i'), NONE)],
+        key: KeyPattern::new(KeyCode::Char('i'), NONE),
         cmd: VimCommand::EnterInsert,
         help: "insert",
-        when: "",
         alias: false,
     },
 ];
@@ -100,10 +93,8 @@ mod tests {
     use crate::keymap::editor_bindings::EDITOR_BINDINGS;
     use crate::keymap::index;
 
-    /// Startup-gate stand-in (plan WP6.S4) — see `global::tests`'s
-    /// identical note.
     #[test]
-    fn vim_bindings_have_no_prefix_collision() {
+    fn vim_bindings_have_no_duplicate_key() {
         assert!(index::validate(VIM_BINDINGS).is_ok());
     }
 
@@ -121,11 +112,11 @@ mod tests {
         // takes one table at a time).
         let vim_has_bare_i = VIM_BINDINGS
             .iter()
-            .any(|b| b.keys == [KeyPattern::new(KeyCode::Char('i'), NONE)]);
+            .any(|b| b.key == KeyPattern::new(KeyCode::Char('i'), NONE));
         assert!(vim_has_bare_i);
         let editor_binds_bare_i = EDITOR_BINDINGS
             .iter()
-            .any(|b| b.keys == [KeyPattern::new(KeyCode::Char('i'), NONE)]);
+            .any(|b| b.key == KeyPattern::new(KeyCode::Char('i'), NONE));
         assert!(
             !editor_binds_bare_i,
             "editor's own table never binds bare `i` (it falls through to insert-as-text); \
