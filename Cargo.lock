@@ -2261,7 +2261,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "zstd",
 ]
 
@@ -2395,6 +2394,7 @@ name = "rune-vfs"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "sha2 0.11.0",
  "trash",
 ]
 
