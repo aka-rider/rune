@@ -475,8 +475,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         }
         Command::FollowLink => navigate::follow(app, effects),
         Command::Reload => {
-            let doc = app.active_doc();
-            if doc.image.is_some() || !doc.embeds.images.is_empty() {
+            if app.active_doc().has_reloadable_graphics() {
                 crate::graphics::reload_image(app, app.active, effects);
                 crate::graphics::reload_embeds(app, app.active, effects);
             } else {

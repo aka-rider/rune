@@ -309,6 +309,18 @@ impl Document {
     pub fn shows_selection(&self) -> bool {
         self.focused
     }
+
+    /// Whether `⌘R` has anything to do for this document: a whole `Image`
+    /// document (`reload_image` always redecodes it) or a markdown document
+    /// with at least one embed wedged mid-decode (`reload_embeds` only ever
+    /// reschedules those). The dispatch gate and `reload_embeds`'s own
+    /// rescheduling both read `EmbedSet::has_wedged` so neither can drift
+    /// from the other — a document whose embeds are all `Live`/`Failed`
+    /// answers `false` here, matching the no-op `reload_embeds` performs on
+    /// it.
+    pub fn has_reloadable_graphics(&self) -> bool {
+        self.image.is_some() || self.embeds.has_wedged()
+    }
 }
 
 /// The save-in-progress capture: the exact version/bytes

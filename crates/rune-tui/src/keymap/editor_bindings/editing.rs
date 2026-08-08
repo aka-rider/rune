@@ -147,10 +147,10 @@ pub(crate) const SAVE: Binding<Command> = Binding {
 /// embed decode. `⌘R` is unused anywhere else in this table (see
 /// `editor_bindings.rs`'s own collision test); `dispatch::Command::Reload`
 /// refuses with a status message on a document with neither an image nor
-/// an embed to reload.
+/// a wedged embed to reload.
 pub(crate) const RELOAD: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('r'), SUP),
     cmd: Command::Reload,
-    help: "reload image",
+    help: "reload graphics",
     alias: false,
 };

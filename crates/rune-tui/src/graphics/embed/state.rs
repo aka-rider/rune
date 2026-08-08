@@ -74,4 +74,13 @@ impl EmbedSet {
         }
         dims
     }
+
+    /// Whether any tracked embed is wedged mid-decode (`in_flight.is_some()`)
+    /// — the one definition `reload_embeds`'s own rescheduling and
+    /// `Document::has_reloadable_graphics`'s dispatch gate both read, so a
+    /// document whose embeds are all `Live`/`Failed` can never present as
+    /// reloadable while the reload itself does nothing.
+    pub fn has_wedged(&self) -> bool {
+        self.images.values().any(|state| state.in_flight.is_some())
+    }
 }
