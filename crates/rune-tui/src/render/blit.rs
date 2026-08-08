@@ -31,8 +31,8 @@ use super::Cell;
 /// ratatui's own `CellWidth for str` derives for the same symbol —
 /// `rune_syntax::wrap::grapheme_width`'s doc comment states that as the
 /// chokepoint's own invariant (with one documented, narrow exception — a
-/// LONE zero-width rune clamped to a reserved width of 1, see that doc and
-/// `TODO/TODO.md`), and the `assert_invariant` call below enforces exactly
+/// LONE zero-width rune clamped to a reserved width of 1, see that doc),
+/// and the `assert_invariant` call below enforces exactly
 /// that (narrowed the same way) at every cell this loop writes; a producer
 /// bug that lets the two drift apart in any OTHER way would corrupt the row
 /// exactly as the pre-fix MAX-rule divergence once did, so this is
@@ -65,8 +65,7 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                         // only here: `declared == 1` (never a wide-cell
                         // mismatch, so `blit`'s continuation-reset loop
                         // above never runs for it) with `ratatui_width ==
-                        // 0` on a single-`char` symbol. Recorded, with the
-                        // measured evidence, in `TODO/TODO.md`.
+                        // 0` on a single-`char` symbol.
                         || (declared == 1
                             && ratatui_width == 0
                             && cell.text.chars().count() == 1)

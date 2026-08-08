@@ -13,6 +13,9 @@ build:
 
 test:
 	$(CARGO) test --workspace
+	# Cargo feature unification already arms strict-invariants on rune-md for the
+	# whole --workspace run above (rune-fuzz requests it), but this isolated
+	# invocation stays so the suite still proves out if that unification ever goes away.
 	$(CARGO) test -p rune-md --features strict-invariants
 
 lint:

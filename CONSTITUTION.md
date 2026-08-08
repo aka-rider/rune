@@ -37,7 +37,7 @@ Prefer a Tolerable halt — a surfaced error that keeps the buffer — over any 
 ## 4. No Panic
 
 - The workspace's panic/unwrap/expect lints are law; never `allow` them in production code.
-- `assert!`/`debug_assert!` evade those lints — a "can't happen" check routes through `assert_invariant`, gated on `STRICT_INVARIANTS`, never on `cfg!(debug_assertions)`.
+- `assert!`/`debug_assert!` evade those lints — a "can't happen" check routes through the `assert_invariant!` macro, armed by tests or a crate's `strict-invariants` feature, never by `cfg!(debug_assertions)`.
 - A refusal is a typed return value, never a swallowed `Result`.
 - `panic = "abort"` is forbidden — terminal restore runs on unwind.
 - A crash in linked C is not a Rust panic, and no lint can see it: never construct a tree-sitter `InputEdit`; every parse is a full parse.
