@@ -275,8 +275,10 @@ pub enum OpOutcome {
     Materialize(Box<MatResult>),
     /// `Load`'s [`LoadResult`] (boxed — see `Sync`'s doc comment).
     Load(Box<LoadResult>),
-    /// `ResolveAdopt`'s resulting [`Observation`].
-    Observation(Observation),
+    /// `ResolveAdopt`'s resulting [`Observation`] (boxed — see `Sync`'s doc
+    /// comment: the version DAG's second parent edge pushed `Observation`
+    /// past the boxing threshold too).
+    Observation(Box<Observation>),
     /// `RenameFile`/`RenameReplace`'s [`RenameOutcome`] (boxed — see
     /// `Sync`'s doc comment: `Replaced` carries a whole `Observation`).
     Rename(Box<RenameOutcome>),

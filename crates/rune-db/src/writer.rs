@@ -36,6 +36,7 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
+use rune_core::assert_invariant;
 use rune_vfs::Vfs;
 
 use crate::Error;
@@ -270,8 +271,22 @@ fn execute_op(
             // caller) always lands a genuine row, so `seq` is always > 0
             // here; recording it extends this doc's local-position mapping
             // by exactly one entry, matching the ONE local `Journal::push`
-            // this `AppendEdit` replicates.
-            undo_state.entry(doc_id).or_default().local_seq.push(seq);
+            // this `AppendEdit` replicates. With coalescing gone, every
+            // `append_edit` call lands a fresh row, so `seq` is now always
+            // strictly greater than the previous entry — a violation would
+            // mean the journal grew a coalescing path again without
+            // updating this mapping.
+            let state = undo_state.entry(doc_id).or_default();
+            assert_invariant!(
+                state.local_seq.last().is_none_or(|&last| seq > last),
+                || {
+                    format!(
+                        "append_edit doc {doc_id}: seq {seq} did not advance past local_seq.last() {:?}",
+                        state.local_seq.last()
+                    )
+                }
+            );
+            state.local_seq.push(seq);
             Ok(OpOutcome::Seq(seq))
         }
         OpKind::MoveUndoPos {
@@ -419,7 +434,7 @@ fn execute_op(
         } => {
             let observation =
                 crate::adopt::resolve_adopt(conn, session_id, doc_id, obs, edit_seq, now)?;
-            Ok(OpOutcome::Observation(observation))
+            Ok(OpOutcome::Observation(Box::new(observation)))
         }
         OpKind::ResolveAbandon { session_id, doc_id } => {
             crate::adopt::resolve_abandon(conn, session_id, doc_id)?;

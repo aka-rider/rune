@@ -125,6 +125,7 @@ pub fn record_materialize_outcome(
                 seq,
                 stat: &stat,
                 confirmed,
+                reconciled: None,
             };
             let saved = commit_save_from_stat(conn, ds, facts, now)?;
             Ok(MatResult {
@@ -143,7 +144,9 @@ pub fn record_materialize_outcome(
             // The displaced bytes are a one-shot read of the caller's own
             // private temp file (never contended) — recorded unclassified
             // (`None`), same as every other forensic swap capture in this
-            // crate; it is never served as a decision input.
+            // crate; it is never served as a decision input. Its own
+            // observation IS the disk-side fact this save's commit
+            // reconciles against — `facts.reconciled` below.
             let fresh =
                 record_fresh_from_stat(conn, ds, &displaced, "swap", &displaced_stat, None, now)?;
             let resolved_str = crate::paths::to_db_string(resolved_path)?;
@@ -153,6 +156,7 @@ pub fn record_materialize_outcome(
                 seq,
                 stat: &stat,
                 confirmed,
+                reconciled: Some(fresh.id),
             };
             let saved = commit_save_from_stat(conn, ds, facts, now)?;
             Ok(MatResult {
@@ -219,6 +223,12 @@ struct CommitFacts<'a> {
     /// The caller's own bracketed-stat verdict around `stat` — whether a
     /// racer landing between the publish and the stat can be ruled out.
     confirmed: bool,
+    /// The disk-side observation this commit reconciled against, when one
+    /// exists — a swap-race's displaced-bytes capture (`record_fresh_from_stat`'s
+    /// own `Observation`, already recorded before this commit runs).
+    /// `None` on a plain `Committed` outcome, which reconciled against
+    /// nothing.
+    reconciled: Option<ObsId>,
 }
 
 /// ONE tx — blob put (hash of the bytes actually written) + observation
@@ -257,6 +267,7 @@ fn commit_save_from_stat(
             },
             facts.stat,
             &at,
+            facts.reconciled,
         )?;
 
         rebind_document_tx(
