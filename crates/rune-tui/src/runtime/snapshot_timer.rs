@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::document::DocumentId;
 
@@ -70,11 +70,16 @@ impl SnapshotTimer {
     }
 
     /// (Re)arms `id`'s debounce to fire `Msg::SnapshotDue { id, generation }`
-    /// at `deadline` — overwrites any earlier pending deadline for the same
-    /// `id`. A pure state update before `attach` has ever run (or in a
-    /// test/fuzz `App` that never calls it): nothing is parked on the
-    /// `Condvar` yet, so `notify_one` is simply a no-op.
-    pub fn arm(&self, id: DocumentId, generation: u32, deadline: Instant) {
+    /// after `delay` — overwrites any earlier pending deadline for the same
+    /// `id`. The deadline is computed HERE, from this timer thread's own
+    /// `Instant::now()` — a timeout is a message produced by a dedicated
+    /// thread, so it reads its own clock rather than accepting an absolute
+    /// `Instant` from the caller's (possibly different, possibly manual in
+    /// tests) time domain. A pure state update before `attach` has ever run
+    /// (or in a test/fuzz `App` that never calls it): nothing is parked on
+    /// the `Condvar` yet, so `notify_one` is simply a no-op.
+    pub fn arm(&self, id: DocumentId, generation: u32, delay: Duration) {
+        let deadline = Instant::now() + delay;
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.pending.insert(id, (generation, deadline));
         drop(state);
@@ -147,7 +152,7 @@ mod tests {
     /// runtime loop that would `attach` it.
     fn timer_without_attach() {
         let timer = SnapshotTimer::new();
-        timer.arm(doc_id(1), 1, Instant::now());
+        timer.arm(doc_id(1), 1, Duration::ZERO);
         // No assertion beyond "did not panic/hang" — there is nothing to
         // observe without a channel attached.
     }
@@ -162,7 +167,7 @@ mod tests {
         let timer = SnapshotTimer::new();
         let (tx, rx) = mpsc::channel();
         timer.attach(tx);
-        timer.arm(doc_id(1), 7, Instant::now() + Duration::from_millis(20));
+        timer.arm(doc_id(1), 7, Duration::from_millis(20));
 
         let msg = rx
             .recv_timeout(Duration::from_secs(2))
@@ -188,10 +193,10 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         timer.attach(tx);
 
-        timer.arm(doc_id(1), 1, Instant::now() + Duration::from_millis(500));
+        timer.arm(doc_id(1), 1, Duration::from_millis(500));
         // Re-arm almost immediately with a LATER generation and a much
         // sooner deadline — the later arm must win outright.
-        timer.arm(doc_id(1), 2, Instant::now() + Duration::from_millis(20));
+        timer.arm(doc_id(1), 2, Duration::from_millis(20));
 
         let msg = rx
             .recv_timeout(Duration::from_secs(2))
@@ -218,8 +223,8 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         timer.attach(tx);
 
-        timer.arm(doc_id(1), 1, Instant::now() + Duration::from_millis(20));
-        timer.arm(doc_id(2), 1, Instant::now() + Duration::from_millis(60));
+        timer.arm(doc_id(1), 1, Duration::from_millis(20));
+        timer.arm(doc_id(2), 1, Duration::from_millis(60));
 
         let mut seen = Vec::new();
         for _ in 0..2 {

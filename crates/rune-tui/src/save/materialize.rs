@@ -512,8 +512,7 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
     };
     doc_db.snapshot_generation = doc_db.snapshot_generation.wrapping_add(1);
     let generation = doc_db.snapshot_generation;
-    let deadline = std::time::Instant::now() + SNAPSHOT_DEBOUNCE;
-    app.snapshot_timer.arm(id, generation, deadline);
+    app.snapshot_timer.arm(id, generation, SNAPSHOT_DEBOUNCE);
 }
 
 // Kept in a sibling file: this module's own vfs dance stays under the

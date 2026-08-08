@@ -89,8 +89,7 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
             crate::workspace::switch_to(app, victim);
         }
         crate::workspace::request_close(app, victim, effects);
-        // `request_close` discards `set_guard`'s own return, and a
-        // pre-existing foreign guard would also leave `app.guard` `Some`
+        // A pre-existing foreign guard would also leave `app.guard` `Some`
         // here — the `had_guard` snapshot plus a victim match is the only
         // way to tell "this eviction just armed its own prompt" apart from
         // "something else already had the guard". Checked BEFORE the room
@@ -338,13 +337,16 @@ mod tests {
             crate::commands::edit::insert_char(&mut app, id, '!');
         }
         let doc = app.active;
-        assert!(crate::guard::set_guard(
-            &mut app,
-            GuardPrompt {
-                doc,
-                kind: GuardKind::DirtyQuit,
-            }
-        ));
+        assert_eq!(
+            crate::guard::set_guard(
+                &mut app,
+                GuardPrompt {
+                    doc,
+                    kind: GuardKind::DirtyQuit,
+                }
+            ),
+            crate::guard::GuardRaise::Raised
+        );
 
         let mut effects = Effects::default();
         assert!(!ensure_room(&mut app, &mut effects));

@@ -165,3 +165,95 @@ fn an_ordinary_commit_reports_confirmed() {
         other => panic!("expected a plain commit, got {other:?}"),
     }
 }
+
+fn app_with_db() -> App {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let clock: rune_db::ClockFn = Arc::new(std::time::SystemTime::now);
+    let store = rune_db::Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {}))
+        .expect("open in-memory store");
+    let bridge = crate::db::DbBridge::bootstrap();
+    let mut app = App::new(rune_core::buffer::Buffer::new("hello"), None, vfs, None);
+    app.frame_width = 80;
+    app.frame_height = 24;
+    app.db = Some(crate::db::Db::new(store, bridge, false));
+    let id = app.active;
+    if let Some(doc) = app.doc_mut(id) {
+        doc.db = Some(crate::db::DocDb::new(1, false, 0));
+    }
+    app
+}
+
+fn type_char(app: &mut App, effects: &mut Effects, c: char) {
+    let key = crate::keymap::KeyInput {
+        code: crate::keymap::KeyCode::Char(c),
+        mods: crate::keymap::Mods::NONE,
+    };
+    crate::app::update(app, crate::runtime::Msg::Key(key), effects);
+}
+
+/// A journal-mutating keystroke bumps `snapshot_generation` and arms
+/// `App::snapshot_timer` (`App::update`'s own wrapper), but the timer
+/// itself now owns its deadline's time domain (fix for the debounce
+/// decoupling under a `ManualClock`) — this test instead covers the
+/// production reaction to the timer's eventual message, delivered exactly
+/// as the timer thread would send it: `Msg::SnapshotDue` carrying a
+/// generation. A CURRENT generation must enqueue the snapshot; a STALE one
+/// (superseded by a later edit) must be silently ignored.
+#[test]
+fn snapshot_due_with_the_current_generation_enqueues_a_snapshot() {
+    let mut app = app_with_db();
+    let id = app.active;
+    let mut effects = Effects::default();
+
+    type_char(&mut app, &mut effects, 'x');
+    let generation = app
+        .doc(id)
+        .and_then(|d| d.db.as_ref())
+        .expect("db-bound doc")
+        .snapshot_generation;
+    assert_eq!(generation, 1, "one journal-mutating keystroke bumps once");
+    let ops_before = app.db_ops.len();
+
+    crate::app::update(
+        &mut app,
+        crate::runtime::Msg::SnapshotDue { id, generation },
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.db_ops.len(),
+        ops_before + 1,
+        "a snapshot for the current generation must be enqueued"
+    );
+}
+
+#[test]
+fn snapshot_due_with_a_stale_generation_is_ignored() {
+    let mut app = app_with_db();
+    let id = app.active;
+    let mut effects = Effects::default();
+
+    type_char(&mut app, &mut effects, 'x');
+    let stale_generation = app
+        .doc(id)
+        .and_then(|d| d.db.as_ref())
+        .expect("db-bound doc")
+        .snapshot_generation;
+    type_char(&mut app, &mut effects, 'y');
+    let ops_before = app.db_ops.len();
+
+    crate::app::update(
+        &mut app,
+        crate::runtime::Msg::SnapshotDue {
+            id,
+            generation: stale_generation,
+        },
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.db_ops.len(),
+        ops_before,
+        "a stale generation must never enqueue a snapshot"
+    );
+}

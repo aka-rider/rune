@@ -205,10 +205,20 @@ fn average_frame_cost(app: &App) -> Duration {
     // One untimed frame first: the same settle-before-timing discipline the
     // keystroke guard uses, so a first-paint-only cost is never what the
     // budget is compared against.
-    std::hint::black_box(render::build_rows(app, app.active_doc(), view));
+    std::hint::black_box(render::build_rows(
+        app,
+        app.active_doc(),
+        Some(app.active),
+        view,
+    ));
     let start = Instant::now();
     for _ in 0..RENDER_FRAMES {
-        std::hint::black_box(render::build_rows(app, app.active_doc(), view));
+        std::hint::black_box(render::build_rows(
+            app,
+            app.active_doc(),
+            Some(app.active),
+            view,
+        ));
     }
     start.elapsed() / u32::try_from(RENDER_FRAMES).unwrap_or(1)
 }

@@ -28,12 +28,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: quarantine the specific comrak-sourcepos inputs behind a named allowlist and arm the rest, or delete the feature and stop claiming coverage.
 - **Done when**: all three comments cite a live ledger (issue) or the feature gap is closed.
 
-### `let _ = set_guard(...)` defeats its own `#[must_use]`
-- **Where**: `crates/rune-tui/src/guard.rs:26-31` (doc + `#[must_use]`); discarded with no stated reason at `crates/rune-tui/src/pane.rs:345` (DirtyQuit), `crates/rune-tui/src/trash.rs:69` (Trash), `crates/rune-tui/src/materialize_ack/reactions.rs:321` (DiskConflict); explained at `crates/rune-tui/src/workspace/close.rs:43`
-- **Wrong**: `set_guard` returns whether the prompt was actually raised specifically because dropping the bool is a bug (the prompt may never appear). Three of four discard sites give no reason; Trash/DiskConflict prompts can silently no-op.
-- **Instead**: typed `GuardRaise::{Raised, Displaced}` handled at every site, or at least `messages::warn` on `false`.
-- **Done when**: every `set_guard` call site handles the return value or states why not.
-
 ## Architecture
 
 ### The `when`-clause DSL is decorative
@@ -41,12 +35,6 @@ entry is deleted in the same commit that fixes it.
 - **Wrong**: `evaluate_cached` carries a global `OnceLock<Mutex<HashMap<..>>>` in a single-threaded UI and deep-clones the `Expr` per lookup, for a code path nothing calls. Real gates are hand-duplicated `is_some()` checks or missing entirely — `Command::Reload` fires `reload_image`/`reload_embeds` on any document with no `image` gate. Multi-key chord sequences never resolve anywhere.
 - **Instead**: thread `when::Context` through resolution and delete hand-rolled gates, OR delete `when.rs`/`Binding::when`/sequence support. Not both.
 - **Done when**: one of the two paths above is chosen and the dead half is removed.
-
-### Keymap startup validation doesn't exist; registry test incomplete
-- **Where**: `crates/rune-tui/src/keymap/index/validate.rs:236-243` (`every_registered_binding_table_validates`, lists 6 tables); claimant helper at `crates/rune-tui/src/global.rs:547-569` lists 8 (includes `MERGE_BINDINGS` from `crates/rune-tui/src/merge/keys.rs`, `FILESEARCH_BINDINGS` from `crates/rune-tui/src/filesearch/keys.rs`)
-- **Wrong**: the registry test is the only thing validating binding tables (nothing calls `validate` at startup); it omits `MERGE_BINDINGS` and `FILESEARCH_BINDINGS`, both of which the claimant helper does enumerate, proving the omission is an oversight not a deliberate exclusion.
-- **Instead**: add the two missing tables to the registry test.
-- **Done when**: `every_registered_binding_table_validates` lists all 8 tables the claimant helper knows about.
 
 ### Shadow state
 - **Where**: (a) `Document.save_in_flight` at `crates/rune-tui/src/document/mod.rs:130,341,371,383,403`, written directly by a test at `crates/rune-tui/src/merge/landing.rs:472`; (b) `is_dirty_cached` (`document/mod.rs:142`) vs `is_dirty` (`document/mod.rs:360-361`) vs `is_dirty_now` (`crates/rune-tui/src/materialize_ack.rs:408`)
@@ -71,18 +59,6 @@ entry is deleted in the same commit that fixes it.
 - **Wrong**: confirm/collapse timeouts park one OS thread per (re)arm with no cancellation — the generation counters exist largely to discard the late replies. `spawn_cmd` spawns unbounded threads; `Highlight`/`ImageDecode` issue at keystroke rate.
 - **Instead**: generalize `SnapshotTimer` (single thread, Mutex+Condvar, rearm-to-earliest) to a keyed deadline map; bound the worker pool.
 - **Done when**: no `Cmd` does a bare `thread::sleep`, and `spawn_cmd` is bounded.
-
-### `Instant::now()` inside `update`
-- **Where**: `crates/rune-tui/src/save/materialize.rs:345,355` (`schedule_snapshot_debounce`)
-- **Wrong**: computes a deadline via `std::time::Instant::now()` directly, bypassing the injected `Clock` seam everything else in the runtime honors.
-- **Instead**: take the deadline from the injected `Clock`.
-- **Done when**: `schedule_snapshot_debounce` has no direct `Instant::now()` call.
-
-### `std::ptr::eq` for document identity
-- **Where**: `crates/rune-tui/src/render/mod.rs:131`
-- **Wrong**: search-highlight gating compares `&Document` addresses because the messages pane shares the render pipeline — convention, not type.
-- **Instead**: pass `Option<DocumentId>` or a `RenderTarget` enum.
-- **Done when**: no pointer-identity comparison stands in for document identity in render.
 
 ### Multi-meaning `None`s in the highlight reply protocol
 - **Where**: `crates/rune-tui/src/runtime/mod.rs:187-190` (`Msg::Highlighted { result: Option<HighlightReply> }`), `crates/rune-tui/src/highlight/mod.rs:122` (`payload: Option<RegionPayload>`)

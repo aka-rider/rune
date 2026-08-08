@@ -379,7 +379,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
             // displaces), and waiting on an invisible prompt would leave the
             // title focused with every key going somewhere the user does
             // not expect (hazard 1).
-            let raised = guard::set_guard(
+            let raised = guard::set_guard_or_warn(
                 app,
                 GuardPrompt {
                     doc: doc_id,
@@ -387,8 +387,12 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                         target: display_name(&to),
                     },
                 },
+                &format!(
+                    "rename to {} refused \u{2014} a prompt is already showing",
+                    display_name(&to)
+                ),
             );
-            if raised {
+            if raised == guard::GuardRaise::Raised {
                 app.rename = RenameState::Collision {
                     doc: doc_id,
                     from,

@@ -44,7 +44,7 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     for row in &rows {
         for cell in row {
             assert!(
@@ -79,7 +79,7 @@ fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_c
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     for row in &rows {
         for cell in row {
             assert!(
@@ -158,7 +158,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
         "汉 (width 2) then a tab to the next 4-stop must land 'a' at column 4"
     );
 
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.first().map(|c| (c.text.as_str(), c.width)),
@@ -201,7 +201,7 @@ fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.len(),
@@ -230,7 +230,7 @@ fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.len(),
@@ -255,7 +255,7 @@ fn wide_cell_leaves_a_blank_continuation_column_in_the_real_backend() {
     let app = app_for(&content, 0, true);
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     let family_cell = first_row.first().expect("family cell present");
     assert_eq!(family_cell.text, family);
@@ -296,7 +296,7 @@ fn control_char_gets_a_safe_placeholder_glyph() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     let placeholder = rows
         .first()
         .and_then(|row| row.iter().find(|c| c.text == "\u{2407}"))
@@ -364,7 +364,7 @@ fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
     let app = app_for(&content, 0, true);
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), view);
+    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     let heart_cell = first_row.first().expect("heart cell present");
     assert_eq!(heart_cell.text, heart);
@@ -433,7 +433,7 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
         );
 
         let view = app.active_doc().view.as_ref().expect("synced view");
-        let rows = render::build_rows(&app, app.active_doc(), view);
+        let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
         let cell = rows
             .first()
             .and_then(|row| row.iter().find(|c| c.text.chars().eq(std::iter::once(*ch))))

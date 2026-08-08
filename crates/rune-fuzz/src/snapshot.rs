@@ -236,7 +236,7 @@ impl Snapshot {
         let (cells, row_meta) = if with_cells {
             match &app.active_doc().view {
                 Some(view) => (
-                    render::build_rows(app, app.active_doc(), view),
+                    render::build_rows(app, app.active_doc(), Some(app.active), view),
                     row_meta::row_meta(view, app),
                 ),
                 None => (Vec::new(), Vec::new()),

@@ -35,7 +35,7 @@ use ratatui::widgets::{Block, BorderType};
 use rune_md::element::doc::ViewSnapshots;
 
 use crate::app::App;
-use crate::document::Document;
+use crate::document::{Document, DocumentId};
 use crate::messages;
 use crate::pane::Pane;
 
@@ -57,7 +57,12 @@ pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 /// here — it is the active editor document's own content, so `render::draw`
 /// applies it itself, at the one call site that actually knows `doc` is the
 /// active document.
-pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Cell>> {
+pub fn build_rows(
+    app: &App,
+    doc: &Document,
+    doc_id: Option<DocumentId>,
+    view: &ViewSnapshots,
+) -> Vec<Vec<Cell>> {
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
@@ -120,15 +125,13 @@ pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Ce
     // the token overlay (so a match's background sits under, not over, a
     // token's foreground) and BEFORE the cursor overlays just below (so
     // the caret/selection still wins where they land on a match). Guarded
-    // on `doc` actually being the ACTIVE document — `build_rows` is
+    // on `doc_id` actually being the ACTIVE document — `build_rows` is
     // generic over `doc` (the messages pane renders its own read-only
-    // `Document` through this same function), but `App::search`'s matches
-    // are computed against the active document's bytes only, and `doc`
-    // carries no id of its own to compare against `App::active` directly;
-    // pointer identity is exact here since every caller either passes
-    // `app.active_doc()` itself or a document that provably never is it.
+    // `Document`, `doc_id: None`, through this same function), but
+    // `App::search`'s matches are computed against the active document's
+    // bytes only.
     if let Some(state) = &app.search
-        && std::ptr::eq(doc, app.active_doc())
+        && doc_id == Some(app.active)
     {
         for m in &state.matches {
             paint_range(&mut rows, m.clone(), app.theme.chrome.search_match_bg);
@@ -196,7 +199,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
     }
 
     if let Some(view) = &app.active_doc().view {
-        let mut rows = build_rows(app, app.active_doc(), view);
+        let mut rows = build_rows(app, app.active_doc(), Some(app.active), view);
         // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
         // every overlay `build_rows` already applied — the working form's
         // markers and framed spans are merge mode's own content, not
