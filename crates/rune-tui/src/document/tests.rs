@@ -101,6 +101,60 @@ fn hydrate_adopts_a_recovered_draft_even_in_reading_view() {
 }
 
 #[test]
+fn hydrate_leaves_a_cursor_at_offset_zero_in_place() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    assert_eq!(doc.cursors.primary().position, 0);
+
+    doc.hydrate("on disk", "a much longer recovered draft");
+
+    assert_eq!(doc.cursors.primary().position, 0);
+    assert_eq!(doc.cursors.primary().anchor, 0);
+}
+
+#[test]
+fn hydrate_clamps_a_cursor_beyond_the_recovered_content() {
+    let disk = "0123456789ABCDEF";
+    let mut doc = Document::new(Buffer::new(disk));
+    doc.cursors = CursorSet::new(doc.buffer.len());
+
+    doc.hydrate(disk, "01234567");
+
+    assert_eq!(doc.cursors.primary().position, "01234567".len());
+    assert_eq!(doc.cursors.primary().anchor, "01234567".len());
+}
+
+#[test]
+fn hydrate_lands_a_clamped_cursor_on_a_char_boundary() {
+    let mut doc = Document::new(Buffer::new("aaaaaa"));
+    doc.cursors = CursorSet::new(3);
+
+    doc.hydrate("aaaaaa", "\u{e9}\u{e9}\u{e9}\u{e9}");
+
+    let cursor = doc.cursors.primary();
+    assert!(
+        "\u{e9}\u{e9}\u{e9}\u{e9}".is_char_boundary(cursor.position),
+        "clamped position {} is not a char boundary",
+        cursor.position
+    );
+    assert!(
+        "\u{e9}\u{e9}\u{e9}\u{e9}".is_char_boundary(cursor.anchor),
+        "clamped anchor {} is not a char boundary",
+        cursor.anchor
+    );
+}
+
+#[test]
+fn hydrate_keeps_a_cursor_offset_within_the_recovered_content() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    doc.cursors = CursorSet::new(3);
+
+    doc.hydrate("on disk", "recovered draft");
+
+    assert_eq!(doc.cursors.primary().position, 3);
+    assert_eq!(doc.cursors.primary().anchor, 3);
+}
+
+#[test]
 fn document_ids_are_distinct_and_ordered() {
     // Mints two REAL ids the same way production code does — through
     // `App`, never a raw-number constructor.

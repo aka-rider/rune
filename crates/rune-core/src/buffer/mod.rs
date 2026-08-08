@@ -335,12 +335,9 @@ impl Buffer {
 }
 
 /// The one place `insert_len - deleted_len` is computed — how many bytes a
-/// single edit adds (negative for a net deletion). Re-derived independently
-/// at five call sites before this chokepoint existed (`apply_edits` ×2,
-/// `CursorSet::adjust_after_edit`, `adjust_after_batch_edits` ×2), each free
-/// to make its own clamp decision. Takes plain lengths rather than an
-/// `Edit`/`AppliedEdit` so both crate-side derivations (a range's
-/// `end - start`, or an already-known `deleted.len()`) share it.
+/// single edit adds (negative for a net deletion). Takes plain lengths
+/// rather than an `Edit`/`AppliedEdit` so both crate-side derivations (a
+/// range's `end - start`, or an already-known `deleted.len()`) share it.
 pub fn edit_delta(deleted_len: usize, insert_len: usize) -> isize {
     insert_len as isize - deleted_len as isize
 }

@@ -144,13 +144,14 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
 }
 
 /// The control: a dead session's own draft bridged onto disk content that
-/// has NOT moved (`Inherited::Bridged`, not `Diverged` — same shape
-/// `db_wiring_hydrate.rs`'s restart test exercises) installs the draft dirty
-/// exactly like the diverged case above, but must NEVER post the G0 banner —
-/// this is an ordinary unsaved edit, not a recovered draft whose baseline
-/// disk has moved out from under.
+/// has NOT moved (`Inherited::Bridged`, not `Diverged`) installs the draft
+/// dirty exactly like the diverged case above. It must never post the
+/// disk-changed G0 banner — this is an ordinary unsaved edit, not a
+/// recovered draft whose baseline disk has moved out from under — but the
+/// adoption itself still silently swapped the buffer, so a plainer
+/// recovery message is owed regardless.
 #[test]
-fn bridged_load_without_disk_divergence_posts_no_g0_banner() {
+fn bridged_load_without_disk_divergence_posts_a_plain_recovery_message() {
     let dir = temp_db_dir("bridged-load-no-divergence");
     let db_path = dir.join("rune-v1.db");
     let doc_path = Path::new("/doc.md");
@@ -226,8 +227,14 @@ fn bridged_load_without_disk_divergence_posts_no_g0_banner() {
     assert!(app_b.doc(id_b).unwrap().is_dirty());
     assert_eq!(
         rune_tui::messages::posts(&app_b),
-        0,
-        "no divergence to report — the G0 banner must not fire, got {:?}",
+        1,
+        "no divergence to report — the G0 banner must not also fire, got {:?}",
         rune_tui::messages::newest_text(&app_b)
+    );
+    assert_eq!(
+        rune_tui::messages::newest_text(&app_b),
+        Some("recovered unsaved changes"),
+        "no divergence to report, but the silent buffer swap still owes the \
+         user a plain recovery message"
     );
 }

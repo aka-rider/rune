@@ -98,9 +98,10 @@ pub fn handle_load_ack(
                 "recovered unsaved changes — the file on disk has changed since \u{21c4} [^M]erge to reconcile",
             );
         }
-        Some(crate::document::Hydration::Adopted)
-        | Some(crate::document::Hydration::NoChange)
-        | None => {}
+        Some(crate::document::Hydration::Adopted) => {
+            messages::info(app, "recovered unsaved changes");
+        }
+        Some(crate::document::Hydration::NoChange) | None => {}
     }
     // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
     // marks it itself, so every hydration site re-derives it explicitly,
@@ -332,6 +333,45 @@ mod tests {
         assert!(
             app.db.as_ref().expect("store still present").degraded,
             "a Fatal event must still degrade the store via on_store_failure"
+        );
+    }
+
+    #[test]
+    fn handle_load_ack_messages_a_non_diverged_adoption() {
+        let mut app = App::new(
+            Buffer::new("on disk"),
+            None,
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id = app.active;
+        let issued_version = app.doc(id).expect("doc exists").buffer.version();
+
+        let load_result = rune_db::LoadResult {
+            doc_id: 1,
+            renamed_from: None,
+            disk_content: "on disk".to_string(),
+            recovered: "recovered draft".to_string(),
+            has_history: true,
+            sync: rune_db::SyncState {
+                kind: rune_db::SyncKind::BufferAhead,
+                ancestor: None,
+                ours: rune_db::Version {
+                    hash: String::new(),
+                    obs: None,
+                },
+                theirs: None,
+            },
+            nlink: 1,
+            saved_obs: Some(1),
+            bridge_seq: None,
+        };
+
+        handle_load_ack(&mut app, id, load_result, Some(issued_version), false);
+
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("recovered unsaved changes")
         );
     }
 }

@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, Edit};
-use rune_core::cursor::CursorSet;
+use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_md::icons::IconSet;
@@ -471,7 +471,20 @@ impl Document {
         let Ok((new_buffer, applied)) = self.buffer.apply_edits(std::slice::from_ref(&edit)) else {
             return Hydration::Refused("recovered draft failed to apply to the buffer");
         };
-        self.cursors = self.cursors.adjust_after_batch_edits(&applied);
+        self.cursors = self.cursors.map(|c| {
+            let position = recovered.floor_char_boundary(c.position.min(recovered.len()));
+            let anchor = recovered.floor_char_boundary(c.anchor.min(recovered.len()));
+            Cursor {
+                position,
+                anchor,
+                desired_col: if position == c.position {
+                    c.desired_col
+                } else {
+                    0
+                },
+                ..c
+            }
+        });
         self.buffer = new_buffer;
         self.journal.push(Step {
             edits: applied,

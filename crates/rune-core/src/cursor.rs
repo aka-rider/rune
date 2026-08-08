@@ -3,7 +3,6 @@
 //! multi-cursor future.
 
 use crate::assert_invariant;
-use crate::buffer::{AppliedEdit, edit_delta};
 
 /// One cursor: `position` is the head (blinks), `anchor` is the tail
 /// (`position == anchor` means no selection).
@@ -276,56 +275,6 @@ impl CursorSet {
         };
         res.merge()
     }
-
-    /// Shift cursor offsets after a single `[start, end)` ->
-    /// `insert_len`-byte replace.
-    pub fn adjust_after_edit(&self, start: usize, end: usize, insert_len: usize) -> CursorSet {
-        let net: isize = edit_delta(end - start, insert_len);
-        self.map(move |c| {
-            let adjust = |pos: usize| -> usize {
-                if pos < start {
-                    pos
-                } else if pos < end {
-                    start + insert_len
-                } else {
-                    ((pos as isize) + net).max(0) as usize
-                }
-            };
-            Cursor {
-                position: adjust(c.position),
-                anchor: adjust(c.anchor),
-                ..c
-            }
-        })
-    }
-
-    /// Shift cursor offsets after a whole applied-edit batch. `edits` is in
-    /// the same descending-`start` order `Buffer::apply_edits` returns.
-    pub fn adjust_after_batch_edits(&self, edits: &[AppliedEdit]) -> CursorSet {
-        self.map(|c| {
-            let adjust = |pos: usize| -> usize {
-                let mut shift: isize = 0;
-                for ae in edits.iter().rev() {
-                    let old_start = ae.start as isize - shift;
-                    let old_end = old_start + ae.deleted.len() as isize;
-                    let pos_i = pos as isize;
-                    if pos_i < old_start {
-                        return (pos_i + shift).max(0) as usize;
-                    }
-                    if pos_i < old_end {
-                        return ae.start + ae.insert.len();
-                    }
-                    shift += edit_delta(ae.deleted.len(), ae.insert.len());
-                }
-                (pos as isize + shift).max(0) as usize
-            };
-            Cursor {
-                position: adjust(c.position),
-                anchor: adjust(c.anchor),
-                ..c
-            }
-        })
-    }
 }
 
 #[cfg(test)]
@@ -359,58 +308,6 @@ mod tests {
         assert_eq!(cs.len(), 1);
         let merged = cs.primary();
         assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
-    }
-
-    #[test]
-    fn adjust_after_edit_shifts_positions_past_the_edit() {
-        let cs = CursorSet::new(10);
-        let adjusted = cs.adjust_after_edit(2, 4, 6);
-        assert_eq!(adjusted.primary().position, 14); // 10 + (6 - 2)
-    }
-
-    /// [rune-core 14]: `adjust_after_batch_edits` is the one production
-    /// path with the subtle pre-edit-coordinate reconstruction (each
-    /// `AppliedEdit::start` already carries a cumulative shift baked in).
-    /// Drive it from a REAL `apply_edits` output — not a hand-guessed
-    /// `AppliedEdit` batch — so the test can't share a wrong assumption
-    /// with the code under test: a cursor before, inside each edit, and
-    /// past both.
-    #[test]
-    fn adjust_after_batch_edits_shifts_cursors_by_position() {
-        use crate::buffer::{Buffer, Edit};
-
-        let buf = Buffer::new("abcdefgh");
-        let (new_buf, applied) = buf
-            .apply_edits(&[
-                Edit {
-                    start: 6,
-                    end: 8,
-                    insert: String::new(),
-                },
-                Edit {
-                    start: 2,
-                    end: 4,
-                    insert: "XYZ".to_string(),
-                },
-            ])
-            .expect("edit should apply");
-        assert_eq!(new_buf.content(), "abXYZef");
-
-        let cs = CursorSet::new_from_positions(&[0, 3, 7, 8]);
-        let adjusted = cs.adjust_after_batch_edits(&applied);
-        let positions: Vec<usize> = adjusted.all().iter().map(|c| c.position).collect();
-        // 0 precedes both edits: unchanged.
-        // 3 falls inside the "cd" replace ([2,4)): snaps to that edit's
-        // post-edit end (byte 5, right after "XYZ").
-        // 7 falls inside the "gh" delete ([6,8)): snaps to that edit's
-        // post-edit end (byte 7, the delete's own empty-insert end).
-        // 8 (buffer's own length) follows both edits: shifted by both
-        // deltas (+1 for "cd"->"XYZ", -2 for deleting "gh" — net -1), also
-        // landing on byte 7 — `map`'s `merge()` then coalesces this
-        // now-identical zero-width cursor with the previous one, so only
-        // 3 cursors survive.
-        assert_eq!(positions, vec![0, 5, 7]);
-        assert_eq!(adjusted.len(), 3);
     }
 
     /// [rune-core 14]: when two overlapping cursors merge, the survivor's
