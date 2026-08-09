@@ -148,7 +148,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             app.search_history_ops.remove(&op_id);
         }
         DbEvent::Err { id: op_id, error } => {
-            app.db_ops.remove(&op_id);
+            let pending = app.db_ops.remove(&op_id);
             // A cosmetic `search_history` write failing must never
             // sticky-degrade the whole recovery store the way a real
             // journal/materialize failure does — the bar keeps working,
@@ -171,6 +171,22 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                         ..Default::default()
                     },
                 );
+            }
+            // A doc-scoped read op failing (a probe against an externally
+            // deleted file, a load that couldn't reach its row) is a fact
+            // about ONE document's disk, not about the store's ability to
+            // keep journaling — surface it on that document and leave the
+            // store trusted. `last_sync` stays untouched: a failed probe
+            // produced no new disk fact.
+            if let Some(pending) = pending
+                && pending.doc_scoped
+            {
+                let text = match app.doc(pending.doc) {
+                    Some(doc) => format!("{}: {error}", doc.file_name()),
+                    None => error,
+                };
+                crate::messages::error(app, text);
+                return;
             }
             materialize_ack::on_store_failure(app, error);
         }
