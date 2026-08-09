@@ -47,6 +47,7 @@ mod load_anchor;
 mod materialize;
 mod materialize_types;
 mod merge_prep;
+mod merge_state;
 mod observation;
 mod open_ladder;
 mod paths;
@@ -85,6 +86,7 @@ pub use materialize::{
     record_materialize_outcome,
 };
 pub use merge_prep::{AncestorRung, MergePrepResult};
+pub use merge_state::{MergeCloseState, ResumableMerge};
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};

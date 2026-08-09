@@ -156,21 +156,57 @@ fn ours_and_theirs_collapse_blocks_to_exact_bytes_one_journal_step_each() {
 }
 
 #[test]
-fn both_marks_resolved_without_touching_the_buffer() {
+fn both_strips_markers_and_keeps_both_sides_as_one_edit() {
     let (mut app, _bridge, doc_id) = enter_two_conflict_merge();
 
-    let before = app.doc(doc_id).unwrap().buffer.content().to_string();
     let pos_before = app.doc(doc_id).unwrap().journal.pos();
     press_key(&mut app, ch('b'));
 
     let doc = app.doc(doc_id).unwrap();
-    assert_eq!(doc.buffer.content(), before, "B edits nothing");
-    assert_eq!(doc.journal.pos(), pos_before, "B pushes no journal step");
+    assert_eq!(doc.journal.pos(), pos_before + 1, "B is one journal step");
+    assert!(
+        doc.buffer.content().starts_with("Xone\n\none disk\ntwo\n"),
+        "B keeps ours then theirs with no marker lines: {:?}",
+        doc.buffer.content()
+    );
     let MergeState::Active { blocks, .. } = &app.merge else {
         panic!("resolver still active after resolving 1 of 2");
     };
     assert!(blocks[0].resolved);
     assert!(!blocks[1].resolved);
+    assert_eq!(
+        doc.buffer.content().matches("<<<<<<<").count(),
+        1,
+        "only the unresolved block's markers remain"
+    );
+}
+
+#[test]
+fn all_both_resolution_leaves_zero_marker_bytes() {
+    let (mut app, _bridge, doc_id) = enter_two_conflict_merge();
+
+    press_key(&mut app, ch('b'));
+    press_key(&mut app, ch('b'));
+
+    assert_eq!(app.merge, MergeState::Inactive, "all resolved exits merge");
+    let content = app.doc(doc_id).unwrap().buffer.content().to_string();
+    for marker in ["<<<<<<<", "=======", ">>>>>>>"] {
+        assert!(
+            !content.contains(marker),
+            "no {marker} bytes may remain: {content:?}"
+        );
+    }
+    assert_eq!(
+        content,
+        "Xone\n\none disk\ntwo\nthree\nfour\nfiveZ\n\nfive disk\n"
+    );
+    assert!(
+        rune_tui::messages::newest_text(&app)
+            .unwrap_or_default()
+            .contains("merge complete"),
+        "expected the merge-complete status, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
 }
 
 #[test]
@@ -419,7 +455,7 @@ fn help_lists_the_merge_bindings() {
         "next conflict",
         "keep editor's side",
         "keep disk's side",
-        "keep both (markers stay)",
+        "keep both",
         "close merge",
     ] {
         assert!(help.contains(label), "missing help row {label:?}");

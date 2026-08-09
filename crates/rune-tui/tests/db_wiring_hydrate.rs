@@ -269,6 +269,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
         nlink: 1,
         saved_obs: None,
         bridge_seq: None,
+        resumable_merge: None,
     };
 
     let mut effects = Effects::default();
@@ -336,6 +337,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
         nlink: 1,
         saved_obs: Some(1),
         bridge_seq: None,
+        resumable_merge: None,
     };
 
     let mut effects = Effects::default();

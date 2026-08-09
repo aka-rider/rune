@@ -124,6 +124,28 @@ pub enum OpKind {
         doc_id: i64,
         now: SystemTime,
     },
+    MergeOpen {
+        session_id: i64,
+        liveness_check: LivenessCheckFn,
+        doc_id: i64,
+        base_obs: Option<ObsId>,
+        theirs_obs: ObsId,
+        marker_content: String,
+        blocks_json: String,
+        now: SystemTime,
+    },
+    MergeProgress {
+        session_id: i64,
+        liveness_check: LivenessCheckFn,
+        doc_id: i64,
+        marker_content: String,
+        blocks_json: String,
+    },
+    MergeClose {
+        session_id: i64,
+        doc_id: i64,
+        state: crate::merge_state::MergeCloseState,
+    },
     /// The bookkeeping-only half of `Materialize` that runs
     /// BEFORE any `vfs` call — hands the caller the CAS decision data
     /// (`materialize::prepare_materialize`) so the actual disk publish can

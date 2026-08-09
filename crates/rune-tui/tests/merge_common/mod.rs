@@ -21,6 +21,7 @@ use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::Vfs;
 
+#[allow(unused_imports)]
 pub use db_wiring_common::{app_with_store, publish, recv_ok};
 
 pub fn bare(code: KeyCode) -> KeyInput {

@@ -8,12 +8,14 @@ pub mod frame;
 pub mod keys;
 mod landing;
 pub(crate) mod paint;
+mod persist;
 mod resolve;
 pub(crate) mod resync;
 pub mod state;
 
 pub use keys::{MERGE_BINDINGS, MergeCommand};
 pub(crate) use landing::handle_merge_prep_ack;
+pub(crate) use persist::resume_from_store;
 pub(crate) use resync::resync;
 pub use state::{Block, Conflict, MergeIntent, MergeState};
 
@@ -108,8 +110,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         if let Some(d) = app.doc_mut(doc) {
             d.display_name = saved_display_name;
         }
-        // A completed merge (including all-[B]oth, whose kept markers
-        // the user explicitly chose) leaves the buffer strictly ahead
+        // A completed merge leaves the buffer strictly ahead
         // of the disk bytes it just reconciled with — recording that
         // here is what retires the disk-changed banner/hint instead of
         // re-inviting a merge forever. Esc-out with unresolved blocks
@@ -120,6 +121,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // genuinely reconciled the buffer with the disk bytes the merge
         // read, so only now does the save-CAS baseline advance to them.
         landing::advance_expect_obs(app, doc, theirs_obs);
+        persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Completed);
         messages::info(app, "merge complete — \u{2318}S to save");
     } else {
         // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
@@ -156,6 +158,7 @@ fn abandon_active(
         d.display_name = saved_display_name;
     }
     enqueue_resolve_abandon(app, doc);
+    persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Abandoned);
     messages::info(app, message);
 }
 

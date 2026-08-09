@@ -80,6 +80,7 @@ pub fn handle_load_ack(
             None
         }
     };
+    let adopted = matches!(&hydration, Some(crate::document::Hydration::Adopted));
     match hydration {
         Some(crate::document::Hydration::Refused(reason)) => {
             messages::error(app, format!("crash recovery: {reason}"));
@@ -132,6 +133,13 @@ pub fn handle_load_ack(
     // entirely when `binding_only`, per this function's own doc comment.
     if !binding_only {
         doc.last_sync = Some(load_result.sync.kind);
+    }
+    // A dead session's still-active merge is re-entered ONLY by an ack that
+    // genuinely hydrated the reconstruction the merge row was matched
+    // against — a skipped or refused hydration leaves the row active for
+    // the next full load to re-offer.
+    if adopted && let Some(resume) = load_result.resumable_merge {
+        crate::merge::resume_from_store(app, id, &resume.blocks_json, resume.theirs_obs);
     }
 }
 
@@ -365,6 +373,7 @@ mod tests {
             nlink: 1,
             saved_obs: Some(1),
             bridge_seq: None,
+            resumable_merge: None,
         };
 
         handle_load_ack(&mut app, id, load_result, Some(issued_version), false);

@@ -28,6 +28,7 @@ pub(crate) fn sweep_unreferenced_blobs(tx: &Transaction) -> Result<usize, Error>
             SELECT b.hash FROM blobs b \
             WHERE NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.blob_hash = b.hash) \
               AND NOT EXISTS (SELECT 1 FROM observations o WHERE o.blob_hash = b.hash) \
+              AND NOT EXISTS (SELECT 1 FROM merges m WHERE m.marker_hash = b.hash) \
             LIMIT ?1 \
         )",
         rusqlite::params![SWEEP_BATCH_LIMIT],
@@ -121,6 +122,47 @@ mod tests {
         assert!(
             b_present,
             "a blob still referenced by an observation must survive"
+        );
+    }
+
+    #[test]
+    fn sweep_spares_a_blob_referenced_only_by_a_merges_row() {
+        let mut conn = open();
+        let session_id = seed_session(&conn);
+        let doc_id = seed_doc(&conn);
+
+        let obs_hash = crate::blob::put_blob(&conn, b"theirs bytes").expect("put obs blob");
+        conn.execute(
+            "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at) \
+             VALUES (?1, ?2, ?3, 'probe', 'x')",
+            params![doc_id, session_id, obs_hash],
+        )
+        .expect("seed observation");
+        let theirs_obs = conn.last_insert_rowid();
+
+        let marker_hash = crate::blob::put_blob(&conn, b"<<< markers >>>").expect("put marker");
+        conn.execute(
+            "INSERT INTO merges(doc_id, session_id, base_obs, theirs_obs, marker_hash, blocks, state, created_at) \
+             VALUES (?1, ?2, NULL, ?3, ?4, '[]', 'active', 'x')",
+            params![doc_id, session_id, theirs_obs, marker_hash],
+        )
+        .expect("seed merges row");
+
+        let tx = conn.transaction().expect("tx");
+        let deleted = sweep_unreferenced_blobs(&tx).expect("sweep");
+        tx.commit().expect("commit");
+        assert_eq!(deleted, 0, "nothing here is unreferenced");
+
+        let marker_present: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM blobs WHERE hash=?1)",
+                params![marker_hash],
+                |r| r.get(0),
+            )
+            .expect("check marker blob");
+        assert!(
+            marker_present,
+            "a blob referenced only by a merges row must survive the sweep"
         );
     }
 

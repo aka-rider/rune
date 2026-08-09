@@ -22,7 +22,7 @@ pub enum MergeIntent {
 /// index-for-index with `blocks` below — immutable for the lifetime of the
 /// merge attempt, unlike `Block`'s byte range (which shifts as earlier
 /// blocks in the buffer get resolved to a different length).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Conflict {
     pub ours: String,
     pub theirs: String,
@@ -33,7 +33,7 @@ pub struct Conflict {
 /// (`<<<<<<< editor` through `>>>>>>> disk\n` inclusive) while `resolved`
 /// is `false`, or the collapsed replacement span once a future resolver
 /// (plan WP4) accepts it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Block {
     pub start: usize,
     pub end: usize,
