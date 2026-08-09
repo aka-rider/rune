@@ -286,21 +286,27 @@ fn map_put_outcome(
             confirmed: current.confirmed,
             resolved_path,
         },
-        Ok(PutOutcome::Committed { stat, durable, .. }) => MaterializeVfsOutcome::Committed {
+        Ok(PutOutcome::Committed {
+            stat,
+            stat_confirmed,
+            durable,
+            ..
+        }) => MaterializeVfsOutcome::Committed {
             data: data.to_vec(),
-            confirmed: stat.is_some(),
+            confirmed: stat_confirmed,
             stat: rune_db::stat_facts_from(stat),
             resolved_path,
             durable,
         },
         Ok(PutOutcome::Raced {
             stat,
+            stat_confirmed,
             durable,
             displaced,
             ..
         }) => MaterializeVfsOutcome::Raced {
             data: data.to_vec(),
-            confirmed: stat.is_some(),
+            confirmed: stat_confirmed,
             stat: rune_db::stat_facts_from(stat),
             displaced: displaced.bytes,
             displaced_stat: rune_db::stat_facts_from(displaced.stat),

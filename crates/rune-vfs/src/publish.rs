@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::sighting::{GetRefusal, Sighting, get};
+use crate::sighting::{GetRefusal, Sighting, bracketed_stat, get};
 use crate::{Etag, Stat, Vfs, etag_of, published_not_durable};
 
 #[derive(Debug)]
@@ -16,6 +16,7 @@ pub enum PutOutcome {
     Committed {
         etag: Etag,
         stat: Option<Stat>,
+        stat_confirmed: bool,
         durable: bool,
     },
     Conflict {
@@ -24,31 +25,18 @@ pub enum PutOutcome {
     Raced {
         etag: Etag,
         stat: Option<Stat>,
+        stat_confirmed: bool,
         durable: bool,
         displaced: Sighting,
     },
     Missing,
 }
 
-fn refusal_to_io(refusal: GetRefusal) -> io::Error {
-    match refusal {
-        GetRefusal::NotFound => io::Error::new(io::ErrorKind::NotFound, "not found"),
-        GetRefusal::NotAFile(kind) => {
-            io::Error::new(io::ErrorKind::InvalidInput, format!("not a file: {kind:?}"))
-        }
-        GetRefusal::TooLarge { size, limit } => io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("unexpected size refusal: {size} > {limit}"),
-        ),
-        GetRefusal::Io(e) => e,
-    }
-}
-
 fn current_sighting<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<Option<Sighting>> {
     match get(vfs, path, None) {
         Ok(sighting) => Ok(Some(sighting)),
         Err(GetRefusal::NotFound) => Ok(None),
-        Err(other) => Err(refusal_to_io(other)),
+        Err(other) => Err(other.into()),
     }
 }
 
@@ -68,7 +56,19 @@ fn finish_over_existing<V: Vfs + ?Sized>(
             return Err(e);
         }
     };
-    let displaced_bytes = vfs.read(temp)?;
+    let (stat, stat_confirmed) = bracketed_stat(vfs, path);
+    // The publish already took effect: a failure reading the displaced
+    // bytes back off the temp is NOT a failed save. The temp is kept — it
+    // may hold the sole copy of the displaced content — and the raced-ness
+    // stays unclassified, so this reports a plain commit.
+    let Ok(displaced_bytes) = vfs.read(temp) else {
+        return Ok(PutOutcome::Committed {
+            etag: new_etag.clone(),
+            stat,
+            stat_confirmed,
+            durable,
+        });
+    };
     let displaced = Sighting {
         etag: etag_of(&displaced_bytes),
         stat: vfs.stat(temp).ok(),
@@ -78,11 +78,11 @@ fn finish_over_existing<V: Vfs + ?Sized>(
     if durable {
         let _ = vfs.remove(temp);
     }
-    let stat = vfs.stat(path).ok();
     let outcome = if &displaced.etag != race_baseline {
         PutOutcome::Raced {
             etag: new_etag.clone(),
             stat,
+            stat_confirmed,
             durable,
             displaced,
         }
@@ -90,6 +90,7 @@ fn finish_over_existing<V: Vfs + ?Sized>(
         PutOutcome::Committed {
             etag: new_etag.clone(),
             stat,
+            stat_confirmed,
             durable,
         }
     };
@@ -121,15 +122,30 @@ fn put_if_match<V: Vfs + ?Sized>(
     finish_over_existing(vfs, &dest, &temp, publish, &new_etag, expect)
 }
 
+fn finish_fresh_create<V: Vfs + ?Sized>(
+    vfs: &V,
+    dest: &Path,
+    bytes: &[u8],
+    publish: io::Result<()>,
+) -> io::Result<PutOutcome> {
+    let durable = match publish {
+        Ok(()) => true,
+        Err(e) if published_not_durable(&e) => false,
+        Err(e) => return Err(e),
+    };
+    let (stat, stat_confirmed) = bracketed_stat(vfs, dest);
+    Ok(PutOutcome::Committed {
+        etag: etag_of(bytes),
+        stat,
+        stat_confirmed,
+        durable,
+    })
+}
+
 fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Result<PutOutcome> {
     let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
-    match vfs.rename_excl(&temp, &dest) {
-        Ok(()) => Ok(PutOutcome::Committed {
-            etag: etag_of(bytes),
-            stat: vfs.stat(&dest).ok(),
-            durable: true,
-        }),
+    let publish = match vfs.rename_excl(&temp, &dest) {
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             let _ = vfs.remove(&temp);
             let current = current_sighting(vfs, &dest)?.ok_or_else(|| {
@@ -138,15 +154,11 @@ fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Res
                     "winner vanished after AlreadyExists",
                 )
             })?;
-            Ok(PutOutcome::Conflict { current })
+            return Ok(PutOutcome::Conflict { current });
         }
-        Err(e) if published_not_durable(&e) => Ok(PutOutcome::Committed {
-            etag: etag_of(bytes),
-            stat: vfs.stat(&dest).ok(),
-            durable: false,
-        }),
-        Err(e) => Err(e),
-    }
+        other => other,
+    };
+    finish_fresh_create(vfs, &dest, bytes, publish)
 }
 
 fn put_force<V: Vfs + ?Sized>(
@@ -159,22 +171,14 @@ fn put_force<V: Vfs + ?Sized>(
     let dest_existed = vfs.stat(&dest).is_ok();
     let temp = vfs.write_durable(&dest, bytes)?;
     if !dest_existed {
-        return match vfs.rename_excl(&temp, &dest) {
-            Ok(()) => Ok(PutOutcome::Committed {
-                etag: etag_of(bytes),
-                stat: vfs.stat(&dest).ok(),
-                durable: true,
-            }),
-            Err(e) if published_not_durable(&e) => Ok(PutOutcome::Committed {
-                etag: etag_of(bytes),
-                stat: vfs.stat(&dest).ok(),
-                durable: false,
-            }),
-            Err(e) => {
+        let publish = match vfs.rename_excl(&temp, &dest) {
+            Err(e) if !published_not_durable(&e) => {
                 let _ = vfs.remove(&temp);
-                Err(e)
+                return Err(e);
             }
+            other => other,
         };
+        return finish_fresh_create(vfs, &dest, bytes, publish);
     }
     let publish = vfs.exchange(&temp, &dest);
     let new_etag = etag_of(bytes);
@@ -359,6 +363,76 @@ mod tests {
             PutOutcome::Committed { durable: true, .. }
         ));
         assert_eq!(vfs.debug_paths().len(), 1);
+    }
+
+    #[test]
+    fn a_displaced_read_failure_after_the_publish_is_still_a_commit_and_keeps_the_temp() {
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish_direct(&vfs, path, b"original");
+        vfs.fail_next(OpKind::Read, io::ErrorKind::PermissionDenied);
+
+        let outcome = put(&vfs, path, b"updated", PutCondition::Force { expect: None }).unwrap();
+        assert!(matches!(
+            outcome,
+            PutOutcome::Committed { durable: true, .. }
+        ));
+        assert_eq!(vfs.read(path).unwrap(), b"updated");
+        assert_eq!(
+            vfs.debug_paths().len(),
+            2,
+            "the temp may hold the sole displaced copy and must survive"
+        );
+    }
+
+    #[test]
+    fn a_flapping_post_publish_stat_reports_stat_unconfirmed() {
+        let inner = Mem::new();
+        let path = Path::new("/doc.md");
+        publish_direct(&inner, path, b"original");
+        let vfs = FlappingIdentityVfs {
+            inner,
+            calls: AtomicU64::new(0),
+        };
+
+        let outcome = put(
+            &vfs,
+            path,
+            b"updated",
+            PutCondition::Force {
+                expect: Some(etag_of(b"original")),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            PutOutcome::Committed {
+                stat_confirmed: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_quiescent_commit_reports_a_confirmed_post_publish_stat() {
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish_direct(&vfs, path, b"original");
+
+        let outcome = put(
+            &vfs,
+            path,
+            b"updated",
+            PutCondition::IfMatch(etag_of(b"original")),
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            PutOutcome::Committed {
+                stat_confirmed: true,
+                ..
+            }
+        ));
     }
 
     #[test]

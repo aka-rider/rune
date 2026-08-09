@@ -19,7 +19,7 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use rune_vfs::{GetRefusal, Stat, Vfs};
+use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
 use crate::observation::{self, ObserveInput, StatFacts};
@@ -53,12 +53,7 @@ pub fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
             stat: stat_facts_from(sighting.stat),
             confirmed: sighting.confirmed,
         }),
-        Err(GetRefusal::NotFound) => Err(io::Error::new(io::ErrorKind::NotFound, "not found")),
-        Err(GetRefusal::Io(e)) => Err(e),
-        Err(refusal) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            refusal.to_string(),
-        )),
+        Err(refusal) => Err(refusal.into()),
     }
 }
 

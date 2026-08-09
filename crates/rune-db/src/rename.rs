@@ -69,8 +69,10 @@ use crate::retry;
 #[derive(Clone, Debug, PartialEq)]
 pub enum RenameOutcome {
     /// The document is now bound to `to`. Its dirty state and `saved_obs`
-    /// are unchanged — a rename is not a save.
-    Renamed { to: PathBuf },
+    /// are unchanged — a rename is not a save. `durable: false` means the
+    /// publish took effect but its durability confirmation failed — still
+    /// a success, surfaced as a warning.
+    Renamed { to: PathBuf, durable: bool },
     /// `to` already exists. **Nothing was written**, to disk or to the
     /// database. `seen` is what the destination looked like at the moment
     /// of the collision; it becomes the consent baseline the user is shown

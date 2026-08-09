@@ -251,10 +251,10 @@ pub trait Vfs {
             PutOutcome::Committed { durable: false, .. }
             | PutOutcome::Raced { durable: false, .. } => {
                 // The publish already took effect but its durability could
-                // not be confirmed — `put_and_temp` kept the temp holding
-                // the displaced content on disk rather than remove it; the
-                // marker is carried onto the re-wrapped error so a caller
-                // further up can still observe it.
+                // not be confirmed — the sibling temp holding the displaced
+                // content stays on disk rather than being removed; the
+                // marker is carried onto the re-wrapped error so the
+                // condition remains observable further up.
                 Err(wrap_io_published(
                     io::Error::other("durability could not be confirmed after publish"),
                     "save published but durability could not be confirmed; \
