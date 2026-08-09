@@ -124,6 +124,56 @@ impl Store {
         })
     }
 
+    pub fn merge_open(
+        &self,
+        doc_id: i64,
+        base_obs: Option<ObsId>,
+        theirs_obs: ObsId,
+        marker_content: &str,
+        blocks_json: &str,
+    ) -> Result<u64, Error> {
+        let now = self.now();
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::MergeOpen {
+            session_id: self.session_id,
+            liveness_check,
+            doc_id,
+            base_obs,
+            theirs_obs,
+            marker_content: marker_content.to_string(),
+            blocks_json: blocks_json.to_string(),
+            now,
+        })
+    }
+
+    pub fn merge_progress(
+        &self,
+        doc_id: i64,
+        marker_content: &str,
+        blocks_json: &str,
+    ) -> Result<u64, Error> {
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::MergeProgress {
+            session_id: self.session_id,
+            liveness_check,
+            doc_id,
+            marker_content: marker_content.to_string(),
+            blocks_json: blocks_json.to_string(),
+        })
+    }
+
+    pub fn merge_close(
+        &self,
+        doc_id: i64,
+        state: crate::merge_state::MergeCloseState,
+    ) -> Result<u64, Error> {
+        self.enqueue(OpKind::MergeClose {
+            session_id: self.session_id,
+            doc_id,
+            state,
+        })
+    }
+
     /// The first, bookkeeping-only step of the materialize protocol
     /// (prepare / vfs write / record): enqueues `MaterializePrepare` —
     /// hands back the CAS decision data (`materialize::MaterializePrep`) the

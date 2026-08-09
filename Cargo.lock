@@ -2384,6 +2384,8 @@ dependencies = [
  "rune-ts",
  "rune-tui",
  "rune-vfs",
+ "serde",
+ "serde_json",
  "termina",
  "unicode-segmentation",
  "unicode-width",

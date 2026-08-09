@@ -14,11 +14,11 @@
 //! happens to carry those exact bytes framed the same way, in which case
 //! calling it block `k` is not a misclassification at all.
 //!
-//! Review fix F1: a scan alone cannot tell a `[B]`-resolved block (its
-//! framed bytes deliberately left in place, decision 5) apart from an
-//! undecided one — both are byte-identical in the buffer. Re-deriving EVERY
-//! block's resolved-ness from the scan would therefore reopen a `B`'d block
-//! on any undo/redo anywhere else in the document. `affected` (the byte
+//! A scan alone can misread a resolved block whose bytes
+//! happen to coincide with prose quoting the same framed block — content
+//! alone cannot always prove resolved-ness. Re-deriving EVERY
+//! block's resolved-ness from the scan could therefore reopen a resolved
+//! block on an undo/redo anywhere else in the document. `affected` (the byte
 //! range the journal jump itself touched, in the same PRE-jump coordinate
 //! space `old_blocks`' spans already live in) scopes the reclassification:
 //! a block whose OLD state was `resolved: true` and whose OLD span does not
@@ -146,13 +146,11 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
         }
     }
 
-    // Review fix F1: force back to `resolved: true` any block the scan
+    // Force back to `resolved: true` any block the scan
     // above may have reopened by byte-pattern coincidence, PROVIDED it
-    // wasn't in the range this journal jump actually touched — a `B`'d
-    // block's framed bytes are indistinguishable from an undecided one by
-    // content alone, so only the affected range (or an absent one, meaning
-    // "trust the scan everywhere") may downgrade a previously-resolved
-    // block back to open.
+    // wasn't in the range this journal jump actually touched — only the
+    // affected range (or an absent one, meaning "trust the scan
+    // everywhere") may downgrade a previously-resolved block back to open.
     if let Some(range) = &affected {
         for (new, old) in new_blocks.iter_mut().zip(old_blocks.iter()) {
             if old.resolved && !intersects(old.start, old.end, range.start, range.end) {

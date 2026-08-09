@@ -337,6 +337,56 @@ fn execute_op(
             let result = crate::merge_prep::merge_prep(conn, vfs, session_id, doc_id, now)?;
             Ok(OpOutcome::MergePrep(Box::new(result)))
         }
+        OpKind::MergeOpen {
+            session_id,
+            liveness_check,
+            doc_id,
+            base_obs,
+            theirs_obs,
+            marker_content,
+            blocks_json,
+            now,
+        } => {
+            crate::merge_state::merge_open(
+                conn,
+                liveness_check.as_ref(),
+                crate::merge_state::MergeOpenArgs {
+                    doc_id,
+                    session_id,
+                    base_obs,
+                    theirs_obs,
+                    marker_content: &marker_content,
+                    blocks_json: &blocks_json,
+                },
+                now,
+            )?;
+            Ok(OpOutcome::None)
+        }
+        OpKind::MergeProgress {
+            session_id,
+            liveness_check,
+            doc_id,
+            marker_content,
+            blocks_json,
+        } => {
+            crate::merge_state::merge_progress(
+                conn,
+                liveness_check.as_ref(),
+                doc_id,
+                session_id,
+                &marker_content,
+                &blocks_json,
+            )?;
+            Ok(OpOutcome::None)
+        }
+        OpKind::MergeClose {
+            session_id,
+            doc_id,
+            state,
+        } => {
+            crate::merge_state::merge_close(conn, doc_id, session_id, state)?;
+            Ok(OpOutcome::None)
+        }
         OpKind::MaterializePrepare {
             doc_id,
             expect,

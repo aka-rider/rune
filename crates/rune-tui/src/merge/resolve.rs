@@ -16,10 +16,10 @@ use crate::messages;
 
 use super::state::{Block, MergeState};
 
-/// Which side an accept keeps. `Both` is a deliberate design choice
-/// (decision 5): the framed block stays in
-/// the document verbatim — an explicit "decide later in the file" escape
-/// hatch — so it edits nothing and only marks the block resolved.
+/// Which side an accept keeps. `Both` keeps the two bodies, ours first,
+/// with no marker lines — an ordinary journaled edit exactly like the
+/// single-sided accepts. "Decide later" remains available by exiting
+/// merge mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
     Ours,
@@ -67,35 +67,32 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
     let Some(block) = blocks.get(cur).copied() else {
         return;
     };
-    let replacement = match choice {
-        Choice::Ours => conflicts.get(cur).map(|c| c.ours.clone()),
-        Choice::Theirs => conflicts.get(cur).map(|c| c.theirs.clone()),
-        Choice::Both => None,
-    };
+    let replacement = conflicts.get(cur).map(|c| match choice {
+        Choice::Ours => c.ours.clone(),
+        Choice::Theirs => c.theirs.clone(),
+        Choice::Both => format!("{}\n{}", c.ours, c.theirs),
+    });
+    let Some(text) = replacement else { return };
 
-    let new_len = match replacement {
-        Some(text) => {
-            let Some(document) = app.doc(doc) else { return };
-            let cursors_before = document.cursors.clone();
-            let edit = Edit {
-                start: block.start,
-                end: block.end,
-                insert: text.clone(),
-            };
-            if !commit_edit_batch(app, doc, vec![(edit, 0)], cursors_before) {
-                messages::error(
-                    app,
-                    "merge: the block could not be applied — left unresolved",
-                );
-                return;
-            }
-            text.len()
-        }
-        None => block.end - block.start,
+    let Some(document) = app.doc(doc) else { return };
+    let cursors_before = document.cursors.clone();
+    let edit = Edit {
+        start: block.start,
+        end: block.end,
+        insert: text.clone(),
     };
+    if !commit_edit_batch(app, doc, vec![(edit, 0)], cursors_before) {
+        messages::error(
+            app,
+            "merge: the block could not be applied — left unresolved",
+        );
+        return;
+    }
+    let new_len = text.len();
 
     let MergeState::Active {
         blocks,
+        conflicts,
         cur: cur_slot,
         ..
     } = &mut app.merge
@@ -118,16 +115,33 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
             }
         }
     }
+    let next = next_unresolved(blocks, cur, 1);
+    if let Some(n) = next {
+        *cur_slot = n;
+    }
+    let blocks_snapshot = blocks.clone();
+    let conflicts_snapshot = conflicts.clone();
 
-    let Some(next) = next_unresolved(blocks, cur, 1) else {
+    let marker_content = app
+        .doc(doc)
+        .map(|d| d.buffer.content().to_string())
+        .unwrap_or_default();
+    super::persist::enqueue_merge_progress(
+        app,
+        doc,
+        &marker_content,
+        &blocks_snapshot,
+        &conflicts_snapshot,
+    );
+
+    let Some(next) = next else {
         // Decision 13: resolving the last hunk leaves merge mode
         // immediately — `exit_in_place` reports "merge complete".
         super::exit_in_place(app);
         return;
     };
-    *cur_slot = next;
-    let target = blocks.get(next).map(|b| b.start).unwrap_or(0);
-    let position = position_status(blocks, next);
+    let target = blocks_snapshot.get(next).map(|b| b.start).unwrap_or(0);
+    let position = position_status(&blocks_snapshot, next);
     scroll_doc(app, doc, target);
     messages::info(app, position);
 }

@@ -64,6 +64,12 @@ pub struct LoadResult {
     /// lands would otherwise silently regress this session's own
     /// `current_seq` past a bridge edit that already advanced it.
     pub bridge_seq: Option<i64>,
+    /// A dead session's still-`active` merge whose recorded working form
+    /// byte-matches this load's own journal reconstruction — the caller may
+    /// re-enter it; the row stays `active` until a hydrating ack actually
+    /// does. `None` when there is no such merge (or its recorded form no
+    /// longer matches, in which case the row was flipped to `abandoned`).
+    pub resumable_merge: Option<crate::merge_state::ResumableMerge>,
 }
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
@@ -219,6 +225,11 @@ pub fn load(
         })?;
     }
 
+    let recovered_hash = observation::hash_bytes(recovered.as_bytes());
+    let resumable_merge = retry::with_retry(conn, |tx| {
+        crate::merge_state::resume_candidate(tx, liveness_check, doc_id, &recovered_hash)
+    })?;
+
     let sync_state = retry::with_retry(conn, |tx| crate::sync::sync(tx, session_id, doc_id))?;
     let saved_obs = retry::with_retry(conn, |tx| {
         observation::saved_obs_for(tx, session_id, doc_id)
@@ -235,6 +246,7 @@ pub fn load(
         nlink: stat.nlink.unwrap_or(0),
         saved_obs,
         bridge_seq,
+        resumable_merge,
     })
 }
 

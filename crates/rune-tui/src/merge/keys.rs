@@ -79,13 +79,13 @@ pub const MERGE_BINDINGS: &[Binding<MergeCommand>] = &[
     Binding {
         key: KeyPattern::new(KeyCode::Char('b'), Mods::NONE),
         cmd: MergeCommand::KeepBoth,
-        help: "keep both (markers stay)",
+        help: "keep both",
         alias: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('B'), SHIFT),
         cmd: MergeCommand::KeepBoth,
-        help: "keep both (markers stay)",
+        help: "keep both",
         alias: true,
     },
     Binding {

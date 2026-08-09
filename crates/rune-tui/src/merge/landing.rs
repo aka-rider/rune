@@ -201,6 +201,15 @@ pub(crate) fn handle_merge_prep_ack(
     }
 
     let unresolved = blocks.len();
+    super::persist::enqueue_merge_open(
+        app,
+        doc,
+        prep.sync.ancestor.as_ref().and_then(|v| v.obs),
+        theirs_obs,
+        &buffer_text,
+        &blocks,
+        &conflicts,
+    );
     app.merge = MergeState::Active {
         doc,
         conflicts,

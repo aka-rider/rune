@@ -116,17 +116,15 @@ fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
 }
 
 /// Review fix F1(a): a resolver-Active `undo` used to rescan and reopen
-/// EVERY block, not just the one the journal jump touched — a `[B]`'d
-/// block is byte-identical in the buffer to an undecided one, so a scan
-/// alone cannot tell them apart. `b` (block 0, pushes no journal step)
-/// then `o` (block 1, pushes one) then `undo` must reopen ONLY block 1
+/// EVERY block, not just the one the journal jump touched. `b` (block 0)
+/// then `o` (block 1) then `undo` must reopen ONLY block 1
 /// (the O-accept undo actually reversed) and leave block 0's `B`
 /// verdict untouched.
 #[test]
 fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
     let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
 
-    press_key(&mut app, ch('b')); // block 0 -> resolved, no journal step
+    press_key(&mut app, ch('b')); // block 0 -> resolved, one journal step
     let pos_before_ours = app.doc(doc_id).unwrap().journal.pos();
     press_key(&mut app, ch('o')); // block 1 -> resolved, one journal step
     let MergeState::Active { blocks, .. } = &app.merge else {
@@ -154,40 +152,48 @@ fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
     );
 }
 
-/// Review fix F1(c): `[B]` pushes no journal step, so `undo` right after a
-/// `B` actually reverses whatever the PREVIOUS real edit was — here, an
-/// earlier `o` accept on a different block. That undo's affected range
-/// still must not touch the later `B`'d block's verdict.
+/// `[B]` is an ordinary journaled edit now, so `undo` right after a `B`
+/// reverses exactly that accept — reopening ONLY the `B`'d block (its
+/// framed markers return) and leaving the earlier `o` accept untouched.
 #[test]
-fn undo_after_ours_then_both_reopens_only_the_ours_block_not_the_both_block() {
+fn undo_after_ours_then_both_reopens_only_the_both_block() {
     let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
 
-    let pos_before_ours = app.doc(doc_id).unwrap().journal.pos();
     press_key(&mut app, ch('o')); // block 0 -> resolved, one journal step
-    press_key(&mut app, ch('b')); // block 1 -> resolved, no journal step
+    let pos_before_both = app.doc(doc_id).unwrap().journal.pos();
+    press_key(&mut app, ch('b')); // block 1 -> resolved, one journal step
     let MergeState::Active { blocks, .. } = &app.merge else {
         panic!("resolver must still be active — block 2 remains");
     };
     assert!(blocks[0].resolved && blocks[1].resolved && !blocks[2].resolved);
 
-    // `B` pushed no step, so this undo reverses the EARLIER `o` accept.
     rune_tui::commands::edit::undo(&mut app, doc_id);
     assert_eq!(
         app.doc(doc_id).unwrap().journal.pos(),
-        pos_before_ours,
-        "undo must reverse the earlier ours-accept's journal step, since B pushed none"
+        pos_before_both,
+        "undo must reverse exactly the both-accept's one journal step"
     );
 
     let MergeState::Active { blocks, .. } = &app.merge else {
         panic!("resync must leave the resolver active — block 2 is still unresolved");
     };
     assert!(
-        !blocks[0].resolved,
-        "the just-undone ours-accepted block must be unresolved again"
+        !blocks[1].resolved,
+        "the just-undone both-accepted block must be unresolved again"
     );
     assert!(
-        blocks[1].resolved,
-        "the B-resolved block must stay resolved even though it postdates the undone step"
+        app.doc(doc_id)
+            .unwrap()
+            .buffer
+            .content()
+            .matches("<<<<<<<")
+            .count()
+            >= 2,
+        "the undone block's framed markers must return"
+    );
+    assert!(
+        blocks[0].resolved,
+        "the earlier ours accept must be untouched"
     );
 }
 
