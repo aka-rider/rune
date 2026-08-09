@@ -166,6 +166,244 @@ fn an_ordinary_commit_reports_confirmed() {
     }
 }
 
+/// The disk-conflict Guard's `[S]ave anyway` over a destination that
+/// vanished meanwhile: a fresh no-clobber create, reported as a plain
+/// commit — never a race, nothing displaced.
+#[test]
+fn a_force_save_of_a_missing_destination_commits_as_a_fresh_create() {
+    let vfs = Mem::new();
+    let expect_hash = rune_db::hash_bytes(b"the old baseline");
+
+    let outcome = run_materialize_vfs(
+        &vfs,
+        Path::new("/doc.md"),
+        false,
+        "new content",
+        &expect_hash,
+        None,
+        SaveMode::Force,
+    );
+
+    match outcome {
+        MaterializeVfsOutcome::Committed { data, .. } => assert_eq!(data, b"new content"),
+        other => panic!("expected a fresh-create commit, got {other:?}"),
+    }
+    assert_eq!(vfs.read(Path::new("/doc.md")).unwrap(), b"new content");
+}
+
+/// A force-save whose displaced bytes still equal the guard's own CAS
+/// baseline overwrote nothing foreign — a plain commit, so the
+/// "concurrent external change was overwritten" message never fires for it.
+#[test]
+fn a_force_save_over_the_unchanged_baseline_commits_without_a_race() {
+    let path = Path::new("/doc.md");
+    let vfs = Mem::new();
+    publish(&vfs, path, b"the baseline");
+    let expect_hash = rune_db::hash_bytes(b"the baseline");
+
+    let outcome = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "new content",
+        &expect_hash,
+        None,
+        SaveMode::Force,
+    );
+
+    match outcome {
+        MaterializeVfsOutcome::Committed { .. } => {}
+        other => panic!("expected a raceless force commit, got {other:?}"),
+    }
+    assert_eq!(vfs.read(path).unwrap(), b"new content");
+}
+
+/// A force-save that actually displaced foreign bytes is a genuine race:
+/// the displaced content rides on the outcome so the recovery store can
+/// capture it durably.
+#[test]
+fn a_force_save_over_foreign_bytes_races_and_captures_the_displaced_bytes() {
+    let path = Path::new("/doc.md");
+    let vfs = Mem::new();
+    publish(&vfs, path, b"foreign bytes");
+    let expect_hash = rune_db::hash_bytes(b"the baseline");
+
+    let outcome = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "new content",
+        &expect_hash,
+        None,
+        SaveMode::Force,
+    );
+
+    match outcome {
+        MaterializeVfsOutcome::Raced { displaced, .. } => {
+            assert_eq!(displaced, b"foreign bytes");
+        }
+        other => panic!("expected a genuine race, got {other:?}"),
+    }
+    assert_eq!(vfs.read(path).unwrap(), b"new content");
+}
+
+/// Wraps a `Mem`, delegating everything EXCEPT `stat`, which mints a fresh
+/// identity per call — the file's CONTENT never moves (every read hashes
+/// equal to the baseline), but no bracket around it can ever settle.
+struct FlappingStatVfs {
+    inner: Mem,
+    calls: AtomicUsize,
+}
+
+impl Vfs for FlappingStatVfs {
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+        self.inner.write_durable(path, bytes)
+    }
+    fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+        self.inner.exchange(a, b)
+    }
+    fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
+        self.inner.rename_excl(old, new)
+    }
+    fn remove(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove(path)
+    }
+    fn trash(&self, path: &Path) -> io::Result<()> {
+        self.inner.trash(path)
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        let mut stat = self.inner.stat(path)?;
+        let n = self.calls.fetch_add(1, Ordering::SeqCst) as u64;
+        stat.identity = rune_vfs::Identity {
+            inode: Some(n),
+            device: Some(1),
+        };
+        Ok(stat)
+    }
+    fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.resolve(path)
+    }
+    fn mkdir_all(&self, path: &Path) -> io::Result<()> {
+        self.inner.mkdir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.inner.read_dir(path)
+    }
+}
+
+/// An unconfirmed read whose hash happens to match the baseline decides
+/// nothing: a file whose bracket can never settle refuses the
+/// compare-and-swap as a conflict instead of trusting a hash-equal
+/// snapshot it could not stabilize.
+#[test]
+fn an_unconfirmed_hash_equal_disk_refuses_the_save_as_a_conflict() {
+    let path = Path::new("/doc.md");
+    let inner = Mem::new();
+    publish(&inner, path, b"the baseline");
+    let vfs = FlappingStatVfs {
+        inner,
+        calls: AtomicUsize::new(0),
+    };
+    let expect_hash = rune_db::hash_bytes(b"the baseline");
+
+    let outcome = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "new content",
+        &expect_hash,
+        None,
+        SaveMode::Normal,
+    );
+
+    match outcome {
+        MaterializeVfsOutcome::Conflict { confirmed, .. } => {
+            assert!(!confirmed, "a churning bracket must never confirm");
+        }
+        other => panic!("expected a conflict refusal, got {other:?}"),
+    }
+    assert_eq!(
+        vfs.read(path).unwrap(),
+        b"the baseline",
+        "a refused save must leave the destination untouched"
+    );
+}
+
+/// A publish whose durability confirmation failed is physical success:
+/// reported committed, `durable: false` riding along so the ack side can
+/// warn instead of failing the save.
+#[test]
+fn a_post_publish_durability_failure_still_commits_with_durable_false() {
+    let path = Path::new("/doc.md");
+    let vfs = Mem::new();
+    publish(&vfs, path, b"original");
+    vfs.fail_after(rune_vfs::OpKind::Exchange, io::ErrorKind::Other);
+    let expect_hash = rune_db::hash_bytes(b"original");
+
+    let outcome = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "new content",
+        &expect_hash,
+        None,
+        SaveMode::Normal,
+    );
+
+    match outcome {
+        MaterializeVfsOutcome::Committed { durable, .. } => {
+            assert!(!durable, "the durability confirmation failed");
+        }
+        other => panic!("expected a committed save, got {other:?}"),
+    }
+    assert_eq!(
+        vfs.read(path).unwrap(),
+        b"new content",
+        "the publish itself already took effect"
+    );
+}
+
+/// Two documents bound to one file saving back-to-back: the second publish
+/// must never trip over the first one's temp residue.
+#[test]
+fn two_saves_of_one_file_back_to_back_never_collide_on_temp_names() {
+    let path = Path::new("/doc.md");
+    let vfs = Mem::new();
+    publish(&vfs, path, b"original");
+
+    let first = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "first tab's content",
+        &rune_db::hash_bytes(b"original"),
+        None,
+        SaveMode::Normal,
+    );
+    assert!(
+        matches!(first, MaterializeVfsOutcome::Committed { .. }),
+        "first save must commit, got {first:?}"
+    );
+
+    let second = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "second tab's content",
+        &rune_db::hash_bytes(b"first tab's content"),
+        None,
+        SaveMode::Normal,
+    );
+    assert!(
+        matches!(second, MaterializeVfsOutcome::Committed { .. }),
+        "second save must commit, got {second:?}"
+    );
+    assert_eq!(vfs.read(path).unwrap(), b"second tab's content");
+}
+
 fn app_with_db() -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let clock: rune_db::ClockFn = Arc::new(std::time::SystemTime::now);

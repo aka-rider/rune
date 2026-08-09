@@ -63,10 +63,11 @@ fn decode_embed_cmd(
     generation: u64,
 ) -> Cmd {
     Cmd::new(CmdKind::ImageDecode, move || {
-        let result = vfs
-            .read(&path)
+        let result = rune_vfs::get(vfs.as_ref(), &path, None)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| rune_image::decode_still(&bytes).map_err(|e| e.to_string()));
+            .and_then(|sighting| {
+                rune_image::decode_still(&sighting.bytes).map_err(|e| e.to_string())
+            });
         Some(Msg::ImageDecoded {
             doc,
             generation,

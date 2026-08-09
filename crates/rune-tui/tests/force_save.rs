@@ -113,6 +113,32 @@ fn disk_conflict_guard_save_anyway_force_saves_and_preserves_the_displaced_bytes
     );
 }
 
+/// Force-save truthfulness: when the disk moved back to the CAS baseline
+/// before `[S]ave anyway` publishes, nothing foreign is displaced — the
+/// save commits plainly and the "concurrent external change was
+/// overwritten" message must NOT fire.
+#[test]
+fn disk_conflict_guard_save_anyway_over_the_restored_baseline_posts_no_race_message() {
+    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
+
+    // The interloper reverts its change while the Guard is up — the disk
+    // holds the exact baseline bytes this session loaded.
+    external_write(vfs.as_ref(), b"hello");
+
+    press_key(&mut app, ch('s'));
+    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+
+    assert!(app.guard.is_none());
+    assert!(!app.doc(doc_id).unwrap().is_dirty());
+    assert_eq!(vfs.read(Path::new("/doc.md")).unwrap(), b"!hello");
+    let log = rune_tui::messages::log_text(&app);
+    assert!(
+        !log.contains("preserved"),
+        "a force-save that displaced only its own baseline overwrote nothing \
+         foreign and must not claim it did: {log:?}"
+    );
+}
+
 /// The actual bug this WP kills: a CAS *retry* refuses again the moment the
 /// disk moves a second time, making the old `[S]ave anyway` useless exactly
 /// when the user needed it most. A force-save must succeed regardless of how

@@ -87,7 +87,8 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             id,
             version,
             result,
-        } => materialize_ack::handle_save_done(app, id, version, result),
+            durable,
+        } => materialize_ack::handle_save_done(app, id, version, result, durable),
         Msg::ConfirmTimeout { generation } => {
             if let Some((_, pending_gen)) = app.pending_quit
                 && pending_gen == generation

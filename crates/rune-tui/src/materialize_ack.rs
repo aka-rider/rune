@@ -101,13 +101,16 @@ pub enum MaterializeVfsOutcome {
         confirmed: bool,
         resolved_path: PathBuf,
     },
-    /// The write committed with no race. `confirmed` is the bracketed
-    /// post-publish stat's own verdict.
+    /// The write committed with no race. `confirmed` is the post-publish
+    /// stat's own verdict; `durable: false` means the publish took effect
+    /// but its durability confirmation failed — still a success, surfaced
+    /// as a warning.
     Committed {
         data: Vec<u8>,
         stat: StatFacts,
         confirmed: bool,
         resolved_path: PathBuf,
+        durable: bool,
     },
     /// The write committed AND a racer's displaced bytes were captured in
     /// the same atomic-swap window (F5). `confirmed` describes `stat` only.
@@ -118,8 +121,12 @@ pub enum MaterializeVfsOutcome {
         displaced: Vec<u8>,
         displaced_stat: StatFacts,
         resolved_path: PathBuf,
+        durable: bool,
     },
 }
+
+pub(crate) const DURABILITY_UNCONFIRMED_WARNING: &str =
+    "saved \u{2014} durability unconfirmed; prior content kept at the sibling temp";
 
 /// WP7 step (b): the caller-side `vfs` `Cmd` — resolves the destination,
 /// CAS-checks it (`!bind_new`), publishes (`exchange`/`rename_excl`), and
@@ -212,7 +219,11 @@ pub(crate) fn handle_materialize_vfs_done(
             stat,
             confirmed,
             resolved_path,
+            durable,
         } => {
+            if !durable {
+                messages::warn(app, DURABILITY_UNCONFIRMED_WARNING);
+            }
             record_outcome(
                 app,
                 id,
@@ -233,7 +244,11 @@ pub(crate) fn handle_materialize_vfs_done(
             displaced,
             displaced_stat,
             resolved_path,
+            durable,
         } => {
+            if !durable {
+                messages::warn(app, DURABILITY_UNCONFIRMED_WARNING);
+            }
             record_outcome(
                 app,
                 id,

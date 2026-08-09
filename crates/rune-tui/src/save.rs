@@ -89,10 +89,10 @@ pub(crate) enum SaveStart {
 ///
 /// With no store at all, or with this particular document unbound to one
 /// (Assumption A1: a document opened after WP4's Explorer lands with
-/// `db: None` until per-doc hydration exists), falls back to the pre-WP5
-/// direct `vfs.save_atomic` `Cmd` — Prime Directive: the user must always be
-/// able to save (plan decision 5: "losing the DB never damages a user
-/// file").
+/// `db: None` until per-doc hydration exists), falls back to the direct
+/// unconditional-publish `Cmd` ([`save_cmd`]) — Prime Directive: the user
+/// must always be able to save (plan decision 5: "losing the DB never
+/// damages a user file").
 pub(crate) fn trigger_save(
     app: &mut App,
     id: DocumentId,
@@ -112,9 +112,9 @@ pub(crate) fn trigger_save(
         return SaveStart::Refused;
     }
     // Every global save chord routes here unconditionally,
-    // and the no-store fallback below reaches `vfs.save_atomic` directly —
-    // without this, saving a `Preview` document would atomically overwrite
-    // the previewed file with this document's own buffer.
+    // and the no-store fallback below publishes unconditionally — without
+    // this, saving a `Preview` document would atomically overwrite the
+    // previewed file with this document's own buffer.
     if app.refuse_if_preview(id) {
         return SaveStart::Refused;
     }
@@ -239,14 +239,16 @@ fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
     })
 }
 
-/// The off-thread save I/O itself: `vfs.save_atomic` (a durable
-/// temp-write + atomic publish, or `Mem`'s test double) writes EXACTLY
-/// `bytes` verbatim — no normalization anywhere on this path.
+/// The off-thread save I/O itself: an unconditional `rune_vfs::put`
+/// (`Force`, no baseline — a durable temp-write + atomic publish) writes
+/// EXACTLY `bytes` verbatim — no normalization anywhere on this path.
 /// Reached when `id` has no store binding (see `trigger_save`'s docs), or
 /// as WP7's fallback when a store binding exists but its `MaterializePrepare`
 /// enqueue itself failed (the store couldn't even do the bookkeeping-only
 /// first step) — either way, the Prime Directive holds: the user can
-/// always save.
+/// always save. A publish whose durability confirmation failed is still a
+/// success (`durable: false`), surfaced as a warning on the ack side —
+/// never a save failure.
 pub(crate) fn save_cmd(
     id: DocumentId,
     vfs: std::sync::Arc<dyn Vfs + Send + Sync>,
@@ -255,11 +257,27 @@ pub(crate) fn save_cmd(
     version: u64,
 ) -> Cmd {
     Cmd::new(CmdKind::Save, move || {
-        let result = vfs.save_atomic(&path, &bytes).map_err(|e| e.to_string());
+        let (result, durable) = match rune_vfs::put(
+            vfs.as_ref(),
+            &path,
+            &bytes,
+            rune_vfs::PutCondition::Force { expect: None },
+        ) {
+            Ok(
+                rune_vfs::PutOutcome::Committed { durable, .. }
+                | rune_vfs::PutOutcome::Raced { durable, .. },
+            ) => (Ok(()), durable),
+            Ok(_) => (
+                Err("save failed: unconditional publish refused".to_string()),
+                true,
+            ),
+            Err(e) => (Err(e.to_string()), true),
+        };
         Some(Msg::SaveDone {
             id,
             version,
             result,
+            durable,
         })
     })
 }

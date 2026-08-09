@@ -271,8 +271,8 @@ mod tests {
         let doc_id = seed_doc(&tx);
 
         let stat = observation::StatFacts {
-            size: 1,
-            mtime: "t".to_string(),
+            size: Some(1),
+            mtime: Some("t".to_string()),
             ..Default::default()
         };
 
@@ -377,8 +377,8 @@ mod tests {
         let doc_id = seed_doc(&tx);
 
         let stat = observation::StatFacts {
-            size: 1,
-            mtime: "t".to_string(),
+            size: Some(1),
+            mtime: Some("t".to_string()),
             ..Default::default()
         };
         let hash_l = crate::blob::put_blob(&tx, b"ancestor").expect("seed blob");
@@ -466,8 +466,8 @@ mod tests {
                 confirmed: None,
             },
             &observation::StatFacts {
-                size: 1,
-                mtime: "t".to_string(),
+                size: Some(1),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -486,8 +486,8 @@ mod tests {
                 confirmed: Some(true),
             },
             &observation::StatFacts {
-                size: 1,
-                mtime: "t2".to_string(),
+                size: Some(1),
+                mtime: Some("t2".to_string()),
                 ..Default::default()
             },
             "t2",
@@ -508,8 +508,8 @@ mod tests {
                 confirmed: None,
             },
             &observation::StatFacts {
-                size: 1,
-                mtime: "t3".to_string(),
+                size: Some(1),
+                mtime: Some("t3".to_string()),
                 ..Default::default()
             },
             "t3",
@@ -562,8 +562,8 @@ mod tests {
                 confirmed: None,
             },
             &observation::StatFacts {
-                size: 1,
-                mtime: "t".to_string(),
+                size: Some(1),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -584,8 +584,8 @@ mod tests {
                 confirmed: Some(false),
             },
             &observation::StatFacts {
-                size: 1,
-                mtime: "t2".to_string(),
+                size: Some(1),
+                mtime: Some("t2".to_string()),
                 ..Default::default()
             },
             "t2",
@@ -609,8 +609,8 @@ mod tests {
                 confirmed: Some(false),
             },
             &observation::StatFacts {
-                size: 1,
-                mtime: "t3".to_string(),
+                size: Some(1),
+                mtime: Some("t3".to_string()),
                 ..Default::default()
             },
             "t3",
@@ -695,8 +695,8 @@ mod tests {
                 confirmed: None,
             },
             &crate::observation::StatFacts {
-                size: 1,
-                mtime: "t".to_string(),
+                size: Some(1),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -733,8 +733,8 @@ mod tests {
                 confirmed: None,
             },
             &crate::observation::StatFacts {
-                size: load_blob.len() as i64,
-                mtime: "t".to_string(),
+                size: Some(load_blob.len() as i64),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -769,8 +769,8 @@ mod tests {
                 confirmed: None,
             },
             &crate::observation::StatFacts {
-                size: resolve_blob.len() as i64,
-                mtime: "t2".to_string(),
+                size: Some(resolve_blob.len() as i64),
+                mtime: Some("t2".to_string()),
                 ..Default::default()
             },
             "t2",
@@ -881,7 +881,7 @@ mod tests {
                 confirmed: None,
             },
             &crate::observation::StatFacts {
-                mtime: "t".to_string(),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -918,8 +918,8 @@ mod tests {
                 confirmed: None,
             },
             &crate::observation::StatFacts {
-                size: 5,
-                mtime: "t".to_string(),
+                size: Some(5),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",

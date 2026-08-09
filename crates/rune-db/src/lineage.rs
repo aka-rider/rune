@@ -115,8 +115,8 @@ mod tests {
                 confirmed: Some(true),
             },
             &StatFacts {
-                size: content.len() as i64,
-                mtime: "t".to_string(),
+                size: Some(content.len() as i64),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -252,8 +252,8 @@ mod tests {
                 confirmed: Some(true),
             },
             &StatFacts {
-                size: 6,
-                mtime: "t".to_string(),
+                size: Some(6),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",

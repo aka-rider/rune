@@ -88,6 +88,7 @@ pub enum Msg {
         id: DocumentId,
         version: u64,
         result: Result<(), String>,
+        durable: bool,
     },
     ConfirmTimeout {
         generation: u32,
@@ -554,7 +555,7 @@ pub fn load_dir_cmd(
     })
 }
 
-/// Reads `path` off-thread via `vfs.read` —
+/// Reads `path` off-thread via `rune_vfs::get` —
 /// `workspace::open_path_async`'s only `Cmd`, and `load_dir_cmd`'s single-
 /// file counterpart. `anchor` is opaque data here, just carried through to
 /// the `Msg::FileOpened` reply unchanged — this `Cmd` never resolves it
@@ -566,7 +567,9 @@ pub fn read_file_cmd(
     anchor: Option<rune_nav::Anchor>,
 ) -> Cmd {
     Cmd::new(CmdKind::ReadFile, move || {
-        let result = vfs.read(&path).map_err(|e| e.to_string());
+        let result = rune_vfs::get(vfs.as_ref(), &path, Some(rune_vfs::MAX_DOCUMENT_BYTES))
+            .map(|sighting| sighting.bytes)
+            .map_err(|e| e.to_string());
         Some(Msg::FileOpened {
             path,
             result,
@@ -603,10 +606,9 @@ pub fn load_search_history_cmd(reader: rune_db::ReaderQuery, generation: u64) ->
 pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Reads `path` off-thread for the Explorer's live preview, the same
-/// physical work as [`read_file_cmd`] (a single `vfs.read`) but folding in
-/// the two checks a preview must make BEFORE showing anything: a `vfs.stat`
-/// size gate ([`MAX_PREVIEW_BYTES`]) so an oversized file is never even
-/// read, and a UTF-8 validity check so a binary file never reaches
+/// physical work as [`read_file_cmd`] but with the preview's own tighter
+/// size gate ([`MAX_PREVIEW_BYTES`], enforced by `rune_vfs::get` before
+/// reading) and a UTF-8 validity check so a binary file never reaches
 /// `Buffer::from_bytes`. Every rejection reports through the SAME `Result`
 /// channel `read_file_cmd` uses (`Msg::FileOpened`'s `result`) rather than a
 /// distinct error shape — `explorer_preview::maybe_consume_reply` is the
@@ -617,11 +619,13 @@ pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
     Cmd::new(CmdKind::ReadFile, move || {
         let result = (|| -> Result<Vec<u8>, String> {
-            let stat = vfs.stat(&path).map_err(|e| e.to_string())?;
-            if stat.size > MAX_PREVIEW_BYTES {
-                return Err("too large to preview".to_string());
-            }
-            let bytes = vfs.read(&path).map_err(|e| e.to_string())?;
+            let bytes = match rune_vfs::get(vfs.as_ref(), &path, Some(MAX_PREVIEW_BYTES)) {
+                Ok(sighting) => sighting.bytes,
+                Err(rune_vfs::GetRefusal::TooLarge { .. }) => {
+                    return Err("too large to preview".to_string());
+                }
+                Err(e) => return Err(e.to_string()),
+            };
             if std::str::from_utf8(&bytes).is_err() {
                 return Err("not valid UTF-8".to_string());
             }

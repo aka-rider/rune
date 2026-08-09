@@ -1,17 +1,17 @@
 //! A single successfully-returned read is evidence, never truth: every
-//! fresh disk read that produces an observation is bracketed (stat, read,
-//! re-stat — [`bracketed_read`]) or, for a caller that already knows the
-//! bytes it wrote and only needs to confirm its own publish
-//! ([`bracketed_stat`]). [`observe_disk`] is the chokepoint every fresh
-//! "read the live file, then record what it said" call site (`probe::probe`,
-//! `load::load`) funnels through: it brackets the read, folds in the
-//! suspicious-shrink gate against the newest CONFIRMED observation already
-//! on file ([`confirm_against_history`]), then puts the bytes as a blob and
-//! records the referencing observation. Only a `confirmed: Some(true)`
-//! observation may short-circuit a probe, serve as a merge Theirs, or become
-//! a CAS baseline — an unconfirmed or unclassified (`None`, legacy)
-//! observation decides nothing, though its blob is kept exactly like any
-//! other (blob retention is sacred).
+//! fresh disk read that produces an observation goes through
+//! `rune_vfs::get`'s stat/read/stat bracket ([`bracketed_read`] adapts its
+//! result into this crate's [`StatFacts`] vocabulary). [`observe_disk`] is
+//! the chokepoint every fresh "read the live file, then record what it
+//! said" call site (`probe::probe`, `load::load`) funnels through: it
+//! brackets the read, folds in the suspicious-shrink gate against the
+//! newest CONFIRMED observation already on file
+//! ([`confirm_against_history`]), then puts the bytes as a blob and records
+//! the referencing observation. Only a `confirmed: Some(true)` observation
+//! may short-circuit a probe, serve as a merge Theirs, or become a CAS
+//! baseline — an unconfirmed or unclassified (`None`, legacy) observation
+//! decides nothing, though its blob is kept exactly like any other (blob
+//! retention is sacred).
 
 use std::io;
 use std::path::Path;
@@ -19,36 +19,26 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use rune_vfs::Vfs;
+use rune_vfs::{GetRefusal, Stat, Vfs};
 
 use crate::Error;
 use crate::observation::{self, ObserveInput, StatFacts};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
-/// The bound on how many times a bracket (stat-read-stat, or the CAS
-/// re-verify read) retries an unstable result before giving up and reporting
-/// what it last saw — bounded so a persistently changing file degrades to
-/// "unconfirmed", never an unbounded spin.
-pub const BRACKET_MAX_ATTEMPTS: u32 = 3;
-
-/// `stat_identity`'s result, narrowed to `Some` only when the stat actually
-/// succeeded AND exposed a real (inode, device) identity — a failed stat
-/// degrades to `StatFacts::default()`, and two such defaults compare equal,
-/// so a bracket comparing raw `StatFacts` values would let two FAILED stats
-/// masquerade as a confirmed match. Every bracket in this module compares
-/// through this instead, never through `stat_identity` directly.
-fn stat_with_identity(vfs: &dyn Vfs, path: &Path) -> Option<StatFacts> {
-    let stat = observation::stat_identity(vfs, path);
-    (stat.inode.is_some() && stat.device.is_some()).then_some(stat)
+pub fn stat_facts_from(stat: Option<Stat>) -> StatFacts {
+    match stat {
+        Some(st) => StatFacts {
+            size: Some(st.size as i64),
+            mtime: Some(format_rfc3339_nanos(st.mtime)),
+            inode: st.identity.inode.map(|v| v as i64),
+            device: st.identity.device.map(|v| v as i64),
+            nlink: st.nlink.map(|v| v as i64),
+        },
+        None => StatFacts::default(),
+    }
 }
 
-/// A disk read bracketed by a stat immediately before and after it — the
-/// read-side half of "a single read is evidence, never truth". `confirmed`
-/// is `true` only when both stats succeeded, exposed a real identity, and
-/// compared IDENTICAL: the file's identity/size/mtime did not move between
-/// the two stats, so `data` is what a caller can trust actually existed on
-/// disk at a single instant, not two different instants stitched together.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BracketedRead {
     pub data: Vec<u8>,
@@ -56,66 +46,20 @@ pub struct BracketedRead {
     pub confirmed: bool,
 }
 
-fn one_read_bracket(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
-    let before = stat_with_identity(vfs, path);
-    let data = vfs.read(path)?;
-    let after = stat_with_identity(vfs, path);
-    let confirmed = matches!((&before, &after), (Some(b), Some(a)) if b == a);
-    let stat = after.or(before).unwrap_or_default();
-    Ok(BracketedRead {
-        data,
-        stat,
-        confirmed,
-    })
-}
-
-/// Brackets a read of `path`: stat, read, re-stat, retrying (bounded by
-/// [`BRACKET_MAX_ATTEMPTS`]) while the bracket stays unstable. A retry
-/// re-runs the WHOLE bracket, never just the second stat — an unstable
-/// result means the file was genuinely moving, and only a fresh read can
-/// describe whatever it settled on. Still unstable after every attempt
-/// returns the LAST attempt's bytes/stat with `confirmed: false` — a
-/// destructive async replacement is suspect until proven, never dropped
-/// (blob retention is sacred), but it decides nothing downstream either.
 pub fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
-    let mut result = one_read_bracket(vfs, path)?;
-    let mut attempts = 1;
-    while !result.confirmed && attempts < BRACKET_MAX_ATTEMPTS {
-        result = one_read_bracket(vfs, path)?;
-        attempts += 1;
+    match rune_vfs::get(vfs, path, None) {
+        Ok(sighting) => Ok(BracketedRead {
+            data: sighting.bytes,
+            stat: stat_facts_from(sighting.stat),
+            confirmed: sighting.confirmed,
+        }),
+        Err(GetRefusal::NotFound) => Err(io::Error::new(io::ErrorKind::NotFound, "not found")),
+        Err(GetRefusal::Io(e)) => Err(e),
+        Err(refusal) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            refusal.to_string(),
+        )),
     }
-    Ok(result)
-}
-
-/// Two stats of `path`, taken back to back with no read in between —
-/// [`bracketed_read`]'s counterpart for a caller that already knows what it
-/// just wrote (a save's own publish) and only needs to confirm nothing raced
-/// the file's IDENTITY between the write and the moment it stats the result.
-/// `confirmed` follows the same rule as `bracketed_read`'s.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BracketedStat {
-    pub stat: StatFacts,
-    pub confirmed: bool,
-}
-
-fn one_stat_bracket(vfs: &dyn Vfs, path: &Path) -> BracketedStat {
-    let before = stat_with_identity(vfs, path);
-    let after = stat_with_identity(vfs, path);
-    let confirmed = matches!((&before, &after), (Some(b), Some(a)) if b == a);
-    let stat = after.or(before).unwrap_or_default();
-    BracketedStat { stat, confirmed }
-}
-
-/// Brackets a stat of `path` with a second stat immediately after, retrying
-/// (bounded by [`BRACKET_MAX_ATTEMPTS`]) while the two disagree.
-pub fn bracketed_stat(vfs: &dyn Vfs, path: &Path) -> BracketedStat {
-    let mut result = one_stat_bracket(vfs, path);
-    let mut attempts = 1;
-    while !result.confirmed && attempts < BRACKET_MAX_ATTEMPTS {
-        result = one_stat_bracket(vfs, path);
-        attempts += 1;
-    }
-    result
 }
 
 /// The size a bracketed read's `confirmed` bracket result still must clear
@@ -128,9 +72,10 @@ fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<i64
     tx.query_row(
         "SELECT size FROM observations WHERE doc_id=?1 AND confirmed=1 ORDER BY id DESC LIMIT 1",
         params![doc_id],
-        |r| r.get(0),
+        |r| r.get::<_, Option<i64>>(0),
     )
     .optional()
+    .map(Option::flatten)
     .map_err(Error::from)
 }
 
@@ -193,16 +138,16 @@ pub struct ObserveDiskMeta<'a> {
     pub origin: &'a str,
 }
 
-/// Brackets a fresh disk read for `doc_id` (stat, read, re-stat via
-/// [`bracketed_read`]) and folds in the suspicious-shrink gate against the
-/// newest CONFIRMED observation already on file (via
-/// [`confirm_against_history`]), then puts the bytes as a blob and records
-/// the referencing observation, all in ONE transaction beyond the read
-/// itself (the blob put and its observation insert never split across two,
-/// closing the cross-process GC race [rune-db 2]) — the one chokepoint every
-/// fresh "read the live file, then record what it said" call site
-/// (`probe::probe`, `load::load`) funnels through, so a racer caught
-/// mid-external-rewrite can never masquerade as a stable, trusted fact.
+/// Brackets a fresh disk read for `doc_id` (via [`bracketed_read`]) and
+/// folds in the suspicious-shrink gate against the newest CONFIRMED
+/// observation already on file (via [`confirm_against_history`]), then puts
+/// the bytes as a blob and records the referencing observation, all in ONE
+/// transaction beyond the read itself (the blob put and its observation
+/// insert never split across two, closing the cross-process GC race
+/// [rune-db 2]) — the one chokepoint every fresh "read the live file, then
+/// record what it said" call site (`probe::probe`, `load::load`) funnels
+/// through, so a racer caught mid-external-rewrite can never masquerade as
+/// a stable, trusted fact.
 pub fn observe_disk(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -239,52 +184,7 @@ pub fn observe_disk(
 mod tests {
     use super::*;
     use crate::observation::ObservationMeta;
-    use rune_vfs::{DirEntry, Mem, OpKind, Stat};
-
-    /// Wraps a `Mem`, delegating every `Vfs` method to it verbatim EXCEPT
-    /// `stat`, which always fails — a stat that never recovers, unlike
-    /// `Mem::fail_next`'s one-shot injection, so a bracket's retry loop
-    /// genuinely exhausts every attempt against a persistently unavailable
-    /// stat.
-    struct AlwaysFailStatVfs {
-        inner: Mem,
-    }
-
-    impl Vfs for AlwaysFailStatVfs {
-        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-            self.inner.read(path)
-        }
-        fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<std::path::PathBuf> {
-            self.inner.write_durable(path, bytes)
-        }
-        fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
-            self.inner.exchange(a, b)
-        }
-        fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
-            self.inner.rename_excl(old, new)
-        }
-        fn remove(&self, path: &Path) -> io::Result<()> {
-            self.inner.remove(path)
-        }
-        fn trash(&self, path: &Path) -> io::Result<()> {
-            self.inner.trash(path)
-        }
-        fn stat(&self, _path: &Path) -> io::Result<Stat> {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "stat always fails",
-            ))
-        }
-        fn resolve(&self, path: &Path) -> io::Result<std::path::PathBuf> {
-            self.inner.resolve(path)
-        }
-        fn mkdir_all(&self, path: &Path) -> io::Result<()> {
-            self.inner.mkdir_all(path)
-        }
-        fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
-            self.inner.read_dir(path)
-        }
-    }
+    use rune_vfs::Mem;
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
@@ -311,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_read_on_a_quiescent_file_confirms() {
+    fn bracketed_read_on_a_quiescent_file_confirms_with_real_stat_facts() {
         let vfs = Mem::new();
         let path = Path::new("/doc.md");
         publish(&vfs, path, b"hello");
@@ -319,6 +219,8 @@ mod tests {
         let bracket = bracketed_read(&vfs, path).expect("bracketed_read");
         assert!(bracket.confirmed);
         assert_eq!(bracket.data, b"hello");
+        assert_eq!(bracket.stat.size, Some(5));
+        assert!(bracket.stat.mtime.is_some());
     }
 
     #[test]
@@ -328,49 +230,28 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    /// A TRANSIENT stat failure never confirms the attempt it hits, but the
-    /// bracket's retry recovers: `Mem::fail_next(OpKind::Stat, ..)` fires
-    /// once, so only the bracket's FIRST stat fails; the retry loop still
-    /// needs the second attempt's own pair of stats to succeed and agree
-    /// for `confirmed` to come back `true` — proving a failed stat is
-    /// excluded from, not silently absorbed into, the comparison
-    /// (`StatFacts::default()` on error compares equal to itself, which is
-    /// exactly the bug this bracket must not reproduce).
     #[test]
-    fn a_transient_stat_failure_is_excluded_from_the_comparison_and_the_retry_recovers() {
+    fn bracketed_read_refuses_a_non_file() {
+        let vfs = Mem::new();
+        publish(&vfs, Path::new("/fifo"), b"");
+        vfs.set_kind(Path::new("/fifo"), rune_vfs::FileKind::Other)
+            .expect("set_kind");
+
+        let err = bracketed_read(&vfs, Path::new("/fifo")).expect_err("must refuse");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn an_unstable_bracket_reports_unconfirmed() {
         let vfs = Mem::new();
         let path = Path::new("/doc.md");
-        publish(&vfs, path, b"hello");
-        vfs.fail_next(OpKind::Stat, io::ErrorKind::PermissionDenied);
+        publish(&vfs, path, b"before");
+        vfs.set_churning(path, true);
 
         let bracket = bracketed_read(&vfs, path).expect("bracketed_read");
-        assert!(
-            bracket.confirmed,
-            "the retry must recover once the injected stat failure is consumed"
-        );
+        assert!(!bracket.confirmed);
     }
 
-    /// A stat failure that PERSISTS across every bounded attempt — unlike
-    /// `Mem::fail_next`'s one-shot injection — must exhaust the retry loop
-    /// and never confirm: `StatFacts::default()` on error compares equal to
-    /// itself, which is exactly the bug this bracket must not reproduce.
-    #[test]
-    fn stat_failures_that_persist_across_every_attempt_never_confirm() {
-        let vfs = AlwaysFailStatVfs { inner: Mem::new() };
-        let path = Path::new("/doc.md");
-        publish(&vfs.inner, path, b"hello");
-
-        let bracket = bracketed_read(&vfs, path).expect("bracketed_read");
-        assert!(
-            !bracket.confirmed,
-            "a stat that never recovers must exhaust the retry loop unconfirmed"
-        );
-    }
-
-    /// The mid-bracket-mutation shape: the file's identity/content changes
-    /// strictly between the bracket's own two stat calls. The first attempt
-    /// must come back unconfirmed; the retry then sees the settled state and
-    /// confirms.
     #[test]
     fn a_mutation_between_the_two_stats_is_caught_and_the_retry_recovers() {
         let vfs = Mem::new();
@@ -386,14 +267,6 @@ mod tests {
         assert_eq!(bracket.data, b"after");
     }
 
-    /// The same-stat-different-content shape (G2): a rewrite that lands
-    /// between two probes without moving any stat-visible fact at all is
-    /// exactly what a stat-only "nothing changed" comparison cannot see —
-    /// this pins that a bracket run AFTER such a rewrite still confirms
-    /// (the bracket's own two stats agree with EACH OTHER, correctly, since
-    /// nothing moved DURING this particular bracket) and reads the NEW
-    /// content, never the stale one a naive short-circuit would have kept
-    /// serving.
     #[test]
     fn same_stat_different_content_is_read_fresh_not_masked_by_stable_identity() {
         let vfs = Mem::new();
@@ -408,13 +281,13 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_stat_on_a_quiescent_file_confirms() {
-        let vfs = Mem::new();
-        let path = Path::new("/doc.md");
-        publish(&vfs, path, b"hello");
-
-        let bracket = bracketed_stat(&vfs, path);
-        assert!(bracket.confirmed);
+    fn stat_facts_from_none_is_all_null_never_a_synthetic_zero_size() {
+        let facts = stat_facts_from(None);
+        assert_eq!(facts.size, None);
+        assert_eq!(facts.mtime, None);
+        assert_eq!(facts.inode, None);
+        assert_eq!(facts.device, None);
+        assert_eq!(facts.nlink, None);
     }
 
     fn seed_confirmed(tx: &Transaction<'_>, doc_id: i64, session_id: i64, content: &str) {
@@ -430,8 +303,8 @@ mod tests {
                 confirmed: Some(true),
             },
             &StatFacts {
-                size: content.len() as i64,
-                mtime: "t".to_string(),
+                size: Some(content.len() as i64),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -487,8 +360,8 @@ mod tests {
                 confirmed: Some(false),
             },
             &StatFacts {
-                size: 5,
-                mtime: "t2".to_string(),
+                size: Some(5),
+                mtime: Some("t2".to_string()),
                 ..Default::default()
             },
             "t2",
@@ -536,8 +409,8 @@ mod tests {
                 confirmed: Some(false),
             },
             &StatFacts {
-                size: 0,
-                mtime: "t2".to_string(),
+                size: Some(0),
+                mtime: Some("t2".to_string()),
                 ..Default::default()
             },
             "t2",

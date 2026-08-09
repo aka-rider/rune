@@ -264,8 +264,8 @@ mod tests {
 
     fn test_stat() -> StatFacts {
         StatFacts {
-            size: 1,
-            mtime: "t".to_string(),
+            size: Some(1),
+            mtime: Some("t".to_string()),
             ..Default::default()
         }
     }

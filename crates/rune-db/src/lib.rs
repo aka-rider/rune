@@ -73,7 +73,7 @@ mod writer_lifecycle;
 mod writer_ops;
 
 pub use adopt::{adopt_equal, resolve_abandon, resolve_adopt};
-pub use bracket::{BracketedRead, BracketedStat, bracketed_read, bracketed_stat};
+pub use bracket::{BracketedRead, bracketed_read, stat_facts_from};
 pub use document::{DocRef, open_path, recent_paths};
 pub use error::Error;
 pub use journal::{

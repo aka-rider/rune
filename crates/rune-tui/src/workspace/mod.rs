@@ -93,8 +93,15 @@ fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
         return ReadOutcome::Reactivated(id);
     }
 
-    match app.vfs.read(&resolved) {
-        Ok(bytes) => ReadOutcome::Read { resolved, bytes },
+    match rune_vfs::get(
+        app.vfs.as_ref(),
+        &resolved,
+        Some(rune_vfs::MAX_DOCUMENT_BYTES),
+    ) {
+        Ok(sighting) => ReadOutcome::Read {
+            resolved,
+            bytes: sighting.bytes,
+        },
         Err(e) => {
             messages::error(app, format!("could not open {}: {e}", resolved.display()));
             ReadOutcome::Failed

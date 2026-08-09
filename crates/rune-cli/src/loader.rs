@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use rune_core::buffer::{Buffer, BufferError};
-use rune_vfs::Vfs;
+use rune_vfs::{GetRefusal, MAX_DOCUMENT_BYTES, Vfs};
 
 #[derive(Debug)]
 pub(crate) enum LoadError {
@@ -21,10 +21,16 @@ pub(crate) enum LoadError {
 /// directly, so this whole load path is exercisable against `Mem` in
 /// tests, not just against a real disk.
 pub(crate) fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadError> {
-    let bytes = match vfs.read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(LoadError::Io(e)),
+    let bytes = match rune_vfs::get(vfs, path, Some(MAX_DOCUMENT_BYTES)) {
+        Ok(sighting) => sighting.bytes,
+        Err(GetRefusal::NotFound) => Vec::new(),
+        Err(GetRefusal::Io(e)) => return Err(LoadError::Io(e)),
+        Err(refusal) => {
+            return Err(LoadError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                refusal.to_string(),
+            )));
+        }
     };
     Buffer::from_bytes(bytes).map_err(|e| match e {
         BufferError::InvalidUtf8 => LoadError::InvalidUtf8,

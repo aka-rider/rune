@@ -286,8 +286,8 @@ mod tests {
         let h0_hash = observation::hash_bytes(b"session A's content");
 
         let live_stat = StatFacts {
-            size: disk_content.len() as i64,
-            mtime: "t".to_string(),
+            size: Some(disk_content.len() as i64),
+            mtime: Some("t".to_string()),
             ..Default::default()
         };
         let ctx = LoadContext {
@@ -311,8 +311,8 @@ mod tests {
             session_id: session_a,
             blob_hash: h0_hash.clone(),
             seq: Some(0),
-            size: 0,
-            mtime: "t".to_string(),
+            size: Some(0),
+            mtime: Some("t".to_string()),
             inode: None,
             device: None,
             nlink: None,

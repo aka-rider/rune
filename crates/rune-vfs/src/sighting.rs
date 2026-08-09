@@ -5,6 +5,8 @@ use crate::{Etag, FileKind, Stat, Vfs, etag_of};
 
 const BRACKET_MAX_ATTEMPTS: u32 = 3;
 
+pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sighting {
     pub bytes: Vec<u8>,
@@ -20,6 +22,21 @@ pub enum GetRefusal {
     TooLarge { size: u64, limit: u64 },
     Io(io::Error),
 }
+
+impl std::fmt::Display for GetRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GetRefusal::NotFound => f.write_str("not found"),
+            GetRefusal::NotAFile(kind) => write!(f, "not a regular file ({kind:?})"),
+            GetRefusal::TooLarge { size, limit } => {
+                write!(f, "too large ({size} bytes; limit {limit})")
+            }
+            GetRefusal::Io(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for GetRefusal {}
 
 fn as_not_found(e: io::Error) -> GetRefusal {
     if e.kind() == io::ErrorKind::NotFound {
