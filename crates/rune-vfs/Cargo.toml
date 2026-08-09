@@ -1,0 +1,12 @@
+[package]
+name = "rune-vfs"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+libc = { workspace = true }
+trash = { workspace = true }
+sha2 = "0.11.0"
+
+[lints]
+workspace = true

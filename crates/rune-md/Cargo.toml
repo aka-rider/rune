@@ -1,0 +1,54 @@
+[package]
+name = "rune-md"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+rune-core = { path = "../rune-core" }
+rune-syntax = { path = "../rune-syntax" }
+rune-nav = { path = "../rune-nav" }
+comrak = { workspace = true }
+unicode-width = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+# Self-dependency trick: `cfg(test)` alone only enables the strict-invariants
+# gate for THIS crate's own `#[cfg(test)] mod tests` (compiled with `--cfg
+# test`) — an integration test under `tests/` links the library as an
+# ORDINARY (non-test) dependency, so `cfg(test)` is false there and the
+# strict asserts would never fire for `tests/conceal_roundtrip.rs`'s
+# full-pipeline scenarios, exactly where a nested-container producer bug
+# is most likely to actually surface. Listing the crate as its own
+# dev-dependency with the feature enabled makes Cargo's feature
+# unification turn `strict-invariants` on for every use of `rune-md`
+# within a `cargo test` build — unit tests AND integration tests alike.
+rune-md = { path = ".", features = ["strict-invariants"] }
+
+[[bench]]
+name = "parse_bench"
+harness = false
+
+[features]
+# Opts a non-test build into the same producer-bug invariant checks test
+# builds always run (see `emit`'s module docs) — e.g. a debug binary a
+# developer wants to run with strict checking on. Never enabled by
+# default: an ordinary shipped build must degrade gracefully on a
+# producer-bug invariant violation, never panic on a user's document.
+# Also turns on `rune-syntax/strict-invariants`: `SyntaxSpan::identical`'s
+# own checked-construction assert ([rune-syntax 1]) now owns the
+# char-boundary invariant this crate's `push_span_split_by_line` used to
+# assert locally for the `Identical` branch — one feature flip has to
+# arm both crates' asserts together, or this crate's own test suite would
+# stop seeing a violation it still causes.
+strict-invariants = ["rune-syntax/strict-invariants"]
+# `DocMachine::force_rebuild` alone, with none of `strict-invariants`'
+# assert_invariant consequences (see that feature's own docs): a consumer
+# that only needs a cache-bypassed rebuild for its own testing (rune-fuzz's
+# `SYNC-IDEMPOTENT`, WP14.S1) must not also be forced to arm every
+# `assert_invariant` in the crate just to reach it.
+fuzz-hooks = []
+
+[lints]
+workspace = true

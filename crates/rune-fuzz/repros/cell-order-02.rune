@@ -1,0 +1,13 @@
+content Hello there. This is a short prose paragraph with a few sentences in it.\n
+type 
+type 
+type 
+key down ----
+paste \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family
+key tab ----
+key delete ----
+type [a](b)
+key down ----
+key left -a--
+type 
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}

@@ -7,15 +7,16 @@
 ## Good News Everyone
 
 - **MacOS-native** look and feel with familiar **⌘** - combinations
-- **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code blocks with syntax highlighting, tables, task lists, horizontal rules, YAML frontmatter, and `[[wikilinks]]`.
-- **Voice Dictation** — on your local machine.
+- **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code fences with real tree-sitter syntax highlighting across 22 languages, tables with adaptive layouts, task lists, thematic breaks, YAML frontmatter, `[[wikilinks]]`, and setext headings.
 - **Task lists** - `- [x] buy milk` syntax
-- **Inline Images** — Render PNG, JPEG, GIF (animated), WebP, BMP, TIFF, and even SVG directly in your terminal via the Kitty or iTerm2 graphics protocol.
-- **Mouse Support** — Click to focus, drag pane dividers, scroll through files.
-- **Obsidian Vault Compatible** — Open any Obsidian vault as-is. Launch Rune from the vault root so `[[wikilinks]]` resolve correctly across your notes.
+- **Inline Images** — Render PNG, JPEG, GIF, WebP, BMP, TIFF, and SVG directly in your terminal via the Kitty graphics protocol. GIFs render as a still frame.
+- **Mouse Support** — Click to focus, drag to select, drag pane dividers, scroll through files, multi-click select.
+- **Obsidian Vault Compatible** — Launch Rune from the vault root so `[[wikilinks]]` and embeds resolve across your notes. Some Obsidian-flavored constructs (callouts, `==highlights==`, `#tags`, math) render as plain text for now.
 - **Multi-Cursor Editing** — Add cursors above or below the current line.
-- **File Watching** — Auto-reloads files when they change on disk (e.g., from `git checkout` or an external edit).
-- **AI Chat** — Talk to an OpenAI-compatible LLM about your notes. The chat pane has context of your open file.
+- **Crash Recovery** — Every edit lands in a durable journal with periodic snapshots; unsaved work survives a crash.
+- **Conflict Guard + Merge** — An external edit to the open file is caught before it can be overwritten, with a built-in 3-way merge resolver (`^M`) to reconcile both sides.
+- **Reading View** — Toggle a read-only rendered view with `^P`/`⌘P`.
+- **Tabs + File Explorer** — Type-to-search jumps straight to a file.
 
 ### File Explorer
 
@@ -41,23 +42,10 @@ Requires macOS on Apple Silicon (arm64).
 ```sh
 brew tap aka-rider/tap
 brew trust aka-rider/tap
-brew install --cask rune-edit
+brew install aka-rider/tap/rune
 ```
 
-### Voice input (optional) 
-
-(requires a local whisper.cpp server — **~1.6 GB RAM** while running)
-Press `Ctrl+V` to start dictation in the editor or LLM chat.
-
-Rune follows MacOS input language, switch your keyboard language to change dictation language.
-
-```sh
-brew install aka-rider/tap/whisper-cpp-server
-brew services start aka-rider/tap/whisper-cpp-server
-```
-
-First launch downloads ~3 GB of model weights and builds the ANE encoder (~5–10 min).
-Subsequent launches are instant.
+Upgrading from the old cask? First run `brew uninstall --cask rune-edit`.
 
 ---
 
@@ -83,11 +71,13 @@ Press `F1` inside Rune for the list of keyboard shortcuts — the help page is g
 
 Kitty, iTerm2, WezTerm work too, with all kinds of bugs. 
 rune relies on terminal protocol extensions (super key, image rendering, clipboard, etc.).
+Inline image rendering needs a Kitty-graphics-protocol terminal (Kitty, Ghostty); other terminals fall back to an info card.
 
 ## Credits
 
-- [Bubble Tea by charmbracelet](https://github.com/charmbracelet/bubbletea)
-- [goldmark by yuin](https://github.com/yuin/goldmark)
+- [ratatui](https://github.com/ratatui/ratatui)
+- [comrak](https://github.com/kivikakk/comrak)
+- [tree-sitter](https://github.com/tree-sitter/tree-sitter) and its grammars
 
 ---
 

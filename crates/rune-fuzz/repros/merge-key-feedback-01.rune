@@ -1,0 +1,11 @@
+content 
+type 
+key char:c --c-
+key char:d ----
+type 
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:b ----
+key char:m --c-

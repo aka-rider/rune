@@ -1,44 +1,57 @@
-THIS_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
-RUNE := "$(dir $(THIS_MAKEFILE_PATH))rune"
+CARGO ?= cargo
+# Randomized sessions per `make test-fuzz` (PROPTEST_CASES). An EMPTY value is
+# not "unset" — proptest warns to stderr and silently falls back to 256
+# (config.rs parse_or_warn) — so this default has to be spelled out.
+RC ?= 512
+# Optional PROPTEST_RNG_SEED for a pinned re-run. Empty = fresh OS entropy.
+RS ?=
+
+.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars
 
 build:
-	CGO_ENABLED=1 go build -ldflags "-s -w" -o $(RUNE) ./cmd/rune
-
-run: build
-	$(RUNE) $(ARGS)
-rune: run
-
-clean:
-	rm -f $(RUNE)
+	$(CARGO) build --workspace
 
 test:
-	go test -race -timeout 10m -coverprofile=coverage.out -covermode=atomic ./...
-	go vet ./...
-	go vet -tags fuzzing ./...
+	$(CARGO) test --workspace
+	# Cargo feature unification already arms strict-invariants on rune-md for the
+	# whole --workspace run above (rune-fuzz requests it), but this isolated
+	# invocation stays so the suite still proves out if that unification ever goes away.
+	$(CARGO) test -p rune-md --features strict-invariants
 
-T ?= 1m
+lint:
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
+fmt:
+	$(CARGO) fmt --all --check
+
+bench:
+	$(CARGO) bench -p rune-md --bench parse_bench
+
+# `--test perf_guard` + `--exact` scope each invocation to ONE test in ONE
+# binary. Without them, every other test binary prints `test result: ok. 0
+# passed ... filtered out` and exits 0, so the target stays green even if the
+# test is renamed or deleted — this is why the WP16 keystroke-latency guard
+# below needs its OWN invocation rather than widening the `--exact` filter on
+# this one, which by definition can never pick up a second test name.
+perf-guard:
+	$(CARGO) test -p rune-md --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 full_pipeline_5k_under_100ms
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 keystroke_view_cost_under_budget_on_a_5k_line_code_document
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_5k_line_code_document
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_many_fence_markdown_document
+
+# `--test human_session` + `--exact` for the same reason as perf-guard.
+# Debug profile on purpose: keeps the buffer/undo/render debug_asserts armed.
 test-fuzz:
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferSnapshotImmutability$$' -fuzztime=$(T) ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferBatchEquivalence$$'      -fuzztime=$(T) ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferPointRoundtrip$$'        -fuzztime=$(T) ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSyntaxMapRoundtrip$$'          -fuzztime=$(T) ./pkg/editor/display
-	go test -tags fuzzing -count=1 -fuzz='^FuzzWrapMapRoundtrip$$'            -fuzztime=$(T) ./pkg/editor/display
-	go test -tags fuzzing -count=1 -fuzz='^FuzzEvictionModel$$'               -fuzztime=$(T) ./pkg/ui/components/opentabs
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSession$$'                     -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSessionWithFile$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzWorkspaceTabOps$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzLoadReorder$$'                 -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSaveRace$$'                    -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzDelayedViewResult$$'           -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzHumanSession$$'                -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzTwoSessionsSharedDoc$$'        -fuzztime=$(T) ./pkg/ui/pages/workspace
+	PROPTEST_CASES=$(RC) PROPTEST_RNG_SEED=$(RS) \
+	    $(CARGO) test -p rune-fuzz --test human_session -- \
+	    --ignored --exact --test-threads=1 human_session
 
-release-snapshot:
-	goreleaser release --snapshot --clean
-
-whisper.cpp-restart:
-	brew services restart whisper-cpp-server
-
-.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart
-
+# The heavy per-grammar property test: every one of the 22 tree-sitter
+# grammars against many arbitrary sources, not just the handful the
+# non-ignored smoke test runs on every `make test`.
+test-grammars:
+	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1

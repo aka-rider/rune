@@ -1,0 +1,9 @@
+# The `ignore` crate's own recursive walker reads the real filesystem
+# directly, bypassing the injected `Vfs` — every walk in this workspace goes
+# through `Vfs::read_dir` instead, composing its own recursion, so these
+# types are mechanically fenced off rather than trusted to convention.
+disallowed-types = [
+    "ignore::WalkBuilder",
+    "ignore::Walk",
+    "walkdir::WalkDir",
+]

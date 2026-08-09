@@ -1,61 +1,125 @@
-# TODO
+# TODO — Refactor Ledger
 
-## FuzzWorkspaceTabOps: intermittent "fuzzing process hung or terminated unexpectedly: exit status 2" (pre-existing, environment/resource flake)
+Reinstated 2026-08-07 from a three-audit sweep of the codebase. This is an
+inventory of known violations of `CONSTITUTION.md`'s governing rules and of
+non-idiomatic implementations with better alternatives available; it seeds a
+future refactor plan. New code must not repeat these patterns even where
+legacy code still does. Fixes land with tests per the constitution, and an
+entry is deleted in the same commit that fixes it.
 
-**Status:** open; confirmed pre-existing independently by all three statechart-refactor tracks (T, W, M) — NOT caused by any of them.
+## Data-safety
 
-- **Symptom:** `make test-fuzz` (or `go test -tags fuzzing -fuzz='^FuzzWorkspaceTabOps$' ./pkg/ui/pages/workspace`) occasionally reports a worker crash with no invariant name or panic trace — just "fuzzing process hung or terminated unexpectedly: exit status 2" — and writes a "failing" corpus entry under `pkg/ui/pages/workspace/testdata/fuzz/FuzzWorkspaceTabOps/<hash>`.
-- **Not reproducible standalone:** every entry captured this way (e.g. `666b114d7066f71e` from the rebased T-branch run, `7e4aa989fadca355` from a control run against unmodified `a7bbc62`) PASSES cleanly when re-run in isolation via `go test -run=FuzzWorkspaceTabOps/<hash>` — the input itself is not a real invariant violation, the parallel fuzz run just loses a worker (resource contention under N=14 workers, not a deterministic bug in the input).
-- **Confirmed pre-existing:** reproduced against the untouched `a7bbc62` baseline in a throwaway `git worktree add <tmp> a7bbc62` — same signature, same standalone-pass behavior. T3's commit message independently documented the same flake during the original (pre-rebase) T-track run, with a different corpus hash (`3a0021192dd9736f`), also root-caused as environment/resource, not a Track T regression.
-- **Action:** none required for the statechart refactor landing. The generated `testdata/fuzz/FuzzWorkspaceTabOps/*` "failing" entries are harmless (they pass when re-run) but are left untracked/uncommitted deliberately — committing a flake-only entry would make `make test-fuzz` look red for the wrong reason. If this becomes disruptive, the real fix is investigating why a fuzz worker process can die under this target specifically (fd/goroutine/sqlite-temp-file exhaustion under 14 parallel workers are the leading suspects, unconfirmed).
-- **Reconfirmed during the T1–T6 rebase-onto-main landing:** hit again on a completely fresh corpus directory (no prior seed entries at all) at `make test-fuzz`'s default 1-minute budget, ~12s in, hash `06b04289206359b8` — same signature, same standalone pass. Three independent hashes now observed (`3a0021192dd9736f` at T3's original commit, `666b114d7066f71e`/`7e4aa989fadca355` from the T=20s gate on the rebased branch and the `a7bbc62` control respectively, `06b04289206359b8` from this full-budget rerun), always ~10-20s into the run regardless of which input is "blamed" — consistent with a timing/resource-window flake, not a specific bad input. The generated corpus files were deleted after standalone-verifying each one (not committed) to keep `make test-fuzz` reproducible for the next runner; this note plus the git history of this file is the retained evidence.
-- **Track W independently bisected the same flake** (`git stash -u` back to clean `a7bbc62`, identical invocation, identical signature and hash `06b04289206359b8`) and observed the misattribution mechanism: under Go's parallel fuzzing, the "failing input" written is often just whatever was in flight when a worker died, not the actual trigger — the captured seed passes standalone on every commit. Track W's final full `make test-fuzz` run (14 targets, default budget) passed cleanly INCLUDING this target, confirming intermittency. Track M reproduced it on clean `a7bbc62` as well, with a CPU profile showing >85% of time in `runtime.kevent/madvise/pthread_cond_*` — no product hot path — pointing at a worker-liveness watchdog under CPU contention.
-- **Next step if it becomes disruptive:** dedicated investigation with a single fuzz worker (`GOMAXPROCS=1` or explicit worker count) to isolate the real culprit input, per the project's "reproduce hangs with polled evidence" convention; leading suspects are fd/goroutine/sqlite-temp-file exhaustion under 14 parallel workers. Alternatives: a lower `-parallel` for this target in `make test-fuzz`, or checking whether an unusually heavy input among the ~417 committed corpus entries exercises a genuinely slow path (many synchronous SQLite commits) worth speeding up in its own right.
+### rune-merge scrapes diffy's rendered conflict markers
+- **Where**: `crates/rune-merge/src/hunks.rs:41` (`merge_bytes` call), `crates/rune-merge/src/hunks.rs:111-192` (`parse_diff3`, `find_subslice`, `anchor_section`)
+- **Wrong**: `parse_diff3` re-parses diffy's rendered `<<<<<<<`/`=======`/`>>>>>>>` output by line-prefix matching, and `anchor_section` re-anchors each section by first-occurrence substring search. A document already containing marker-shaped lines can mis-segment (bytes reassigned across Clean/Conflict hunks) or mis-anchor on repeated lines — both silent, on a data-destructive path.
+- **Instead**: get structured hunks instead of parsing display form; at minimum scan inputs for the longest marker run and call `set_conflict_marker_length` so collision is unrepresentable, and anchor by consumed-byte accounting, not content search.
+- **Done when**: conflict segmentation no longer depends on parsing diffy's rendered text, or marker-length collision is provably unrepresentable and anchoring is position-accounted.
+- **Update 2026-08-07 (WP-D)**: a real anchor failure (diffy's diff3 marker text newline-terminates a section's final line even when the source input has no trailing newline there) was root-caused and fixed with a bounded trailing-newline retry, and a failed anchor now widens only its own run of conflicts instead of collapsing the whole file (see `parse_hunks`). The repeated-marker-line collision risk this entry originally raised is untouched by that fix and remains open.
 
-## Fuzz catch: RESIZE-INV — HasDirtyFile flips true→false on resize (pre-existing)
+### Same-session reopen after an external rewrite still adopts stale content
+- **Where**: `crates/rune-db/src/load.rs`, `load`'s `has_hist` branch.
+- **Wrong**: when a tab that already has journal history in this session is reopened after some OTHER tool rewrote the file on disk, `load` returns this session's own journal reconstruction — the pre-rewrite content — never the new disk content, even though the session made no edits of its own. A fix was tried that swapped in the reconstructed disk content directly when it disagreed with this session's `saved_obs` baseline; it was withdrawn because returning that string without also journaling a matching bridge edit leaves the buffer and this session's journal disagreeing — the next edit journals at offsets valid only for the buffer, so `recover_document` either dies with "edit out of bounds" or the durable record silently corrupts.
+- **Instead**: re-anchor this session's own journal to the new disk content before returning it — a bridge edit (or a fresh anchor snapshot) the way `load_anchor::anchor_first_load` does for the cross-session case — never swap the returned string alone.
+- **Done when**: a same-session reopen after an external rewrite reflects the new disk content AND this session's own journal reconstruction agrees with it (the assertion `dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees` pins for the cross-session case has a same-session equivalent that passes).
 
-**Status:** open; investigation started 2026-07-12 and stopped by user before root cause landed.
+### `published_not_durable` honored at only 1 of 4 publish sites
+- **Where**: contract at `crates/rune-vfs/src/lib.rs:88`; honored at `crates/rune-tui/src/save/materialize.rs:294`; ignored at `crates/rune-db/src/rename_replace.rs:72`, `crates/rune-db/src/rename_bind.rs:35-40`, `crates/rune-tui/src/rename_create.rs:158`
+- **Wrong**: the predicate means the swap/rename already took effect and callers must never remove the temp (sole surviving copy of displaced bytes). Three call sites propagate the raw `io::Error` (or a stringified generic arm) without checking it, so a physically-successful rename can be reported as failed while UI/DB state disagrees with disk.
+- **Instead**: every publish site branches on `published_not_durable` before deciding what to do with the temp, same as `materialize.rs`.
+- **Done when**: all four sites branch on the predicate identically.
 
-- **Repro:** copy the failing input to `pkg/ui/pages/workspace/testdata/fuzz/FuzzSaveRace/50d39e00116f9609`, then
-  `go test -run 'FuzzSaveRace/50d39e00116f9609' ./pkg/ui/pages/workspace/`
-  → `session_fuzz_test.go:438: invariant RESIZE-INV: HasDirtyFile changed on resize: true → false`.
-  The input file is NOT committed (it would make `make test` red — it was briefly committed at `229c0ba` and reverted at `fa7b014`). A copy lives outside the repo; regenerate by re-running the reverted commit's diff (`git show 229c0ba`) which contains the 2-line corpus file verbatim.
-- **Bisection (done, trust it):** fails at `7bba191` (QA-rehaul merge, where the RESIZE-INV monitor was introduced) and at every later commit including `b0551da` — i.e. it predates ALL of the 2026-07 pkg/ui refactor stages (A1–A3, B1–B7). The pre-rehaul commit `7f08432` has no such fuzz subtest, so whether the underlying bug predates the rehaul is unknown.
-- **ROOT CAUSE (investigation complete, verdict: genuine product flaw, not a monitor bug):** `syncDirty()` (workspace_edit.go:225-236) polls `store.IsDirty` from `finalize()` on EVERY message. The failing input is Paste → ⌘S → Resize: `store.Materialize` commits `saved_obs` inside the save Cmd's goroutine, so `store.IsDirty` flips false BEFORE `FileSavedMsg` is delivered; the next message of ANY kind (here a resize) re-polls and flips the tab's dirty display in the commit→ack gap. The resize is the messenger, not the mutator — real in production too, not just under the fuzz harness's deferred delivery.
-- **Fix design (USER DECISION 2026-07-12 — eliminate the shadow state, don't retime the poll):** the root problem is a parallel source of truth: `Tab.Dirty` (and parts of `activeSave`) shadow the DB, and any ambient read (`syncDirty`'s per-message `store.IsDirty` poll) can observe the DB mid-transition and contradict the pending ack. An event-driven `refreshDirtyFromStore(...)` would only narrow the race. Required shape instead:
-  1. **Displays update ONLY from operation results, never ambient reads.** Each store mutation carries the post-mutation dirty bit in its OWN return value — `AppendEdit` (synchronous, main loop) returns it; `Materialize`'s `MatResult`/`FileSavedMsg` carries it; `Load`'s `FileLoadedMsg` carries it (a recovered doc with journal head ahead of `saved_obs` opens dirty); undo/redo's `MoveUndoPos` result carries it; merge/discard resolutions land through those same paths. The UI applies the bit co-atomically at the ack. Delete `syncDirty()` and, ideally, remove the UI's ability to call `store.IsDirty` outside decision points — the capability, not just the call site.
-  2. **`activeSave` sheds DB-duplicating fields**: it may only record "async op in flight, ack pending" (a message-ordering fact); anything the DB also knows must arrive in the result message instead of being cached UI-side across the gap.
-  3. **Decision points unchanged** (§1.4.8): `vetSave`/`groundTruthDirty`/`enforceTabLimit` keep re-deriving fresh — safe because synchronous within one Update pass.
-  Fail-safe direction still holds: a lost ack leaves the display dirty, never falsely clean. `syncDirty()` is currently the ONLY `Tab.Dirty = true` raiser — the operation-result plumbing must cover every raise transition it masked.
-- **Sequencing:** implement AFTER the A4–A7 worker lands (it is actively editing workspace_edit.go/finalize — fixing now would collide).
-- **When fixed:** re-add the corpus entry in the SAME commit as the fix (catches travel with the repo, but only alongside their fix).
+## Architecture
 
-## Layering: pkg/docstate/store.go ships test support in the production binary (pre-push review PP-2)
+### Shadow state
+- **Where**: (a) `Document.save_in_flight` at `crates/rune-tui/src/document/mod.rs:130,341,371,383,403`, written directly by a test at `crates/rune-tui/src/merge/landing.rs:472`; (b) `is_dirty_cached` (`document/mod.rs:142`) vs `is_dirty` (`document/mod.rs:360-361`) vs `is_dirty_now` (`crates/rune-tui/src/materialize_ack.rs:408`)
+- **Wrong**: (a) `save_in_flight` duplicates `save_pending.is_some()`; being `pub` let a test manufacture an "impossible" state by writing it directly. (b) two accessors exist where picking the wrong one is a per-call-site correctness decision, for a compare the code's own comment calls "length check + memcmp, microsecond-scale" — the cache buys only a staleness hazard.
+- **Instead**: delete `save_in_flight` and derive it; delete the dirty cache or store a content hash instead.
+- **Done when**: both fields are gone (or one is provably necessary and the other deleted).
 
-`store.go` imports `testing` + `internal/editortest` to host `NewTestStore`/`AutoClock` (QA-rehaul convention; footer_testing.go documents the same cross-package test-seam pattern without the import). Not a runtime bug — but the shipped binary links the testing package. Proper fix per CONSTITUTION §50 spirit: move `NewTestStore` behind `//go:build testing` (requires adding `-tags testing` to Makefile `test:` targets + CI + developer habit) or into a `docstatetest` subpackage (requires migrating ~12 test files' imports). Both are convention decisions — pick one deliberately. Related fragility notes from the same review: two_sessions_fuzz_test.go shares one non-thread-safe AutoClock across two stores (mutex or comment); editortest.Drain has no iteration cap (a steps-cap panic-guard would fail loudly instead of hanging on a future undisabled timer); invarianttest.CheckWorkspace silently skips L1/L2 (Frame never set on the unit path — fix the doc claim or plumb a frame).
+### Sentinel-value class
+- **Where**: `crates/rune-syntax/src/syntax.rs:56` (`CellMap = Vec<i64>`, -1 = decorative); `crates/rune-tui/src/render/cell.rs:38,132` (`buf_offset: i64`, -1, guarded by `< 0` at ~6 render sites then `as usize`); `crates/rune-md/src/table/mod.rs:36` (`buf: i64`); `crates/rune-tui/src/app.rs:337,409` (`root: PathBuf`, empty = unresolved); `crates/rune-tui/src/app.rs:82-92` (`frame_height/width: u16`, 0 = no resize yet); `crates/rune-tui/src/filesearch/rank.rs:112` and `crates/rune-tui/src/messages/mod.rs:371` (`unwrap_or(usize::MAX)`)
+- **Wrong**: each type can represent an invalid state (negative offset, unresolved root, unsized frame) as a valid-looking value; a forgotten guard is a silent logic bug, not a compile error.
+- **Instead**: `Option<usize>` or an enum at each site.
+- **Done when**: no sentinel value stands in for "absent"/"unresolved" in these types.
 
-## Statechart refactor — deferred edges (plan-statechart-refactor.md, deliberate scope cuts)
+### Nine hand-rolled generation counters
+- **Where**: `crates/rune-tui/src/app.rs:120,127,178,195,237,267,288` (`next_rename_gen`, `next_merge_gen`, `next_save_confirm_gen`, `next_quit_gen`, `trash_gen`, `next_filesearch_gen`, `next_search_history_gen`) plus `explorer.request_generation`, `messages.generation`, `ImageState::next_generation`; inconsistent mint order between `crates/rune-tui/src/filesearch/mod.rs:108-109` (mint-then-read) and `crates/rune-tui/src/pane.rs:363-364` (read-then-mint)
+- **Wrong**: nine bespoke counters, each with its own mint site and stale-discard check, mint-then-read inconsistent with read-then-mint between sites.
+- **Instead**: one `Gen<T>` newtype (`mint`/`is_current`), type-distinct per domain.
+- **Done when**: all generation fields route through one newtype with one mint convention.
 
-- **E3 — `DisplaySeq` reveal signal (statechart pressure point #8):** textedit could expose `DisplaySeq() uint64`, bumped whenever `syncDisplay` installs a display snapshot that differs from the previous one (content, reveal, wrap, or image-expansion). markdownedit's `reconcile` could then skip the whole `afterMutation` funnel when both `rev` and `DisplaySeq` are unchanged, and `hasUndiscoveredImages` could be deleted (≈ −12). Not needed for correctness — the funnel is change-gated internally — pure efficiency/clarity follow-up.
-- **E4 — workspace divider `drag` outlives the mouse button:** the workspace's own divider-drag field persists until the next click. `tea.MouseReleaseMsg` exists in Bubble Tea v2.0.6 and reaches children via the workspace's default broadcast; the divider is its natural first consumer. (markdownedit deliberately has no release handler — after the refactor it keeps no drag state at all.)
-- **Statechart pressure point #10 — placement double-tick:** the iTerm2 placement pipeline's "pending ⇔ one tick" invariant is only *mostly* exact (an overwrite edge emits a second tick that safely no-ops). A sequence number would make it exact. Harmless today.
+### Sleep-based uncancellable timers; unbounded thread-per-Cmd
+- **Where**: `crates/rune-tui/src/save.rs:215`, `crates/rune-tui/src/pane.rs:400`, `crates/rune-tui/src/messages/mod.rs:451` (`thread::sleep`-based `Cmd` timeouts); correct shape at `crates/rune-tui/src/runtime/snapshot_timer.rs`; unbounded spawn at `crates/rune-tui/src/runtime/mod.rs:469` (`spawn_cmd`)
+- **Wrong**: confirm/collapse timeouts park one OS thread per (re)arm with no cancellation — the generation counters exist largely to discard the late replies. `spawn_cmd` spawns unbounded threads; `Highlight`/`ImageDecode` issue at keystroke rate.
+- **Instead**: generalize `SnapshotTimer` (single thread, Mutex+Condvar, rearm-to-earliest) to a keyed deadline map; bound the worker pool.
+- **Done when**: no `Cmd` does a bare `thread::sleep`, and `spawn_cmd` is bounded.
 
-## Fuzz catches: FuzzHumanSession tab-coherence invariants — EDITOR-TAB-COH and TAB-SET (both pre-existing)
+### Multi-meaning `None`s in the highlight reply protocol
+- **Where**: `crates/rune-tui/src/runtime/mod.rs:187-190` (`Msg::Highlighted { result: Option<HighlightReply> }`), `crates/rune-tui/src/highlight/mod.rs:122` (`payload: Option<RegionPayload>`)
+- **Wrong**: `result: None` means "carry forward"; within a reply, per-region `payload: None` means "keep channels" while `Some(empty)` means "clear" — decoded by convention and comments, not the type.
+- **Instead**: an explicit `CarryForward`/`Replace` enum.
+- **Done when**: the reply protocol has no dual-meaning `None`.
 
-**Status:** open; found 2026-07-16 while fuzzing the integrated statechart-refactor tree. BOTH bisected to PRE-EXISTING — each reproducer fails identically on `a7bbc62` (pre-refactor base), on T+M (`53b3d08`), and on W's tip (`6e02700`), so no refactor track introduced them. FuzzHumanSession surfaced two distinct violations in back-to-back 1-minute runs — its latent bug surface in tab management is evidently not yet drained; expect more catches until the underlying coherence flaw(s) are fixed.
+## Mechanical
 
-- **Catch 1 — EDITOR-TAB-COH:** corpus entry `FuzzHumanSession/42335ab630528b99`, content:
-  ```
-  go test fuzz v1
-  []byte("y0 0c")
-  ```
-  → `human_fuzz_test.go:117: invariant EDITOR-TAB-COH: EditorPath "/fuzz/notes/e.md" != Tabs[0].Path "/fuzz/a.md"` (deterministic, 0.09s). The editor ends bound to one doc while the active tab points at another.
-- **Catch 2 — TAB-SET:** corpus entry `FuzzHumanSession/d9abe6755ff8bd82`, content:
-  ```
-  go test fuzz v1
-  []byte("11A920\xaf{\xed\xf9C5'\xdf\xd8\xf6\xdb\x106\x1b\x84\xc3\xf3H&\xbb\x9f\x99G\x86ni\xc5.2")
-  ```
-  → `human_fuzz_test.go:117: invariant TAB-SET: expected exactly 1 active tab, got 0` (deterministic, 0.23s). A session ends with no active tab at all.
-- **Repro:** write the entry file under `pkg/ui/pages/workspace/testdata/fuzz/FuzzHumanSession/` then `go test -tags fuzzing -run 'FuzzHumanSession/<hash>' ./pkg/ui/pages/workspace`.
-- **Not committed while red** (same convention as RESIZE-INV above): re-add each corpus entry in the SAME commit as its fix. Copies of both inputs are quoted verbatim here.
-- **Next step:** root-cause with the read-only fuzz investigator (`/rune-fuzzer` catch flow); suspect area is the tab-switch/load-settle/close path that updates `view` and `opentabs.SetActive` asymmetrically. Both invariants smell like one underlying coherence flaw around doc transitions.
+### Typed errors flattened to String
+- **Where**: ~9 `map_err(|e| e.to_string())` at Cmd boundaries across `runtime/mod.rs`, `save.rs`, `trash.rs`, `rename_create.rs`, `graphics/*`; inside `rune-db::Error` (`crates/rune-db/src/error.rs:17,37,49,60`): `ReplayFailed(String)`, `CorruptPayload(String)`, `SessionEstablish(String)` stringify their sources while `Sqlite(rusqlite::Error)` proves the crate can hold typed sources
+- **Wrong**: stringifying erases the `ErrorKind`/error type that `rune-vfs::WrappedIo` and `rusqlite::Error` deliberately preserve.
+- **Instead**: typed variants; a small `Cause` enum in `Msg::Error`.
+- **Done when**: no Cmd-boundary error is stringified before it reaches its handler, and `rune-db::Error`'s String variants hold typed sources.
+
+### Stale/false comments (provable lies)
+- **Where**: "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4` (cite deleted per-crate `TODO.md`s); `crates/rune-syntax/src/wrap/width.rs:93`, `crates/rune-tui/tests/tui_render_text.rs:387` (cite a nonexistent `TODO/TODO.md`)
+- **Wrong**: comments cite functions and files that no longer exist.
+- **Instead**: fix or delete each citation when touched (per house rule, no `path:line` in comments either).
+- **Done when**: no comment in the tree cites a nonexistent symbol or deleted file.
+
+### O(file) per keystroke is the deliberate design ceiling
+- **Where**: `crates/rune-core/src/buffer/mod.rs`, `crates/rune-core/src/buffer/lineindex.rs`, `crates/rune-tui/src/commands/edit_core.rs`, `crates/rune-tui/src/materialize_ack.rs`; perf-guarded by `crates/rune-tui/tests/perf_guard.rs:92` (`keystroke_view_cost_under_budget_on_a_5k_line_code_document`)
+- **Wrong**: full content copy + full line-index clone + full memcmp + journal clones per edit batch; does not scale past the guard fixture's size.
+- **Instead**: a rope with the same value-semantics facade, if the ceiling is ever hit in practice.
+- **Done when**: not currently actionable — record only; revisit if the perf guard's fixture size stops matching real documents.
+
+### Files over 500 lines
+- **Where** (recomputed from the live tree; comment purge below will change these numbers):
+  - `crates/rune-db/src/sync.rs` — 873 (new WP-C: own-history echo + its tests pushed this over; split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
+  - `crates/rune-tui/src/explorer_preview/tests.rs` — 868 (test file)
+  - `crates/rune-tui/src/global.rs` — 809
+  - `crates/rune-tui/src/pane.rs` — 800
+  - `crates/rune-tui/src/layout.rs` — 754
+  - `crates/rune-merge/src/hunks.rs` — 684 (grew past the threshold in WP-D fixing the anchoring bug; the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
+  - `crates/rune-tui/src/runtime/mod.rs` — 672
+  - `crates/rune-fuzz/src/generate/palette.rs` — 660
+  - `crates/rune-tui/src/app.rs` — 625 (grew further in the G7 fix adding the `file_bindings` shared-baseline map's own doc comment)
+  - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
+  - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
+  - `crates/rune-tui/src/merge/landing.rs` — 600 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
+  - `crates/rune-tui/src/db.rs` — 523 (the review-fixes chokepoint pair `App::doc_file_binding`/`doc_file_binding_mut`/`doc_db_id` pushed this over; split candidate: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
+  - `crates/rune-tui/src/guard.rs` — 558 (crossed the threshold in WP-D adding the `DiskConflict` convergence self-retraction and its tests; split candidate: same as above, its `#[cfg(test)] mod tests` block is roughly a fifth of the file)
+  - `crates/rune-tui/src/messages/mod.rs` — 557
+  - `crates/rune-md/src/emit/mod.rs` — 556
+  - `crates/rune-tui/src/render/filesearch.rs` — 546
+  - `crates/rune-tui/src/rename.rs` — 544
+  - `crates/rune-vfs/src/mem.rs` — 673
+  - `crates/rune-tui/src/dispatch.rs` — 526
+  - `crates/rune-tui/src/document/mod.rs` — 523 (the hydrate-cursor char-boundary fix pushed this over; split candidate: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
+  - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
+  - `crates/rune-db/src/writer.rs` — 532 (split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
+  - `crates/rune-syntax/src/wrap/mod.rs` — 513
+  - `crates/rune-tui/src/footer.rs` — 512
+  - `crates/rune-md/src/catalogue.rs` — 512
+  - `crates/rune-fuzz/src/driver/mod.rs` — 508
+  - `crates/rune-tui/src/focus.rs` — 506
+  - `crates/rune-syntax/src/syntax.rs` — 505
+  - `crates/rune-fuzz/src/script/decode.rs` — 503
+  - `crates/rune-tui/src/save/materialize.rs` — 523 (crossed the threshold in the G7 fix: `materialize_now` now reads `expect_obs` off `App::file_bindings` instead of `DocDb` directly, then grew further in the review-fixes pass refusing a missing file binding explicitly instead of a `0` sentinel; split candidate: move `run_materialize_vfs`'s `force_publish`/`capture_and_swap_publish` helpers to a sibling `force_publish.rs`)
+- **Wrong**: 31 source files exceed the 500-line house rule, none ledgered.
+- **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
+- **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
+
+### Comment purge (the refactor itself)
+- **Where**: `crates/rune-tui` broadly — comments are roughly a third of the crate, rustdoc included
+- **Wrong**: a paragraph-long justification comment indicts the code it justifies — the code is the refactor candidate, not the comment.
+- **Instead**: apply the heuristic crate-wide: keep only complex-algorithm explanations (inside the function), third-party quirks that save real debugging time, and constraints no type/name/test can carry; delete the rest by cleaning the code they were defending.
+- **Done when**: the purge has run and each surviving comment matches one of the three legitimate categories above.

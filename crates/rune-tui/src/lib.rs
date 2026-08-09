@@ -1,0 +1,66 @@
+//! rune-tui: the Elm-style runtime, terminal lifecycle, keymap resolver, and
+//! editor UI. Depends on rune-core and rune-md; owns the one place in the
+//! workspace that talks to a real terminal (`term::Guard`).
+
+pub mod app;
+mod app_view;
+pub mod binding;
+pub mod breadcrumb;
+pub mod breadcrumb_layout;
+pub mod clipboard;
+pub mod commands;
+pub mod db;
+pub mod db_ack;
+mod db_dispatch;
+pub mod db_enqueue;
+mod dispatch;
+pub mod document;
+pub mod document_map;
+pub mod document_support;
+pub mod explorer;
+pub mod explorer_dirload;
+pub mod explorer_keys;
+pub mod explorer_preview;
+pub mod explorer_reveal;
+pub mod explorer_search;
+pub mod field;
+pub mod fileicons;
+mod filesearch;
+pub mod focus;
+pub mod footer;
+pub mod footer_hints;
+pub mod global;
+pub mod graphics;
+pub mod guard;
+pub mod help;
+pub mod highlight;
+pub mod keymap;
+pub mod layout;
+pub mod linemap;
+pub mod listnav;
+pub mod materialize_ack;
+pub mod merge;
+pub mod messages;
+pub mod navigate;
+pub mod opentabs;
+pub mod pane;
+pub mod pointer;
+pub mod read_only;
+pub mod rename;
+pub mod rename_create;
+pub mod render;
+pub mod row_meta;
+pub mod runtime;
+pub mod save;
+mod search;
+pub mod split;
+pub mod term;
+#[cfg(any(test, feature = "testgrid"))]
+pub mod testgrid;
+pub mod theme;
+pub mod title;
+pub mod trash;
+pub mod viewport;
+pub mod width;
+pub mod workspace;
+pub mod workspaceroot;

@@ -1,0 +1,29 @@
+[package]
+name = "rune-cli"
+version = "1.2.0"
+edition.workspace = true
+description = "TUI markdown editor that protects your words"
+homepage = "https://github.com/aka-rider/rune"
+repository = "https://github.com/aka-rider/rune"
+license = "MIT"
+
+[[bin]]
+name = "rune"
+path = "src/main.rs"
+
+[dependencies]
+rune-core = { path = "../rune-core" }
+rune-db = { path = "../rune-db" }
+rune-tui = { path = "../rune-tui" }
+rune-vfs = { path = "../rune-vfs" }
+
+[dev-dependencies]
+# Test-only, direct sqlite access (plan WP3): simulating a genuinely dead
+# prior session in `a_dead_sessions_untitled_draft_is_recovered_on_the_next_
+# launch` needs to stamp the `sessions` row through a raw connection —
+# `rune-db` deliberately exposes no such escape hatch from its own public
+# API (decision 11: "no table-level CRUD escapes the crate").
+rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
+
+[lints]
+workspace = true

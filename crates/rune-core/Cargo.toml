@@ -1,0 +1,29 @@
+[package]
+name = "rune-core"
+version = "0.1.0"
+edition.workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
+# Self-dependency trick: `cfg(test)` alone only enables `STRICT_INVARIANTS`
+# for THIS crate's own `#[cfg(test)] mod tests` (compiled with `--cfg
+# test`) — an integration test under `tests/` links the library as an
+# ORDINARY (non-test) dependency, so `cfg(test)` is false there and the
+# strict asserts would never fire for `tests/buffer_roundtrip.rs`'s
+# full-pipeline scenarios. Listing the crate as its own dev-dependency with
+# the feature enabled makes Cargo's feature unification turn
+# `strict-invariants` on for every use of `rune-core` within a `cargo test`
+# build — unit tests AND integration tests alike (mirrors `rune-md`'s own
+# Cargo.toml).
+rune-core = { path = ".", features = ["strict-invariants"] }
+
+[features]
+# Opts a non-test build into the same producer-bug invariant checks test
+# builds always run (see `lib.rs`'s module docs) — e.g. a debug binary a
+# developer wants to run with strict checking on. Never enabled by
+# default: an ordinary shipped build must degrade gracefully on a
+# producer-bug invariant violation, never panic on a user's document.
+strict-invariants = []
+
+[lints]
+workspace = true

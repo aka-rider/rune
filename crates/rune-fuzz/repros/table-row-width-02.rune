@@ -1,0 +1,2 @@
+content # Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n
+resize 7 9

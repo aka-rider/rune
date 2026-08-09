@@ -1,0 +1,263 @@
+//! Cell-model invariants: `CELL-OFFSET`/`CELL-NO-EOL`/`CELL-ORDER` over
+//! `Snapshot.cells`, plus the pure comparator half of `SYNC-IDEMPOTENT`.
+//!
+//! `SYNC-IDEMPOTENT` itself needs a SECOND live `app.sync_view()` call with
+//! no intervening message — it is a comparison of two consecutive renders
+//! of the same settled state, not a property of one `Snapshot` — so
+//! `driver.rs` drives the two `render::build_rows` calls directly against
+//! `&mut App` (G6 proves this is a genuine fixpoint: `Document::view` never
+//! reads `viewport.scroll_row`, and `Viewport::reconcile` converges in one
+//! call, plan WP7.S1) and hands the results to `sync_idempotent` below,
+//! which is the actual pure, hand-testable assertion.
+
+use rune_tui::render::Cell;
+
+use super::Violation;
+use crate::snapshot::Snapshot;
+
+/// `SYNC-IDEMPOTENT`'s display-pipeline half — compares the production
+/// (WP16-memoized) render already cached on `Document` against a
+/// cache-BYPASSED rebuild from the exact same already-synced inputs
+/// (`DocMachine::force_rebuild`, `driver/checks.rs`). Once `snapshot()`
+/// memoizes on a `dirty` flag, comparing two ordinary `sync_view()` calls
+/// would only ever compare a memo hit against itself — trivially equal
+/// regardless of whether the underlying emit -> wrap -> display pass is
+/// actually a fixpoint (CODE-REVIEW.md rune-fuzz finding 1). Forcing a
+/// genuine second rebuild is what makes this check able to fail again.
+/// Active-document-switch-safe: both row sets come from the SAME already-
+/// synced active document (`driver/checks.rs::sync_idempotent_check`) with
+/// no message, let alone a document switch, between them.
+pub fn sync_idempotent_rebuild(
+    production_rows: &[Vec<Cell>],
+    rebuilt_rows: &[Vec<Cell>],
+) -> Option<Violation> {
+    if production_rows != rebuilt_rows {
+        return Some(Violation {
+            id: "SYNC-IDEMPOTENT",
+            message: format!(
+                "a cache-bypassed rebuild from the same synced inputs produced different rows \
+                 than the memoized production render ({} rows production, {} rows rebuilt)",
+                production_rows.len(),
+                rebuilt_rows.len()
+            ),
+        });
+    }
+    None
+}
+
+/// `SYNC-IDEMPOTENT`'s scroll half — `rows_before`/`scroll_before` are
+/// captured immediately before a second, message-free `app.sync_view()`;
+/// `rows_after`/`scroll_after` immediately after. `rows_before`/
+/// `rows_after` are both ordinary (memoized) production renders here — a
+/// genuine display-pipeline regression is caught by
+/// [`sync_idempotent_rebuild`] above instead, since a memo hit would make
+/// the row comparison here vacuous; this pair still catches a
+/// non-settling `Viewport::reconcile` scroll, which memoization never
+/// masks (G6).
+/// Active-document-switch-safe: both halves are captured around a single,
+/// message-free `app.sync_view()` call (`driver/checks.rs`) — nothing can
+/// switch `app.active` in between.
+pub fn sync_idempotent(
+    rows_before: &[Vec<Cell>],
+    scroll_before: usize,
+    rows_after: &[Vec<Cell>],
+    scroll_after: usize,
+) -> Option<Violation> {
+    if rows_before != rows_after {
+        return Some(Violation {
+            id: "SYNC-IDEMPOTENT",
+            message: format!(
+                "a second sync_view() with no intervening message changed the rendered rows \
+                 ({} rows before, {} rows after)",
+                rows_before.len(),
+                rows_after.len()
+            ),
+        });
+    }
+    if scroll_before != scroll_after {
+        return Some(Violation {
+            id: "SYNC-IDEMPOTENT",
+            message: format!(
+                "a second sync_view() with no intervening message moved scroll_row: \
+                 {scroll_before} -> {scroll_after}"
+            ),
+        });
+    }
+    None
+}
+
+/// `CELL-OFFSET` (L0, sampled per G19) — every
+/// `Cell.buf_offset` is `-1` or a valid, in-bounds, char-boundary byte
+/// offset into `content`; a non-negative offset implies `width >= 1` (a
+/// real buffer byte always renders as at least one cell).
+///
+/// Active-document-switch-safe: L0, checks one `Snapshot`'s `cells` against
+/// its own `content`.
+pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
+    for row in &snap.cells {
+        for cell in row {
+            if cell.buf_offset == -1 {
+                continue;
+            }
+            if cell.buf_offset < 0 {
+                return Some(Violation {
+                    id: "CELL-OFFSET",
+                    message: format!(
+                        "cell buf_offset={} is negative but not the -1 sentinel",
+                        cell.buf_offset
+                    ),
+                });
+            }
+            let offset = cell.buf_offset as usize;
+            if offset > snap.content.len() || !snap.content.is_char_boundary(offset) {
+                return Some(Violation {
+                    id: "CELL-OFFSET",
+                    message: format!(
+                        "cell buf_offset={offset} is out of bounds or not a char boundary \
+                         (content.len()={})",
+                        snap.content.len()
+                    ),
+                });
+            }
+            if cell.width == 0 {
+                return Some(Violation {
+                    id: "CELL-OFFSET",
+                    message: format!("cell at buf_offset={offset} has width=0"),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// `CELL-NO-EOL` (L0, sampled per G19) — no cell's `text` is `\n`
+/// or `\r`: those bytes carry zero display width and must never reach a
+/// rendered cell (`push_grapheme_cells` drops them, `render.rs`). A
+/// grapheme cluster is never a bare `\n`/`\r` plus anything else (both
+/// break grapheme segmentation), so an exact string comparison is safe.
+///
+/// Active-document-switch-safe: L0, single `Snapshot`.
+pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
+    for row in &snap.cells {
+        for cell in row {
+            if cell.text == "\n" || cell.text == "\r" {
+                return Some(Violation {
+                    id: "CELL-NO-EOL",
+                    message: format!(
+                        "cell carries an EOL char {:?} at buf_offset={}",
+                        cell.text, cell.buf_offset
+                    ),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// `CELL-ORDER` (L0, sampled per G19) — within each row, cells
+/// with a real (non-negative) `buf_offset` are non-decreasing left to
+/// right.
+///
+/// Active-document-switch-safe: L0, single `Snapshot`.
+pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
+    for row in &snap.cells {
+        let mut last: Option<i64> = None;
+        for cell in row {
+            if cell.buf_offset < 0 {
+                continue;
+            }
+            if let Some(prev_offset) = last
+                && cell.buf_offset < prev_offset
+            {
+                return Some(Violation {
+                    id: "CELL-ORDER",
+                    message: format!(
+                        "row cell buf_offsets go backwards: {prev_offset} then {}",
+                        cell.buf_offset
+                    ),
+                });
+            }
+            last = Some(cell.buf_offset);
+        }
+    }
+    None
+}
+
+/// `TABLE-ROW-WIDTH` (L0, sampled per G19; plan WP5.S3) — within one
+/// `table_group`, every row (a content row or a synthesised border) has
+/// the same summed cell width. `Snapshot.cells`/`Snapshot.row_meta` are
+/// index-aligned (`rune_tui::row_meta::row_meta` windows the exact same
+/// `viewport.scroll_row`/`height` `render::build_rows` does), so pairing
+/// `cells[i]` with `row_meta[i]` is always the SAME row. A border row
+/// whose width disagrees with its content rows is exactly the defect
+/// class this invariant exists to catch (plan WP5's own docs).
+///
+/// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
+pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
+    let mut first_of_group: std::collections::HashMap<usize, (usize, usize)> =
+        std::collections::HashMap::new();
+    for (i, m) in snap.row_meta.iter().enumerate() {
+        let Some(group) = m.table_group else {
+            continue;
+        };
+        // Only a boxed table pads every row to one shared width. The
+        // Pivoted key-value layout draws no box and is deliberately ragged
+        // — a suppressed header renders blank, a record rule and a
+        // `Label: Value` row differ — so holding it to a single width
+        // would be asserting a property it never had.
+        if !m.boxed {
+            continue;
+        }
+        let Some(row) = snap.cells.get(i) else {
+            continue;
+        };
+        let width: usize = row.iter().map(|c| c.width as usize).sum();
+        match first_of_group.get(&group) {
+            Some(&(first_row, first_width)) if first_width != width => {
+                return Some(Violation {
+                    id: "TABLE-ROW-WIDTH",
+                    message: format!(
+                        "table_group {group}: row {i} has summed width {width}, but row \
+                         {first_row} (same group) has width {first_width}"
+                    ),
+                });
+            }
+            Some(_) => {}
+            None => {
+                first_of_group.insert(group, (i, width));
+            }
+        }
+    }
+    None
+}
+
+/// `TABLE-SYNTHETIC-DECORATIVE` (L0, sampled per G19; plan WP5.S4) — every
+/// cell of a row whose `RowMeta.synthetic` is `true` carries `buf_offset
+/// == -1`: a synthesised border row has no source line at all
+/// (`DisplaySnapshot::expand_tables`'s docs), so none of its cells may
+/// claim a real buffer byte.
+///
+/// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
+pub fn table_synthetic_decorative(snap: &Snapshot) -> Option<Violation> {
+    for (i, m) in snap.row_meta.iter().enumerate() {
+        if !m.synthetic {
+            continue;
+        }
+        let Some(row) = snap.cells.get(i) else {
+            continue;
+        };
+        for cell in row {
+            if cell.buf_offset != -1 {
+                return Some(Violation {
+                    id: "TABLE-SYNTHETIC-DECORATIVE",
+                    message: format!(
+                        "synthetic row {i} has a cell with buf_offset={} \
+                         (must be -1, decorative only)",
+                        cell.buf_offset
+                    ),
+                });
+            }
+        }
+    }
+    None
+}

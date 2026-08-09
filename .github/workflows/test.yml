@@ -12,15 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
-          cache: true
+      # No toolchain input: rust-toolchain.toml at the repo root pins it.
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install build dependencies
-        run: brew install libgit2 pkg-config
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: make fmt
+
+      - name: Lint
+        run: make lint
 
       - name: Test
-        env:
-          CGO_ENABLED: "1"
-        run: make test
+        run: cargo test --workspace
+
+      - name: Strict invariants
+        run: cargo test -p rune-md --features strict-invariants

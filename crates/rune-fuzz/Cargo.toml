@@ -1,0 +1,41 @@
+[package]
+name = "rune-fuzz"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+# strict-invariants on purpose: a dependency does NOT inherit cfg(test), so
+# without this feature rune-core's strict-invariants-gated checks (e.g.
+# undo::reapply's duplicate-post-edit-start check) silently compile out of
+# the fuzzer, and the session fuzzer exists specifically to catch producer
+# bugs those checks detect.
+rune-core = { path = "../rune-core", features = ["strict-invariants"] }
+rune-db = { path = "../rune-db" }
+# `fuzz-hooks` exposes ONLY `DocMachine::force_rebuild` (no
+# `assert_invariant` consequences) — `SYNC-IDEMPOTENT` (`driver/checks.rs`)
+# needs a cache-bypassed rebuild to check WP16's memoized `snapshot()`
+# against a genuine one, not a memo hit. `strict-invariants` (mirrors
+# rune-core above) also turns on `rune-syntax/strict-invariants`
+# transitively (rune-md's own Cargo.toml) — the fuzzer traverses
+# rune-md/rune-syntax snapshots and must not silently compile out their
+# span-coverage/duplicate-claim asserts either.
+rune-md = { path = "../rune-md", features = ["fuzz-hooks", "strict-invariants"] }
+rune-syntax = { path = "../rune-syntax" }
+# strict-invariants on purpose (mirrors rune-core above): `LAYOUT-TILES`
+# (`invariant/pane.rs`) exercises `layout::geometry` at every width the
+# fuzzer resizes to, and without this feature `layout.rs`'s own
+# `assert_invariant` horizontal-tiling checks silently compile out of the
+# fuzzer binary — `cfg(test)` covers only rune-tui's own `cargo test`, not
+# a normal dependency link like this one.
+rune-tui = { path = "../rune-tui", features = ["strict-invariants"] }
+rune-vfs = { path = "../rune-vfs" }
+rune-ts = { path = "../rune-ts" }
+base64 = { workspace = true }
+unicode-segmentation = { workspace = true }
+ratatui = { workspace = true }
+# A normal (not dev) dependency: the generators live in `src/generate.rs` so the
+# fuzz target, the tripwire, and the replay test all share one grammar.
+proptest = { workspace = true }
+
+[lints]
+workspace = true

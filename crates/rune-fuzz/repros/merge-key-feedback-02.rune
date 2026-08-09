@@ -1,0 +1,7 @@
+content 
+type hello world
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key up -a-u

@@ -1,0 +1,72 @@
+[package]
+name = "rune-tui"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+rune-core = { path = "../rune-core" }
+rune-db = { path = "../rune-db" }
+rune-image = { workspace = true }
+rune-md = { path = "../rune-md" }
+rune-merge = { path = "../rune-merge" }
+rune-nav = { path = "../rune-nav" }
+rune-syntax = { path = "../rune-syntax" }
+rune-ts = { path = "../rune-ts" }
+rune-vfs = { path = "../rune-vfs" }
+ratatui = { workspace = true, features = ["termina"] }
+# `unstable-backend-writer` (plan WP4.S5): `theme::probe::supports_truecolor`
+# needs the raw `termina::Terminal` underneath ratatui's backend (to write
+# the DA1 query and poll/read its reply) — `TerminaBackend::terminal_mut`
+# is gated behind this feature. Everything else `term::Guard` does still
+# goes through plain `io::Write`, unaffected (see its own module docs).
+ratatui-termina = { workspace = true, features = ["unstable-backend-writer"] }
+termina = { workspace = true }
+base64 = { workspace = true }
+catppuccin = { version = "2.8.0", default-features = false }
+unicode-segmentation = { workspace = true }
+nucleo-matcher = { workspace = true }
+ignore = { workspace = true }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+rune-core = { path = "../rune-core" }
+# Unifies in `test-support` (`Store::kill_writer_for_test`/
+# `probe_blocking_for_test`, `OpKind::KillWriterForTest`) for every test/
+# dev target only — the same double-listing trick as the `rune-tui`
+# self-dependency below: Cargo unifies this crate's features across the
+# whole dependency graph for a given build, but a dev-dependency entry
+# never applies to `cargo build --release -p rune-db`'s own production
+# artifact, only to `rune-tui`'s test/bench/example targets.
+rune-db = { path = "../rune-db", features = ["test-support"] }
+# Test-only: an INDEPENDENT width oracle for `breadcrumb.rs`'s gate tests
+# (plan WP8, [rune-tui C 14]) — computed straight from `unicode_width`
+# rather than by calling this crate's own `width`/`rune_syntax::wrap`
+# chokepoint, so a regression in the production width math can't pass a
+# test that merely re-invokes the same broken function.
+unicode-width = { workspace = true }
+# Self-dependency trick (Cargo permits it for dev-dependencies): pulls in
+# THIS crate again with `testgrid` and `strict-invariants` turned on, so
+# feature unification enables `crate::testgrid` and `layout::geometry`'s
+# strict asserts for every integration test in `tests/` without needing
+# `--features` on the command line — `cargo test --workspace` (the
+# Makefile's `test` target) sees both automatically. Without this,
+# `cfg(test)` alone would only arm `layout.rs`'s asserts for its own
+# `#[cfg(test)] mod tests`, never for `tests/layout.rs`, which links the
+# library as an ordinary (non-test) dependency.
+rune-tui = { path = ".", features = ["testgrid", "strict-invariants"] }
+
+[features]
+# Exposes `testgrid` (plan WP1.S1) to integration tests, which link the
+# library WITHOUT `cfg(test)` — see the dev-dependency self-reference above.
+testgrid = []
+# Opts a non-test build into the same horizontal-tiling invariant checks
+# test builds always run (`layout::geometry`'s module docs) — e.g. a debug
+# binary a developer wants to run with strict checking on, or the fuzzer
+# (never enabled by default: an ordinary shipped build must degrade
+# gracefully on a producer-bug invariant violation, never panic on a
+# user's session).
+strict-invariants = []
+
+[lints]
+workspace = true
