@@ -24,13 +24,7 @@ pub(crate) fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadErro
     let bytes = match rune_vfs::get(vfs, path, Some(MAX_DOCUMENT_BYTES)) {
         Ok(sighting) => sighting.bytes,
         Err(GetRefusal::NotFound) => Vec::new(),
-        Err(GetRefusal::Io(e)) => return Err(LoadError::Io(e)),
-        Err(refusal) => {
-            return Err(LoadError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                refusal.to_string(),
-            )));
-        }
+        Err(refusal) => return Err(LoadError::Io(refusal.into())),
     };
     Buffer::from_bytes(bytes).map_err(|e| match e {
         BufferError::InvalidUtf8 => LoadError::InvalidUtf8,

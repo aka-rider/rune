@@ -332,6 +332,39 @@ fn an_unconfirmed_hash_equal_disk_refuses_the_save_as_a_conflict() {
     );
 }
 
+/// A commit whose post-publish stat bracket never settles (a racer in the
+/// publish-to-stat gap) must never masquerade as a stable observation:
+/// the outcome still commits, but `confirmed: false`.
+#[test]
+fn a_flapping_post_publish_stat_commits_unconfirmed() {
+    let path = Path::new("/doc.md");
+    let inner = Mem::new();
+    publish(&inner, path, b"the baseline");
+    let vfs = FlappingStatVfs {
+        inner,
+        calls: AtomicUsize::new(0),
+    };
+    let expect_hash = rune_db::hash_bytes(b"the baseline");
+
+    let outcome = run_materialize_vfs(
+        &vfs,
+        path,
+        false,
+        "new content",
+        &expect_hash,
+        None,
+        SaveMode::Force,
+    );
+
+    match outcome {
+        MaterializeVfsOutcome::Committed { confirmed, .. } => {
+            assert!(!confirmed, "a churning post-publish stat must not confirm");
+        }
+        other => panic!("expected a committed save, got {other:?}"),
+    }
+    assert_eq!(vfs.read(path).unwrap(), b"new content");
+}
+
 /// A publish whose durability confirmation failed is physical success:
 /// reported committed, `durable: false` riding along so the ack side can
 /// warn instead of failing the save.

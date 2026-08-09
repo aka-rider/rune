@@ -346,24 +346,31 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
     let was_capturing = matches!(app.rename, RenameState::Capturing { .. });
 
     match result {
-        Ok(RenameOutcome::Renamed { to }) => {
+        Ok(RenameOutcome::Renamed { to, durable }) => {
             let created = from.as_os_str().is_empty();
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
             let verb = if created { "created" } else { "renamed to" };
             messages::info(app, format!("{verb} {}", display_name(&to)));
+            if !durable {
+                messages::warn(app, crate::materialize_ack::DURABILITY_UNCONFIRMED_WARNING);
+            }
         }
         Ok(RenameOutcome::Replaced { displaced }) => {
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
-            let byte_count = displaced.size.map(|s| format!("{s} ")).unwrap_or_default();
-            messages::info(
-                app,
-                format!(
-                    "replaced {} \u{2014} its {byte_count}bytes were preserved in the recovery store",
-                    display_name(&to),
+            let name = display_name(&to);
+            let text = match displaced.size {
+                Some(size) => format!(
+                    "replaced {name} \u{2014} its {size} bytes were preserved in the recovery store"
                 ),
-            );
+                None => {
+                    format!(
+                        "replaced {name} \u{2014} its bytes were preserved in the recovery store"
+                    )
+                }
+            };
+            messages::info(app, text);
         }
         Ok(RenameOutcome::Collided { seen }) => {
             // An empty `from` means this was a draft CREATE, not a rename:

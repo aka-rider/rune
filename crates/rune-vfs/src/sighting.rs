@@ -38,6 +38,18 @@ impl std::fmt::Display for GetRefusal {
 
 impl std::error::Error for GetRefusal {}
 
+impl From<GetRefusal> for io::Error {
+    fn from(refusal: GetRefusal) -> io::Error {
+        match refusal {
+            GetRefusal::Io(e) => e,
+            other @ GetRefusal::NotFound => {
+                io::Error::new(io::ErrorKind::NotFound, other.to_string())
+            }
+            other => io::Error::new(io::ErrorKind::InvalidInput, other.to_string()),
+        }
+    }
+}
+
 fn as_not_found(e: io::Error) -> GetRefusal {
     if e.kind() == io::ErrorKind::NotFound {
         GetRefusal::NotFound
@@ -78,6 +90,21 @@ fn bracketed_get<V: Vfs + ?Sized>(
         attempts += 1;
     }
     Ok(result)
+}
+
+pub(crate) fn bracketed_stat<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> (Option<Stat>, bool) {
+    let mut last = None;
+    for _ in 0..BRACKET_MAX_ATTEMPTS {
+        let first = stat_with_identity(vfs, path);
+        let second = stat_with_identity(vfs, path);
+        if let (Some(a), Some(b)) = (&first, &second)
+            && stat_matches(a, b)
+        {
+            return (second, true);
+        }
+        last = second.or(first);
+    }
+    (last, false)
 }
 
 pub fn get<V: Vfs + ?Sized>(

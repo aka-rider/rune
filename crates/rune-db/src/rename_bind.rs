@@ -43,6 +43,7 @@ pub fn rename_bind(
     rebind(conn, vfs, ds, to, now)?;
     Ok(RenameOutcome::Renamed {
         to: to.to_path_buf(),
+        durable: true,
     })
 }
 
@@ -146,7 +147,8 @@ mod tests {
         assert_eq!(
             out,
             RenameOutcome::Renamed {
-                to: PathBuf::from("/b.md")
+                to: PathBuf::from("/b.md"),
+                durable: true,
             }
         );
         assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"hello");

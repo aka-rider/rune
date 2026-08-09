@@ -70,7 +70,7 @@ pub(crate) fn rename_cmd(
 ) -> Cmd {
     Cmd::new(CmdKind::Rename, move || {
         let result = match vfs.rename_excl(&from, &to) {
-            Ok(()) => Ok(RenameOutcome::Renamed { to }),
+            Ok(()) => Ok(RenameOutcome::Renamed { to, durable: true }),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match vfs.stat(&to) {
                 Ok(seen) => Ok(RenameOutcome::Collided { seen }),
                 Err(e) => Err(e.to_string()),
@@ -146,9 +146,10 @@ fn create_cmd(
             &bytes,
             rune_vfs::PutCondition::IfAbsent,
         ) {
-            Ok(rune_vfs::PutOutcome::Committed { .. }) => {
-                Ok(RenameOutcome::Renamed { to: path.clone() })
-            }
+            Ok(rune_vfs::PutOutcome::Committed { durable, .. }) => Ok(RenameOutcome::Renamed {
+                to: path.clone(),
+                durable,
+            }),
             Ok(rune_vfs::PutOutcome::Conflict { current }) => match current.stat {
                 Some(seen) => Ok(RenameOutcome::Collided { seen }),
                 None => Err("target already exists".to_string()),

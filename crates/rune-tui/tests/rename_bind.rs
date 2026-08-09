@@ -286,6 +286,38 @@ fn naming_a_draft_creates_the_file() {
     );
 }
 
+/// A draft create whose publish took effect but whose durability
+/// confirmation failed is still a success — the file exists and the draft
+/// binds — and the unconfirmed durability is WARNED about, never swallowed.
+#[test]
+fn a_durability_unconfirmed_draft_create_succeeds_and_warns() {
+    let mem = Arc::new(Mem::new());
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+    let mut app = App::new(Buffer::new("draft body"), None, vfs, None);
+
+    send(&mut app, ctrl('r'));
+    type_text(&mut app, "fresh");
+    let mut effects = send(&mut app, plain(KeyCode::Enter));
+
+    mem.fail_after(rune_vfs::OpKind::RenameExcl, std::io::ErrorKind::Other);
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Rename)
+        .expect("a create Cmd");
+    send(&mut app, cmd.run().expect("a reply"));
+
+    assert_eq!(app.rename, RenameState::Idle);
+    let path = active_path(&app).expect("the draft must be bound despite unconfirmed durability");
+    assert_eq!(path.file_name().unwrap(), "fresh.md");
+    assert_eq!(mem.read(&path).unwrap(), b"draft body");
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("durability unconfirmed")),
+        "the unconfirmed durability must be warned about, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+}
+
 /// A draft name that collides gives a FOOTER refusal and never a
 /// `RenameCollision` guard — offering `[R]eplace` would overwrite a foreign
 /// file with a buffer that has no CAS baseline.
