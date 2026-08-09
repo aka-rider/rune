@@ -200,6 +200,12 @@ pub struct PendingOp {
     /// the user's own typing with a stale recovery row's content the
     /// instant the round trip lands.
     pub binding_only: bool,
+    /// True iff this op only READS one document's disk/journal state
+    /// (`Probe`/`Load`/`MergePrep`): its failure means "this document's
+    /// read didn't land", never "the store can't be trusted for recovery",
+    /// so the `DbEvent::Err` router posts a per-document error instead of
+    /// sticky-degrading the whole store.
+    pub doc_scoped: bool,
 }
 
 impl PendingOp {
@@ -212,6 +218,7 @@ impl PendingOp {
             probe_epoch: None,
             merge_gen: None,
             binding_only: false,
+            doc_scoped: false,
         }
     }
 
@@ -224,6 +231,7 @@ impl PendingOp {
             probe_epoch: None,
             merge_gen: None,
             binding_only,
+            doc_scoped: true,
         }
     }
 
@@ -236,6 +244,7 @@ impl PendingOp {
             probe_epoch: None,
             merge_gen: None,
             binding_only: false,
+            doc_scoped: false,
         }
     }
 
@@ -248,6 +257,7 @@ impl PendingOp {
             probe_epoch: Some(save_epoch),
             merge_gen: None,
             binding_only: false,
+            doc_scoped: true,
         }
     }
 
@@ -260,6 +270,7 @@ impl PendingOp {
             probe_epoch: None,
             merge_gen: Some(generation),
             binding_only: false,
+            doc_scoped: true,
         }
     }
 }
