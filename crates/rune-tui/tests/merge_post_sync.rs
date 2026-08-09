@@ -28,9 +28,10 @@ use rune_tui::merge::MergeState;
 use rune_tui::testgrid;
 use rune_vfs::{Mem, Vfs};
 
+use merge_common::db_wiring_common::{app_with_store, publish};
 use merge_common::{
-    app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, reprobe, save_and_ack,
+    bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key, reprobe,
+    save_and_ack,
 };
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched

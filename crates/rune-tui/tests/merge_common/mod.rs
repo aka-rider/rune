@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 #[path = "../db_wiring_common/mod.rs"]
-mod db_wiring_common;
+pub mod db_wiring_common;
 
 use std::path::Path;
 
@@ -21,8 +21,7 @@ use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::Vfs;
 
-#[allow(unused_imports)]
-pub use db_wiring_common::{app_with_store, publish, recv_ok};
+use db_wiring_common::recv_ok;
 
 pub fn bare(code: KeyCode) -> KeyInput {
     KeyInput {

@@ -25,9 +25,8 @@ use rune_tui::merge::MergeState;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use merge_common::{
-    app_with_store, ctrl, drain_one_op_for, external_write, press_key, publish, reprobe,
-};
+use merge_common::db_wiring_common::{app_with_store, publish};
+use merge_common::{ctrl, drain_one_op_for, external_write, press_key, reprobe};
 
 /// Opens `/doc.md`, drains its `Load` ack, and returns the opened
 /// document's id alongside the untitled draft it switched away from (a

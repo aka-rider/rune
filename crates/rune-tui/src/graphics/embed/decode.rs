@@ -14,15 +14,12 @@
 //! document that may hold embeds, never both, so there is no ambiguity to
 //! resolve at that fork.
 
-use std::path::PathBuf;
 use std::sync::Arc;
-
-use rune_vfs::Vfs;
 
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::Effects;
 
 /// Spawns a decode for the embed named `target` in document `id`, iff one
 /// isn't already in flight for it. A no-op if the target isn't tracked at
@@ -53,27 +50,9 @@ pub(crate) fn schedule_embed_decode(
     let vfs = Arc::clone(&app.vfs);
     effects
         .cmds
-        .push(decode_embed_cmd(id, vfs, path, generation));
-}
-
-fn decode_embed_cmd(
-    doc: DocumentId,
-    vfs: Arc<dyn Vfs + Send + Sync>,
-    path: PathBuf,
-    generation: u64,
-) -> Cmd {
-    Cmd::new(CmdKind::ImageDecode, move || {
-        let result = rune_vfs::get(vfs.as_ref(), &path, None)
-            .map_err(|e| e.to_string())
-            .and_then(|sighting| {
-                rune_image::decode_still(&sighting.bytes).map_err(|e| e.to_string())
-            });
-        Some(Msg::ImageDecoded {
-            doc,
-            generation,
-            result,
-        })
-    })
+        .push(super::super::decode_cmd::decode_image_cmd(
+            id, vfs, path, generation,
+        ));
 }
 
 /// Applies a `Msg::ImageDecoded` reply that belongs to an EMBED rather than

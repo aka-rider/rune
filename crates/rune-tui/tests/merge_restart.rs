@@ -24,9 +24,9 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
+use merge_common::db_wiring_common::{publish, recv_ok};
 use merge_common::{
-    bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key, publish,
-    recv_ok,
+    bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
 };
 
 const ANCESTOR: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
@@ -141,6 +141,11 @@ fn merge_resumes_after_restart() {
     assert!(
         rune_tui::messages::log_text(&app_b).contains("merge resumed — 1 conflict(s)"),
         "expected the resume status, got {:?}",
+        rune_tui::messages::log_text(&app_b)
+    );
+    assert!(
+        !rune_tui::messages::log_text(&app_b).contains("[^M]erge to reconcile"),
+        "a resumed merge must not also post the stale ^M invitation, got {:?}",
         rune_tui::messages::log_text(&app_b)
     );
     assert_eq!(

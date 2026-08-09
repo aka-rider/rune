@@ -60,13 +60,13 @@ pub struct Observation {
     /// differs from what was newest a moment before, that prior newest row.
     /// `None` for a legacy/root row, or a sighting that matched the hash
     /// already newest (nothing to chain to).
-    pub parent_a: Option<i64>,
+    pub parent_a: Option<ObsId>,
     /// The version DAG's second lineage edge — the disk-side observation a
     /// two-parent join reconciled against: `adopt::resolve_adopt`'s own
     /// `obs` argument (theirs, being resolved), or `materialize`'s swap-race
     /// capture when a save's publish raced a concurrent external write.
     /// `None` for every one-parent row.
-    pub parent_b: Option<i64>,
+    pub parent_b: Option<ObsId>,
     pub at: String,
     /// `None` for a legacy/unclassified row; `Some(true)` for a sighting
     /// trusted as a stable fact (only such a row may short-circuit a probe,
@@ -156,10 +156,6 @@ pub struct ObservationMeta<'a> {
     pub confirmed: Option<bool>,
 }
 
-/// The two lineage edges a row may carry (the `parent_a`/`parent_b`
-/// columns), bundled so [`insert_observation_row`] takes the same
-/// argument count it always has — see [`StatFacts`]'s doc for why this
-/// crate bundles rather than growing a function's raw parameter list.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ParentEdges {
     pub a: Option<ObsId>,

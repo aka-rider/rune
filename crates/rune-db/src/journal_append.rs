@@ -160,9 +160,7 @@ mod tests {
     /// undid to — under v1's coalescing, the writer seam's `local_seq` still
     /// pushed once per insert while the DB folded all three into ONE row,
     /// so undoing one local step reverted the WHOLE merged row and
-    /// resurrected the undone character. Verified to fail against v1
-    /// behavior by temporarily restoring the coalescing block and rerunning
-    /// this test red before this commit.
+    /// resurrected the undone character.
     #[test]
     fn three_single_char_inserts_then_one_undo_matches_the_buffer() {
         let mut conn = open();

@@ -200,6 +200,24 @@ pub(crate) fn retract_active_on_convergence(
     );
 }
 
+/// Installs the resolver's "name: editor <-> disk" display title on `doc`
+/// and returns the display name it replaced, for `MergeState::Active` to
+/// carry until exit restores it.
+fn install_resolver_display_name(
+    app: &mut App,
+    doc: crate::document::DocumentId,
+) -> Option<String> {
+    let file_name = app
+        .doc(doc)
+        .map(|d| d.file_name().to_string())
+        .unwrap_or_default();
+    let saved_display_name = app.doc(doc).and_then(|d| d.display_name.clone());
+    if let Some(d) = app.doc_mut(doc) {
+        d.display_name = Some(format!("{file_name}: editor <-> disk"));
+    }
+    saved_display_name
+}
+
 /// The one place merge outcomes record a document's fresh sync
 /// classification — render/hint state only, never the CAS baseline (that is
 /// `landing::advance_expect_obs`'s job, gated on terminal success). A no-op

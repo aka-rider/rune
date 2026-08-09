@@ -85,14 +85,18 @@ pub fn handle_load_ack(
         Some(crate::document::Hydration::Refused(reason)) => {
             messages::error(app, format!("crash recovery: {reason}"));
         }
-        // G0: a recovered draft was just installed AND the load's own fresh
+        // A recovered draft was just installed AND the load's own fresh
         // disk sighting genuinely diverges from the baseline it was bridged
-        // from — the root of the false-conflict incident this work package
-        // fixes was rendering exactly this silently, with only a footer
-        // hint. A plain unsaved edit against an unmoved disk (`BufferAhead`)
-        // stays silent — every save already surfaces that ordinarily.
+        // from — rendering this silently, with only a footer hint, once let
+        // a real conflict pass unnoticed.
+        // A plain unsaved edit against an unmoved disk (`BufferAhead`)
+        // stays silent — every save already surfaces that ordinarily. A
+        // resumable merge suppresses the `^M` invitation: the resolver is
+        // about to auto-open below, so inviting a manual merge would be
+        // stale the moment it posted.
         Some(crate::document::Hydration::Adopted)
-            if load_result.sync.kind == rune_db::SyncKind::Diverged =>
+            if load_result.sync.kind == rune_db::SyncKind::Diverged
+                && load_result.resumable_merge.is_none() =>
         {
             messages::warn(
                 app,

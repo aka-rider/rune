@@ -16,6 +16,7 @@ use rune_core::buffer::Buffer;
 use rune_db::{DbEvent, LoadResult, OpOutcome, Store};
 use rune_tui::app::{self, App};
 use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
@@ -141,6 +142,27 @@ pub fn app_with_store(label: &str, vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Arc
     let db = Db::new(store, Arc::clone(&bridge), false);
     let app = App::new(Buffer::new(""), None, vfs, Some(db));
     (app, bridge)
+}
+
+/// Drains the single op currently recorded in `app.db_ops` for `doc`,
+/// feeding its ack through `app::update` exactly as the real runtime loop
+/// would when the op's `DbEvent` arrives on `Msg::Db` — `Err` events
+/// included, so a caller asserting on a failure path gets the event back
+/// rather than a panic.
+pub fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) -> DbEvent {
+    let op_id = *app
+        .db_ops
+        .iter()
+        .find(|(_, pending)| pending.doc == doc)
+        .expect("one op recorded for this document")
+        .0;
+    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
+        DbEvent::Fatal { .. } => true,
+    });
+    let mut effects = Effects::default();
+    app::update(app, Msg::Db(evt.clone()), &mut effects);
+    evt
 }
 
 /// Blocks for the next `DbEvent::Ok` reply to `op_id` buffered on `bridge`,

@@ -16,37 +16,12 @@ mod db_wiring_common;
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_db::{DbEvent, SyncKind};
-use rune_tui::app::{self, App};
+use rune_db::SyncKind;
 use rune_tui::footer::footer_text;
-use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, publish, recv_ok};
-
-/// Drains the single op currently recorded in `app.db_ops` for `doc`,
-/// feeding its ack through `app::update` exactly as the real runtime loop
-/// would when the op's `DbEvent` arrives on `Msg::Db`.
-fn drain_one_op_for(
-    app: &mut App,
-    bridge: &rune_tui::db::DbBridge,
-    doc: rune_tui::document::DocumentId,
-) {
-    let op_id = *app
-        .db_ops
-        .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let result = recv_ok(bridge, op_id);
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
-}
+use db_wiring_common::{app_with_store, drain_one_op_for, publish};
 
 /// Overwrites `/doc.md`'s content in place, simulating an external editor —
 /// `rename_excl` refuses to publish over an existing destination, so the

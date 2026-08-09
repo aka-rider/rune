@@ -33,7 +33,7 @@ pub(crate) fn record_adoption_tx(
     at: &str,
     parent_b: Option<ObsId>,
 ) -> Result<Observation, Error> {
-    let parent_a: Option<i64> = tx
+    let parent_a: Option<ObsId> = tx
         .query_row(
             "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
             params![session_id, doc_id],
@@ -213,7 +213,7 @@ pub fn resolve_abandon(conn: &mut Connection, session_id: i64, doc_id: i64) -> R
             return Ok(()); // no session_documents row, or saved_obs NULL — nothing adopted yet
         };
 
-        let (parent_a, origin): (Option<i64>, String) = tx.query_row(
+        let (parent_a, origin): (Option<ObsId>, String) = tx.query_row(
             "SELECT parent_a, origin FROM observations WHERE id=?1",
             params![current],
             |r| Ok((r.get(0)?, r.get(1)?)),

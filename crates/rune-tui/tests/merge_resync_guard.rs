@@ -25,9 +25,9 @@ use rune_tui::merge::MergeState;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
+use merge_common::db_wiring_common::{app_with_store, publish};
 use merge_common::{
-    app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, reprobe,
+    bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key, reprobe,
 };
 
 /// Three separate conflicts (lines 1, 5, 9), each surrounded by three
