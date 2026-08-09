@@ -24,9 +24,9 @@ use rune_tui::guard::GuardKind;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
+use merge_common::db_wiring_common::{app_with_store, publish};
 use merge_common::{
-    app_with_store, ch, drain_materialize_round_trip, drain_one_op_for, external_write, press_key,
-    publish, save_and_ack,
+    ch, drain_materialize_round_trip, drain_one_op_for, external_write, press_key, save_and_ack,
 };
 
 /// Sets up a document whose disk changed since it was opened, edits the

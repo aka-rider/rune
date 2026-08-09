@@ -14,30 +14,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_db::DbEvent;
-use rune_tui::app::{self, App};
-use rune_tui::db::DbBridge;
-use rune_tui::document::DocumentId;
-use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, press, publish};
-
-fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) -> DbEvent {
-    let op_id = *app
-        .db_ops
-        .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    });
-    let mut effects = Effects::default();
-    app::update(app, Msg::Db(evt.clone()), &mut effects);
-    evt
-}
+use db_wiring_common::{app_with_store, drain_one_op_for, press, publish};
 
 #[test]
 fn probe_missing_file_keeps_store() {

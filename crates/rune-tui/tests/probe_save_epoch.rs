@@ -22,9 +22,9 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
+use merge_common::db_wiring_common::{app_with_store, publish, recv_ok};
 use merge_common::{
-    app_with_store, ch, drain_materialize_round_trip, drain_one_op_for, external_write, press_key,
-    publish, recv_ok, sup,
+    ch, drain_materialize_round_trip, drain_one_op_for, external_write, press_key, sup,
 };
 
 fn fake_version(hash: &str) -> Version {

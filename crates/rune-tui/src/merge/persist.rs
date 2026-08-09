@@ -118,14 +118,7 @@ pub(crate) fn resume_from_store(
         &payload.conflicts,
     );
 
-    let file_name = app
-        .doc(doc)
-        .map(|d| d.file_name().to_string())
-        .unwrap_or_default();
-    let saved_display_name = app.doc(doc).and_then(|d| d.display_name.clone());
-    if let Some(d) = app.doc_mut(doc) {
-        d.display_name = Some(format!("{file_name}: editor <-> disk"));
-    }
+    let saved_display_name = super::install_resolver_display_name(app, doc);
 
     let cur = payload.blocks.iter().position(|b| !b.resolved).unwrap_or(0);
     let target = payload.blocks.get(cur).map(|b| b.start).unwrap_or(0);

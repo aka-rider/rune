@@ -124,6 +124,9 @@ impl Store {
         })
     }
 
+    /// Enqueues a `MergeOpen` op — records the just-entered merge's durable
+    /// row. The ack arrives asynchronously as `DbEvent::Ok.result`
+    /// (`OpOutcome::None`).
     pub fn merge_open(
         &self,
         doc_id: i64,
@@ -146,6 +149,9 @@ impl Store {
         })
     }
 
+    /// Enqueues a `MergeProgress` op — re-records the active merge's working
+    /// form. The ack arrives asynchronously as `DbEvent::Ok.result`
+    /// (`OpOutcome::None`).
     pub fn merge_progress(
         &self,
         doc_id: i64,
@@ -162,6 +168,9 @@ impl Store {
         })
     }
 
+    /// Enqueues a `MergeClose` op — retires the active merge row as `state`.
+    /// The ack arrives asynchronously as `DbEvent::Ok.result`
+    /// (`OpOutcome::None`).
     pub fn merge_close(
         &self,
         doc_id: i64,

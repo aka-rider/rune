@@ -191,14 +191,7 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     }
 
-    let file_name = app
-        .doc(doc)
-        .map(|d| d.file_name().to_string())
-        .unwrap_or_default();
-    let saved_display_name = app.doc(doc).and_then(|d| d.display_name.clone());
-    if let Some(d) = app.doc_mut(doc) {
-        d.display_name = Some(format!("{file_name}: editor <-> disk"));
-    }
+    let saved_display_name = super::install_resolver_display_name(app, doc);
 
     let unresolved = blocks.len();
     super::persist::enqueue_merge_open(

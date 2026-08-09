@@ -28,9 +28,9 @@ use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
+use merge_common::db_wiring_common::{app_with_store, publish, recv_ok};
 use merge_common::{
-    app_with_store, ch, drain_all_ops_for, drain_one_op_for, external_write, press_key, publish,
-    recv_ok, save_and_ack, sup,
+    ch, drain_all_ops_for, drain_one_op_for, external_write, press_key, save_and_ack, sup,
 };
 
 /// Binds a brand-new `Document` (a second tab) onto the SAME `db_id` a
