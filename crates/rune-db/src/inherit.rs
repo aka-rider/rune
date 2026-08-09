@@ -221,7 +221,7 @@ mod tests {
                     confirmed: None,
                 },
                 &observation::StatFacts {
-                    mtime: "t".to_string(),
+                    mtime: Some("t".to_string()),
                     ..Default::default()
                 },
                 "t",
@@ -305,7 +305,7 @@ mod tests {
                     confirmed: None,
                 },
                 &observation::StatFacts {
-                    mtime: "t".to_string(),
+                    mtime: Some("t".to_string()),
                     ..Default::default()
                 },
                 "t",
@@ -376,7 +376,7 @@ mod tests {
                     confirmed: None,
                 },
                 &observation::StatFacts {
-                    mtime: "t".to_string(),
+                    mtime: Some("t".to_string()),
                     ..Default::default()
                 },
                 "t",

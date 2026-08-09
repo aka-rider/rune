@@ -159,6 +159,7 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
             id,
             version,
             result: Ok(()),
+            durable: true,
         },
         &mut effects,
     );
@@ -189,6 +190,7 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
             id,
             version,
             result: Err("disk full".to_string()),
+            durable: true,
         },
         &mut effects,
     );
@@ -234,6 +236,7 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
             id: id_a,
             version: version_a,
             result: Ok(()),
+            durable: true,
         },
         &mut effects,
     );
@@ -248,6 +251,7 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
             id: id_b,
             version: version_b,
             result: Ok(()),
+            durable: true,
         },
         &mut effects,
     );
@@ -289,6 +293,7 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
             id: id_a,
             version: version_a,
             result: Ok(()),
+            durable: true,
         },
         &mut effects,
     );

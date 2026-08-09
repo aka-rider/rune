@@ -7,6 +7,10 @@ impl Etag {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn from_stored(hash: impl Into<String>) -> Etag {
+        Etag(hash.into())
+    }
 }
 
 impl std::fmt::Display for Etag {

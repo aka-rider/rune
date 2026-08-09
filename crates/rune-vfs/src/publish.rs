@@ -1,5 +1,5 @@
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::sighting::{GetRefusal, Sighting, get};
 use crate::{Etag, Stat, Vfs, etag_of, published_not_durable};
@@ -52,8 +52,6 @@ fn current_sighting<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<Option<
     }
 }
 
-type PutAndTemp = (PutOutcome, Option<PathBuf>);
-
 fn finish_over_existing<V: Vfs + ?Sized>(
     vfs: &V,
     path: &Path,
@@ -61,7 +59,7 @@ fn finish_over_existing<V: Vfs + ?Sized>(
     publish: io::Result<()>,
     new_etag: &Etag,
     race_baseline: &Etag,
-) -> io::Result<PutAndTemp> {
+) -> io::Result<PutOutcome> {
     let durable = match publish {
         Ok(()) => true,
         Err(e) if published_not_durable(&e) => false,
@@ -77,6 +75,9 @@ fn finish_over_existing<V: Vfs + ?Sized>(
         confirmed: true,
         bytes: displaced_bytes,
     };
+    if durable {
+        let _ = vfs.remove(temp);
+    }
     let stat = vfs.stat(path).ok();
     let outcome = if &displaced.etag != race_baseline {
         PutOutcome::Raced {
@@ -92,7 +93,7 @@ fn finish_over_existing<V: Vfs + ?Sized>(
             durable,
         }
     };
-    Ok((outcome, Some(temp.to_path_buf())))
+    Ok(outcome)
 }
 
 fn put_if_match<V: Vfs + ?Sized>(
@@ -100,18 +101,18 @@ fn put_if_match<V: Vfs + ?Sized>(
     path: &Path,
     bytes: &[u8],
     expect: &Etag,
-) -> io::Result<PutAndTemp> {
+) -> io::Result<PutOutcome> {
     let Some(mut sighting) = current_sighting(vfs, path)? else {
-        return Ok((PutOutcome::Missing, None));
+        return Ok(PutOutcome::Missing);
     };
-    if !sighting.confirmed {
+    if !sighting.confirmed || &sighting.etag != expect {
         let Some(retry) = current_sighting(vfs, path)? else {
-            return Ok((PutOutcome::Missing, None));
+            return Ok(PutOutcome::Missing);
         };
         sighting = retry;
     }
     if !sighting.confirmed || &sighting.etag != expect {
-        return Ok((PutOutcome::Conflict { current: sighting }, None));
+        return Ok(PutOutcome::Conflict { current: sighting });
     }
     let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
@@ -120,18 +121,15 @@ fn put_if_match<V: Vfs + ?Sized>(
     finish_over_existing(vfs, &dest, &temp, publish, &new_etag, expect)
 }
 
-fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Result<PutAndTemp> {
+fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Result<PutOutcome> {
     let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
     match vfs.rename_excl(&temp, &dest) {
-        Ok(()) => Ok((
-            PutOutcome::Committed {
-                etag: etag_of(bytes),
-                stat: vfs.stat(&dest).ok(),
-                durable: true,
-            },
-            None,
-        )),
+        Ok(()) => Ok(PutOutcome::Committed {
+            etag: etag_of(bytes),
+            stat: vfs.stat(&dest).ok(),
+            durable: true,
+        }),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             let _ = vfs.remove(&temp);
             let current = current_sighting(vfs, &dest)?.ok_or_else(|| {
@@ -140,16 +138,13 @@ fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Res
                     "winner vanished after AlreadyExists",
                 )
             })?;
-            Ok((PutOutcome::Conflict { current }, None))
+            Ok(PutOutcome::Conflict { current })
         }
-        Err(e) if published_not_durable(&e) => Ok((
-            PutOutcome::Committed {
-                etag: etag_of(bytes),
-                stat: vfs.stat(&dest).ok(),
-                durable: false,
-            },
-            None,
-        )),
+        Err(e) if published_not_durable(&e) => Ok(PutOutcome::Committed {
+            etag: etag_of(bytes),
+            stat: vfs.stat(&dest).ok(),
+            durable: false,
+        }),
         Err(e) => Err(e),
     }
 }
@@ -159,28 +154,22 @@ fn put_force<V: Vfs + ?Sized>(
     path: &Path,
     bytes: &[u8],
     expect: Option<&Etag>,
-) -> io::Result<PutAndTemp> {
+) -> io::Result<PutOutcome> {
     let dest = vfs.resolve(path)?;
     let dest_existed = vfs.stat(&dest).is_ok();
     let temp = vfs.write_durable(&dest, bytes)?;
     if !dest_existed {
         return match vfs.rename_excl(&temp, &dest) {
-            Ok(()) => Ok((
-                PutOutcome::Committed {
-                    etag: etag_of(bytes),
-                    stat: vfs.stat(&dest).ok(),
-                    durable: true,
-                },
-                None,
-            )),
-            Err(e) if published_not_durable(&e) => Ok((
-                PutOutcome::Committed {
-                    etag: etag_of(bytes),
-                    stat: vfs.stat(&dest).ok(),
-                    durable: false,
-                },
-                None,
-            )),
+            Ok(()) => Ok(PutOutcome::Committed {
+                etag: etag_of(bytes),
+                stat: vfs.stat(&dest).ok(),
+                durable: true,
+            }),
+            Err(e) if published_not_durable(&e) => Ok(PutOutcome::Committed {
+                etag: etag_of(bytes),
+                stat: vfs.stat(&dest).ok(),
+                durable: false,
+            }),
             Err(e) => {
                 let _ = vfs.remove(&temp);
                 Err(e)
@@ -193,26 +182,17 @@ fn put_force<V: Vfs + ?Sized>(
     finish_over_existing(vfs, &dest, &temp, publish, &new_etag, &race_baseline)
 }
 
-pub(crate) fn put_and_temp<V: Vfs + ?Sized>(
-    vfs: &V,
-    path: &Path,
-    bytes: &[u8],
-    cond: PutCondition,
-) -> io::Result<PutAndTemp> {
-    match cond {
-        PutCondition::IfMatch(expect) => put_if_match(vfs, path, bytes, &expect),
-        PutCondition::IfAbsent => put_if_absent(vfs, path, bytes),
-        PutCondition::Force { expect } => put_force(vfs, path, bytes, expect.as_ref()),
-    }
-}
-
 pub fn put<V: Vfs + ?Sized>(
     vfs: &V,
     path: &Path,
     bytes: &[u8],
     cond: PutCondition,
 ) -> io::Result<PutOutcome> {
-    put_and_temp(vfs, path, bytes, cond).map(|(outcome, _)| outcome)
+    match cond {
+        PutCondition::IfMatch(expect) => put_if_match(vfs, path, bytes, &expect),
+        PutCondition::IfAbsent => put_if_absent(vfs, path, bytes),
+        PutCondition::Force { expect } => put_force(vfs, path, bytes, expect.as_ref()),
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +332,33 @@ mod tests {
             PutOutcome::Committed { durable: false, .. }
         ));
         assert_eq!(vfs.read(path).unwrap(), b"original");
+        assert_eq!(
+            vfs.debug_paths().len(),
+            2,
+            "an unconfirmed-durability publish must keep the sibling temp"
+        );
+    }
+
+    #[test]
+    fn a_durable_commit_leaves_no_temp_residue() {
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish_direct(&vfs, path, b"original");
+
+        let outcome = put(
+            &vfs,
+            path,
+            b"updated",
+            PutCondition::Force {
+                expect: Some(etag_of(b"original")),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            PutOutcome::Committed { durable: true, .. }
+        ));
+        assert_eq!(vfs.debug_paths().len(), 1);
     }
 
     #[test]

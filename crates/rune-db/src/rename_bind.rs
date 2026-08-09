@@ -76,6 +76,14 @@ mod tests {
         conn.last_insert_rowid()
     }
 
+    fn disk(vfs: &Mem, path: &Path) -> Vec<u8> {
+        rune_vfs::get(vfs, path, None).expect("disk content").bytes
+    }
+
+    fn gone(vfs: &Mem, path: &Path) -> bool {
+        rune_vfs::get(vfs, path, None).is_err()
+    }
+
     fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
         let temp = vfs.write_durable(path, bytes).expect("write_durable");
         vfs.rename_excl(&temp, path).expect("publish");
@@ -141,8 +149,8 @@ mod tests {
                 to: PathBuf::from("/b.md")
             }
         );
-        assert_eq!(f.vfs.read(Path::new("/b.md")).expect("read to"), b"hello");
-        assert!(f.vfs.read(Path::new("/a.md")).is_err(), "from must be gone");
+        assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"hello");
+        assert!(gone(&f.vfs, Path::new("/a.md")), "from must be gone");
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");
 
         let after = f.vfs.stat(Path::new("/b.md")).expect("stat after");
@@ -177,8 +185,8 @@ mod tests {
         .expect("collision is a refusal, not an error");
 
         assert_eq!(out, RenameOutcome::Collided { seen: expected });
-        assert_eq!(f.vfs.read(Path::new("/a.md")).expect("a intact"), b"ours");
-        assert_eq!(f.vfs.read(Path::new("/b.md")).expect("b intact"), b"theirs");
+        assert_eq!(disk(&f.vfs, Path::new("/a.md")), b"ours");
+        assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"theirs");
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/a.md");
         assert_eq!(obs_count(&f.conn), obs_before);
     }
@@ -203,8 +211,8 @@ mod tests {
         .expect_err("permission denied must surface");
         assert!(matches!(err, Error::Io(_)));
 
-        assert_eq!(f.vfs.read(Path::new("/a.md")).expect("a intact"), b"ours");
-        assert!(f.vfs.read(Path::new("/b.md")).is_err());
+        assert_eq!(disk(&f.vfs, Path::new("/a.md")), b"ours");
+        assert!(gone(&f.vfs, Path::new("/b.md")));
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/a.md");
     }
 }

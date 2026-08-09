@@ -28,6 +28,38 @@ fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
 }
 
+/// A publish whose durability confirmation failed is still a SUCCESS —
+/// reported as saved, with a warning, never as a save failure (the same
+/// verdict the store-backed path gives the identical physical state).
+#[test]
+fn save_done_ok_with_durable_false_succeeds_and_warns() {
+    let mut app = test_app();
+    let id = app.active;
+    let version = app.doc(id).unwrap().buffer.version();
+
+    let mut effects = Effects::default();
+    update(
+        &mut app,
+        Msg::SaveDone {
+            id,
+            version,
+            result: Ok(()),
+            durable: false,
+        },
+        &mut effects,
+    );
+
+    let log = rune_tui::messages::log_text(&app);
+    assert!(
+        log.contains("durability unconfirmed"),
+        "an unconfirmed-durability save must warn: {log:?}"
+    );
+    assert!(
+        !log.contains("save failed"),
+        "physical success must never be reported as a failure: {log:?}"
+    );
+}
+
 /// The log is append-only: a save failure's entry stays in the log even
 /// after a LATER save on the same document succeeds — a success posts
 /// nothing at all, so there is nothing to clear.
@@ -44,6 +76,7 @@ fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log
             id,
             version,
             result: Err("oops".to_string()),
+            durable: true,
         },
         &mut effects,
     );
@@ -56,6 +89,7 @@ fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log
             id,
             version,
             result: Ok(()),
+            durable: true,
         },
         &mut effects2,
     );
@@ -86,6 +120,7 @@ fn save_done_ok_keeps_an_unrelated_log_entry() {
             id,
             version,
             result: Ok(()),
+            durable: true,
         },
         &mut effects2,
     );
@@ -117,6 +152,7 @@ fn save_done_err_surfaces_status_and_keeps_dirty() {
             id,
             version,
             result: Err("disk full".to_string()),
+            durable: true,
         },
         &mut effects,
     );

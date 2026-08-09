@@ -26,7 +26,7 @@ pub use disk::Disk;
 pub use etag::{Etag, etag_of};
 pub use mem::{Mem, OpKind};
 pub use publish::{PutCondition, PutOutcome, put};
-pub use sighting::{GetRefusal, Sighting, get};
+pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighting, get};
 
 /// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping
 /// `e` itself reachable as [`std::error::Error::source`] — so a caller can
@@ -244,19 +244,10 @@ pub trait Vfs {
     /// way). Kept only so existing callers (the plain `super+s` save path)
     /// keep working unchanged through this work package.
     fn save_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        let (outcome, temp) =
-            publish::put_and_temp(self, path, bytes, PutCondition::Force { expect: None })?;
+        let outcome = publish::put(self, path, bytes, PutCondition::Force { expect: None })?;
         match outcome {
             PutOutcome::Committed { durable: true, .. }
-            | PutOutcome::Raced { durable: true, .. } => {
-                // This convenience has no caller to hand displaced bytes to,
-                // so whatever the swap displaced is discarded here — see the
-                // doc comment above.
-                if let Some(temp) = temp {
-                    let _ = self.remove(&temp);
-                }
-                Ok(())
-            }
+            | PutOutcome::Raced { durable: true, .. } => Ok(()),
             PutOutcome::Committed { durable: false, .. }
             | PutOutcome::Raced { durable: false, .. } => {
                 // The publish already took effect but its durability could

@@ -263,8 +263,8 @@ mod tests {
                 confirmed: None,
             },
             &StatFacts {
-                size: 1,
-                mtime: "t".to_string(),
+                size: Some(1),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",
@@ -283,8 +283,8 @@ mod tests {
 
         let tx = conn.transaction().expect("tx");
         let stat = StatFacts {
-            size: 1,
-            mtime: "t".to_string(),
+            size: Some(1),
+            mtime: Some("t".to_string()),
             ..Default::default()
         };
 

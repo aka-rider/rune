@@ -24,7 +24,6 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 use rune_vfs::Vfs;
 
 use crate::Error;
-use crate::session::format_rfc3339_nanos;
 
 /// Identifies a row in `observations`. AUTOINCREMENT ids start at 1 — the
 /// zero value is never a valid observation.
@@ -46,8 +45,8 @@ pub struct Observation {
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible) — a bare sighting.
     pub seq: Option<i64>,
-    pub size: i64,
-    pub mtime: String,
+    pub size: Option<i64>,
+    pub mtime: Option<String>,
     pub inode: Option<i64>,
     pub device: Option<i64>,
     pub nlink: Option<i64>,
@@ -128,8 +127,8 @@ fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
 /// failed or exposed no usable identity, never a literal `0` (D12/D13).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatFacts {
-    pub size: i64,
-    pub mtime: String,
+    pub size: Option<i64>,
+    pub mtime: Option<String>,
     pub inode: Option<i64>,
     pub device: Option<i64>,
     pub nlink: Option<i64>,
@@ -139,16 +138,7 @@ pub struct StatFacts {
 /// no DB access, so callers control exactly when this (disk I/O) runs
 /// relative to any open transaction.
 pub fn stat_identity(vfs: &dyn Vfs, path: &Path) -> StatFacts {
-    match vfs.stat(path) {
-        Ok(st) => StatFacts {
-            size: st.size as i64,
-            mtime: format_rfc3339_nanos(st.mtime),
-            inode: st.identity.inode.map(|v| v as i64),
-            device: st.identity.device.map(|v| v as i64),
-            nlink: st.nlink.map(|v| v as i64),
-        },
-        Err(_) => StatFacts::default(),
-    }
+    crate::bracket::stat_facts_from(vfs.stat(path).ok())
 }
 
 /// The non-stat facts describing what an observation records — bundled with
@@ -476,8 +466,8 @@ mod tests {
         let hash_b = seed_blob(&tx, "content b");
 
         let stat = StatFacts {
-            size: 1,
-            mtime: "t".to_string(),
+            size: Some(1),
+            mtime: Some("t".to_string()),
             ..Default::default()
         };
         record_observation(
@@ -536,8 +526,8 @@ mod tests {
                 confirmed: None,
             },
             &StatFacts {
-                size: 1,
-                mtime: "t".to_string(),
+                size: Some(1),
+                mtime: Some("t".to_string()),
                 ..Default::default()
             },
             "t",

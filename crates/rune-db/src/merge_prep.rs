@@ -219,8 +219,8 @@ mod tests {
         let doc_id = conn.last_insert_rowid();
 
         let stat = observation::StatFacts {
-            size: 1,
-            mtime: "t".to_string(),
+            size: Some(1),
+            mtime: Some("t".to_string()),
             ..Default::default()
         };
         let hash_baseline = {
@@ -346,7 +346,7 @@ mod tests {
                     confirmed: None,
                 },
                 &crate::observation::StatFacts {
-                    mtime: "t".to_string(),
+                    mtime: Some("t".to_string()),
                     ..Default::default()
                 },
                 "t",

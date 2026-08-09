@@ -128,10 +128,11 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     };
 }
 
-/// The no-store draft-create `Cmd`: durable temp write, then a no-clobber
-/// `rename_excl` publish. On `AlreadyExists` the temp is genuinely
-/// unneeded — the existing file is untouched and stays the winner — so it
-/// is removed and the create refused.
+/// The no-store draft-create `Cmd`: a no-clobber `rune_vfs::put`
+/// (`IfAbsent` — durable temp write, then `rename_excl`). A losing race
+/// comes back as `Collided` with the winner's stat (the temp is removed,
+/// the winner untouched); a non-collision publish failure keeps the temp —
+/// the only place these bytes physically exist outside the buffer.
 fn create_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
@@ -139,25 +140,22 @@ fn create_cmd(
     generation: u32,
 ) -> Cmd {
     Cmd::new(CmdKind::Rename, move || {
-        let result = (|| {
-            let temp = vfs
-                .write_durable(&path, &bytes)
-                .map_err(|e| e.to_string())?;
-            match vfs.rename_excl(&temp, &path) {
-                Ok(()) => Ok(RenameOutcome::Renamed { to: path.clone() }),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let _ = vfs.remove(&temp);
-                    match vfs.stat(&path) {
-                        Ok(seen) => Ok(RenameOutcome::Collided { seen }),
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-                // Deliberately NOT removed: the publish never happened and
-                // the temp is the only place these bytes physically exist
-                // outside the buffer (materialize's own doctrine).
-                Err(e) => Err(e.to_string()),
+        let result = match rune_vfs::put(
+            vfs.as_ref(),
+            &path,
+            &bytes,
+            rune_vfs::PutCondition::IfAbsent,
+        ) {
+            Ok(rune_vfs::PutOutcome::Committed { .. }) => {
+                Ok(RenameOutcome::Renamed { to: path.clone() })
             }
-        })();
+            Ok(rune_vfs::PutOutcome::Conflict { current }) => match current.stat {
+                Some(seen) => Ok(RenameOutcome::Collided { seen }),
+                None => Err("target already exists".to_string()),
+            },
+            Ok(_) => Err("create failed: unexpected publish outcome".to_string()),
+            Err(e) => Err(e.to_string()),
+        };
         Some(Msg::RenameDone { generation, result })
     })
 }

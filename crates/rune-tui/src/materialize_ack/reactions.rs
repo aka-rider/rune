@@ -385,12 +385,16 @@ pub(crate) fn handle_save_done(
     id: DocumentId,
     version: u64,
     result: Result<(), String>,
+    durable: bool,
 ) {
     let succeeded = result.is_ok();
     match result {
         Ok(()) => {
             if let Some(doc) = app.doc_mut(id) {
                 doc.finish_save_ok(version);
+            }
+            if !durable {
+                messages::warn(app, super::DURABILITY_UNCONFIRMED_WARNING);
             }
         }
         Err(e) => {

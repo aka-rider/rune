@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rune_vfs::Vfs;
+use rune_vfs::{PutCondition, PutOutcome, Vfs};
 
 use crate::app::App;
 use crate::document::DocumentId;
@@ -219,23 +219,12 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     }
 }
 
-/// The bound on how many times the CAS check re-reads the live target while
-/// it disagrees with `expect_hash` before treating the mismatch as a stable
-/// conflict — a transient window (an external writer that wrote then
-/// reverted inside the gap) must never raise the disk-conflict guard from a
-/// single read.
-const CAS_VERIFY_ATTEMPTS: u32 = 2;
-
 /// The `vfs` dance itself, factored out of `materialize_vfs_cmd` so it is
-/// plain, synchronous, testable logic. Mirrors the steps the pre-WP7
-/// `rune-db::materialize`/`materialize_overwrite`/`materialize_create` used
-/// to run on the writer thread, verbatim in shape, just against the
-/// CALLER's own `vfs` instead. Every fresh read of the live target is
-/// bracketed (`rune_db::bracketed_read`) — a racer caught mid-external-
-/// rewrite must never become a trusted `Conflict` capture — and every stat
-/// of OUR OWN just-published bytes is bracketed too (`rune_db::
-/// bracketed_stat`), so a racer landing between the publish and the stat can
-/// never let the resulting observation's blob and stat quietly disagree.
+/// plain, synchronous, testable logic: the pre-checks (path disagreement,
+/// destination resolve) followed by one `rune_vfs::put` — `IfMatch` for an
+/// ordinary compare-and-swap save, `Force` for the disk-conflict Guard's
+/// escape hatch, `IfAbsent` for a `bind_new` create — and the adapter
+/// mapping `PutOutcome` onto [`MaterializeVfsOutcome`].
 pub(crate) fn run_materialize_vfs(
     vfs: &dyn Vfs,
     path: &Path,
@@ -247,58 +236,22 @@ pub(crate) fn run_materialize_vfs(
 ) -> MaterializeVfsOutcome {
     let data = content.as_bytes();
 
+    let resolved = match vfs.resolve(path) {
+        Ok(r) => r,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+
     if bind_new {
-        let resolved = match vfs.resolve(path) {
-            Ok(r) => r,
-            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-        };
         if let Some(dir) = resolved.parent()
             && !dir.as_os_str().is_empty()
             && let Err(e) = vfs.mkdir_all(dir)
         {
             return MaterializeVfsOutcome::Error(e.to_string());
         }
-        let temp = match vfs.write_durable(&resolved, data) {
-            Ok(t) => t,
-            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-        };
-        return match vfs.rename_excl(&temp, &resolved) {
-            Ok(()) => {
-                let bracket = rune_db::bracketed_stat(vfs, &resolved);
-                MaterializeVfsOutcome::Committed {
-                    data: data.to_vec(),
-                    stat: bracket.stat,
-                    confirmed: bracket.confirmed,
-                    resolved_path: resolved,
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // A concurrent creator won the race — our own temp is
-                // genuinely unneeded (the winner's bytes are what get
-                // recorded), safe to discard.
-                let _ = vfs.remove(&temp);
-                match rune_db::bracketed_read(vfs, &resolved) {
-                    Ok(bracket) => MaterializeVfsOutcome::Conflict {
-                        data: bracket.data,
-                        origin: "probe",
-                        stat: bracket.stat,
-                        confirmed: bracket.confirmed,
-                        resolved_path: resolved,
-                    },
-                    Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
-                }
-            }
-            // Deliberately NOT removed on a genuine I/O failure: the temp
-            // is the only place the user's just-written bytes still
-            // physically exist.
-            Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
-        };
+        let outcome = rune_vfs::put(vfs, &resolved, data, PutCondition::IfAbsent);
+        return map_put_outcome(outcome, data, resolved);
     }
 
-    let resolved = match vfs.resolve(path) {
-        Ok(r) => r,
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    };
     if let Some(bound) = bound_path {
         match vfs.resolve(Path::new(bound)) {
             Ok(db_resolved) if db_resolved != resolved => {
@@ -309,188 +262,52 @@ pub(crate) fn run_materialize_vfs(
         }
     }
 
-    if mode == SaveMode::Force {
-        return force_publish(vfs, &resolved, data);
-    }
-
-    // Step 1-2: bracketed read+hash of the live target, re-verified
-    // (bounded) while it disagrees with `expect_hash` — a stable mismatch
-    // after every attempt is a real conflict; a mismatch that stops
-    // reproducing on a later attempt was a transient window, and the save
-    // proceeds against the CURRENT live content instead of refusing it.
-    let mut bracket = match rune_db::bracketed_read(vfs, &resolved) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // An ordinary overwrite-intent save must never silently
-            // (re)create a file the caller didn't explicitly ask to.
-            return MaterializeVfsOutcome::Missing;
-        }
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    let condition = match mode {
+        SaveMode::Normal => PutCondition::IfMatch(rune_vfs::Etag::from_stored(expect_hash)),
+        SaveMode::Force => PutCondition::Force {
+            expect: (!expect_hash.is_empty()).then(|| rune_vfs::Etag::from_stored(expect_hash)),
+        },
     };
-    let mut attempts = 1;
-    while rune_db::hash_bytes(&bracket.data) != expect_hash && attempts < CAS_VERIFY_ATTEMPTS {
-        bracket = match rune_db::bracketed_read(vfs, &resolved) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return MaterializeVfsOutcome::Missing;
-            }
-            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-        };
-        attempts += 1;
-    }
-    if rune_db::hash_bytes(&bracket.data) != expect_hash {
-        return MaterializeVfsOutcome::Conflict {
-            data: bracket.data,
-            origin: "probe",
-            stat: bracket.stat,
-            confirmed: bracket.confirmed,
-            resolved_path: resolved,
-        };
-    }
-
-    let temp = match vfs.write_durable(&resolved, data) {
-        Ok(t) => t,
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    };
-
-    match vfs.exchange(&temp, &resolved) {
-        Ok(()) => {}
-        Err(e) if rune_vfs::published_not_durable(&e) => {
-            // WP1: the swap already physically took effect — only the
-            // durability CONFIRMATION (parent fsync) failed. `resolved`
-            // already holds our new bytes, so this is the same physical
-            // state as `Ok(())`; keep going rather than reporting a save
-            // that, on disk, actually succeeded.
-        }
-        Err(e) => {
-            // Deliberately NOT removed: the temp is the only place the
-            // user's just-written bytes still physically exist.
-            return MaterializeVfsOutcome::Error(e.to_string());
-        }
-    }
-
-    // Step 4: temp now holds what USED TO be at `resolved` (the displaced
-    // bytes, never unlinked by the swap) — read+hash it. `temp` is our own
-    // private scratch path, never contended, so a plain read/stat suffices;
-    // only `resolved`'s own post-publish stat needs bracketing.
-    let displaced = match vfs.read(&temp) {
-        Ok(d) => d,
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    };
-    let stat_bracket = rune_db::bracketed_stat(vfs, &resolved);
-    if rune_db::hash_bytes(&displaced) != expect_hash {
-        // F5 swap-race: a writer raced us inside the atomic-swap window.
-        let displaced_stat = rune_db::stat_identity(vfs, &temp);
-        let _ = vfs.remove(&temp);
-        return MaterializeVfsOutcome::Raced {
-            data: data.to_vec(),
-            stat: stat_bracket.stat,
-            confirmed: stat_bracket.confirmed,
-            displaced,
-            displaced_stat,
-            resolved_path: resolved,
-        };
-    }
-    // Hash matched: `temp` has already been read and verified above, its
-    // job done — a failed cleanup here just leaks a scratch file.
-    let _ = vfs.remove(&temp);
-    MaterializeVfsOutcome::Committed {
-        data: data.to_vec(),
-        stat: stat_bracket.stat,
-        confirmed: stat_bracket.confirmed,
-        resolved_path: resolved,
-    }
+    let outcome = rune_vfs::put(vfs, &resolved, data, condition);
+    map_put_outcome(outcome, data, resolved)
 }
 
-/// `SaveMode::Force`'s publish: existence-aware (`exchange` when the
-/// destination is there to swap with, `rename_excl` when it has vanished —
-/// the same ladder `Vfs::save_atomic` composes, chosen explicitly here
-/// instead of implicitly so the swap side can hand its displaced bytes on
-/// rather than discard them) and never CAS-gated — there is no hash this
-/// mode refuses on. Existence is read, not merely stated, because a
-/// `RENAME_SWAP` needs both paths to exist: a blind `exchange` would fail
-/// exactly when the user most needs the save to go through.
-fn force_publish(vfs: &dyn Vfs, resolved: &Path, data: &[u8]) -> MaterializeVfsOutcome {
-    let dest_existed = match vfs.stat(resolved) {
-        Ok(_) => true,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    };
-
-    let temp = match vfs.write_durable(resolved, data) {
-        Ok(t) => t,
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    };
-
-    if !dest_existed {
-        return match vfs.rename_excl(&temp, resolved) {
-            Ok(()) => {
-                let bracket = rune_db::bracketed_stat(vfs, resolved);
-                MaterializeVfsOutcome::Committed {
-                    data: data.to_vec(),
-                    stat: bracket.stat,
-                    confirmed: bracket.confirmed,
-                    resolved_path: resolved.to_path_buf(),
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // A concurrent creator filled the destination between our
-                // existence read and this publish — it genuinely exists
-                // now, so swap onto it rather than reporting a failure the
-                // user has no way to retry out of; the temp we already
-                // wrote is still exactly what needs publishing.
-                capture_and_swap_publish(vfs, resolved, &temp, data)
-            }
-            // Deliberately NOT removed: the temp is the only place the
-            // user's just-written bytes still physically exist.
-            Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
-        };
-    }
-
-    capture_and_swap_publish(vfs, resolved, &temp, data)
-}
-
-/// The swap half of [`force_publish`]: publishes via `exchange`, then reads
-/// `temp` back — the swap deposits whatever WAS at `resolved` there, never
-/// unlinking it — and reports that as displaced, unconditionally. No hash
-/// gate anywhere in this function: whatever the swap actually displaced is
-/// what gets captured, following the same unconditional-capture shape
-/// `rune-db`'s own user-confirmed destructive rename uses.
-fn capture_and_swap_publish(
-    vfs: &dyn Vfs,
-    resolved: &Path,
-    temp: &Path,
+fn map_put_outcome(
+    outcome: std::io::Result<PutOutcome>,
     data: &[u8],
+    resolved_path: PathBuf,
 ) -> MaterializeVfsOutcome {
-    match vfs.exchange(temp, resolved) {
-        Ok(()) => {}
-        Err(e) if rune_vfs::published_not_durable(&e) => {
-            // The swap already took effect; only the durability
-            // confirmation failed. `resolved` already holds the new bytes —
-            // keep going and capture what it displaced, same as the CAS
-            // path's own handling of this error shape.
-        }
-        // Deliberately NOT removed: the temp is the only place the user's
-        // just-written bytes still physically exist.
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    }
-
-    let displaced = match vfs.read(temp) {
-        Ok(d) => d,
-        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
-    };
-    let stat_bracket = rune_db::bracketed_stat(vfs, resolved);
-    let displaced_stat = rune_db::stat_identity(vfs, temp);
-    // The displaced bytes are already read into `displaced` above; a failed
-    // cleanup here just leaks a scratch file, never loses them.
-    let _ = vfs.remove(temp);
-    MaterializeVfsOutcome::Raced {
-        data: data.to_vec(),
-        stat: stat_bracket.stat,
-        confirmed: stat_bracket.confirmed,
-        displaced,
-        displaced_stat,
-        resolved_path: resolved.to_path_buf(),
+    match outcome {
+        Ok(PutOutcome::Missing) => MaterializeVfsOutcome::Missing,
+        Ok(PutOutcome::Conflict { current }) => MaterializeVfsOutcome::Conflict {
+            data: current.bytes,
+            origin: "probe",
+            stat: rune_db::stat_facts_from(current.stat),
+            confirmed: current.confirmed,
+            resolved_path,
+        },
+        Ok(PutOutcome::Committed { stat, durable, .. }) => MaterializeVfsOutcome::Committed {
+            data: data.to_vec(),
+            confirmed: stat.is_some(),
+            stat: rune_db::stat_facts_from(stat),
+            resolved_path,
+            durable,
+        },
+        Ok(PutOutcome::Raced {
+            stat,
+            durable,
+            displaced,
+            ..
+        }) => MaterializeVfsOutcome::Raced {
+            data: data.to_vec(),
+            confirmed: stat.is_some(),
+            stat: rune_db::stat_facts_from(stat),
+            displaced: displaced.bytes,
+            displaced_stat: rune_db::stat_facts_from(displaced.stat),
+            resolved_path,
+            durable,
+        },
+        Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
     }
 }
 

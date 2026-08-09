@@ -356,12 +356,12 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
         Ok(RenameOutcome::Replaced { displaced }) => {
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
+            let byte_count = displaced.size.map(|s| format!("{s} ")).unwrap_or_default();
             messages::info(
                 app,
                 format!(
-                    "replaced {} \u{2014} its {} bytes were preserved in the recovery store",
+                    "replaced {} \u{2014} its {byte_count}bytes were preserved in the recovery store",
                     display_name(&to),
-                    displaced.size
                 ),
             );
         }

@@ -306,6 +306,7 @@ fn a_failed_save_ack_leaves_the_document_open() {
             id: second,
             version,
             result: Err("disk full".to_string()),
+            durable: true,
         },
         &mut effects2,
     );

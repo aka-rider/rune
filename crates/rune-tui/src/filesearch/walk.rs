@@ -161,10 +161,10 @@ fn build_matcher(vfs: &dyn Vfs, dir: &Path, entries: &[DirEntry]) -> Gitignore {
         if entry.is_dir || !is_ignore_file(&entry.name) {
             continue;
         }
-        let Ok(bytes) = vfs.read(&entry.path) else {
+        let Ok(sighting) = rune_vfs::get(vfs, &entry.path, None) else {
             continue;
         };
-        let Ok(text) = String::from_utf8(bytes) else {
+        let Ok(text) = String::from_utf8(sighting.bytes) else {
             continue;
         };
         for line in text.lines() {
