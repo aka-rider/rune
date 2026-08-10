@@ -37,7 +37,7 @@ use merge_common::{
 /// document already open on `path` is bound to — the shape two Explorer
 /// opens of one file, or two CLI positionals resolving to one canonical
 /// path, would leave behind. Joins the existing shared `FileBinding` rather
-/// than reseeding it (`App::bind_file`'s own doc comment) — a real second
+/// than reseeding it (`App::install_or_join_file_binding`'s own doc comment) — a real second
 /// binding would go through the exact same call, just from `db_ack::
 /// handle_load_ack`'s production path instead of this test's direct
 /// construction.
@@ -53,7 +53,7 @@ fn bind_second_tab(
         doc.file_path = Some(path.to_path_buf());
         doc.db = Some(DocDb::new(db_id, false, 0));
     }
-    app.bind_file(db_id, 0);
+    app.install_or_join_file_binding(db_id, 0);
     id
 }
 

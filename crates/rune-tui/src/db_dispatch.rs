@@ -272,7 +272,7 @@ mod tests {
         );
         let id = app.active;
         app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(1, false, 0));
-        app.bind_file(1, 0);
+        app.install_or_join_file_binding(1, 0);
 
         crate::db_enqueue::probe(&mut app, id);
         let op_id = *app

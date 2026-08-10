@@ -28,7 +28,7 @@ use rune_tui::runtime::Msg;
 use rune_vfs::{Mem, Vfs};
 
 use db_wiring_common::{
-    bind_file_from, db_from, doc_db_from, open_and_load, press, publish, save_key, temp_db_dir,
+    db_from, doc_db_from, join_binding_from, open_and_load, press, publish, save_key, temp_db_dir,
 };
 
 /// Plan WP5 "Done when": type -> kill the store writer via the test hook
@@ -62,7 +62,7 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
     );
     let id = app.active;
     app.doc_mut(id).unwrap().db = Some(doc_db);
-    bind_file_from(&mut app, &load);
+    join_binding_from(&mut app, &load);
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
@@ -162,7 +162,7 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     );
     let id = app.active;
     app.doc_mut(id).unwrap().db = Some(doc_db);
-    bind_file_from(&mut app, &load);
+    join_binding_from(&mut app, &load);
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 

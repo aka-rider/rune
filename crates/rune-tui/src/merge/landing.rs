@@ -528,7 +528,7 @@ mod tests {
             d.read_only = crate::document::ReadOnly::Always;
             d.db = Some(crate::db::DocDb::new(1, false, 0));
         }
-        app.bind_file(1, 7);
+        app.install_or_join_file_binding(1, 7);
         app.merge = MergeState::Pending {
             doc,
             generation: 0,

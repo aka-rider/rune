@@ -24,32 +24,33 @@ use rune_db::LoadResult;
 /// document may never be left bound to a baseline this reply refused to
 /// supply.
 ///
-/// Otherwise, when `binding_only` is `false`, `recovered` is adopted into
-/// the buffer, through [`crate::document::Document::hydrate`], ONLY when
-/// `issued_version` still equals the buffer's CURRENT version — `Load` is
-/// asynchronous, so the user may have typed into the buffer during the
-/// round trip, and clobbering those keystrokes to complete a recovery
-/// binding would violate the Prime Directive. When the version has moved
-/// on, `DocDb` is still installed (this document's own recovery journal is
-/// real and should be used going forward), but the buffer bytes are left
-/// exactly as the user last typed them — this session's baseline simply
-/// anchors from the disk content `db_enqueue::load_document`'s caller
-/// already read, same as `recovered == disk_content` would.
+/// `binding_only` (`PendingOp::binding_only`'s own doc comment) routes
+/// straight to [`crate::db::App::rebaseline_file_binding`] and [`install_doc_
+/// db`], then returns: a re-baseline `Load` is never a recovery attempt, so
+/// it never touches `id`'s buffer or `last_sync` — only the shared per-file
+/// baseline and `doc.db` itself (which a lost-create-race hand-off may be
+/// rebinding to an entirely different row) advance.
 ///
-/// `binding_only` (`PendingOp::binding_only`'s own doc comment) skips
-/// hydration outright, version match or not: a re-baseline `Load` is never
-/// a recovery attempt, and the ordinary "⌘S then wait" round trip is fast
-/// enough that the version-match guard above would otherwise let a STALE
-/// recovery row (a previous session's journal for a deleted-then-recreated
-/// path) silently replace the user's live buffer the instant this ack
-/// lands.
+/// Otherwise `recovered` is adopted into the buffer, through
+/// [`crate::document::Document::hydrate`], ONLY when `issued_version` still
+/// equals the buffer's CURRENT version — `Load` is asynchronous, so the
+/// user may have typed into the buffer during the round trip, and
+/// clobbering those keystrokes to complete a recovery binding would violate
+/// the Prime Directive. When the version has moved on, `DocDb` is still
+/// installed (this document's own recovery journal is real and should be
+/// used going forward), but the buffer bytes are left exactly as the user
+/// last typed them — this session's baseline simply anchors from the disk
+/// content `db_enqueue::load_document`'s caller already read, same as
+/// `recovered == disk_content` would.
 ///
-/// `binding_only` also skips the `last_sync` write below: the caller
-/// enqueued this `Load` to install a binding only, already knows more about
-/// the document's sync state than this ack's freshly-read observation does
-/// (the lost-create-race hand-off, for one, deliberately seeds `Diverged`
-/// to keep `^M` reachable), and this ack landing must not overwrite that
-/// deliberate classification with its own.
+/// A `Hydration::Refused` (the recovered draft looked truncated, or failed
+/// to apply) takes the same exit as the `saved_obs == None` arm above:
+/// nothing is installed, `doc.db` is dropped, the shared binding is pruned,
+/// and an error is posted — a document whose recovered content this session
+/// just rejected must never keep journaling against that row, or a later
+/// crash recovery would replay the rejected content plus every edit made
+/// since. The buffer itself is untouched either way (`hydrate` never
+/// mutates it before refusing), so direct-vfs saving still works.
 pub fn handle_load_ack(
     app: &mut App,
     id: DocumentId,
@@ -58,13 +59,7 @@ pub fn handle_load_ack(
     binding_only: bool,
 ) {
     let Some(expect_obs) = load_result.saved_obs else {
-        let old_db_id = app.doc_db_id(id);
-        if let Some(doc) = app.doc_mut(id) {
-            doc.db = None;
-        }
-        if let Some(db_id) = old_db_id {
-            app.prune_file_binding(db_id);
-        }
+        detach_file_binding(app, id);
         messages::error(
             app,
             "crash recovery unavailable for this tab: load returned no baseline observation",
@@ -72,9 +67,15 @@ pub fn handle_load_ack(
         return;
     };
 
+    if binding_only {
+        app.rebaseline_file_binding(load_result.doc_id, expect_obs);
+        install_doc_db(app, id, &load_result);
+        return;
+    }
+
     let hydration = {
         let Some(doc) = app.doc_mut(id) else { return };
-        if !binding_only && issued_version == Some(doc.buffer.version()) {
+        if issued_version == Some(doc.buffer.version()) {
             Some(doc.hydrate(&load_result.disk_content, &load_result.recovered))
         } else {
             None
@@ -84,6 +85,8 @@ pub fn handle_load_ack(
     match hydration {
         Some(crate::document::Hydration::Refused(reason)) => {
             messages::error(app, format!("crash recovery: {reason}"));
+            detach_file_binding(app, id);
+            return;
         }
         // A recovered draft was just installed AND the load's own fresh
         // disk sighting genuinely diverges from the baseline it was bridged
@@ -117,33 +120,58 @@ pub fn handle_load_ack(
     crate::materialize_ack::recompute_dirty(app, id);
 
     // Joins the shared baseline for this `db_id` — seeded from THIS load
-    // only if no other document has bound it yet (`App::bind_file`'s own
-    // doc comment): a second tab opening the same file must never reset a
-    // baseline a sibling tab's own save has already advanced. Done BEFORE
-    // installing `doc.db` below: the join itself never touches `id`'s own
-    // document, so there is no reason to interleave it with the borrow that
-    // does.
-    app.bind_file(load_result.doc_id, expect_obs);
+    // only if no other document has bound it yet (`App::
+    // install_or_join_file_binding`'s own doc comment): a second tab
+    // opening the same file must never reset a baseline a sibling tab's own
+    // save has already advanced. Done BEFORE installing `doc.db` below: the
+    // join itself never touches `id`'s own document, so there is no reason
+    // to interleave it with the borrow that does.
+    app.install_or_join_file_binding(load_result.doc_id, expect_obs);
+    install_doc_db(app, id, &load_result);
     let Some(doc) = app.doc_mut(id) else { return };
-    doc.db = Some(DocDb::new(
-        load_result.doc_id,
-        false, // bind_new: `id` is already bound to a path read straight off disk
-        load_result.bridge_seq.unwrap_or(0),
-    ));
-    // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s
-    // own doc comment) — set even on the version-moved-on branch above
-    // where `hydrate` was never called: the fact this `Load` reported is
-    // still true regardless of whether the buffer adopted it. Skipped
-    // entirely when `binding_only`, per this function's own doc comment.
-    if !binding_only {
-        doc.last_sync = Some(load_result.sync.kind);
-    }
+    // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s own
+    // doc comment) — set even on the version-moved-on branch above where
+    // `hydrate` was never called: the fact this `Load` reported is still
+    // true regardless of whether the buffer adopted it.
+    doc.last_sync = Some(load_result.sync.kind);
     // A dead session's still-active merge is re-entered ONLY by an ack that
     // genuinely hydrated the reconstruction the merge row was matched
     // against — a skipped or refused hydration leaves the row active for
     // the next full load to re-offer.
     if adopted && let Some(resume) = load_result.resumable_merge {
         crate::merge::resume_from_store(app, id, &resume.blocks_json, resume.theirs_obs);
+    }
+}
+
+/// Installs `id`'s `DocDb` for `load_result.doc_id` — shared by both
+/// `handle_load_ack` branches: the ordinary recovery path (where `db_id`
+/// is `id`'s own file, freshly loaded) and the `binding_only` path (where
+/// it may instead be a hand-off target this document has never bound
+/// before, e.g. the lost-create-race route's racer row). Either way `id`
+/// is now bound to a row read straight off disk, so the next save is an
+/// overwrite, never a create.
+fn install_doc_db(app: &mut App, id: DocumentId, load_result: &LoadResult) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    doc.db = Some(DocDb::new(
+        load_result.doc_id,
+        false,
+        load_result.bridge_seq.unwrap_or(0),
+    ));
+}
+
+/// Drops `id`'s `db` binding and prunes its now-possibly-unreferenced
+/// shared [`crate::db::FileBinding`] — the shared exit both of
+/// `handle_load_ack`'s refusal arms take (`saved_obs == None`, and
+/// `Hydration::Refused`): a document a `Load` ack has just declined to
+/// supply a trustworthy baseline for may never keep journaling against a
+/// row this session no longer stands behind.
+fn detach_file_binding(app: &mut App, id: DocumentId) {
+    let old_db_id = app.doc_db_id(id);
+    if let Some(doc) = app.doc_mut(id) {
+        doc.db = None;
+    }
+    if let Some(db_id) = old_db_id {
+        app.prune_file_binding(db_id);
     }
 }
 
@@ -175,11 +203,11 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
 pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
     let Some(doc) = app.doc_mut(id) else { return };
     doc.db = Some(DocDb::new(row_id, true, 0));
-    app.bind_file(row_id, 0);
+    app.install_or_join_file_binding(row_id, 0);
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::db::{Db, DbBridge};
@@ -187,6 +215,7 @@ mod tests {
     use rune_core::buffer::Buffer;
     use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
     use rune_vfs::{Mem, Vfs};
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     fn in_memory_db() -> Db {
@@ -385,6 +414,180 @@ mod tests {
         assert_eq!(
             messages::newest_text(&app),
             Some("recovered unsaved changes")
+        );
+    }
+
+    /// Issue #82: a `binding_only` ack for a document with live buffer
+    /// edits must never adopt the recovered content or touch `last_sync` —
+    /// only the shared per-file baseline and `doc.db` itself (which the
+    /// lost-create-race hand-off relies on rebinding to an entirely
+    /// different row, `bind_new` included) advance. Contrasts `handle_
+    /// load_ack_messages_a_non_diverged_adoption` above, which drives the
+    /// ordinary (`binding_only: false`) path and DOES adopt.
+    #[test]
+    fn binding_only_load_does_not_rehydrate() {
+        let mut app = App::new(
+            Buffer::new("live edits"),
+            None,
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id = app.active;
+        // Starts `bind_new: true`, on a DIFFERENT `db_id` than the ack
+        // below carries — the exact shape the lost-create-race hand-off
+        // leaves behind right before its own `binding_only` `Load` lands.
+        app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(3, true, 0));
+        app.install_or_join_file_binding(3, 0);
+        let issued_version = app.doc(id).expect("doc exists").buffer.version();
+
+        let load_result = rune_db::LoadResult {
+            doc_id: 7,
+            renamed_from: None,
+            disk_content: "on disk".to_string(),
+            recovered: "a stale recovery row".to_string(),
+            has_history: true,
+            sync: rune_db::SyncState {
+                kind: rune_db::SyncKind::Clean,
+                ancestor: None,
+                ours: rune_db::Version {
+                    hash: String::new(),
+                    obs: None,
+                },
+                theirs: None,
+            },
+            nlink: 1,
+            saved_obs: Some(42),
+            bridge_seq: Some(9),
+            resumable_merge: None,
+        };
+
+        handle_load_ack(&mut app, id, load_result, Some(issued_version), true);
+
+        assert_eq!(
+            app.doc(id).expect("doc exists").buffer.content(),
+            "live edits",
+            "binding_only must never adopt recovered content into the buffer"
+        );
+        let doc_db = app
+            .doc(id)
+            .expect("doc exists")
+            .db
+            .as_ref()
+            .expect("doc.db must be rebound to the hand-off's target row");
+        assert_eq!(
+            doc_db.db_id, 7,
+            "a binding_only ack rebinds doc.db to the ack's OWN db_id"
+        );
+        assert!(
+            !doc_db.bind_new,
+            "a binding_only ack always installs bind_new: false"
+        );
+        assert_eq!(doc_db.last_known_seq, 9);
+        assert_eq!(
+            app.doc(id).expect("doc exists").last_sync,
+            None,
+            "binding_only must never touch last_sync"
+        );
+        assert_eq!(
+            app.file_binding(7).expect("binding exists").expect_obs,
+            42,
+            "the shared per-file baseline must advance for the ack's OWN db_id"
+        );
+    }
+
+    /// Issue #82: the re-baseline `Load` a `saved: None` `MaterializeRecord`
+    /// ack enqueues (`materialize_ack::reactions`) must actually advance
+    /// `expect_obs` once its own ack lands, and clear `pending_
+    /// rebaseline_hash` — not fall into `install_or_join_file_binding`'s
+    /// join semantics, which would silently drop the fresh observation for
+    /// a `db_id` this process already has a binding for.
+    #[test]
+    fn rebaseline_load_advances_expect_obs() {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        vfs.save_atomic(Path::new("/doc.md"), b"hello")
+            .expect("seed doc.md");
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let bridge = DbBridge::bootstrap();
+        let store =
+            Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("open store");
+
+        store.load(Path::new("/doc.md")).expect("enqueue load");
+        let load = match bridge.wait_for_bootstrap_event(|_| true) {
+            DbEvent::Ok {
+                result: OpOutcome::Load(load),
+                ..
+            } => *load,
+            other => panic!("expected a Load ack, got {other:?}"),
+        };
+
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/doc.md")),
+            Arc::clone(&vfs),
+            Some(Db::new(store, Arc::clone(&bridge), false)),
+        );
+        let id = app.active;
+        app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(load.doc_id, false, 0));
+        app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
+
+        // Simulates exactly the state a `saved: None` `MaterializeRecord`
+        // ack leaves behind (`materialize_ack.rs`'s own `record_outcome`
+        // `Err` arm) — reproducing the transient writer-queue failure that
+        // produces it for real would make this test racy against the
+        // writer thread (same rationale `force_save.rs`'s own lost-
+        // bookkeeping fixture states).
+        app.file_binding_mut(load.doc_id)
+            .expect("binding exists")
+            .pending_rebaseline_hash = Some(rune_db::hash_bytes(b"hello"));
+
+        // An external rewrite between the lost bookkeeping and the
+        // re-baseline `Load` below, so the fresh observation this test
+        // asserts against is genuinely NEW, not incidentally identical to
+        // the seed `Load`'s own.
+        vfs.save_atomic(Path::new("/doc.md"), b"hello again")
+            .expect("external rewrite");
+
+        let enqueued =
+            crate::db_enqueue::load_document_best_effort(&mut app, id, Path::new("/doc.md"));
+        assert!(
+            enqueued,
+            "the re-baseline Load must enqueue against a live, non-degraded store"
+        );
+
+        let rebaseline_evt = bridge.wait_for_bootstrap_event(|evt| {
+            matches!(
+                evt,
+                DbEvent::Ok {
+                    result: OpOutcome::Load(_),
+                    ..
+                }
+            )
+        });
+        let fresh_obs = match &rebaseline_evt {
+            DbEvent::Ok {
+                result: OpOutcome::Load(load),
+                ..
+            } => load.saved_obs.expect("a fresh load carries a baseline"),
+            other => panic!("expected a Load ack, got {other:?}"),
+        };
+
+        let mut effects = crate::runtime::Effects::default();
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::Db(rebaseline_evt),
+            &mut effects,
+        );
+
+        let binding = app
+            .file_binding(load.doc_id)
+            .expect("the shared binding must survive a binding_only re-baseline");
+        assert_eq!(
+            binding.expect_obs, fresh_obs,
+            "expect_obs must advance to the re-baseline Load's own fresh observation"
+        );
+        assert!(
+            binding.pending_rebaseline_hash.is_none(),
+            "a landed re-baseline must clear the stashed echo hash"
         );
     }
 }

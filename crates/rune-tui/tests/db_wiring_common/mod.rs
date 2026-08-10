@@ -94,12 +94,12 @@ pub fn doc_db_from(load: &LoadResult) -> DocDb {
 /// The [`doc_db_from`] counterpart for the shared per-file CAS baseline:
 /// joins `App::file_bindings` for `load.doc_id`, seeded from
 /// `load.saved_obs`, exactly like `db_ack::handle_load_ack`'s own production
-/// call to `App::bind_file` does. Every test that installs a `doc_db_from`
+/// call to `App::install_or_join_file_binding` does. Every test that installs a `doc_db_from`
 /// binding onto a live `App` must call this too, or that document's CAS
 /// baseline reads back as the unseeded default instead of what its own
 /// fixture `Load` actually observed.
-pub fn bind_file_from(app: &mut App, load: &LoadResult) {
-    app.bind_file(load.doc_id, load.saved_obs.unwrap_or(0));
+pub fn join_binding_from(app: &mut App, load: &LoadResult) {
+    app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
 }
 
 pub fn press(app: &mut App, ch: char) {

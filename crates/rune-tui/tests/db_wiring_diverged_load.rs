@@ -27,7 +27,7 @@ use rune_tui::footer::footer_text;
 use rune_vfs::{Mem, Vfs};
 
 use db_wiring_common::{
-    bind_file_from, db_from, doc_db_from, open_and_load, press, publish, temp_db_dir,
+    db_from, doc_db_from, join_binding_from, open_and_load, press, publish, temp_db_dir,
 };
 
 #[test]
@@ -54,7 +54,7 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
     );
     let id_a = app_a.active;
     app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
-    bind_file_from(&mut app_a, &load_a);
+    join_binding_from(&mut app_a, &load_a);
     app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(0);
     for ch in "UNSAVED ".chars() {
         press(&mut app_a, ch);
@@ -172,7 +172,7 @@ fn bridged_load_without_disk_divergence_posts_a_plain_recovery_message() {
     );
     let id_a = app_a.active;
     app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
-    bind_file_from(&mut app_a, &load_a);
+    join_binding_from(&mut app_a, &load_a);
     app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(0);
     for ch in "UNSAVED ".chars() {
         press(&mut app_a, ch);

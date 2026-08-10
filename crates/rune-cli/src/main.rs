@@ -256,7 +256,7 @@ fn bootstrap(
         // `Load`/scratch-row observation, exactly like every later
         // `db_ack::handle_load_ack`/`handle_create_scratch_ack` does for a
         // document opened mid-session.
-        app.bind_file(db_id, db_bootstrap.expect_obs.unwrap_or(0));
+        app.install_or_join_file_binding(db_id, db_bootstrap.expect_obs.unwrap_or(0));
     }
     // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s
     // own doc comment) — set unconditionally, exactly like
