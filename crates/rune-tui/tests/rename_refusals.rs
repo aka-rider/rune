@@ -100,7 +100,11 @@ fn the_help_document_refuses_title_focus() {
 fn a_save_in_flight_refuses_to_rename() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
-    app.active_doc_mut().save_in_flight = true;
+    let (version, content) = {
+        let d = app.active_doc();
+        (d.buffer.version(), std::sync::Arc::from(d.buffer.content()))
+    };
+    app.active_doc_mut().begin_save(version, content);
     let before = app.active_doc().buffer.content().to_string();
 
     let effects = rename_to(&mut app, "b");

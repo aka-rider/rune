@@ -142,7 +142,7 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
     press(&mut app, key(KeyCode::Char('s')));
 
     assert!(
-        app.doc(id).unwrap().save_in_flight,
+        app.doc(id).unwrap().save_in_flight(),
         "save must have started"
     );
     assert!(!app.should_quit);
@@ -226,8 +226,8 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
     press(&mut app, key(KeyCode::Char('s')));
 
     assert_eq!(app.quit_intent.as_ref().map(|i| i.pending.len()), Some(2));
-    assert!(app.doc(id_a).unwrap().save_in_flight);
-    assert!(app.doc(id_b).unwrap().save_in_flight);
+    assert!(app.doc(id_a).unwrap().save_in_flight());
+    assert!(app.doc(id_b).unwrap().save_in_flight());
 
     let mut effects = Effects::default();
     update(
@@ -337,7 +337,7 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
         app.quit_intent.is_none(),
         "the stranded intent must be cleared"
     );
-    assert!(!app.doc(id).unwrap().save_in_flight);
+    assert!(!app.doc(id).unwrap().save_in_flight());
 
     // The next `^C` must still raise a fresh, resolvable guard rather than
     // silently doing nothing (the document is still genuinely dirty).
@@ -395,7 +395,7 @@ fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
         "the armed gate must name one of the two dirty documents"
     );
     assert!(
-        !app.doc(id_a).unwrap().save_in_flight && !app.doc(id_b).unwrap().save_in_flight,
+        !app.doc(id_a).unwrap().save_in_flight() && !app.doc(id_b).unwrap().save_in_flight(),
         "the degraded arm must never enqueue a save on its first press"
     );
     let expected_name = if armed_id == id_a { "a.md" } else { "b.md" };

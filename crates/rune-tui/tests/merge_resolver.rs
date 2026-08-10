@@ -433,7 +433,7 @@ fn dirty_close_guard_save_during_unresolved_merge_refuses_and_writes_nothing() {
     );
     assert!(app.doc(doc_id).is_some(), "the document must stay open");
     assert!(
-        !app.doc(doc_id).unwrap().save_in_flight,
+        !app.doc(doc_id).unwrap().save_in_flight(),
         "no save may start while the resolver has unresolved blocks"
     );
     assert!(matches!(

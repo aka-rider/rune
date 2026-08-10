@@ -154,7 +154,7 @@ pub(super) fn materialize_now(
 /// write actually commits.
 pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     let Some(doc) = app.doc(id) else { return };
-    if doc.save_in_flight {
+    if doc.save_in_flight() {
         return;
     }
     let version = doc.buffer.version();

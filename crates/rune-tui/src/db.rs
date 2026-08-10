@@ -547,7 +547,7 @@ impl crate::app::App {
     pub fn any_save_in_flight_for(&self, db_id: i64) -> bool {
         self.documents
             .values()
-            .any(|d| d.db.as_ref().is_some_and(|db| db.db_id == db_id) && d.save_in_flight)
+            .any(|d| d.db.as_ref().is_some_and(|db| db.db_id == db_id) && d.save_in_flight())
     }
 
     /// Every currently-open document bound to `db_id` — used to re-issue a

@@ -236,7 +236,7 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
         "the store must be marked degraded via on_store_failure, not left untouched"
     );
     assert!(
-        app.doc(id).unwrap().save_in_flight,
+        app.doc(id).unwrap().save_in_flight(),
         "WP7: a dead writer must not also make the save itself impossible — the \
          direct-vfs fallback Cmd is in flight, not silently skipped"
     );
@@ -251,7 +251,7 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     app::update(&mut app, msg, &mut effects2);
 
     assert!(
-        !app.doc(id).unwrap().save_in_flight,
+        !app.doc(id).unwrap().save_in_flight(),
         "the fallback save's own ack must clear save_in_flight"
     );
     assert_eq!(
@@ -299,7 +299,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         "the first super+s on a degraded store must only arm the confirm gate"
     );
     assert!(
-        !app.doc(id).unwrap().save_in_flight,
+        !app.doc(id).unwrap().save_in_flight(),
         "no materialize must be enqueued before the gate is confirmed"
     );
     assert!(rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("recovery disabled")));
@@ -311,7 +311,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         "the second super+s must consume the confirm gate"
     );
     assert!(
-        app.doc(id).unwrap().save_in_flight,
+        app.doc(id).unwrap().save_in_flight(),
         "the second super+s must actually enqueue the materialize"
     );
 }

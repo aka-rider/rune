@@ -566,7 +566,7 @@ mod tests {
         let doc = app.active;
         if let Some(d) = app.doc_mut(doc) {
             d.last_sync = Some(SyncKind::Diverged);
-            d.save_in_flight = true;
+            d.begin_save(d.buffer.version(), Arc::from(d.buffer.content()));
         }
 
         let mut effects = Effects::default();

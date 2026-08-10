@@ -383,7 +383,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
     let stranded: Vec<DocumentId> = app
         .documents
         .iter()
-        .filter(|(_, doc)| doc.save_in_flight)
+        .filter(|(_, doc)| doc.save_in_flight())
         .map(|(&id, _)| id)
         .collect();
     for &id in &stranded {

@@ -264,7 +264,7 @@ impl Snapshot {
             app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
                 dirty_by_doc.insert(doc_id, d.is_dirty());
-                save_in_flight_by_doc.insert(doc_id, d.save_in_flight);
+                save_in_flight_by_doc.insert(doc_id, d.save_in_flight());
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
             }
         }
@@ -297,7 +297,7 @@ impl Snapshot {
             line_ends,
             journal_pos: doc.journal.pos(),
             journal_len: doc.journal.len(),
-            save_in_flight: doc.save_in_flight,
+            save_in_flight: doc.save_in_flight(),
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
             status: fuzz_status(app),

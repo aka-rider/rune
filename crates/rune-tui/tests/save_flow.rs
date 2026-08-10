@@ -264,14 +264,14 @@ fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
 
     let effects = press_save(&mut app);
     assert_eq!(effects.cmds.len(), 1);
-    assert!(app.doc(id).unwrap().save_in_flight);
+    assert!(app.doc(id).unwrap().save_in_flight());
 
     let effects2 = press_save(&mut app);
     assert!(
         !spawns_a_save(&effects2),
         "a save already in flight must not spawn a second save Cmd"
     );
-    assert!(app.doc(id).unwrap().save_in_flight);
+    assert!(app.doc(id).unwrap().save_in_flight());
 }
 
 #[test]

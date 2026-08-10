@@ -225,7 +225,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // The no-store `save_cmd` captures `path` in its closure and would
     // republish at the OLD name after the rename landed — a save that
     // silently resurrects the old file.
-    if doc.save_in_flight {
+    if doc.save_in_flight() {
         messages::warn(app, "can't rename while a save is in flight");
         return Commit::Refused;
     }

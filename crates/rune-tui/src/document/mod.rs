@@ -17,9 +17,12 @@
 //! `scroll_to_cursor`, `sync`) as a second `impl Document` block, since none
 //! of that sequence depends on anything declared only in this file.
 
+mod save_state;
 mod sync;
 #[cfg(test)]
 mod tests;
+
+use save_state::SaveState;
 
 use std::num::NonZeroU64;
 use std::path::PathBuf;
@@ -120,14 +123,14 @@ pub struct Document {
     /// integration test that needs a dirty fixture goes through a real edit
     /// instead, see `dirty_common::force_dirty`.
     pub(crate) saved_content: Arc<str>,
-    /// The save-lifecycle state a save-in-progress carries: the version/
-    /// content it captured at `begin_save` time. Private — `begin_save`/
-    /// `finish_save_ok`/`abandon_save` are the ONLY three places allowed to
-    /// touch `save_in_flight`/`save_pending` together, so a save can never
-    /// be in flight without the exact bytes it captured, and a stale
-    /// capture can never survive to be promoted by a later unrelated ack.
-    save_pending: Option<PendingSave>,
-    pub save_in_flight: bool,
+    /// The save-lifecycle state machine: `Idle` when no save is running, or
+    /// the version/content a save-in-progress captured at `begin_save` time.
+    /// Private — `begin_save`/`finish_save_ok`/`abandon_save` are the ONLY
+    /// three places allowed to touch it, so a save can never be in flight
+    /// without the exact bytes it captured, and a stale capture can never
+    /// survive to be promoted by a later unrelated ack. `save_in_flight()`
+    /// derives from this rather than caching a parallel bool.
+    save: SaveState,
     /// The path an in-flight `bind_new` materialize is trying to CREATE
     /// (`save::bind_new_now`). Deliberately not `file_path`: a create that
     /// loses the no-clobber race must leave the draft untitled, or a later
@@ -321,16 +324,13 @@ impl Document {
     pub fn has_reloadable_graphics(&self) -> bool {
         self.image.is_some() || self.embeds.has_wedged()
     }
-}
 
-/// The save-in-progress capture: the exact version/bytes
-/// [`Document::begin_save`] captured, held until the matching
-/// [`Document::finish_save_ok`]/[`Document::abandon_save`] resolves it.
-/// Private to this module — `Document`'s three chokepoint methods are the
-/// only code that ever constructs, reads, or drops one.
-struct PendingSave {
-    version: u64,
-    content: Arc<str>,
+    /// Whether a save is currently running for this document — derived
+    /// from `save` rather than a parallel cached bool, so the two can never
+    /// disagree.
+    pub fn save_in_flight(&self) -> bool {
+        !self.save.is_idle()
+    }
 }
 
 impl Document {
@@ -349,8 +349,7 @@ impl Document {
             file_path: None,
             saved_version,
             saved_content,
-            save_pending: None,
-            save_in_flight: false,
+            save: SaveState::default(),
             pending_bind_path: None,
             is_dirty_cached: false,
             view: None,
@@ -374,46 +373,42 @@ impl Document {
     }
 
     /// Arms a save in flight, capturing `version`/`content` TOGETHER at one
-    /// chokepoint — the only way `save_in_flight` and `save_pending`
-    /// are ever set, so a save can never be in flight without the exact
-    /// bytes it captured. Called by every save-start site: `save::
-    /// materialize_now`, the no-store fallback in `save::trigger_save`, and
-    /// `save::bind_new_now`.
+    /// chokepoint — the only way `save` ever leaves `Idle`, so a save can
+    /// never be in flight without the exact bytes it captured. Called by
+    /// every save-start site: `save::materialize_now`, the no-store
+    /// fallback in `save::trigger_save`, and `save::bind_new_now`.
     pub fn begin_save(&mut self, version: u64, content: Arc<str>) {
-        self.save_in_flight = true;
-        self.save_pending = Some(PendingSave { version, content });
+        self.save.begin_direct(version, content);
     }
 
-    /// Resolves a successful save ack: clears in-flight, and promotes the
-    /// captured `save_pending` content into `saved_content` iff its version
+    /// Resolves a successful save ack: returns `save` to `Idle`, and
+    /// promotes the captured content into `saved_content` iff its version
     /// matches `version` (the ack's own correlated fact) AND exceeds
     /// `saved_version` — so an ack for a capture this document no longer
     /// recognizes (or one that would move the baseline BACKWARD) promotes
     /// nothing. Returns whether the promotion happened. The only writer of
     /// `saved_content`/`saved_version`.
     pub fn finish_save_ok(&mut self, version: u64) -> bool {
-        self.save_in_flight = false;
-        let Some(pending) = self.save_pending.take() else {
+        let Some(capture) = self.save.resolve() else {
             return false;
         };
-        if pending.version == version && pending.version > self.saved_version {
-            self.saved_version = pending.version;
-            self.saved_content = pending.content;
+        if capture.version == version && capture.version > self.saved_version {
+            self.saved_version = capture.version;
+            self.saved_content = capture.content;
             true
         } else {
             false
         }
     }
 
-    /// Resolves a failed/abandoned save: clears in-flight and drops the
-    /// captured bytes without promoting anything — the exact opposite of
-    /// `finish_save_ok`. Every clear site that isn't a genuine success
+    /// Resolves a failed/abandoned save: returns `save` to `Idle` and drops
+    /// the captured bytes without promoting anything — the exact opposite
+    /// of `finish_save_ok`. Every clear site that isn't a genuine success
     /// (`fail_materialize_locally`, `on_store_failure`'s sweep,
     /// `bind_new_now`'s error arm, `handle_save_done`'s `Err` arm) goes
     /// through here, never through a direct field write.
     pub fn abandon_save(&mut self) {
-        self.save_in_flight = false;
-        self.save_pending = None;
+        self.save.resolve();
     }
 
     /// The version an in-flight save captured, if one is running — a
@@ -423,7 +418,7 @@ impl Document {
     /// the SAME bytes `begin_save` captured before deciding whether to call
     /// `finish_save_ok` or `abandon_save`.
     pub fn pending_save_version(&self) -> Option<u64> {
-        self.save_pending.as_ref().map(|p| p.version)
+        self.save.pending_version()
     }
 
     /// The one hydration-adoption chokepoint: `self.buffer` is
