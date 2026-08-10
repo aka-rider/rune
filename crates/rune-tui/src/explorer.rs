@@ -80,6 +80,13 @@ pub struct Explorer {
     /// lands, whether that reply is adopted or found stale, so this can
     /// never grow unbounded across a long arrow-key session.
     pub preview_awaiting: HashSet<PathBuf>,
+    /// The path the live preview placeholder currently names, if the last
+    /// read for it failed — `request_preview` treats this exactly like
+    /// `already_showing`, so a failed read is not retried on every step
+    /// while the cursor sits still, but IS retried once the cursor leaves
+    /// and comes back. Cleared alongside `preview` in
+    /// `remove_preview_document` and by a later successful `apply_loaded`.
+    pub preview_failed: Option<PathBuf>,
 }
 
 impl Default for Explorer {
@@ -95,6 +102,7 @@ impl Default for Explorer {
             preview: None,
             preview_return_to: None,
             preview_awaiting: HashSet::new(),
+            preview_failed: None,
         }
     }
 }
