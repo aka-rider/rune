@@ -186,7 +186,7 @@ fn probe_deferred_during_save_in_flight_fires_after_the_ack_with_correct_sync_st
 
     press_key(&mut app, sup('s'));
     assert!(
-        app.doc(doc_id).unwrap().save_in_flight,
+        app.doc(doc_id).unwrap().save_in_flight(),
         "test setup: the save must be in flight"
     );
 

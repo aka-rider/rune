@@ -43,7 +43,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
     // the session itself just wrote. `save_in_flight` spans the whole dance
     // — trigger through the same ack that advances `expect_obs` — unlike
     // any single pending-op entry, so it is the one check with no window.
-    if doc.save_in_flight {
+    if doc.save_in_flight() {
         messages::warn(app, "save in progress — merge after it completes");
         return;
     }

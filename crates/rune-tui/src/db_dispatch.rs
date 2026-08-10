@@ -3,7 +3,6 @@
 //! — this is reached only through `dispatch::update_inner`'s `Msg::Db` arm.
 
 use crate::app::App;
-use crate::document::DocumentId;
 use crate::materialize_ack;
 use crate::runtime::Effects;
 use rune_db::DbEvent;
@@ -33,16 +32,15 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             result: rune_db::OpOutcome::MaterializePrep(prep),
         } => {
             if let Some(pending) = app.db_ops.remove(&op_id) {
-                materialize_ack::handle_prepare_ack(app, pending.doc, *prep, effects);
+                materialize_ack::handle_prepare_ack(app, pending.doc, op_id, *prep, effects);
             }
         }
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::Materialize(mat),
         } => {
-            app.published_ops.remove(&op_id);
             if let Some(pending) = app.db_ops.remove(&op_id) {
-                materialize_ack::handle_materialize_ack(app, pending.doc, *mat);
+                materialize_ack::handle_materialize_ack_for_op(app, pending.doc, op_id, *mat);
             }
         }
         DbEvent::Ok {
@@ -161,20 +159,6 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 return;
             }
             crate::rename::fail_op(app, op_id, error.clone(), effects);
-            // This exact op may be a `MaterializeRecord` whose disk
-            // write ALREADY physically completed before the writer died —
-            // report the save as successful FIRST, so `on_store_failure`'s
-            // in-flight sweep below never re-flags it as failed.
-            if let Some(doc_id) = app.published_ops.remove(&op_id) {
-                materialize_ack::handle_materialize_ack(
-                    app,
-                    doc_id,
-                    rune_db::MatResult {
-                        committed: true,
-                        ..Default::default()
-                    },
-                );
-            }
             // A doc-scoped read op failing (a probe against an externally
             // deleted file, a load that couldn't reach its row) is a fact
             // about ONE document's disk, not about the store's ability to
@@ -195,20 +179,12 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Fatal { error } => {
             crate::rename::fail_all(app, error.clone(), effects);
-            // Same reasoning as the `Err` arm above, for every
-            // still-in-flight `MaterializeRecord` a `Fatal` tears down —
-            // each one's write already physically completed.
-            let published: Vec<DocumentId> = app.published_ops.drain().map(|(_, id)| id).collect();
-            for doc_id in published {
-                materialize_ack::handle_materialize_ack(
-                    app,
-                    doc_id,
-                    rune_db::MatResult {
-                        committed: true,
-                        ..Default::default()
-                    },
-                );
-            }
+            // `on_store_failure`'s own state-aware sweep resolves every
+            // document whose `MaterializeRecord` already physically
+            // completed (`Recording { published: true }`) as a synthetic
+            // commit — the same outcome a `Fatal` tearing down that op's own
+            // ack would have produced, just derived from the document's
+            // current state rather than a side map of op ids.
             materialize_ack::on_store_failure(app, error);
             // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
             // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`

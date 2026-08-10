@@ -303,7 +303,11 @@ fn reading_view_paints_no_caret_anywhere() {
 fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
     let mem = rename_common::seeded_vfs();
     let mut app = rename_common::app_with(&mem);
-    app.active_doc_mut().save_in_flight = true;
+    let (version, content) = {
+        let d = app.active_doc();
+        (d.buffer.version(), Arc::from(d.buffer.content()))
+    };
+    app.active_doc_mut().begin_save(version, content);
 
     rename_common::type_new_name(&mut app, "b");
     assert_eq!(

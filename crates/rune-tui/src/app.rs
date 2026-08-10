@@ -158,21 +158,6 @@ pub struct App {
     /// `file_binding`/`file_binding_mut`/`prune_file_binding` are the only
     /// chokepoints that touch this map.
     pub file_bindings: HashMap<i64, crate::db::FileBinding>,
-    /// Correlates an in-flight `MaterializeRecord` op id to the
-    /// document whose disk write ALREADY physically completed before this
-    /// op was even enqueued — the caller-side vfs work runs first, this
-    /// bookkeeping op runs after. A dead writer failing precisely THIS op
-    /// (`DbEvent::Err`/`Fatal`) must never be reported as a failed save:
-    /// `handle_db_event` consults this map to react with a
-    /// synthetic committed ack instead of the ordinary failure path.
-    /// Cleared on both success and failure — never left stale.
-    pub published_ops: HashMap<u64, DocumentId>,
-    /// The content/path/CAS facts a `materialize` attempt captured at
-    /// trigger time, held here between `MaterializePrepare`'s ack (which
-    /// carries no disk-sourced data at all) and the caller-side `vfs` `Cmd`
-    /// it spawns — `save::PendingMaterialize`'s doc comment explains why
-    /// each field is captured once and never re-derived.
-    pub(crate) pending_materialize: HashMap<DocumentId, crate::save::PendingMaterialize>,
     /// A persistent status banner independent of the message log — set once
     /// the store degrades (at open, or from a later `on_store_failure`) and
     /// never cleared automatically.
@@ -389,8 +374,6 @@ impl App {
             db,
             db_ops: HashMap::new(),
             file_bindings: HashMap::new(),
-            published_ops: HashMap::new(),
-            pending_materialize: HashMap::new(),
             db_banner: None,
             pending_save_confirm: None,
             next_save_confirm_gen: 0,

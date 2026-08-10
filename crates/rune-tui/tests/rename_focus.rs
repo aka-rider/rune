@@ -141,7 +141,7 @@ fn an_invalid_name_still_lets_the_user_quit_and_save() {
     };
     send(&mut app, key(KeyCode::Char('s'), cmd_s));
     assert!(
-        app.active_doc().save_in_flight,
+        app.active_doc().save_in_flight(),
         "\u{2318}S must still trigger a save even with an unusable name pending"
     );
 

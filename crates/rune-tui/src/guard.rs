@@ -273,7 +273,7 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
             clear_guard(app);
             let _ = save::trigger_save(app, doc, SaveMode::Normal, effects);
-            if app.doc(doc).is_some_and(|d| d.save_in_flight) {
+            if app.doc(doc).is_some_and(|d| d.save_in_flight()) {
                 app.pending_close_on_save = Some(doc);
             }
         }
@@ -395,7 +395,7 @@ fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effec
             // user's "save anyway" is never silently dropped on the floor,
             // and a repeat press once the in-flight save has finished can
             // still answer it.
-            let already_in_flight = app.doc(doc).is_some_and(|d| d.save_in_flight);
+            let already_in_flight = app.doc(doc).is_some_and(|d| d.save_in_flight());
             let start = save::trigger_save(app, doc, SaveMode::Force, effects);
             if !already_in_flight && matches!(start, SaveStart::InFlight) {
                 clear_guard(app);
@@ -700,7 +700,7 @@ mod tests {
             SaveStart::InFlight
         );
         assert!(
-            app.doc(doc).unwrap().save_in_flight,
+            app.doc(doc).unwrap().save_in_flight(),
             "a Force save on a degraded store must reach materialize directly"
         );
         assert!(
@@ -722,7 +722,7 @@ mod tests {
             save::trigger_save(&mut app, doc, SaveMode::Normal, &mut effects),
             SaveStart::Refused
         );
-        assert!(!app.doc(doc).unwrap().save_in_flight);
+        assert!(!app.doc(doc).unwrap().save_in_flight());
         assert!(app.pending_save_confirm.is_some_and(|(cid, _)| cid == doc));
     }
 
@@ -748,6 +748,6 @@ mod tests {
             save::trigger_save(&mut app, doc, SaveMode::Force, &mut effects),
             SaveStart::InFlight
         );
-        assert!(app.doc(doc).unwrap().save_in_flight);
+        assert!(app.doc(doc).unwrap().save_in_flight());
     }
 }

@@ -242,7 +242,11 @@ fn disk_conflict_prompt_survives_refused_force() {
     let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
     assert!(app.guard.is_some(), "expected the disk-conflict Guard");
 
-    app.doc_mut(doc_id).unwrap().save_in_flight = true;
+    let (version, content) = {
+        let d = app.doc(doc_id).unwrap();
+        (d.buffer.version(), Arc::from(d.buffer.content()))
+    };
+    app.doc_mut(doc_id).unwrap().begin_save(version, content);
 
     press_key(&mut app, ch('s'));
     assert!(
@@ -258,7 +262,7 @@ fn disk_conflict_prompt_survives_refused_force() {
         "the refusal must be posted, not silent: {log:?}"
     );
 
-    app.doc_mut(doc_id).unwrap().save_in_flight = false;
+    app.doc_mut(doc_id).unwrap().abandon_save();
 
     press_key(&mut app, ch('s'));
     assert!(

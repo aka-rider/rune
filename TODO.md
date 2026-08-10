@@ -31,10 +31,11 @@ entry is deleted in the same commit that fixes it.
 ## Architecture
 
 ### Shadow state
-- **Where**: (a) `Document.save_in_flight` at `crates/rune-tui/src/document/mod.rs:130,341,371,383,403`, written directly by a test at `crates/rune-tui/src/merge/landing.rs:472`; (b) `is_dirty_cached` (`document/mod.rs:142`) vs `is_dirty` (`document/mod.rs:360-361`) vs `is_dirty_now` (`crates/rune-tui/src/materialize_ack.rs:408`)
-- **Wrong**: (a) `save_in_flight` duplicates `save_pending.is_some()`; being `pub` let a test manufacture an "impossible" state by writing it directly. (b) two accessors exist where picking the wrong one is a per-call-site correctness decision, for a compare the code's own comment calls "length check + memcmp, microsecond-scale" — the cache buys only a staleness hazard.
-- **Instead**: delete `save_in_flight` and derive it; delete the dirty cache or store a content hash instead.
-- **Done when**: both fields are gone (or one is provably necessary and the other deleted).
+- **Where**: `is_dirty_cached` (`document/mod.rs:142`) vs `is_dirty` (`document/mod.rs:360-361`) vs `is_dirty_now` (`crates/rune-tui/src/materialize_ack.rs:408`)
+- **Wrong**: two accessors exist where picking the wrong one is a per-call-site correctness decision, for a compare the code's own comment calls "length check + memcmp, microsecond-scale" — the cache buys only a staleness hazard.
+- **Instead**: delete the dirty cache or store a content hash instead.
+- **Done when**: one of the two is deleted.
+- **Update**: the `save_in_flight` half of this entry is resolved — `Document.save_in_flight` is now a derived accessor over the `SaveState` machine (`document/save_state.rs`), and no test can manufacture an impossible in-flight state by writing a field directly.
 
 ### Sentinel-value class
 - **Where**: `crates/rune-syntax/src/syntax.rs:56` (`CellMap = Vec<i64>`, -1 = decorative); `crates/rune-tui/src/render/cell.rs:38,132` (`buf_offset: i64`, -1, guarded by `< 0` at ~6 render sites then `as usize`); `crates/rune-md/src/table/mod.rs:36` (`buf: i64`); `crates/rune-tui/src/app.rs:337,409` (`root: PathBuf`, empty = unresolved); `crates/rune-tui/src/app.rs:82-92` (`frame_height/width: u16`, 0 = no resize yet); `crates/rune-tui/src/filesearch/rank.rs:112` and `crates/rune-tui/src/messages/mod.rs:371` (`unwrap_or(usize::MAX)`)
@@ -90,7 +91,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-merge/src/hunks.rs` — 684 (grew past the threshold in WP-D fixing the anchoring bug; the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
   - `crates/rune-tui/src/runtime/mod.rs` — 672
   - `crates/rune-fuzz/src/generate/palette.rs` — 660
-  - `crates/rune-tui/src/app.rs` — 625 (grew further in the G7 fix adding the `file_bindings` shared-baseline map's own doc comment)
+  - `crates/rune-tui/src/app.rs` — 608 (shrank from 625 once the SaveState refactor deleted `published_ops`/`pending_materialize`, still over)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 600 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
@@ -103,7 +104,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 544
   - `crates/rune-vfs/src/mem.rs` — 673
   - `crates/rune-tui/src/dispatch.rs` — 526
-  - `crates/rune-tui/src/document/mod.rs` — 523 (the hydrate-cursor char-boundary fix pushed this over; split candidate: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-tui/src/document/mod.rs` — 626 (the SaveState machine's `begin_prepare`/`begin_publishing`/`begin_recording`/`save_phase`/`bind_target` accessors pushed this further over; split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
   - `crates/rune-db/src/writer.rs` — 552 (grew further in the issue #77 fix: the `Load` arm now dispatches on `LoadSource::Fresh`/`Taken`; split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
@@ -116,8 +117,8 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/focus.rs` — 506
   - `crates/rune-syntax/src/syntax.rs` — 505
   - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-tui/src/save/materialize.rs` — 523 (crossed the threshold in the G7 fix: `materialize_now` now reads `expect_obs` off `App::file_bindings` instead of `DocDb` directly, then grew further in the review-fixes pass refusing a missing file binding explicitly instead of a `0` sentinel; split candidate: move `run_materialize_vfs`'s `force_publish`/`capture_and_swap_publish` helpers to a sibling `force_publish.rs`)
-- **Wrong**: 35 source files exceed the 500-line house rule, none ledgered.
+  - `crates/rune-tui/src/materialize_ack.rs` — 565 (the SaveState refactor's `handle_prepare_ack`/`handle_materialize_vfs_done`/`record_outcome`/`record_orphan_outcome`/`on_store_failure` rewrite pushed this over; split candidate: move `record_outcome`/`record_orphan_outcome`/`RecordTarget` to a sibling `record.rs`)
+- **Wrong**: 35 source files exceed the 500-line house rule, none ledgered. (`crates/rune-tui/src/save/materialize.rs` dropped to 321 lines once the SaveState refactor deleted `PendingMaterialize` and is no longer over — removed from this list.)
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 

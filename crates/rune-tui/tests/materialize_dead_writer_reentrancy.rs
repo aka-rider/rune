@@ -84,14 +84,17 @@ fn a_dead_writer_racing_its_own_materialize_record_ack_still_resolves_the_save_a
     send(&mut app, vfs_done);
 
     // The `MaterializeRecord` enqueue above succeeded (the writer was still
-    // alive) — exactly one op is now in flight, and it is `published`
-    // (WP7's own "the disk write already committed" bookkeeping).
-    let (&op_id, &published_doc) = app
-        .published_ops
-        .iter()
-        .next()
-        .expect("the committed write must have enqueued a published MaterializeRecord");
-    assert_eq!(published_doc, id);
+    // alive) — the document is now `Recording { published: true }` (the
+    // disk write already committed).
+    assert_eq!(
+        app.doc(id).unwrap().save_phase(),
+        rune_tui::document::SavePhase::Recording { published: true }
+    );
+    let op_id = app
+        .doc(id)
+        .unwrap()
+        .record_op()
+        .expect("the committed write must have enqueued a MaterializeRecord");
 
     // The writer dies BEFORE that op's own reply would have arrived —
     // deterministically confirmed, never raced.

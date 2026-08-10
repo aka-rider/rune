@@ -1,7 +1,7 @@
 //! Review fix (round 4, finding 2): `db_dispatch::handle_db_event`'s
-//! `DbEvent::Fatal` arm drains `App::published_ops` and calls `handle_
-//! materialize_ack` for EVERY affected document in a loop, `on_store_
-//! failure` only running once the whole loop finishes. Each of those calls
+//! `DbEvent::Fatal` arm resolves every document `on_store_failure`'s own
+//! state-aware sweep finds `Recording { published: true }` in a loop before
+//! degrading the store. Each of those calls
 //! may itself trigger a `saved: None` re-baseline `Load` enqueue
 //! (`materialize_ack::reactions`) — with a dead writer that enqueue always
 //! fails, and a degrading failure there would sweep every OTHER document
@@ -101,9 +101,14 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
     commit_but_leave_unacked(&mut app, &bridge);
 
     assert_eq!(
-        app.published_ops.len(),
-        2,
-        "test setup: both documents' committed writes must be tracked as published"
+        app.doc(id_a).unwrap().save_phase(),
+        rune_tui::document::SavePhase::Recording { published: true },
+        "test setup: doc a's committed write must be tracked as published"
+    );
+    assert_eq!(
+        app.doc(id_b).unwrap().save_phase(),
+        rune_tui::document::SavePhase::Recording { published: true },
+        "test setup: doc b's committed write must be tracked as published"
     );
 
     // The writer dies before either op's own reply would have arrived.

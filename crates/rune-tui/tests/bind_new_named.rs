@@ -302,20 +302,20 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
         "the document must stay bind_new — no naming attempt has succeeded yet"
     );
     assert!(
-        app.doc(id).unwrap().pending_bind_path.is_none(),
-        "a refused create must clear pending_bind_path"
+        app.doc(id).unwrap().bind_target().is_none(),
+        "a refused create must clear bind_target"
     );
 }
 
-/// A refused create's `pending_bind_path` must never survive to bind a
-/// LATER, unrelated successful create. `^R` into a collision, refused,
-/// THEN a plain ⌘S — never a second `^R`, which would route through
-/// `bind_new_now` and unconditionally overwrite `pending_bind_path` before
-/// the commit ever consumes the stale one, masking the leak this test
-/// exists to catch. ⌘S instead goes through `materialize_now`, which never
-/// touches `pending_bind_path` at all: if the first refusal left it
-/// standing, the commit below would bind this document to the REFUSED
-/// name (`taken.md`) while the bytes it actually just wrote landed at the
+/// A refused create's `bind_target` must never survive to bind a LATER,
+/// unrelated successful create. `^R` into a collision, refused, THEN a
+/// plain ⌘S — never a second `^R`, which would route through
+/// `bind_new_now` and unconditionally overwrite `bind_target` before the
+/// commit ever consumes the stale one, masking the leak this test exists
+/// to catch. ⌘S instead goes through `materialize_now`, which never
+/// touches `bind_target` at all: if the first refusal left it standing,
+/// the commit below would bind this document to the REFUSED name
+/// (`taken.md`) while the bytes it actually just wrote landed at the
 /// document's own, never-touched path (`nope.md`).
 #[test]
 fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
