@@ -463,3 +463,45 @@ pub(crate) fn bootstrap_new_file(
         banner,
     }
 }
+
+/// Opens the recovery store with no document to bind (issue #78, the
+/// image-first-launch fix): every OTHER bootstrap shape opens the store
+/// and then immediately does its own `Load`/scratch-row work against it —
+/// this is the shape for a launch whose first positional is an image, which
+/// has nothing to `Load` (an image binds no `DocDb` at all) but still needs
+/// a live session-wide store so that documents opened LATER in the same
+/// session (the Explorer, an extra positional) actually journal. Store-open
+/// failure behaves like every other bootstrap shape: reported to stderr,
+/// carried on the returned banner, `db: None`.
+pub(crate) fn bootstrap_store_only(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    home: Option<&Path>,
+) -> DbBootstrap {
+    let OpenedStore {
+        bridge,
+        store,
+        degraded_at_open,
+        warning: open_warning,
+    } = match open_store(vfs, home) {
+        Ok(opened) => opened,
+        Err(banner) => {
+            return DbBootstrap {
+                banner: Some(banner),
+                ..DbBootstrap::default()
+            };
+        }
+    };
+
+    let db = Db::new(store, bridge, degraded_at_open);
+    let banner = if degraded_at_open {
+        Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
+    } else {
+        None
+    };
+
+    DbBootstrap {
+        db: Some(db),
+        banner,
+        ..DbBootstrap::default()
+    }
+}

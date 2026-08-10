@@ -542,3 +542,102 @@ fn launch_one_positional_reads_the_path_exactly_once() {
         "one launched positional must read its path exactly once"
     );
 }
+
+/// Issue #78: an image-first launch must still open the session-wide store
+/// — later markdown opens depend on it, even though the image document
+/// itself binds no `DocDb`.
+#[test]
+fn launch_image_first_still_opens_the_session_store() {
+    let vfs = Mem::new();
+    vfs.save_atomic(
+        Path::new("/vault/x.png"),
+        &[0x89, b'P', b'N', b'G', 0, 0, 0, 0],
+    )
+    .expect("seed a (fake) png");
+    let home = ScratchHome::new("image-first-store");
+
+    let app = bootstrap(
+        Arc::new(vfs),
+        vec![OsString::from("/vault/x.png")].into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed for an image first positional");
+
+    assert!(
+        app.db.is_some(),
+        "an image-first launch must still open the session-wide store"
+    );
+    assert!(
+        app.db_banner.is_none(),
+        "a healthy store open must not post a banner"
+    );
+}
+
+/// The degraded mirror of the above: an image-first launch whose store
+/// fails to open (no usable `$HOME`, the same trigger every other bootstrap
+/// shape's own degraded test uses) must still open the editor, with `db:
+/// None` and the recovery-disabled banner carried through — never silently
+/// dropped just because there was no document to `Load`.
+#[test]
+fn launch_image_first_with_an_unopenable_store_banners() {
+    let vfs = Mem::new();
+    vfs.save_atomic(
+        Path::new("/vault/x.png"),
+        &[0x89, b'P', b'N', b'G', 0, 0, 0, 0],
+    )
+    .expect("seed a (fake) png");
+
+    let app = bootstrap(
+        Arc::new(vfs),
+        vec![OsString::from("/vault/x.png")].into_iter(),
+        PathBuf::from("/"),
+        None,
+    )
+    .expect("bootstrap should succeed even with no recovery store");
+
+    assert!(
+        app.db.is_none(),
+        "an unopenable store must leave the image-first launch with db: None"
+    );
+    assert!(
+        app.db_banner.is_some(),
+        "an unopenable store must still surface the recovery-disabled banner"
+    );
+}
+
+/// The end-to-end payoff: after an image-first launch, opening a markdown
+/// file through the workspace (the same path the Explorer uses) must
+/// actually enqueue journaling work against the now-live session store —
+/// before issue #78's fix, this store was never opened at all, so nothing
+/// journaled for the rest of the session.
+#[test]
+fn launch_image_first_then_opening_markdown_enqueues_journaling() {
+    let vfs = Mem::new();
+    vfs.save_atomic(
+        Path::new("/vault/x.png"),
+        &[0x89, b'P', b'N', b'G', 0, 0, 0, 0],
+    )
+    .expect("seed a (fake) png");
+    vfs.save_atomic(Path::new("/vault/notes.md"), b"notes")
+        .expect("seed notes.md");
+    let home = ScratchHome::new("image-first-then-markdown");
+
+    let mut app = bootstrap(
+        Arc::new(vfs),
+        vec![OsString::from("/vault/x.png")].into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed for an image first positional");
+
+    assert!(
+        app.db_ops.is_empty(),
+        "nothing has opened yet besides the image"
+    );
+    workspace::open_path(&mut app, Path::new("/vault/notes.md"));
+    assert!(
+        !app.db_ops.is_empty(),
+        "opening a markdown file after an image-first launch must enqueue a Load"
+    );
+}

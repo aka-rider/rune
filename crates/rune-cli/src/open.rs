@@ -12,7 +12,8 @@ use rune_vfs::{FileKind, Vfs};
 
 use crate::cli::CliError;
 use crate::db_bootstrap::{
-    DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_untitled_db,
+    DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_store_only,
+    bootstrap_untitled_db,
 };
 use crate::loader::{LoadError, load_sighting};
 use crate::{AppGuard, exit_code};
@@ -84,7 +85,14 @@ pub(crate) fn open_first_positional(
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     if rune_tui::document_support::is_image_path(&path) {
-        let mut app = App::new_untitled(Arc::clone(vfs), None);
+        // Issue #78: an image-first launch still needs the session store —
+        // later markdown opens (Explorer, extra positionals) must not
+        // silently journal nothing for the whole session. The image
+        // document itself stays recovery-free either way (`workspace::
+        // open_path` binds no `DocDb` for an image), so this only affects
+        // documents opened AFTER this one.
+        let mut bootstrap = bootstrap_store_only(Arc::clone(vfs), home);
+        let mut app = App::new_untitled(Arc::clone(vfs), bootstrap.db.take());
         let blank = app.active;
         let opened = workspace::open_path(&mut app, &path);
         if let Some(image_id) = opened
@@ -98,7 +106,13 @@ pub(crate) fn open_first_positional(
             let _ =
                 workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
         }
-        return Ok((app, DbBootstrap::default()));
+        return Ok((
+            app,
+            DbBootstrap {
+                banner: bootstrap.banner,
+                ..DbBootstrap::default()
+            },
+        ));
     }
 
     // One sighting decides both "does this path exist" and, if so, the
