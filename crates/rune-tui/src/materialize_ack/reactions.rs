@@ -138,6 +138,16 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             binding.expect_obs = saved.id;
             binding.pending_rebaseline_hash = None;
         }
+        let was_hardlinked = app.doc(id).is_some_and(|d| d.nlink.is_some_and(|n| n > 1));
+        if was_hardlinked {
+            messages::info(
+                app,
+                "saved \u{2014} this file was hard-linked; its other names still hold the previous content",
+            );
+        }
+        if let Some(doc) = app.doc_mut(id) {
+            doc.nlink = mat.saved.as_ref().and_then(|o| o.nlink);
+        }
         // Resolved BEFORE the `saved: None` re-baseline below: that arm may
         // enqueue a `Load`, and a `Load` enqueue failure sweeps every
         // document with `save_in_flight` (`db_enqueue::load_document` ->

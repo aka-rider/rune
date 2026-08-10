@@ -266,6 +266,17 @@ fn bootstrap(
     if let Some(sync_kind) = db_bootstrap.sync_kind {
         app.active_doc_mut().last_sync = Some(sync_kind);
     }
+    if let Some(nlink) = db_bootstrap.nlink {
+        app.active_doc_mut().nlink = Some(nlink);
+        if nlink > 1 {
+            rune_tui::messages::warn(
+                &mut app,
+                format!(
+                    "this file has {nlink} hard links \u{2014} saving replaces it atomically, so the other links keep the old content"
+                ),
+            );
+        }
+    }
     if let Some(recovered) = db_bootstrap.recovered_content {
         // Adopts a dead session's inherited draft content through the same
         // chokepoint `db::handle_load_ack` uses for every later per-document

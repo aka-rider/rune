@@ -219,6 +219,14 @@ pub struct Document {
     /// Nothing that mutates the buffer or the recovery store may treat it
     /// as fact. `None` before the first `Load`/`Probe` ack lands.
     pub last_sync: Option<rune_db::SyncKind>,
+    /// The most recently known hard-link count for this document's file —
+    /// written only from an operation's own result (`db_ack::handle_load_ack`,
+    /// the launch bootstrap, a committed materialize ack's `saved`
+    /// observation), never invented locally. `Some(n > 1)` is what the
+    /// save-side warn in `materialize_ack::reactions::handle_materialize_ack`
+    /// reads before a save forks the file from its other names on disk.
+    /// `None` before any such operation has reported a fact.
+    pub nlink: Option<i64>,
 }
 
 /// Why a document refuses mutation — not a plain bool, so a toggleable view
@@ -409,6 +417,7 @@ impl Document {
             image: None,
             embeds: crate::graphics::EmbedSet::new(),
             last_sync: None,
+            nlink: None,
             pinned: false,
         }
     }

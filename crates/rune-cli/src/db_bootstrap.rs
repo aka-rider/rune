@@ -46,6 +46,11 @@ pub(crate) struct DbBootstrap {
     /// loading anything, so there is no `Load` on that path at all, not
     /// even on success.
     pub(crate) sync_kind: Option<rune_db::SyncKind>,
+    /// This `Load`'s hard-link count, mirrored onto the active document's
+    /// own `Document::nlink` the same way `sync_kind` is — `None` on every
+    /// path that never ran `rune_db::load` (matching `sync_kind`'s own
+    /// `None` cases).
+    pub(crate) nlink: Option<i64>,
     /// The persistent degraded-store status banner (plan WP5.S2), or
     /// `None` when the store opened clean.
     pub(crate) banner: Option<String>,
@@ -247,6 +252,7 @@ pub(crate) fn bootstrap_db(
         expect_obs: Some(expect_obs),
         recovered_content: Some(load_result.recovered),
         sync_kind: Some(sync_kind),
+        nlink: Some(load_result.nlink),
         banner,
     }
 }
@@ -460,6 +466,7 @@ pub(crate) fn bootstrap_new_file(
         expect_obs: Some(0),
         recovered_content: None,
         sync_kind: None,
+        nlink: None,
         banner,
     }
 }

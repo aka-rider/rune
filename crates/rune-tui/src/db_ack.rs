@@ -136,6 +136,16 @@ pub fn handle_load_ack(
     // `hydrate` was never called: the fact this `Load` reported is still
     // true regardless of whether the buffer adopted it.
     doc.last_sync = Some(load_result.sync.kind);
+    doc.nlink = Some(load_result.nlink);
+    if load_result.nlink > 1 {
+        messages::warn(
+            app,
+            format!(
+                "this file has {} hard links \u{2014} saving replaces it atomically, so the other links keep the old content",
+                load_result.nlink
+            ),
+        );
+    }
     // A dead session's still-active merge is re-entered ONLY by an ack that
     // genuinely hydrated the reconstruction the merge row was matched
     // against — a skipped or refused hydration leaves the row active for
@@ -520,6 +530,63 @@ mod tests {
             42,
             "the shared per-file baseline must advance for the ack's OWN db_id"
         );
+    }
+
+    fn load_ack_for(nlink: u64) -> (App, DocumentId) {
+        let mem = Mem::new();
+        mem.save_atomic(Path::new("/doc.md"), b"hello")
+            .expect("seed doc.md");
+        mem.set_nlink(Path::new("/doc.md"), nlink)
+            .expect("set nlink");
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let bridge = DbBridge::bootstrap();
+        let store =
+            Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("open store");
+
+        store.load(Path::new("/doc.md")).expect("enqueue load");
+        let load_result = match bridge.wait_for_bootstrap_event(|_| true) {
+            DbEvent::Ok {
+                result: OpOutcome::Load(load),
+                ..
+            } => *load,
+            other => panic!("expected a Load ack, got {other:?}"),
+        };
+
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/doc.md")),
+            vfs,
+            Some(Db::new(store, bridge, false)),
+        );
+        let id = app.active;
+        let issued_version = app.doc(id).expect("doc exists").buffer.version();
+        handle_load_ack(&mut app, id, load_result, Some(issued_version), false);
+        (app, id)
+    }
+
+    /// Issue #85: a load off a path with more than one hard link must warn
+    /// that saving forks it from its other names.
+    #[test]
+    fn load_ack_warns_on_multiple_hard_links() {
+        let (app, id) = load_ack_for(2);
+
+        assert_eq!(app.doc(id).expect("doc exists").nlink, Some(2));
+        assert_eq!(
+            messages::newest_text(&app),
+            Some(
+                "this file has 2 hard links \u{2014} saving replaces it atomically, so the other links keep the old content"
+            )
+        );
+    }
+
+    /// Issue #85: an ordinary single-link file must never warn.
+    #[test]
+    fn load_ack_stays_silent_on_a_single_hard_link() {
+        let (app, id) = load_ack_for(1);
+
+        assert_eq!(app.doc(id).expect("doc exists").nlink, Some(1));
+        assert_eq!(messages::posts(&app), 0);
     }
 
     /// Issue #82: the re-baseline `Load` a `saved: None` `MaterializeRecord`
