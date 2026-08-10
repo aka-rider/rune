@@ -134,3 +134,52 @@ fn a_resolvable_racer_path_hands_off_to_a_load() {
         "a resolvable racer path must hand off to a Load"
     );
 }
+
+fn committed_result(nlink: Option<i64>) -> MatResult {
+    MatResult {
+        committed: true,
+        saved: Some(Observation {
+            nlink,
+            ..racer_observation(1)
+        }),
+        fresh: None,
+        missing: false,
+        raced: false,
+    }
+}
+
+/// Issue #85: a committed save of a document whose stored `nlink` fact was
+/// `> 1` must warn once that the file's other names still hold the
+/// previous content, then refresh the fact from the publish's own
+/// observation so a second save doesn't repeat a stale claim.
+#[test]
+fn committed_save_warns_once_for_a_hardlinked_document_then_stops() {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let mut app = App::new(
+        Buffer::new("body"),
+        Some(PathBuf::from("/doc.md")),
+        vfs,
+        None,
+    );
+    let id = app.active;
+    app.doc_mut(id).unwrap().nlink = Some(2);
+
+    handle_materialize_ack(&mut app, id, committed_result(Some(1)));
+
+    assert_eq!(
+        messages::newest_text(&app),
+        Some(
+            "saved \u{2014} this file was hard-linked; its other names still hold the previous content"
+        )
+    );
+    assert_eq!(app.doc(id).unwrap().nlink, Some(1));
+
+    let posts_before_second_save = messages::posts(&app);
+    handle_materialize_ack(&mut app, id, committed_result(Some(1)));
+
+    assert_eq!(
+        messages::posts(&app),
+        posts_before_second_save,
+        "a second save must not repeat the hardlink warning once the fact refreshed"
+    );
+}

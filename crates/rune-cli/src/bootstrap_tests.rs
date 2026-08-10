@@ -153,6 +153,35 @@ fn launch_same_file_two_spellings_opens_one_document() {
     );
 }
 
+/// Issue #85: a launch positional with more than one hard link must carry
+/// that fact onto the active document and warn that saving will fork it
+/// from its other names.
+#[test]
+fn launch_of_a_hardlinked_positional_carries_the_fact_and_warns() {
+    let vfs = Mem::new();
+    vfs.save_atomic(Path::new("/vault/notes.md"), b"hi")
+        .expect("seed notes.md");
+    vfs.set_nlink(Path::new("/vault/notes.md"), 2)
+        .expect("set nlink");
+    let home = ScratchHome::new("hardlink");
+
+    let app = bootstrap(
+        Arc::new(vfs),
+        vec![OsString::from("/vault/notes.md")].into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed");
+
+    assert_eq!(app.doc(app.active).expect("doc exists").nlink, Some(2));
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some(
+            "this file has 2 hard links \u{2014} saving replaces it atomically, so the other links keep the old content"
+        )
+    );
+}
+
 /// Plan WP4.S8: a `.png` first positional bootstraps through the SAME
 /// `workspace::open_path` dispatch every extra positional uses (built
 /// via the untitled `App` constructor as an anchor), rather than
