@@ -44,7 +44,7 @@ pub struct LoadResult {
     pub nlink: i64,
     /// This session's CAS baseline for `doc_id` (`session_documents.
     /// saved_obs`) once `load` returns — the `expect` `Store::materialize`
-    /// (WP5) needs for this session's very first save. `None` only if
+    /// needs for this session's very first save. `None` only if
     /// adoption somehow never happened for this session/doc pair (should
     /// not occur — every branch of `load` above either adopts or leaves a
     /// PRIOR adoption of this session's own in place — kept `Option` rather

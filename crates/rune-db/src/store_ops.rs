@@ -284,9 +284,9 @@ impl Store {
     }
 
     /// Enqueues a `Load` op that adopts `sighting` — a read the caller
-    /// already took of `path` — instead of reading it a second time (issue
-    /// #77: one sighting must decide both the buffer bytes and the CAS
-    /// baseline). `path` must already be resolved, the same requirement
+    /// already took of `path` — instead of reading it a second time: one
+    /// sighting must decide both the buffer bytes and the CAS baseline.
+    /// `path` must already be resolved, the same requirement
     /// `crate::load::load_from_read` places on its own `path` argument.
     pub fn load_sighted(&self, path: &Path, sighting: rune_vfs::Sighting) -> Result<u64, Error> {
         let now = self.now();

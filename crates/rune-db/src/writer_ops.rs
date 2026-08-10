@@ -186,9 +186,8 @@ pub enum OpKind {
     /// `Store`'s mutex. `source` decides whether this op reads `path` fresh
     /// itself (`LoadSource::Fresh`, `crate::load::load`) or adopts an
     /// already-taken caller-side sighting (`LoadSource::Taken`,
-    /// `crate::load::load_from_read`) — the single-sighting fix for issue
-    /// #77: a caller that already read `path` once must never have this op
-    /// read it again.
+    /// `crate::load::load_from_read`) — the single-sighting fix: a caller
+    /// that already read `path` once must never have this op read it again.
     Load {
         session_id: i64,
         liveness_check: LivenessCheckFn,

@@ -16,6 +16,20 @@ use rusqlite::Connection;
 
 use crate::Error;
 
+/// Extracts a `struct timeval` (`i64` seconds + `i32` microseconds, 4 bytes
+/// padding, 12 bytes total) from the front of a `sysctl` result buffer.
+/// Refuses a buffer too short to hold one, and a negative `sec` or `usec` —
+/// a negative timeval is never a real timestamp, so it is treated the same
+/// as any other malformed read: `None`, never a positive claim.
+fn parse_timeval(buf: &[u8]) -> Option<(i64, i32)> {
+    let sec = i64::from_ne_bytes(buf.get(0..8)?.try_into().ok()?);
+    let usec = i32::from_ne_bytes(buf.get(8..12)?.try_into().ok()?);
+    if sec < 0 || usec < 0 {
+        return None;
+    }
+    Some((sec, usec))
+}
+
 /// Reads `pid`'s start time via `sysctl(CTL_KERN, KERN_PROC, KERN_PROC_PID)`
 /// — the Darwin equivalent of Linux's `/proc/<pid>/stat` starttime field.
 /// Returns `None` on any failure, including "no such
@@ -70,8 +84,7 @@ fn proc_started_at(pid: i32) -> Option<String> {
         return None;
     }
 
-    let sec = i64::from_ne_bytes(buf.get(0..8)?.try_into().ok()?);
-    let usec = i32::from_ne_bytes(buf.get(8..12)?.try_into().ok()?);
+    let (sec, usec) = parse_timeval(&buf)?;
     Some(format!("{sec}.{usec:06}"))
 }
 
@@ -97,11 +110,7 @@ pub(crate) fn boot_time() -> Option<SystemTime> {
     if ret != 0 || len < 12 {
         return None;
     }
-    let sec = i64::from_ne_bytes(buf.get(0..8)?.try_into().ok()?);
-    let usec = i32::from_ne_bytes(buf.get(8..12)?.try_into().ok()?);
-    if sec < 0 || usec < 0 {
-        return None;
-    }
+    let (sec, usec) = parse_timeval(&buf)?;
     Some(SystemTime::UNIX_EPOCH + Duration::new(sec as u64, usec as u32 * 1_000))
 }
 
@@ -250,6 +259,19 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+/// The number of days in Gregorian `(year, month)`, leap years included —
+/// derived from [`days_from_civil`] itself (the gap between this month's
+/// first day and next month's first day) rather than a duplicate leap-year
+/// rule, so the two can never disagree.
+fn days_in_month(year: i64, month: u32) -> u32 {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    (days_from_civil(next_year, next_month, 1) - days_from_civil(year, month, 1)) as u32
+}
+
 /// The inverse of [`format_rfc3339_nanos`], scoped to that function's own
 /// fixed output shape (`YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`) rather than general
 /// RFC3339 — any deviation, or a pre-epoch instant, is refused as `None`
@@ -263,7 +285,10 @@ pub(crate) fn parse_rfc3339_nanos(s: &str) -> Option<SystemTime> {
     let year: i64 = date_parts.next()?.parse().ok()?;
     let month: u32 = date_parts.next()?.parse().ok()?;
     let day: u32 = date_parts.next()?.parse().ok()?;
-    if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if date_parts.next().is_some() || !(1..=12).contains(&month) {
+        return None;
+    }
+    if !(1..=days_in_month(year, month)).contains(&day) {
         return None;
     }
 
@@ -391,5 +416,21 @@ mod tests {
         assert_eq!(parse_rfc3339_nanos(""), None);
         assert_eq!(parse_rfc3339_nanos("not a timestamp"), None);
         assert_eq!(parse_rfc3339_nanos("2024-13-40T99:99:99.000000000Z"), None);
+    }
+
+    #[test]
+    fn parse_rfc3339_nanos_rejects_impossible_calendar_days() {
+        assert_eq!(parse_rfc3339_nanos("2024-02-30T00:00:00.000000000Z"), None);
+        assert_eq!(parse_rfc3339_nanos("2025-04-31T00:00:00.000000000Z"), None);
+        assert_eq!(
+            parse_rfc3339_nanos("2025-02-29T00:00:00.000000000Z"),
+            None,
+            "2025 is not a leap year"
+        );
+    }
+
+    #[test]
+    fn parse_rfc3339_nanos_accepts_a_leap_day() {
+        assert!(parse_rfc3339_nanos("2024-02-29T00:00:00.000000000Z").is_some());
     }
 }
