@@ -53,7 +53,7 @@ fn cmd_s_creates_the_file_and_clears_bind_new() {
         mem.read(Path::new("/root/nope.md")).expect("file created"),
         UNPUBLISHED_BODY.as_bytes()
     );
-    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(
         !doc_db.bind_new,
         "the create just committed — the next save is an overwrite"
@@ -130,7 +130,7 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
         app.guard.is_none(),
         "a lost create race must never raise an unanswerable DiskConflict guard"
     );
-    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(
         !doc_db.bind_new,
         "the document must come out of bind_new bound to the file's own row"
@@ -186,7 +186,7 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
         app.doc(id).unwrap().buffer.content() == UNPUBLISHED_BODY,
         "the buffer must stay exactly as typed"
     );
-    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(
         doc_db.bind_new,
         "no hand-off happened, so bind_new must stay true"
@@ -296,7 +296,7 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
         app.guard.is_none(),
         "a rename-create collision has no CAS baseline to raise a Guard against"
     );
-    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(
         doc_db.bind_new,
         "the document must stay bind_new — no naming attempt has succeeded yet"
@@ -375,13 +375,13 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
         b"already here",
         "the refused target must stay exactly as it was"
     );
-    let doc_db = app.doc(id).unwrap().db.as_ref().expect("still bound");
+    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(!doc_db.bind_new, "the create just committed");
 }
 
 /// Blocker 3 regression (moved out of `materialize_ack::reactions`'s own
 /// internal test module, A2 — the observable property is "the next ⌘S
-/// still writes the file", not `doc.db`'s internal shape): `record_outcome`'s
+/// still writes the file", not the document's replica internal shape): `record_outcome`'s
 /// "the store vanished entirely mid-flight" synthetic-commit arm builds a
 /// `MatResult { committed: true, ..Default::default() }` — `saved: None`.
 /// With no store left to re-baseline from, the document's binding must be
@@ -421,7 +421,7 @@ fn a_synthesized_commit_with_no_store_left_drops_the_binding_and_the_next_save_s
         "the just-published bytes must still count as saved"
     );
     assert!(
-        app.doc(id).unwrap().db.is_none(),
+        !app.doc(id).unwrap().is_store_bound(),
         "a binding that can never serve its next save must be dropped, not left dangling"
     );
 

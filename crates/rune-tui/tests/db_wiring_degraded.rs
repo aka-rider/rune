@@ -61,7 +61,7 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().db = Some(doc_db);
+    app.doc_mut(id).unwrap().set_doc_db_for_test(doc_db);
     join_binding_from(&mut app, &load);
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
@@ -161,7 +161,7 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().db = Some(doc_db);
+    app.doc_mut(id).unwrap().set_doc_db_for_test(doc_db);
     join_binding_from(&mut app, &load);
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
@@ -287,7 +287,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().db = Some(doc_db);
+    app.doc_mut(id).unwrap().set_doc_db_for_test(doc_db);
     dirty_common::force_dirty(&mut app, id); // nothing to save otherwise
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);

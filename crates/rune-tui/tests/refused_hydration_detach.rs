@@ -26,7 +26,7 @@ fn refused_hydration_detaches() {
     let mem = seeded_vfs();
     let (mut app, _bridge) = app_with_store(&mem);
     let id = app.active;
-    let db_id = app.doc(id).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id).unwrap().doc_db().unwrap().db_id;
 
     // Dirties the buffer BEFORE the refusal, so the later save actually has
     // something to publish rather than short-circuiting on "not dirty".
@@ -57,7 +57,7 @@ fn refused_hydration_detaches() {
     handle_load_ack(&mut app, id, load_result, Some(issued_version), false);
 
     assert!(
-        app.doc(id).unwrap().db.is_none(),
+        !app.doc(id).unwrap().is_store_bound(),
         "a refused hydration must drop the document's own db binding"
     );
     assert!(

@@ -409,6 +409,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::db::{Db, DbBridge};
+    use crate::document::Replica;
     use rune_core::buffer::Buffer;
     use rune_db::{ClockFn, Store};
     use rune_vfs::{Mem, Vfs};
@@ -525,7 +526,10 @@ mod tests {
         app.doc_mut(app.active)
             .expect("active doc exists")
             .saved_content = Arc::from("");
-        assert!(app.active_doc().db.is_none(), "test setup: no db binding");
+        assert!(
+            !app.active_doc().is_store_bound(),
+            "test setup: no db binding"
+        );
 
         let mut effects = Effects::default();
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
@@ -558,8 +562,8 @@ mod tests {
         app.doc_mut(app.active)
             .expect("active doc exists")
             .saved_content = Arc::from("");
-        app.doc_mut(app.active).expect("active doc exists").db =
-            Some(crate::db::DocDb::new(1, true, 0));
+        app.doc_mut(app.active).expect("active doc exists").replica =
+            Replica::Bound(crate::db::DocDb::new(1, true, 0));
         app.db = Some(live_db());
 
         let mut effects = Effects::default();
@@ -585,7 +589,10 @@ mod tests {
         app.doc_mut(app.active)
             .expect("active doc exists")
             .saved_content = Arc::from("");
-        assert!(app.active_doc().db.is_none(), "test setup: no db binding");
+        assert!(
+            !app.active_doc().is_store_bound(),
+            "test setup: no db binding"
+        );
         let other_doc = app.active;
         assert_eq!(
             crate::guard::set_guard(

@@ -28,7 +28,7 @@ pub(crate) fn enqueue_rename(
     to: &Path,
     effects: &mut Effects,
 ) -> Option<Ticket> {
-    if let Some(db_id) = app.doc(id).and_then(|d| d.db.as_ref()).map(|d| d.db_id)
+    if let Some(db_id) = app.doc(id).and_then(|d| d.doc_db()).map(|d| d.db_id)
         && let Some(db) = app.db.as_ref()
     {
         return match db.store.rename_file(db_id, from, to) {
@@ -96,7 +96,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     let dir = crate::explorer::initial_root(app);
     let path = dir.join(name);
 
-    if app.doc(id).and_then(|d| d.db.as_ref()).is_some() && app.db.is_some() {
+    if app.doc(id).and_then(|d| d.doc_db()).is_some() && app.db.is_some() {
         // The store route: `materialize(bind_new=true)` is an atomic
         // `rename_excl` create whose EEXIST branch refuses and records the
         // winner's bytes. `save::trigger_save` cannot be reused — it reads

@@ -114,7 +114,7 @@ fn launch_multi_file_enqueues_a_load_for_every_extra_tab() {
     // The first file hydrates synchronously inside `bootstrap_db` and
     // is bound before `App::new` ever runs.
     assert_eq!(app.documents.len(), 3);
-    assert!(app.doc(app.active).is_some_and(|d| d.db.is_some()));
+    assert!(app.doc(app.active).is_some_and(|d| d.is_store_bound()));
     // The other two open through `workspace::open_path`'s async path
     // (plan [rune-cli 1]/WP3.S1): each one's `Load` must actually be
     // enqueued and tracked, not silently dropped the way a `Sink::
@@ -215,7 +215,7 @@ fn launch_nonexistent_path_is_recovery_backed() {
     assert!(app.db.is_some(), "a live app-wide store must be bound");
     assert!(
         app.doc(app.active)
-            .and_then(|d| d.db.as_ref())
+            .and_then(|d| d.doc_db())
             .is_some_and(|db| db.bind_new),
         "the active document must be bound to a scratch row awaiting its first publish"
     );
@@ -255,7 +255,7 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
          not fall back to an untitled draft"
     );
     assert!(
-        active.db.as_ref().is_some_and(|db| db.bind_new),
+        active.doc_db().is_some_and(|db| db.bind_new),
         "the first positional's document must bind the fresh scratch row"
     );
 
@@ -265,7 +265,7 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
         .find(|d| d.file_path.as_deref() == Some(Path::new("/vault/other.md")))
         .expect("the second positional opened its own tab");
     assert!(
-        other.db.is_none(),
+        !other.is_store_bound(),
         "the DocDb from bootstrap_new_file must land on the first positional's \
          document, never on an extra tab"
     );
@@ -422,7 +422,7 @@ fn no_positional_launch_binds_both_the_app_db_and_a_doc_db() {
         "the default untitled launch must have a live app-wide store"
     );
     assert!(
-        app.doc(app.active).is_some_and(|d| d.db.is_some()),
+        app.doc(app.active).is_some_and(|d| d.is_store_bound()),
         "the default document must be bound to its own scratch row"
     );
 }

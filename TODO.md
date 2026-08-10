@@ -95,8 +95,8 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 600 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
-  - `crates/rune-tui/src/db.rs` — 564 (issues #82/#87's `install_or_join_file_binding`/`rebaseline_file_binding` split pushed this further over; split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
-  - `crates/rune-tui/src/db_ack.rs` — 593 (issues #82/#87's `binding_only` routing, the shared `install_doc_db`/`detach_file_binding` helpers, and three new tests pushed this over; split candidate: move the `#[cfg(test)] mod tests` block, over a third of the file, to a sibling `db_ack_tests.rs`, matching the crate's own `merge/landing.rs`-style split elsewhere)
+  - `crates/rune-tui/src/db.rs` — 593 (issue #84's `DocDb::undo_base` field plus `PendingOp::move_undo_pos` pushed this further over; split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
+  - `crates/rune-tui/src/db_ack.rs` — 621 (issue #84's `install_doc_db`/`handle_create_scratch_ack` pending-replay rewrite pushed this further over; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to a sibling `db_ack_tests.rs`, matching the crate's own `merge/landing.rs`-style split elsewhere)
   - `crates/rune-tui/src/guard.rs` — 753 (issue #88's force-save fix reordered the disk-conflict Guard's `[S]` handler and added its own unit tests; split candidate unchanged: its `#[cfg(test)] mod tests` block is now well over a third of the file — move it to a `#[path]`-included sibling `guard_tests.rs` so it keeps access to the private `set_guard`/`handle_disk_conflict_key` it exercises)
   - `crates/rune-tui/src/messages/mod.rs` — 557
   - `crates/rune-md/src/emit/mod.rs` — 556
@@ -104,7 +104,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 544
   - `crates/rune-vfs/src/mem.rs` — 673
   - `crates/rune-tui/src/dispatch.rs` — 526
-  - `crates/rune-tui/src/document/mod.rs` — 626 (the SaveState machine's `begin_prepare`/`begin_publishing`/`begin_recording`/`save_phase`/`bind_target` accessors pushed this further over; split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-tui/src/document/mod.rs` — 667 (issue #84's `Replica` seam — `doc_db`/`doc_db_mut`/`is_store_bound`/`bind_doc_db`/`set_doc_db_for_test` accessors replacing the old bare `db: Option<DocDb>` field — pushed this further over; split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
   - `crates/rune-db/src/writer.rs` — 552 (grew further in the issue #77 fix: the `Load` arm now dispatches on `LoadSource::Fresh`/`Taken`; split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
@@ -117,7 +117,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/focus.rs` — 506
   - `crates/rune-syntax/src/syntax.rs` — 505
   - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-tui/src/materialize_ack.rs` — 565 (the SaveState refactor's `handle_prepare_ack`/`handle_materialize_vfs_done`/`record_outcome`/`record_orphan_outcome`/`on_store_failure` rewrite pushed this over; split candidate: move `record_outcome`/`record_orphan_outcome`/`RecordTarget` to a sibling `record.rs`)
+  - `crates/rune-tui/src/materialize_ack.rs` — 577 (issue #84's `on_store_failure` Binding-to-Detached sweep pushed this further over; split candidate unchanged: move `record_outcome`/`record_orphan_outcome`/`RecordTarget` to a sibling `record.rs`)
 - **Wrong**: 35 source files exceed the 500-line house rule, none ledgered. (`crates/rune-tui/src/save/materialize.rs` dropped to 321 lines once the SaveState refactor deleted `PendingMaterialize` and is no longer over — removed from this list.)
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).

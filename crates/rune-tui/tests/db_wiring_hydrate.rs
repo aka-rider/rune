@@ -61,7 +61,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
         Some(db_a),
     );
     let id_a = app_a.active;
-    app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    app_a.doc_mut(id_a).unwrap().set_doc_db_for_test(doc_db_a);
     join_binding_from(&mut app_a, &load_a);
     let len_a = app_a.doc(id_a).unwrap().buffer.len();
     app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(len_a);
@@ -132,7 +132,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
         Some(db_b),
     );
     let id_b = app_b.active;
-    app_b.doc_mut(id_b).unwrap().db = Some(doc_db_b);
+    app_b.doc_mut(id_b).unwrap().set_doc_db_for_test(doc_db_b);
     join_binding_from(&mut app_b, &load_b);
     if let Some(bridge_edit) = bridge_edit {
         app_b.doc_mut(id_b).unwrap().journal.push(Step {
@@ -173,7 +173,7 @@ fn load_ack_installs_document_db_as_some() {
     );
 
     assert!(
-        app.doc(id).unwrap().db.is_some(),
+        app.doc(id).unwrap().is_store_bound(),
         "a Load ack with a saved_obs baseline must install DocDb"
     );
     assert!(
@@ -225,7 +225,7 @@ fn ack_for_a_document_edited_during_the_round_trip_leaves_the_buffer_unchanged()
         "the ack must never clobber a keystroke typed during the round trip"
     );
     assert!(
-        app.doc(id).unwrap().db.is_some(),
+        app.doc(id).unwrap().is_store_bound(),
         "DocDb must still be installed even when the buffer adopt is skipped"
     );
 }
@@ -283,7 +283,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
     );
 
     assert!(
-        app.doc(id).unwrap().db.is_none(),
+        !app.doc(id).unwrap().is_store_bound(),
         "no baseline observation means no DocDb binding"
     );
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
@@ -360,7 +360,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
         "a refused hydration must not mark the buffer dirty"
     );
     assert!(
-        app.doc(id).unwrap().db.is_none(),
+        !app.doc(id).unwrap().is_store_bound(),
         "issue #87: a document whose recovered content this session just \
          rejected must never keep journaling against that row"
     );

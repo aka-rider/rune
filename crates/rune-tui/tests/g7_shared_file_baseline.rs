@@ -51,7 +51,7 @@ fn bind_second_tab(
     {
         let doc = app.doc_mut(id).unwrap();
         doc.file_path = Some(path.to_path_buf());
-        doc.db = Some(DocDb::new(db_id, false, 0));
+        doc.set_doc_db_for_test(DocDb::new(db_id, false, 0));
     }
     app.install_or_join_file_binding(db_id, 0);
     id
@@ -75,7 +75,7 @@ fn bs_next_save_does_not_falsely_conflict_after_as_own_save_to_the_same_file() {
     let id_a = app.active;
     drain_one_op_for(&mut app, &bridge, id_a);
 
-    let db_id = app.doc(id_a).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id_a).unwrap().doc_db().unwrap().db_id;
     let id_b = bind_second_tab(&mut app, db_id, Path::new("/doc.md"), "hello");
 
     // Tab A edits and saves — a clean, ordinary CAS-matched publish.
@@ -120,7 +120,7 @@ fn force_save_from_one_tab_advances_the_shared_baseline_for_both() {
     let id_a = app.active;
     drain_one_op_for(&mut app, &bridge, id_a);
 
-    let db_id = app.doc(id_a).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id_a).unwrap().doc_db().unwrap().db_id;
     let id_b = bind_second_tab(&mut app, db_id, Path::new("/doc.md"), "hello");
 
     press_key(&mut app, ch('!'));
@@ -171,7 +171,7 @@ fn merge_discard_adoption_in_one_tab_advances_the_shared_baseline_for_both() {
     let id_a = app.active;
     drain_one_op_for(&mut app, &bridge, id_a);
 
-    let db_id = app.doc(id_a).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id_a).unwrap().doc_db().unwrap().db_id;
     let id_b = bind_second_tab(&mut app, db_id, Path::new("/doc.md"), "hello");
 
     press_key(&mut app, ch('!'));
@@ -238,7 +238,7 @@ fn a_stale_probe_for_tab_b_issued_before_tab_as_save_is_dropped_by_the_epoch_ech
     let id_a = app.active;
     drain_one_op_for(&mut app, &bridge, id_a);
 
-    let db_id = app.doc(id_a).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id_a).unwrap().doc_db().unwrap().db_id;
     let id_b = bind_second_tab(&mut app, db_id, Path::new("/doc.md"), "hello");
     app.doc_mut(id_b).unwrap().last_sync = Some(SyncKind::Clean);
 

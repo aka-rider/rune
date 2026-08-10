@@ -261,6 +261,25 @@ impl PendingOp {
         }
     }
 
+    /// A `MoveUndoPos` op — doc-scoped (issue #84): resolving a local undo
+    /// position to a durable seq can fail on this ONE document's own local-
+    /// position bookkeeping (`rune_db::OpKind::MoveUndoPos`'s doc comment)
+    /// without that being any kind of evidence the store itself can no
+    /// longer be trusted for recovery — an undo error must never
+    /// sticky-degrade the whole store.
+    pub fn move_undo_pos(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            mints_scratch: false,
+            is_probe: false,
+            probe_epoch: None,
+            merge_gen: None,
+            binding_only: false,
+            doc_scoped: true,
+        }
+    }
+
     pub fn merge_prep(doc: DocumentId, generation: u32) -> PendingOp {
         PendingOp {
             doc,
@@ -346,6 +365,15 @@ pub struct DocDb {
     /// arriving with a stale generation means a later edit already
     /// superseded it, so it's ignored.
     pub snapshot_generation: u32,
+    /// 1 iff the local journal's position 1 is the synthetic bridge `Step`
+    /// an adopting hydration pushes directly onto it (`Document::hydrate`'s
+    /// own doc comment) — that push never reaches `db_enqueue::append_edit`,
+    /// so the writer thread's own local-position numbering (which counts
+    /// only `AppendEdit`s it actually ran) stays one behind the local
+    /// journal's from that point on. `db_enqueue::move_undo_pos` subtracts
+    /// this before sending a local position to the writer thread; every
+    /// other document (never adopted) keeps it 0.
+    pub undo_base: u8,
 }
 
 impl DocDb {
@@ -355,6 +383,7 @@ impl DocDb {
             bind_new,
             last_known_seq,
             snapshot_generation: 0,
+            undo_base: 0,
         }
     }
 
@@ -498,12 +527,12 @@ impl crate::app::App {
     }
 
     /// `id`'s bound `db_id`, or `None` when the document has no store
-    /// binding at all — the one place `doc(id).db.as_ref().map(|d| d.db_id)`
+    /// binding at all — the one place `doc(id).doc_db().map(|d| d.db_id)`
     /// is spelled out, so every caller that only needs the id (never the
     /// [`FileBinding`] itself, e.g. to prune it) shares this instead of
     /// re-deriving it by hand.
     pub fn doc_db_id(&self, id: DocumentId) -> Option<i64> {
-        self.doc(id).and_then(|d| d.db.as_ref().map(|d| d.db_id))
+        self.doc(id).and_then(|d| d.doc_db().map(|d| d.db_id))
     }
 
     /// `id`'s shared [`FileBinding`] — `None` when `id` has no store binding
@@ -511,7 +540,7 @@ impl crate::app::App {
     /// case that should never occur, when it does but no entry was ever
     /// joined for its `db_id`. The one chokepoint for "this document's
     /// store binding, then its shared per-file baseline" — every caller
-    /// that used to hand-roll `doc(id).db.as_ref().map(...).and_then(|db_id|
+    /// that used to hand-roll `doc(id).doc_db().map(...).and_then(|db_id|
     /// file_binding(db_id))` shares this instead.
     pub fn doc_file_binding(&self, id: DocumentId) -> Option<&FileBinding> {
         self.file_binding(self.doc_db_id(id)?)
@@ -533,7 +562,7 @@ impl crate::app::App {
         let still_referenced = self
             .documents
             .values()
-            .any(|d| d.db.as_ref().is_some_and(|db| db.db_id == db_id));
+            .any(|d| d.doc_db().is_some_and(|db| db.db_id == db_id));
         if !still_referenced {
             self.file_bindings.remove(&db_id);
         }
@@ -547,7 +576,7 @@ impl crate::app::App {
     pub fn any_save_in_flight_for(&self, db_id: i64) -> bool {
         self.documents
             .values()
-            .any(|d| d.db.as_ref().is_some_and(|db| db.db_id == db_id) && d.save_in_flight())
+            .any(|d| d.doc_db().is_some_and(|db| db.db_id == db_id) && d.save_in_flight())
     }
 
     /// Every currently-open document bound to `db_id` — used to re-issue a
@@ -557,7 +586,7 @@ impl crate::app::App {
     pub fn documents_bound_to(&self, db_id: i64) -> Vec<DocumentId> {
         self.documents
             .iter()
-            .filter(|(_, d)| d.db.as_ref().is_some_and(|db| db.db_id == db_id))
+            .filter(|(_, d)| d.doc_db().is_some_and(|db| db.db_id == db_id))
             .map(|(&id, _)| id)
             .collect()
     }

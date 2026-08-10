@@ -449,7 +449,7 @@ fn app_with_db() -> App {
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let id = app.active;
     if let Some(doc) = app.doc_mut(id) {
-        doc.db = Some(crate::db::DocDb::new(1, false, 0));
+        doc.replica = crate::document::Replica::Bound(crate::db::DocDb::new(1, false, 0));
     }
     app
 }
@@ -479,7 +479,7 @@ fn snapshot_due_with_the_current_generation_enqueues_a_snapshot() {
     type_char(&mut app, &mut effects, 'x');
     let generation = app
         .doc(id)
-        .and_then(|d| d.db.as_ref())
+        .and_then(|d| d.doc_db())
         .expect("db-bound doc")
         .snapshot_generation;
     assert_eq!(generation, 1, "one journal-mutating keystroke bumps once");
@@ -507,7 +507,7 @@ fn snapshot_due_with_a_stale_generation_is_ignored() {
     type_char(&mut app, &mut effects, 'x');
     let stale_generation = app
         .doc(id)
-        .and_then(|d| d.db.as_ref())
+        .and_then(|d| d.doc_db())
         .expect("db-bound doc")
         .snapshot_generation;
     type_char(&mut app, &mut effects, 'y');

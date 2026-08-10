@@ -85,7 +85,7 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
     {
         let doc = app.doc_mut(id_b).unwrap();
         doc.file_path = Some(std::path::PathBuf::from("/root/b.md"));
-        doc.db = Some(rune_tui::db::DocDb::new(db_id_b.doc_id, false, 0));
+        doc.set_doc_db_for_test(rune_tui::db::DocDb::new(db_id_b.doc_id, false, 0));
         doc.viewport
             .set_size(rename_common::WIDTH, rename_common::HEIGHT - 1);
     }
@@ -113,8 +113,8 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
 
     // The writer dies before either op's own reply would have arrived.
     let (store_db_id, _) = (
-        app.doc(id_a).unwrap().db.as_ref().unwrap().db_id,
-        app.doc(id_b).unwrap().db.as_ref().unwrap().db_id,
+        app.doc(id_a).unwrap().doc_db().unwrap().db_id,
+        app.doc(id_b).unwrap().doc_db().unwrap().db_id,
     );
     {
         let store = &app.db.as_ref().unwrap().store;

@@ -208,6 +208,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
 mod tests {
     use super::*;
     use crate::db::{Db, DbBridge, DocDb};
+    use crate::document::Replica;
     use rune_core::buffer::Buffer;
     use rune_db::{ClockFn, Store, SyncKind, SyncState, Version};
     use rune_vfs::{Mem, Vfs};
@@ -247,7 +248,7 @@ mod tests {
             Some(in_memory_db()),
         );
         let id = app.active;
-        app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(1, false, 0));
+        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(1, false, 0));
         app.install_or_join_file_binding(1, 0);
 
         crate::db_enqueue::probe(&mut app, id);

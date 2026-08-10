@@ -121,7 +121,7 @@ fn stale_vfs_done_never_promotes() {
     assert_eq!(app.doc(id).unwrap().save_phase(), SavePhase::Idle);
     let saved_content_before = app.doc(id).unwrap().buffer.content().to_string();
     let ops_before = app.db_ops.len();
-    let db_id = app.doc(id).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id).unwrap().doc_db().unwrap().db_id;
 
     // A late reply for the now-stale ticket, claiming a DIFFERENT commit —
     // must be dropped without touching anything.

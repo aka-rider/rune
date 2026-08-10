@@ -307,7 +307,7 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
     external_write(vfs.as_ref(), b"!hello");
     let db_id = app
         .doc(doc_id)
-        .and_then(|d| d.db.as_ref())
+        .and_then(|d| d.doc_db())
         .expect("the document is store-bound")
         .db_id;
     {
@@ -358,7 +358,7 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_still_conflicts_on_foreign_by
     {
         let db_id = app
             .doc(doc_id)
-            .and_then(|d| d.db.as_ref())
+            .and_then(|d| d.doc_db())
             .expect("the document is store-bound")
             .db_id;
         let binding = app

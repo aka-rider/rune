@@ -75,7 +75,7 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().db = Some(doc_db);
+    app.doc_mut(id).unwrap().set_doc_db_for_test(doc_db);
     join_binding_from(&mut app, &load);
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
@@ -141,7 +141,7 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
         .as_ref()
         .unwrap()
         .store
-        .probe(app.doc(id).unwrap().db.as_ref().unwrap().db_id)
+        .probe(app.doc(id).unwrap().doc_db().unwrap().db_id)
         .expect("enqueue probe");
     let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
         DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == probe_op,

@@ -5,7 +5,7 @@
 
 use crate::app::App;
 use crate::db::DocDb;
-use crate::document::DocumentId;
+use crate::document::{DocumentId, Replica, ReplicaStep};
 use crate::messages;
 use rune_db::LoadResult;
 
@@ -28,7 +28,7 @@ use rune_db::LoadResult;
 /// straight to [`crate::db::App::rebaseline_file_binding`] and [`install_doc_
 /// db`], then returns: a re-baseline `Load` is never a recovery attempt, so
 /// it never touches `id`'s buffer or `last_sync` — only the shared per-file
-/// baseline and `doc.db` itself (which a lost-create-race hand-off may be
+/// baseline and the document's own `DocDb` itself (which a lost-create-race hand-off may be
 /// rebinding to an entirely different row) advance.
 ///
 /// Otherwise `recovered` is adopted into the buffer, through
@@ -45,7 +45,7 @@ use rune_db::LoadResult;
 ///
 /// A `Hydration::Refused` (the recovered draft looked truncated, or failed
 /// to apply) takes the same exit as the `saved_obs == None` arm above:
-/// nothing is installed, `doc.db` is dropped, the shared binding is pruned,
+/// nothing is installed, the replica is `Detached`, the shared binding is pruned,
 /// and an error is posted — a document whose recovered content this session
 /// just rejected must never keep journaling against that row, or a later
 /// crash recovery would replay the rejected content plus every edit made
@@ -69,7 +69,8 @@ pub fn handle_load_ack(
 
     if binding_only {
         app.rebaseline_file_binding(load_result.doc_id, expect_obs);
-        install_doc_db(app, id, &load_result);
+        let pending = install_doc_db(app, id, &load_result, 0);
+        crate::db_enqueue::replay_pending(app, id, pending);
         return;
     }
 
@@ -123,11 +124,12 @@ pub fn handle_load_ack(
     // only if no other document has bound it yet (`App::
     // install_or_join_file_binding`'s own doc comment): a second tab
     // opening the same file must never reset a baseline a sibling tab's own
-    // save has already advanced. Done BEFORE installing `doc.db` below: the
+    // save has already advanced. Done BEFORE installing the DocDb below: the
     // join itself never touches `id`'s own document, so there is no reason
     // to interleave it with the borrow that does.
     app.install_or_join_file_binding(load_result.doc_id, expect_obs);
-    install_doc_db(app, id, &load_result);
+    let pending = install_doc_db(app, id, &load_result, u8::from(adopted));
+    crate::db_enqueue::replay_pending(app, id, pending);
     let Some(doc) = app.doc_mut(id) else { return };
     // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s own
     // doc comment) — set even on the version-moved-on branch above where
@@ -149,18 +151,39 @@ pub fn handle_load_ack(
 /// it may instead be a hand-off target this document has never bound
 /// before, e.g. the lost-create-race route's racer row). Either way `id`
 /// is now bound to a row read straight off disk, so the next save is an
-/// overwrite, never a create.
-fn install_doc_db(app: &mut App, id: DocumentId, load_result: &LoadResult) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.db = Some(DocDb::new(
+/// overwrite, never a create. Takes any [`ReplicaStep`]s a `Binding` window
+/// buffered and returns them for the caller to replay via `db_enqueue::
+/// replay_pending` — done AFTER `id` is `Bound`, so a document `Binding`
+/// found itself in only for the length of one round trip (issue #84).
+/// `undo_base` becomes the fresh `DocDb`'s own — 1 only when THIS load's
+/// own hydration adopted a recovered draft (`DocDb::undo_base`'s own doc
+/// comment), 0 for every other call site.
+fn install_doc_db(
+    app: &mut App,
+    id: DocumentId,
+    load_result: &LoadResult,
+    undo_base: u8,
+) -> Vec<ReplicaStep> {
+    let Some(doc) = app.doc_mut(id) else {
+        return Vec::new();
+    };
+    let pending = match std::mem::replace(&mut doc.replica, Replica::Detached) {
+        Replica::Binding { pending } => pending,
+        Replica::Detached | Replica::Bound(_) => Vec::new(),
+    };
+    let mut doc_db = DocDb::new(
         load_result.doc_id,
         false,
         load_result.bridge_seq.unwrap_or(0),
-    ));
+    );
+    doc_db.undo_base = undo_base;
+    doc.replica = Replica::Bound(doc_db);
+    pending
 }
 
-/// Drops `id`'s `db` binding and prunes its now-possibly-unreferenced
-/// shared [`crate::db::FileBinding`] — the shared exit both of
+/// Drops `id`'s replica binding — `Detached`, dropping any buffered
+/// `Binding` pending steps along with it — and prunes its now-possibly-
+/// unreferenced shared [`crate::db::FileBinding`]. The shared exit both of
 /// `handle_load_ack`'s refusal arms take (`saved_obs == None`, and
 /// `Hydration::Refused`): a document a `Load` ack has just declined to
 /// supply a trustworthy baseline for may never keep journaling against a
@@ -168,7 +191,7 @@ fn install_doc_db(app: &mut App, id: DocumentId, load_result: &LoadResult) {
 fn detach_file_binding(app: &mut App, id: DocumentId) {
     let old_db_id = app.doc_db_id(id);
     if let Some(doc) = app.doc_mut(id) {
-        doc.db = None;
+        doc.replica = Replica::Detached;
     }
     if let Some(db_id) = old_db_id {
         app.prune_file_binding(db_id);
@@ -183,7 +206,7 @@ fn detach_file_binding(app: &mut App, id: DocumentId) {
 /// have updated is already gone.
 pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
     let Some(doc) = app.doc_mut(id) else { return };
-    if let Some(doc_db) = doc.db.as_mut() {
+    if let Some(doc_db) = doc.doc_db_mut() {
         doc_db.resolve_append_ack(seq);
     }
 }
@@ -199,11 +222,19 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
 /// was closed while this op was still in flight) is a correct, silent
 /// drop — `close_now` already sweeps `db_ops` of any entry pointing at a
 /// closed document, but a race between that sweep and this ack landing is
-/// still just a document that's gone, nothing to bind.
+/// still just a document that's gone, nothing to bind. Replays any
+/// `Binding`-window `ReplicaStep`s the same way `install_doc_db` does
+/// (issue #84) — a scratch draft can be typed into just as easily as an
+/// ordinary file while its own `CreateScratch` is still in flight.
 pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
     let Some(doc) = app.doc_mut(id) else { return };
-    doc.db = Some(DocDb::new(row_id, true, 0));
+    let pending = match std::mem::replace(&mut doc.replica, Replica::Detached) {
+        Replica::Binding { pending } => pending,
+        Replica::Detached | Replica::Bound(_) => Vec::new(),
+    };
+    doc.replica = Replica::Bound(DocDb::new(row_id, true, 0));
     app.install_or_join_file_binding(row_id, 0);
+    crate::db_enqueue::replay_pending(app, id, pending);
 }
 
 #[cfg(test)]
@@ -241,8 +272,8 @@ mod tests {
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
 
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").replica = Replica::Bound(DocDb::new(1, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").replica = Replica::Bound(DocDb::new(2, true, 0));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -272,8 +303,7 @@ mod tests {
         assert_eq!(
             app.doc(id_a)
                 .expect("doc a exists")
-                .db
-                .as_ref()
+                .doc_db()
                 .expect("doc a has a DocDb")
                 .last_known_seq,
             7
@@ -281,8 +311,7 @@ mod tests {
         assert_eq!(
             app.doc(id_b)
                 .expect("doc b exists")
-                .db
-                .as_ref()
+                .doc_db()
                 .expect("doc b has a DocDb")
                 .last_known_seq,
             42
@@ -300,8 +329,8 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").replica = Replica::Bound(DocDb::new(1, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").replica = Replica::Bound(DocDb::new(2, true, 0));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         let op_for_a = *app
@@ -328,8 +357,7 @@ mod tests {
         assert_eq!(
             app.doc(id_a)
                 .expect("doc a exists")
-                .db
-                .as_ref()
+                .doc_db()
                 .expect("doc a has a DocDb")
                 .last_known_seq,
             99
@@ -351,8 +379,8 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").replica = Replica::Bound(DocDb::new(1, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").replica = Replica::Bound(DocDb::new(2, true, 0));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -419,7 +447,7 @@ mod tests {
 
     /// Issue #82: a `binding_only` ack for a document with live buffer
     /// edits must never adopt the recovered content or touch `last_sync` —
-    /// only the shared per-file baseline and `doc.db` itself (which the
+    /// only the shared per-file baseline and the document's own `DocDb` itself (which the
     /// lost-create-race hand-off relies on rebinding to an entirely
     /// different row, `bind_new` included) advance. Contrasts `handle_
     /// load_ack_messages_a_non_diverged_adoption` above, which drives the
@@ -436,7 +464,7 @@ mod tests {
         // Starts `bind_new: true`, on a DIFFERENT `db_id` than the ack
         // below carries — the exact shape the lost-create-race hand-off
         // leaves behind right before its own `binding_only` `Load` lands.
-        app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(3, true, 0));
+        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(3, true, 0));
         app.install_or_join_file_binding(3, 0);
         let issued_version = app.doc(id).expect("doc exists").buffer.version();
 
@@ -471,8 +499,7 @@ mod tests {
         let doc_db = app
             .doc(id)
             .expect("doc exists")
-            .db
-            .as_ref()
+            .doc_db()
             .expect("doc.db must be rebound to the hand-off's target row");
         assert_eq!(
             doc_db.db_id, 7,
@@ -527,7 +554,8 @@ mod tests {
             Some(Db::new(store, Arc::clone(&bridge), false)),
         );
         let id = app.active;
-        app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(load.doc_id, false, 0));
+        app.doc_mut(id).expect("doc exists").replica =
+            Replica::Bound(DocDb::new(load.doc_id, false, 0));
         app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
 
         // Simulates exactly the state a `saved: None` `MaterializeRecord`

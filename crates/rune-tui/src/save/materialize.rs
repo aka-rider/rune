@@ -41,8 +41,7 @@ pub(super) fn materialize_now(
 ) {
     let Some(doc) = app.doc(id) else { return };
     let Some((db_id, last_known_seq, bind_new)) = doc
-        .db
-        .as_ref()
+        .doc_db()
         .map(|d| (d.db_id, d.last_known_seq, d.bind_new))
     else {
         return;
@@ -54,7 +53,7 @@ pub(super) fn materialize_now(
     // (whichever tab made it) actually advanced the baseline to. `install_or_join_file_binding`
     // is joined synchronously the instant a document installs its own
     // `DocDb` (`db_ack::handle_load_ack`/`handle_create_scratch_ack`), so a
-    // document that reaches here with `doc.db` set but no matching entry is
+    // document that reaches here `Bound` but with no matching entry is
     // an internal inconsistency, not an ordinary "first save" case — refuse
     // the coordinated path outright rather than guess a CAS baseline with a
     // sentinel, taking the exact same uncoordinated fallback an enqueue
@@ -140,7 +139,7 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
         return;
     }
     let version = doc.buffer.version();
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+    let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;
     };
     let content: Arc<str> = Arc::from(doc.buffer.content());
@@ -150,7 +149,7 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     // `vfs` work skips the read/hash-compare accordingly.
     let seq = app
         .doc(id)
-        .and_then(|d| d.db.as_ref())
+        .and_then(|d| d.doc_db())
         .map(|d| d.last_known_seq)
         .unwrap_or(0);
     let result = db.store.materialize_prepare(db_id, 0, true);
@@ -306,7 +305,7 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
         return;
     }
     let Some(doc) = app.doc_mut(id) else { return };
-    let Some(doc_db) = doc.db.as_mut() else {
+    let Some(doc_db) = doc.doc_db_mut() else {
         return;
     };
     doc_db.snapshot_generation = doc_db.snapshot_generation.wrapping_add(1);

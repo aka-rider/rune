@@ -235,7 +235,7 @@ pub(crate) fn open_untitled(
 /// treat it as a genuine baseline.
 fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
     if let Some(doc) = app.doc_mut(id) {
-        doc.db = Some(rune_tui::db::DocDb::new(scratch.db_id, true, 0));
+        doc.bind_doc_db(rune_tui::db::DocDb::new(scratch.db_id, true, 0));
     }
     app.install_or_join_file_binding(scratch.db_id, 0);
     if scratch.content.is_empty() {
