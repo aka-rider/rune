@@ -91,10 +91,12 @@ fn two_children_race_store_open_on_a_fresh_path_apply_schema_once_both_get_sessi
 
     let mut children = Vec::new();
     let mut readies = Vec::new();
+    let mut openeds = Vec::new();
     for i in 0..2 {
         let ready = dir.join(format!("ready-{i}"));
         let opened = dir.join(format!("opened-{i}"));
         readies.push(ready.clone());
+        openeds.push(opened.clone());
         children.push(spawn_helper(
             "race_open",
             &[
@@ -123,12 +125,29 @@ fn two_children_race_store_open_on_a_fresh_path_apply_schema_once_both_get_sessi
         .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .expect("integrity check");
     assert_eq!(integrity, "ok");
-    let sessions: i64 = verify
-        .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
-        .expect("count sessions");
-    assert_eq!(
-        sessions, 2,
-        "both racing opens must each get their own session row"
+
+    // A dead session's now-observation-free `sessions` row is fair game for
+    // the OTHER child's own reaper to reclaim before this assertion ever
+    // runs (WP: sessions-row reap) — so the durable row COUNT no longer
+    // proves "both racing opens each got their own session". What the test
+    // actually means is proven by each child's own `opened-{i}` marker,
+    // written from its own live `Store::session_id()` before either child
+    // could have raced the other's reaper: two distinct ids means the
+    // schema was applied once and both opens genuinely established
+    // separate sessions, regardless of what either row's fate is afterward.
+    let session_ids: Vec<i64> = openeds
+        .iter()
+        .map(|p| {
+            std::fs::read_to_string(p)
+                .expect("read opened marker")
+                .trim()
+                .parse()
+                .expect("parse opened session id")
+        })
+        .collect();
+    assert_ne!(
+        session_ids[0], session_ids[1],
+        "both racing opens must each have established their own distinct session"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
