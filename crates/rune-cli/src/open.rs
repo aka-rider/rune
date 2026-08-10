@@ -12,9 +12,10 @@ use rune_vfs::{FileKind, Vfs};
 
 use crate::cli::CliError;
 use crate::db_bootstrap::{
-    DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_untitled_db,
+    DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_store_only,
+    bootstrap_untitled_db,
 };
-use crate::loader::{LoadError, load_buffer};
+use crate::loader::{LoadError, load_sighting};
 use crate::{AppGuard, exit_code};
 
 /// `-w`'s own validation (WP7.S4): `dir` (already absolutized by
@@ -24,7 +25,7 @@ use crate::{AppGuard, exit_code};
 /// denied, an I/O error) each get their own [`CliError`] instead of one
 /// wildcard "not a directory" collapsing all three. Split out from
 /// `bootstrap` so it's exercisable against `Mem` in tests, exactly like
-/// `load_buffer` in the parent module.
+/// `load_sighting` in the parent module.
 pub(crate) fn validate_work_dir(vfs: &dyn Vfs, dir: &Path) -> Result<(), CliError> {
     match vfs.stat(dir) {
         Ok(stat) if stat.kind == FileKind::Dir => Ok(()),
@@ -68,7 +69,7 @@ pub(crate) fn resolve_root(
 /// DbBootstrap)` pair `bootstrap` wires up next (plan WP4.S8, split out of
 /// `main` to keep it under the 500-line budget). An image path
 /// (`kind_for` via `rune_tui::document_support::is_image_path`) never reaches
-/// `load_buffer` at all — image bytes are never valid UTF-8 in general, and
+/// `load_sighting` at all — image bytes are never valid UTF-8 in general, and
 /// even a coincidentally UTF-8-clean image must still open read-only, not
 /// as editable text — so it's routed through the SAME dispatch every extra
 /// positional (and the Explorer) already uses, `workspace::open_path`, via
@@ -84,7 +85,14 @@ pub(crate) fn open_first_positional(
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     if rune_tui::document_support::is_image_path(&path) {
-        let mut app = App::new_untitled(Arc::clone(vfs), None);
+        // Issue #78: an image-first launch still needs the session store —
+        // later markdown opens (Explorer, extra positionals) must not
+        // silently journal nothing for the whole session. The image
+        // document itself stays recovery-free either way (`workspace::
+        // open_path` binds no `DocDb` for an image), so this only affects
+        // documents opened AFTER this one.
+        let mut bootstrap = bootstrap_store_only(Arc::clone(vfs), home);
+        let mut app = App::new_untitled(Arc::clone(vfs), bootstrap.db.take());
         let blank = app.active;
         let opened = workspace::open_path(&mut app, &path);
         if let Some(image_id) = opened
@@ -98,13 +106,20 @@ pub(crate) fn open_first_positional(
             let _ =
                 workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
         }
-        return Ok((app, DbBootstrap::default()));
+        return Ok((
+            app,
+            DbBootstrap {
+                banner: bootstrap.banner,
+                ..DbBootstrap::default()
+            },
+        ));
     }
 
-    let file_existed = vfs.stat(&path).is_ok();
-
-    let buffer = match load_buffer(vfs.as_ref(), &path) {
-        Ok(buffer) => buffer,
+    // One sighting decides both "does this path exist" and, if so, the
+    // buffer's bytes (issue #77) — never a separate `vfs.stat` plus a
+    // separate read of the same path.
+    let sighting = match load_sighting(vfs.as_ref(), &path) {
+        Ok(sighting) => sighting,
         Err(LoadError::InvalidUtf8) => {
             eprintln!(
                 "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
@@ -117,10 +132,28 @@ pub(crate) fn open_first_positional(
             return Err(std::process::ExitCode::from(exit_code::IO_ERR));
         }
     };
+    let buffer = match &sighting {
+        // `load_sighting` already refused invalid UTF-8, so this re-decode
+        // is a formality, not a second gate — an `Err` here can only mean a
+        // producer bug upstream, surfaced the same way any other unreadable
+        // file is, rather than assumed away.
+        Some(sighting) => match String::from_utf8(sighting.bytes.clone()) {
+            Ok(text) => rune_core::buffer::Buffer::new(text),
+            Err(e) => {
+                eprintln!(
+                    "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
+                    path.display()
+                );
+                let _ = e;
+                return Err(std::process::ExitCode::from(exit_code::DATA_ERR));
+            }
+        },
+        None => rune_core::buffer::Buffer::new(""),
+    };
 
     // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
     // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
-    // NotFound-tolerant branch, unlike `load_buffer` above), so a missing
+    // NotFound-tolerant branch, unlike `load_sighting` above), so a missing
     // path has nothing to `Load` — but that is not "no recovery this
     // launch": a named-but-not-yet-created file is exactly a recovery-backed
     // untitled draft that already knows its name, so it binds a scratch row
@@ -129,13 +162,13 @@ pub(crate) fn open_first_positional(
     // (protect the user's words over every other feature) — reported to
     // stderr, not to the TUI (which hasn't started yet), and the editor
     // proceeds with `app.db = None`.
-    let mut db_bootstrap = if file_existed {
-        bootstrap_db(Arc::clone(vfs), &path, home)
+    let mut db_bootstrap = if let Some(sighting) = sighting {
+        bootstrap_db(Arc::clone(vfs), &path, home, sighting)
     } else {
         bootstrap_new_file(Arc::clone(vfs), home)
     };
 
-    // The buffer stays exactly what `load_buffer` read off disk here —
+    // The buffer stays exactly what `load_sighting` read off disk here —
     // adopting `recovered_content` goes through the same hydration
     // chokepoint (`Document::hydrate`, plan WP5.S2) `db::handle_load_ack`
     // uses, once `App::new` exists to hold it. Pre-replacing the buffer

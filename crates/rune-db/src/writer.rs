@@ -454,9 +454,29 @@ fn execute_op(
             liveness_check,
             path,
             now,
+            source,
         } => {
-            let result =
-                crate::load::load(conn, vfs, session_id, liveness_check.as_ref(), &path, now)?;
+            let result = match source {
+                crate::writer_ops::LoadSource::Fresh => {
+                    crate::load::load(conn, vfs, session_id, liveness_check.as_ref(), &path, now)?
+                }
+                crate::writer_ops::LoadSource::Taken(sighting) => {
+                    let read = crate::bracket::BracketedRead {
+                        data: sighting.bytes,
+                        stat: crate::bracket::stat_facts_from(sighting.stat),
+                        confirmed: sighting.confirmed,
+                    };
+                    crate::load::load_from_read(
+                        conn,
+                        vfs,
+                        session_id,
+                        liveness_check.as_ref(),
+                        &path,
+                        read,
+                        now,
+                    )?
+                }
+            };
             // A fresh binding — this document's LOCAL undo-journal position
             // `0` (no local pushes yet this binding) durably predates
             // `bridge_seq` if this load journaled a cross-session
