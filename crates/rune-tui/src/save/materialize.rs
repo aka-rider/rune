@@ -69,7 +69,7 @@ pub(super) fn materialize_now(
     // The CAS baseline is shared per file, not per document — read from
     // `App::file_bindings`, never from a per-`Document` copy, so
     // this save compares against whatever the LAST save on this file
-    // (whichever tab made it) actually advanced the baseline to. `bind_file`
+    // (whichever tab made it) actually advanced the baseline to. `install_or_join_file_binding`
     // is joined synchronously the instant a document installs its own
     // `DocDb` (`db_ack::handle_load_ack`/`handle_create_scratch_ack`), so a
     // document that reaches here with `doc.db` set but no matching entry is

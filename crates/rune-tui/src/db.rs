@@ -372,8 +372,8 @@ impl DocDb {
 /// false-conflict class where two tabs on one file each held an
 /// independent, silently-diverging copy of `expect_obs`. Lives in
 /// `App::file_bindings`, keyed by `db_id`; installed once, the moment the
-/// FIRST document binds that `db_id` (`db_ack::bind_file`'s own doc
-/// comment), and joined — never reseeded — by every later document binding
+/// FIRST document binds that `db_id` (`App::install_or_join_file_binding`'s
+/// own doc comment), and joined — never reseeded — by every later document binding
 /// the same `db_id`, so a second tab opening the file adopts whatever the
 /// first tab's own saves have already advanced it to rather than resetting
 /// it from its own possibly-older `Load`. Pruned once no open `Document`
@@ -431,6 +431,14 @@ impl FileBinding {
     }
 }
 
+/// Which of the two outcomes [`App::install_or_join_file_binding`] took —
+/// named so a caller that cares (none does today) never has to infer it
+/// from whether `file_binding` already existed beforehand.
+pub enum BindOutcome {
+    Installed,
+    Joined,
+}
+
 impl crate::app::App {
     /// Joins `db_id`'s shared [`FileBinding`], seeding it from
     /// `seed_expect_obs` only if no document has ever bound this `db_id`
@@ -442,10 +450,43 @@ impl crate::app::App {
     /// never observe a baseline OLDER than what a sibling document's own
     /// earlier save already advanced the shared entry to, so joining rather
     /// than reseeding never regresses it.
-    pub fn bind_file(&mut self, db_id: i64, seed_expect_obs: ObsId) {
+    pub fn install_or_join_file_binding(
+        &mut self,
+        db_id: i64,
+        seed_expect_obs: ObsId,
+    ) -> BindOutcome {
+        match self.file_bindings.entry(db_id) {
+            std::collections::hash_map::Entry::Occupied(_) => BindOutcome::Joined,
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                vacant.insert(FileBinding::new(seed_expect_obs));
+                BindOutcome::Installed
+            }
+        }
+    }
+
+    /// Advances `db_id`'s shared [`FileBinding`] to `obs` unconditionally —
+    /// the re-baseline counterpart to [`App::install_or_join_file_binding`],
+    /// called only from a `binding_only` `Load` ack (`db_ack::
+    /// handle_load_ack`). When `db_id` already has a binding, always
+    /// overwrites `expect_obs` and clears `pending_rebaseline_hash`, even
+    /// though the ordinary join path never would: a re-baseline exists
+    /// precisely to correct a baseline that path left stale.
+    ///
+    /// A missing entry is NOT an inconsistency — the lost-create-race
+    /// hand-off (`materialize_ack::reactions`) enqueues a `binding_only`
+    /// `Load` against the RACER's own row, a `db_id` this process may never
+    /// have touched before, so its first-ever sighting legitimately lands
+    /// here rather than through [`App::install_or_join_file_binding`]. That
+    /// case installs a fresh binding from `obs`, exactly like the ordinary
+    /// join path's own first install would.
+    pub fn rebaseline_file_binding(&mut self, db_id: i64, obs: ObsId) {
         self.file_bindings
             .entry(db_id)
-            .or_insert_with(|| FileBinding::new(seed_expect_obs));
+            .and_modify(|binding| {
+                binding.expect_obs = obs;
+                binding.pending_rebaseline_hash = None;
+            })
+            .or_insert_with(|| FileBinding::new(obs));
     }
 
     pub fn file_binding(&self, db_id: i64) -> Option<&FileBinding> {

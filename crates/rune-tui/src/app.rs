@@ -154,7 +154,7 @@ pub struct App {
     /// and advances the SAME [`crate::db::FileBinding`] rather
     /// than each carrying its own copy, which is what let one tab's own
     /// save falsely raise the disk-conflict guard against a second tab's
-    /// very next attempt on that file. `crate::db::App::bind_file`/
+    /// very next attempt on that file. `crate::db::App::install_or_join_file_binding`/
     /// `file_binding`/`file_binding_mut`/`prune_file_binding` are the only
     /// chokepoints that touch this map.
     pub file_bindings: HashMap<i64, crate::db::FileBinding>,

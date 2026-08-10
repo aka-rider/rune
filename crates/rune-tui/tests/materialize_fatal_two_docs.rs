@@ -89,7 +89,7 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
         doc.viewport
             .set_size(rename_common::WIDTH, rename_common::HEIGHT - 1);
     }
-    app.bind_file(db_id_b.doc_id, db_id_b.saved_obs.unwrap_or(0));
+    app.install_or_join_file_binding(db_id_b.doc_id, db_id_b.saved_obs.unwrap_or(0));
 
     // Dirty and save BOTH documents, each up through a physically-committed
     // write whose `MaterializeRecord` ack has not landed yet.

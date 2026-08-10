@@ -466,7 +466,7 @@ mod tests {
         );
         let id = app.active;
         app.doc_mut(id).unwrap().db = Some(doc_db);
-        app.bind_file(1, 0);
+        app.install_or_join_file_binding(1, 0);
         app
     }
 

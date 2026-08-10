@@ -58,7 +58,7 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
     app.active_doc_mut().db = Some(DocDb::new(row_id, true, 0));
-    app.bind_file(row_id, 0);
+    app.install_or_join_file_binding(row_id, 0);
     (app, row_id)
 }
 
