@@ -105,7 +105,8 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/document/mod.rs` — 523 (the hydrate-cursor char-boundary fix pushed this over; split candidate: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
-  - `crates/rune-db/src/writer.rs` — 532 (split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
+  - `crates/rune-db/src/writer.rs` — 552 (grew further in the issue #77 fix: the `Load` arm now dispatches on `LoadSource::Fresh`/`Taken`; split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
+  - `crates/rune-cli/src/bootstrap_tests.rs` — 544 (test file; crossed the threshold adding the issue #77 one-read regression test plus `CountingReadVfs`; split candidate: move the launch-image-first tests to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
   - `crates/rune-syntax/src/wrap/mod.rs` — 513
   - `crates/rune-tui/src/footer.rs` — 512
   - `crates/rune-md/src/catalogue.rs` — 512
@@ -114,7 +115,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-syntax/src/syntax.rs` — 505
   - `crates/rune-fuzz/src/script/decode.rs` — 503
   - `crates/rune-tui/src/save/materialize.rs` — 523 (crossed the threshold in the G7 fix: `materialize_now` now reads `expect_obs` off `App::file_bindings` instead of `DocDb` directly, then grew further in the review-fixes pass refusing a missing file binding explicitly instead of a `0` sentinel; split candidate: move `run_materialize_vfs`'s `force_publish`/`capture_and_swap_publish` helpers to a sibling `force_publish.rs`)
-- **Wrong**: 31 source files exceed the 500-line house rule, none ledgered.
+- **Wrong**: 32 source files exceed the 500-line house rule, none ledgered.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 

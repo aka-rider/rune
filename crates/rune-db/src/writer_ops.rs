@@ -24,6 +24,16 @@ use crate::sync::SyncState;
 /// wedged writer, which is exactly when the degraded path should trigger.
 pub const QUEUE_DEPTH: usize = 1024;
 
+/// [`OpKind::Load`]'s own read: either the writer thread performs the ONE
+/// disk read itself (`Fresh`), or it adopts a `Sighting` the caller already
+/// took before enqueuing (`Taken`) — an enum rather than an
+/// `Option<Sighting>`-plus-a-separate-flag, so "read fresh" and "adopt this
+/// sighting" stay the only two representable states.
+pub enum LoadSource {
+    Fresh,
+    Taken(rune_vfs::Sighting),
+}
+
 /// The write operations the writer thread knows how to execute.
 /// [`OpKind::Noop`] is a real op that exercises the full `BEGIN
 /// IMMEDIATE`-plus-retry chokepoint without any domain semantics; the
@@ -173,12 +183,18 @@ pub enum OpKind {
     /// `liveness_check` is this `Store`'s own injected liveness function
     /// (`Store::set_liveness_check`), threaded through per-op rather than
     /// read from shared state, so the writer thread never needs to touch
-    /// `Store`'s mutex.
+    /// `Store`'s mutex. `source` decides whether this op reads `path` fresh
+    /// itself (`LoadSource::Fresh`, `crate::load::load`) or adopts an
+    /// already-taken caller-side sighting (`LoadSource::Taken`,
+    /// `crate::load::load_from_read`) — the single-sighting fix for issue
+    /// #77: a caller that already read `path` once must never have this op
+    /// read it again.
     Load {
         session_id: i64,
         liveness_check: LivenessCheckFn,
         path: PathBuf,
         now: SystemTime,
+        source: LoadSource,
     },
     /// Rename `from` → `to` with no clobber (`rename::rename_bind`). A
     /// collision comes back as `RenameOutcome::Collided` — a refusal, not

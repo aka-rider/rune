@@ -5,6 +5,59 @@
 
 use super::*;
 use rune_vfs::Mem;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Counts every [`Vfs::read`] call made against ANY path, wrapping a real
+/// [`Mem`] for everything else — the TOCTOU pin for issue #77: a launch's
+/// first positional must be read off disk exactly once, never once for the
+/// buffer and again for the recovery store's own CAS baseline.
+struct CountingReadVfs {
+    inner: Mem,
+    reads: AtomicU32,
+}
+
+impl CountingReadVfs {
+    fn new(inner: Mem) -> CountingReadVfs {
+        CountingReadVfs {
+            inner,
+            reads: AtomicU32::new(0),
+        }
+    }
+}
+
+impl Vfs for CountingReadVfs {
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.read(path)
+    }
+    fn write_durable(&self, path: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
+        self.inner.write_durable(path, bytes)
+    }
+    fn exchange(&self, a: &Path, b: &Path) -> std::io::Result<()> {
+        self.inner.exchange(a, b)
+    }
+    fn rename_excl(&self, old: &Path, new: &Path) -> std::io::Result<()> {
+        self.inner.rename_excl(old, new)
+    }
+    fn remove(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.remove(path)
+    }
+    fn trash(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.trash(path)
+    }
+    fn stat(&self, path: &Path) -> std::io::Result<rune_vfs::Stat> {
+        self.inner.stat(path)
+    }
+    fn resolve(&self, path: &Path) -> std::io::Result<PathBuf> {
+        self.inner.resolve(path)
+    }
+    fn mkdir_all(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.mkdir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> std::io::Result<Vec<rune_vfs::DirEntry>> {
+        self.inner.read_dir(path)
+    }
+}
 
 /// A real, throwaway `$HOME` under the OS temp dir — `Store::open`
 /// talks to the sqlite file directly via `rusqlite`, bypassing the
@@ -457,5 +510,35 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
         app.active_doc().buffer.content(),
         "unsaved draft from a dead session",
         "the dead session's own draft must come back on the next launch"
+    );
+}
+
+/// Issue #77's own regression: a full bootstrap of one positional must read
+/// that path off disk exactly once — the buffer's bytes and the recovery
+/// store's CAS baseline both trace to the SAME [`rune_vfs::Sighting`], never
+/// two independent reads racing against an external rewrite in between.
+#[test]
+fn launch_one_positional_reads_the_path_exactly_once() {
+    let counting = Arc::new(CountingReadVfs::new(Mem::new()));
+    counting
+        .inner
+        .save_atomic(Path::new("/vault/a.md"), b"hello")
+        .expect("seed a.md");
+    let home = ScratchHome::new("one-read");
+    let vfs: Arc<dyn Vfs + Send + Sync> = counting.clone();
+
+    let app = bootstrap(
+        vfs,
+        vec![OsString::from("/vault/a.md")].into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed");
+
+    assert_eq!(app.active_doc().buffer.content(), "hello");
+    assert_eq!(
+        counting.reads.load(Ordering::SeqCst),
+        1,
+        "one launched positional must read its path exactly once"
     );
 }

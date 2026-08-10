@@ -70,7 +70,7 @@ fn main() -> ExitCode {
 
     // Constructed before the load so the whole load path — like every other
     // filesystem access in this app — goes through the injected `Vfs`,
-    // not a direct `std::fs` call: see `load_buffer`.
+    // not a direct `std::fs` call: see `load_sighting`.
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
     let home = env::var_os("HOME").map(PathBuf::from);
 
@@ -202,7 +202,7 @@ fn bootstrap(
         // (plan WP4.S8) is what actually decides whether that resolved
         // path opens as text or as a read-only image document. A resolve
         // failure (an unreadable/missing ancestor, a symlink loop) is a
-        // load failure exactly like `load_buffer`'s own `Io` arm below —
+        // load failure exactly like `load_sighting`'s own `Io` arm below —
         // reported the same way, at the same exit code, rather than
         // silently launching under the unnormalized spelling.
         let path = match workspace::resolve(vfs.as_ref(), path) {
@@ -273,7 +273,7 @@ fn bootstrap(
         // check, the synthetic bridge `Step` so post-restart undo reaches
         // `disk_content` in one step, and a refusal surfaced rather than
         // silently applied. The buffer here still holds exactly what
-        // `load_buffer` read off disk, so it IS `disk_content`.
+        // `load_sighting` read off disk, so it IS `disk_content`.
         let disk_content = app.active_doc_mut().buffer.content().to_string();
         if let rune_tui::document::Hydration::Refused(reason) =
             app.active_doc_mut().hydrate(&disk_content, &recovered)

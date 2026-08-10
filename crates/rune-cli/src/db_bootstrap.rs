@@ -31,7 +31,7 @@ pub(crate) struct DbBootstrap {
     /// paths use) for a fresh scratch row.
     pub(crate) expect_obs: Option<rune_db::ObsId>,
     /// `Some` whenever `rune-db`'s `Load` returned reconstructed content
-    /// (which may or may not differ from the buffer `load_buffer` already
+    /// (which may or may not differ from the buffer `load_sighting` already
     /// read straight off disk) — `main` runs this through the same
     /// `Document::hydrate` chokepoint `db::handle_load_ack` uses, once
     /// `App::new` exists to hold the result.
@@ -168,10 +168,17 @@ fn blocking_call(
 /// `rune_db::production_db_path`) so this whole path is exercisable
 /// against a temp directory in tests (plan WP4.S1/S7) without touching the
 /// real machine's recovery store.
+///
+/// `sighting` is the SAME [`rune_vfs::Sighting`] the caller already took of
+/// `path` to build the initial buffer (issue #77) — threaded through to
+/// `Store::load_sighted` so the CAS baseline this launch adopts traces to
+/// that one read, never a second, independent one this function would
+/// otherwise take itself.
 pub(crate) fn bootstrap_db(
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: &Path,
     home: Option<&Path>,
+    sighting: rune_vfs::Sighting,
 ) -> DbBootstrap {
     let OpenedStore {
         bridge,
@@ -188,7 +195,7 @@ pub(crate) fn bootstrap_db(
         }
     };
 
-    let load_outcome = blocking_call(&bridge, || store.load(path));
+    let load_outcome = blocking_call(&bridge, || store.load_sighted(path, sighting));
 
     let load_result = match load_outcome {
         Ok(OpOutcome::Load(load_result)) => *load_result,
@@ -215,7 +222,7 @@ pub(crate) fn bootstrap_db(
     let db = Db::new(store, bridge, degraded_at_open);
     let doc_db = DocDb::new(
         load_result.doc_id,
-        false, // bind_new: `file_existed` at the call site guarantees the target exists
+        false, // bind_new: the caller only reaches here when `sighting` confirms the target exists
         // last_known_seq: `load` may have already durably journaled a
         // cross-session-inheritance bridge edit under THIS session's own
         // id — `bridge_seq` is that edit's own seq when it happened, and

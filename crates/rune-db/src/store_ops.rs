@@ -279,6 +279,24 @@ impl Store {
             liveness_check,
             path: path.to_path_buf(),
             now,
+            source: crate::writer_ops::LoadSource::Fresh,
+        })
+    }
+
+    /// Enqueues a `Load` op that adopts `sighting` — a read the caller
+    /// already took of `path` — instead of reading it a second time (issue
+    /// #77: one sighting must decide both the buffer bytes and the CAS
+    /// baseline). `path` must already be resolved, the same requirement
+    /// `crate::load::load_from_read` places on its own `path` argument.
+    pub fn load_sighted(&self, path: &Path, sighting: rune_vfs::Sighting) -> Result<u64, Error> {
+        let now = self.now();
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::Load {
+            session_id: self.session_id,
+            liveness_check,
+            path: path.to_path_buf(),
+            now,
+            source: crate::writer_ops::LoadSource::Taken(sighting),
         })
     }
 
