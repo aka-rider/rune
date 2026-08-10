@@ -276,8 +276,8 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
         )
         .expect("check sessions row");
     assert!(
-        killed_session_row_exists,
-        "the sessions row itself must never be deleted"
+        !killed_session_row_exists,
+        "an observation-free sessions row must be reaped alongside its footprint"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

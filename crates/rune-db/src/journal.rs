@@ -3,7 +3,7 @@
 //! always both the journal key and the recovery/undo unit; every query here
 //! additionally scopes to `(doc_id, session_id)` together, so a DIFFERENT
 //! session sharing this `doc_id` (two rune windows on the same file) can
-//! never see, coalesce with, or truncate this session's own events.
+//! never see or truncate this session's own events.
 //!
 //! Every function below takes an already-open `&Transaction`/`&Connection`
 //! rather than a `Store` — the writer thread (`writer.rs`) is the one
@@ -12,10 +12,8 @@
 //! `BEGIN IMMEDIATE` (plan Gotchas). `now` is threaded in explicitly rather
 //! than read from a clock here, so the caller's injected clock (plan
 //! Gotchas: "rune-db must take a `clock: ... -> SystemTime` injection") is
-//! the only place wall-clock nondeterminism can enter — sampled ONCE per
-//! `append_edit` call and reused for both the row's `at` timestamp and the
-//! coalescing elapsed-time check, removing a source of intra-call clock
-//! skew between the two uses.
+//! the only place wall-clock nondeterminism can enter, sampled ONCE per
+//! `append_edit` call for the row's `at` timestamp.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
@@ -149,12 +147,11 @@ pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 }
 
 /// `doc_id`'s own edit rows with seq in `(from_seq, to_seq]`, each tagged
-/// with its seq, ordered ascending — the current TAIL row (`seq == to_seq`)
-/// is the only one `append_edit`'s coalescing UPDATE can still mutate in
-/// place. Session-scoped: only ever this session's own edits. Read-only,
-/// so it takes `&Connection` rather than `&Transaction` — callable from either the
-/// writer's own transaction (via `Transaction`'s `Deref<Target=Connection>`
-/// coercion) or a plain read connection.
+/// with its seq, ordered ascending. Session-scoped: only ever this
+/// session's own edits. Read-only, so it takes `&Connection` rather than
+/// `&Transaction` — callable from either the writer's own transaction (via
+/// `Transaction`'s `Deref<Target=Connection>` coercion) or a plain read
+/// connection.
 pub fn edits_in_range(
     conn: &rusqlite::Connection,
     session_id: i64,

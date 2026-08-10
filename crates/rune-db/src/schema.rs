@@ -66,10 +66,11 @@ CREATE TABLE IF NOT EXISTS blobs (
 -- (v10). proc_started_at is the OS-reported start time
 -- of pid, recorded once at construction (session.rs) — the only thing that
 -- lets a LATER session tell "pid still running MY writer" apart from "pid
--- recycled to an unrelated process since". A session row is deliberately
--- NEVER deleted by the reaper (WP4) — only its session_documents/events/
--- snapshots footprint — so a dead session's own observations (see below)
--- always keep a valid FK target.
+-- recycled to an unrelated process since". The reaper (WP4) deletes a dead
+-- session's session_documents/events/snapshots footprint, then the row
+-- itself too once it has recorded no observations (see below) — a row that
+-- DID record one stays in place as that dead session's own permanent
+-- "theirs" provenance, the only fact every other session may still need.
 --
 -- FROZEN LIVENESS CONTRACT (versioning.rs): every rune-v*.db, past and
 -- future, must satisfy `SELECT pid, proc_started_at FROM sessions` — this
@@ -117,10 +118,10 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_session ON snapshots(session_id);
 -- events: one document = one event stream. No surface dimension — title is
 -- never journaled and chat journals to its own reserved document, so doc_id
 -- alone is always both the journal key and the recovery/undo unit.
--- session_id (v10): the journal author — AppendEdit's redo-truncation,
--- 300ms coalescing, and undo/redo position all scope to (doc_id,
--- session_id) together, so a session's own undo/redo can never see,
--- coalesce with, or truncate a DIFFERENT session's edits to the same doc.
+-- session_id (v10): the journal author — AppendEdit's redo-truncation and
+-- undo/redo position both scope to (doc_id, session_id) together, so a
+-- session's own undo/redo can never see or truncate a DIFFERENT session's
+-- edits to the same doc.
 CREATE TABLE IF NOT EXISTS events (
 	seq            INTEGER PRIMARY KEY AUTOINCREMENT,
 	doc_id         INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
