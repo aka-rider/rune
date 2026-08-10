@@ -27,6 +27,7 @@ use rune_vfs::{Mem, Vfs};
 use merge_common::db_wiring_common::{app_with_store, publish};
 use merge_common::{
     ch, drain_materialize_round_trip, drain_one_op_for, external_write, press_key, save_and_ack,
+    sup,
 };
 
 /// Sets up a document whose disk changed since it was opened, edits the
@@ -231,22 +232,40 @@ fn an_ordinary_save_still_succeeds_once_the_disk_is_quiet() {
     );
 }
 
-/// Issue #88: the disk-conflict Guard's `[S]ave anyway` is the user's
-/// explicit last-resort consent — a refused attempt (here, a save already
-/// in flight for the same document, poked directly since racing the real
-/// materialize dance into that exact window would make the test flaky)
-/// must never destroy the prompt that consent was answering. A second
-/// `[S]` once that save has actually finished then succeeds normally.
+/// The disk-conflict Guard's `[S]ave anyway` is the user's explicit
+/// last-resort consent — a refused attempt (here, a save genuinely already
+/// running for the same document, driven through a real `⌘S` whose own ack
+/// is deliberately left undelivered) must never destroy the prompt that
+/// consent was answering. A second `[S]` once that save has actually
+/// finished then succeeds normally.
 #[test]
 fn disk_conflict_prompt_survives_refused_force() {
-    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
-    assert!(app.guard.is_some(), "expected the disk-conflict Guard");
+    let mem = Mem::new();
+    publish(&mem, Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let (mut app, bridge) = app_with_store("force-save-inflight", Arc::clone(&vfs));
+    workspace::open_path(&mut app, Path::new("/doc.md"));
+    let doc_id = app.active;
+    drain_one_op_for(&mut app, &bridge, doc_id);
 
-    let (version, content) = {
-        let d = app.doc(doc_id).unwrap();
-        (d.buffer.version(), Arc::from(d.buffer.content()))
-    };
-    app.doc_mut(doc_id).unwrap().begin_save(version, content);
+    press_key(&mut app, ch('!'));
+    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
+    drain_one_op_for(&mut app, &bridge, doc_id);
+
+    press_key(&mut app, sup('s'));
+    assert!(
+        app.doc(doc_id).unwrap().save_in_flight(),
+        "the real ⌘S must actually start a save"
+    );
+
+    let raise = rune_tui::guard::set_guard(
+        &mut app,
+        rune_tui::guard::GuardPrompt {
+            doc: doc_id,
+            kind: GuardKind::DiskConflict,
+        },
+    );
+    assert_eq!(raise, rune_tui::guard::GuardRaise::Raised);
 
     press_key(&mut app, ch('s'));
     assert!(
@@ -262,7 +281,11 @@ fn disk_conflict_prompt_survives_refused_force() {
         "the refusal must be posted, not silent: {log:?}"
     );
 
-    app.doc_mut(doc_id).unwrap().abandon_save();
+    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    assert!(
+        !app.doc(doc_id).unwrap().save_in_flight(),
+        "the original save must have finished against the quiet disk"
+    );
 
     press_key(&mut app, ch('s'));
     assert!(

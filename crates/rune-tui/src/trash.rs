@@ -61,12 +61,8 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
         path
     };
 
-    let path = match workspace::resolve(app.vfs.as_ref(), &target) {
-        Ok(path) => path,
-        Err(e) => {
-            messages::error(app, format!("could not trash {}: {e}", target.display()));
-            return;
-        }
+    let Some(path) = workspace::resolve_or_report(app, &target, "trash") else {
+        return;
     };
     if refuse_if_dirty(app, &path) {
         return;

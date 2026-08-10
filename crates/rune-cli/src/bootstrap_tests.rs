@@ -8,8 +8,8 @@ use rune_vfs::Mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Counts every [`Vfs::read`] call made against ANY path, wrapping a real
-/// [`Mem`] for everything else — the TOCTOU pin for issue #77: a launch's
-/// first positional must be read off disk exactly once, never once for the
+/// [`Mem`] for everything else — the TOCTOU pin: a launch's first
+/// positional must be read off disk exactly once, never once for the
 /// buffer and again for the recovery store's own CAS baseline.
 struct CountingReadVfs {
     inner: Mem,
@@ -115,11 +115,11 @@ fn launch_multi_file_enqueues_a_load_for_every_extra_tab() {
     // is bound before `App::new` ever runs.
     assert_eq!(app.documents.len(), 3);
     assert!(app.doc(app.active).is_some_and(|d| d.is_store_bound()));
-    // The other two open through `workspace::open_path`'s async path
-    // (plan [rune-cli 1]/WP3.S1): each one's `Load` must actually be
-    // enqueued and tracked, not silently dropped the way a `Sink::
-    // Bootstrap`-less bridge used to swallow it — `db_ops` is where
-    // `db::load_document` records that at enqueue time, synchronously.
+    // The other two open through `workspace::open_path`'s async path: each
+    // one's `Load` must actually be enqueued and tracked, not silently
+    // dropped the way a `Sink::Bootstrap`-less bridge used to swallow it —
+    // `db_ops` is where `db::load_document` records that at enqueue time,
+    // synchronously.
     assert_eq!(
         app.db_ops.len(),
         2,
@@ -153,9 +153,9 @@ fn launch_same_file_two_spellings_opens_one_document() {
     );
 }
 
-/// Issue #85: a launch positional with more than one hard link must carry
-/// that fact onto the active document and warn that saving will fork it
-/// from its other names.
+/// A launch positional with more than one hard link must carry that fact
+/// onto the active document and warn that saving will fork it from its
+/// other names.
 #[test]
 fn launch_of_a_hardlinked_positional_carries_the_fact_and_warns() {
     let vfs = Mem::new();
@@ -182,7 +182,7 @@ fn launch_of_a_hardlinked_positional_carries_the_fact_and_warns() {
     );
 }
 
-/// Plan WP4.S8: a `.png` first positional bootstraps through the SAME
+/// A `.png` first positional bootstraps through the SAME
 /// `workspace::open_path` dispatch every extra positional uses (built
 /// via the untitled `App` constructor as an anchor), rather than
 /// `load_buffer`'s text-only path — which would reject the PNG's bytes
@@ -383,8 +383,8 @@ fn launch_nonexistent_path_without_home_still_banners() {
     );
 }
 
-/// Issue #80: a first positional whose resolution fails must never fall
-/// back to the caller's unnormalized spelling — `bootstrap` refuses and
+/// A first positional whose resolution fails must never fall back to the
+/// caller's unnormalized spelling — `bootstrap` refuses and
 /// exits `EX_IOERR`, the same code `open::open_first_positional`'s own
 /// unreadable-file arm already returns, rather than launching under a
 /// path whose on-disk identity was never actually confirmed.
@@ -427,8 +427,8 @@ fn launch_empty_positional_is_rejected_before_any_open() {
     );
 }
 
-/// Plan WP3 ("the untitled draft is really recovery-backed"): a
-/// no-positional launch against a real (temp) `$HOME` must come up with
+/// The untitled draft is really recovery-backed: a no-positional launch
+/// against a real (temp) `$HOME` must come up with
 /// BOTH a live app-wide `Db` and a bound `DocDb` on the default
 /// document — the two facts that together arm the guard's "recovery-
 /// backed" exemption. Before this change, this launch mode always had
@@ -542,8 +542,8 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     );
 }
 
-/// Issue #77's own regression: a full bootstrap of one positional must read
-/// that path off disk exactly once — the buffer's bytes and the recovery
+/// A full bootstrap of one positional must read that path off disk exactly
+/// once — the buffer's bytes and the recovery
 /// store's CAS baseline both trace to the SAME [`rune_vfs::Sighting`], never
 /// two independent reads racing against an external rewrite in between.
 #[test]
@@ -572,9 +572,9 @@ fn launch_one_positional_reads_the_path_exactly_once() {
     );
 }
 
-/// Issue #78: an image-first launch must still open the session-wide store
-/// — later markdown opens depend on it, even though the image document
-/// itself binds no `DocDb`.
+/// An image-first launch must still open the session-wide store — later
+/// markdown opens depend on it, even though the image document itself
+/// binds no `DocDb`.
 #[test]
 fn launch_image_first_still_opens_the_session_store() {
     let vfs = Mem::new();
@@ -638,8 +638,8 @@ fn launch_image_first_with_an_unopenable_store_banners() {
 /// The end-to-end payoff: after an image-first launch, opening a markdown
 /// file through the workspace (the same path the Explorer uses) must
 /// actually enqueue journaling work against the now-live session store —
-/// before issue #78's fix, this store was never opened at all, so nothing
-/// journaled for the rest of the session.
+/// without an image-first launch opening it, nothing journaled for the
+/// rest of the session.
 #[test]
 fn launch_image_first_then_opening_markdown_enqueues_journaling() {
     let vfs = Mem::new();

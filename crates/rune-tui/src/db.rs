@@ -261,12 +261,12 @@ impl PendingOp {
         }
     }
 
-    /// A `MoveUndoPos` op — doc-scoped (issue #84): resolving a local undo
-    /// position to a durable seq can fail on this ONE document's own local-
-    /// position bookkeeping (`rune_db::OpKind::MoveUndoPos`'s doc comment)
-    /// without that being any kind of evidence the store itself can no
-    /// longer be trusted for recovery — an undo error must never
-    /// sticky-degrade the whole store.
+    /// A `MoveUndoPos` op — doc-scoped: resolving a local undo position to
+    /// a durable seq can fail on this ONE document's own local-position
+    /// bookkeeping (`rune_db::OpKind::MoveUndoPos`'s doc comment) without
+    /// that being any kind of evidence the store itself can no longer be
+    /// trusted for recovery — an undo error must never sticky-degrade the
+    /// whole store.
     pub fn move_undo_pos(doc: DocumentId) -> PendingOp {
         PendingOp {
             doc,
@@ -460,14 +460,6 @@ impl FileBinding {
     }
 }
 
-/// Which of the two outcomes [`App::install_or_join_file_binding`] took —
-/// named so a caller that cares (none does today) never has to infer it
-/// from whether `file_binding` already existed beforehand.
-pub enum BindOutcome {
-    Installed,
-    Joined,
-}
-
 impl crate::app::App {
     /// Joins `db_id`'s shared [`FileBinding`], seeding it from
     /// `seed_expect_obs` only if no document has ever bound this `db_id`
@@ -479,17 +471,9 @@ impl crate::app::App {
     /// never observe a baseline OLDER than what a sibling document's own
     /// earlier save already advanced the shared entry to, so joining rather
     /// than reseeding never regresses it.
-    pub fn install_or_join_file_binding(
-        &mut self,
-        db_id: i64,
-        seed_expect_obs: ObsId,
-    ) -> BindOutcome {
-        match self.file_bindings.entry(db_id) {
-            std::collections::hash_map::Entry::Occupied(_) => BindOutcome::Joined,
-            std::collections::hash_map::Entry::Vacant(vacant) => {
-                vacant.insert(FileBinding::new(seed_expect_obs));
-                BindOutcome::Installed
-            }
+    pub fn install_or_join_file_binding(&mut self, db_id: i64, seed_expect_obs: ObsId) {
+        if let std::collections::hash_map::Entry::Vacant(vacant) = self.file_bindings.entry(db_id) {
+            vacant.insert(FileBinding::new(seed_expect_obs));
         }
     }
 

@@ -395,6 +395,49 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
 }
 
 #[test]
+fn a_failed_preview_at_the_tab_limit_mints_no_placeholder_and_does_not_reread() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/bad.bin"), &[0xFF, 0xFE, 0x00])
+        .unwrap();
+    let mut app = app_with(&mem);
+    for i in 0..crate::opentabs::limit::MAX_TABS {
+        let id = app.open_document(CoreBuffer::new("hello"));
+        app.doc_mut(id)
+            .unwrap()
+            .bind_path(PathBuf::from(format!("/root/doc{i}.md")));
+    }
+    load_entries(&mut app, &["bad.bin"]);
+    let mut effects = Effects::default();
+    let docs_before = app.documents.len();
+
+    app.explorer.nav.move_by(1, app.explorer.entries.len()); // ".." -> "bad.bin"
+    after_cursor_move(&mut app, &mut effects);
+    assert_eq!(effects.cmds.len(), 1, "the first visit reads once");
+    run_cmds(&mut app, &mut effects);
+
+    assert!(
+        app.explorer.preview.is_none(),
+        "a full tab strip must not mint a placeholder document"
+    );
+    assert_eq!(
+        app.documents.len(),
+        docs_before,
+        "no document was minted for the failed preview"
+    );
+    assert_eq!(
+        app.explorer.preview_failed,
+        Some(PathBuf::from("/root/bad.bin")),
+        "the failure must still be recorded even without a placeholder"
+    );
+
+    after_cursor_move(&mut app, &mut effects);
+    assert!(
+        effects.cmds.is_empty(),
+        "sitting on the same failed entry must not re-read, even at the tab limit"
+    );
+}
+
+#[test]
 fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(std::path::Path::new("/root/a.bin"), &[0xFF, 0xFE, 0x00])

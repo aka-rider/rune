@@ -1,9 +1,8 @@
-//! `Document::save`'s state machine: the two invariants issues #76/#83
-//! exist to make structurally impossible. (1) While a publish `Cmd` is
-//! outstanding for a document, no second publish can be spawned for it.
-//! (2) No `App`-level map may reference a closed document's save attempt —
-//! trivially true now since the attempt lives on the `Document` itself and
-//! is removed with it.
+//! `Document::save`'s state machine makes two invariants structurally
+//! impossible to violate. (1) While a publish `Cmd` is outstanding for a
+//! document, no second publish can be spawned for it. (2) No `App`-level
+//! map may reference a closed document's save attempt — trivially true now
+//! since the attempt lives on the `Document` itself and is removed with it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

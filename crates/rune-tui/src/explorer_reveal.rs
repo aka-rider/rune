@@ -11,7 +11,6 @@ use std::path::Path;
 
 use crate::app::App;
 use crate::explorer::{ensure_visible, request_dir};
-use crate::messages;
 use crate::runtime::Effects;
 use crate::workspace;
 
@@ -34,12 +33,8 @@ use crate::workspace;
 /// falls back to the top of the list — the same rule `handle_dir_loaded`
 /// already applies to a `Refresh` whose preserved selection vanished.
 pub fn reveal(app: &mut App, path: &Path, effects: &mut Effects) {
-    let resolved = match workspace::resolve(app.vfs.as_ref(), path) {
-        Ok(resolved) => resolved,
-        Err(e) => {
-            messages::error(app, format!("could not reveal {}: {e}", path.display()));
-            return;
-        }
+    let Some(resolved) = workspace::resolve_or_report(app, path, "reveal") else {
+        return;
     };
     let Some(parent) = resolved.parent().map(Path::to_path_buf) else {
         return;

@@ -68,4 +68,15 @@ impl Replica {
             Replica::Detached | Replica::Binding { .. } => None,
         }
     }
+
+    /// Takes whatever `Binding` window steps this replica buffered, leaving
+    /// it `Detached` — the shared first half of installing a fresh `DocDb`
+    /// once a `Load`/`CreateScratch` ack lands, before the caller replaces
+    /// it with `Bound`.
+    pub(crate) fn take_pending(&mut self) -> Vec<ReplicaStep> {
+        match std::mem::replace(self, Replica::Detached) {
+            Replica::Binding { pending } => pending,
+            Replica::Detached | Replica::Bound(_) => Vec::new(),
+        }
+    }
 }

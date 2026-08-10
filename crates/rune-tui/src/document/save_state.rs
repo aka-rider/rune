@@ -231,7 +231,7 @@ pub(crate) struct SaveTicketMint(u64);
 
 impl SaveTicketMint {
     pub(crate) fn mint(&mut self) -> SaveTicket {
-        self.0 += 1;
+        self.0 = self.0.wrapping_add(1);
         SaveTicket(self.0)
     }
 }

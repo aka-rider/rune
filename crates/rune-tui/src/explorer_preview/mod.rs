@@ -237,6 +237,7 @@ fn apply_failed(app: &mut App, path: &Path, reason: &str) {
         .and_then(|n| n.to_str())
         .unwrap_or("this file");
     let text = format!("cannot preview {file_name} — {reason}");
+    app.explorer.preview_failed = Some(path.to_path_buf());
     let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
         Some(id) => {
             let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
@@ -262,7 +263,6 @@ fn apply_failed(app: &mut App, path: &Path, reason: &str) {
             id
         }
     };
-    app.explorer.preview_failed = Some(path.to_path_buf());
     workspace::switch_to(app, id);
 }
 

@@ -9,7 +9,7 @@ use crate::document::{DocumentId, Replica, ReplicaStep};
 use crate::messages;
 use rune_db::LoadResult;
 
-/// The reaction to a `Load` op's ack (plan WP6.S2/S3) — routed from
+/// The reaction to a `Load` op's ack — routed from
 /// `app::handle_db_event` once `app.db_ops` has resolved the ack's op id to
 /// `id`. `issued_version` is `id`'s buffer version recorded by
 /// `db_enqueue::load_document` at ENQUEUE time, on the same `PendingOp` that
@@ -112,9 +112,9 @@ pub fn handle_load_ack(
         }
         Some(crate::document::Hydration::NoChange) | None => {}
     }
-    // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
-    // marks it itself, so every hydration site re-derives it explicitly,
-    // even on the `NoChange`/version-moved-on
+    // Dirty is a content comparison — `hydrate` no longer marks it itself,
+    // so every hydration site re-derives it explicitly, even on the
+    // `NoChange`/version-moved-on
     // branches where `hydrate` was never actually called: this document's
     // `db` binding is about to change below, which is itself a fact worth
     // re-settling the cache against.
@@ -131,21 +131,13 @@ pub fn handle_load_ack(
     let pending = install_doc_db(app, id, &load_result, u8::from(adopted));
     crate::db_enqueue::replay_pending(app, id, pending);
     let Some(doc) = app.doc_mut(id) else { return };
-    // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s own
-    // doc comment) — set even on the version-moved-on branch above where
-    // `hydrate` was never called: the fact this `Load` reported is still
-    // true regardless of whether the buffer adopted it.
+    // Render/hint state only (see `Document::last_sync`'s own doc comment)
+    // — set even on the version-moved-on branch above where `hydrate` was
+    // never called: the fact this `Load` reported is still true regardless
+    // of whether the buffer adopted it.
     doc.last_sync = Some(load_result.sync.kind);
     doc.nlink = Some(load_result.nlink);
-    if load_result.nlink > 1 {
-        messages::warn(
-            app,
-            format!(
-                "this file has {} hard links \u{2014} saving replaces it atomically, so the other links keep the old content",
-                load_result.nlink
-            ),
-        );
-    }
+    warn_hard_links(app, load_result.nlink);
     // A dead session's still-active merge is re-entered ONLY by an ack that
     // genuinely hydrated the reconstruction the merge row was matched
     // against — a skipped or refused hydration leaves the row active for
@@ -163,8 +155,8 @@ pub fn handle_load_ack(
 /// is now bound to a row read straight off disk, so the next save is an
 /// overwrite, never a create. Takes any [`ReplicaStep`]s a `Binding` window
 /// buffered and returns them for the caller to replay via `db_enqueue::
-/// replay_pending` — done AFTER `id` is `Bound`, so a document `Binding`
-/// found itself in only for the length of one round trip (issue #84).
+/// replay_pending` — done AFTER `id` is `Bound`, so a document is only ever
+/// `Binding` for the length of one round trip.
 /// `undo_base` becomes the fresh `DocDb`'s own — 1 only when THIS load's
 /// own hydration adopted a recovered draft (`DocDb::undo_base`'s own doc
 /// comment), 0 for every other call site.
@@ -177,10 +169,7 @@ fn install_doc_db(
     let Some(doc) = app.doc_mut(id) else {
         return Vec::new();
     };
-    let pending = match std::mem::replace(&mut doc.replica, Replica::Detached) {
-        Replica::Binding { pending } => pending,
-        Replica::Detached | Replica::Bound(_) => Vec::new(),
-    };
+    let pending = doc.replica.take_pending();
     let mut doc_db = DocDb::new(
         load_result.doc_id,
         false,
@@ -208,6 +197,21 @@ fn detach_file_binding(app: &mut App, id: DocumentId) {
     }
 }
 
+/// Warns once that saving will detach the extra hard links `nlink` counts —
+/// shared by `handle_load_ack` (every later reload) and `rune-cli`'s own
+/// launch-time bootstrap (the session's very first `Load`), so the message
+/// stays byte-identical between the two.
+pub fn warn_hard_links(app: &mut App, nlink: i64) {
+    if nlink > 1 {
+        messages::warn(
+            app,
+            format!(
+                "this file has {nlink} hard links \u{2014} saving replaces it atomically, so the other links keep the old content"
+            ),
+        );
+    }
+}
+
 /// Records that `seq` was durably committed for `id`'s oldest still-pending
 /// `AppendEdit` — called from `app::handle_db_event`'s `Msg::Db` handler on
 /// `DbEvent::Ok { result: OpOutcome::Seq(seq), .. }`, after `app.db_ops` has
@@ -221,8 +225,8 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
     }
 }
 
-/// The reaction to a `CreateScratch` op's ack (plan WP0/WP3, mid-session
-/// half): `row_id` is a freshly minted, never-bound scratch row — `id`'s
+/// The reaction to a `CreateScratch` op's ack: `row_id` is a freshly
+/// minted, never-bound scratch row — `id`'s
 /// document binds to it exactly like a recovered launch-time scratch draft
 /// does (`rune-cli::open::adopt_scratch_doc`), `bind_new` true because a
 /// scratch row has never been bound to a real file, so its NEXT save must
@@ -233,15 +237,12 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
 /// drop — `close_now` already sweeps `db_ops` of any entry pointing at a
 /// closed document, but a race between that sweep and this ack landing is
 /// still just a document that's gone, nothing to bind. Replays any
-/// `Binding`-window `ReplicaStep`s the same way `install_doc_db` does
-/// (issue #84) — a scratch draft can be typed into just as easily as an
-/// ordinary file while its own `CreateScratch` is still in flight.
+/// `Binding`-window `ReplicaStep`s the same way `install_doc_db` does — a
+/// scratch draft can be typed into just as easily as an ordinary file
+/// while its own `CreateScratch` is still in flight.
 pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
     let Some(doc) = app.doc_mut(id) else { return };
-    let pending = match std::mem::replace(&mut doc.replica, Replica::Detached) {
-        Replica::Binding { pending } => pending,
-        Replica::Detached | Replica::Bound(_) => Vec::new(),
-    };
+    let pending = doc.replica.take_pending();
     doc.replica = Replica::Bound(DocDb::new(row_id, true, 0));
     app.install_or_join_file_binding(row_id, 0);
     crate::db_enqueue::replay_pending(app, id, pending);
@@ -267,9 +268,9 @@ mod tests {
         Db::new(store, bridge, false)
     }
 
-    /// Plan WP1.S8: two documents each enqueue an `AppendEdit`; delivering
-    /// their `DbEvent::Ok` acks (identified only by op id, via `app.db_ops`)
-    /// must route each `Seq` result to the CORRECT document's `DocDb`, never
+    /// Two documents each enqueue an `AppendEdit`; delivering their
+    /// `DbEvent::Ok` acks (identified only by op id, via `app.db_ops`) must
+    /// route each `Seq` result to the CORRECT document's `DocDb`, never
     /// crossing them.
     #[test]
     fn db_event_acks_route_to_the_correct_document_via_db_ops() {
@@ -455,8 +456,8 @@ mod tests {
         );
     }
 
-    /// Issue #82: a `binding_only` ack for a document with live buffer
-    /// edits must never adopt the recovered content or touch `last_sync` —
+    /// A `binding_only` ack for a document with live buffer edits must
+    /// never adopt the recovered content or touch `last_sync` —
     /// only the shared per-file baseline and the document's own `DocDb` itself (which the
     /// lost-create-race hand-off relies on rebinding to an entirely
     /// different row, `bind_new` included) advance. Contrasts `handle_
@@ -565,8 +566,8 @@ mod tests {
         (app, id)
     }
 
-    /// Issue #85: a load off a path with more than one hard link must warn
-    /// that saving forks it from its other names.
+    /// A load off a path with more than one hard link must warn that
+    /// saving forks it from its other names.
     #[test]
     fn load_ack_warns_on_multiple_hard_links() {
         let (app, id) = load_ack_for(2);
@@ -580,7 +581,7 @@ mod tests {
         );
     }
 
-    /// Issue #85: an ordinary single-link file must never warn.
+    /// An ordinary single-link file must never warn.
     #[test]
     fn load_ack_stays_silent_on_a_single_hard_link() {
         let (app, id) = load_ack_for(1);
@@ -589,8 +590,8 @@ mod tests {
         assert_eq!(messages::posts(&app), 0);
     }
 
-    /// Issue #82: the re-baseline `Load` a `saved: None` `MaterializeRecord`
-    /// ack enqueues (`materialize_ack::reactions`) must actually advance
+    /// The re-baseline `Load` a `saved: None` `MaterializeRecord` ack
+    /// enqueues (`materialize_ack::reactions`) must actually advance
     /// `expect_obs` once its own ack lands, and clear `pending_
     /// rebaseline_hash` — not fall into `install_or_join_file_binding`'s
     /// join semantics, which would silently drop the fresh observation for

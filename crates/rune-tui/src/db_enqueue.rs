@@ -15,7 +15,7 @@ use crate::document::{DocumentId, Replica, ReplicaStep};
 
 /// THE sole chokepoint an edit batch's replica reaches after `Journal::
 /// push` at `commands::edit_core::apply_edit_batch_with_cursors`'s one call
-/// site (plan WP5.S3, issue #84): what happens next depends on `id`'s
+/// site: what happens next depends on `id`'s
 /// [`Replica`]. `Detached` (no store, a degraded one, or a document with no
 /// recovery journal) does nothing — same as always. `Binding` (a `Load`/
 /// `CreateScratch` op is still in flight) buffers the batch as a
@@ -54,8 +54,7 @@ pub fn append_edit(
 /// only ever marks the whole store degraded (`materialize_ack::
 /// on_store_failure`) — the buffer/journal mutation already happened and is
 /// never rolled back. Every successful enqueue records `id` in
-/// `app.db_ops` (plan decision 6) so the eventual ack routes back to the
-/// right document.
+/// `app.db_ops` so the eventual ack routes back to the right document.
 fn append_edit_bound(
     app: &mut App,
     id: DocumentId,
@@ -96,7 +95,7 @@ pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<Replica
 }
 
 /// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
-/// locally (plan WP5.S3) — called immediately after `Journal::move_pos` at
+/// locally — called immediately after `Journal::move_pos` at
 /// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
 /// position just committed (`Journal::move_pos`'s own argument), minus
 /// `DocDb::undo_base` — the local journal counts the synthetic bridge
@@ -130,7 +129,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// Enqueues a `Load` op hydrating `id` (already bound to `path`, an
 /// existing file just read straight off disk — `workspace::open_path`'s one
 /// call site) through the app-wide recovery store, closing the "Explorer-
-/// opened documents get no recovery journal" gap (plan WP6). Records `id`'s
+/// opened documents get no recovery journal" gap. Records `id`'s
 /// buffer version at the moment the load is ISSUED, alongside the routing
 /// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
 /// `Load` arm needs both to decide, on the ack, whether adopting the
@@ -186,7 +185,7 @@ fn load_document_inner(
                 .insert(op_id, PendingOp::load(id, issued_version, binding_only));
             // A document with no binding yet starts buffering: every edit
             // committed before this op's ack lands must reach the store
-            // eventually, not be dropped (issue #84). A re-baseline/hand-off
+            // eventually, not be dropped. A re-baseline/hand-off
             // `Load` (`load_document_best_effort`, or a `binding_only` call
             // against an already-`Bound` document) targets a document that
             // is already `Bound` or `Detached`-by-design, so this is a no-op
@@ -210,7 +209,7 @@ fn load_document_inner(
     }
 }
 
-/// Enqueues a `Probe` op refreshing `id`'s disk fact (plan WP2.S4) — called
+/// Enqueues a `Probe` op refreshing `id`'s disk fact — called
 /// from `workspace::switch_to` for a document with both a `db` binding and a
 /// `file_path` (nothing to probe for a pathless draft or one with no
 /// recovery journal). Skips enqueueing if `id` already has a probe in
@@ -266,7 +265,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
 /// Enqueues a `CreateScratch` op registering `id` — a freshly minted
 /// untitled draft (`workspace::new_untitled_document`'s one call site) — as
 /// its own scratch row in the recovery store, closing the "an untitled
-/// draft minted mid-session has no journal" gap (plan WP0/WP3). Mirrors
+/// draft minted mid-session has no journal" gap. Mirrors
 /// `load_document`'s enqueue-then-record shape: a degraded or absent store
 /// enqueues nothing, leaving the document `Detached` and the draft exactly
 /// as unpreserved as it is today — `App::is_preserved` already reports that

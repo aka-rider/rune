@@ -1,4 +1,4 @@
-//! Issue #87: `Hydration::Refused` must take the same detach exit
+//! `Hydration::Refused` must take the same detach exit
 //! `handle_load_ack`'s `saved_obs == None` arm already took — a document
 //! whose recovered content this session just rejected may never keep
 //! journaling against that row, and a direct-vfs save must still work for
