@@ -43,6 +43,21 @@ pub fn resolve(vfs: &dyn Vfs, path: &Path) -> std::io::Result<PathBuf> {
     vfs.resolve(path)
 }
 
+/// [`resolve`] plus every call site's own shared reaction to a resolution
+/// failure: posts `could not <verb> {path}: {e}` into the message log (the
+/// one chokepoint every error report funnels through) and hands back
+/// `None`. `verb` names what the caller was trying to do ("open", "trash",
+/// "reveal", …) so the message stays specific despite the shared plumbing.
+pub fn resolve_or_report(app: &mut App, path: &Path, verb: &str) -> Option<PathBuf> {
+    match resolve(app.vfs.as_ref(), path) {
+        Ok(resolved) => Some(resolved),
+        Err(e) => {
+            messages::error(app, format!("could not {verb} {}: {e}", path.display()));
+            None
+        }
+    }
+}
+
 /// Opens `path`: normalizes it via [`resolve`], then either re-activates
 /// an already-open `Document` with that resolved `file_path` or reads a
 /// fresh one. A read/decode failure is reported into the message log
@@ -90,12 +105,8 @@ enum ReadOutcome {
 }
 
 fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
-    let resolved = match resolve(app.vfs.as_ref(), path) {
-        Ok(resolved) => resolved,
-        Err(e) => {
-            messages::error(app, format!("could not open {}: {e}", path.display()));
-            return ReadOutcome::Failed;
-        }
+    let Some(resolved) = resolve_or_report(app, path, "open") else {
+        return ReadOutcome::Failed;
     };
 
     if let Some(id) = existing_document_for(app, &resolved) {
@@ -140,12 +151,8 @@ pub fn open_path_async(
     anchor: Option<rune_nav::Anchor>,
     effects: &mut Effects,
 ) {
-    let resolved = match resolve(app.vfs.as_ref(), path) {
-        Ok(resolved) => resolved,
-        Err(e) => {
-            messages::error(app, format!("could not open {}: {e}", path.display()));
-            return;
-        }
+    let Some(resolved) = resolve_or_report(app, path, "open") else {
+        return;
     };
 
     if let Some(id) = existing_document_for(app, &resolved) {

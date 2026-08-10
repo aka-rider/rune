@@ -63,7 +63,7 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
     (app, row_id)
 }
 
-/// Issue #80: the hand-off's own path-identity compare must take the SAME
+/// The hand-off's own path-identity compare must take the SAME
 /// conservative branch a genuine collision-elsewhere takes when it can't
 /// even resolve the racer's path — proof positive that a resolve failure
 /// on the path itself, not just on some other document's binding, forces
@@ -148,10 +148,10 @@ fn committed_result(nlink: Option<i64>) -> MatResult {
     }
 }
 
-/// Issue #85: a committed save of a document whose stored `nlink` fact was
-/// `> 1` must warn once that the file's other names still hold the
-/// previous content, then refresh the fact from the publish's own
-/// observation so a second save doesn't repeat a stale claim.
+/// A committed save of a document whose stored `nlink` fact was `> 1` must
+/// warn once that the file's other names still hold the previous content,
+/// then refresh the fact from the publish's own observation so a second
+/// save doesn't repeat a stale claim.
 #[test]
 fn committed_save_warns_once_for_a_hardlinked_document_then_stops() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());

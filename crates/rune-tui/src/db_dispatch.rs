@@ -235,7 +235,7 @@ mod tests {
         }
     }
 
-    /// Issue #86: a probe ack whose `probe_epoch` no longer matches the
+    /// A probe ack whose `probe_epoch` no longer matches the
     /// binding's current `save_epoch` — a publish landed while the probe was
     /// in flight — must re-issue a fresh probe rather than drop the ack and
     /// leave `last_sync` stuck at whatever it read before.

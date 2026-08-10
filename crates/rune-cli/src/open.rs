@@ -1,6 +1,6 @@
-//! The launch-action dispatch split out of `main` (plan WP7.S4/WP4.S6): `-w`
-//! workspace-root validation and resolution, and the multi-file open loop
-//! that opens every positional past the first as its own tab (WP7.S6).
+//! The launch-action dispatch split out of `main`: `-w` workspace-root
+//! validation and resolution, and the multi-file open loop that opens
+//! every positional past the first as its own tab.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,12 +15,12 @@ use crate::db_bootstrap::{
     DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_store_only,
     bootstrap_untitled_db,
 };
-use crate::loader::{LoadError, load_sighting};
+use crate::loader::{LoadError, LoadedFile, load_sighting};
 use crate::{AppGuard, exit_code};
 
-/// `-w`'s own validation (WP7.S4): `dir` (already absolutized by
+/// `-w`'s own validation: `dir` (already absolutized by
 /// `cli::parse`) must `stat` successfully as a directory. Distinguishes
-/// WHY it didn't (plan WP4.S6/[rune-cli 9]) — a nonexistent path, an
+/// WHY it didn't — a nonexistent path, an
 /// existing non-directory, or some other `stat` failure (permission
 /// denied, an I/O error) each get their own [`CliError`] instead of one
 /// wildcard "not a directory" collapsing all three. Split out from
@@ -42,7 +42,7 @@ pub(crate) fn validate_work_dir(vfs: &dyn Vfs, dir: &Path) -> Result<(), CliErro
 
 /// The one exit path for every [`CliError`] — from `cli::parse` itself or
 /// from `validate_work_dir` afterward: the specific message, then
-/// [`crate::cli::USAGE_TEXT`], both to stderr (WP7.S3).
+/// [`crate::cli::USAGE_TEXT`], both to stderr.
 pub(crate) fn usage_error(e: &CliError) -> std::process::ExitCode {
     eprintln!("rune: {e}");
     eprintln!("{}", crate::cli::USAGE_TEXT);
@@ -66,8 +66,8 @@ pub(crate) fn resolve_root(
 }
 
 /// Resolves and opens the first positional, building the `(App,
-/// DbBootstrap)` pair `bootstrap` wires up next (plan WP4.S8, split out of
-/// `main` to keep it under the 500-line budget). An image path
+/// DbBootstrap)` pair `bootstrap` wires up next — split out of
+/// `main` to keep it under the 500-line budget. An image path
 /// (`kind_for` via `rune_tui::document_support::is_image_path`) never reaches
 /// `load_sighting` at all — image bytes are never valid UTF-8 in general, and
 /// even a coincidentally UTF-8-clean image must still open read-only, not
@@ -77,7 +77,7 @@ pub(crate) fn resolve_root(
 /// pre-load for an image). That anchor's blank draft is closed once the
 /// image opens — it was never edited, so discarding it loses nothing, and
 /// a single-file image launch should show exactly the image, not the image
-/// plus an empty extra tab. Every other path keeps the pre-WP4 text-load
+/// plus an empty extra tab. Every other path keeps the ordinary text-load
 /// shape unchanged.
 pub(crate) fn open_first_positional(
     vfs: &Arc<dyn Vfs + Send + Sync>,
@@ -85,7 +85,7 @@ pub(crate) fn open_first_positional(
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     if rune_tui::document_support::is_image_path(&path) {
-        // Issue #78: an image-first launch still needs the session store —
+        // An image-first launch still needs the session store —
         // later markdown opens (Explorer, extra positionals) must not
         // silently journal nothing for the whole session. The image
         // document itself stays recovery-free either way (`workspace::
@@ -99,9 +99,9 @@ pub(crate) fn open_first_positional(
             && image_id != blank
         {
             // A scratch sink: no runtime/terminal exists yet at this point
-            // in the CLI bootstrap (plan WP4.S8), and the blank draft being
+            // in the CLI bootstrap, and the blank draft being
             // closed here is never an image document, so `close_now`'s
-            // image-delete branch (WP5.S7) is a no-op on this path either
+            // image-delete branch is a no-op on this path either
             // way.
             let _ =
                 workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
@@ -116,10 +116,11 @@ pub(crate) fn open_first_positional(
     }
 
     // One sighting decides both "does this path exist" and, if so, the
-    // buffer's bytes (issue #77) — never a separate `vfs.stat` plus a
-    // separate read of the same path.
-    let sighting = match load_sighting(vfs.as_ref(), &path) {
-        Ok(sighting) => sighting,
+    // buffer's text — never a separate `vfs.stat` plus a separate read of
+    // the same path, and `load_sighting` hands back text already validated
+    // as UTF-8, so there is no second decode/validation branch here.
+    let loaded = match load_sighting(vfs.as_ref(), &path) {
+        Ok(loaded) => loaded,
         Err(LoadError::InvalidUtf8) => {
             eprintln!(
                 "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
@@ -132,27 +133,9 @@ pub(crate) fn open_first_positional(
             return Err(std::process::ExitCode::from(exit_code::IO_ERR));
         }
     };
-    let buffer = match &sighting {
-        // `load_sighting` already refused invalid UTF-8, so this re-decode
-        // is a formality, not a second gate — an `Err` here can only mean a
-        // producer bug upstream, surfaced the same way any other unreadable
-        // file is, rather than assumed away.
-        Some(sighting) => match String::from_utf8(sighting.bytes.clone()) {
-            Ok(text) => rune_core::buffer::Buffer::new(text),
-            Err(e) => {
-                eprintln!(
-                    "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
-                    path.display()
-                );
-                let _ = e;
-                return Err(std::process::ExitCode::from(exit_code::DATA_ERR));
-            }
-        },
-        None => rune_core::buffer::Buffer::new(""),
-    };
 
-    // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
-    // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
+    // The recovery store. `rune_db::load` itself requires the target to
+    // already exist on disk (`vfs.resolve`+`vfs.read` with no
     // NotFound-tolerant branch, unlike `load_sighting` above), so a missing
     // path has nothing to `Load` — but that is not "no recovery this
     // launch": a named-but-not-yet-created file is exactly a recovery-backed
@@ -162,29 +145,32 @@ pub(crate) fn open_first_positional(
     // (protect the user's words over every other feature) — reported to
     // stderr, not to the TUI (which hasn't started yet), and the editor
     // proceeds with `app.db = None`.
-    let mut db_bootstrap = if let Some(sighting) = sighting {
-        bootstrap_db(Arc::clone(vfs), &path, home, sighting)
-    } else {
-        bootstrap_new_file(Arc::clone(vfs), home)
-    };
-
+    //
     // The buffer stays exactly what `load_sighting` read off disk here —
     // adopting `recovered_content` goes through the same hydration
-    // chokepoint (`Document::hydrate`, plan WP5.S2) `db::handle_load_ack`
-    // uses, once `App::new` exists to hold it. Pre-replacing the buffer
-    // here (as this used to) would skip that chokepoint's suspicion
-    // check entirely.
+    // chokepoint (`Document::hydrate`) `db::handle_load_ack` uses, once
+    // `App::new` exists to hold it. Pre-replacing the buffer here would skip
+    // that chokepoint's suspicion check entirely.
+    let (buffer, mut db_bootstrap) = match loaded {
+        Some(LoadedFile { sighting, text }) => (
+            rune_core::buffer::Buffer::new(text),
+            bootstrap_db(Arc::clone(vfs), &path, home, sighting),
+        ),
+        None => (
+            rune_core::buffer::Buffer::new(""),
+            bootstrap_new_file(Arc::clone(vfs), home),
+        ),
+    };
+
     let app = App::new(buffer, Some(path), Arc::clone(vfs), db_bootstrap.db.take());
     Ok((app, db_bootstrap))
 }
 
 /// Builds the default no-positional launch: an untitled document genuinely
-/// backed by the recovery store (plan WP3, "the untitled draft is really
-/// recovery-backed" — the fix for `crates/rune-tui/TODO.md`'s now-resolved
-/// "no recovery journal for the default untitled document" entry).
-/// `bootstrap_untitled_db` does the actual store/scratch-row work
-/// (opening/creating/recovering rows, GC); this only wires its result onto a
-/// freshly constructed `App`. `scratch_docs` is ordered newest first: the
+/// backed by the recovery store. `bootstrap_untitled_db` does the actual
+/// store/scratch-row work (opening/creating/recovering rows, GC); this only
+/// wires its result onto a freshly constructed `App`. `scratch_docs` is
+/// ordered newest first: the
 /// first entry adopts the already-open default document (through
 /// `Document::hydrate`, the same chokepoint every other hydration route
 /// uses) and becomes the active tab; every remaining recovered draft opens
@@ -248,7 +234,7 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
     {
         rune_tui::messages::error(app, format!("crash recovery: {reason}"));
     }
-    // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
+    // Dirty is a content comparison — `hydrate` no longer
     // marks it itself, so every hydration site re-derives it explicitly,
     // same as `bootstrap`'s and `db_ack::handle_load_ack`'s own hydration
     // sites.

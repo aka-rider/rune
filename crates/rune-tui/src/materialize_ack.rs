@@ -474,9 +474,9 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
         // A `Binding` document has no durable row yet — a store this
         // degraded will never deliver the `Load`/`CreateScratch` ack that
         // would have installed one, so whatever it buffered can never
-        // replay; dropping it here (issue #84) is honest, not a loss on top
-        // of a loss — `App::is_preserved` already reports an unbound
-        // document's unsaved bytes as unpreserved.
+        // replay; dropping it here is honest, not a loss on top of a
+        // loss — `App::is_preserved` already reports an unbound document's
+        // unsaved bytes as unpreserved.
         if let Some(doc) = app.doc_mut(*id)
             && matches!(doc.replica, crate::document::Replica::Binding { .. })
         {

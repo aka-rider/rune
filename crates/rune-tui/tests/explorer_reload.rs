@@ -1,9 +1,8 @@
-//! WP4/WP13 "Done when" tests: the Explorer's `resolve` refusal, refresh
-//! and stale-reply handling, `workspace::open_path` reactivation, and the
-//! lazy `ensure_loaded` load — TODO.md's 500-line budget split of the
-//! original `explorer.rs`. Cursor movement and opening files/directories live in
-//! the sibling `explorer_nav.rs`; both pull shared fixtures from
-//! `explorer_common`.
+//! The Explorer's `resolve` refusal, refresh and stale-reply handling,
+//! `workspace::open_path` reactivation, and the lazy `ensure_loaded` load —
+//! TODO.md's 500-line budget split of the original `explorer.rs`. Cursor
+//! movement and opening files/directories live in the sibling
+//! `explorer_nav.rs`; both pull shared fixtures from `explorer_common`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod explorer_common;
@@ -20,10 +19,10 @@ use rune_vfs::Vfs;
 
 use explorer_common::{app_with, key, load_explorer, seeded_vfs};
 
-/// Issue #80: `open_selected`'s directory branch resolves the new root
-/// through `workspace::resolve`, same as `initial_root` already does — and,
-/// on a `resolve` error, aborts the navigation and posts a message rather
-/// than re-rooting the Explorer under an unresolved spelling.
+/// `open_selected`'s directory branch resolves the new root through
+/// `workspace::resolve`, same as `initial_root` already does — and, on a
+/// `resolve` error, aborts the navigation and posts a message rather than
+/// re-rooting the Explorer under an unresolved spelling.
 #[test]
 fn open_selected_on_a_directory_reports_and_aborts_when_resolve_fails() {
     let mem = seeded_vfs();
@@ -193,11 +192,10 @@ fn open_path_on_an_already_open_document_reactivates_instead_of_duplicating() {
     let before = app.documents.len();
     let first_active = app.active;
 
-    // `open_path` itself no longer moves focus (plan WP2 decision 6:
-    // `switch_to` lost that write, and this function has no `Effects` sink
-    // to run `App::set_focus` through) — this test's own re-activation
-    // contract is `documents.len()`/`active` staying put, not a focus
-    // assertion this change removes (plan gotcha 7).
+    // `open_path` itself never moves focus (`switch_to` never writes it,
+    // and this function has no `Effects` sink to run `App::set_focus`
+    // through) — this test's own re-activation contract is
+    // `documents.len()`/`active` staying put, not a focus assertion.
     workspace::open_path(&mut app, Path::new("/root/a.md"));
 
     assert_eq!(app.documents.len(), before, "must not duplicate");

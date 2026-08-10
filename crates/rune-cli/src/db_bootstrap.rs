@@ -1,7 +1,6 @@
 //! The recovery-store bootstrap seam split out of `main` so that module can
 //! stay focused on argument parsing plus the wiring that constructs the
-//! `Vfs`, the store, and the runtime (plan WP4.S5/S1, re-split alongside
-//! `AppDb` -> `Db`/`DocDb`, plan decision 5).
+//! `Vfs`, the store, and the runtime.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,11 +12,10 @@ use rune_vfs::Vfs;
 /// The result of [`bootstrap_db`] (an existing path, loaded off disk) or
 /// [`bootstrap_new_file`] (a positional naming a path that doesn't exist
 /// yet, bound to a fresh scratch row instead) — everything `bootstrap`
-/// needs to finish constructing `App` with a hydrated recovery store (plan
-/// WP5.S2/S4, re-split in WP1 alongside `AppDb` -> `Db`/`DocDb`, plan
-/// decision 5): `db` wires onto `App` directly (`App::new`'s 4th
-/// argument); `doc_db` installs on the initial document afterward, since
-/// `App::new` only knows about the app-wide half.
+/// needs to finish constructing `App` with a hydrated recovery store: `db`
+/// wires onto `App` directly (`App::new`'s 4th argument); `doc_db` installs
+/// on the initial document afterward, since `App::new` only knows about the
+/// app-wide half.
 #[derive(Default)]
 pub(crate) struct DbBootstrap {
     pub(crate) db: Option<Db>,
@@ -51,8 +49,8 @@ pub(crate) struct DbBootstrap {
     /// path that never ran `rune_db::load` (matching `sync_kind`'s own
     /// `None` cases).
     pub(crate) nlink: Option<i64>,
-    /// The persistent degraded-store status banner (plan WP5.S2), or
-    /// `None` when the store opened clean.
+    /// The persistent degraded-store status banner, or `None` when the
+    /// store opened clean.
     pub(crate) banner: Option<String>,
 }
 
@@ -115,8 +113,7 @@ fn open_store(vfs: Arc<dyn Vfs + Send + Sync>, home: Option<&Path>) -> Result<Op
 }
 
 /// One exit path for every "recovery store bootstrap failed after a `Store`
-/// was actually opened" branch below (plan WP4.S5/[rune-cli 11] — these
-/// used to be written out four times near-verbatim): prints the reason,
+/// was actually opened" branch below: prints the reason,
 /// drains the writer thread, and returns the all-`None`/banner-set
 /// bootstrap the editor runs with when recovery is unavailable.
 fn degrade(store: Store, msg: impl Into<String>) -> DbBootstrap {
@@ -132,7 +129,7 @@ fn degrade(store: Store, msg: impl Into<String>) -> DbBootstrap {
 /// Enqueues one op via `enqueue` and blocks THIS thread (there is no runtime
 /// loop yet — see [`DbBridge`]'s own doc comment) until its completion
 /// arrives, returning the domain result or a flattened error message. Shared
-/// by every bootstrap-time op (`Load`, and WP3's `RecoverableScratch`/
+/// by every bootstrap-time op (`Load`, and `RecoverableScratch`/
 /// `ReconstructScratch`/`CreateScratch`/`GcEmptyScratch`) so this
 /// enqueue-then-block shape is written once, not once per op kind.
 fn blocking_call(
@@ -159,23 +156,22 @@ fn blocking_call(
 }
 
 /// Opens the recovery store at `$HOME/Library/Application Support/rune/
-/// rune-v{SCHEMA_VERSION}.db` and hydrates `path` through it (plan
-/// WP5.S2/S4), BEFORE the TUI ever starts (`runtime::run` hasn't been
-/// called yet — no `Sender<Msg>` exists; see `db::DbBridge`'s doc comment
-/// for why hydration blocks on the bridge's OWN buffer instead). Never
-/// fatal to the editor: any failure here is reported to stderr and this
-/// returns `DbBootstrap::default()` — the editor still opens and runs
-/// fully, just without recovery journaling for this launch (the user's
-/// words come before every other feature, plan decision 5: "losing the DB
-/// never damages a user file").
+/// rune-v{SCHEMA_VERSION}.db` and hydrates `path` through it, BEFORE the
+/// TUI ever starts (`runtime::run` hasn't been called yet — no
+/// `Sender<Msg>` exists; see `db::DbBridge`'s doc comment for why hydration
+/// blocks on the bridge's OWN buffer instead). Never fatal to the editor:
+/// any failure here is reported to stderr and this returns
+/// `DbBootstrap::default()` — the editor still opens and runs fully, just
+/// without recovery journaling for this launch (the user's words come
+/// before every other feature — losing the DB never damages a user file).
 ///
 /// `home` is threaded in rather than read from `$HOME` directly (unlike
 /// `rune_db::production_db_path`) so this whole path is exercisable
-/// against a temp directory in tests (plan WP4.S1/S7) without touching the
-/// real machine's recovery store.
+/// against a temp directory in tests without touching the real machine's
+/// recovery store.
 ///
 /// `sighting` is the SAME [`rune_vfs::Sighting`] the caller already took of
-/// `path` to build the initial buffer (issue #77) — threaded through to
+/// `path` to build the initial buffer — threaded through to
 /// `Store::load_sighted` so the CAS baseline this launch adopts traces to
 /// that one read, never a second, independent one this function would
 /// otherwise take itself.
@@ -261,8 +257,8 @@ pub(crate) fn bootstrap_db(
 /// either a genuinely recovered draft (`db_id` names an EXISTING row, `rune-
 /// db`'s `RecoverableScratch`/`ReconstructScratch`) or a brand-new one
 /// (`content` empty, `db_id` a freshly minted row). Recovered drafts adopt
-/// their OWN row rather than a fresh one copying the text in (plan WP3):
-/// the source row keeps its events, `GcEmptyScratch` will not remove it (its
+/// their OWN row rather than a fresh one copying the text in: the source
+/// row keeps its events, `GcEmptyScratch` will not remove it (its
 /// `inode IS NULL` filter is unconditional, not "only when empty"), and it
 /// would otherwise be re-offered on every later launch forever.
 pub(crate) struct ScratchDoc {
@@ -284,9 +280,9 @@ pub(crate) struct DbBootstrapUntitled {
     pub(crate) banner: Option<String>,
 }
 
-/// One exit path for every "store opened, but a later WP3 op failed" branch
-/// below — mirrors [`degrade`], but for [`DbBootstrapUntitled`]'s shape (no
-/// `doc_db`/`recovered_content` fields to leave `None`).
+/// One exit path for every "store opened, but a later bootstrap op failed"
+/// branch below — mirrors [`degrade`], but for [`DbBootstrapUntitled`]'s
+/// shape (no `doc_db`/`recovered_content` fields to leave `None`).
 fn degrade_untitled(store: Store, msg: impl Into<String>) -> DbBootstrapUntitled {
     let msg = msg.into();
     eprintln!("rune: recovery store degraded: {msg}");
@@ -297,9 +293,8 @@ fn degrade_untitled(store: Store, msg: impl Into<String>) -> DbBootstrapUntitled
     }
 }
 
-/// Opens the recovery store for a no-positional launch (plan WP3, "the
-/// untitled draft is really recovery-backed") and makes the default draft
-/// genuinely recovery-backed: unlike [`bootstrap_db`], there is no on-disk
+/// Opens the recovery store for a no-positional launch and makes the
+/// default draft genuinely recovery-backed: unlike [`bootstrap_db`], there is no on-disk
 /// path to `Load` — instead this lists every genuinely recoverable scratch
 /// row left by a prior, now-dead session (`Store::recoverable_scratch`),
 /// reconstructs each one's content across the session boundary
@@ -471,8 +466,8 @@ pub(crate) fn bootstrap_new_file(
     }
 }
 
-/// Opens the recovery store with no document to bind (issue #78, the
-/// image-first-launch fix): every OTHER bootstrap shape opens the store
+/// Opens the recovery store with no document to bind — the image-first
+/// launch shape: every OTHER bootstrap shape opens the store
 /// and then immediately does its own `Load`/scratch-row work against it —
 /// this is the shape for a launch whose first positional is an image, which
 /// has nothing to `Load` (an image binds no `DocDb` at all) but still needs

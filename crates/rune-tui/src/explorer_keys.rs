@@ -15,7 +15,6 @@ use crate::explorer::{self, ensure_visible};
 use crate::explorer_preview;
 use crate::explorer_search::{self, EXPLORER_SEARCH_BINDINGS};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
-use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
@@ -179,12 +178,8 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         return;
     };
     if is_dir {
-        let resolved = match workspace::resolve(app.vfs.as_ref(), &target) {
-            Ok(resolved) => resolved,
-            Err(e) => {
-                messages::error(app, format!("could not open {}: {e}", target.display()));
-                return;
-            }
+        let Some(resolved) = workspace::resolve_or_report(app, &target, "open") else {
+            return;
         };
         explorer::request_dir(app, resolved, effects);
         return;
@@ -225,12 +220,8 @@ fn go_to_parent(app: &mut App, effects: &mut Effects) {
         return;
     };
     let parent = parent.to_path_buf();
-    let resolved = match workspace::resolve(app.vfs.as_ref(), &parent) {
-        Ok(resolved) => resolved,
-        Err(e) => {
-            messages::error(app, format!("could not open {}: {e}", parent.display()));
-            return;
-        }
+    let Some(resolved) = workspace::resolve_or_report(app, &parent, "open") else {
+        return;
     };
     explorer::request_dir(app, resolved, effects);
 }

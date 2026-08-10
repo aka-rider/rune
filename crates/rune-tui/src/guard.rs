@@ -685,10 +685,10 @@ mod tests {
         assert_eq!(messages::newest_text(&app), None);
     }
 
-    /// Issue #88: the DiskConflict Guard's `[S]ave anyway` is already the
-    /// user's explicit last-resort consent — on a degraded store it must
-    /// reach the materialize dance on the FIRST press, never arm the
-    /// two-press confirm gate the way an ordinary `⌘S` does.
+    /// The DiskConflict Guard's `[S]ave anyway` is already the user's
+    /// explicit last-resort consent — on a degraded store it must reach the
+    /// materialize dance on the FIRST press, never arm the two-press
+    /// confirm gate the way an ordinary `⌘S` does.
     #[test]
     fn force_save_single_press_when_degraded() {
         let mut app = store_bound_app(true);
@@ -727,11 +727,11 @@ mod tests {
         assert!(app.pending_save_confirm.is_some_and(|(cid, _)| cid == doc));
     }
 
-    /// Issue #88: a force-save must proceed even when the buffer is NOT
-    /// dirty — "save anyway" means "make disk hold my buffer", and the user
-    /// may have undone back to `saved_content` while disk still holds
-    /// foreign bytes. The ordinary `Normal` path is untouched: it still
-    /// refuses with `NotDirty`.
+    /// A force-save must proceed even when the buffer is NOT dirty — "save
+    /// anyway" means "make disk hold my buffer", and the user may have
+    /// undone back to `saved_content` while disk still holds foreign bytes.
+    /// The ordinary `Normal` path is untouched: it still refuses with
+    /// `NotDirty`.
     #[test]
     fn force_save_bypasses_not_dirty() {
         let mut app = store_bound_app(false);

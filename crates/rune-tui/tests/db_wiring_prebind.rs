@@ -1,6 +1,6 @@
-//! Issue #84 regression suite: `local_seq` desync when an `AppendEdit`
-//! replica is skipped pre-bind. Shares fixtures with the rest of the
-//! `db_wiring_*` suite via `db_wiring_common`.
+//! `local_seq` desync regression suite: an `AppendEdit` replica skipped
+//! pre-bind. Shares fixtures with the rest of the `db_wiring_*` suite via
+//! `db_wiring_common`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -44,7 +44,7 @@ fn drain_all(app: &mut App, bridge: &DbBridge, op_ids: &[u64]) -> Vec<DbEvent> {
         .collect()
 }
 
-/// The core issue #84 repro: a document opened through the store (a `Load`
+/// The core repro: a document opened through the store (a `Load`
 /// in flight) receives several keystrokes BEFORE that `Load`'s own ack
 /// lands. Every one of those pre-bind edits must still reach the durable
 /// journal once the ack installs the document's `DocDb` — restoring the 1:1
@@ -135,11 +135,11 @@ fn prebind_edits_replay_at_bind() {
     );
 
     // Undo must resolve cleanly against the now-durable journal — the exact
-    // failure mode issue #84 produced when a pre-bind edit was silently
-    // dropped instead of replayed: the writer thread's own local-position
-    // count would then be short by however many edits never reached it,
-    // and MoveUndoPos would resolve to the wrong durable seq (or fail
-    // outright once the desync ran past the end of `local_seq`).
+    // failure mode a dropped pre-bind edit used to produce when it was
+    // silently skipped instead of replayed: the writer thread's own
+    // local-position count would then be short by however many edits never
+    // reached it, and MoveUndoPos would resolve to the wrong durable seq
+    // (or fail outright once the desync ran past the end of `local_seq`).
     edit::undo(&mut app, id);
     let undo_op = *app.db_ops.keys().next().expect("undo enqueues MoveUndoPos");
     let undo_evt = bridge.wait_for_bootstrap_event(|evt| match evt {

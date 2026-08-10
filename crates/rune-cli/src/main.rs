@@ -268,14 +268,7 @@ fn bootstrap(
     }
     if let Some(nlink) = db_bootstrap.nlink {
         app.active_doc_mut().nlink = Some(nlink);
-        if nlink > 1 {
-            rune_tui::messages::warn(
-                &mut app,
-                format!(
-                    "this file has {nlink} hard links \u{2014} saving replaces it atomically, so the other links keep the old content"
-                ),
-            );
-        }
+        rune_tui::db_ack::warn_hard_links(&mut app, nlink);
     }
     if let Some(recovered) = db_bootstrap.recovered_content {
         // Adopts a dead session's inherited draft content through the same
