@@ -1,4 +1,4 @@
-//! WP4/WP13 "Done when" tests: the Explorer's `resolve` fallback, refresh
+//! WP4/WP13 "Done when" tests: the Explorer's `resolve` refusal, refresh
 //! and stale-reply handling, `workspace::open_path` reactivation, and the
 //! lazy `ensure_loaded` load — TODO.md's 500-line budget split of the
 //! original `explorer.rs`. Cursor movement and opening files/directories live in
@@ -20,16 +20,12 @@ use rune_vfs::Vfs;
 
 use explorer_common::{app_with, key, load_explorer, seeded_vfs};
 
-/// Review fix: `open_selected`'s directory branch must resolve the new root
-/// through `app.vfs.resolve`, same as `initial_root` already does
-/// — and, on a `resolve` error, fall back to the unresolved path (the same
-/// pattern `workspace::open_path` uses) rather than losing the navigation.
-/// `Mem::resolve` is an identity function, so this can't observe a resolved
-/// path actually DIFFERING from the raw one — it proves the fallback is
-/// exercised (no panic, the `ReadDir` Cmd still fires, the listing still
-/// lands) when `resolve` itself fails.
+/// Issue #80: `open_selected`'s directory branch resolves the new root
+/// through `workspace::resolve`, same as `initial_root` already does — and,
+/// on a `resolve` error, aborts the navigation and posts a message rather
+/// than re-rooting the Explorer under an unresolved spelling.
 #[test]
-fn open_selected_on_a_directory_falls_back_when_resolve_fails() {
+fn open_selected_on_a_directory_reports_and_aborts_when_resolve_fails() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     load_explorer(&mut app);
@@ -40,6 +36,7 @@ fn open_selected_on_a_directory_falls_back_when_resolve_fails() {
         .position(|e| e.name == "sub")
         .expect("sub listed");
     app.explorer.nav.cursor = idx;
+    let root_before = app.explorer.root.clone();
 
     // Armed AFTER the initial `^b` load (which itself resolves
     // `initial_root`) so it targets THIS Enter-on-a-directory's own
@@ -49,22 +46,23 @@ fn open_selected_on_a_directory_falls_back_when_resolve_fails() {
     let mut effects = Effects::default();
     let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
-    assert_eq!(
-        effects.cmds.len(),
-        1,
-        "a resolve failure must not drop the ReadDir Cmd"
+    assert!(
+        effects.cmds.is_empty(),
+        "a resolve failure must never spawn a ReadDir Cmd"
     );
-
-    let cmd = effects.cmds.remove(0);
-    let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
-    let mut effects2 = Effects::default();
-    app::update(&mut app, msg, &mut effects2);
-    assert_eq!(app.explorer.root, PathBuf::from("/root/sub"));
+    assert_eq!(
+        app.explorer.root, root_before,
+        "a resolve failure must never re-root the Explorer"
+    );
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some(),
+        "a resolve failure must post a message"
+    );
 }
 
-/// Same fallback guarantee for Backspace's `go_to_parent`.
+/// Same refusal for Backspace's `go_to_parent`.
 #[test]
-fn go_to_parent_falls_back_when_resolve_fails() {
+fn go_to_parent_reports_and_aborts_when_resolve_fails() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     load_explorer(&mut app);
@@ -75,17 +73,19 @@ fn go_to_parent_falls_back_when_resolve_fails() {
     let mut effects = Effects::default();
     let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
-    assert_eq!(
-        effects.cmds.len(),
-        1,
-        "a resolve failure must not drop the ReadDir Cmd"
+    assert!(
+        effects.cmds.is_empty(),
+        "a resolve failure must never spawn a ReadDir Cmd"
     );
-
-    let cmd = effects.cmds.remove(0);
-    let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
-    let mut effects2 = Effects::default();
-    app::update(&mut app, msg, &mut effects2);
-    assert_eq!(app.explorer.root, PathBuf::from("/"));
+    assert_eq!(
+        app.explorer.root,
+        PathBuf::from("/root"),
+        "a resolve failure must never re-root the Explorer"
+    );
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some(),
+        "a resolve failure must post a message"
+    );
 }
 
 #[test]

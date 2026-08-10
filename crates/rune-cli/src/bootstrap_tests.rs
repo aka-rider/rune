@@ -301,6 +301,34 @@ fn launch_nonexistent_path_without_home_still_banners() {
     );
 }
 
+/// Issue #80: a first positional whose resolution fails must never fall
+/// back to the caller's unnormalized spelling — `bootstrap` refuses and
+/// exits `EX_IOERR`, the same code `open::open_first_positional`'s own
+/// unreadable-file arm already returns, rather than launching under a
+/// path whose on-disk identity was never actually confirmed.
+#[test]
+fn launch_resolve_failing_first_positional_exits_with_the_io_error_code() {
+    let mem = Arc::new(Mem::new());
+    mem.fail_resolve(Path::new("/vault/unresolvable.md"));
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+
+    let result = bootstrap(
+        vfs,
+        vec![OsString::from("/vault/unresolvable.md")].into_iter(),
+        PathBuf::from("/"),
+        None,
+    );
+
+    match result {
+        Err(code) => assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(exit_code::IO_ERR)),
+            "a resolve failure must exit with the same code load failures use"
+        ),
+        Ok(_) => panic!("a resolve-failing first positional must not bootstrap"),
+    }
+}
+
 #[test]
 fn launch_empty_positional_is_rejected_before_any_open() {
     let vfs = Mem::new();

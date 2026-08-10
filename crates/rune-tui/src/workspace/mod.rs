@@ -30,11 +30,17 @@ use crate::runtime::Effects;
 /// textually different documents (a symlink, a `..` segment, or a
 /// duplicated absolute-path spelling all collapse to one canonical form
 /// here instead of staying an unresolved, divergence-prone primitive).
-/// Falls back to `path` itself only when resolution itself fails (e.g.
-/// permission denied) — the caller's own subsequent read surfaces that
-/// same failure.
-pub fn resolve(vfs: &dyn Vfs, path: &Path) -> PathBuf {
-    vfs.resolve(path).unwrap_or_else(|_| path.to_path_buf())
+/// A resolution failure (an unreadable/missing ancestor, a symlink loop, an
+/// unreadable cwd) is surfaced to the caller rather than silently answered
+/// with `path`'s own unnormalized spelling — that fallback used to fire
+/// exactly when path identity was least certain, and `existing_document_for`
+/// compares resolved paths textually, so a masked failure could bind the
+/// same underlying file as two different documents. A missing leaf whose
+/// parent still canonicalizes is not a failure (`Disk::resolve` tolerates
+/// it for a not-yet-created file), so refusing on `Err` never blocks a
+/// genuinely new file.
+pub fn resolve(vfs: &dyn Vfs, path: &Path) -> std::io::Result<PathBuf> {
+    vfs.resolve(path)
 }
 
 /// Opens `path`: normalizes it via [`resolve`], then either re-activates
@@ -84,7 +90,13 @@ enum ReadOutcome {
 }
 
 fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
-    let resolved = resolve(app.vfs.as_ref(), path);
+    let resolved = match resolve(app.vfs.as_ref(), path) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            messages::error(app, format!("could not open {}: {e}", path.display()));
+            return ReadOutcome::Failed;
+        }
+    };
 
     if let Some(id) = existing_document_for(app, &resolved) {
         // Re-activation moves the Tabs cursor only — never reorders
@@ -128,7 +140,13 @@ pub fn open_path_async(
     anchor: Option<rune_nav::Anchor>,
     effects: &mut Effects,
 ) {
-    let resolved = resolve(app.vfs.as_ref(), path);
+    let resolved = match resolve(app.vfs.as_ref(), path) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            messages::error(app, format!("could not open {}: {e}", path.display()));
+            return;
+        }
+    };
 
     if let Some(id) = existing_document_for(app, &resolved) {
         // Decision 8: blur BEFORE the switch — `switch_to` is about to
@@ -478,6 +496,47 @@ mod tests {
 
         assert_eq!(app.documents.len(), after_first_open, "must not duplicate");
         assert_eq!(app.active, first_active);
+    }
+
+    #[test]
+    fn a_resolve_failing_path_posts_an_error_message_and_opens_nothing() {
+        let mem = Arc::new(Mem::new());
+        mem.fail_resolve(Path::new("/root/unresolvable.md"));
+        let mut app = app_with_seed(&mem);
+        let before = app.documents.len();
+
+        let opened = open_path(&mut app, Path::new("/root/unresolvable.md"));
+
+        assert!(opened.is_none());
+        assert_eq!(app.documents.len(), before);
+        assert!(
+            messages::newest_text(&app).is_some(),
+            "a resolve failure must post a message"
+        );
+    }
+
+    #[test]
+    fn a_resolve_failing_path_pushes_no_cmd_when_opened_async() {
+        let mem = Arc::new(Mem::new());
+        mem.fail_resolve(Path::new("/root/unresolvable.md"));
+        let mut app = app_with_seed(&mem);
+        let mut effects = Effects::default();
+
+        open_path_async(
+            &mut app,
+            Path::new("/root/unresolvable.md"),
+            None,
+            &mut effects,
+        );
+
+        assert!(
+            effects.cmds.is_empty(),
+            "a resolve failure must never spawn a read Cmd"
+        );
+        assert!(
+            messages::newest_text(&app).is_some(),
+            "a resolve failure must post a message"
+        );
     }
 
     #[test]
