@@ -28,9 +28,10 @@ use crate::open_ladder::{LadderResult, memory_uri, open_ladder, open_memory_back
 use crate::writer::{OnEvent, OpKind, WriteOp};
 use crate::{Error, reader, retry, session, writer};
 
-/// An injectable wall clock — wall-clock coalescing is nondeterministic
-/// in tests, so the clock arrives as an injection. Production uses
-/// `SystemTime::now`; tests install a deterministic stand-in.
+/// An injectable wall clock — reading the system clock directly makes
+/// timestamps nondeterministic in tests, so the clock arrives as an
+/// injection instead. Production uses `SystemTime::now`; tests install a
+/// deterministic stand-in.
 pub type ClockFn = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 
 /// An injectable liveness check: `(pid, proc_started_at) -> still running?`.

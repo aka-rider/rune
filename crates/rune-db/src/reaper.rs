@@ -8,16 +8,20 @@
 //! destroy the exact unsaved content the next opener still needs to
 //! inherit (`inherit::find_inheritable_draft`).
 //!
-//! The `sessions` row itself is deliberately NEVER deleted here:
-//! `observations.session_id` has no cascade, by design, since a dead
-//! session's own save/load/resolve observation must remain a valid,
-//! visible "theirs" fact to every other session forever.
+//! A row that predates the current boot with no recorded `proc_started_at`
+//! (the legacy liveness hole `session::establish_session` no longer
+//! produces, see `session.rs`) is confirmed dead outright: no process
+//! survives a reboot. The `sessions` row itself is deleted alongside its
+//! footprint once it has recorded no `observations` — the one fact every
+//! OTHER session may still need to see forever; a row that recorded at
+//! least one observation stays in place as that provenance.
 
 use rusqlite::{Connection, Transaction, params};
 
 use crate::Error;
 use crate::inherit::most_recent_session_for_doc;
 use crate::retry;
+use crate::session::{boot_time, parse_rfc3339_nanos};
 
 /// Runs once per `Store::open`. `is_alive` decides whether a recorded
 /// `(pid, proc_started_at)` pair still identifies a running process — the
@@ -27,18 +31,20 @@ pub fn reap_dead_sessions(
     conn: &mut Connection,
     is_alive: &dyn Fn(i64, &str) -> bool,
 ) -> Result<(), Error> {
-    let candidates: Vec<(i64, i64, String)> = {
-        let mut stmt = conn.prepare("SELECT id, pid, proc_started_at FROM sessions")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    let candidates: Vec<(i64, i64, String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, pid, proc_started_at, opened_at FROM sessions")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         let mut v = Vec::new();
         for row in rows {
             v.push(row?);
         }
         v
     };
+    let boot = boot_time();
 
-    for (id, pid, started_at) in candidates {
-        if is_alive(pid, &started_at) {
+    for (id, pid, started_at, opened_at) in candidates {
+        let dead_since_reboot = started_at.is_empty() && predates_boot(&opened_at, boot);
+        if !dead_since_reboot && is_alive(pid, &started_at) {
             continue;
         }
         let reapable = retry::with_retry(conn, |tx| session_is_reapable(tx, id))?;
@@ -48,6 +54,19 @@ pub fn reap_dead_sessions(
         retry::with_retry(conn, |tx| reap_session_footprint(tx, id))?;
     }
     Ok(())
+}
+
+/// A legacy `proc_started_at=""` row is confirmed dead only when its own
+/// `opened_at` parses to an instant strictly before the current boot — no
+/// process can have survived a reboot to still be running it. An
+/// unparseable `opened_at`, or an unreadable `boot`, is never a positive
+/// death claim: fails toward alive, exactly like every other liveness
+/// ambiguity in this crate.
+fn predates_boot(opened_at: &str, boot: Option<std::time::SystemTime>) -> bool {
+    match (parse_rfc3339_nanos(opened_at), boot) {
+        (Some(opened), Some(boot)) => opened < boot,
+        _ => false,
+    }
 }
 
 /// Reports whether `session_id` is safe to reap: for EVERY `doc_id` it ever
@@ -81,7 +100,9 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: i64) -> Result<bool, Er
 }
 
 /// Deletes `session_id`'s `session_documents`/`events`/`snapshots` rows,
-/// leaving the `sessions` row itself in place.
+/// then the `sessions` row itself too — but only if it recorded no
+/// `observations`; a row with at least one stays behind as that dead
+/// session's own permanent "theirs" provenance for every other session.
 fn reap_session_footprint(tx: &Transaction<'_>, session_id: i64) -> Result<(), Error> {
     tx.execute(
         "DELETE FROM session_documents WHERE session_id=?1",
@@ -93,6 +114,10 @@ fn reap_session_footprint(tx: &Transaction<'_>, session_id: i64) -> Result<(), E
     )?;
     tx.execute(
         "DELETE FROM snapshots WHERE session_id=?1",
+        params![session_id],
+    )?;
+    tx.execute(
+        "DELETE FROM sessions WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM observations WHERE session_id=?1)",
         params![session_id],
     )?;
     Ok(())
@@ -134,6 +159,25 @@ mod tests {
         conn.last_insert_rowid()
     }
 
+    fn seed_blob(conn: &Connection, hash: &str) {
+        conn.execute(
+            "INSERT INTO blobs(hash, content) VALUES(?1, ?2)",
+            params![hash, b"x".as_slice()],
+        )
+        .expect("seed blob");
+    }
+
+    fn seed_observation(conn: &Connection, session_id: i64, doc_id: i64) {
+        let hash = format!("hash-{session_id}-{doc_id}");
+        seed_blob(conn, &hash);
+        conn.execute(
+            "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at) \
+             VALUES(?1, ?2, ?3, 'probe', 'x')",
+            params![doc_id, session_id, hash],
+        )
+        .expect("seed observation");
+    }
+
     fn journal_one_edit(conn: &mut Connection, session_id: i64, doc_id: i64) {
         let tx = conn.transaction().expect("tx");
         crate::journal::append_edit(
@@ -154,15 +198,25 @@ mod tests {
         tx.commit().expect("commit");
     }
 
+    fn sessions_row_exists(conn: &Connection, session_id: i64) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
+            params![session_id],
+            |r| r.get(0),
+        )
+        .expect("check")
+    }
+
     /// A dead session that is NOT the most-recent toucher of any doc it
-    /// touched has its footprint reaped; the `sessions` row itself
-    /// survives.
+    /// touched has its footprint reaped; recording an observation keeps its
+    /// `sessions` row in place as that dead session's own provenance.
     #[test]
-    fn reaper_deletes_footprint_of_a_superseded_dead_session() {
+    fn reaper_deletes_footprint_but_spares_sessions_row_with_an_observation() {
         let mut conn = open();
         let session_old = seed_session(&conn, 111);
         let doc_id = seed_doc(&conn);
         journal_one_edit(&mut conn, session_old, doc_id);
+        seed_observation(&conn, session_old, doc_id);
 
         // A later session supersedes session_old as the most-recent toucher.
         let session_new = seed_session(&conn, 222);
@@ -182,17 +236,34 @@ mod tests {
             old_events, 0,
             "superseded dead session's footprint must be reaped"
         );
-
-        let sessions_row_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-                params![session_old],
-                |r| r.get(0),
-            )
-            .expect("check");
         assert!(
-            sessions_row_exists,
-            "the sessions row itself must never be deleted"
+            sessions_row_exists(&conn, session_old),
+            "a sessions row that recorded an observation must never be deleted"
+        );
+    }
+
+    /// A superseded dead session that recorded NO observation has its
+    /// `sessions` row itself reaped alongside its footprint — there is no
+    /// provenance fact left for any other session to depend on.
+    #[test]
+    fn reaper_deletes_the_sessions_row_of_an_observation_free_superseded_dead_session() {
+        let mut conn = open();
+        let session_old = seed_session(&conn, 111);
+        let doc_id = seed_doc(&conn);
+        journal_one_edit(&mut conn, session_old, doc_id);
+
+        let session_new = seed_session(&conn, 222);
+        journal_one_edit(&mut conn, session_new, doc_id);
+
+        reap_dead_sessions(&mut conn, &|pid, _| pid != 111).expect("reap");
+
+        assert!(
+            !sessions_row_exists(&conn, session_old),
+            "an observation-free sessions row must be reaped alongside its footprint"
+        );
+        assert!(
+            sessions_row_exists(&conn, session_new),
+            "the live session's own row must never be touched"
         );
     }
 
@@ -333,6 +404,80 @@ mod tests {
         assert_eq!(
             recovered, "UNSAVED session A's content",
             "the bridged draft must survive reaping the dead session it came from"
+        );
+    }
+
+    fn seed_session_at(conn: &Connection, pid: i64, proc_started_at: &str, opened_at: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES(?1, ?2, ?3)",
+            params![pid, proc_started_at, opened_at],
+        )
+        .expect("seed session");
+        conn.last_insert_rowid()
+    }
+
+    /// A legacy row that never captured a real `proc_started_at` (the
+    /// liveness hole `establish_session` no longer produces) is confirmed
+    /// dead once its own `opened_at` predates the current boot — no process
+    /// survives a reboot, so this must reap even when `is_alive` wrongly
+    /// reports true for it.
+    #[test]
+    fn legacy_empty_started_at_before_boot_is_reaped_even_when_reported_alive() {
+        let mut conn = open();
+        let own_pid = std::process::id() as i64;
+        let before_boot = crate::session::format_rfc3339_nanos(
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(24 * 3600),
+        );
+        let session_old = seed_session_at(&conn, own_pid, "", &before_boot);
+        let doc_id = seed_doc(&conn);
+        journal_one_edit(&mut conn, session_old, doc_id);
+
+        let session_new = seed_session(&conn, own_pid + 1);
+        journal_one_edit(&mut conn, session_new, doc_id);
+
+        reap_dead_sessions(&mut conn, &|_pid, _started_at| true).expect("reap");
+
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id=?1",
+                params![session_old],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            old_events, 0,
+            "a legacy '' row predating boot must be reaped despite is_alive reporting true"
+        );
+    }
+
+    /// A legacy `proc_started_at=''` row whose `opened_at` is AFTER the
+    /// current boot is not a reboot-death candidate at all — ordinary
+    /// `is_alive` liveness still governs it, and here it reports alive, so
+    /// it must be spared.
+    #[test]
+    fn legacy_empty_started_at_after_boot_is_spared() {
+        let mut conn = open();
+        let own_pid = std::process::id() as i64;
+        let after_boot = crate::session::format_rfc3339_nanos(SystemTime::now());
+        let session_old = seed_session_at(&conn, own_pid, "", &after_boot);
+        let doc_id = seed_doc(&conn);
+        journal_one_edit(&mut conn, session_old, doc_id);
+
+        let session_new = seed_session(&conn, own_pid + 1);
+        journal_one_edit(&mut conn, session_new, doc_id);
+
+        reap_dead_sessions(&mut conn, &|_pid, _started_at| true).expect("reap");
+
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id=?1",
+                params![session_old],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            old_events, 1,
+            "a legacy '' row after boot must stay governed by is_alive, not reboot-death"
         );
     }
 }

@@ -10,7 +10,7 @@
 //! from "pid recycled to an unrelated process since".
 
 use std::ffi::c_int;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use rusqlite::Connection;
 
@@ -73,6 +73,36 @@ fn proc_started_at(pid: i32) -> Option<String> {
     let sec = i64::from_ne_bytes(buf.get(0..8)?.try_into().ok()?);
     let usec = i32::from_ne_bytes(buf.get(8..12)?.try_into().ok()?);
     Some(format!("{sec}.{usec:06}"))
+}
+
+/// Reads the system boot time via `sysctl(CTL_KERN, KERN_BOOTTIME)` — the
+/// same 12-byte `timeval` read as [`proc_started_at`], but for a fixed
+/// `mib` whose buffer size is known up front (no probe/fetch dance). Returns
+/// `None` on any failure; callers that compare against it must fail toward
+/// treating the compared fact as unresolved, never as a positive claim.
+pub(crate) fn boot_time() -> Option<SystemTime> {
+    let mut mib: [c_int; 2] = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+    let mut buf = [0u8; std::mem::size_of::<libc::timeval>()];
+    let mut len = buf.len();
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 || len < 12 {
+        return None;
+    }
+    let sec = i64::from_ne_bytes(buf.get(0..8)?.try_into().ok()?);
+    let usec = i32::from_ne_bytes(buf.get(8..12)?.try_into().ok()?);
+    if sec < 0 || usec < 0 {
+        return None;
+    }
+    Some(SystemTime::UNIX_EPOCH + Duration::new(sec as u64, usec as u32 * 1_000))
 }
 
 /// The result of [`process_exists`] — three genuinely distinct outcomes, not
@@ -149,10 +179,9 @@ pub fn is_process_alive(pid: i64, started_at: &str) -> bool {
 /// `proc_started_at`).
 pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<i64, Error> {
     let pid = std::process::id() as i64;
-    // ok ignored: "" is a valid (if degraded) value — ties
-    // this session to existence-only comparisons, never blocks session
-    // creation.
-    let started_at = proc_started_at(pid as i32).unwrap_or_default();
+    let started_at = proc_started_at(pid as i32).ok_or_else(|| {
+        Error::SessionEstablish(format!("could not read start time of own pid {pid}"))
+    })?;
     let opened_at = format_rfc3339_nanos(now);
 
     conn.execute(
@@ -209,6 +238,58 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
+/// The inverse of [`civil_from_days`]: a proleptic Gregorian (year, month,
+/// day) to days-since-epoch. Same Howard Hinnant algorithm, run backwards.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 }.div_euclid(400);
+    let yoe = y - era * 400; // [0, 399]
+    let mp = if m > 2 { m as i64 - 3 } else { m as i64 + 9 }; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
+}
+
+/// The inverse of [`format_rfc3339_nanos`], scoped to that function's own
+/// fixed output shape (`YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`) rather than general
+/// RFC3339 — any deviation, or a pre-epoch instant, is refused as `None`
+/// rather than guessed at, so a corrupt `opened_at` column always fails
+/// toward the caller's own "can't confirm" handling.
+pub(crate) fn parse_rfc3339_nanos(s: &str) -> Option<SystemTime> {
+    let body = s.strip_suffix('Z')?;
+    let (date, time) = body.split_once('T')?;
+
+    let mut date_parts = date.split('-');
+    let year: i64 = date_parts.next()?.parse().ok()?;
+    let month: u32 = date_parts.next()?.parse().ok()?;
+    let day: u32 = date_parts.next()?.parse().ok()?;
+    if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    let (hms, nanos_str) = time.split_once('.')?;
+    let mut hms_parts = hms.split(':');
+    let hour: i64 = hms_parts.next()?.parse().ok()?;
+    let minute: i64 = hms_parts.next()?.parse().ok()?;
+    let second: i64 = hms_parts.next()?.parse().ok()?;
+    if hms_parts.next().is_some() || hour >= 24 || minute >= 60 || second >= 60 {
+        return None;
+    }
+    if nanos_str.len() != 9 {
+        return None;
+    }
+    let nanos: u32 = nanos_str.parse().ok()?;
+
+    let days = days_from_civil(year, month, day);
+    let secs = days
+        .checked_mul(86_400)?
+        .checked_add(hour * 3600 + minute * 60 + second)?;
+    if secs < 0 {
+        return None;
+    }
+    Some(SystemTime::UNIX_EPOCH + Duration::new(secs as u64, nanos))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -217,6 +298,8 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     clippy::panic
 )]
 mod tests {
+    use rusqlite::params;
+
     use super::*;
 
     #[test]
@@ -276,5 +359,37 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
             .expect("count sessions");
         assert_eq!(count, 1);
+
+        let started_at: String = conn
+            .query_row(
+                "SELECT proc_started_at FROM sessions WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .expect("read proc_started_at");
+        assert!(
+            !started_at.is_empty(),
+            "a live process must always record a real start time, never the empty liveness hole"
+        );
+    }
+
+    #[test]
+    fn boot_time_reads_a_plausible_past_instant() {
+        let bt = boot_time().expect("read boot time");
+        assert!(bt < SystemTime::now(), "boot time must be in the past");
+    }
+
+    #[test]
+    fn parse_rfc3339_nanos_round_trips_format_rfc3339_nanos() {
+        let t = SystemTime::UNIX_EPOCH + Duration::new(1_704_164_645, 123_456_789);
+        let s = format_rfc3339_nanos(t);
+        assert_eq!(parse_rfc3339_nanos(&s), Some(t));
+    }
+
+    #[test]
+    fn parse_rfc3339_nanos_rejects_garbage() {
+        assert_eq!(parse_rfc3339_nanos(""), None);
+        assert_eq!(parse_rfc3339_nanos("not a timestamp"), None);
+        assert_eq!(parse_rfc3339_nanos("2024-13-40T99:99:99.000000000Z"), None);
     }
 }
