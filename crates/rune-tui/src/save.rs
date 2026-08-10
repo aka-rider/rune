@@ -55,6 +55,7 @@ pub(crate) enum SaveMode {
 /// bare `()` return so no refusal is silent to the CALLER, not just to the
 /// footer: WP2's quit-save fan-out keys off this to decide whether a
 /// document is actually waiting on a save before it counts toward a quit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SaveStart {
     /// A save is now running (the store-backed materialize dance or the
     /// no-store fallback `Cmd`) — or one already was, before this call.
@@ -153,7 +154,10 @@ pub(crate) fn trigger_save(
     }
     // Re-derived, not read from the cache (plan WP1): a transition-quality
     // answer, exactly like the close/quit guards' own `is_dirty_now` calls.
-    if !materialize_ack::is_dirty_now(app, id) {
+    // `Force` skips this: "save anyway" means "make disk hold my buffer" —
+    // the user may have undone back to `saved_content` while disk still
+    // holds the foreign bytes the disk-conflict Guard warned about.
+    if mode == SaveMode::Normal && !materialize_ack::is_dirty_now(app, id) {
         return SaveStart::NotDirty;
     }
     let Some(doc) = app.doc(id) else {
@@ -199,6 +203,19 @@ pub(crate) fn trigger_save(
 
     let degraded = app.db.as_ref().is_some_and(|db| db.degraded);
     if degraded {
+        // `Force` is already the user's explicit last-resort consent from
+        // the disk-conflict Guard's `[S]ave anyway` — a second confirm
+        // dance would silently downgrade that consent instead of acting on
+        // it. Any confirm `id` itself had armed is stale the moment this
+        // Force save starts, so it is cleared rather than left to fire
+        // later against a save that already happened.
+        if mode == SaveMode::Force {
+            if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
+                app.pending_save_confirm = None;
+            }
+            materialize_now(app, id, path, version, mode, effects);
+            return SaveStart::InFlight;
+        }
         if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
             app.pending_save_confirm = None;
             materialize_now(app, id, path, version, mode, effects);

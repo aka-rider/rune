@@ -95,7 +95,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 600 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
   - `crates/rune-tui/src/db.rs` — 523 (the review-fixes chokepoint pair `App::doc_file_binding`/`doc_file_binding_mut`/`doc_db_id` pushed this over; split candidate: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
-  - `crates/rune-tui/src/guard.rs` — 558 (crossed the threshold in WP-D adding the `DiskConflict` convergence self-retraction and its tests; split candidate: same as above, its `#[cfg(test)] mod tests` block is roughly a fifth of the file)
+  - `crates/rune-tui/src/guard.rs` — 753 (issue #88's force-save fix reordered the disk-conflict Guard's `[S]` handler and added its own unit tests; split candidate unchanged: its `#[cfg(test)] mod tests` block is now well over a third of the file — move it to a `#[path]`-included sibling `guard_tests.rs` so it keeps access to the private `set_guard`/`handle_disk_conflict_key` it exercises)
   - `crates/rune-tui/src/messages/mod.rs` — 557
   - `crates/rune-md/src/emit/mod.rs` — 556
   - `crates/rune-tui/src/render/filesearch.rs` — 546
