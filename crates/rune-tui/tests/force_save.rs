@@ -231,6 +231,50 @@ fn an_ordinary_save_still_succeeds_once_the_disk_is_quiet() {
     );
 }
 
+/// Issue #88: the disk-conflict Guard's `[S]ave anyway` is the user's
+/// explicit last-resort consent — a refused attempt (here, a save already
+/// in flight for the same document, poked directly since racing the real
+/// materialize dance into that exact window would make the test flaky)
+/// must never destroy the prompt that consent was answering. A second
+/// `[S]` once that save has actually finished then succeeds normally.
+#[test]
+fn disk_conflict_prompt_survives_refused_force() {
+    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
+    assert!(app.guard.is_some(), "expected the disk-conflict Guard");
+
+    app.doc_mut(doc_id).unwrap().save_in_flight = true;
+
+    press_key(&mut app, ch('s'));
+    assert!(
+        matches!(
+            &app.guard,
+            Some(prompt) if matches!(prompt.kind, GuardKind::DiskConflict)
+        ),
+        "a refused force-save must leave the disk-conflict prompt up"
+    );
+    let log = rune_tui::messages::log_text(&app);
+    assert!(
+        log.contains("a save is already in progress"),
+        "the refusal must be posted, not silent: {log:?}"
+    );
+
+    app.doc_mut(doc_id).unwrap().save_in_flight = false;
+
+    press_key(&mut app, ch('s'));
+    assert!(
+        app.guard.is_none(),
+        "a force-save that actually starts must clear the Guard"
+    );
+    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+
+    assert!(!app.doc(doc_id).unwrap().is_dirty());
+    assert_eq!(
+        vfs.read(Path::new("/doc.md")).unwrap(),
+        b"!hello",
+        "the retried force-save must still publish the buffer's bytes"
+    );
+}
+
 /// The baseline-lifecycle fix: a commit whose own observation was lost to
 /// a failing writer leaves `expect_obs` stale but
 /// stashes the hash of what THIS session actually wrote

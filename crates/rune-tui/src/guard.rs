@@ -386,8 +386,20 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
 fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_SAVE.key) => {
-            clear_guard(app);
-            let _ = save::trigger_save(app, doc, SaveMode::Force, effects);
+            // The consent this prompt exists to capture must survive a
+            // refused attempt: `trigger_save` runs FIRST, and the prompt is
+            // torn down only once THIS press actually started a save — a
+            // save already in flight before this press (its own warning
+            // already posted by `trigger_save`), a rename in flight, or
+            // unresolved merge conflicts each leave the Guard up so the
+            // user's "save anyway" is never silently dropped on the floor,
+            // and a repeat press once the in-flight save has finished can
+            // still answer it.
+            let already_in_flight = app.doc(doc).is_some_and(|d| d.save_in_flight);
+            let start = save::trigger_save(app, doc, SaveMode::Force, effects);
+            if !already_in_flight && matches!(start, SaveStart::InFlight) {
+                clear_guard(app);
+            }
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_DISCARD.key) => {
             clear_guard(app);
@@ -423,12 +435,39 @@ fn handle_trash_key(app: &mut App, path: PathBuf, key: KeyInput, effects: &mut E
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::db::{Db, DocDb};
     use rune_core::buffer::Buffer;
+    use rune_db::{ClockFn, Store};
     use rune_vfs::Mem;
     use std::sync::Arc;
 
     fn app() -> App {
         App::new(Buffer::new("hi"), None, Arc::new(Mem::new()), None)
+    }
+
+    /// A store-bound, path-bound document whose store is (or isn't)
+    /// degraded, dirtied through the real `insert_char` command — the same
+    /// shape `db_wiring_degraded.rs`'s own degraded-confirm fixture builds,
+    /// needed here too since integration tests cannot reach `trigger_save`
+    /// (`pub(crate)`) directly.
+    fn store_bound_app(degraded: bool) -> App {
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {}))
+            .expect("open in-memory store");
+        let bridge = crate::db::DbBridge::bootstrap();
+        let db = Db::new(store, bridge, degraded);
+        let doc_db = DocDb::new(1, true, 0);
+        let mut app = App::new(
+            Buffer::new("hi"),
+            Some(PathBuf::from("/doc.md")),
+            vfs,
+            Some(db),
+        );
+        let id = app.active;
+        app.doc_mut(id).unwrap().db = Some(doc_db);
+        app.bind_file(1, 0);
+        app
     }
 
     fn prompt(doc: DocumentId, kind: GuardKind) -> GuardPrompt {
@@ -643,5 +682,72 @@ mod tests {
 
         assert_eq!(raise, GuardRaise::Raised);
         assert_eq!(messages::newest_text(&app), None);
+    }
+
+    /// Issue #88: the DiskConflict Guard's `[S]ave anyway` is already the
+    /// user's explicit last-resort consent — on a degraded store it must
+    /// reach the materialize dance on the FIRST press, never arm the
+    /// two-press confirm gate the way an ordinary `⌘S` does.
+    #[test]
+    fn force_save_single_press_when_degraded() {
+        let mut app = store_bound_app(true);
+        let doc = app.active;
+        crate::commands::edit::insert_char(&mut app, doc, '!');
+        let mut effects = Effects::default();
+
+        assert_eq!(
+            save::trigger_save(&mut app, doc, SaveMode::Force, &mut effects),
+            SaveStart::InFlight
+        );
+        assert!(
+            app.doc(doc).unwrap().save_in_flight,
+            "a Force save on a degraded store must reach materialize directly"
+        );
+        assert!(
+            app.pending_save_confirm.is_none(),
+            "Force must never arm the degraded confirm gate"
+        );
+    }
+
+    /// The degraded confirm-gate's ordinary two-press dance is untouched:
+    /// `Normal` still only arms it on the first press.
+    #[test]
+    fn normal_save_still_arms_the_degraded_confirm_gate() {
+        let mut app = store_bound_app(true);
+        let doc = app.active;
+        crate::commands::edit::insert_char(&mut app, doc, '!');
+        let mut effects = Effects::default();
+
+        assert_eq!(
+            save::trigger_save(&mut app, doc, SaveMode::Normal, &mut effects),
+            SaveStart::Refused
+        );
+        assert!(!app.doc(doc).unwrap().save_in_flight);
+        assert!(app.pending_save_confirm.is_some_and(|(cid, _)| cid == doc));
+    }
+
+    /// Issue #88: a force-save must proceed even when the buffer is NOT
+    /// dirty — "save anyway" means "make disk hold my buffer", and the user
+    /// may have undone back to `saved_content` while disk still holds
+    /// foreign bytes. The ordinary `Normal` path is untouched: it still
+    /// refuses with `NotDirty`.
+    #[test]
+    fn force_save_bypasses_not_dirty() {
+        let mut app = store_bound_app(false);
+        let doc = app.active;
+        assert!(!app.doc(doc).unwrap().is_dirty());
+        let mut effects = Effects::default();
+
+        assert_eq!(
+            save::trigger_save(&mut app, doc, SaveMode::Normal, &mut effects),
+            SaveStart::NotDirty
+        );
+
+        let mut effects = Effects::default();
+        assert_eq!(
+            save::trigger_save(&mut app, doc, SaveMode::Force, &mut effects),
+            SaveStart::InFlight
+        );
+        assert!(app.doc(doc).unwrap().save_in_flight);
     }
 }
