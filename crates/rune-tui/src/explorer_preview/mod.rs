@@ -86,7 +86,8 @@ pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effect
         .and_then(|id| app.doc(id))
         .and_then(|doc| doc.file_path.as_deref())
         == Some(target);
-    if already_showing || app.explorer.preview_awaiting.contains(target) {
+    let already_failed = app.explorer.preview_failed.as_deref() == Some(target);
+    if already_showing || already_failed || app.explorer.preview_awaiting.contains(target) {
         return;
     }
 
@@ -126,8 +127,9 @@ pub(crate) fn maybe_consume_reply(
     if !is_current_target(app, path) {
         return true;
     }
-    if let Ok(bytes) = result {
-        apply_loaded(app, path, bytes.clone());
+    match result {
+        Ok(bytes) => apply_loaded(app, path, bytes.clone()),
+        Err(reason) => apply_failed(app, path, reason),
     }
     true
 }
@@ -178,11 +180,10 @@ fn is_current_target(app: &App, path: &Path) -> bool {
 /// merely unlikely.
 fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
     let Ok(buffer) = Buffer::from_bytes(bytes) else {
-        // `read_preview_cmd` already rejected invalid UTF-8 before this
-        // reply was ever sent — unreachable in practice, kept as a refusal
-        // rather than a silent corruption of whatever is on screen.
+        apply_failed(app, path, "not valid UTF-8");
         return;
     };
+    app.explorer.preview_failed = None;
     let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
         Some(id) => {
             let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
@@ -217,6 +218,51 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
             id
         }
     };
+    workspace::switch_to(app, id);
+}
+
+/// Renders a failed preview read INSIDE the preview slot rather than
+/// posting to the message log — `read_preview_cmd`'s `reason` (too large,
+/// an I/O error, invalid UTF-8) becomes the whole content of a short,
+/// read-only placeholder document, mint-or-replace against
+/// `app.explorer.preview` exactly like [`apply_loaded`]. Deliberately never
+/// calls `Document::bind_path`: `existing_document_for` and
+/// `explorer_keys::open_selected`'s own promote-in-place check both key off
+/// `file_path`, so an unbound placeholder can never be mistaken for the
+/// real file's content — Enter on the entry falls through to the ordinary
+/// `open_path_checked`, which reports the real error loudly.
+fn apply_failed(app: &mut App, path: &Path, reason: &str) {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("this file");
+    let text = format!("cannot preview {file_name} — {reason}");
+    let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
+        Some(id) => {
+            let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
+            let buffer = Buffer::new(text).advance_past(floor);
+            if let Some(doc) = app.doc_mut(id) {
+                *doc = Document::new(buffer);
+                doc.read_only = ReadOnly::Preview;
+                doc.display_name = Some(file_name.to_string());
+            }
+            id
+        }
+        None => {
+            if app.tabs.order.len() >= crate::opentabs::limit::MAX_TABS {
+                return;
+            }
+            let id = app.open_document(Buffer::new(text));
+            if let Some(doc) = app.doc_mut(id) {
+                doc.read_only = ReadOnly::Preview;
+                doc.display_name = Some(file_name.to_string());
+            }
+            app.explorer.preview = Some(id);
+            app.explorer.preview_return_to = Some(app.active);
+            id
+        }
+    };
+    app.explorer.preview_failed = Some(path.to_path_buf());
     workspace::switch_to(app, id);
 }
 
@@ -336,6 +382,7 @@ fn remove_preview_document(app: &mut App, id: DocumentId) {
     app.tabs.mru.retain(|&t| t != id);
     app.explorer.preview = None;
     app.explorer.preview_return_to = None;
+    app.explorer.preview_failed = None;
 }
 
 #[cfg(test)]
