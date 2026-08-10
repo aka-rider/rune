@@ -89,7 +89,10 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 // file's `db_id`, not only the one that issued the probe —
                 // so the disk fact it carries no longer describes the
                 // current world, and it is dropped rather than trusted
-                // (mirrors the `MergePrep` ticket check below).
+                // (mirrors the `MergePrep` ticket check below). A fresh
+                // probe replaces it so `last_sync` doesn't stall until an
+                // unrelated event happens to probe again.
+                crate::db_enqueue::probe(app, pending.doc);
                 return;
             }
             if let Some(doc) = app.doc_mut(pending.doc) {
@@ -221,5 +224,97 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // silently dropped by this.
             app.db_ops.clear();
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::db::{Db, DbBridge, DocDb};
+    use rune_core::buffer::Buffer;
+    use rune_db::{ClockFn, Store, SyncKind, SyncState, Version};
+    use rune_vfs::{Mem, Vfs};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn in_memory_db() -> Db {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = Store::open_in_memory(clock, vfs, Box::new(|_evt| {})).expect("open store");
+        let bridge = DbBridge::bootstrap();
+        Db::new(store, bridge, false)
+    }
+
+    fn clean_state() -> SyncState {
+        SyncState {
+            kind: SyncKind::Clean,
+            ancestor: None,
+            ours: Version {
+                hash: "same".to_string(),
+                obs: None,
+            },
+            theirs: None,
+        }
+    }
+
+    /// Issue #86: a probe ack whose `probe_epoch` no longer matches the
+    /// binding's current `save_epoch` — a publish landed while the probe was
+    /// in flight — must re-issue a fresh probe rather than drop the ack and
+    /// leave `last_sync` stuck at whatever it read before.
+    #[test]
+    fn stale_probe_ack_rearms() {
+        let mut app = App::new(
+            Buffer::new("body"),
+            Some(PathBuf::from("/vault/note.md")),
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id = app.active;
+        app.doc_mut(id).expect("doc exists").db = Some(DocDb::new(1, false, 0));
+        app.bind_file(1, 0);
+
+        crate::db_enqueue::probe(&mut app, id);
+        let op_id = *app
+            .db_ops
+            .iter()
+            .find(|(_, pending)| pending.is_probe)
+            .expect("probe enqueued")
+            .0;
+        assert_eq!(
+            app.db_ops.get(&op_id).expect("op recorded").probe_epoch,
+            Some(0)
+        );
+
+        app.file_binding_mut(1).expect("binding exists").save_epoch = 1;
+
+        let mut effects = crate::runtime::Effects::default();
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::Db(rune_db::DbEvent::Ok {
+                id: op_id,
+                result: rune_db::OpOutcome::Sync(Box::new(clean_state())),
+            }),
+            &mut effects,
+        );
+
+        assert!(
+            app.doc(id).expect("doc exists").last_sync.is_none(),
+            "a stale-epoch ack must never overwrite last_sync"
+        );
+        assert!(
+            !app.db_ops.contains_key(&op_id),
+            "the stale ack must still be popped from db_ops"
+        );
+        let reissued = app
+            .db_ops
+            .values()
+            .find(|pending| pending.is_probe && pending.doc == id)
+            .expect("a fresh probe must be re-issued");
+        assert_eq!(
+            reissued.probe_epoch,
+            Some(1),
+            "the re-issued probe must record the CURRENT epoch"
+        );
     }
 }
