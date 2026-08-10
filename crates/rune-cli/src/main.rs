@@ -200,8 +200,18 @@ fn bootstrap(
         // duplicated absolute path) would fail to recognize as the same
         // document (plan [rune-cli 2]). `open::open_first_positional`
         // (plan WP4.S8) is what actually decides whether that resolved
-        // path opens as text or as a read-only image document.
-        let path = workspace::resolve(vfs.as_ref(), path);
+        // path opens as text or as a read-only image document. A resolve
+        // failure (an unreadable/missing ancestor, a symlink loop) is a
+        // load failure exactly like `load_buffer`'s own `Io` arm below —
+        // reported the same way, at the same exit code, rather than
+        // silently launching under the unnormalized spelling.
+        let path = match workspace::resolve(vfs.as_ref(), path) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("rune: cannot resolve {}: {e}", path.display());
+                return Err(ExitCode::from(exit_code::IO_ERR));
+            }
+        };
         open::open_first_positional(&vfs, path, home.as_deref())?
     } else {
         // No positional files — open the default untitled document

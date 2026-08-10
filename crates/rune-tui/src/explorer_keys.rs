@@ -15,6 +15,7 @@ use crate::explorer::{self, ensure_visible};
 use crate::explorer_preview;
 use crate::explorer_search::{self, EXPLORER_SEARCH_BINDINGS};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
+use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
@@ -154,13 +155,13 @@ fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
 /// onto `app.explorer.root`: `name` is lossy-decoded for display, and
 /// rejoining it would let a byte the user's filename actually has silently
 /// become U+FFFD in the path the app opens. The directory branch
-/// resolves the candidate root through `app.vfs.resolve` first,
+/// resolves the candidate root through `workspace::resolve` first,
 /// same as `initial_root`/`open_path` already do — a plain `join` would let
 /// an unresolved (e.g. symlinked) path become the Explorer's new root,
-/// unlike every other root-changing path in this module. Falls back to the
-/// unresolved path on a `resolve` error, mirroring `workspace::open_path`'s
-/// own `unwrap_or_else` fallback (Prime Directive: a resolve failure must
-/// never just strand the user mid-navigation).
+/// unlike every other root-changing path in this module. Reports and
+/// aborts the navigation on a `resolve` error, rather than opening a
+/// directory listing under an unnormalized spelling the identity of which
+/// is not actually known.
 ///
 /// The file branch blurs the title BEFORE calling `open_path` (decision 8:
 /// `open_path`'s own reactivation branch switches synchronously, and
@@ -178,7 +179,13 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         return;
     };
     if is_dir {
-        let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
+        let resolved = match workspace::resolve(app.vfs.as_ref(), &target) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                messages::error(app, format!("could not open {}: {e}", target.display()));
+                return;
+            }
+        };
         explorer::request_dir(app, resolved, effects);
         return;
     }
@@ -209,7 +216,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
 
 /// Backspace navigates to the CURRENT root's own parent — a no-op at a
 /// filesystem root (`Path::parent` returns `None`), never a Cmd for a
-/// nonexistent target. Resolved through `app.vfs.resolve` before use (see
+/// nonexistent target. Resolved through `workspace::resolve` before use (see
 /// `open_selected`'s docs) — a plain `Path::parent` is pure path arithmetic
 /// that never consults the filesystem, unlike `initial_root`'s own root
 /// resolution.
@@ -218,14 +225,20 @@ fn go_to_parent(app: &mut App, effects: &mut Effects) {
         return;
     };
     let parent = parent.to_path_buf();
-    let resolved = app.vfs.resolve(&parent).unwrap_or_else(|_| parent.clone());
+    let resolved = match workspace::resolve(app.vfs.as_ref(), &parent) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            messages::error(app, format!("could not open {}: {e}", parent.display()));
+            return;
+        }
+    };
     explorer::request_dir(app, resolved, effects);
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     use rune_core::buffer::Buffer;
@@ -249,6 +262,36 @@ mod tests {
                 is_dir: *is_dir,
             })
             .collect()
+    }
+
+    #[test]
+    fn resolve_failure_on_a_directory_aborts_navigation_and_posts_a_message() {
+        let mem = Arc::new(Mem::new());
+        mem.fail_resolve(Path::new("/sub"));
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = mem.clone();
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        app.active_doc_mut().viewport.set_size(80, 23);
+        explorer::handle_dir_loaded(
+            &mut app,
+            PathBuf::from("/"),
+            entries(&[("sub", true)]),
+            DirCause::Nav,
+            0,
+        );
+        app.explorer.nav.cursor = 0;
+        let root_before = app.explorer.root.clone();
+        let mut effects = Effects::default();
+
+        open_selected(&mut app, &mut effects);
+
+        assert_eq!(
+            app.explorer.root, root_before,
+            "a resolve failure must never re-root the Explorer"
+        );
+        assert!(
+            crate::messages::newest_text(&app).is_some(),
+            "a resolve failure must post a message"
+        );
     }
 
     #[test]

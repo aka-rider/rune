@@ -271,16 +271,25 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // racer's file itself is left untouched: a direct-vfs fallback
             // here would clobber a foreign file this session has never
             // observed.
-            let resolved_path = workspace::resolve(app.vfs.as_ref(), &path);
-            let hand_off_safe = !app.documents.iter().any(|(other_id, other)| {
-                *other_id != id
-                    && other
-                        .file_path
-                        .as_deref()
-                        .map(|p| workspace::resolve(app.vfs.as_ref(), p))
-                        .as_deref()
-                        == Some(resolved_path.as_path())
-            });
+            // Either `resolve` call failing here — this document's own
+            // target, or some other open document's own binding — leaves
+            // no proof the two name different files, so it takes the
+            // conservative branch below (`hand_off_safe = false`) exactly
+            // like a genuine collision would, rather than risking a hand-
+            // off `hydrate` could clobber.
+            let hand_off_safe = match workspace::resolve(app.vfs.as_ref(), &path) {
+                Ok(resolved_path) => !app.documents.iter().any(|(other_id, other)| {
+                    *other_id != id
+                        && match other.file_path.as_deref() {
+                            Some(p) => match workspace::resolve(app.vfs.as_ref(), p) {
+                                Ok(other_resolved) => other_resolved == resolved_path,
+                                Err(_) => true,
+                            },
+                            None => false,
+                        }
+                }),
+                Err(_) => false,
+            };
             let can_hand_off = hand_off_safe && app.db.as_ref().is_some_and(|db| !db.degraded);
             if can_hand_off {
                 messages::error(
@@ -497,3 +506,7 @@ pub(crate) fn retire_quit_wait(app: &mut App, id: DocumentId) {
         app.should_quit = true;
     }
 }
+
+#[cfg(test)]
+#[path = "reactions_tests.rs"]
+mod tests;

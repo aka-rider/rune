@@ -61,7 +61,13 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
         path
     };
 
-    let path = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
+    let path = match workspace::resolve(app.vfs.as_ref(), &target) {
+        Ok(path) => path,
+        Err(e) => {
+            messages::error(app, format!("could not trash {}: {e}", target.display()));
+            return;
+        }
+    };
     if refuse_if_dirty(app, &path) {
         return;
     }
@@ -213,6 +219,27 @@ mod tests {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
         app.active_doc_mut().file_path = Some(PathBuf::from("/doc.md"));
         app
+    }
+
+    #[test]
+    fn a_resolve_failing_target_aborts_the_trash_request_and_posts_a_message() {
+        let mem = Arc::new(Mem::new());
+        mem.fail_resolve(Path::new("/doc.md"));
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem.clone();
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        app.active_doc_mut().file_path = Some(PathBuf::from("/doc.md"));
+        let mut effects = Effects::default();
+
+        request_trash(&mut app, &mut effects);
+
+        assert!(
+            app.guard.is_none(),
+            "a resolve failure must never raise the trash guard"
+        );
+        assert!(
+            messages::newest_text(&app).is_some(),
+            "a resolve failure must post a message"
+        );
     }
 
     /// The trash chord, resolved through `App::update`'s real `Msg::Key`

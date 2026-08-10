@@ -75,6 +75,11 @@ pub struct Mem {
     /// never stops changing: no bracket around it can ever settle, since
     /// even its own retry attempts each see a fresh mutation mid-bracket.
     churning: Mutex<std::collections::HashSet<PathBuf>>,
+    /// Paths `Mem::resolve` refuses permanently, set via `Mem::fail_resolve`
+    /// — an unreadable/missing ancestor or a symlink loop, unlike
+    /// `fail_next(OpKind::Resolve, ..)`'s one-shot, path-blind trigger,
+    /// which cannot target one path across a test that resolves several.
+    resolve_failures: Mutex<std::collections::HashSet<PathBuf>>,
 }
 
 impl Mem {
@@ -89,6 +94,7 @@ impl Mem {
             fail_after: Mutex::new(None),
             mutate_after_stat: Mutex::new(None),
             churning: Mutex::new(std::collections::HashSet::new()),
+            resolve_failures: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -286,6 +292,22 @@ impl Mem {
             }
             None => Err(not_found(path, "set_kind")),
         }
+    }
+
+    /// Marks `path` (any spelling, compared after `lexically_normalize`) so
+    /// every future `Vfs::resolve` call naming it fails permanently — a
+    /// path-targeted counterpart to `fail_next(OpKind::Resolve, ..)`'s
+    /// one-shot, path-blind trigger, for a test that needs one specific
+    /// path's resolution to be the one that fails while others still
+    /// succeed. No existing-file requirement, unlike `set_nlink`/`set_kind`
+    /// — resolution failure (a missing/unreadable ancestor, a symlink loop)
+    /// is exactly the case where the target need not exist at all.
+    pub fn fail_resolve(&self, path: &Path) {
+        let mut guard = self
+            .resolve_failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.insert(lexically_normalize(path));
     }
 }
 
@@ -527,7 +549,18 @@ impl Vfs for Mem {
     /// the same `HashMap` key instead of two unrelated ones.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         self.take_failure(OpKind::Resolve)?;
-        Ok(lexically_normalize(path))
+        let normalized = lexically_normalize(path);
+        let failing = self
+            .resolve_failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if failing.contains(&normalized) {
+            return Err(io::Error::other(format!(
+                "fail_resolve({}) triggered",
+                normalized.display()
+            )));
+        }
+        Ok(normalized)
     }
 
     /// No-op: Mem has no directory tree, only flat path->content keys.
