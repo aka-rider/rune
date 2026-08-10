@@ -149,8 +149,18 @@ fn stale_pre_save_probe_ack_never_overwrites_post_save_last_sync() {
          with a stale classification once the epoch has advanced"
     );
     assert!(
-        app.db_ops.is_empty(),
-        "the stale probe ack must still be popped from db_ops even though it's dropped"
+        !app.db_ops.contains_key(&probe_op),
+        "the stale probe op id must not linger in db_ops"
+    );
+    let reissued = app
+        .db_ops
+        .values()
+        .find(|pending| pending.doc == doc_id && pending.is_probe)
+        .expect("a dropped stale ack must re-issue a fresh probe, not leave last_sync stale");
+    assert_eq!(
+        reissued.probe_epoch,
+        Some(1),
+        "the re-issued probe must record the CURRENT save epoch"
     );
 }
 
