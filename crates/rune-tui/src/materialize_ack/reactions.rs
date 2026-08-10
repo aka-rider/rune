@@ -27,7 +27,6 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
     let pending_version = app.doc(id).and_then(|d| d.pending_save_version());
     if let Some(doc) = app.doc_mut(id) {
         doc.abandon_save();
-        doc.pending_bind_path = None;
     }
     messages::error(app, message.into());
     recompute_dirty(app, id);
@@ -43,20 +42,20 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
 /// would otherwise raise.
 ///
 /// Only fires for a save of the document's OWN `file_path` (`doc.
-/// pending_bind_path` is the discriminator: `bind_new_now`'s rename-create
-/// route sets it and deliberately leaves `file_path` alone until the
-/// publish commits, so `doc.file_path` would name a file this document has
-/// never claimed — handing THAT off to a `Load` would ask `rune-db` to read
-/// a path that has never existed). A naming attempt (`pending_bind_path`
-/// set) keeps today's plain refusal instead: the racer's file sits at a
-/// name this document has no claim on, so adopting its row would be wrong.
+/// bind_target` is the discriminator: `bind_new_now`'s rename-create route
+/// sets it and deliberately leaves `file_path` alone until the publish
+/// commits, so `doc.file_path` would name a file this document has never
+/// claimed — handing THAT off to a `Load` would ask `rune-db` to read a
+/// path that has never existed). A naming attempt (`bind_target` set) keeps
+/// today's plain refusal instead: the racer's file sits at a name this
+/// document has no claim on, so adopting its row would be wrong.
 fn lost_create_race(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::path::PathBuf> {
     mat.fresh.as_ref()?;
     let doc = app.doc(id)?;
     if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
         return None;
     }
-    if doc.pending_bind_path.is_some() {
+    if doc.bind_target().is_some() {
         return None;
     }
     doc.file_path.clone()
@@ -77,7 +76,7 @@ fn naming_collision(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::p
     if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
         return None;
     }
-    doc.pending_bind_path.clone()
+    doc.bind_target().cloned()
 }
 
 /// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
@@ -101,7 +100,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         // A committed bind-new create is where an untitled draft finally
         // gets its path — only now, after the no-clobber publish actually
         // succeeded (see `bind_new_now`'s docs).
-        if let Some(path) = app.doc_mut(id).and_then(|d| d.pending_bind_path.take()) {
+        if let Some(path) = app.doc_mut(id).and_then(|d| d.take_bind_target()) {
             if let Some(doc) = app.doc_mut(id) {
                 doc.bind_path(path);
             }
@@ -214,29 +213,18 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             );
         }
     } else {
-        // Both discriminators read `pending_bind_path` — they must run
-        // BEFORE the clear below wipes it. A refused rename-create, a
-        // refused save of the document's own `file_path`, and an ordinary
-        // CAS-conflict refusal all land here; `pending_bind_path` and
-        // `bind_new` together are what tells the three apart.
+        // Both discriminators read `bind_target` — they must run BEFORE
+        // `abandon_save` below wipes it (it now lives inside `save` itself,
+        // so a single resolve clears it atomically — no separate "was this
+        // ack actually still current" re-check needed the way a bare field
+        // once required). A refused rename-create, a refused save of the
+        // document's own `file_path`, and an ordinary CAS-conflict refusal
+        // all land here; `bind_target` and `bind_new` together are what
+        // tells the three apart.
         let race = lost_create_race(app, id, &mat);
         let naming = naming_collision(app, id, &mat);
         if let Some(doc) = app.doc_mut(id) {
             doc.abandon_save();
-        }
-        if pending_version.is_some() {
-            // Only when THIS ack actually corresponds to `id`'s own
-            // in-flight save (the version this branch peeked at the top
-            // was still there to abandon) — a stale ack for an
-            // already-abandoned attempt must never clear a LATER,
-            // still-pending `bind_new_now`'s own target out from under it.
-            // A refused create has nothing pending to bind either way —
-            // leaving it standing would let a LATER, unrelated successful
-            // create (`pending_bind_path.take()` above) bind this document
-            // to a name it never wrote.
-            if let Some(doc) = app.doc_mut(id) {
-                doc.pending_bind_path = None;
-            }
         }
         if mat.missing {
             messages::error(app, "save failed: file no longer exists");
@@ -386,16 +374,23 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
 }
 
 /// The reaction to `Msg::SaveDone` — the no-store fallback save path's own
-/// completion, or a leftover reply for a document whose
-/// store binding vanished mid-flight. Success posts only the durability
-/// warning, and only when the write could not be confirmed durable.
+/// completion, or a leftover reply for a document whose store binding
+/// vanished mid-flight. `ticket` is checked against the document's own
+/// `save_ticket` first — a stale reply for an attempt this document has
+/// already moved on from (or a document that has since closed) is a typed,
+/// silent drop. Success posts only the durability warning, and only when
+/// the write could not be confirmed durable.
 pub(crate) fn handle_save_done(
     app: &mut App,
     id: DocumentId,
+    ticket: crate::document::SaveTicket,
     version: u64,
     result: Result<(), String>,
     durable: bool,
 ) {
+    if app.doc(id).and_then(|d| d.save_ticket()) != Some(ticket) {
+        return;
+    }
     let succeeded = result.is_ok();
     match result {
         Ok(()) => {

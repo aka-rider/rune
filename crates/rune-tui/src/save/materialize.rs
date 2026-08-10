@@ -15,7 +15,7 @@ use std::time::Duration;
 use rune_vfs::{PutCondition, PutOutcome, Vfs};
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::document::{DocumentId, PublishParams};
 use crate::materialize_ack::{self, MaterializeVfsOutcome};
 use crate::runtime::Effects;
 use crate::save::SaveMode;
@@ -23,32 +23,14 @@ use crate::save::SaveMode;
 /// The snapshot-autosave debounce window (plan WP5.S6).
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 
-/// WP7: the content/path/CAS facts `materialize_now`/`bind_new_now` capture
-/// at trigger time, held in `App::pending_materialize` between
-/// `MaterializePrepare`'s ack (which carries no disk-sourced data of its
-/// own) and the caller-side `vfs` `Cmd` it spawns. Never re-derived once
-/// captured — the eventual `vfs` work and `MaterializeRecord`
-/// enqueue both read only from this struct, never from the document's
-/// (possibly further-edited) live buffer.
-#[derive(Clone)]
-pub(crate) struct PendingMaterialize {
-    pub(crate) content: String,
-    pub(crate) path: PathBuf,
-    pub(crate) bind_new: bool,
-    pub(crate) db_id: i64,
-    pub(crate) seq: i64,
-    pub(crate) mode: SaveMode,
-}
-
-/// WP7 step (a): enqueues `MaterializePrepare` — a plain, non-blocking
-/// channel send (never I/O that leaves this thread; the writer thread's
-/// reply carries no disk-sourced data at all, only DB bookkeeping), so
-/// `update` can call it directly. `content`/`path`/`seq`/`bind_new`
-/// are all captured HERE, synchronously, into `App::pending_materialize` —
-/// never re-derived once the round trip is under way.
-/// `content` is captured through `Document::begin_save` (plan WP1's
-/// chokepoint) BEFORE the match on `result`, so `save_in_flight` is never
-/// true without the exact bytes this save will persist.
+/// WP7 step (a), now Document-owned (`SaveState::Preparing`): enqueues
+/// `MaterializePrepare` — a plain, non-blocking channel send (never I/O that
+/// leaves this thread; the writer thread's reply carries no disk-sourced
+/// data at all, only DB bookkeeping), so `update` can call it directly.
+/// `content`/`path`/`seq`/`bind_new` are all captured HERE, synchronously,
+/// into `Document::begin_prepare` — never re-derived once the round trip is
+/// under way, and never overwritable by a second attempt while this one's
+/// own ticket is still live (`trigger_save`'s in-flight refusal).
 pub(super) fn materialize_now(
     app: &mut App,
     id: DocumentId,
@@ -82,37 +64,31 @@ pub(super) fn materialize_now(
             app,
             format!("materialize: document {id:?} bound to db_id {db_id} has no file binding"),
         );
-        if let Some(doc) = app.doc_mut(id) {
-            doc.begin_save(version, Arc::clone(&content));
-        }
-        let bytes = content.as_bytes().to_vec();
-        let vfs = Arc::clone(&app.vfs);
-        effects
-            .cmds
-            .push(crate::save::save_cmd(id, vfs, path, bytes, version));
+        fall_back_to_direct(app, id, path, version, content, effects);
         return;
     };
     let expect_obs = binding.expect_obs;
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.materialize_prepare(db_id, expect_obs, bind_new);
 
-    if let Some(doc) = app.doc_mut(id) {
-        doc.begin_save(version, Arc::clone(&content));
-    }
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
-            app.pending_materialize.insert(
-                id,
-                PendingMaterialize {
-                    content: content.to_string(),
-                    path,
-                    bind_new,
-                    db_id,
-                    seq: last_known_seq,
-                    mode,
-                },
-            );
+            if let Some(doc) = app.doc_mut(id) {
+                doc.begin_prepare(
+                    version,
+                    Arc::clone(&content),
+                    PublishParams {
+                        path,
+                        bind_new,
+                        db_id,
+                        seq: last_known_seq,
+                        mode,
+                        bind_target: None,
+                    },
+                    op_id,
+                );
+            }
         }
         Err(e) => {
             // WP7: nothing has touched disk yet — the store couldn't even
@@ -121,25 +97,31 @@ pub(super) fn materialize_now(
             // enqueue-time error) AND fall back to the uncoordinated
             // direct-vfs write, exactly like a document with no store
             // binding at all: "press ⌘S again to save anyway" must
-            // actually save ([rune-db 1]). `on_store_failure`'s in-flight
-            // sweep abandons the save for EVERY document (it has no way to
-            // know this ONE document's save is about to continue via the
-            // fallback `Cmd`) — this one included — so it must be re-armed
-            // right after with the SAME capture (plan WP1: not just the
-            // `save_in_flight` flag), or the fallback `Cmd`'s eventual
-            // `SaveDone` would have no `save_pending` left to promote from,
-            // leaving the document dirty forever despite a successful save.
+            // actually save ([rune-db 1]). This document never entered
+            // `Preparing`, so `on_store_failure`'s sweep has nothing of
+            // THIS attempt to abandon — the fallback below is the first
+            // and only thing that arms `save_in_flight` for it.
             materialize_ack::on_store_failure(app, e.to_string());
-            if let Some(doc) = app.doc_mut(id) {
-                doc.begin_save(version, Arc::clone(&content));
-            }
-            let bytes = content.as_bytes().to_vec();
-            let vfs = Arc::clone(&app.vfs);
-            effects
-                .cmds
-                .push(crate::save::save_cmd(id, vfs, path, bytes, version));
+            fall_back_to_direct(app, id, path, version, content, effects);
         }
     }
+}
+
+fn fall_back_to_direct(
+    app: &mut App,
+    id: DocumentId,
+    path: PathBuf,
+    version: u64,
+    content: Arc<str>,
+    effects: &mut Effects,
+) {
+    let bytes = content.as_bytes().to_vec();
+    let Some(doc) = app.doc_mut(id) else { return };
+    let ticket = doc.begin_save(version, content);
+    let vfs = Arc::clone(&app.vfs);
+    effects
+        .cmds
+        .push(crate::save::save_cmd(id, ticket, vfs, path, bytes, version));
 }
 
 /// The draft-naming route (`rename::bind_new`): materialize the buffer to
@@ -173,47 +155,41 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
         .unwrap_or(0);
     let result = db.store.materialize_prepare(db_id, 0, true);
 
-    if let Some(doc) = app.doc_mut(id) {
-        doc.begin_save(version, Arc::clone(&content));
-        // Remembered so the ack can bind it — see `pending_bind_path`.
-        doc.pending_bind_path = Some(path.clone());
-    }
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
-            app.pending_materialize.insert(
-                id,
-                PendingMaterialize {
-                    content: content.to_string(),
-                    path,
-                    bind_new: true,
-                    db_id,
-                    seq,
-                    // `bind_new` never reaches the mode-dependent branch —
-                    // the create path has no CAS baseline to compare either
-                    // way.
-                    mode: SaveMode::Normal,
-                },
-            );
+            if let Some(doc) = app.doc_mut(id) {
+                doc.begin_prepare(
+                    version,
+                    Arc::clone(&content),
+                    PublishParams {
+                        path: path.clone(),
+                        bind_new: true,
+                        db_id,
+                        seq,
+                        // `bind_new` never reaches the mode-dependent branch —
+                        // the create path has no CAS baseline to compare
+                        // either way.
+                        mode: SaveMode::Normal,
+                        bind_target: Some(path),
+                    },
+                    op_id,
+                );
+            }
         }
         Err(e) => {
             // Unlike `materialize_now`'s overwrite path, there is no
             // equivalent-safety direct-vfs fallback for a bind-new create:
             // a plain `vfs.save_atomic` has no no-clobber guarantee, and
             // `handle_save_done`'s success path never binds `file_path`
-            // (only `handle_materialize_ack`'s `pending_bind_path` dance
-            // does) — reusing it here would silently create the file
-            // without ever giving the draft its name. The buffer itself is
-            // never at risk (still safely in memory, `saved_version`
-            // untouched), just this ONE draft-naming attempt; the user can
-            // retry once a fresh store is available. Tracked as a narrower,
-            // pre-existing gap distinct from [rune-db 1] (which is about
-            // an ALREADY-bound document's overwrite, not draft creation) —
-            // see `TODO-wp7-bind-new-dead-writer.md`.
-            if let Some(doc) = app.doc_mut(id) {
-                doc.abandon_save();
-                doc.pending_bind_path = None;
-            }
+            // (only `handle_materialize_ack`'s bind-target dance does) —
+            // reusing it here would silently create the file without ever
+            // giving the draft its name. The buffer itself is never at risk
+            // (still safely in memory, `saved_version` untouched), just this
+            // ONE draft-naming attempt; the user can retry once a fresh
+            // store is available. This document never entered `Preparing`,
+            // so there is nothing of THIS attempt for `on_store_failure`'s
+            // state-aware handling to touch.
             materialize_ack::on_store_failure(app, e.to_string());
         }
     }

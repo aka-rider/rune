@@ -85,10 +85,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result,
             durable,
-        } => materialize_ack::handle_save_done(app, id, version, result, durable),
+        } => materialize_ack::handle_save_done(app, id, ticket, version, result, durable),
         Msg::ConfirmTimeout { generation } => {
             if let Some((_, pending_gen)) = app.pending_quit
                 && pending_gen == generation
@@ -119,9 +120,16 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             materialize_ack::handle_snapshot_due(app, id, generation)
         }
         Msg::Db(evt) => crate::db_dispatch::handle_db_event(app, evt, effects),
-        Msg::MaterializeVfsDone { id, outcome } => {
-            materialize_ack::handle_materialize_vfs_done(app, id, outcome)
-        }
+        Msg::MaterializeVfsDone {
+            id,
+            ticket,
+            db_id,
+            seq,
+            content,
+            outcome,
+        } => materialize_ack::handle_materialize_vfs_done(
+            app, id, ticket, db_id, seq, content, outcome,
+        ),
         Msg::DirLoaded {
             root,
             entries,

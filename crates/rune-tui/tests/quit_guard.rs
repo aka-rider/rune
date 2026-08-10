@@ -152,11 +152,13 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
         "the fan-out must be waiting on exactly this document"
     );
 
+    let ticket = app.doc(id).unwrap().save_ticket().unwrap();
     let mut effects = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result: Ok(()),
             durable: true,
@@ -183,11 +185,13 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
     press(&mut app, key(KeyCode::Char('s')));
     assert!(app.quit_intent.is_some());
 
+    let ticket = app.doc(id).unwrap().save_ticket().unwrap();
     let mut effects = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result: Err("disk full".to_string()),
             durable: true,
@@ -229,11 +233,14 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
     assert!(app.doc(id_a).unwrap().save_in_flight());
     assert!(app.doc(id_b).unwrap().save_in_flight());
 
+    let ticket_a = app.doc(id_a).unwrap().save_ticket().unwrap();
+    let ticket_b = app.doc(id_b).unwrap().save_ticket().unwrap();
     let mut effects = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id: id_a,
+            ticket: ticket_a,
             version: version_a,
             result: Ok(()),
             durable: true,
@@ -249,6 +256,7 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
         &mut app,
         Msg::SaveDone {
             id: id_b,
+            ticket: ticket_b,
             version: version_b,
             result: Ok(()),
             durable: true,
@@ -287,10 +295,12 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
     );
     assert_eq!(app.quit_intent.as_ref().map(|i| i.pending.len()), Some(1));
 
+    let ticket_a = app.doc(id_a).unwrap().save_ticket().unwrap();
     update(
         &mut app,
         Msg::SaveDone {
             id: id_a,
+            ticket: ticket_a,
             version: version_a,
             result: Ok(()),
             durable: true,
@@ -306,15 +316,29 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
 /// A whole-store failure landing mid quit-save must abort the quit (never
 /// exit over a save the user believes succeeded) AND leave the state clean
 /// enough that the very next `^C` still works — the strand `on_store_
-/// failure`'s own doc comment warns against.
+/// failure`'s own doc comment warns against. This document's save is the
+/// no-store `Direct` fallback (`test_app` has no store at all) — a store
+/// failure must leave a `Direct` save completely untouched (its own vfs
+/// `Cmd` is already outstanding, unrelated to any store), so it resolves
+/// only once that `Cmd`'s own `SaveDone` lands, not synchronously here.
 #[test]
 fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works() {
     let mut app = test_app();
     let id = named_dirty_doc(&mut app, "/a.md");
 
     press(&mut app, ctrl_c());
-    press(&mut app, key(KeyCode::Char('s')));
+    let mut save_effects = Effects::default();
+    update(
+        &mut app,
+        Msg::Key(key(KeyCode::Char('s'))),
+        &mut save_effects,
+    );
     assert!(app.quit_intent.is_some());
+    let save_cmd = save_effects
+        .cmds
+        .into_iter()
+        .find(|c| c.kind() == rune_tui::runtime::CmdKind::Save)
+        .expect("the fan-out must have spawned a Save Cmd");
 
     let mut effects = Effects::default();
     update(
@@ -334,15 +358,35 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
         "the failure must be surfaced"
     );
     assert!(
+        app.doc(id).unwrap().save_in_flight(),
+        "a Direct save's own vfs Cmd is unrelated to the store — a store \
+         failure must leave it running, not abandon it out from under the \
+         write already headed to disk"
+    );
+    let save_done = save_cmd.run().expect("the Save Cmd must reply");
+    let mut effects3 = Effects::default();
+    update(&mut app, save_done, &mut effects3);
+    assert!(
+        !app.doc(id).unwrap().save_in_flight(),
+        "the Direct save's own ack must resolve it once it actually lands"
+    );
+    assert!(
         app.quit_intent.is_none(),
         "the stranded intent must be cleared"
     );
-    assert!(!app.doc(id).unwrap().save_in_flight());
 
-    // The next `^C` must still raise a fresh, resolvable guard rather than
-    // silently doing nothing (the document is still genuinely dirty).
+    // The Direct save's own ack already resolved cleanly (the mem `Vfs`
+    // write really landed), so the next two `^C` presses (the ordinary
+    // two-press quit confirm, nothing left dirty to guard) must complete
+    // the quit rather than wedging.
+    assert!(!app.doc(id).unwrap().is_dirty());
     press(&mut app, ctrl_c());
-    assert_eq!(guard_kind(&app), Some(&GuardKind::DirtyQuit));
+    press(&mut app, ctrl_c());
+    assert!(
+        app.should_quit,
+        "the next ^C presses must still be responsive rather than silently \
+         doing nothing"
+    );
 }
 
 /// Code-review finding 6: with a DEGRADED store (every dirty document is

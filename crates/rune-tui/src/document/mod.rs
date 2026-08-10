@@ -22,7 +22,9 @@ mod sync;
 #[cfg(test)]
 mod tests;
 
-use save_state::SaveState;
+pub(crate) use save_state::PublishParams;
+pub use save_state::{SavePhase, SaveTicket};
+use save_state::{SaveState, SaveTicketMint};
 
 use std::num::NonZeroU64;
 use std::path::PathBuf;
@@ -123,20 +125,24 @@ pub struct Document {
     /// integration test that needs a dirty fixture goes through a real edit
     /// instead, see `dirty_common::force_dirty`.
     pub(crate) saved_content: Arc<str>,
-    /// The save-lifecycle state machine: `Idle` when no save is running, or
-    /// the version/content a save-in-progress captured at `begin_save` time.
-    /// Private — `begin_save`/`finish_save_ok`/`abandon_save` are the ONLY
-    /// three places allowed to touch it, so a save can never be in flight
-    /// without the exact bytes it captured, and a stale capture can never
-    /// survive to be promoted by a later unrelated ack. `save_in_flight()`
-    /// derives from this rather than caching a parallel bool.
+    /// The save-lifecycle state machine — `Idle`, or one attempt's own
+    /// ticket/capture/publish bookkeeping, one owner at a time: `Direct`
+    /// (the no-store fallback), `Preparing` (a `MaterializePrepare` is
+    /// outstanding), `Publishing` (its vfs `Cmd` is outstanding — the store
+    /// dying no longer releases this document while that write is still
+    /// headed to disk), `Recording` (the `MaterializeRecord` bookkeeping
+    /// ack is outstanding after the write already committed). Private —
+    /// `begin_save`/`begin_prepare`/`begin_publishing`/`begin_recording`/
+    /// `finish_save_ok`/`abandon_save` are the only places allowed to
+    /// touch it, so a save can never be in flight without the exact
+    /// ticket/bytes it captured, and a stale ticket can never be promoted
+    /// by a later unrelated ack. `save_in_flight()` derives from this
+    /// rather than caching a parallel bool; a second save attempt is
+    /// refused outright while this is anything but `Idle`, so no App-level
+    /// map can ever be overwritten by a second attempt's capture while the
+    /// first one's own publish is still outstanding.
     save: SaveState,
-    /// The path an in-flight `bind_new` materialize is trying to CREATE
-    /// (`save::bind_new_now`). Deliberately not `file_path`: a create that
-    /// loses the no-clobber race must leave the draft untitled, or a later
-    /// ⌘S would overwrite the winner. `handle_materialize_ack`
-    /// moves it into `file_path` only once the write actually commits.
-    pub pending_bind_path: Option<PathBuf>,
+    next_save_ticket: SaveTicketMint,
     /// The render-only dirty cache: `is_dirty` reads
     /// ONLY this field. Recomputed in `update`, and ONLY there, at exactly
     /// two trigger points — see `materialize_ack::recompute_dirty`'s doc comment.
@@ -350,7 +356,7 @@ impl Document {
             saved_version,
             saved_content,
             save: SaveState::default(),
-            pending_bind_path: None,
+            next_save_ticket: SaveTicketMint::default(),
             is_dirty_cached: false,
             view: None,
             db: None,
@@ -372,13 +378,115 @@ impl Document {
         self.is_dirty_cached
     }
 
-    /// Arms a save in flight, capturing `version`/`content` TOGETHER at one
-    /// chokepoint — the only way `save` ever leaves `Idle`, so a save can
-    /// never be in flight without the exact bytes it captured. Called by
-    /// every save-start site: `save::materialize_now`, the no-store
-    /// fallback in `save::trigger_save`, and `save::bind_new_now`.
-    pub fn begin_save(&mut self, version: u64, content: Arc<str>) {
-        self.save.begin_direct(version, content);
+    /// Arms the no-store fallback save in flight, capturing `version`/
+    /// `content` TOGETHER at one chokepoint — the only way `save` ever
+    /// leaves `Idle` for a `Direct` attempt, so a save can never be in
+    /// flight without the exact bytes it captured. Called by every no-store
+    /// save-start site: the fallback in `save::trigger_save`, and
+    /// `save::materialize_now`'s own no-binding/enqueue-failure fallbacks.
+    pub fn begin_save(&mut self, version: u64, content: Arc<str>) -> SaveTicket {
+        let ticket = self.next_save_ticket.mint();
+        self.save.begin_direct(ticket, version, content);
+        ticket
+    }
+
+    /// The current save phase — `on_store_failure`'s own state-aware sweep
+    /// is the primary reader: `Preparing` and an unpublished `Recording`
+    /// abandon on a store failure, `Publishing` and `Direct` do not (the
+    /// write is already headed to, or already on, disk and the store's
+    /// death cannot cancel it), and a published `Recording` resolves as a
+    /// synthetic commit.
+    pub fn save_phase(&self) -> SavePhase {
+        self.save.phase()
+    }
+
+    /// Arms the store-backed materialize dance's `Preparing` phase — the
+    /// counterpart to `begin_save` for a save with a `MaterializePrepare`
+    /// enqueued. `save::materialize_now`/`save::bind_new_now` are the only
+    /// callers.
+    pub(crate) fn begin_prepare(
+        &mut self,
+        version: u64,
+        content: Arc<str>,
+        params: PublishParams,
+        prep_op: u64,
+    ) -> SaveTicket {
+        let ticket = self.next_save_ticket.mint();
+        self.save
+            .begin_prepare(ticket, version, content, params, prep_op);
+        ticket
+    }
+
+    /// The `MaterializePrepare` op id `Preparing` is waiting on, or `None`
+    /// outside that state — `db_dispatch`'s own op-id routing already
+    /// filters by this before `materialize_ack::handle_prepare_ack` is
+    /// ever reached, so this is a defense-in-depth re-check, not the only
+    /// gate.
+    pub(crate) fn prep_op(&self) -> Option<u64> {
+        self.save.prep_op()
+    }
+
+    /// This document's current save attempt ticket, or `None` when `Idle` —
+    /// the correlation key every ticketed `Msg` echoes back so a reply for
+    /// an attempt this document has already moved on from is a typed,
+    /// silent drop rather than a promotion against the wrong capture.
+    pub fn save_ticket(&self) -> Option<SaveTicket> {
+        self.save.ticket()
+    }
+
+    /// Advances `Preparing` to `Publishing` once its prep ack lands and the
+    /// caller-side vfs `Cmd` is about to be spawned — `false` (a no-op) for
+    /// a stale/late call against a document that already moved on. The
+    /// store dying while `Publishing` no longer releases this document
+    /// (`on_store_failure`'s own state-aware handling) — the vfs `Cmd` this
+    /// transition is about to spawn owns the save until it replies, exactly
+    /// once, and no second attempt can start while it does (`save_in_
+    /// flight()` stays `true` the whole time).
+    pub(crate) fn begin_publishing(&mut self) -> Option<(SaveTicket, Arc<str>, PublishParams)> {
+        self.save
+            .advance_to_publishing()
+            .map(|(ticket, capture, params)| (ticket, capture.content, params))
+    }
+
+    /// Whether `save` is currently `Publishing` — the invariant chokepoint:
+    /// while this is `true`, `on_store_failure` must never abandon this
+    /// document, and no second save attempt can be spawned for it (`save_
+    /// in_flight()` already refuses one).
+    pub(crate) fn is_publishing(&self) -> bool {
+        self.save.is_publishing()
+    }
+
+    /// Advances `Publishing` to `Recording` once the vfs `Cmd`'s outcome is
+    /// known and a `MaterializeRecord` op has been enqueued — `false` (a
+    /// no-op) for a stale/late call against a document that already moved
+    /// on. `published` marks whether the disk write already physically
+    /// took effect (`Committed`/`Raced`) — `save_phase`'s own `Recording {
+    /// published }` is what `on_store_failure`'s state-aware handling reads
+    /// back to decide whether a lost record ack still resolves as a
+    /// synthetic commit.
+    pub(crate) fn begin_recording(&mut self, record_op: u64, published: bool) -> bool {
+        self.save.advance_to_recording(record_op, published)
+    }
+
+    /// The `MaterializeRecord` op id `Recording` is waiting on, or `None`
+    /// outside that state.
+    pub fn record_op(&self) -> Option<u64> {
+        self.save.record_op()
+    }
+
+    /// The path an in-flight `bind_new` CREATE (`save::bind_new_now`) is
+    /// trying to claim, or `None` outside that shape — deliberately not
+    /// `file_path`: a create that loses the no-clobber race must leave the
+    /// draft untitled, or a later ⌘S would overwrite the winner.
+    pub fn bind_target(&self) -> Option<&PathBuf> {
+        self.save.bind_target()
+    }
+
+    /// Takes `bind_target`, leaving `None` behind — `handle_materialize_
+    /// ack`'s committed arm moves it into `file_path` only once the write
+    /// actually commits; every refusal arm clears it without binding.
+    pub(crate) fn take_bind_target(&mut self) -> Option<PathBuf> {
+        self.save.take_bind_target()
     }
 
     /// Resolves a successful save ack: returns `save` to `Idle`, and

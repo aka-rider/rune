@@ -9,15 +9,17 @@
 //! owns everything from the recovery store's first reply onward.
 //!
 //! Every function here is per-document except `on_store_failure`, which
-//! stays app-wide (plan decision 3/6: a hard write failure degrades the ONE
-//! shared `Store`, never just the document that happened to trigger it).
+//! stays app-wide: a hard write failure degrades the ONE shared `Store`,
+//! never just the document that happened to trigger it — but its own sweep
+//! is now state-aware per document (`Document::save_phase`), rather than
+//! abandoning every in-flight save uniformly.
 //!
-//! [`reactions`] (split out for the 500-line budget, plan WP2) holds what
-//! happens once a save/materialize attempt actually resolves — `handle_
-//! materialize_ack`/`handle_save_done`'s own success/failure arms, the
-//! close-on-save-ack and quit-save-fan-out chokepoints (`close_if_pending`/
-//! `quit_if_pending`) they both funnel through, and the local materialize
-//! failure path (`fail_materialize_locally`).
+//! [`reactions`] (split out for the 500-line budget) holds what happens
+//! once a save/materialize attempt actually resolves — `handle_materialize_
+//! ack`/`handle_save_done`'s own success/failure arms, the close-on-save-ack
+//! and quit-save-fan-out chokepoints (`close_if_pending`/`quit_if_pending`)
+//! they both funnel through, and the local materialize failure path
+//! (`fail_materialize_locally`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,30 +28,50 @@ use rune_db::{MatResult, MaterializeOutcome, StatFacts};
 use rune_vfs::Vfs;
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::document::{DocumentId, PublishParams, SavePhase, SaveTicket};
 use crate::messages;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
-use crate::save::{self, PendingMaterialize};
+use crate::save;
 
 mod reactions;
 use reactions::fail_materialize_locally;
 pub(crate) use reactions::{handle_materialize_ack, handle_save_done, retire_quit_wait};
 
-/// WP7 step (a)'s reaction: `prep` carries the CAS decision data
+/// `Recording`'s reaction to its own `MaterializeRecord` ack: `op_id` is
+/// checked against the document's own `record_op` before anything else
+/// happens — a document that has moved on to a later attempt since this op
+/// was enqueued gets a typed, silent drop rather than [`handle_materialize_
+/// ack`]'s full reactions running against the wrong capture.
+pub(crate) fn handle_materialize_ack_for_op(
+    app: &mut App,
+    id: DocumentId,
+    op_id: u64,
+    mat: MatResult,
+) {
+    if app.doc(id).and_then(|d| d.record_op()) != Some(op_id) {
+        return;
+    }
+    handle_materialize_ack(app, id, mat);
+}
+
+/// `Preparing`'s reaction: `prep` carries the CAS decision data
 /// (`rune_db::MaterializePrep`) — no disk-sourced fact of its own — so this
-/// only retrieves `id`'s captured [`PendingMaterialize`] and spawns the
-/// caller-side `vfs` `Cmd` that performs the ENTIRE disk dance.  A missing
-/// `pending_materialize` entry (the document closed mid-flight, or a stale
-/// ack) is a correct, silent no-op.
+/// only advances `id` from `Preparing` to `Publishing` and spawns the
+/// caller-side `vfs` `Cmd` that performs the ENTIRE disk dance. A document
+/// that has moved on since this op was enqueued (closed mid-flight, or a
+/// stale ack for an attempt this document already abandoned) is a correct,
+/// silent no-op — `op_id` is checked against the document's own `prep_op`
+/// before anything else happens.
 pub(crate) fn handle_prepare_ack(
     app: &mut App,
     id: DocumentId,
+    op_id: u64,
     prep: rune_db::MaterializePrep,
     effects: &mut Effects,
 ) {
-    let Some(pending) = app.pending_materialize.get(&id).cloned() else {
+    if app.doc(id).and_then(|d| d.prep_op()) != Some(op_id) {
         return;
-    };
+    }
     // A baseline left unconfirmed by a prior commit whose observation was
     // lost (`FileBinding::pending_rebaseline_hash`'s own doc comment) stands
     // in for `expect_hash` here — the DB's own lookup would otherwise still
@@ -62,11 +84,17 @@ pub(crate) fn handle_prepare_ack(
         .doc_file_binding(id)
         .and_then(|b| b.pending_rebaseline_hash.clone())
         .unwrap_or(prep.expect_hash);
+    let Some(doc) = app.doc_mut(id) else { return };
+    let Some((ticket, content, params)) = doc.begin_publishing() else {
+        return;
+    };
     let vfs = Arc::clone(&app.vfs);
     effects.cmds.push(materialize_vfs_cmd(
         id,
+        ticket,
         vfs,
-        pending,
+        content,
+        params,
         expect_hash,
         prep.bound_path,
     ));
@@ -82,8 +110,8 @@ pub enum MaterializeVfsOutcome {
     /// never silently (re)create.
     Missing,
     /// The caller's own target disagrees with the document's bound path —
-    /// a caller-bug guard ([rune-db 5]), not an ordinary CAS race. No `vfs`
-    /// write was attempted.
+    /// a caller-bug guard, not an ordinary CAS race. No `vfs` write was
+    /// attempted.
     PathDisagreement,
     /// A genuine `vfs` I/O failure. No `rune-db` op is ever enqueued for
     /// this outcome — nothing happened worth recording, and the failure is
@@ -113,7 +141,7 @@ pub enum MaterializeVfsOutcome {
         durable: bool,
     },
     /// The write committed AND a racer's displaced bytes were captured in
-    /// the same atomic-swap window (F5). `confirmed` describes `stat` only.
+    /// the same atomic-swap window. `confirmed` describes `stat` only.
     Raced {
         data: Vec<u8>,
         stat: StatFacts,
@@ -128,60 +156,79 @@ pub enum MaterializeVfsOutcome {
 pub(crate) const DURABILITY_UNCONFIRMED_WARNING: &str =
     "saved \u{2014} durability unconfirmed; prior content kept at the sibling temp";
 
-/// WP7 step (b): the caller-side `vfs` `Cmd` — resolves the destination,
-/// CAS-checks it (`!bind_new`), publishes (`exchange`/`rename_excl`), and
-/// on a plain overwrite, reads back the displaced bytes to detect a
-/// swap-race — entirely through THIS app's own `Vfs` handle, never the
-/// writer thread's. Tagged `CmdKind::Save` (not a new kind) so quit's
-/// existing `save_handles` join covers it exactly like the no-store
-/// fallback save ([rune-tui A 5]).
+/// `Publishing`'s own vfs `Cmd` — resolves the destination, CAS-checks it
+/// (`!bind_new`), publishes (`exchange`/`rename_excl`), and on a plain
+/// overwrite, reads back the displaced bytes to detect a swap-race —
+/// entirely through THIS app's own `Vfs` handle, never the writer thread's.
+/// `db_id`/`seq`/`content` are captured here at spawn time and echoed back
+/// on `Msg::MaterializeVfsDone` — never re-read from the document once this
+/// `Cmd` is running, so a `Committed`/`Raced` outcome can still be recorded
+/// durably even if the document has since closed (`record_orphan_outcome`).
+/// Tagged `CmdKind::Save` (not a new kind) so quit's existing `save_handles`
+/// join covers it exactly like the no-store fallback save.
 fn materialize_vfs_cmd(
     id: DocumentId,
+    ticket: SaveTicket,
     vfs: Arc<dyn Vfs + Send + Sync>,
-    pending: PendingMaterialize,
+    content: Arc<str>,
+    params: PublishParams,
     expect_hash: String,
     bound_path: Option<String>,
 ) -> Cmd {
     Cmd::new(CmdKind::Save, move || {
         let outcome = save::run_materialize_vfs(
             vfs.as_ref(),
-            &pending.path,
-            pending.bind_new,
-            &pending.content,
+            &params.path,
+            params.bind_new,
+            &content,
             &expect_hash,
             bound_path.as_deref(),
-            pending.mode,
+            params.mode,
         );
-        Some(Msg::MaterializeVfsDone { id, outcome })
+        Some(Msg::MaterializeVfsDone {
+            id,
+            ticket,
+            db_id: params.db_id,
+            seq: params.seq,
+            content,
+            outcome,
+        })
     })
 }
 
-/// WP7 step (b)'s reaction: reacts to [`MaterializeVfsOutcome`]. `Missing`
-/// finishes locally (no DB round-trip, matching the pre-WP7 behavior of
-/// never touching the DB for a missing target). `PathDisagreement` is a
-/// caller-bug signal — degrades the whole store, same as the pre-WP7
-/// `Error::Invalid` path did via `DbEvent::Err`. A plain `Error` fails only
-/// THIS document's save (a disk I/O hiccup is not a `rune-db` failure now
-/// that the write no longer runs through it). `Conflict`/`Committed`/
-/// `Raced` enqueue `MaterializeRecord` (WP7 step c).
+/// `Publishing`'s reaction: reacts to [`MaterializeVfsOutcome`]. `live` is
+/// `true` only when `id` is still `Publishing` on exactly `ticket` — a
+/// document that closed, or moved on to a later attempt, mid-flight gets a
+/// typed, silent drop for every outcome that never touched disk
+/// (`Missing`/`Error`/`Conflict`), but a `Committed`/`Raced` write already
+/// took effect regardless of whether anything is still listening, so its
+/// bytes are still recorded durably via [`record_orphan_outcome`] — bytes a
+/// write displaces are captured before anything discards them, live
+/// document or not.
 pub(crate) fn handle_materialize_vfs_done(
     app: &mut App,
     id: DocumentId,
+    ticket: SaveTicket,
+    db_id: i64,
+    seq: i64,
+    content: Arc<str>,
     outcome: MaterializeVfsOutcome,
 ) {
-    let Some(pending) = app.pending_materialize.remove(&id) else {
-        return;
-    };
+    let live = app
+        .doc(id)
+        .is_some_and(|d| d.save_ticket() == Some(ticket) && d.is_publishing());
     match outcome {
         MaterializeVfsOutcome::Missing => {
-            handle_materialize_ack(
-                app,
-                id,
-                MatResult {
-                    missing: true,
-                    ..Default::default()
-                },
-            );
+            if live {
+                handle_materialize_ack(
+                    app,
+                    id,
+                    MatResult {
+                        missing: true,
+                        ..Default::default()
+                    },
+                );
+            }
         }
         MaterializeVfsOutcome::PathDisagreement => {
             on_store_failure(
@@ -191,7 +238,9 @@ pub(crate) fn handle_materialize_vfs_done(
             );
         }
         MaterializeVfsOutcome::Error(e) => {
-            fail_materialize_locally(app, id, format!("save failed: {e}"));
+            if live {
+                fail_materialize_locally(app, id, format!("save failed: {e}"));
+            }
         }
         MaterializeVfsOutcome::Conflict {
             data,
@@ -200,19 +249,25 @@ pub(crate) fn handle_materialize_vfs_done(
             confirmed,
             resolved_path,
         } => {
-            record_outcome(
-                app,
-                id,
-                &pending,
-                &resolved_path,
-                MaterializeOutcome::Conflict {
-                    data,
-                    origin,
-                    stat,
-                    confirmed,
-                },
-                false,
-            );
+            if live {
+                record_outcome(
+                    app,
+                    id,
+                    RecordTarget {
+                        db_id,
+                        seq,
+                        content: &content,
+                        resolved_path: &resolved_path,
+                    },
+                    MaterializeOutcome::Conflict {
+                        data,
+                        origin,
+                        stat,
+                        confirmed,
+                    },
+                    false,
+                );
+            }
         }
         MaterializeVfsOutcome::Committed {
             data,
@@ -224,18 +279,27 @@ pub(crate) fn handle_materialize_vfs_done(
             if !durable {
                 messages::warn(app, DURABILITY_UNCONFIRMED_WARNING);
             }
-            record_outcome(
-                app,
-                id,
-                &pending,
-                &resolved_path,
-                MaterializeOutcome::Committed {
-                    data,
-                    stat,
-                    confirmed,
-                },
-                true,
-            );
+            let outcome = MaterializeOutcome::Committed {
+                data,
+                stat,
+                confirmed,
+            };
+            if live {
+                record_outcome(
+                    app,
+                    id,
+                    RecordTarget {
+                        db_id,
+                        seq,
+                        content: &content,
+                        resolved_path: &resolved_path,
+                    },
+                    outcome,
+                    true,
+                );
+            } else {
+                record_orphan_outcome(app, db_id, seq, &resolved_path, outcome);
+            }
         }
         MaterializeVfsOutcome::Raced {
             data,
@@ -249,35 +313,54 @@ pub(crate) fn handle_materialize_vfs_done(
             if !durable {
                 messages::warn(app, DURABILITY_UNCONFIRMED_WARNING);
             }
-            record_outcome(
-                app,
-                id,
-                &pending,
-                &resolved_path,
-                MaterializeOutcome::Raced {
-                    data,
-                    stat,
-                    confirmed,
-                    displaced,
-                    displaced_stat,
-                },
-                true,
-            );
+            let outcome = MaterializeOutcome::Raced {
+                data,
+                stat,
+                confirmed,
+                displaced,
+                displaced_stat,
+            };
+            if live {
+                record_outcome(
+                    app,
+                    id,
+                    RecordTarget {
+                        db_id,
+                        seq,
+                        content: &content,
+                        resolved_path: &resolved_path,
+                    },
+                    outcome,
+                    true,
+                );
+            } else {
+                record_orphan_outcome(app, db_id, seq, &resolved_path, outcome);
+            }
         }
     }
 }
 
-/// WP7 step (c)'s enqueue: hands `outcome` to `rune-db`'s bookkeeping-only
-/// `MaterializeRecord`. `published` marks whether the disk write ALREADY
-/// physically completed (`Committed`/`Raced`) — when it did, the op id is
-/// ALSO recorded in `App::published_ops`, so a dead writer failing this
-/// exact op still reports the save as successful (only the store degrades,
-/// [rune-db 1]'s "the vfs publish still completes" guarantee).
+/// The disk-sourced facts [`record_outcome`] needs to call `rune-db`'s
+/// `materialize_record` — bundled so that function stays under clippy's
+/// argument-count lint without losing any of the "caller-captured, never
+/// re-derived" facts each field carries.
+struct RecordTarget<'a> {
+    db_id: i64,
+    seq: i64,
+    content: &'a str,
+    resolved_path: &'a Path,
+}
+
+/// Hands `outcome` to `rune-db`'s bookkeeping-only `MaterializeRecord` and
+/// advances `id` from `Publishing` to `Recording` — `published` marks
+/// whether the disk write ALREADY physically completed (`Committed`/
+/// `Raced`); `Document::save_phase`'s own `Recording { published }` is what
+/// lets `on_store_failure` resolve a published record's lost ack as a
+/// synthetic commit instead of abandoning a write that already succeeded.
 fn record_outcome(
     app: &mut App,
     id: DocumentId,
-    pending: &PendingMaterialize,
-    resolved_path: &Path,
+    target: RecordTarget<'_>,
     outcome: MaterializeOutcome,
     published: bool,
 ) {
@@ -301,46 +384,34 @@ fn record_outcome(
     };
     match db
         .store
-        .materialize_record(pending.db_id, resolved_path, pending.seq, outcome)
+        .materialize_record(target.db_id, target.resolved_path, target.seq, outcome)
     {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
-            if published {
-                app.published_ops.insert(op_id, id);
+            if let Some(doc) = app.doc_mut(id) {
+                doc.begin_recording(op_id, published);
             }
         }
         Err(e) => {
             if published {
                 // The write already physically committed but its own
                 // observation just failed to record — the disk now holds
-                // exactly `pending.content`, so a save that starts before
-                // the re-baseline load below lands must be able to
-                // recognize that as its own echo rather than manufacture a
-                // conflict against it (`FileBinding::pending_rebaseline_hash`'s
-                // own doc comment). Stashed on the SHARED per-file entry, not
-                // this one document's own binding: any OTHER tab open on the
-                // same file needs to recognize the identical echo too.
-                // Stashed before the ack below, which may itself go on to
-                // drop this document's binding entirely (the re-baseline
-                // enqueue failing too) — a binding that can no longer serve a
-                // save leaves nothing here for the stash to protect, and
-                // `App::prune_file_binding` discards the shared entry (stash
-                // included) once no document references this `db_id` at all.
+                // exactly `content`, so a save that starts before the
+                // re-baseline load below lands must be able to recognize
+                // that as its own echo rather than manufacture a conflict
+                // against it (`FileBinding::pending_rebaseline_hash`'s own
+                // doc comment). Stashed on the SHARED per-file entry, not
+                // this one document's own binding: any OTHER tab open on
+                // the same file needs to recognize the identical echo too.
                 if let Some(binding) = app.doc_file_binding_mut(id) {
                     binding.pending_rebaseline_hash =
-                        Some(rune_db::hash_bytes(pending.content.as_bytes()));
+                        Some(rune_db::hash_bytes(target.content.as_bytes()));
                 }
-                // WP7: the write already physically completed — only the
-                // DB bookkeeping is lost. Report the save as successful
-                // FIRST (clearing this document's in-flight/pending state)
-                // so the subsequent whole-store degrade doesn't also flag
-                // it as a failed save. Its own re-baseline attempt
-                // (`handle_materialize_ack`'s `saved: None` arm) enqueues
-                // through `load_document_best_effort`, which never degrades
-                // the store on failure itself — so no duplicate banner+error
-                // pair here even though the store is still nominally
-                // un-degraded at this point; the single `on_store_failure`
-                // call below is the only one this error ever produces.
+                // The write already physically completed — only the DB
+                // bookkeeping is lost. Report the save as successful FIRST
+                // (resolving this document's `save` back to `Idle`) so the
+                // subsequent whole-store degrade doesn't also flag it as a
+                // failed save.
                 handle_materialize_ack(
                     app,
                     id,
@@ -355,20 +426,40 @@ fn record_outcome(
     }
 }
 
-/// A store enqueue-time error or an async `DbEvent::Err`/`Fatal` landed
-/// (plan decision 3): the in-memory buffer/journal are NEVER rolled back —
-/// only the WHOLE store is marked degraded (sticky; no reopen path) and a
-/// persistent banner is raised. If ANY document had a save in flight, its
-/// guard is released and the failure surfaces as an ordinary save error
-/// too, so `trigger_save`'s in-flight guard can never wedge open on a lost
-/// ack — app-wide because one shared `Store`'s failure can strand any
-/// document currently mid-save on it, not just the one whose op happened
-/// to trigger this call. A document whose write ALREADY physically
-/// completed (WP7's `published_ops`) must have been cleared of
-/// `save_in_flight` by its own synthetic `handle_materialize_ack` call
-/// BEFORE this runs — see `record_outcome`/`dispatch::handle_db_event` — so
-/// this loop never re-reports that document's already-successful save as
-/// failed.
+/// The counterpart to [`record_outcome`] for a `Committed`/`Raced` outcome
+/// arriving for a document that is no longer `live` — closed mid-flight, or
+/// moved on to a later attempt. The write already physically took effect,
+/// so its bytes are still recorded through `MaterializeRecord`; the
+/// enqueued op's `PendingOp` carries no doc-scoped reaction (`db_dispatch`'s
+/// own routing already treats an unmatched op id as a no-op), so its
+/// eventual ack — or a lost one — never touches any document again.
+fn record_orphan_outcome(
+    app: &mut App,
+    db_id: i64,
+    seq: i64,
+    resolved_path: &Path,
+    outcome: MaterializeOutcome,
+) {
+    let Some(db) = app.db.as_ref() else { return };
+    let _ = db
+        .store
+        .materialize_record(db_id, resolved_path, seq, outcome);
+}
+
+/// A store enqueue-time error or an async `DbEvent::Err`/`Fatal` landed: the
+/// in-memory buffer/journal are NEVER rolled back — only the WHOLE store is
+/// marked degraded (sticky; no reopen path) and a persistent banner is
+/// raised. Every document's own save attempt is swept by its CURRENT
+/// `Document::save_phase` (not a uniform "every in-flight save dies"):
+/// `Preparing` and an unpublished `Recording` abandon (nothing irrevocable
+/// happened yet); a published `Recording` resolves as a synthetic commit
+/// (the write already succeeded — only its own bookkeeping ack was lost);
+/// `Publishing` and `Direct` are left completely untouched — a vfs `Cmd` is
+/// already outstanding for them, headed to (or already on) disk, and the
+/// store's death cannot cancel a write already in flight. This state-aware
+/// sweep is what makes a second save attempt for a `Publishing` document
+/// structurally impossible: `save_in_flight()` stays `true` the whole time,
+/// so `trigger_save` keeps refusing.
 pub(crate) fn on_store_failure(app: &mut App, error: String) {
     if let Some(db) = app.db.as_mut() {
         db.degraded = true;
@@ -376,48 +467,54 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
     app.db_banner = Some(format!("recovery disabled: {error}"));
     messages::error(app, format!("recovery disabled: {error}"));
 
-    // Collected first: `abandon_save` needs `&mut Document`, and every one
-    // ALSO needs its dirty cache re-settled (plan WP1 — a stranded capture
-    // must never be left promotable, and the cache must never be left
-    // stale after the state it was derived from just changed).
-    let stranded: Vec<DocumentId> = app
-        .documents
-        .iter()
-        .filter(|(_, doc)| doc.save_in_flight())
-        .map(|(&id, _)| id)
-        .collect();
-    for &id in &stranded {
-        if let Some(doc) = app.doc_mut(id) {
-            doc.abandon_save();
+    let ids: Vec<DocumentId> = app.documents.keys().copied().collect();
+    let mut abandoned_any = false;
+    let mut resolved_committed = Vec::new();
+    for id in ids {
+        let Some(doc) = app.doc(id) else { continue };
+        match doc.save_phase() {
+            SavePhase::Preparing | SavePhase::Recording { published: false } => {
+                if let Some(doc) = app.doc_mut(id) {
+                    doc.abandon_save();
+                }
+                recompute_dirty(app, id);
+                abandoned_any = true;
+            }
+            SavePhase::Recording { published: true } => {
+                resolved_committed.push(id);
+            }
+            SavePhase::Idle | SavePhase::Direct | SavePhase::Publishing => {}
         }
-        recompute_dirty(app, id);
     }
-    if !stranded.is_empty() {
+    for id in resolved_committed {
+        handle_materialize_ack(
+            app,
+            id,
+            MatResult {
+                committed: true,
+                ..Default::default()
+            },
+        );
+    }
+    if abandoned_any {
         messages::error(app, format!("save failed: {error}"));
     }
 
     // A `Fatal` kills the writer's whole FIFO — every op it had enqueued,
-    // including any quit-save fan-out's, will now never ack (plan WP2).
-    // Aborting the intent outright (rather than leaving it to strand
-    // forever, waiting on acks that can no longer arrive) is what keeps the
-    // NEXT `^C` able to raise a fresh, resolvable Guard instead of silently
-    // doing nothing — the failure itself is already surfaced via `db_banner`
-    // above, so no separate status is needed here.
+    // including any quit-save fan-out's, will now never ack. Aborting the
+    // intent outright (rather than leaving it to strand forever, waiting on
+    // acks that can no longer arrive) is what keeps the NEXT `^C` able to
+    // raise a fresh, resolvable Guard instead of silently doing nothing —
+    // the failure itself is already surfaced via `db_banner` above, so no
+    // separate status is needed here.
     app.quit_intent = None;
 }
 
 /// A stale `generation` (a later journal mutation already rescheduled the
 /// debounce — `save::schedule_snapshot_debounce`) is ignored. `content` is
 /// captured SYNCHRONOUSLY here, in `update` — never re-derived once the
-/// enqueued `CreateSnapshot` op actually runs on the writer thread (the
-/// "caller-captured, never re-derived" discipline, same as `materialize`).
-/// The durable journal position this content anchors against is NOT
-/// captured here — the writer thread resolves it fresh, at op-execution
-/// time, from its own already-committed state (`rune_db::OpKind::
-/// CreateSnapshot`'s own doc comment), which this app-side call has no way
-/// to know exactly while other ops for this doc may still be in flight.
-/// Never touches the user's file — `create_snapshot` is a pure recovery
-/// anchor (`rune-db::snapshot`'s doc comment).
+/// enqueued `CreateSnapshot` op actually runs on the writer thread. Never
+/// touches the user's file — `create_snapshot` is a pure recovery anchor.
 pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -442,16 +539,11 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     }
 }
 
-/// `Document::is_dirty` reads only the cache this
-/// recomputes. A straight content comparison against `saved_content` (plan
-/// WP1) — never the old `buffer.version() != saved_version` proxy:
+/// `Document::is_dirty` reads only the cache this recomputes. A straight
+/// content comparison against `saved_content` — never a version proxy:
 /// `Buffer::apply_edits` always returns `version + 1`, and undo/redo build
 /// a fresh buffer, so a version comparison alone leaves an edit-then-undo
 /// document dirty forever even once the bytes are back to identical.
-/// `saved_content` is a plain `String` compare — a length check plus
-/// `memcmp`, microsecond-scale even against a multi-thousand-line document,
-/// so this stays cheap enough to call from every edit/ack site AND from
-/// [`is_dirty_now`]'s transition re-derive.
 pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
     let dirty = doc.buffer.content() != &*doc.saved_content;

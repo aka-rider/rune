@@ -299,11 +299,13 @@ fn a_failed_save_ack_leaves_the_document_open() {
     assert_eq!(app.pending_close_on_save, Some(second));
 
     let version = app.doc(second).unwrap().buffer.version();
+    let ticket = app.doc(second).unwrap().save_ticket().unwrap();
     let mut effects2 = Effects::default();
     app::update(
         &mut app,
         Msg::SaveDone {
             id: second,
+            ticket,
             version,
             result: Err("disk full".to_string()),
             durable: true,

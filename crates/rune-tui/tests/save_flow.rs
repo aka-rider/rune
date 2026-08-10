@@ -28,6 +28,21 @@ fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
 }
 
+/// Arms the document's no-store `SaveState::Direct` exactly the way
+/// `save::trigger_save`'s fallback would, so a hand-built `Msg::SaveDone`
+/// carries a ticket the document actually recognizes as live — a `SaveDone`
+/// for a document that never armed a save is correctly a stale, silent drop.
+fn arm_direct_save(
+    app: &mut App,
+    id: rune_tui::document::DocumentId,
+) -> rune_tui::document::SaveTicket {
+    let (version, content) = {
+        let doc = app.doc(id).unwrap();
+        (doc.buffer.version(), Arc::from(doc.buffer.content()))
+    };
+    app.doc_mut(id).unwrap().begin_save(version, content)
+}
+
 /// A publish whose durability confirmation failed is still a SUCCESS —
 /// reported as saved, with a warning, never as a save failure (the same
 /// verdict the store-backed path gives the identical physical state).
@@ -36,12 +51,14 @@ fn save_done_ok_with_durable_false_succeeds_and_warns() {
     let mut app = test_app();
     let id = app.active;
     let version = app.doc(id).unwrap().buffer.version();
+    let ticket = arm_direct_save(&mut app, id);
 
     let mut effects = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result: Ok(()),
             durable: false,
@@ -68,12 +85,14 @@ fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log
     let mut app = test_app();
     let id = app.active;
     let version = app.doc(id).unwrap().buffer.version();
+    let ticket = arm_direct_save(&mut app, id);
 
     let mut effects = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result: Err("oops".to_string()),
             durable: true,
@@ -82,11 +101,13 @@ fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log
     );
     assert!(rune_tui::messages::newest_text(&app).is_some());
 
+    let ticket2 = arm_direct_save(&mut app, id);
     let mut effects2 = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket: ticket2,
             version,
             result: Ok(()),
             durable: true,
@@ -113,11 +134,13 @@ fn save_done_ok_keeps_an_unrelated_log_entry() {
     assert!(rune_tui::messages::newest_text(&app).is_some());
 
     let version = app.doc(id).unwrap().buffer.version();
+    let ticket = arm_direct_save(&mut app, id);
     let mut effects2 = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result: Ok(()),
             durable: true,
@@ -145,11 +168,13 @@ fn save_done_err_surfaces_status_and_keeps_dirty() {
         .expect("in-bounds insert should apply");
     let before_saved = app.doc(id).unwrap().saved_version;
     let version = app.doc(id).unwrap().buffer.version();
+    let ticket = arm_direct_save(&mut app, id);
     let mut effects = Effects::default();
     update(
         &mut app,
         Msg::SaveDone {
             id,
+            ticket,
             version,
             result: Err("disk full".to_string()),
             durable: true,

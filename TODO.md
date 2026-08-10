@@ -91,7 +91,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-merge/src/hunks.rs` — 684 (grew past the threshold in WP-D fixing the anchoring bug; the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
   - `crates/rune-tui/src/runtime/mod.rs` — 672
   - `crates/rune-fuzz/src/generate/palette.rs` — 660
-  - `crates/rune-tui/src/app.rs` — 625 (grew further in the G7 fix adding the `file_bindings` shared-baseline map's own doc comment)
+  - `crates/rune-tui/src/app.rs` — 608 (shrank from 625 once the SaveState refactor deleted `published_ops`/`pending_materialize`, still over)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 600 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
@@ -104,7 +104,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 544
   - `crates/rune-vfs/src/mem.rs` — 673
   - `crates/rune-tui/src/dispatch.rs` — 526
-  - `crates/rune-tui/src/document/mod.rs` — 523 (the hydrate-cursor char-boundary fix pushed this over; split candidate: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-tui/src/document/mod.rs` — 626 (the SaveState machine's `begin_prepare`/`begin_publishing`/`begin_recording`/`save_phase`/`bind_target` accessors pushed this further over; split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
   - `crates/rune-db/src/writer.rs` — 552 (grew further in the issue #77 fix: the `Load` arm now dispatches on `LoadSource::Fresh`/`Taken`; split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
@@ -117,8 +117,8 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/focus.rs` — 506
   - `crates/rune-syntax/src/syntax.rs` — 505
   - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-tui/src/save/materialize.rs` — 523 (crossed the threshold in the G7 fix: `materialize_now` now reads `expect_obs` off `App::file_bindings` instead of `DocDb` directly, then grew further in the review-fixes pass refusing a missing file binding explicitly instead of a `0` sentinel; split candidate: move `run_materialize_vfs`'s `force_publish`/`capture_and_swap_publish` helpers to a sibling `force_publish.rs`)
-- **Wrong**: 35 source files exceed the 500-line house rule, none ledgered.
+  - `crates/rune-tui/src/materialize_ack.rs` — 565 (the SaveState refactor's `handle_prepare_ack`/`handle_materialize_vfs_done`/`record_outcome`/`record_orphan_outcome`/`on_store_failure` rewrite pushed this over; split candidate: move `record_outcome`/`record_orphan_outcome`/`RecordTarget` to a sibling `record.rs`)
+- **Wrong**: 35 source files exceed the 500-line house rule, none ledgered. (`crates/rune-tui/src/save/materialize.rs` dropped to 321 lines once the SaveState refactor deleted `PendingMaterialize` and is no longer over — removed from this list.)
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 

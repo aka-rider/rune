@@ -86,6 +86,7 @@ pub enum Msg {
     },
     SaveDone {
         id: DocumentId,
+        ticket: crate::document::SaveTicket,
         version: u64,
         result: Result<(), String>,
         durable: bool,
@@ -123,6 +124,10 @@ pub enum Msg {
     /// `materialize_ack::handle_materialize_vfs_done`.
     MaterializeVfsDone {
         id: DocumentId,
+        ticket: crate::document::SaveTicket,
+        db_id: i64,
+        seq: i64,
+        content: std::sync::Arc<str>,
         outcome: crate::materialize_ack::MaterializeVfsOutcome,
     },
     /// `vfs.read_dir(root)` completed — the Explorer's own

@@ -7,9 +7,9 @@
 //! reaction side — everything from the recovery store's first reply onward
 //! — is [`crate::materialize_ack`].
 //!
-//! `App::pending_materialize` carries the caller-captured
-//! content/path/CAS facts between hops (captured once, at
-//! trigger time, never re-derived).
+//! `Document::begin_prepare` carries the caller-captured content/path/CAS
+//! facts between hops (captured once, at trigger time, never re-derived) as
+//! part of the document's own `SaveState::Preparing`/`Publishing`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,9 +25,7 @@ use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 
 mod materialize;
 use materialize::materialize_now;
-pub(crate) use materialize::{
-    PendingMaterialize, bind_new_now, run_materialize_vfs, schedule_snapshot_debounce,
-};
+pub(crate) use materialize::{bind_new_now, run_materialize_vfs, schedule_snapshot_debounce};
 
 /// The degraded-save confirm-gate's arm-to-confirm window — mirrors
 /// `app::CONFIRM_TIMEOUT` (plan WP5.S2/S6: "a pending-confirm state like the
@@ -193,11 +191,14 @@ pub(crate) fn trigger_save(
         // the time the ack lands.
         let content: Arc<str> = Arc::from(doc.buffer.content());
         let bytes = content.as_bytes().to_vec();
-        if let Some(doc) = app.doc_mut(id) {
-            doc.begin_save(version, content);
-        }
+        let Some(doc) = app.doc_mut(id) else {
+            return SaveStart::Refused;
+        };
+        let ticket = doc.begin_save(version, content);
         let vfs = Arc::clone(&app.vfs);
-        effects.cmds.push(save_cmd(id, vfs, path, bytes, version));
+        effects
+            .cmds
+            .push(save_cmd(id, ticket, vfs, path, bytes, version));
         return SaveStart::InFlight;
     }
 
@@ -268,6 +269,7 @@ fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
 /// never a save failure.
 pub(crate) fn save_cmd(
     id: DocumentId,
+    ticket: crate::document::SaveTicket,
     vfs: std::sync::Arc<dyn Vfs + Send + Sync>,
     path: std::path::PathBuf,
     bytes: Vec<u8>,
@@ -292,6 +294,7 @@ pub(crate) fn save_cmd(
         };
         Some(Msg::SaveDone {
             id,
+            ticket,
             version,
             result,
             durable,
