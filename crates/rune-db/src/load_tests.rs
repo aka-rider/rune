@@ -317,11 +317,10 @@ fn dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees() {
     );
 }
 
-/// TOCTOU pin (issue #77): `load_from_read` adopts whatever bytes the
-/// caller's own taken read carries, never a second, independent read of
-/// the same path — the CAS baseline and the returned content both trace
-/// to the SAME sighting even when disk has moved on since that sighting
-/// was taken.
+/// TOCTOU pin: `load_from_read` adopts whatever bytes the caller's own
+/// taken read carries, never a second, independent read of the same path —
+/// the CAS baseline and the returned content both trace to the SAME
+/// sighting even when disk has moved on since that sighting was taken.
 #[test]
 fn load_from_read_adopts_the_taken_bytes_never_a_fresh_disk_read() {
     let mut conn = open();

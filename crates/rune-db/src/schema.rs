@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS blobs (
 -- (v10). proc_started_at is the OS-reported start time
 -- of pid, recorded once at construction (session.rs) — the only thing that
 -- lets a LATER session tell "pid still running MY writer" apart from "pid
--- recycled to an unrelated process since". The reaper (WP4) deletes a dead
+-- recycled to an unrelated process since". The reaper deletes a dead
 -- session's session_documents/events/snapshots footprint, then the row
 -- itself too once it has recorded no observations (see below) — a row that
 -- DID record one stays in place as that dead session's own permanent

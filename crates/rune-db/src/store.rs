@@ -108,7 +108,11 @@ impl Store {
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         // Best-effort dead-session reaper: never blocks open — a failure
         // here is swallowed, not surfaced, on purpose.
-        let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
+        let _ = crate::reaper::reap_dead_sessions(
+            &mut conn,
+            liveness_check.as_ref(),
+            session::boot_time(),
+        );
         // One startup blob-sweep batch, after the reaper — best effort,
         // never blocks open.
         let _ = retry::with_retry(&mut conn, crate::gc::sweep_unreferenced_blobs);
@@ -138,7 +142,11 @@ impl Store {
         // Best-effort dead-session reaper: never blocks open — a failure
         // here is swallowed, not surfaced, on purpose.
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
-        let _ = crate::reaper::reap_dead_sessions(&mut writer_conn, liveness_check.as_ref());
+        let _ = crate::reaper::reap_dead_sessions(
+            &mut writer_conn,
+            liveness_check.as_ref(),
+            session::boot_time(),
+        );
         // One startup blob-sweep batch, after the reaper — best effort,
         // never blocks open.
         let _ = retry::with_retry(&mut writer_conn, crate::gc::sweep_unreferenced_blobs);

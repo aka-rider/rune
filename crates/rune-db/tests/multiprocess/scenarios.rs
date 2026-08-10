@@ -128,9 +128,9 @@ fn two_children_race_store_open_on_a_fresh_path_apply_schema_once_both_get_sessi
 
     // A dead session's now-observation-free `sessions` row is fair game for
     // the OTHER child's own reaper to reclaim before this assertion ever
-    // runs (WP: sessions-row reap) — so the durable row COUNT no longer
-    // proves "both racing opens each got their own session". What the test
-    // actually means is proven by each child's own `opened-{i}` marker,
+    // runs — so the durable row COUNT no longer proves "both racing opens
+    // each got their own session". What the test actually means is proven
+    // by each child's own `opened-{i}` marker,
     // written from its own live `Store::session_id()` before either child
     // could have raced the other's reaper: two distinct ids means the
     // schema was applied once and both opens genuinely established
@@ -273,7 +273,7 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     // needed. The reaper only reclaims a dead session once it is no longer
     // the most-recent toucher, which the append above just ensured.
     let mut reap_conn = Connection::open(&path).expect("reap connection");
-    rune_db::reap_dead_sessions(&mut reap_conn, &rune_db::is_process_alive).expect("reap");
+    rune_db::reap_dead_sessions(&mut reap_conn, &rune_db::is_process_alive, None).expect("reap");
 
     let killed_events_after_reap: i64 = reap_conn
         .query_row(
