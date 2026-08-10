@@ -180,7 +180,7 @@ pub(crate) fn trigger_save(
         return SaveStart::NeedsName;
     };
 
-    let has_binding = app.db.is_some() && doc.db.is_some();
+    let has_binding = app.db.is_some() && doc.is_store_bound();
     if !has_binding {
         // No store at all, or this document has no binding to it — the
         // pre-WP5 direct-vfs fallback. `content` is captured HERE, once,

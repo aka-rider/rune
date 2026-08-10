@@ -52,7 +52,7 @@ fn external_disk_edit_surfaces_the_footer_hint_and_clears_on_restore() {
     let doc_id = app.active;
     assert_ne!(doc_id, draft_id);
 
-    // Drain the `Load` ack — installs `doc.db` and seeds `last_sync` (S3).
+    // Drain the `Load` ack — installs the DocDb and seeds `last_sync` (S3).
     drain_one_op_for(&mut app, &bridge, doc_id);
     assert_eq!(
         app.doc(doc_id).unwrap().last_sync,

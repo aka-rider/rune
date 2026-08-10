@@ -56,7 +56,7 @@ fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
         "the enqueued op must be routed to the opened document, not the initial draft"
     );
     assert!(
-        app.doc(opened_id).unwrap().db.is_none(),
+        !app.doc(opened_id).unwrap().is_store_bound(),
         "db stays None until the Load ack lands"
     );
 }
@@ -156,9 +156,14 @@ fn two_file_launch_delivers_both_load_acks_once_attach_drains_the_bootstrap_buff
     // `Load` — both land in the still-`Bootstrap` bridge.
     let id_a = workspace::open_path(&mut app, Path::new("/a.md")).expect("open a");
     let id_b = workspace::open_path(&mut app, Path::new("/b.md")).expect("open b");
-    assert!(app.doc(id_a).unwrap().db.is_none(), "no ack has landed yet");
-    assert!(app.doc(id_b).unwrap().db.is_none(), "no ack has landed yet");
-
+    assert!(
+        !app.doc(id_a).unwrap().is_store_bound(),
+        "no ack has landed yet"
+    );
+    assert!(
+        !app.doc(id_b).unwrap().is_store_bound(),
+        "no ack has landed yet"
+    );
     // Enqueued strictly after both Loads — see the FIFO-ordering doc
     // comment above.
     let probe_op = app
@@ -183,11 +188,11 @@ fn two_file_launch_delivers_both_load_acks_once_attach_drains_the_bootstrap_buff
     }
 
     assert!(
-        app.doc(id_a).unwrap().db.is_some(),
+        app.doc(id_a).unwrap().is_store_bound(),
         "doc a's Load ack, buffered before attach, must still be delivered"
     );
     assert!(
-        app.doc(id_b).unwrap().db.is_some(),
+        app.doc(id_b).unwrap().is_store_bound(),
         "doc b's Load ack, buffered before attach, must still be delivered"
     );
 }

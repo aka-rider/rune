@@ -112,7 +112,7 @@ fn stale_pre_save_probe_ack_never_overwrites_post_save_last_sync() {
         .expect("materialize-record op enqueued");
     drain_specific(&mut app, &bridge, record_op);
 
-    let db_id = app.doc(doc_id).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(doc_id).unwrap().doc_db().unwrap().db_id;
     assert_eq!(
         app.file_binding(db_id).unwrap().save_epoch,
         1,
@@ -199,7 +199,7 @@ fn probe_deferred_during_save_in_flight_fires_after_the_ack_with_correct_sync_st
         1,
         "the probe must be deferred, not enqueued, while a save is in flight"
     );
-    let db_id = app.doc(doc_id).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(doc_id).unwrap().doc_db().unwrap().db_id;
     assert!(
         app.file_binding(db_id).unwrap().pending_probe,
         "the deferred probe request must be recorded on the shared FileBinding"
@@ -238,7 +238,7 @@ fn probe_without_an_intervening_save_still_classifies_normally() {
     let doc_id = app.active;
     drain_one_op_for(&mut app, &bridge, doc_id);
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Clean));
-    let db_id = app.doc(doc_id).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(doc_id).unwrap().doc_db().unwrap().db_id;
     assert_eq!(
         app.file_binding(db_id).unwrap().save_epoch,
         0,

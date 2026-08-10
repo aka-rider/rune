@@ -64,8 +64,8 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 ///
 /// Registers `id` as its own scratch row in the recovery store (plan WP0/
 /// WP3's mid-session gap) whenever a live store exists: `db_enqueue::
-/// create_scratch` enqueues nothing and `doc.db` stays `None` — exactly
-/// today's behaviour — when there is no store or it's `degraded`, and
+/// create_scratch` enqueues nothing and the document stays `Detached` —
+/// exactly today's behaviour — when there is no store or it's `degraded`, and
 /// `App::is_preserved` already reports that honestly to the quit/close
 /// guard. Fired after activation so the new tab's own document already
 /// exists for the eventual ack (`db_ack::handle_create_scratch_ack`) to

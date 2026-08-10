@@ -196,7 +196,7 @@ fn journaled_edit_past_the_install_abandons_the_merge_on_restart() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
 
     let (app_a, _bridge_a, doc_a) = enter_two_conflict_merge_at(&db_path, &vfs);
-    let db_id = app_a.doc(doc_a).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app_a.doc(doc_a).unwrap().doc_db().unwrap().db_id;
     app_a
         .db
         .as_ref()

@@ -53,7 +53,7 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
         Some(db_a),
     );
     let id_a = app_a.active;
-    app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    app_a.doc_mut(id_a).unwrap().set_doc_db_for_test(doc_db_a);
     join_binding_from(&mut app_a, &load_a);
     app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(0);
     for ch in "UNSAVED ".chars() {
@@ -171,7 +171,7 @@ fn bridged_load_without_disk_divergence_posts_a_plain_recovery_message() {
         Some(db_a),
     );
     let id_a = app_a.active;
-    app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    app_a.doc_mut(id_a).unwrap().set_doc_db_for_test(doc_db_a);
     join_binding_from(&mut app_a, &load_a);
     app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(0);
     for ch in "UNSAVED ".chars() {

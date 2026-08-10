@@ -470,6 +470,19 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
     let ids: Vec<DocumentId> = app.documents.keys().copied().collect();
     let mut abandoned_any = false;
     let mut resolved_committed = Vec::new();
+    for id in &ids {
+        // A `Binding` document has no durable row yet — a store this
+        // degraded will never deliver the `Load`/`CreateScratch` ack that
+        // would have installed one, so whatever it buffered can never
+        // replay; dropping it here (issue #84) is honest, not a loss on top
+        // of a loss — `App::is_preserved` already reports an unbound
+        // document's unsaved bytes as unpreserved.
+        if let Some(doc) = app.doc_mut(*id)
+            && matches!(doc.replica, crate::document::Replica::Binding { .. })
+        {
+            doc.replica = crate::document::Replica::Detached;
+        }
+    }
     for id in ids {
         let Some(doc) = app.doc(id) else { continue };
         match doc.save_phase() {
@@ -521,8 +534,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     }
     let Some(doc) = app.doc(id) else { return };
     let Some(db_id) = doc
-        .db
-        .as_ref()
+        .doc_db()
         .filter(|d| d.snapshot_generation == generation)
         .map(|d| d.db_id)
     else {

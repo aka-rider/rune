@@ -526,7 +526,7 @@ mod tests {
         let doc = app.active;
         if let Some(d) = app.doc_mut(doc) {
             d.read_only = crate::document::ReadOnly::Always;
-            d.db = Some(crate::db::DocDb::new(1, false, 0));
+            d.replica = crate::document::Replica::Bound(crate::db::DocDb::new(1, false, 0));
         }
         app.install_or_join_file_binding(1, 7);
         app.merge = MergeState::Pending {

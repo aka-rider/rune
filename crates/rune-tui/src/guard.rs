@@ -436,6 +436,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::db::{Db, DocDb};
+    use crate::document::Replica;
     use rune_core::buffer::Buffer;
     use rune_db::{ClockFn, Store};
     use rune_vfs::Mem;
@@ -465,7 +466,7 @@ mod tests {
             Some(db),
         );
         let id = app.active;
-        app.doc_mut(id).unwrap().db = Some(doc_db);
+        app.doc_mut(id).unwrap().replica = Replica::Bound(doc_db);
         app.install_or_join_file_binding(1, 0);
         app
     }

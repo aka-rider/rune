@@ -10,6 +10,7 @@ use rune_vfs::{Mem, Vfs};
 use super::handle_materialize_ack;
 use crate::app::App;
 use crate::db::{Db, DbBridge, DocDb};
+use crate::document::Replica;
 use crate::messages;
 
 fn racer_observation(doc_id: i64) -> Observation {
@@ -57,7 +58,7 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut().db = Some(DocDb::new(row_id, true, 0));
+    app.active_doc_mut().replica = Replica::Bound(DocDb::new(row_id, true, 0));
     app.install_or_join_file_binding(row_id, 0);
     (app, row_id)
 }
@@ -92,7 +93,7 @@ fn a_resolve_failure_on_the_racers_own_path_keeps_the_plain_refusal() {
         messages::newest_text(&app)
     );
     assert!(
-        app.doc(id).unwrap().db.as_ref().unwrap().bind_new,
+        app.doc(id).unwrap().doc_db().unwrap().bind_new,
         "no hand-off happened, so bind_new must stay true"
     );
     assert!(

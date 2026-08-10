@@ -52,7 +52,7 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
 fn lost_create_race(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::path::PathBuf> {
     mat.fresh.as_ref()?;
     let doc = app.doc(id)?;
-    if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
+    if !doc.doc_db().is_some_and(|d| d.bind_new) {
         return None;
     }
     if doc.bind_target().is_some() {
@@ -73,7 +73,7 @@ fn lost_create_race(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::p
 fn naming_collision(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::path::PathBuf> {
     mat.fresh.as_ref()?;
     let doc = app.doc(id)?;
-    if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
+    if !doc.doc_db().is_some_and(|d| d.bind_new) {
         return None;
     }
     doc.bind_target().cloned()
@@ -121,7 +121,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         // against a stale per-tab copy that never learned about this commit,
         // instead of the file's true current baseline.
         let db_id = app.doc_db_id(id);
-        if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
+        if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.doc_db_mut()) {
             doc_db.bind_new = false;
         }
         if let Some(binding) = app.doc_file_binding_mut(id) {
@@ -192,7 +192,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             let still_usable = app.db.as_ref().is_some_and(|db| !db.degraded);
             if !re_baselined || !still_usable {
                 if let Some(doc) = app.doc_mut(id) {
-                    doc.db = None;
+                    doc.replica = crate::document::Replica::Detached;
                 }
                 // `db_id` is this document's own binding as captured above
                 // `load_document_best_effort` may have already installed a

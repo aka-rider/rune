@@ -51,7 +51,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         messages::warn(app, "no divergence to merge");
         return;
     }
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+    let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         messages::warn(app, "no divergence to merge");
         return;
     };

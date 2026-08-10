@@ -11,20 +11,20 @@ use rune_core::cursor::Cursor;
 
 use crate::app::App;
 use crate::db::PendingOp;
-use crate::document::DocumentId;
+use crate::document::{DocumentId, Replica, ReplicaStep};
 
-/// Enqueues an `AppendEdit` replica of a batch this session just committed
-/// to `id`'s LOCAL in-memory journal (plan WP5.S3) — called immediately
-/// after `Journal::push` at `commands::edit::commit_edit_batch`'s one call
-/// site. A failure here (enqueue-time `Error`, never an async one — that
-/// lands via `Msg::Db` instead) only ever marks the whole store degraded
-/// (`app::on_store_failure`) — the buffer/journal mutation already
-/// happened and is never rolled back (plan decision 3). Every successful
-/// enqueue records `id` in `app.db_ops` (plan decision 6) so the eventual
-/// ack routes back to the right document. The writer thread derives this
-/// session's own local-position bookkeeping itself, from the ops it has
-/// already run (`rune_db::OpKind::MoveUndoPos`'s doc comment) — this side
-/// carries no local position of its own to track.
+/// THE sole chokepoint an edit batch's replica reaches after `Journal::
+/// push` at `commands::edit_core::apply_edit_batch_with_cursors`'s one call
+/// site (plan WP5.S3, issue #84): what happens next depends on `id`'s
+/// [`Replica`]. `Detached` (no store, a degraded one, or a document with no
+/// recovery journal) does nothing — same as always. `Binding` (a `Load`/
+/// `CreateScratch` op is still in flight) buffers the batch as a
+/// [`ReplicaStep`] instead of dropping it — [`crate::db_ack::install_doc_db`]
+/// replays every buffered step, in order, as a real `AppendEdit` the moment
+/// the ack installs the `DocDb`, restoring the 1:1 correspondence between
+/// local journal positions and durable `events` rows that silently dropping
+/// a pre-bind edit used to break. `Bound` enqueues immediately, exactly as
+/// before.
 pub fn append_edit(
     app: &mut App,
     id: DocumentId,
@@ -37,8 +37,34 @@ pub fn append_edit(
     }
     // `id` not (or no longer) live is a plain, correct no-op — see
     // `App::doc`'s docs.
+    let Some(doc) = app.doc_mut(id) else { return };
+    if let Replica::Binding { pending } = &mut doc.replica {
+        pending.push(ReplicaStep::new(edits, cursors_before, cursors_after));
+        return;
+    }
+    if !doc.replica.is_bound() {
+        return;
+    }
+    append_edit_bound(app, id, edits, cursors_before, cursors_after);
+}
+
+/// The actual `AppendEdit` enqueue, shared by [`append_edit`]'s `Bound`
+/// branch and [`replay_pending`]'s replay loop — a failure here (enqueue-
+/// time `Error`, never an async one — that lands via `Msg::Db` instead)
+/// only ever marks the whole store degraded (`materialize_ack::
+/// on_store_failure`) — the buffer/journal mutation already happened and is
+/// never rolled back. Every successful enqueue records `id` in
+/// `app.db_ops` (plan decision 6) so the eventual ack routes back to the
+/// right document.
+fn append_edit_bound(
+    app: &mut App,
+    id: DocumentId,
+    edits: &[AppliedEdit],
+    cursors_before: &[Cursor],
+    cursors_after: &[Cursor],
+) {
     let Some(doc) = app.doc(id) else { return };
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+    let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;
     };
     let Some(db) = app.db.as_ref() else { return };
@@ -53,27 +79,49 @@ pub fn append_edit(
     }
 }
 
+/// Replays every [`ReplicaStep`] a `Binding` window buffered, in order, as a
+/// real `AppendEdit` — called by [`crate::db_ack::install_doc_db`] right
+/// after it moves `id`'s `Replica` to `Bound`, so every buffered step reaches
+/// the store before this document is ever considered fully bound.
+pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<ReplicaStep>) {
+    for step in pending {
+        append_edit_bound(
+            app,
+            id,
+            &step.edits,
+            &step.cursors_before,
+            &step.cursors_after,
+        );
+    }
+}
+
 /// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
 /// locally (plan WP5.S3) — called immediately after `Journal::move_pos` at
 /// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
-/// position just committed (`Journal::move_pos`'s own argument) — carried
-/// to the writer thread AS-IS, never resolved to a durable seq here: only
-/// the writer thread, which has already executed every `AppendEdit` this
-/// session enqueued ahead of this op, can resolve it exactly (see
-/// `rune_db::OpKind::MoveUndoPos`'s doc comment).
+/// position just committed (`Journal::move_pos`'s own argument), minus
+/// `DocDb::undo_base` — the local journal counts the synthetic bridge
+/// `Step` an adopting hydration pushes, but the writer thread's own
+/// local-position numbering does not (`DocDb::undo_base`'s own doc
+/// comment) — carried to the writer thread AS-IS from there, never further
+/// resolved to a durable seq here: only the writer thread, which has
+/// already executed every `AppendEdit` this session enqueued ahead of this
+/// op, can resolve it exactly (see `rune_db::OpKind::MoveUndoPos`'s doc
+/// comment). This op is doc-scoped (`PendingOp::doc_scoped`): a resolution
+/// failure is a fact about ONE document's undo position, never a reason to
+/// degrade the whole store.
 pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
     let Some(doc) = app.doc(id) else { return };
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
-        return;
-    };
+    let Some(doc_db) = doc.doc_db() else { return };
+    let db_id = doc_db.db_id;
+    let resolved_pos = local_pos.saturating_sub(doc_db.undo_base as usize);
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.move_undo_pos(db_id, local_pos as i64);
+    let result = db.store.move_undo_pos(db_id, resolved_pos as i64);
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::new(id));
+            app.db_ops.insert(op_id, PendingOp::move_undo_pos(id));
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
@@ -136,6 +184,21 @@ fn load_document_inner(
         Ok(op_id) => {
             app.db_ops
                 .insert(op_id, PendingOp::load(id, issued_version, binding_only));
+            // A document with no binding yet starts buffering: every edit
+            // committed before this op's ack lands must reach the store
+            // eventually, not be dropped (issue #84). A re-baseline/hand-off
+            // `Load` (`load_document_best_effort`, or a `binding_only` call
+            // against an already-`Bound` document) targets a document that
+            // is already `Bound` or `Detached`-by-design, so this is a no-op
+            // for those — only a genuinely fresh, never-bound document
+            // transitions here.
+            if let Some(doc) = app.doc_mut(id)
+                && matches!(doc.replica, Replica::Detached)
+            {
+                doc.replica = Replica::Binding {
+                    pending: Vec::new(),
+                };
+            }
             true
         }
         Err(e) => {
@@ -171,7 +234,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
         return;
     }
     let Some(doc) = app.doc(id) else { return };
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+    let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;
     };
     if doc.file_path.is_none() {
@@ -205,11 +268,12 @@ pub fn probe(app: &mut App, id: DocumentId) {
 /// its own scratch row in the recovery store, closing the "an untitled
 /// draft minted mid-session has no journal" gap (plan WP0/WP3). Mirrors
 /// `load_document`'s enqueue-then-record shape: a degraded or absent store
-/// enqueues nothing, leaving `doc.db` `None` and the draft exactly as
-/// unpreserved as it is today — `App::is_preserved` already reports that
-/// honestly, so there is nothing else to gate here. The ack binds `doc.db`
-/// (`db_ack::handle_create_scratch_ack`); until it lands the draft is
-/// simply not yet preserved, same as any other in-flight recovery op.
+/// enqueues nothing, leaving the document `Detached` and the draft exactly
+/// as unpreserved as it is today — `App::is_preserved` already reports that
+/// honestly, so there is nothing else to gate here. The ack binds the
+/// document's `DocDb` (`db_ack::handle_create_scratch_ack`); until it lands
+/// the draft is simply not yet preserved, same as any other in-flight
+/// recovery op.
 pub fn create_scratch(app: &mut App, id: DocumentId) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -218,6 +282,13 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
     match db.store.create_scratch() {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::create_scratch(id));
+            if let Some(doc) = app.doc_mut(id)
+                && matches!(doc.replica, Replica::Detached)
+            {
+                doc.replica = Replica::Binding {
+                    pending: Vec::new(),
+                };
+            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }

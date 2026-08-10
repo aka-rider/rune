@@ -251,7 +251,7 @@ fn bootstrap(
     // app-wide store handle above.
     if let Some(doc_db) = db_bootstrap.doc_db {
         let db_id = doc_db.db_id;
-        app.active_doc_mut().db = Some(doc_db);
+        app.active_doc_mut().bind_doc_db(doc_db);
         // Joins `db_id`'s shared CAS baseline, seeded from this launch's own
         // `Load`/scratch-row observation, exactly like every later
         // `db_ack::handle_load_ack`/`handle_create_scratch_ack` does for a

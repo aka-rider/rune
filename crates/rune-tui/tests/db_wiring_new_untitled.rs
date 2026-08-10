@@ -44,7 +44,7 @@ fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
 
     let id = workspace::new_untitled_document(&mut app);
     assert!(
-        app.doc(id).unwrap().db.is_none(),
+        !app.doc(id).unwrap().is_store_bound(),
         "db stays None until the CreateScratch ack lands"
     );
 
@@ -65,7 +65,7 @@ fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
         &mut effects,
     );
 
-    let doc_db = app.doc(id).unwrap().db.as_ref().expect("db_id bound");
+    let doc_db = app.doc(id).unwrap().doc_db().expect("db_id bound");
     assert_eq!(doc_db.db_id, row_id);
     assert!(
         doc_db.bind_new,
@@ -87,7 +87,7 @@ fn new_untitled_document_with_no_store_leaves_db_none_and_enqueues_nothing() {
 
     let id = workspace::new_untitled_document(&mut app);
 
-    assert!(app.doc(id).unwrap().db.is_none());
+    assert!(!app.doc(id).unwrap().is_store_bound());
     assert!(
         app.db_ops.is_empty(),
         "no store means create_scratch must enqueue nothing"
@@ -107,10 +107,9 @@ fn new_untitled_document_with_a_degraded_store_leaves_db_none_and_enqueues_nothi
     let bridge = DbBridge::bootstrap();
     let mut app = app::App::new_untitled(Arc::clone(&vfs), None);
     app.db = Some(Db::new(store, bridge, true));
-
     let id = workspace::new_untitled_document(&mut app);
 
-    assert!(app.doc(id).unwrap().db.is_none());
+    assert!(!app.doc(id).unwrap().is_store_bound());
     assert!(
         app.db_ops.is_empty(),
         "a degraded store must skip the enqueue exactly like no store at all"
@@ -151,8 +150,7 @@ fn closing_the_only_document_registers_the_replacement_untitled_too() {
     let doc_db = app
         .doc(replacement)
         .unwrap()
-        .db
-        .as_ref()
+        .doc_db()
         .expect("replacement's own row bound");
     assert_eq!(doc_db.db_id, row_id);
 }
@@ -166,8 +164,9 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let (mut app, _bridge) = app_with_store("snapshot-row-id-not-scratch", vfs);
     let id = app.active;
-    app.doc_mut(id).unwrap().db = Some(DocDb::new(1, true, 0));
-
+    app.doc_mut(id)
+        .unwrap()
+        .set_doc_db_for_test(DocDb::new(1, true, 0));
     // A bare, unrouted RowId ack with no matching db_ops entry at all must
     // be a harmless no-op — the fire-and-forget shape any snapshot ack
     // whose entry was already popped elsewhere would take.
@@ -182,7 +181,7 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     );
 
     assert_eq!(
-        app.doc(id).unwrap().db.as_ref().unwrap().db_id,
+        app.doc(id).unwrap().doc_db().unwrap().db_id,
         1,
         "an unrelated RowId ack must never overwrite an existing DocDb"
     );

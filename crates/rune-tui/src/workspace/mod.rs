@@ -475,7 +475,7 @@ mod tests {
             app.active_doc().file_path.as_deref(),
             Some(Path::new("/root/a.md"))
         );
-        assert!(app.active_doc().db.is_none());
+        assert!(!app.active_doc().is_store_bound());
     }
 
     #[test]

@@ -70,7 +70,7 @@ fn opening_an_image_path_yields_a_read_only_image_document() {
     let doc = app.doc(id).expect("doc");
     assert!(doc.is_read_only(), "an image document must be read-only");
     assert!(
-        doc.db.is_none(),
+        !doc.is_store_bound(),
         "an image document has no recovery binding"
     );
     assert_eq!(doc.kind, DocumentKind::Image);

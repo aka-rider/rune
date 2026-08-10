@@ -512,14 +512,15 @@ impl App {
 
     /// Whether `doc` has a live, trustworthy recovery journal — the single
     /// predicate `pane::unpreserved_dirty_docs`'s quit/close guard scan
-    /// keys off. `doc.db.is_some()` alone is not enough: `degraded`
+    /// keys off. `doc.is_store_bound()` alone is not enough: `degraded`
     /// is sticky with no reopen path, so a mid-session store failure leaves
-    /// `doc.db` `Some` while every write it would enqueue silently never
-    /// lands — a document in that state has stopped journaling in every
-    /// way that matters, exactly as if it had no binding at all. `db: None`
-    /// (no store at all) also fails this, same as before.
+    /// the document `Bound` while every write it would enqueue silently
+    /// never lands — a document in that state has stopped journaling in
+    /// every way that matters, exactly as if it had no binding at all.
+    /// `Detached`/`Binding` (no store at all) also fails this, same as
+    /// before.
     pub fn is_preserved(&self, doc: &Document) -> bool {
-        doc.db.is_some() && self.db.as_ref().is_some_and(|db| !db.degraded)
+        doc.is_store_bound() && self.db.as_ref().is_some_and(|db| !db.degraded)
     }
 
     pub fn file_name(&self) -> &str {

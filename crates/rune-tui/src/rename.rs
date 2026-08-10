@@ -159,7 +159,7 @@ pub fn replace_allowed(app: &App) -> bool {
     let Some(doc_id) = collision_doc(app) else {
         return false;
     };
-    app.db.is_some() && app.doc(doc_id).is_some_and(|d| d.db.is_some())
+    app.db.is_some() && app.doc(doc_id).is_some_and(|d| d.is_store_bound())
 }
 
 fn collision_doc(app: &App) -> Option<DocumentId> {
@@ -258,7 +258,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     if app.db.is_some()
         && app
             .doc(id)
-            .and_then(|d| d.db.as_ref())
+            .and_then(|d| d.doc_db())
             .is_some_and(|d| d.bind_new)
     {
         crate::save::bind_new_now(app, id, to);
@@ -487,7 +487,7 @@ pub fn replace_confirmed(app: &mut App) {
     // Move to `Capturing` BEFORE clearing the modal: `clear_modal` calls
     // `on_prompt_dismissed`, which cancels a `Collision` — leaving the
     // order the other way round would immediately undo this confirmation.
-    let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref()).map(|d| d.db_id) else {
+    let Some(db_id) = app.doc(doc).and_then(|d| d.doc_db()).map(|d| d.db_id) else {
         return;
     };
     let Some(db) = app.db.as_ref() else { return };

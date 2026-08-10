@@ -98,7 +98,7 @@ fn a_dead_writer_racing_its_own_materialize_record_ack_still_resolves_the_save_a
 
     // The writer dies BEFORE that op's own reply would have arrived —
     // deterministically confirmed, never raced.
-    let db_id = app.doc(id).unwrap().db.as_ref().unwrap().db_id;
+    let db_id = app.doc(id).unwrap().doc_db().unwrap().db_id;
     {
         let store = &app.db.as_ref().unwrap().store;
         store.kill_writer_for_test().expect("enqueue the kill op");
@@ -132,7 +132,7 @@ fn a_dead_writer_racing_its_own_materialize_record_ack_still_resolves_the_save_a
          dirty just because its own re-baseline Load lost a race with a dead writer"
     );
     assert!(
-        app.doc(id).unwrap().db.is_none(),
+        !app.doc(id).unwrap().is_store_bound(),
         "B2: a binding the re-baseline Load could not refresh must be dropped, \
          never left standing with a stale expect_obs"
     );

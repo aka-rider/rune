@@ -17,11 +17,13 @@
 //! `scroll_to_cursor`, `sync`) as a second `impl Document` block, since none
 //! of that sequence depends on anything declared only in this file.
 
+mod replica;
 mod save_state;
 mod sync;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use replica::{Replica, ReplicaStep};
 pub(crate) use save_state::PublishParams;
 pub use save_state::{SavePhase, SaveTicket};
 use save_state::{SaveState, SaveTicketMint};
@@ -153,12 +155,9 @@ pub struct Document {
     /// for `render::draw` to blit. `None` only before this document's first
     /// sync.
     pub view: Option<ViewSnapshots>,
-    /// This document's handle onto the app-wide recovery store — `AppDb`
-    /// split into app-level `Db` and per-doc `DocDb`.
-    /// `None` for a document with no recovery journal — an ephemeral/help
-    /// document, or one opened before per-doc hydration exists (Assumption
-    /// A1).
-    pub db: Option<DocDb>,
+    /// This document's relationship to the app-wide recovery store —
+    /// `Detached`/`Binding`/`Bound`, see [`Replica`]'s own doc comment.
+    pub(crate) replica: Replica,
     /// Overrides `file_name`'s file-path-derived display name — the
     /// minimal seam a document with no `file_path` at all
     /// (and never will have one) needs to show a real name instead of the
@@ -337,6 +336,48 @@ impl Document {
     pub fn save_in_flight(&self) -> bool {
         !self.save.is_idle()
     }
+
+    /// This document's bound recovery-store row, or `None` while
+    /// `Detached`/`Binding` — the read half of [`Replica`], shared by every
+    /// call site that used to read the old `db: Option<DocDb>` field
+    /// directly.
+    pub fn doc_db(&self) -> Option<&DocDb> {
+        self.replica.doc_db()
+    }
+
+    pub fn doc_db_mut(&mut self) -> Option<&mut DocDb> {
+        self.replica.doc_db_mut()
+    }
+
+    /// Binds this document to `db` directly, `Bound`, dropping any
+    /// `Binding`-window pending steps — the synchronous bootstrap-time
+    /// counterpart to `db_ack::install_doc_db`'s async-ack install, for the
+    /// two call sites (`rune-cli`'s launch-time initial-document bind and
+    /// its scratch-draft adoption) that resolve their `DocDb` before the
+    /// runtime loop, and so its `Msg::Db` dispatch, even exists — there is
+    /// no in-flight op, and so no `Binding` window, to replay pending steps
+    /// out of.
+    pub fn bind_doc_db(&mut self, db: DocDb) {
+        self.replica = Replica::Bound(db);
+    }
+
+    /// Whether this document's row is installed and every edit reaches the
+    /// store directly — `false` for both `Detached` (no journal) and
+    /// `Binding` (a journal is coming, but not installed yet).
+    pub fn is_store_bound(&self) -> bool {
+        self.replica.is_bound()
+    }
+
+    /// Test-only fixture setter, gated behind the same `testgrid` self-
+    /// dependency trick `Cargo.toml`'s own doc comment describes: an
+    /// integration test in `tests/` links this crate WITHOUT `cfg(test)`,
+    /// so it can never reach `replica` (`pub(crate)`) directly the way this
+    /// crate's own unit tests do. Skips `Binding` entirely — a fixture
+    /// wants a document already `Bound`, never mid-round-trip.
+    #[cfg(any(test, feature = "testgrid"))]
+    pub fn set_doc_db_for_test(&mut self, db: DocDb) {
+        self.replica = Replica::Bound(db);
+    }
 }
 
 impl Document {
@@ -359,7 +400,7 @@ impl Document {
             next_save_ticket: SaveTicketMint::default(),
             is_dirty_cached: false,
             view: None,
-            db: None,
+            replica: Replica::Detached,
             display_name: None,
             catalogue: Vec::new(),
             kind: DocumentKind::Markdown,
