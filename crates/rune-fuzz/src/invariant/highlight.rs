@@ -37,15 +37,15 @@ pub fn hl_clamped(next: &Snapshot) -> Option<Violation> {
         let boundary =
             in_bounds && next.content.is_char_boundary(start) && next.content.is_char_boundary(end);
         if !ordered || !in_bounds || !boundary {
-            return Some(Violation {
-                id: "HL-CLAMPED",
-                message: format!(
+            return Some(Violation::new(
+                "HL-CLAMPED",
+                format!(
                     "stored highlight span {start}..{end} is out of bounds or off a char \
                      boundary in content of length {} ({:?})",
                     next.content.len(),
                     trunc(&next.content, 80)
                 ),
-            });
+            ));
         }
     }
     None
@@ -74,14 +74,14 @@ pub fn hl_stale_drop(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
         return None;
     }
     if prev.highlight_spans != next.highlight_spans {
-        return Some(Violation {
-            id: "HL-STALE-DROP",
-            message: format!(
+        return Some(Violation::new(
+            "HL-STALE-DROP",
+            format!(
                 "a Msg::Highlighted delivered at version {delivered_version} (live version {}) \
                  changed stored spans from {:?} to {:?} instead of leaving them untouched",
                 next.version, prev.highlight_spans, next.highlight_spans
             ),
-        });
+        ));
     }
     None
 }
@@ -106,9 +106,9 @@ pub fn hl_no_reflow(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<V
         || prev.journal_len != next.journal_len
         || prev.is_dirty != next.is_dirty
     {
-        return Some(Violation {
-            id: "HL-NO-REFLOW",
-            message: format!(
+        return Some(Violation::new(
+            "HL-NO-REFLOW",
+            format!(
                 "a Msg::Highlighted step changed document state: content {:?} -> {:?}, \
                  version {} -> {}, journal_pos {} -> {}, journal_len {} -> {}, \
                  is_dirty {} -> {}",
@@ -123,42 +123,42 @@ pub fn hl_no_reflow(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<V
                 prev.is_dirty,
                 next.is_dirty
             ),
-        });
+        ));
     }
     if prev.cells.is_empty() || next.cells.is_empty() {
         return None;
     }
     if prev.cells.len() != next.cells.len() {
-        return Some(Violation {
-            id: "HL-NO-REFLOW",
-            message: format!(
+        return Some(Violation::new(
+            "HL-NO-REFLOW",
+            format!(
                 "a Msg::Highlighted step changed the rendered row count: {} -> {}",
                 prev.cells.len(),
                 next.cells.len()
             ),
-        });
+        ));
     }
     for (r, (prow, nrow)) in prev.cells.iter().zip(next.cells.iter()).enumerate() {
         if prow.len() != nrow.len() {
-            return Some(Violation {
-                id: "HL-NO-REFLOW",
-                message: format!(
+            return Some(Violation::new(
+                "HL-NO-REFLOW",
+                format!(
                     "a Msg::Highlighted step changed row {r}'s cell count: {} -> {}",
                     prow.len(),
                     nrow.len()
                 ),
-            });
+            ));
         }
         for (c, (pc, nc)) in prow.iter().zip(nrow.iter()).enumerate() {
             if pc.buf_offset != nc.buf_offset || pc.width != nc.width {
-                return Some(Violation {
-                    id: "HL-NO-REFLOW",
-                    message: format!(
+                return Some(Violation::new(
+                    "HL-NO-REFLOW",
+                    format!(
                         "a Msg::Highlighted step changed cell ({r},{c})'s geometry: \
                          buf_offset {} -> {}, width {} -> {}",
                         pc.buf_offset, nc.buf_offset, pc.width, nc.width
                     ),
-                });
+                ));
             }
         }
     }

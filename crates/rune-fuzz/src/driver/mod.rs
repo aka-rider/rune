@@ -41,6 +41,7 @@ use store_ops::{diverge_disk, drain_all_db_ops, drain_all_pending_setup, open_st
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
 use crate::action::Action;
+use crate::guard;
 use crate::invariant::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
@@ -162,6 +163,28 @@ struct Outcome {
     merge_activated: bool,
 }
 
+/// `run`, with the whole session under the panic guard: a panic anywhere
+/// the per-window guards do not reach still comes back as a recorded
+/// `NO-PANIC` violation, so the caller can write its artifact bundle
+/// instead of unwinding past the one writer that exists.
+pub fn run_catching_panic(path: &str, content: &str, actions: &[Action]) -> RunResult {
+    match guard::catching_panic(|| run(path, content, actions)) {
+        Ok(result) => result,
+        Err(violation) => panicked_result(violation, content),
+    }
+}
+
+fn panicked_result(violation: Violation, content: &str) -> RunResult {
+    RunResult {
+        violation: Some(violation),
+        steps: 0,
+        final_content: content.to_string(),
+        final_snapshot: None,
+        final_ctx: None,
+        merge_activated: false,
+    }
+}
+
 /// Runs `actions` against a fresh session seeded with `content` at `path`
 /// (plan WP7.S2 — a session now opens an arbitrary path, so `DocumentKind`
 /// producer selection, including a code or plain document, is reachable
@@ -197,22 +220,35 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     // that was never routed through the store at all. Falls back to the
     // untitled draft only if the open itself refused (never observed with
     // this driver's own `Mem`-backed content, but `open_path` is fallible
-    // in general).
-    let seed_doc = workspace::open_path(&mut app, &path).unwrap_or(draft_doc);
-    drain_all_pending_setup(&mut app, &bridge);
+    // in general). Setup already reaches the display pipeline, so it runs
+    // under the same panic guard every later step gets.
+    let setup = guard::catching_panic(|| {
+        let seed_doc = workspace::open_path(&mut app, &path).unwrap_or(draft_doc);
+        drain_all_pending_setup(&mut app, &bridge);
 
-    app.active = seed_doc;
-    app.active_doc_mut().focused = true;
-    // Seeds through the same geometry chokepoint `Msg::Resize` uses (plan
-    // WP3.S9, gotcha 9) rather than a bare `viewport.set_size` — since
-    // WP3, `App::relayout` (called from `sync_view` below) overrides the
-    // viewport whenever `frame_width != 0`, so a driver that only set the
-    // viewport directly would have it silently overwritten on the very
-    // first `sync_view` call.
-    app.frame_width = 80;
-    app.frame_height = 24;
-    app.relayout();
-    app.sync_view();
+        app.active = seed_doc;
+        app.active_doc_mut().focused = true;
+        // Seeds through the same geometry chokepoint `Msg::Resize` uses
+        // (plan WP3.S9, gotcha 9) rather than a bare `viewport.set_size` —
+        // since WP3, `App::relayout` (called from `sync_view` below)
+        // overrides the viewport whenever `frame_width != 0`, so a driver
+        // that only set the viewport directly would have it silently
+        // overwritten on the very first `sync_view` call.
+        app.frame_width = 80;
+        app.frame_height = 24;
+        app.relayout();
+        app.sync_view();
+        seed_doc
+    });
+    let seed_doc = match setup {
+        Ok(seed_doc) => seed_doc,
+        Err(violation) => {
+            if let Some(db) = app.db.take() {
+                db.shutdown();
+            }
+            return panicked_result(violation, content);
+        }
+    };
 
     let mut state = State {
         app,
@@ -501,8 +537,8 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     }
 }
 
-// `key_step`, `discharge_pending_save`, `step_and_check`,
-// `run_update_catching_panic`, and `downcast_panic` moved into the
+// `key_step`, `discharge_pending_save`, `step_and_check`, and
+// `run_update_catching_panic` moved into the
 // `step_exec` submodule (500-line budget) — `run` above reaches
 // them through the unqualified imports above. `should_sample`,
 // `sync_idempotent_check`, `wrap_rt_check` and the end-of-session

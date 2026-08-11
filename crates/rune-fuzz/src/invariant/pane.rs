@@ -51,9 +51,9 @@ pub fn pane_no_bleed(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
     if !content_changed && !version_changed && !journal_changed {
         return None;
     }
-    Some(Violation {
-        id: "PANE-NO-BLEED",
-        message: format!(
+    Some(Violation::new(
+        "PANE-NO-BLEED",
+        format!(
             "a key aimed at {:?} (no modal up, active document unchanged) mutated the \
              document: content {:?} -> {:?}, version {} -> {}, journal_len {} -> {}",
             prev.focus,
@@ -64,7 +64,7 @@ pub fn pane_no_bleed(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
             prev.journal_len,
             next.journal_len
         ),
-    })
+    ))
 }
 
 /// True when `inner` lies entirely inside `outer`. A zero-area `inner` is
@@ -146,20 +146,20 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
 
     for (name, rect) in &rects {
         if !within(*rect, frame) {
-            return Some(Violation {
-                id: "LAYOUT-FITS",
-                message: format!("{name} {rect:?} does not lie inside the frame {frame:?}"),
-            });
+            return Some(Violation::new(
+                "LAYOUT-FITS",
+                format!("{name} {rect:?} does not lie inside the frame {frame:?}"),
+            ));
         }
     }
 
     if let Some(left_block) = geo.left_block
         && overlaps(left_block, geo.center)
     {
-        return Some(Violation {
-            id: "LAYOUT-FITS",
-            message: format!("left_block {left_block:?} overlaps center {:?}", geo.center),
-        });
+        return Some(Violation::new(
+            "LAYOUT-FITS",
+            format!("left_block {left_block:?} overlaps center {:?}", geo.center),
+        ));
     }
 
     // The three left-column sections, `tabs_divider` only when it exists
@@ -176,31 +176,29 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     for (i, (name_a, rect_a)) in column_rects.iter().enumerate() {
         for (name_b, rect_b) in column_rects.iter().skip(i + 1) {
             if overlaps(*rect_a, *rect_b) {
-                return Some(Violation {
-                    id: "LAYOUT-FITS",
-                    message: format!(
+                return Some(Violation::new(
+                    "LAYOUT-FITS",
+                    format!(
                         "{name_a} {rect_a:?} overlaps {name_b} {rect_b:?} inside the left column"
                     ),
-                });
+                ));
             }
         }
         if let Some(left_block) = geo.left_block
             && !within(*rect_a, left_block)
         {
-            return Some(Violation {
-                id: "LAYOUT-FITS",
-                message: format!(
-                    "{name_a} {rect_a:?} does not lie inside left_block {left_block:?}"
-                ),
-            });
+            return Some(Violation::new(
+                "LAYOUT-FITS",
+                format!("{name_a} {rect_a:?} does not lie inside left_block {left_block:?}"),
+            ));
         }
     }
 
     if geo.footer.intersects(geo.main) {
-        return Some(Violation {
-            id: "LAYOUT-FITS",
-            message: format!("footer {:?} overlaps main {:?}", geo.footer, geo.main),
-        });
+        return Some(Violation::new(
+            "LAYOUT-FITS",
+            format!("footer {:?} overlaps main {:?}", geo.footer, geo.main),
+        ));
     }
 
     None
@@ -232,14 +230,14 @@ pub fn layout_tiles(next: &Snapshot) -> Option<Violation> {
         let in_left = left_span.is_some_and(|(lo, hi)| col >= lo && col < hi);
         let in_center = col >= center_span.0 && col < center_span.1;
         if !in_left && !in_center {
-            return Some(Violation {
-                id: "LAYOUT-TILES",
-                message: format!(
+            return Some(Violation::new(
+                "LAYOUT-TILES",
+                format!(
                     "frame column {col} inside main {main:?} is covered by neither \
                      left_block {:?} nor center {:?}",
                     geo.left_block, geo.center
                 ),
-            });
+            ));
         }
     }
 

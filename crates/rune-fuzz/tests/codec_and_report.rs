@@ -61,12 +61,12 @@ fn report_writer_produces_a_replayable_bundle() {
         .unwrap_or_else(|e| panic!("repros/tripwire-clean.rune failed to decode: {e}"));
 
     let result = driver::run(&path, &content, &actions);
-    let violation = Violation {
-        id: "TRIPWIRE-PROBE",
-        message: "synthetic violation for report::write's own regression test \
+    let violation = Violation::new(
+        "TRIPWIRE-PROBE",
+        "synthetic violation for report::write's own regression test \
                   (report_writer_produces_a_replayable_bundle); not a real catch"
             .to_string(),
-    };
+    );
 
     let scratch = std::env::temp_dir().join(format!(
         "rune-fuzz-codec-and-report-test-{}",

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use rune_tui::render::Cell;
 
 use crate::action::Action;
-use crate::driver::RunResult;
+use crate::driver::{self, RunResult};
 use crate::hash::fnv1a32;
 use crate::invariant::Violation;
 use crate::script;
@@ -47,12 +47,35 @@ pub fn write(
     Ok(dir)
 }
 
+/// Re-runs the failing case under the panic guard and writes its bundle —
+/// the one path from "this input fails" to an artifact on disk, so a panic
+/// during the re-run still produces the bundle instead of unwinding past
+/// the write. `fallback` names the violation to record when the re-run
+/// itself reports none.
+pub fn capture(
+    dir_root: &Path,
+    path: &str,
+    content: &str,
+    actions: &[Action],
+    fallback: Violation,
+) -> io::Result<(Violation, PathBuf)> {
+    let result = driver::run_catching_panic(path, content, actions);
+    let violation = result.violation.clone().unwrap_or(fallback);
+    let dir = write(dir_root, &violation, path, content, actions, &result)?;
+    Ok((violation, dir))
+}
+
 fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "invariant: {}", v.id);
     let _ = writeln!(out, "message: {}", v.message);
     let _ = writeln!(out, "steps: {}", result.steps);
     let _ = writeln!(out, "seed content: {content:?}");
+    if let Some(site) = &v.site {
+        let _ = writeln!(out, "panic location: {}", site.location);
+        let _ = writeln!(out, "panic backtrace:");
+        let _ = writeln!(out, "{}", site.backtrace);
+    }
     let _ = writeln!(out);
 
     match &result.final_snapshot {
@@ -158,10 +181,10 @@ mod tests {
         let path = "/fuzz/doc.md";
         let content = "hello";
         let actions = vec![Action::Type("world".to_string())];
-        let violation = Violation {
-            id: "TEST-PROBE",
-            message: "synthetic violation for report::write's own test".to_string(),
-        };
+        let violation = Violation::new(
+            "TEST-PROBE",
+            "synthetic violation for report::write's own test".to_string(),
+        );
         let result = driver::run(path, content, &actions);
 
         let guard = ScratchDir::new("report-test");

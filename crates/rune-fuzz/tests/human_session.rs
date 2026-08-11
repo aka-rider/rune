@@ -52,9 +52,9 @@ fn human_session() {
             wal::arm(Path::new("artifacts"), &path, &content, &actions).unwrap_or_else(|e| {
                 panic!("wal::arm failed (environment fault, not a fuzz finding): {e}")
             });
-        match driver::run(&path, &content, &actions).violation {
+        match driver::run_catching_panic(&path, &content, &actions).violation {
             None => Ok(()),
-            Some(v) => Err(TestCaseError::fail(format!("{}: {}", v.id, v.message))),
+            Some(v) => Err(TestCaseError::fail(v.to_string())),
         }
     });
 
@@ -66,24 +66,16 @@ fn human_session() {
             // context proptest's own shrink loop discarded. The driver is
             // deterministic (tests/tripwire.rs's driver_is_deterministic),
             // so this reproduces the exact same violation.
-            let result = driver::run(&path, &content, &actions);
-            let v = result.violation.clone().unwrap_or(Violation {
-                id: "UNKNOWN",
-                message: why.message().to_string(),
-            });
-            let dir = report::write(
+            let (v, dir) = report::capture(
                 Path::new("artifacts"),
-                &v,
                 &path,
                 &content,
                 &actions,
-                &result,
+                Violation::new("UNKNOWN", why.message().to_string()),
             )
             .expect("failed to write fuzz artifact");
             panic!(
-                "{}: {}\nartifact: {}\nscript:\n{}\n{}",
-                v.id,
-                v.message,
+                "{v}\nartifact: {}\nscript:\n{}\n{}",
                 dir.display(),
                 script::encode(&path, &content, &actions),
                 runner

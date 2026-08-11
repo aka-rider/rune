@@ -19,9 +19,9 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
             || !snap.content.is_char_boundary(c.position)
             || !snap.content.is_char_boundary(c.anchor)
         {
-            return Some(Violation {
-                id: "CUR-BOUNDS",
-                message: format!(
+            return Some(Violation::new(
+                "CUR-BOUNDS",
+                format!(
                     "cursor id={} position={} anchor={} content.len()={} content={:?}",
                     c.id,
                     c.position,
@@ -29,7 +29,7 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
                     snap.content.len(),
                     trunc(&snap.content, 80)
                 ),
-            });
+            ));
         }
     }
     None
@@ -59,9 +59,9 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
                 a.selection_end() > b.selection_start()
             };
             if violates {
-                return Some(Violation {
-                    id: "CUR-ORDER",
-                    message: format!(
+                return Some(Violation::new(
+                    "CUR-ORDER",
+                    format!(
                         "cursor id={} ends at {} but cursor id={} starts at {}{}",
                         a.id,
                         a.selection_end(),
@@ -73,7 +73,7 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
                             ""
                         }
                     ),
-                });
+                ));
             }
         }
     }
@@ -87,26 +87,23 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
 /// isolation.
 pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
     if snap.cursors.is_empty() {
-        return Some(Violation {
-            id: "CUR-ID",
-            message: "cursor set is empty".to_string(),
-        });
+        return Some(Violation::new("CUR-ID", "cursor set is empty".to_string()));
     }
     for c in &snap.cursors {
         if c.id == 0 {
-            return Some(Violation {
-                id: "CUR-ID",
-                message: format!("cursor with id=0 at position={}", c.position),
-            });
+            return Some(Violation::new(
+                "CUR-ID",
+                format!("cursor with id=0 at position={}", c.position),
+            ));
         }
     }
     let mut ids: Vec<u32> = snap.cursors.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     if ids.windows(2).any(|w| matches!(w, [a, b] if a == b)) {
-        return Some(Violation {
-            id: "CUR-ID",
-            message: format!("duplicate cursor id among {ids:?}"),
-        });
+        return Some(Violation::new(
+            "CUR-ID",
+            format!("duplicate cursor id among {ids:?}"),
+        ));
     }
     None
 }
@@ -132,12 +129,10 @@ pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         for cell in row {
             if cell.style.add_modifier.contains(Modifier::REVERSED) {
-                return Some(Violation {
-                    id: "CUR-NO-CARET-HIDDEN",
-                    message: format!(
-                        "a REVERSED cell rendered while caret_visible=false: cell={cell:?}"
-                    ),
-                });
+                return Some(Violation::new(
+                    "CUR-NO-CARET-HIDDEN",
+                    format!("a REVERSED cell rendered while caret_visible=false: cell={cell:?}"),
+                ));
             }
         }
     }

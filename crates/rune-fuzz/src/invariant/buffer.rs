@@ -33,32 +33,32 @@ fn expected_line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
 pub fn buf_line_index(snap: &Snapshot) -> Option<Violation> {
     let (expected_starts, expected_ends) = expected_line_bounds(&snap.content);
     if snap.line_starts != expected_starts {
-        return Some(Violation {
-            id: "BUF-LINE-INDEX",
-            message: format!(
+        return Some(Violation::new(
+            "BUF-LINE-INDEX",
+            format!(
                 "line_starts={:?} but content's `\\n` positions imply {:?}",
                 snap.line_starts, expected_starts
             ),
-        });
+        ));
     }
     if snap.line_ends != expected_ends {
-        return Some(Violation {
-            id: "BUF-LINE-INDEX",
-            message: format!(
+        return Some(Violation::new(
+            "BUF-LINE-INDEX",
+            format!(
                 "line_ends={:?} but content's `\\n` positions imply {:?}",
                 snap.line_ends, expected_ends
             ),
-        });
+        ));
     }
     if snap.line_count != expected_starts.len() {
-        return Some(Violation {
-            id: "BUF-LINE-INDEX",
-            message: format!(
+        return Some(Violation::new(
+            "BUF-LINE-INDEX",
+            format!(
                 "line_count={} but content implies {} lines",
                 snap.line_count,
                 expected_starts.len()
             ),
-        });
+        ));
     }
     None
 }
@@ -77,19 +77,19 @@ pub fn version_monotone(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
         return None;
     }
     if next.version < prev.version {
-        return Some(Violation {
-            id: "VERSION-MONOTONE",
-            message: format!("version regressed: {} -> {}", prev.version, next.version),
-        });
+        return Some(Violation::new(
+            "VERSION-MONOTONE",
+            format!("version regressed: {} -> {}", prev.version, next.version),
+        ));
     }
     if next.saved_version < prev.saved_version {
-        return Some(Violation {
-            id: "VERSION-MONOTONE",
-            message: format!(
+        return Some(Violation::new(
+            "VERSION-MONOTONE",
+            format!(
                 "saved_version regressed: {} -> {}",
                 prev.saved_version, next.saved_version
             ),
-        });
+        ));
     }
     None
 }

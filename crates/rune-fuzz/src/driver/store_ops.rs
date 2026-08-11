@@ -14,9 +14,10 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::Vfs;
 
+use crate::guard;
 use crate::snapshot::Snapshot;
 
-use super::step_exec::{drain_one_db_op, run_direct_catching_panic, step_and_check};
+use super::step_exec::{drain_one_db_op, step_and_check};
 use super::{Outcome, State};
 
 /// Blocks on `bridge` for the recovery-store reply completing `op_id` — the
@@ -99,8 +100,8 @@ pub(super) fn drain_all_db_ops(
 /// if one is still open, else whichever other document is) followed by a
 /// switch back, each funnelling through `workspace::switch_to`'s own probe
 /// enqueue. Neither `switch_to` call goes through `update`, so both run
-/// under `run_direct_catching_panic`'s own guard. Returns `true` when a
-/// panic stopped the session.
+/// under the crate's panic guard. Returns `true` when a panic stopped the
+/// session.
 pub(super) fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     state.rediverge.note_external_write();
     state.diverge_step += 1;
@@ -127,12 +128,13 @@ pub(super) fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut
             .unwrap_or(seed_doc)
     };
 
-    let violation = run_direct_catching_panic(&mut state.app, move |app| {
+    let violation = guard::catching_panic(|| {
         if switch_target != seed_doc {
-            workspace::switch_to(app, switch_target);
+            workspace::switch_to(&mut state.app, switch_target);
         }
-        workspace::switch_to(app, seed_doc);
-    });
+        workspace::switch_to(&mut state.app, seed_doc);
+    })
+    .err();
     if let Some(v) = violation {
         outcome.violation = Some(v);
         outcome.final_snapshot = Some(prev.clone());

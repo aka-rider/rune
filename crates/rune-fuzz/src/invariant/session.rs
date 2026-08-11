@@ -66,14 +66,14 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
                     if matches!(input.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'s'))
             );
         if !armed_by_save_key && !armed_by_guard_save_key {
-            return Some(Violation {
-                id: "SAVE-INFLIGHT-SM",
-                message: format!(
+            return Some(Violation::new(
+                "SAVE-INFLIGHT-SM",
+                format!(
                     "save_in_flight went false->true on {:?}, not a Command::Save key \
                      (and no modal was up for a Guard save key either)",
                     ctx.msg
                 ),
-            });
+            ));
         }
     }
     if prev.save_in_flight && !next.save_in_flight {
@@ -107,15 +107,15 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
             _ => false,
         };
         if !matches!(ctx.msg, MsgTag::SaveDone { .. }) && !store_backed_completion {
-            return Some(Violation {
-                id: "SAVE-INFLIGHT-SM",
-                message: format!(
+            return Some(Violation::new(
+                "SAVE-INFLIGHT-SM",
+                format!(
                     "save_in_flight went true->false on {:?}, not a SaveDone, a \
                      MaterializeVfsDone/Db ack naming this document, or a Db ack that posted a \
                      store-failure message",
                     ctx.msg
                 ),
-            });
+            ));
         }
     }
     None
@@ -229,16 +229,16 @@ pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vio
     if armed_chord || guard_discard || quit_intent_retirement_legitimate {
         return None;
     }
-    Some(Violation {
-        id: "QUIT-CHORD",
-        message: format!(
+    Some(Violation::new(
+        "QUIT-CHORD",
+        format!(
             "should_quit went false->true on {:?} with pending_quit={:?}, guard={:?}, \
              quit_intent_pending={:?} (checked: armed chord, DirtyQuit [D]iscard, quit-save \
              fan-out retirement via SaveDone ack / save_in_flight drop / document closed out \
              from under it)",
             ctx.msg, prev.pending_quit, prev.guard, prev.quit_intent_pending
         ),
-    })
+    ))
 }
 
 /// `CONFIRM-GEN` — on `ConfirmTimeout{generation}`, `pending_quit` clears
@@ -258,24 +258,24 @@ pub fn confirm_gen(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vi
     let unchanged = prev.pending_quit == next.pending_quit;
 
     if should_clear && !cleared {
-        return Some(Violation {
-            id: "CONFIRM-GEN",
-            message: format!(
+        return Some(Violation::new(
+            "CONFIRM-GEN",
+            format!(
                 "ConfirmTimeout{{generation:{generation}}} matched the armed generation but \
                  pending_quit was not cleared (prev={:?} next={:?})",
                 prev.pending_quit, next.pending_quit
             ),
-        });
+        ));
     }
     if !should_clear && !unchanged {
-        return Some(Violation {
-            id: "CONFIRM-GEN",
-            message: format!(
+        return Some(Violation::new(
+            "CONFIRM-GEN",
+            format!(
                 "ConfirmTimeout{{generation:{generation}}} did not match the armed generation \
                  {:?} but pending_quit changed to {:?}",
                 prev.pending_quit, next.pending_quit
             ),
-        });
+        ));
     }
     None
 }
@@ -315,14 +315,14 @@ pub fn guard_answered(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
         && next.status == prev.status
         && next.message_posts == prev.message_posts;
     if nothing_changed {
-        return Some(Violation {
-            id: "GUARD-ANSWERED",
-            message: format!(
+        return Some(Violation::new(
+            "GUARD-ANSWERED",
+            format!(
                 "answering the DirtyQuit guard on {:?} left guard/should_quit/quit_intent_pending/\
                  status all unchanged (guard={:?}, status={:?})",
                 ctx.msg, prev.guard, prev.status
             ),
-        });
+        ));
     }
     None
 }
