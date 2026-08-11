@@ -50,6 +50,7 @@ fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
 ///    fixpoint claim, independent of whatever the display pipeline memo
 ///    does.
 pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
+    crate::fault::fire_before_sync_idempotent_check();
     let production_rows = build_rows_or_empty(app);
     let rebuilt_rows = {
         let doc = app.active_doc();

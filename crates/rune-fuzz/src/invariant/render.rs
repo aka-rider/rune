@@ -32,15 +32,15 @@ pub fn sync_idempotent_rebuild(
     rebuilt_rows: &[Vec<Cell>],
 ) -> Option<Violation> {
     if production_rows != rebuilt_rows {
-        return Some(Violation {
-            id: "SYNC-IDEMPOTENT",
-            message: format!(
+        return Some(Violation::new(
+            "SYNC-IDEMPOTENT",
+            format!(
                 "a cache-bypassed rebuild from the same synced inputs produced different rows \
                  than the memoized production render ({} rows production, {} rows rebuilt)",
                 production_rows.len(),
                 rebuilt_rows.len()
             ),
-        });
+        ));
     }
     None
 }
@@ -64,24 +64,24 @@ pub fn sync_idempotent(
     scroll_after: usize,
 ) -> Option<Violation> {
     if rows_before != rows_after {
-        return Some(Violation {
-            id: "SYNC-IDEMPOTENT",
-            message: format!(
+        return Some(Violation::new(
+            "SYNC-IDEMPOTENT",
+            format!(
                 "a second sync_view() with no intervening message changed the rendered rows \
                  ({} rows before, {} rows after)",
                 rows_before.len(),
                 rows_after.len()
             ),
-        });
+        ));
     }
     if scroll_before != scroll_after {
-        return Some(Violation {
-            id: "SYNC-IDEMPOTENT",
-            message: format!(
+        return Some(Violation::new(
+            "SYNC-IDEMPOTENT",
+            format!(
                 "a second sync_view() with no intervening message moved scroll_row: \
                  {scroll_before} -> {scroll_after}"
             ),
-        });
+        ));
     }
     None
 }
@@ -100,30 +100,30 @@ pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
                 continue;
             }
             if cell.buf_offset < 0 {
-                return Some(Violation {
-                    id: "CELL-OFFSET",
-                    message: format!(
+                return Some(Violation::new(
+                    "CELL-OFFSET",
+                    format!(
                         "cell buf_offset={} is negative but not the -1 sentinel",
                         cell.buf_offset
                     ),
-                });
+                ));
             }
             let offset = cell.buf_offset as usize;
             if offset > snap.content.len() || !snap.content.is_char_boundary(offset) {
-                return Some(Violation {
-                    id: "CELL-OFFSET",
-                    message: format!(
+                return Some(Violation::new(
+                    "CELL-OFFSET",
+                    format!(
                         "cell buf_offset={offset} is out of bounds or not a char boundary \
                          (content.len()={})",
                         snap.content.len()
                     ),
-                });
+                ));
             }
             if cell.width == 0 {
-                return Some(Violation {
-                    id: "CELL-OFFSET",
-                    message: format!("cell at buf_offset={offset} has width=0"),
-                });
+                return Some(Violation::new(
+                    "CELL-OFFSET",
+                    format!("cell at buf_offset={offset} has width=0"),
+                ));
             }
         }
     }
@@ -141,13 +141,13 @@ pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         for cell in row {
             if cell.text == "\n" || cell.text == "\r" {
-                return Some(Violation {
-                    id: "CELL-NO-EOL",
-                    message: format!(
+                return Some(Violation::new(
+                    "CELL-NO-EOL",
+                    format!(
                         "cell carries an EOL char {:?} at buf_offset={}",
                         cell.text, cell.buf_offset
                     ),
-                });
+                ));
             }
         }
     }
@@ -169,13 +169,13 @@ pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
             if let Some(prev_offset) = last
                 && cell.buf_offset < prev_offset
             {
-                return Some(Violation {
-                    id: "CELL-ORDER",
-                    message: format!(
+                return Some(Violation::new(
+                    "CELL-ORDER",
+                    format!(
                         "row cell buf_offsets go backwards: {prev_offset} then {}",
                         cell.buf_offset
                     ),
-                });
+                ));
             }
             last = Some(cell.buf_offset);
         }
@@ -214,13 +214,13 @@ pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
         let width: usize = row.iter().map(|c| c.width as usize).sum();
         match first_of_group.get(&group) {
             Some(&(first_row, first_width)) if first_width != width => {
-                return Some(Violation {
-                    id: "TABLE-ROW-WIDTH",
-                    message: format!(
+                return Some(Violation::new(
+                    "TABLE-ROW-WIDTH",
+                    format!(
                         "table_group {group}: row {i} has summed width {width}, but row \
                          {first_row} (same group) has width {first_width}"
                     ),
-                });
+                ));
             }
             Some(_) => {}
             None => {
@@ -248,14 +248,14 @@ pub fn table_synthetic_decorative(snap: &Snapshot) -> Option<Violation> {
         };
         for cell in row {
             if cell.buf_offset != -1 {
-                return Some(Violation {
-                    id: "TABLE-SYNTHETIC-DECORATIVE",
-                    message: format!(
+                return Some(Violation::new(
+                    "TABLE-SYNTHETIC-DECORATIVE",
+                    format!(
                         "synthetic row {i} has a cell with buf_offset={} \
                          (must be -1, decorative only)",
                         cell.buf_offset
                     ),
-                });
+                ));
             }
         }
     }

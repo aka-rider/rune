@@ -14,8 +14,10 @@
 //! layer's own crate carries its own tests.
 //!
 //! - `NO-PANIC` — the driver caught an unwind (a `debug_assert!` tripping,
-//!   or any other panic) while settling a message. Constructed directly by
-//!   `driver.rs`, not a checker function.
+//!   or any other panic) anywhere in a session: settling a message, running
+//!   the display-pipeline checkers, or setting the session up. Constructed
+//!   by `guard`, which also names the file, line, and backtrace it came
+//!   from — not a checker function.
 //! - `SAVE-SINGLE-FLIGHT` — a second in-flight save `Cmd` never arrives
 //!   while one is already pending (G9: at most one save `Cmd` is ever
 //!   outstanding). Also constructed directly by `driver.rs`.
@@ -85,7 +87,9 @@
 //!   decision 1).
 pub mod action;
 pub mod driver;
+pub mod fault;
 pub mod generate;
+pub mod guard;
 mod hash;
 pub mod invariant;
 pub mod report;

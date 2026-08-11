@@ -74,14 +74,14 @@ pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
     if next.content == expected {
         return None;
     }
-    Some(Violation {
-        id: "PASTE-VERBATIM",
-        message: format!(
+    Some(Violation::new(
+        "PASTE-VERBATIM",
+        format!(
             "pasted text not substituted verbatim at [{start}, {end}): expected={:?} got={:?}",
             trunc(&expected, 120),
             trunc(&next.content, 120)
         ),
-    })
+    ))
 }
 
 /// Decodes an OSC 52 "set clipboard" sequence
@@ -152,12 +152,12 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if found {
         return None;
     }
-    Some(Violation {
-        id: "CLIP-OSC52",
-        message: format!(
+    Some(Violation::new(
+        "CLIP-OSC52",
+        format!(
             "no OSC 52 raw chunk decoded to the selected text {:?}; raw chunks emitted: {}",
             trunc(expected, 80),
             ctx.raw.len()
         ),
-    })
+    ))
 }

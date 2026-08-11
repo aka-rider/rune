@@ -96,12 +96,12 @@ pub fn wrap_rt(content: &str, wrap: &WrapSnapshot, line_lens: &[usize]) -> Optio
             let wp = wrap.syntax_to_wrap(sp);
             let sp2 = wrap.wrap_to_syntax(content, wp);
             if sp2 != sp {
-                return Some(Violation {
-                    id: "WRAP-RT",
-                    message: format!(
+                return Some(Violation::new(
+                    "WRAP-RT",
+                    format!(
                         "wrap_to_syntax(syntax_to_wrap({sp:?})) = {sp2:?}, want {sp:?} (via {wp:?})"
                     ),
-                });
+                ));
             }
         }
     }

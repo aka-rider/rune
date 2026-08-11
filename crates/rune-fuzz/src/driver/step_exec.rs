@@ -13,6 +13,7 @@ use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::Vfs;
 
 use crate::action::{HighlightVersion, highlight_spans_from_raw};
+use crate::guard;
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
@@ -178,27 +179,6 @@ pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(M
     Some((Msg::Db(evt), MsgTag::Db { op_id, doc }))
 }
 
-/// Runs an arbitrary direct `App` mutation (one that doesn't go through
-/// `update`, e.g. `workspace::switch_to`'s own away-and-back reprobe dance)
-/// under the same `catch_unwind` guard `run_update_catching_panic` gives
-/// every `Msg` delivery — without this, a debug assertion or genuine panic
-/// inside `switch_to` would abort the whole fuzz run instead of surfacing
-/// as an ordinary `NO-PANIC` violation. Returns the violation directly
-/// rather than the raw panic payload, mirroring `step_and_check`'s own
-/// `NO-PANIC` construction.
-pub(super) fn run_direct_catching_panic(
-    app: &mut App,
-    f: impl FnOnce(&mut App) + std::panic::UnwindSafe,
-) -> Option<Violation> {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(app))) {
-        Ok(()) => None,
-        Err(payload) => Some(Violation {
-            id: "NO-PANIC",
-            message: downcast_panic(payload),
-        }),
-    }
-}
-
 /// Runs the one deferred trash `Cmd`, if any, returning the `Msg` it
 /// produced together with its tag (plan WP3.S3) — the same shape as
 /// `discharge_pending_rename`, closing the identical driver gap for
@@ -244,11 +224,8 @@ pub(super) fn step_and_check(
 
     let effects = match run_update_catching_panic(&mut state.app, msg) {
         Ok(effects) => effects,
-        Err(payload) => {
-            outcome.violation = Some(Violation {
-                id: "NO-PANIC",
-                message: downcast_panic(payload),
-            });
+        Err(violation) => {
+            outcome.violation = Some(violation);
             outcome.final_snapshot = Some(prev.clone());
             outcome.final_ctx = None;
             return true;
@@ -274,12 +251,12 @@ pub(super) fn step_and_check(
         match cmd.kind() {
             CmdKind::Save => {
                 if state.pending_save.is_some() {
-                    outcome.violation = Some(Violation {
-                        id: "SAVE-SINGLE-FLIGHT",
-                        message: "a second save Cmd arrived while one was already pending \
+                    outcome.violation = Some(Violation::new(
+                        "SAVE-SINGLE-FLIGHT",
+                        "a second save Cmd arrived while one was already pending \
                                   (G9: at most one save Cmd may ever be outstanding)"
                             .to_string(),
-                    });
+                    ));
                     outcome.final_snapshot = Some(prev.clone());
                     outcome.final_ctx = None;
                     return true;
@@ -409,8 +386,13 @@ pub(super) fn step_and_check(
     // sampled steps (G19: the display pipeline dominates debug-build
     // runtime).
     if violation.is_none() && sampled {
-        violation = checks::sync_idempotent_check(&mut state.app)
-            .or_else(|| checks::wrap_rt_check(&state.app, next.line_count));
+        violation = match guard::catching_panic(|| {
+            checks::sync_idempotent_check(&mut state.app)
+                .or_else(|| checks::wrap_rt_check(&state.app, next.line_count))
+        }) {
+            Ok(checked) => checked,
+            Err(panicked) => Some(panicked),
+        };
     }
     *prev = next;
 
@@ -426,67 +408,16 @@ pub(super) fn step_and_check(
     false
 }
 
-/// Wraps one `update` + `sync_view` call in `catch_unwind` — G13's three
-/// live `debug_assert!`s (buffer line-starts, undo `reapply`, render cell-
-/// map length) fire in this debug build, and any of them (or a genuine
-/// panic anywhere in the pipeline) must produce a `NO-PANIC` violation
-/// rather than aborting the whole fuzz run.
-fn run_update_catching_panic(
-    app: &mut App,
-    msg: Msg,
-) -> Result<Effects, Box<dyn std::any::Any + Send>> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+/// Wraps one `update` + `sync_view` call — G13's three live
+/// `debug_assert!`s (buffer line-starts, undo `reapply`, render cell-map
+/// length) fire in this debug build, and any of them (or a genuine panic
+/// anywhere in the pipeline) must produce a `NO-PANIC` violation rather
+/// than aborting the whole fuzz run.
+fn run_update_catching_panic(app: &mut App, msg: Msg) -> Result<Effects, Violation> {
+    guard::catching_panic(move || {
         let mut effects = Effects::default();
         app::update(app, msg, &mut effects);
         app.sync_view();
         effects
-    }))
-}
-
-/// The same downcast ladder proptest itself uses to render a caught panic's
-/// payload.
-fn downcast_panic(payload: Box<dyn std::any::Any + Send>) -> String {
-    let payload = match payload.downcast::<&str>() {
-        Ok(s) => return (*s).to_string(),
-        Err(payload) => payload,
-    };
-    match payload.downcast::<String>() {
-        Ok(s) => *s,
-        Err(_) => "<unknown panic value>".to_string(),
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic)]
-mod tests {
-    use std::sync::Arc;
-
-    use rune_core::buffer::Buffer;
-    use rune_tui::app::App;
-    use rune_vfs::{Mem, Vfs};
-
-    use super::run_direct_catching_panic;
-
-    fn test_app() -> App {
-        let mem = Arc::new(Mem::new());
-        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
-        App::new(Buffer::new(""), None, vfs, None)
-    }
-
-    #[test]
-    fn formatted_panic_message_survives_violation_rendering() {
-        let mut app = test_app();
-        let violation =
-            run_direct_catching_panic(&mut app, |_| panic!("caught formatted panic {}", 42))
-                .expect("the closure must panic");
-        assert_eq!(violation.message, "caught formatted panic 42");
-    }
-
-    #[test]
-    fn literal_panic_message_survives_violation_rendering() {
-        let mut app = test_app();
-        let violation = run_direct_catching_panic(&mut app, |_| panic!("caught literal panic"))
-            .expect("the closure must panic");
-        assert_eq!(violation.message, "caught literal panic");
-    }
+    })
 }

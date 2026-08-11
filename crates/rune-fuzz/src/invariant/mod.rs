@@ -75,14 +75,47 @@ pub use session::{confirm_gen, guard_answered, quit_chord, save_inflight_sm};
 pub use undo::{redo_clear, redo_total, undo_total};
 pub use wrap::{wrap_line_lens, wrap_rt};
 
+use std::fmt;
+
+use crate::guard::PanicSite;
 use crate::snapshot::Snapshot;
 use crate::step::StepCtx;
 
-/// A failed invariant check.
+/// A failed invariant check. `site` is present only on a `NO-PANIC`
+/// violation, whose producer the message alone never names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Violation {
     pub id: &'static str,
     pub message: String,
+    pub site: Option<PanicSite>,
+}
+
+impl Violation {
+    pub fn new(id: &'static str, message: String) -> Violation {
+        Violation {
+            id,
+            message,
+            site: None,
+        }
+    }
+
+    pub fn panicked(message: String, site: Option<PanicSite>) -> Violation {
+        Violation {
+            id: "NO-PANIC",
+            message,
+            site,
+        }
+    }
+}
+
+impl fmt::Display for Violation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.id, self.message)?;
+        match &self.site {
+            Some(site) => write!(f, "\n  panicked at {}", site.location),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Truncating formatter for message payloads. Never slices mid-character

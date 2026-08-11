@@ -41,13 +41,13 @@ pub fn redo_clear(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
         && next.journal_len > prev.journal_len
         && next.journal_pos != next.journal_len
     {
-        return Some(Violation {
-            id: "REDO-CLEAR",
-            message: format!(
+        return Some(Violation::new(
+            "REDO-CLEAR",
+            format!(
                 "a new edit landed (journal_len {} -> {}) but journal_pos={} != journal_len",
                 prev.journal_len, next.journal_len, next.journal_pos
             ),
-        });
+        ));
     }
     None
 }
@@ -70,25 +70,25 @@ pub fn redo_clear(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
 /// to switch to.
 pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != 0 {
-        return Some(Violation {
-            id: "UNDO-TOTAL",
-            message: format!(
+        return Some(Violation::new(
+            "UNDO-TOTAL",
+            format!(
                 "undo did not converge to journal_pos == 0 within the bound (stuck at pos={} \
                  of len={})",
                 after.journal_pos, after.journal_len
             ),
-        });
+        ));
     }
     if after.content != seed_content {
-        return Some(Violation {
-            id: "UNDO-TOTAL",
-            message: format!(
+        return Some(Violation::new(
+            "UNDO-TOTAL",
+            format!(
                 "content after undoing to journal_pos == 0 does not match the seed: seed={:?} \
                  after={:?}",
                 trunc(seed_content, 80),
                 trunc(&after.content, 80)
             ),
-        });
+        ));
     }
     None
 }
@@ -114,25 +114,25 @@ pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
 /// docs.
 pub fn redo_total(pre_undo: &Snapshot, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != pre_undo.journal_pos {
-        return Some(Violation {
-            id: "REDO-TOTAL",
-            message: format!(
+        return Some(Violation::new(
+            "REDO-TOTAL",
+            format!(
                 "redo did not converge back to the pre-undo-drive journal_pos={} within the \
                  bound (stuck at pos={} of len={})",
                 pre_undo.journal_pos, after.journal_pos, after.journal_len
             ),
-        });
+        ));
     }
     if after.content != pre_undo.content {
-        return Some(Violation {
-            id: "REDO-TOTAL",
-            message: format!(
+        return Some(Violation::new(
+            "REDO-TOTAL",
+            format!(
                 "content after redoing back to the pre-undo-drive journal_pos does not match \
                  the pre-undo-drive content: pre_undo={:?} after={:?}",
                 trunc(&pre_undo.content, 80),
                 trunc(&after.content, 80)
             ),
-        });
+        ));
     }
     None
 }

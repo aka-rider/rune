@@ -29,9 +29,9 @@ pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     if ctx.disk.as_deref() == ctx.delivered_save_bytes.as_deref() {
         return None;
     }
-    Some(Violation {
-        id: "SAVE-VERBATIM",
-        message: format!(
+    Some(Violation::new(
+        "SAVE-VERBATIM",
+        format!(
             "disk bytes do not byte-equal the delivered save bytes: disk={:?} delivered={:?}",
             ctx.disk
                 .as_ref()
@@ -40,7 +40,7 @@ pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
                 .as_ref()
                 .map(|b| trunc(&String::from_utf8_lossy(b), 80)),
         ),
-    })
+    ))
 }
 
 /// `SAVE-CLEAN-MATCHES-DISK` — once the document reports clean
@@ -81,14 +81,14 @@ pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violati
     if ctx.disk.as_deref() == Some(next.content.as_bytes()) {
         return None;
     }
-    Some(Violation {
-        id: "SAVE-CLEAN-MATCHES-DISK",
-        message: format!(
+    Some(Violation::new(
+        "SAVE-CLEAN-MATCHES-DISK",
+        format!(
             "document reports clean but disk does not match content: disk={:?} content={:?}",
             ctx.disk
                 .as_ref()
                 .map(|b| trunc(&String::from_utf8_lossy(b), 80)),
             trunc(&next.content, 80)
         ),
-    })
+    ))
 }

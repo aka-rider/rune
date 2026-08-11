@@ -114,7 +114,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-syntax/src/wrap/mod.rs` — 509
   - `crates/rune-tui/src/footer.rs` — 512
   - `crates/rune-md/src/catalogue.rs` — 512
-  - `crates/rune-fuzz/src/driver/mod.rs` — 508
+  - `crates/rune-fuzz/src/driver/mod.rs` — 548 (pushed further over by the session-setup panic guard; split candidate: move the `'session` per-`Action` dispatch loop out of `run` into a sibling `action_loop.rs`, leaving `run` with setup, the end-of-session rules, and the `RunResult` assembly)
   - `crates/rune-tui/src/focus.rs` — 506
   - `crates/rune-fuzz/src/script/decode.rs` — 503
   - `crates/rune-tui/src/materialize_ack.rs` — 577 (split candidate unchanged: move `record_outcome`/`record_orphan_outcome`/`RecordTarget` to a sibling `record.rs`)

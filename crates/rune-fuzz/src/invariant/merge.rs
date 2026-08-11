@@ -30,25 +30,25 @@ pub fn merge_doc_active(next: &Snapshot) -> Option<Violation> {
         return None;
     }
     let Some(doc) = next.merge_doc else {
-        return Some(Violation {
-            id: "MERGE-DOC-ACTIVE",
-            message: "merge is Active but MergeState::doc() is None".to_string(),
-        });
+        return Some(Violation::new(
+            "MERGE-DOC-ACTIVE",
+            "merge is Active but MergeState::doc() is None".to_string(),
+        ));
     };
     if !next.dirty_by_doc.contains_key(&doc) {
-        return Some(Violation {
-            id: "MERGE-DOC-ACTIVE",
-            message: format!("merge is Active for {doc:?} but that document is no longer open"),
-        });
+        return Some(Violation::new(
+            "MERGE-DOC-ACTIVE",
+            format!("merge is Active for {doc:?} but that document is no longer open"),
+        ));
     }
     if next.active != doc {
-        return Some(Violation {
-            id: "MERGE-DOC-ACTIVE",
-            message: format!(
+        return Some(Violation::new(
+            "MERGE-DOC-ACTIVE",
+            format!(
                 "merge is Active for {doc:?} but the active document is {:?}",
                 next.active
             ),
-        });
+        ));
     }
     None
 }
@@ -74,14 +74,14 @@ pub fn merge_save_blocked(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
         return None;
     }
     if ctx.pending_save_bytes.is_some() || next.save_in_flight {
-        return Some(Violation {
-            id: "MERGE-SAVE-BLOCKED",
-            message: format!(
+        return Some(Violation::new(
+            "MERGE-SAVE-BLOCKED",
+            format!(
                 "Command::Save scheduled a materialize while merge was Active with {} \
                  unresolved block(s) (pending_save_bytes={:?}, save_in_flight={})",
                 prev.merge_unresolved, ctx.pending_save_bytes, next.save_in_flight
             ),
-        });
+        ));
     }
     None
 }
@@ -148,14 +148,14 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
     {
         return None;
     }
-    Some(Violation {
-        id: "MERGE-KEY-FEEDBACK",
-        message: format!(
+    Some(Violation::new(
+        "MERGE-KEY-FEEDBACK",
+        format!(
             "{:?} was dispatched while merge was Active with Editor focus and left buffer, \
              cursors, scroll, merge state, status, and message log all unchanged",
             ctx.msg
         ),
-    })
+    ))
 }
 
 /// `MERGE-NO-INSTANT-REDIVERGENCE` — the anti-loop invariant. When a merge
@@ -228,14 +228,14 @@ impl RedivergenceTracker {
             && next.active_last_sync == Some(SyncKind::Diverged)
         {
             self.reconciled_doc = None;
-            return Some(Violation {
-                id: "MERGE-NO-INSTANT-REDIVERGENCE",
-                message: format!(
+            return Some(Violation::new(
+                "MERGE-NO-INSTANT-REDIVERGENCE",
+                format!(
                     "{doc:?} re-classified Diverged on step {} ({:?}) with no external \
                      disk write since its merge completed — the re-merge-prompt loop",
                     ctx.step, ctx.msg
                 ),
-            });
+            ));
         }
         None
     }
@@ -324,15 +324,15 @@ impl DivergentSaveTracker {
             if attempt.forced || !committed || violation.is_some() {
                 continue;
             }
-            violation = Some(Violation {
-                id: "SAVE-AGREES-WITH-DIVERGENCE",
-                message: format!(
+            violation = Some(Violation::new(
+                "SAVE-AGREES-WITH-DIVERGENCE",
+                format!(
                     "{doc:?}'s save committed on step {} ({:?}) although the prepare ack it \
                      published on (step {verdict_step}) carried a disk-divergent verdict, and no \
                      force was authorized",
                     ctx.step, ctx.msg
                 ),
-            });
+            ));
         }
         violation
     }
@@ -374,13 +374,13 @@ pub fn merge_theirs_confirmed(msg: &Msg) -> Option<Violation> {
         return None;
     };
     if prep.unstable && (prep.theirs.is_some() || prep.theirs_obs.is_some()) {
-        return Some(Violation {
-            id: "MERGE-THEIRS-CONFIRMED",
-            message: "a MergePrep ack reported unstable=true but still carried a theirs/\
+        return Some(Violation::new(
+            "MERGE-THEIRS-CONFIRMED",
+            "a MergePrep ack reported unstable=true but still carried a theirs/\
                        theirs_obs — an unconfirmed observation must never be rendered as \
                        merge Theirs"
                 .to_string(),
-        });
+        ));
     }
     None
 }
@@ -400,10 +400,10 @@ pub fn merge_title_cleared(next: &Snapshot) -> Option<Violation> {
             .as_deref()
             .is_some_and(|n| n.contains("editor <-> disk"))
         {
-            return Some(Violation {
-                id: "MERGE-TITLE-CLEARED",
-                message: format!("merge is Inactive but {doc:?}'s display_name is still {name:?}"),
-            });
+            return Some(Violation::new(
+                "MERGE-TITLE-CLEARED",
+                format!("merge is Inactive but {doc:?}'s display_name is still {name:?}"),
+            ));
         }
     }
     None

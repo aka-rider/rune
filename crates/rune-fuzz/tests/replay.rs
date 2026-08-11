@@ -109,7 +109,7 @@ fn every_checked_in_repro_replays_clean() {
         let (doc_path, content, actions) = script::decode(&text)
             .unwrap_or_else(|e| panic!("{} failed to decode: {e}", path.display()));
 
-        let result = driver::run(&doc_path, &content, &actions);
+        let result = driver::run_catching_panic(&doc_path, &content, &actions);
         assert!(
             result.violation.is_none(),
             "{}: {}",
@@ -117,7 +117,7 @@ fn every_checked_in_repro_replays_clean() {
             result
                 .violation
                 .as_ref()
-                .map(|v| format!("{}: {}", v.id, v.message))
+                .map(ToString::to_string)
                 .unwrap_or_default()
         );
     }
