@@ -670,3 +670,19 @@ fn launch_image_first_then_opening_markdown_enqueues_journaling() {
         "opening a markdown file after an image-first launch must enqueue a Load"
     );
 }
+
+fn caught_panic(f: impl FnOnce() + std::panic::UnwindSafe) -> Box<dyn Any + Send> {
+    std::panic::catch_unwind(f).expect_err("the closure must panic")
+}
+
+#[test]
+fn panic_message_recovers_a_formatted_message() {
+    let payload = caught_panic(|| panic!("caught formatted panic {}", 42));
+    assert_eq!(panic_message(payload), "caught formatted panic 42");
+}
+
+#[test]
+fn panic_message_recovers_a_literal_message() {
+    let payload = caught_panic(|| panic!("caught literal panic"));
+    assert_eq!(panic_message(payload), "caught literal panic");
+}
