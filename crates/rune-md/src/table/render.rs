@@ -134,12 +134,12 @@ fn render_inline(
         }
         Inline::Code(m) => {
             let scope = style::code_scope();
-            if m.sm.state() == RevealState::Revealed {
-                for &line in &m.content_lines {
+            if m.state() == RevealState::Revealed {
+                for &line in m.content_lines() {
                     out.push_str(content, line, scope);
                 }
             } else {
-                for &line in &m.inner_lines {
+                for &line in m.inner_lines() {
                     out.push_str(content, line, scope);
                 }
             }

@@ -19,7 +19,10 @@
 mod conceal_common;
 
 use conceal_common::{assert_no_duplicate_content, joined_line, synced};
+use rune_md::element::block::Block;
+use rune_md::element::inline::{Inline, InlineCodeM};
 use rune_md::emit::emit;
+use rune_syntax::element::ByteRange;
 
 #[test]
 fn multiline_emphasis_strong_strikethrough_in_blockquote_stays_in_order() {
@@ -122,13 +125,33 @@ fn inline_code_close_delimiter_is_located_not_computed_arithmetically() {
     // span can extend one or more bytes past the true close run (e.g. a
     // trailing space folded in after the CommonMark line-ending-to-space
     // conversion). Both are fixed by LOCATING the close run (scan
-    // backward over non-backtick bytes, then take the trailing run) —
-    // see `trailing_backtick_run` in `parse/inline.rs` — instead of
-    // computing its position by subtraction.
+    // backward over non-backtick bytes, then take the trailing run)
+    // instead of computing its position by subtraction.
     assert_no_duplicate_content("]\n x```\n``` `");
     assert_no_duplicate_content(">t\n>`\n`>");
     // A realistic shape of bug (1): a code span opened on a blockquote's
     // lazy-continuation line, closed on a line with a bare ">" (no
     // trailing space).
     assert_no_duplicate_content("> a\n`b\n>`c");
+}
+
+#[test]
+fn multiline_code_span_extent_stops_at_its_closing_backtick() {
+    let content = "a\n `\n`x";
+    let (_buf, doc) = synced(content, 0, true);
+    let code = first_code_span(doc.blocks()).expect("fixture contains a code span");
+    assert_eq!(code.open(), ByteRange::new(3, 4));
+    assert_eq!(code.close(), ByteRange::new(5, 6));
+    assert_eq!(code.range(), ByteRange::new(3, 6));
+    assert_eq!(code.content(), ByteRange::new(4, 5));
+}
+
+fn first_code_span(blocks: &[Block]) -> Option<&InlineCodeM> {
+    blocks.iter().find_map(|block| match block {
+        Block::Paragraph(p) => p.inlines.iter().find_map(|inline| match inline {
+            Inline::Code(m) => Some(m),
+            _ => None,
+        }),
+        _ => None,
+    })
 }

@@ -363,38 +363,14 @@ fn build_inline<'a>(
             })
         }
         InlineKind::Code(num_backticks) => {
-            // MAJOR fix (verification round 9's exhaustive audit, second
-            // pass): a backtick run can never itself contain a newline, so
-            // `open`/`close` are each genuinely single-line — but deriving
-            // them via raw arithmetic straight off `range.start`/`range.end`
-            // silently assumed `range` is CONTIGUOUS raw bytes, which only
-            // holds when every line the span crosses has the SAME
-            // container-marker width. A blockquote's lazy-continuation line
-            // (no "> " at all) followed by one with a bare ">" (no trailing
-            // space, 1 byte instead of 2) breaks that assumption:
-            // `range.end - num_backticks` lands mid-marker instead of on
-            // the real closing backticks, producing a `close` that
-            // overlaps the marker's own hidden range. Deriving `open` from
-            // the FIRST content_lines piece and `close` from the LAST one
-            // makes both track the actual per-line content instead of raw
-            // extents, closing the same class VerbatimM/EmphasisM's own
-            // `range` had.
-            let content_lines = super::per_line_content(content, starts, range, hint);
-            let first_line = content_lines.first().copied().unwrap_or(range);
-            let last_line = content_lines.last().copied().unwrap_or(range);
+            let raw_lines = super::per_line_content(content, starts, range, hint);
+            let first_line = raw_lines.first().copied().unwrap_or(range);
+            let last_line = raw_lines.last().copied().unwrap_or(range);
             let open = leading_backtick_run(content, first_line, num_backticks);
             let close = trailing_backtick_run(content, last_line, num_backticks);
-            let content_range = ByteRange::new(open.end, close.start).clamp(content.len());
-            Inline::Code(InlineCodeM {
-                sm: RevealSm::new(RevealState::Rendered),
-                range,
-                open,
-                close,
-                content: content_range,
-                line,
-                content_lines,
-                inner_lines: super::per_line_content(content, starts, content_range, hint),
-            })
+            Inline::Code(InlineCodeM::between_delimiters(open, close, |span| {
+                super::per_line_content(content, starts, span.clamp(content.len()), hint)
+            }))
         }
         InlineKind::Link(url) => {
             let text = build_inlines(content, starts, node, hint);

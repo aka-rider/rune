@@ -81,28 +81,67 @@ impl EmphasisM {
 
 #[derive(Clone, Debug)]
 pub struct InlineCodeM {
-    pub sm: RevealSm,
-    pub range: ByteRange,
-    pub open: ByteRange,
-    pub close: ByteRange,
-    pub content: ByteRange,
-    pub line: usize,
-    /// One entry per physical line `range` spans — the Revealed emit
-    /// path iterates this instead of pushing `range` whole (same shape
-    /// as `EmphasisM::content_lines`; `open`/`close` are always a
-    /// contiguous backtick run and never need this).
-    pub content_lines: Vec<ByteRange>,
-    /// One entry per physical line `content` spans — the Rendered
-    /// (concealed) emit path iterates this instead of pushing `content`
-    /// whole. A code span's INNER text is exactly as soft-wrap-capable
-    /// as any other multi-line inline content (verification round 9's
-    /// exhaustive audit found this one: `"> `a\n> b`"` used to re-claim
-    /// the continuation line's own "> " marker as part of the code
-    /// span's rendered content).
-    pub inner_lines: Vec<ByteRange>,
+    sm: RevealSm,
+    range: ByteRange,
+    open: ByteRange,
+    close: ByteRange,
+    content: ByteRange,
+    content_lines: Vec<ByteRange>,
+    inner_lines: Vec<ByteRange>,
 }
 
 impl InlineCodeM {
+    /// comrak's sourcepos for a `Code` node can reach past the true closing
+    /// backtick run and swallow a following byte a sibling node also claims,
+    /// so a code span's extent is the located delimiter runs and nothing
+    /// else: every other field here is derived from `open` and `close`, and
+    /// no caller can supply one.
+    pub fn between_delimiters(
+        open: ByteRange,
+        close: ByteRange,
+        per_line: impl Fn(ByteRange) -> Vec<ByteRange>,
+    ) -> InlineCodeM {
+        let range = ByteRange::new(open.start, close.end.max(open.start));
+        let content = ByteRange::new(open.end, close.start.max(open.end));
+        InlineCodeM {
+            sm: RevealSm::new(RevealState::Rendered),
+            range,
+            open,
+            close,
+            content,
+            content_lines: per_line(range),
+            inner_lines: per_line(content),
+        }
+    }
+
+    pub fn state(&self) -> RevealState {
+        self.sm.state()
+    }
+
+    pub fn range(&self) -> ByteRange {
+        self.range
+    }
+
+    pub fn open(&self) -> ByteRange {
+        self.open
+    }
+
+    pub fn close(&self) -> ByteRange {
+        self.close
+    }
+
+    pub fn content(&self) -> ByteRange {
+        self.content
+    }
+
+    pub fn content_lines(&self) -> &[ByteRange] {
+        &self.content_lines
+    }
+
+    pub fn inner_lines(&self) -> &[ByteRange] {
+        &self.inner_lines
+    }
+
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
         let range = self.range;
         let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
