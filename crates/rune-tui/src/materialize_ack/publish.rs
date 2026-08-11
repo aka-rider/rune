@@ -1,5 +1,4 @@
-//! The caller-side publish half of the save flow (split out of
-//! `materialize_ack.rs` for the 500-line budget): reacting to
+//! The caller-side publish half of the save flow: reacting to
 //! `MaterializePrepare`'s ack — including the divergence gate that refuses
 //! an ordinary publish outright — spawning the `vfs` `Cmd` that performs the
 //! whole disk dance, and reacting to what that `Cmd` concluded
@@ -33,19 +32,6 @@ use super::{
 /// stale ack for an attempt this document already abandoned) is a correct,
 /// silent no-op — `op_id` is checked against the document's own `prep_op`
 /// before anything else happens.
-///
-/// The divergence gate below answers the question the CAS cannot: the CAS
-/// compares the live target against the baseline this session last
-/// published/adopted, so it only ever knows whether DISK moved since that
-/// look — it is blind to a buffer that has since been undone back behind
-/// the disk state it once adopted, whose bytes then still CAS-match and
-/// would silently overwrite the very changes the merge brought in.
-/// `rune_db::sync` answers exactly that, off the journal position and the
-/// observation history, and `prepare_materialize` now carries its verdict.
-/// A `SaveMode::Force` publish bypasses the gate exactly as it bypasses the
-/// CAS — the disk-conflict Guard's `[S]ave anyway` must never be refused a
-/// second time — and `bind_new` carries no verdict at all (a create has no
-/// baseline to diverge from).
 pub(crate) fn handle_prepare_ack(
     app: &mut App,
     id: DocumentId,
@@ -90,12 +76,6 @@ pub(crate) fn handle_prepare_ack(
     ));
 }
 
-/// Nothing has touched disk yet — this attempt dies here, leaving the
-/// document clean of any in-flight save, and the user is handed the same
-/// three answers a CAS refusal offers: `[S]ave anyway` forces past this
-/// gate, `[D]iscard` reloads from disk, `[M]erge` re-enters the resolver
-/// (whose own pre-check reads the `last_sync` this raise has just seeded
-/// with the store's own verdict).
 fn refuse_divergent_publish(app: &mut App, id: DocumentId, kind: SyncKind) {
     fail_materialize_locally(app, id, SAVE_REFUSED_DISK_CHANGED);
     raise_disk_conflict(app, id, kind);
