@@ -194,7 +194,7 @@ pub(super) fn run_direct_catching_panic(
         Ok(()) => None,
         Err(payload) => Some(Violation {
             id: "NO-PANIC",
-            message: downcast_panic(&payload),
+            message: downcast_panic(payload),
         }),
     }
 }
@@ -247,7 +247,7 @@ pub(super) fn step_and_check(
         Err(payload) => {
             outcome.violation = Some(Violation {
                 id: "NO-PANIC",
-                message: downcast_panic(&payload),
+                message: downcast_panic(payload),
             });
             outcome.final_snapshot = Some(prev.clone());
             outcome.final_ctx = None;
@@ -445,12 +445,48 @@ fn run_update_catching_panic(
 
 /// The same downcast ladder proptest itself uses to render a caught panic's
 /// payload.
-fn downcast_panic(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        (*s).to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "<unknown panic value>".to_string()
+fn downcast_panic(payload: Box<dyn std::any::Any + Send>) -> String {
+    let payload = match payload.downcast::<&str>() {
+        Ok(s) => return (*s).to_string(),
+        Err(payload) => payload,
+    };
+    match payload.downcast::<String>() {
+        Ok(s) => *s,
+        Err(_) => "<unknown panic value>".to_string(),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_tui::app::App;
+    use rune_vfs::{Mem, Vfs};
+
+    use super::run_direct_catching_panic;
+
+    fn test_app() -> App {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        App::new(Buffer::new(""), None, vfs, None)
+    }
+
+    #[test]
+    fn formatted_panic_message_survives_violation_rendering() {
+        let mut app = test_app();
+        let violation =
+            run_direct_catching_panic(&mut app, |_| panic!("caught formatted panic {}", 42))
+                .expect("the closure must panic");
+        assert_eq!(violation.message, "caught formatted panic 42");
+    }
+
+    #[test]
+    fn literal_panic_message_survives_violation_rendering() {
+        let mut app = test_app();
+        let violation = run_direct_catching_panic(&mut app, |_| panic!("caught literal panic"))
+            .expect("the closure must panic");
+        assert_eq!(violation.message, "caught literal panic");
     }
 }

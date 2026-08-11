@@ -119,7 +119,7 @@ fn launch(
             // user actually sees why the process is exiting.
             eprintln!(
                 "rune: internal error (recovered): {}",
-                panic_message(&payload)
+                panic_message(payload)
             );
             ExitCode::from(exit_code::SOFTWARE)
         }
@@ -298,14 +298,15 @@ fn bootstrap(
 /// respectively — the two shapes the standard panic machinery actually
 /// produces; anything else (a custom payload from a dependency) falls back
 /// to a fixed placeholder rather than guessing.
-fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        return (*s).to_string();
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    let payload = match payload.downcast::<&str>() {
+        Ok(s) => return (*s).to_string(),
+        Err(payload) => payload,
+    };
+    match payload.downcast::<String>() {
+        Ok(s) => *s,
+        Err(_) => "non-string panic payload".to_string(),
     }
-    if let Some(s) = payload.downcast_ref::<String>() {
-        return s.clone();
-    }
-    "non-string panic payload".to_string()
 }
 
 fn to_abs_path(input: &str, cwd: &Path) -> PathBuf {

@@ -110,7 +110,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
   - `crates/rune-db/src/writer.rs` — 552 (split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
   - `crates/rune-cli/src/db_bootstrap.rs` — 509 (split candidate unchanged: move `bootstrap_untitled_db`/`ScratchDoc`/`DbBootstrapUntitled`/`degrade_untitled` to a sibling `db_bootstrap_untitled.rs`, matching the crate's own `bootstrap_tests.rs` split-out-of-`main.rs` pattern)
-  - `crates/rune-cli/src/bootstrap_tests.rs` — 672 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
+  - `crates/rune-cli/src/bootstrap_tests.rs` — 688 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
   - `crates/rune-syntax/src/wrap/mod.rs` — 509
   - `crates/rune-tui/src/footer.rs` — 512
   - `crates/rune-md/src/catalogue.rs` — 512
