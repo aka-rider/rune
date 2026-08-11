@@ -4,7 +4,7 @@
 //! observation the newest by construction, then calls `sync_with_theirs`
 //! with it.
 
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
 use crate::observation::{self, ObsId};
@@ -99,28 +99,23 @@ pub fn classify_sync(
 /// A user cannot conflict with their own changes, but a change nobody
 /// showed them is still a change: an external revert to bytes rune once
 /// published hides itself exactly like any other external rewrite, and the
-/// hash coincidence must not make it invisible. Both halves are therefore
-/// required — rune PUBLISHED these bytes (`origin='save'`, any session,
-/// `theirs`' own row included), AND the disk state DESCENDS from what this
-/// session last agreed on.
-fn theirs_is_our_own_published_descendant(
+/// hash coincidence must not make it invisible.
+fn theirs_is_our_newest_publish(
     tx: &Transaction<'_>,
     doc_id: i64,
-    ancestor: Option<&Version>,
     theirs: Option<&Version>,
 ) -> Result<bool, Error> {
-    let (Some(ancestor), Some(theirs)) = (ancestor, theirs) else {
+    let Some(theirs) = theirs else {
         return Ok(false);
     };
-    let (Some(ancestor_id), Some(theirs_id)) = (ancestor.obs, theirs.obs) else {
-        return Ok(false);
-    };
-    let published: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM observations WHERE doc_id=?1 AND blob_hash=?2 AND origin='save')",
-        params![doc_id, theirs.hash],
-        |r| r.get(0),
-    )?;
-    Ok(published && crate::lineage::is_ancestor(tx, ancestor_id, theirs_id)?)
+    let newest_publish: Option<String> = tx
+        .query_row(
+            "SELECT blob_hash FROM observations WHERE doc_id=?1 AND origin='save' ORDER BY id DESC LIMIT 1",
+            params![doc_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(newest_publish.as_deref() == Some(theirs.hash.as_str()))
 }
 
 fn buffer_unwound_past(
@@ -178,9 +173,7 @@ pub fn sync_with_theirs(
         kind = SyncKind::Diverged;
     }
 
-    if kind.is_disk_divergent()
-        && theirs_is_our_own_published_descendant(tx, doc_id, ancestor.as_ref(), theirs.as_ref())?
-    {
+    if kind.is_disk_divergent() && theirs_is_our_newest_publish(tx, doc_id, theirs.as_ref())? {
         kind = SyncKind::BufferAhead;
     }
 
@@ -221,109 +214,130 @@ mod tests {
         tx.last_insert_rowid()
     }
 
-    fn stat_at(mtime: &str) -> crate::observation::StatFacts {
+    fn stat_of(content: &str, at: &str) -> crate::observation::StatFacts {
         crate::observation::StatFacts {
-            size: Some(1),
-            mtime: Some(mtime.to_string()),
+            size: Some(content.len() as i64),
+            mtime: Some(at.to_string()),
             ..Default::default()
         }
     }
 
-    /// How the disk bytes this session is about to classify came to be
-    /// there: who (if anyone) published them, and whether the observation
-    /// carrying them descends from what this session last agreed on — the
-    /// edge `adopt::record_adoption_tx` and a confirmed fresh sighting both
-    /// record in the real store.
-    struct DiskSighting<'a> {
-        blob: &'a [u8],
-        published_by: Option<i64>,
-        descends_from_our_ancestor: bool,
-    }
-
-    /// Seeds a document this session loaded and then edited past, and hands
-    /// back the classification against `sighting` freshly seen on disk.
-    fn classify_fresh_disk_sighting(
-        tx: &Transaction<'_>,
-        session_id: i64,
-        doc_id: i64,
-        sighting: DiskSighting<'_>,
-    ) -> SyncKind {
-        let disk_hash = crate::blob::put_blob(tx, sighting.blob).expect("seed disk blob");
-        if let Some(publisher) = sighting.published_by {
-            crate::observation::record_observation(
-                tx,
-                doc_id,
-                publisher,
-                crate::observation::ObservationMeta {
-                    blob_hash: &disk_hash,
-                    seq: Some(0),
-                    origin: "save",
-                    confirmed: Some(true),
-                },
-                &stat_at("t0"),
-                "t0",
-            )
-            .expect("record the publisher's save");
-        }
-
-        let load_hash = crate::blob::put_blob(tx, b"what this session loaded").expect("seed blob");
-        let load_id = crate::observation::record_observation(
+    fn open_document(tx: &Transaction<'_>, session_id: i64, doc_id: i64, disk: &str) {
+        let now = SystemTime::now();
+        let seq = crate::journal::current_seq(tx, session_id, doc_id).expect("current_seq");
+        crate::snapshot::create_snapshot(tx, session_id, now, doc_id, disk, seq)
+            .expect("anchor the load snapshot");
+        let hash = crate::blob::put_blob(tx, disk.as_bytes()).expect("put the load blob");
+        crate::adopt::record_adoption_tx(
             tx,
             doc_id,
             session_id,
             crate::observation::ObservationMeta {
-                blob_hash: &load_hash,
-                seq: Some(0),
+                blob_hash: &hash,
+                seq: Some(seq),
                 origin: "load",
-                confirmed: None,
+                confirmed: Some(true),
             },
-            &stat_at("t1"),
-            "t1",
+            &stat_of(disk, "load"),
+            "load",
+            None,
         )
-        .expect("record this session's load");
+        .expect("record the load adoption");
+    }
 
+    fn type_text(tx: &Transaction<'_>, session_id: i64, doc_id: i64, text: &str) -> i64 {
+        let ours = crate::snapshot::recover_document(tx, session_id, doc_id).expect("recover");
+        let end = ours.len();
         crate::journal::append_edit(
             tx,
             session_id,
             SystemTime::now(),
             doc_id,
             &[rune_core::buffer::AppliedEdit {
-                start: 0,
-                end: 0,
+                start: end,
+                end,
                 deleted: String::new(),
-                insert: "this session's own unsaved edit".to_string(),
+                insert: text.to_string(),
             }],
             &[],
             &[],
         )
-        .expect("append_edit");
+        .expect("append_edit")
+    }
 
-        let theirs_id = crate::observation::insert_observation_row(
+    fn undo_to(tx: &Transaction<'_>, session_id: i64, doc_id: i64, seq: i64) {
+        crate::journal::move_undo_pos(tx, session_id, doc_id, seq).expect("move_undo_pos");
+    }
+
+    fn publish_save(tx: &Transaction<'_>, session_id: i64, doc_id: i64, bytes: &str, at: &str) {
+        let hash = crate::blob::put_blob(tx, bytes.as_bytes()).expect("put the published blob");
+        let seq = crate::journal::current_seq(tx, session_id, doc_id).expect("current_seq");
+        crate::adopt::record_adoption_tx(
             tx,
             doc_id,
             session_id,
             crate::observation::ObservationMeta {
-                blob_hash: &disk_hash,
+                blob_hash: &hash,
+                seq: Some(seq),
+                origin: "save",
+                confirmed: Some(true),
+            },
+            &stat_of(bytes, at),
+            at,
+            None,
+        )
+        .expect("record the save adoption");
+    }
+
+    fn external_write(
+        tx: &Transaction<'_>,
+        session_id: i64,
+        doc_id: i64,
+        bytes: &str,
+        at: &str,
+    ) -> crate::observation::Observation {
+        crate::observation::observe_from_stat_tx(
+            tx,
+            session_id,
+            doc_id,
+            &stat_of(bytes, at),
+            at,
+            crate::observation::ObserveInput {
+                data: bytes.as_bytes(),
                 seq: None,
                 origin: "probe",
                 confirmed: Some(true),
             },
-            &stat_at("t2"),
-            "t2",
-            crate::observation::ParentEdges {
-                a: sighting.descends_from_our_ancestor.then_some(load_id),
-                b: None,
-            },
         )
-        .expect("record the fresh disk sighting");
+        .expect("record the fresh disk sighting")
+    }
 
-        let theirs = Version {
-            hash: disk_hash,
-            obs: Some(theirs_id),
-        };
-        sync_with_theirs(tx, session_id, doc_id, Some(theirs))
-            .expect("sync_with_theirs")
-            .kind
+    fn resolve_against(
+        tx: &Transaction<'_>,
+        session_id: i64,
+        doc_id: i64,
+        theirs: &crate::observation::Observation,
+        edit_seq: i64,
+    ) {
+        crate::adopt::record_adoption_tx(
+            tx,
+            doc_id,
+            session_id,
+            crate::observation::ObservationMeta {
+                blob_hash: &theirs.blob_hash,
+                seq: Some(edit_seq),
+                origin: "resolve",
+                confirmed: theirs.confirmed,
+            },
+            &theirs.stat(),
+            "resolve",
+            Some(theirs.id),
+        )
+        .expect("record the resolve adoption");
+    }
+
+    fn verdict(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> SyncKind {
+        sync(tx, session_id, doc_id).expect("sync").kind
     }
 
     /// A user cannot conflict with their own changes: bytes ANOTHER rune
@@ -340,27 +354,27 @@ mod tests {
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
 
-        let kind = classify_fresh_disk_sighting(
+        open_document(&tx, session_id, doc_id, "base");
+        type_text(&tx, session_id, doc_id, "-mine");
+        publish_save(
             &tx,
-            session_id,
+            publisher,
             doc_id,
-            DiskSighting {
-                blob: b"bytes rune published",
-                published_by: Some(publisher),
-                descends_from_our_ancestor: true,
-            },
+            "base-theirs",
+            "the other session's save",
         );
+        external_write(&tx, session_id, doc_id, "base-theirs", "rediscovery");
+
         assert_eq!(
-            kind,
+            verdict(&tx, session_id, doc_id),
             SyncKind::BufferAhead,
-            "bytes any rune session published, on a disk state we still descend from, are ours to overwrite"
+            "bytes any rune session published are ours to overwrite"
         );
         tx.commit().expect("commit");
     }
 
-    /// The authorship half on its own: bytes no `save` ever published belong
-    /// to whoever put them there. A confirmed read of them is knowledge,
-    /// never authorization, however cleanly they chain off our ancestor.
+    /// Bytes no `save` ever published belong to whoever put them there. A
+    /// confirmed read of them is knowledge, never authorization.
     #[test]
     fn a_fresh_sighting_rune_never_published_stays_diverged() {
         let mut conn = open();
@@ -369,31 +383,29 @@ mod tests {
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
 
-        let kind = classify_fresh_disk_sighting(
+        open_document(&tx, session_id, doc_id, "base");
+        type_text(&tx, session_id, doc_id, "-mine");
+        external_write(
             &tx,
             session_id,
             doc_id,
-            DiskSighting {
-                blob: b"a stranger's rewrite",
-                published_by: None,
-                descends_from_our_ancestor: true,
-            },
+            "a stranger's rewrite",
+            "the rewrite",
         );
+
         assert_eq!(
-            kind,
+            verdict(&tx, session_id, doc_id),
             SyncKind::Diverged,
             "a stranger's bytes stay a conflict however confidently they were read"
         );
         tx.commit().expect("commit");
     }
 
-    /// The containment half on its own, and the case that decides the rule:
-    /// something outside rune — a `git checkout`, a restored backup — put
-    /// bytes on disk that rune itself published at some earlier point. The
-    /// hash says "ours"; the missing lineage edge says the current disk
-    /// state does not descend from what this session last agreed on. The
-    /// external change was hidden from the user either way, and a hash
-    /// coincidence must not make it invisible.
+    /// The case that decides the rule: something outside rune — a `git
+    /// checkout`, a restored backup — puts bytes on disk that rune itself
+    /// published EARLIER, while rune's latest publish said something else.
+    /// The hash says "ours"; the newest publish says the file moved behind
+    /// the user's back.
     #[test]
     fn an_external_revert_to_bytes_rune_published_stays_a_conflict() {
         let mut conn = open();
@@ -402,20 +414,120 @@ mod tests {
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
 
-        let kind = classify_fresh_disk_sighting(
+        open_document(&tx, session_id, doc_id, "base");
+        type_text(&tx, session_id, doc_id, "-one");
+        publish_save(&tx, session_id, doc_id, "base-one", "the first save");
+        type_text(&tx, session_id, doc_id, "-two");
+        publish_save(&tx, session_id, doc_id, "base-one-two", "the second save");
+        external_write(&tx, session_id, doc_id, "base-one", "the revert");
+
+        let kind = verdict(&tx, session_id, doc_id);
+        assert!(
+            kind.is_disk_divergent(),
+            "an external revert is an external change; matching a hash we once wrote does not authorize overwriting it, got {kind:?}"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// The same revert while the buffer carries unsaved edits — the shape
+    /// where the classification the save gate reads is the ONLY thing left
+    /// to notice that somebody else touched the file.
+    #[test]
+    fn an_external_revert_under_unsaved_edits_stays_a_conflict() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        open_document(&tx, session_id, doc_id, "base");
+        type_text(&tx, session_id, doc_id, "-one");
+        publish_save(&tx, session_id, doc_id, "base-one", "the first save");
+        type_text(&tx, session_id, doc_id, "-two");
+        publish_save(&tx, session_id, doc_id, "base-one-two", "the second save");
+        type_text(&tx, session_id, doc_id, "-unsaved");
+        external_write(&tx, session_id, doc_id, "base-one", "the revert");
+
+        let kind = verdict(&tx, session_id, doc_id);
+        assert!(
+            kind.is_disk_divergent(),
+            "a dirty buffer must not hide a revert either, got {kind:?}"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// Seeds the merge story up to the resolution: this session saves, an
+    /// external write lands, the user merges and installs the result. Hands
+    /// back the seq the install can be undone past.
+    fn merge_after_an_external_write(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> i64 {
+        open_document(tx, session_id, doc_id, "base");
+        let saved_seq = type_text(tx, session_id, doc_id, "-one");
+        publish_save(
+            tx,
+            session_id,
+            doc_id,
+            "base-one",
+            "the save before the merge",
+        );
+        let theirs = external_write(
+            tx,
+            session_id,
+            doc_id,
+            "base-external",
+            "the external write",
+        );
+        let install_seq = type_text(tx, session_id, doc_id, "-merged");
+        resolve_against(tx, session_id, doc_id, &theirs, install_seq);
+        saved_seq
+    }
+
+    /// Publishing the merged bytes makes them rune's newest publish, so
+    /// undoing past the install afterward leaves only the buffer moved — an
+    /// ordinary unsaved edit the user is free to save over.
+    #[test]
+    fn undo_past_an_install_that_was_published_is_buffer_ahead() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        let saved_seq = merge_after_an_external_write(&tx, session_id, doc_id);
+        publish_save(
             &tx,
             session_id,
             doc_id,
-            DiskSighting {
-                blob: b"bytes rune published long ago",
-                published_by: Some(session_id),
-                descends_from_our_ancestor: false,
-            },
+            "base-one-merged",
+            "the merged save",
         );
+        undo_to(&tx, session_id, doc_id, saved_seq);
+
         assert_eq!(
-            kind,
+            verdict(&tx, session_id, doc_id),
+            SyncKind::BufferAhead,
+            "disk holds exactly what rune last published; undoing past it is an unsaved edit"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// Without that publish the disk still holds the external bytes and
+    /// rune's newest publish says something else — undoing past the install
+    /// withdraws the only acceptance those bytes ever had.
+    #[test]
+    fn undo_past_an_unpublished_install_stays_diverged() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        let saved_seq = merge_after_an_external_write(&tx, session_id, doc_id);
+        undo_to(&tx, session_id, doc_id, saved_seq);
+
+        assert_eq!(
+            verdict(&tx, session_id, doc_id),
             SyncKind::Diverged,
-            "an external revert is an external change; matching a hash we once wrote does not authorize overwriting it"
+            "bytes nobody published stay a conflict once the acceptance is undone"
         );
         tx.commit().expect("commit");
     }
@@ -639,118 +751,27 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Seeds the undo-unwind shape: a 'load' observation at seq 0 carrying
-    /// the empty journal reconstruction, one journaled edit producing
-    /// "hello" at seq 1, an observation of "hello" with `origin` correlated
-    /// to seq 1 and chained off the load the way `adopt::record_adoption_tx`
-    /// chains every new row off the `saved_obs` it replaces, and the buffer
-    /// then undone back to seq 0.
-    fn seed_unwind_past_disk_bytes(
-        tx: &Transaction<'_>,
-        session_id: i64,
-        doc_id: i64,
-        origin: &str,
-    ) {
-        let empty_hash = crate::blob::put_blob(tx, b"").expect("seed empty blob");
-        let load_id = crate::observation::record_observation(
-            tx,
-            doc_id,
-            session_id,
-            crate::observation::ObservationMeta {
-                blob_hash: &empty_hash,
-                seq: Some(0),
-                origin: "load",
-                confirmed: None,
-            },
-            &crate::observation::StatFacts {
-                mtime: Some("t".to_string()),
-                ..Default::default()
-            },
-            "t",
-        )
-        .expect("record load observation");
-
-        crate::journal::append_edit(
-            tx,
-            session_id,
-            SystemTime::now(),
-            doc_id,
-            &[rune_core::buffer::AppliedEdit {
-                start: 0,
-                end: 0,
-                deleted: String::new(),
-                insert: "hello".to_string(),
-            }],
-            &[],
-            &[],
-        )
-        .expect("append_edit");
-
-        let hello_hash = crate::blob::put_blob(tx, b"hello").expect("seed hello blob");
-        crate::observation::insert_observation_row(
-            tx,
-            doc_id,
-            session_id,
-            crate::observation::ObservationMeta {
-                blob_hash: &hello_hash,
-                seq: Some(1),
-                origin,
-                confirmed: None,
-            },
-            &crate::observation::StatFacts {
-                size: Some(5),
-                mtime: Some("t2".to_string()),
-                ..Default::default()
-            },
-            "t2",
-            crate::observation::ParentEdges {
-                a: Some(load_id),
-                b: None,
-            },
-        )
-        .expect("record disk observation");
-
-        crate::journal::move_undo_pos(tx, session_id, doc_id, 0).expect("move_undo_pos");
-    }
-
-    /// Undoing past bytes rune itself published leaves the user's own save on
-    /// disk and only the buffer moved — an ordinary unsaved edit, never a
+    /// Undoing past bytes rune itself published leaves the user's own save
+    /// on disk and only the buffer moved — an ordinary unsaved edit, never a
     /// conflict against the user's own content.
     #[test]
-    fn unwind_past_our_own_published_save_is_buffer_ahead_not_a_conflict() {
+    fn undo_past_our_own_plain_save_is_buffer_ahead() {
         let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
-        seed_unwind_past_disk_bytes(&tx, session_id, doc_id, "save");
 
-        let state = sync(&tx, session_id, doc_id).expect("sync");
+        open_document(&tx, session_id, doc_id, "base");
+        let anchor = crate::journal::current_seq(&tx, session_id, doc_id).expect("current_seq");
+        type_text(&tx, session_id, doc_id, "-more");
+        publish_save(&tx, session_id, doc_id, "base-more", "the save");
+        undo_to(&tx, session_id, doc_id, anchor);
+
         assert_eq!(
-            state.kind,
+            verdict(&tx, session_id, doc_id),
             SyncKind::BufferAhead,
             "disk holds bytes rune published; undoing past them must not offer a merge against our own content"
-        );
-        tx.commit().expect("commit");
-    }
-
-    /// A resolve records bytes accepted INTO the buffer, never bytes written
-    /// out. Undoing past it withdraws exactly that acceptance, so nothing
-    /// authorizes overwriting whoever put those bytes on disk.
-    #[test]
-    fn unwind_past_an_unpublished_resolve_adoption_stays_diverged() {
-        let mut conn = open();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let tx = conn.transaction().expect("tx");
-        let doc_id = seed_doc(&tx);
-        seed_unwind_past_disk_bytes(&tx, session_id, doc_id, "resolve");
-
-        let state = sync(&tx, session_id, doc_id).expect("sync");
-        assert_eq!(
-            state.kind,
-            SyncKind::Diverged,
-            "undo past an adoption nobody published must stay a conflict, never the plain DiskAhead classify_sync alone would compute"
         );
         tx.commit().expect("commit");
     }

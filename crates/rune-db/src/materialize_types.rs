@@ -1,7 +1,6 @@
 //! `Materialize`'s data model — `DocSession`, the CAS decision/outcome
 //! types [`prepare_materialize`]/[`record_materialize_outcome`] exchange
-//! with the caller. Split out of `materialize.rs` and re-exported
-//! from there, so this stays purely a data-model file with no logic.
+//! with the caller — purely a data-model module, no logic.
 //!
 //! [`prepare_materialize`]: crate::materialize::prepare_materialize
 //! [`record_materialize_outcome`]: crate::materialize::record_materialize_outcome
@@ -22,7 +21,7 @@ pub struct DocSession {
 
 /// The outcome of a materialize attempt, assembled by
 /// `record_materialize_outcome` (`missing` is set directly by the caller
-/// instead — see `save.rs`'s dance): `Missing`/`Fresh`-on-refusal/`Raced`
+/// instead): `Missing`/`Fresh`-on-refusal/`Raced`
 /// stay mutually exclusive discriminants, never a shared sentinel
 /// (this crate's "Options for absent facts" rule).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -63,20 +62,14 @@ pub struct MaterializePrep {
     /// live target's hash against before writing. Empty when `bind_new`
     /// (the create path never had a CAS baseline to compare).
     pub expect_hash: String,
-    /// How this session's own buffer stands against the disk knowledge the
-    /// store holds — the authorship question the CAS baseline cannot answer
-    /// (it only knows whether disk moved since the last look, never whether
-    /// the buffer about to be published descends from what disk holds).
-    /// `None` when `bind_new`: a create has no baseline to diverge from.
     pub sync: Option<SyncKind>,
 }
 
 /// What the caller's own `vfs` work concluded, carrying every disk-sourced
-/// fact `record_materialize_outcome` needs — `materialize.rs` never calls
-/// `vfs` itself to re-derive any of it. A target that turned out `missing`
+/// fact `record_materialize_outcome` needs — this crate never calls `vfs`
+/// itself to re-derive any of it. A target that turned out `missing`
 /// (bind_new=false, `NotFound`) or a genuine I/O failure never reach this
-/// type at all: neither one has anything for the DB to record (see
-/// `save.rs`'s caller-side dance for both).
+/// type at all: neither one has anything for the DB to record.
 pub enum MaterializeOutcome {
     /// The live target's hash disagreed with `expect` (an ordinary CAS
     /// refusal), or a concurrent creator won a `bind_new` race — no write
