@@ -141,6 +141,13 @@ impl SaveState {
         }
     }
 
+    pub(crate) fn preparing_mode(&self) -> Option<SaveMode> {
+        match self {
+            SaveState::Preparing { params, .. } => Some(params.mode),
+            _ => None,
+        }
+    }
+
     pub(crate) fn advance_to_publishing(
         &mut self,
     ) -> Option<(SaveTicket, SaveCapture, PublishParams)> {

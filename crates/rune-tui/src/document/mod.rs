@@ -476,6 +476,14 @@ impl Document {
         self.save.prep_op()
     }
 
+    /// The mode the still-`Preparing` attempt was armed with — the prepare
+    /// ack's divergence gate must refuse an ordinary publish and let a
+    /// `SaveMode::Force` one straight through, and can only ask while the
+    /// attempt is still in that state.
+    pub(crate) fn preparing_mode(&self) -> Option<crate::save::SaveMode> {
+        self.save.preparing_mode()
+    }
+
     /// This document's current save attempt ticket, or `None` when `Idle` —
     /// the correlation key every ticketed `Msg` echoes back so a reply for
     /// an attempt this document has already moved on from is a typed,

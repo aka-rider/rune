@@ -5,9 +5,9 @@
 //! records that prior newest (`Observation::parent_a`/`parent_b` carry the
 //! per-edge meanings) — two edges per row at most, forming a DAG rather
 //! than v1's single-parent forest. [`is_ancestor`] and [`common_ancestor`]
-//! are the two ways that DAG is queried — the own-history echo check and
-//! the merge-prep ancestor ladder share them, so the walk behavior can
-//! never drift between the two.
+//! are the two ways that DAG is queried — the sync classification's
+//! containment half and the merge-prep ancestor ladder share them, so the
+//! walk behavior can never drift between the two.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
@@ -219,20 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn is_ancestor_of_self_is_true() {
-        let mut conn = open();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let tx = conn.transaction().expect("tx");
-        let doc_id = seed_doc(&tx);
-        let a = seed_obs(&tx, doc_id, session_id, "one", None);
-
-        assert!(is_ancestor(&tx, a, a).expect("is_ancestor"));
-        tx.commit().expect("commit");
-    }
-
-    #[test]
-    fn is_ancestor_true_across_a_two_parent_join() {
+    fn common_ancestor_walks_the_second_parent_edge() {
         let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
@@ -264,8 +251,29 @@ mod tests {
         )
         .expect("seed two-parent join");
 
-        assert!(is_ancestor(&tx, a, joined).expect("is_ancestor via parent_a"));
-        assert!(is_ancestor(&tx, b, joined).expect("is_ancestor via parent_b"));
+        for (edge, parent) in [("parent_a", a), ("parent_b", b)] {
+            let found = common_ancestor(&tx, parent, joined)
+                .expect("common_ancestor")
+                .expect("some");
+            assert_eq!(found.id, parent, "the walk must follow {edge}");
+            assert!(
+                is_ancestor(&tx, parent, joined).expect("is_ancestor"),
+                "containment must follow {edge} too"
+            );
+        }
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    fn is_ancestor_of_self_is_true() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        let a = seed_obs(&tx, doc_id, session_id, "one", None);
+
+        assert!(is_ancestor(&tx, a, a).expect("is_ancestor"));
         tx.commit().expect("commit");
     }
 

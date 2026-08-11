@@ -7,6 +7,7 @@
 //! [`record_materialize_outcome`]: crate::materialize::record_materialize_outcome
 
 use crate::observation::{Observation, StatFacts};
+use crate::sync::SyncKind;
 
 /// `doc_id`/`session_id` bundled together — every materialize operation
 /// needs both, and threading them as a pair (rather than two separate
@@ -62,6 +63,12 @@ pub struct MaterializePrep {
     /// live target's hash against before writing. Empty when `bind_new`
     /// (the create path never had a CAS baseline to compare).
     pub expect_hash: String,
+    /// How this session's own buffer stands against the disk knowledge the
+    /// store holds — the authorship question the CAS baseline cannot answer
+    /// (it only knows whether disk moved since the last look, never whether
+    /// the buffer about to be published descends from what disk holds).
+    /// `None` when `bind_new`: a create has no baseline to diverge from.
+    pub sync: Option<SyncKind>,
 }
 
 /// What the caller's own `vfs` work concluded, carrying every disk-sourced

@@ -62,8 +62,8 @@ pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_id, cur_no_caret_hidden, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use merge::{
-    RedivergenceTracker, merge_doc_active, merge_key_feedback, merge_save_blocked,
-    merge_theirs_confirmed, merge_title_cleared,
+    DivergentSaveTracker, RedivergenceTracker, merge_doc_active, merge_key_feedback,
+    merge_save_blocked, merge_theirs_confirmed, merge_title_cleared,
 };
 pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
 pub use render::{

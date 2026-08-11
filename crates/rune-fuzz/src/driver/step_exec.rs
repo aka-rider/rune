@@ -395,6 +395,9 @@ pub(super) fn step_and_check(
     if violation.is_none() {
         violation = state.rediverge.observe(prev, &next, &ctx);
     }
+    if violation.is_none() {
+        violation = state.divergent_save.observe(prev, &next, &ctx);
+    }
     // `SYNC-IDEMPOTENT`/`WRAP-RT` need live `&mut App`/`ViewSnapshots`
     // access `Snapshot` can't carry (module docs) — checked only on
     // sampled steps (G19: the display pipeline dominates debug-build

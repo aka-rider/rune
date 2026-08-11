@@ -2,11 +2,13 @@
 //! `merge_*`/`display_name_by_doc`/`scroll_row` projection `Snapshot`
 //! carries (module docs there): `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
 //! `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` — plus the stateful
-//! `MERGE-NO-INSTANT-REDIVERGENCE` tracker, driven per step by
-//! `driver::step_and_check` rather than `check_all`'s pure fold.
+//! `MERGE-NO-INSTANT-REDIVERGENCE` and `SAVE-AGREES-WITH-DIVERGENCE`
+//! trackers, driven per step by `driver::step_and_check` rather than
+//! `check_all`'s pure fold.
 
 use rune_db::{DbEvent, OpOutcome, SyncKind};
 use rune_tui::document::DocumentId;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
 use rune_tui::runtime::Msg;
@@ -235,6 +237,80 @@ impl RedivergenceTracker {
         }
         None
     }
+}
+
+/// `SAVE-AGREES-WITH-DIVERGENCE` (issue #65) — a publish may never commit
+/// while the document's own classification says the disk holds changes the
+/// buffer does not, unless the user explicitly forced it. The
+/// compare-and-swap alone cannot police this: it compares the live target
+/// against the baseline this session last published, so a buffer undone
+/// back behind a merge it once adopted still CAS-matches and would
+/// overwrite the adopted changes. `SaveMode::Force` — the disk-conflict
+/// Guard's own `[S]ave anyway` — is the one legitimate commit in that
+/// state, and the mode itself never reaches a `Snapshot`, so it is inferred
+/// from the Guard the answer dismisses.
+///
+/// Stateful across steps for the same reason
+/// [`RedivergenceTracker`] is: the arming step (which is where both the
+/// classification and the user's authorization are observable) and the
+/// committing step are different steps.
+#[derive(Debug, Default)]
+pub struct DivergentSaveTracker {
+    /// The document whose in-flight save was armed while its own
+    /// classification said the disk was ahead, with no force authorization —
+    /// `None` whenever no such attempt is outstanding.
+    unauthorized: Option<DocumentId>,
+}
+
+impl DivergentSaveTracker {
+    /// Feeds one checked step, in order, exactly like
+    /// [`RedivergenceTracker::observe`].
+    pub fn observe(
+        &mut self,
+        prev: &Snapshot,
+        next: &Snapshot,
+        ctx: &StepCtx,
+    ) -> Option<Violation> {
+        let doc = next.active;
+        if !save_in_flight(prev, doc) && save_in_flight(next, doc) {
+            let divergent = prev.active == doc
+                && prev
+                    .active_last_sync
+                    .is_some_and(SyncKind::is_disk_divergent);
+            let forced =
+                matches!(&prev.guard, Some((guarded, GuardKind::DiskConflict)) if *guarded == doc);
+            self.unauthorized = (divergent && !forced).then_some(doc);
+            return None;
+        }
+        let watched = self.unauthorized?;
+        if !save_in_flight(prev, watched) || save_in_flight(next, watched) {
+            return None;
+        }
+        self.unauthorized = None;
+        // `saved_version` is the active document's own — a save resolving
+        // for some other document is invisible here, and correctly so: the
+        // classification this tracker armed on is active-document-scoped
+        // too.
+        if next.active != watched || next.saved_version <= prev.saved_version {
+            return None;
+        }
+        Some(Violation {
+            id: "SAVE-AGREES-WITH-DIVERGENCE",
+            message: format!(
+                "{watched:?}'s save committed on step {} ({:?}) although its own classification \
+                 said the disk held changes the buffer did not, and no force was authorized",
+                ctx.step, ctx.msg
+            ),
+        })
+    }
+}
+
+fn save_in_flight(snapshot: &Snapshot, doc: DocumentId) -> bool {
+    snapshot
+        .save_in_flight_by_doc
+        .get(&doc)
+        .copied()
+        .unwrap_or(false)
 }
 
 /// `MERGE-THEIRS-CONFIRMED` (WP-A task 2ii/7): checked against the raw

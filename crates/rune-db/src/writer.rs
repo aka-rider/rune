@@ -388,11 +388,17 @@ fn execute_op(
             Ok(OpOutcome::None)
         }
         OpKind::MaterializePrepare {
+            session_id,
             doc_id,
             expect,
             bind_new,
         } => {
-            let prep = crate::materialize::prepare_materialize(conn, doc_id, expect, bind_new)?;
+            let prep = crate::materialize::prepare_materialize(
+                conn,
+                crate::materialize::DocSession { doc_id, session_id },
+                expect,
+                bind_new,
+            )?;
             Ok(OpOutcome::MaterializePrep(Box::new(prep)))
         }
         OpKind::MaterializeRecord {

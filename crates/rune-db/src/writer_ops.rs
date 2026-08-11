@@ -157,11 +157,14 @@ pub enum OpKind {
         state: crate::merge_state::MergeCloseState,
     },
     /// The bookkeeping-only half of `Materialize` that runs
-    /// BEFORE any `vfs` call — hands the caller the CAS decision data
+    /// BEFORE any `vfs` call — hands the caller the decision data
     /// (`materialize::prepare_materialize`) so the actual disk publish can
     /// happen entirely off this thread, on the caller's own (`rune-tui`'s
-    /// save `Cmd`).
+    /// save `Cmd`). `session_id` is what scopes the divergence
+    /// classification that decision data carries, exactly as it scopes
+    /// `MaterializeRecord`'s own bookkeeping below.
     MaterializePrepare {
+        session_id: i64,
         doc_id: i64,
         expect: ObsId,
         bind_new: bool,

@@ -12,7 +12,6 @@ use rune_db::MatResult;
 
 use crate::app::App;
 use crate::document::DocumentId;
-use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::messages;
 use crate::runtime::Effects;
 use crate::workspace;
@@ -330,34 +329,15 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // with no direct way back into the field to retype it.
             app.refocus_title();
         } else {
-            messages::error(
-                app,
-                "save refused \u{2014} the file changed on disk since it was opened",
-            );
+            messages::error(app, super::SAVE_REFUSED_DISK_CHANGED);
             // Plan WP6.S4: a genuine CAS conflict — the fresh disk
             // observation `record_fresh_from_stat` already recorded — offers
             // the disk-conflict Guard so the user can act on it directly
-            // rather than needing to know `^M` exists.
+            // rather than needing to know `^M` exists. `Diverged` is the
+            // superset of what a CAS refusal can mean: the comparison itself
+            // proves only that disk moved, never how the two sides relate.
             if mat.fresh.is_some() {
-                // `merge::begin`'s own fast pre-check (plan Gotchas `[R3]`)
-                // reads `last_sync` as a hint only — this CAS refusal IS
-                // fresh evidence the disk moved, so seed it conservatively
-                // (`Diverged` is the superset of what a save-time refusal
-                // can mean) rather than leaving `[M]erge`/`[D]iscard` here
-                // refused on a stale `Clean` from the last probe/load. The
-                // AUTHORITATIVE classification still happens fresh inside
-                // the `MergePrep` landing either answer starts.
-                if let Some(doc) = app.doc_mut(id) {
-                    doc.last_sync = Some(rune_db::SyncKind::Diverged);
-                }
-                let _ = guard::set_guard_or_warn(
-                    app,
-                    GuardPrompt {
-                        doc: id,
-                        kind: GuardKind::DiskConflict,
-                    },
-                    "disk-conflict confirmation dropped \u{2014} a prompt is already showing",
-                );
+                super::raise_disk_conflict(app, id, rune_db::SyncKind::Diverged);
             }
         }
     }
