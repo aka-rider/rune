@@ -52,7 +52,6 @@ fn minimal_multiline_code_span_between_fences() {
 }
 
 #[test]
-#[ignore = "issue #94: tab column widens a sourcepos offset off a char boundary"]
 fn case_tab_indented_blockquote_before_wide_text() {
     assert_no_duplicate_content_at(
         "<<<<<<< editor\n- h\n=======\nfuzz-external-write-1\n\n\t>>>>>>> disk\n\t你好世界，世界你好",
@@ -62,7 +61,6 @@ fn case_tab_indented_blockquote_before_wide_text() {
 }
 
 #[test]
-#[ignore = "issue #94: tab column widens a sourcepos offset off a char boundary"]
 fn minimal_tab_indented_blockquote_before_wide_text() {
     assert_no_duplicate_content_at("-\n\t>d\n\t你", &[0], 56);
 }

@@ -10,6 +10,11 @@
 //! (Gotchas: "comrak sourcepos is 1-based, end-inclusive, byte columns").
 //! Sourcepos needs no option: `parse_document` always populates
 //! `Ast.sourcepos` on every node, block and inline alike.
+//!
+//! The model has ONE caveat, pinned by the tab cases below: a line whose
+//! leading tab a container consumes only in part, and which then joins an
+//! already-open block lazily, reports columns shifted right by the spaces
+//! comrak substitutes for the tab's remainder.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -24,14 +29,22 @@ use rune_md::parse::{line_starts, options, sourcepos_to_range};
 /// The WP0-proven conversion formula, byte-exact — now the shared
 /// `rune_md::parse::sourcepos_to_range` (Ground rule 3: "make it a shared fn
 /// in `src/parse.rs`, don't duplicate").
-fn to_range(starts: &[usize], sp: Sourcepos) -> (usize, usize) {
-    let r = sourcepos_to_range(starts, sp);
+fn to_range(src: &str, starts: &[usize], sp: Sourcepos) -> (usize, usize) {
+    let r = sourcepos_to_range(src, starts, sp);
     (r.start, r.end)
 }
 
 /// Depth-first search for the first descendant (root included) whose
-/// `NodeValue` satisfies `pred`, asserting the extracted `src[start..end]`
-/// equals `expected` — the core fidelity assertion this spike exists to make.
+/// `NodeValue` satisfies `pred`.
+fn find_node<'a>(root: &'a AstNode<'a>, pred: impl Fn(&NodeValue) -> bool) -> &'a AstNode<'a> {
+    std::iter::once(root)
+        .chain(root.descendants().skip(1))
+        .find(|n| pred(&n.data.borrow().value))
+        .unwrap_or_else(|| panic!("no node matching predicate found"))
+}
+
+/// Asserts the extracted `src[start..end]` equals `expected` — the core
+/// fidelity assertion this spike exists to make.
 fn assert_node_text<'a>(
     src: &str,
     starts: &[usize],
@@ -39,12 +52,9 @@ fn assert_node_text<'a>(
     pred: impl Fn(&NodeValue) -> bool,
     expected: &str,
 ) -> &'a AstNode<'a> {
-    let node = std::iter::once(root)
-        .chain(root.descendants().skip(1))
-        .find(|n| pred(&n.data.borrow().value))
-        .unwrap_or_else(|| panic!("no node matching predicate found for expected {expected:?}"));
+    let node = find_node(root, pred);
     let sp = node.data.borrow().sourcepos;
-    let (start, end) = to_range(starts, sp);
+    let (start, end) = to_range(src, starts, sp);
     let actual = src
         .get(start..end)
         .unwrap_or_else(|| panic!("range [{start},{end}) not on a char boundary in {src:?}"));
@@ -206,8 +216,8 @@ fn tasklist_marker_and_text_are_byte_exact() {
     // The marker range is the gap between the item's start and its first
     // child's start (parent/child range-gap derivation) — proves the
     // "## "-style prefix extraction generalizes to "- [x] ".
-    let (item_start, _) = to_range(&starts, item.data.borrow().sourcepos);
-    let (text_start, _) = to_range(&starts, text.data.borrow().sourcepos);
+    let (item_start, _) = to_range(src, &starts, item.data.borrow().sourcepos);
+    let (text_start, _) = to_range(src, &starts, text.data.borrow().sourcepos);
     assert_eq!(&src[item_start..text_start], "- [x] ");
 }
 
@@ -236,9 +246,131 @@ fn heading_marker_and_text_are_byte_exact() {
         |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "heading"),
         "heading",
     );
-    let (heading_start, _) = to_range(&starts, heading.data.borrow().sourcepos);
-    let (text_start, _) = to_range(&starts, text.data.borrow().sourcepos);
+    let (heading_start, _) = to_range(src, &starts, heading.data.borrow().sourcepos);
+    let (text_start, _) = to_range(src, &starts, text.data.borrow().sourcepos);
     assert_eq!(&src[heading_start..text_start], "## ");
+}
+
+#[test]
+fn tab_indented_list_item_content_is_byte_exact() {
+    let src = "-\n\t你 tail";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::Paragraph),
+        "你 tail",
+    );
+}
+
+#[test]
+fn tab_indented_blockquote_content_is_byte_exact() {
+    let src = ">\t你 tail";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "你 tail"),
+        "你 tail",
+    );
+}
+
+#[test]
+fn tab_indented_code_block_is_byte_exact() {
+    let src = "\ta code line";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::CodeBlock(_)),
+        "a code line",
+    );
+}
+
+#[test]
+fn lazy_paragraph_continuation_after_a_tab_is_byte_exact() {
+    let src = "a\n\tcontinued";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "continued"),
+        "continued",
+    );
+}
+
+#[test]
+fn tab_immediately_before_a_wide_char_is_byte_exact() {
+    let src = "- x\n\t你";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "你"),
+        "你",
+    );
+}
+
+/// The one shape where a column is NOT a byte column: the list consumes 2
+/// of the leading tab's 4 columns, the blockquote prefix is absent, so the
+/// line joins the open paragraph lazily and comrak substitutes the tab's
+/// remaining 2 columns with spaces — every column on that line comes back
+/// 2 too far right. The conversion cannot undo a shift it cannot see, so
+/// it keeps the range inside its own line and on char boundaries.
+#[test]
+fn partially_consumed_tab_on_a_lazy_line_shifts_columns() {
+    let src = "-\n\t>d\n\t你";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    let text = find_node(
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "你"),
+    );
+    let sp = text.data.borrow().sourcepos;
+    let byte_column = src.find('你').unwrap() - starts[2] + 1;
+    assert_eq!((sp.start.column, byte_column), (4, 2));
+    assert_eq!(to_range(src, &starts, sp), (7, 10));
+    assert_eq!(&src[7..10], "你");
+}
+
+#[test]
+fn partially_consumed_tab_shift_survives_as_a_shorter_range() {
+    let src = "-\n\t>d\n\tabc";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_document(&arena, src, &options());
+
+    let text = find_node(
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "abc"),
+    );
+    let sp = text.data.borrow().sourcepos;
+    let (start, end) = to_range(src, &starts, sp);
+    assert_eq!(sp.start.column, 4);
+    assert!(starts[2] <= start && end <= src.len());
+    assert_eq!(&src[start..end], "c");
 }
 
 #[test]

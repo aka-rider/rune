@@ -329,7 +329,7 @@ fn build_list_items<'a>(
 
         let task = match &item_node.data.borrow().value {
             NodeValue::TaskItem(t) => {
-                let sym = super::sourcepos_to_range(starts, t.symbol_sourcepos);
+                let sym = super::sourcepos_to_range(content, starts, t.symbol_sourcepos);
                 let bracket_start = sym.start.saturating_sub(1);
                 let bracket_end = sym.end.saturating_add(1).min(content.len());
                 Some(ByteRange::new(bracket_start, bracket_end).clamp(content.len()))

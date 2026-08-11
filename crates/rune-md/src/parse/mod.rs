@@ -74,23 +74,53 @@ pub(crate) fn cr_shadow(content: &str) -> Cow<'_, str> {
 }
 
 /// The WP0-proven conversion: comrak `Sourcepos` (1-based, end-inclusive,
-/// UTF-8 byte columns) -> an absolute half-open `ByteRange`.
-/// `start = line_starts[l-1] + (c-1)`, `end = line_starts[el-1] + ec`
-/// (Gotchas: "comrak sourcepos is 1-based, end-inclusive, byte columns").
-/// Never panics on a malformed/out-of-range sourcepos: every lookup goes
-/// through `.get()` and falls back to 0 rather than indexing directly.
-pub fn sourcepos_to_range(starts: &[usize], sp: Sourcepos) -> ByteRange {
-    let start_line = starts
-        .get(sp.start.line.saturating_sub(1))
-        .copied()
-        .unwrap_or(0);
-    let end_line = starts
-        .get(sp.end.line.saturating_sub(1))
-        .copied()
-        .unwrap_or(0);
-    let start = start_line + sp.start.column.saturating_sub(1);
-    let end = end_line + sp.end.column;
+/// UTF-8 byte columns) -> an absolute half-open `ByteRange` into `content`,
+/// always in bounds and always on char boundaries.
+///
+/// Comrak's columns are byte columns EXCEPT on a line whose leading tab is
+/// only partly consumed as container indentation and that is then taken as
+/// a lazy continuation of an already-open block: comrak substitutes the
+/// tab's unconsumed remainder with spaces in that block's content, so every
+/// column reported on that line is shifted right by that many spaces.
+/// The shift depends on the enclosing container's indentation, which a
+/// sourcepos does not carry, so it cannot be undone from a column alone —
+/// but it is bounded by that tab's width, so the column stays on its own
+/// line once clamped there, and snapping to char boundaries keeps the
+/// range a valid slice. `tests/spike_sourcepos.rs` pins both regimes.
+pub fn sourcepos_to_range(content: &str, starts: &[usize], sp: Sourcepos) -> ByteRange {
+    let start = offset_of_column(
+        content,
+        starts,
+        sp.start.line,
+        sp.start.column.saturating_sub(1),
+    );
+    let end = offset_of_column(content, starts, sp.end.line, sp.end.column);
+    let start = content.floor_char_boundary(start.min(content.len()));
+    let end = content
+        .ceil_char_boundary(end.min(content.len()))
+        .max(start);
     ByteRange::new(start, end)
+}
+
+fn indent_bears_tab(line: &[u8]) -> bool {
+    line.iter()
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .any(|&b| b == b'\t')
+}
+
+fn offset_of_column(content: &str, starts: &[usize], line: usize, columns: usize) -> usize {
+    let line_start = starts.get(line.saturating_sub(1)).copied().unwrap_or(0);
+    let line_limit = starts.get(line).copied().unwrap_or(content.len());
+    let offset = line_start + columns;
+    let line_bytes = content
+        .as_bytes()
+        .get(line_start..line_limit)
+        .unwrap_or_default();
+    if indent_bears_tab(line_bytes) {
+        offset.min(line_limit)
+    } else {
+        offset
+    }
 }
 
 /// The one comrak `Options` value the whole crate parses with — extension
@@ -159,7 +189,7 @@ pub(crate) fn last_line_of(starts: &[usize], range: ByteRange) -> usize {
 /// comrak's own line count and `starts` can never disagree.
 pub(crate) fn node_range(content: &str, starts: &[usize], node: &AstNode) -> ByteRange {
     let sp = node.data.borrow().sourcepos;
-    sourcepos_to_range(starts, sp).clamp(content.len())
+    sourcepos_to_range(content, starts, sp)
 }
 
 /// One `ByteRange` per physical line `range` spans — the single
