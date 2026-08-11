@@ -130,6 +130,15 @@ pub fn save_and_ack(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
     drain_materialize_round_trip(app, bridge, doc);
 }
 
+/// Drives a real `⌘S` up to the prepare ack the pre-publish divergence gate
+/// answers — no caller-side vfs `Cmd` follows a refusal, so there is nothing
+/// further to discharge. What the user then sees belongs to the caller to
+/// assert.
+pub fn save_expecting_refusal(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
+    press_key(app, sup('s'));
+    drain_one_op_for(app, bridge, doc);
+}
+
 /// Overwrites `/doc.md`'s content in place, simulating an external editor.
 pub fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
     let path = Path::new("/doc.md");

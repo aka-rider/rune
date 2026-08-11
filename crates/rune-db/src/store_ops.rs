@@ -185,7 +185,7 @@ impl Store {
 
     /// The first, bookkeeping-only step of the materialize protocol
     /// (prepare / vfs write / record): enqueues `MaterializePrepare` —
-    /// hands back the CAS decision data (`materialize::MaterializePrep`) the
+    /// hands back the decision data (`materialize::MaterializePrep`) the
     /// caller needs before it does any `vfs` call itself. Never touches
     /// `vfs`: a dead writer failing THIS enqueue means the caller falls
     /// back to an uncoordinated direct write (same as a document with no
@@ -197,6 +197,7 @@ impl Store {
         bind_new: bool,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MaterializePrepare {
+            session_id: self.session_id,
             doc_id,
             expect,
             bind_new,

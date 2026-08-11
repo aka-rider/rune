@@ -218,6 +218,7 @@ fn close_mid_save_leaves_no_state() {
                 result: rune_db::OpOutcome::MaterializePrep(Box::new(rune_db::MaterializePrep {
                     expect_hash: String::new(),
                     bound_path: None,
+                    sync: None,
                 })),
             }),
         );

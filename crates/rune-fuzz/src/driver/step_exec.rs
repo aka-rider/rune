@@ -229,6 +229,12 @@ pub(super) fn step_and_check(
     let step_index = state.steps;
     let is_save_done_ok = matches!(&tag, MsgTag::SaveDone { ok: true, .. });
 
+    if let MsgTag::Db { doc, .. } = &tag {
+        state
+            .divergent_save
+            .note_prepare_ack(&msg, *doc, step_index);
+    }
+
     if let Some(v) = invariant::merge_theirs_confirmed(&msg) {
         outcome.violation = Some(v);
         outcome.final_snapshot = Some(prev.clone());
@@ -394,6 +400,9 @@ pub(super) fn step_and_check(
     // moot, so `or_else` ordering costs nothing.
     if violation.is_none() {
         violation = state.rediverge.observe(prev, &next, &ctx);
+    }
+    if violation.is_none() {
+        violation = state.divergent_save.observe(prev, &next, &ctx);
     }
     // `SYNC-IDEMPOTENT`/`WRAP-RT` need live `&mut App`/`ViewSnapshots`
     // access `Snapshot` can't carry (module docs) — checked only on

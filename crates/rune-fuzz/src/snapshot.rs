@@ -154,6 +154,12 @@ pub struct Snapshot {
     /// its save actually completed, independent of which message carried
     /// the ack.
     pub save_in_flight_by_doc: BTreeMap<DocumentId, bool>,
+    /// Every open document's own `saved_version`, the same per-document
+    /// shape as `dirty_by_doc` above — `Snapshot.saved_version` is
+    /// active-document-only, so a checker asking "did THIS document's save
+    /// commit" would otherwise be comparing two different documents'
+    /// versions across a step that changed the active document.
+    pub saved_version_by_doc: BTreeMap<DocumentId, u64>,
     /// Whether `app.merge` is `Active`/`Pending` right now (plan WP7.S1) —
     /// a lean projection of `MergeState`, not the enum itself: no checker
     /// here needs the working-form `conflicts`/`blocks` bodies, only
@@ -260,12 +266,14 @@ impl Snapshot {
         let mut dirty_by_doc = BTreeMap::new();
         let mut save_in_flight_by_doc = BTreeMap::new();
         let mut display_name_by_doc = BTreeMap::new();
+        let mut saved_version_by_doc = BTreeMap::new();
         for doc_id in doc_ids {
             app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
                 dirty_by_doc.insert(doc_id, d.is_dirty());
                 save_in_flight_by_doc.insert(doc_id, d.save_in_flight());
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
+                saved_version_by_doc.insert(doc_id, d.saved_version);
             }
         }
         let merge_active = matches!(app.merge, rune_tui::merge::MergeState::Active { .. });
@@ -316,6 +324,7 @@ impl Snapshot {
             quit_intent_pending,
             dirty_by_doc,
             save_in_flight_by_doc,
+            saved_version_by_doc,
             merge_active,
             merge_pending,
             merge_doc,

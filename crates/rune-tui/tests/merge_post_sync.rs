@@ -31,7 +31,7 @@ use rune_vfs::{Mem, Vfs};
 use merge_common::db_wiring_common::{app_with_store, publish};
 use merge_common::{
     bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key, reprobe,
-    save_and_ack,
+    save_and_ack, save_expecting_refusal,
 };
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched
@@ -339,12 +339,12 @@ fn escape_out_with_unresolved_blocks_restores_affordances_and_ctrl_m_retries() {
     );
 }
 
-/// Esc-out then ⌘S must CAS-refuse into the disk-conflict Guard: the save
-/// baseline never advanced at resolver entry, so a single keystroke can
-/// never silently publish the conflict-marker working form over the
-/// external bytes on disk.
+/// Esc-out then ⌘S must be refused into the disk-conflict Guard: the buffer
+/// still holds the conflict-marker working form and still does not descend
+/// from what is on disk, so a single keystroke can never publish it over
+/// the external bytes.
 #[test]
-fn escape_out_then_save_cas_refuses_into_the_guard() {
+fn escape_out_then_save_is_refused_into_the_guard() {
     let (mut app, bridge, doc_id, _draft) = open_two_conflict_diverged("post-sync-esc-save");
 
     press_key(&mut app, ctrl('m'));
@@ -354,7 +354,7 @@ fn escape_out_then_save_cas_refuses_into_the_guard() {
     assert_eq!(app.merge, MergeState::Inactive);
     drain_all_ops_for(&mut app, &bridge, doc_id);
 
-    save_and_ack(&mut app, &bridge, doc_id);
+    save_expecting_refusal(&mut app, &bridge, doc_id);
 
     let Some(prompt) = &app.guard else {
         panic!("expected the disk-conflict Guard, not a silent marker publish");

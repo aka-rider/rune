@@ -1,8 +1,7 @@
 //! The writer thread's op vocabulary: the [`OpKind`] catalog a [`WriteOp`]
 //! carries, the [`OpOutcome`] each one can produce, and the [`DbEvent`]
-//! completion wrapping it. Split out of `writer.rs` — this module is
-//! purely the data model; `writer.rs` keeps the queue/dispatch machinery
-//! that consumes it.
+//! completion wrapping it — purely the data model; the queue/dispatch
+//! machinery that consumes it lives with the writer thread itself.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -39,9 +38,9 @@ pub enum LoadSource {
 /// IMMEDIATE`-plus-retry chokepoint without any domain semantics; the
 /// journal/snapshot domain verbs sit alongside it — no table-level CRUD
 /// escapes this crate, each variant below is one hand-written transaction
-/// from `journal.rs`/`snapshot.rs` embodying its own invariant.
+/// embodying its own invariant.
 /// `session_id`/`now` are baked into each variant's payload
-/// by the `Store` convenience method that constructs it (`store.rs`) —
+/// by the `Store` convenience method that constructs it —
 /// `Store` is the one place that knows this process's session identity and
 /// injected clock; the writer thread itself stays a plain
 /// `Connection` executor with no identity of its own.
@@ -91,7 +90,7 @@ pub enum OpKind {
     /// pre-resolved durable seq. This writer thread resolves it to the exact
     /// durable seq itself, at execution time, using the per-doc undo-state
     /// it has been building from every `AppendEdit` it has already run for
-    /// this doc (`writer.rs`'s `DocUndoState`) — by the time this op reaches
+    /// this doc (`DocUndoState`) — by the time this op reaches
     /// the front of the writer's single FIFO queue, every `AppendEdit`
     /// enqueued ahead of it has already committed, so the mapping is always
     /// exact, never a guess at an unacknowledged in-flight op the way
@@ -157,11 +156,12 @@ pub enum OpKind {
         state: crate::merge_state::MergeCloseState,
     },
     /// The bookkeeping-only half of `Materialize` that runs
-    /// BEFORE any `vfs` call — hands the caller the CAS decision data
+    /// BEFORE any `vfs` call — hands the caller the decision data
     /// (`materialize::prepare_materialize`) so the actual disk publish can
     /// happen entirely off this thread, on the caller's own (`rune-tui`'s
     /// save `Cmd`).
     MaterializePrepare {
+        session_id: i64,
         doc_id: i64,
         expect: ObsId,
         bind_new: bool,

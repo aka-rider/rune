@@ -4,17 +4,15 @@
 //! fresh sighting that differs in hash from what was previously newest
 //! records that prior newest (`Observation::parent_a`/`parent_b` carry the
 //! per-edge meanings) — two edges per row at most, forming a DAG rather
-//! than v1's single-parent forest. [`is_ancestor`] and [`common_ancestor`]
-//! are the two ways that DAG is queried — the own-history echo check and
-//! the merge-prep ancestor ladder share them, so the walk behavior can
-//! never drift between the two.
+//! than v1's single-parent forest. [`common_ancestor`] is how that DAG is
+//! queried: the merge-prep ancestor ladder's own three-way base.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
 use crate::observation::{self, ObsId, Observation};
 
-/// The recursive-CTE body shared by [`is_ancestor`] and [`common_ancestor`]:
+/// The recursive-CTE body [`common_ancestor`] runs once per side:
 /// starting from `param` (a bound-parameter placeholder), walks every
 /// reachable `parent_a`/`parent_b` edge upward, self-joining against
 /// `cte_name` (the enclosing `WITH RECURSIVE` clause's own name — each
@@ -31,17 +29,6 @@ fn ancestors_of_clause(cte_name: &str, param: &str) -> String {
          UNION
          SELECT o.parent_b FROM observations o JOIN {cte_name} ON o.id = {cte_name}.id WHERE o.parent_b IS NOT NULL"
     )
-}
-
-/// Whether `ancestor` is `of` itself, or reachable from `of` by following
-/// `parent_a`/`parent_b` edges upward any number of hops.
-pub fn is_ancestor(tx: &Transaction<'_>, ancestor: ObsId, of: ObsId) -> Result<bool, Error> {
-    let clause = ancestors_of_clause("anc", "?1");
-    let sql = format!(
-        "WITH RECURSIVE anc(id) AS ({clause}) SELECT EXISTS(SELECT 1 FROM anc WHERE id = ?2)"
-    );
-    tx.query_row(&sql, params![of, ancestor], |r| r.get(0))
-        .map_err(Error::from)
 }
 
 /// The closest common ancestor of `a` and `b`: the full ancestor sets of
@@ -219,20 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn is_ancestor_of_self_is_true() {
-        let mut conn = open();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let tx = conn.transaction().expect("tx");
-        let doc_id = seed_doc(&tx);
-        let a = seed_obs(&tx, doc_id, session_id, "one", None);
-
-        assert!(is_ancestor(&tx, a, a).expect("is_ancestor"));
-        tx.commit().expect("commit");
-    }
-
-    #[test]
-    fn is_ancestor_true_across_a_two_parent_join() {
+    fn common_ancestor_walks_the_second_parent_edge() {
         let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
@@ -264,22 +238,12 @@ mod tests {
         )
         .expect("seed two-parent join");
 
-        assert!(is_ancestor(&tx, a, joined).expect("is_ancestor via parent_a"));
-        assert!(is_ancestor(&tx, b, joined).expect("is_ancestor via parent_b"));
-        tx.commit().expect("commit");
-    }
-
-    #[test]
-    fn is_ancestor_false_for_disconnected_nodes() {
-        let mut conn = open();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let tx = conn.transaction().expect("tx");
-        let doc_id = seed_doc(&tx);
-        let a = seed_obs(&tx, doc_id, session_id, "one", None);
-        let b = seed_obs(&tx, doc_id, session_id, "two", None);
-
-        assert!(!is_ancestor(&tx, a, b).expect("is_ancestor"));
+        for (edge, parent) in [("parent_a", a), ("parent_b", b)] {
+            let found = common_ancestor(&tx, parent, joined)
+                .expect("common_ancestor")
+                .expect("some");
+            assert_eq!(found.id, parent, "the walk must follow {edge}");
+        }
         tx.commit().expect("commit");
     }
 }

@@ -136,6 +136,10 @@ struct State {
     /// DivergeDisk` by `diverge_disk` (which runs outside the step cycle
     /// and would otherwise be invisible to it).
     rediverge: crate::invariant::RedivergenceTracker,
+    /// The stateful `SAVE-AGREES-WITH-DIVERGENCE` tracker — fed every
+    /// checked step by `step_and_check`, correlating the step that armed a
+    /// save with the step its ack resolves on.
+    divergent_save: crate::invariant::DivergentSaveTracker,
     /// Bumped on every `Action::DivergeDisk` so repeated occurrences in one
     /// session publish genuinely different bytes each time — a store-backed
     /// session must never externally "publish" the same bytes twice in a
@@ -223,6 +227,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         draft_doc,
         bridge,
         rediverge: crate::invariant::RedivergenceTracker::default(),
+        divergent_save: crate::invariant::DivergentSaveTracker::default(),
         diverge_step: 0,
     };
     let mut prev = Snapshot::capture(&mut state.app, false);

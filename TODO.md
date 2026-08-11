@@ -83,7 +83,7 @@ entry is deleted in the same commit that fixes it.
 
 ### Files over 500 lines
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
-  - `crates/rune-db/src/sync.rs` — 940 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
+  - `crates/rune-db/src/sync.rs` — 778 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1060 (test file)
   - `crates/rune-tui/src/global.rs` — 767
   - `crates/rune-tui/src/pane.rs` — 858

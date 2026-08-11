@@ -43,16 +43,19 @@ use crate::retry;
 
 pub use crate::materialize_types::{DocSession, MatResult, MaterializeOutcome, MaterializePrep};
 
-/// Step 1 (now caller-facing): fetches the CAS decision data for a
-/// `!bind_new` materialize attempt — the bound path to check the caller's
-/// own target against, and the baseline hash to CAS-compare the live target
-/// against. Pure DB read, no `vfs` call ([rune-db 1]'s fix: this can run
+/// Step 1 (now caller-facing): fetches the decision data for a `!bind_new`
+/// materialize attempt — the bound path to check the caller's own target
+/// against, the baseline hash to CAS-compare the live target against, and
+/// this session's own [`crate::sync::sync`] classification, all read in ONE
+/// transaction so the caller never sees a baseline and a verdict taken from
+/// two different states of the database.
+/// Pure DB read, no `vfs` call ([rune-db 1]'s fix: this can run
 /// even while every disk in the workspace is unreachable, and the caller's
 /// OWN subsequent disk work never depends on the writer thread being alive
 /// a moment longer than it takes to answer this one query).
 pub fn prepare_materialize(
     conn: &mut Connection,
-    doc_id: i64,
+    ds: DocSession,
     expect: ObsId,
     bind_new: bool,
 ) -> Result<MaterializePrep, Error> {
@@ -60,23 +63,25 @@ pub fn prepare_materialize(
         return Ok(MaterializePrep::default());
     }
 
-    let db_path: String = retry::with_retry(conn, |tx| {
-        tx.query_row(
+    retry::with_retry(conn, |tx| {
+        let db_path: String = tx.query_row(
             "SELECT path FROM documents WHERE id=?1",
-            params![doc_id],
+            params![ds.doc_id],
             |r| r.get(0),
-        )
-        .map_err(Error::from)
-    })?;
-    if db_path.is_empty() {
-        return Err(Error::Invalid(format!(
-            "materialize doc {doc_id}: no path bound (untitled document)"
-        )));
-    }
-    let expect_obs = retry::with_retry(conn, |tx| observation::get_observation(tx, expect))?;
-    Ok(MaterializePrep {
-        bound_path: Some(db_path),
-        expect_hash: expect_obs.blob_hash,
+        )?;
+        if db_path.is_empty() {
+            return Err(Error::Invalid(format!(
+                "materialize doc {}: no path bound (untitled document)",
+                ds.doc_id
+            )));
+        }
+        let expect_obs = observation::get_observation(tx, expect)?;
+        let sync = crate::sync::sync(tx, ds.session_id, ds.doc_id)?;
+        Ok(MaterializePrep {
+            bound_path: Some(db_path),
+            expect_hash: expect_obs.blob_hash,
+            sync: Some(sync.kind),
+        })
     })
 }
 

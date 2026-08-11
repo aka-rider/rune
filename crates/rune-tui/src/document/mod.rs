@@ -476,6 +476,10 @@ impl Document {
         self.save.prep_op()
     }
 
+    pub(crate) fn preparing_mode(&self) -> Option<crate::save::SaveMode> {
+        self.save.preparing_mode()
+    }
+
     /// This document's current save attempt ticket, or `None` when `Idle` —
     /// the correlation key every ticketed `Msg` echoes back so a reply for
     /// an attempt this document has already moved on from is a typed,

@@ -2,11 +2,15 @@
 //! `merge_*`/`display_name_by_doc`/`scroll_row` projection `Snapshot`
 //! carries (module docs there): `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
 //! `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` — plus the stateful
-//! `MERGE-NO-INSTANT-REDIVERGENCE` tracker, driven per step by
-//! `driver::step_and_check` rather than `check_all`'s pure fold.
+//! `MERGE-NO-INSTANT-REDIVERGENCE` and `SAVE-AGREES-WITH-DIVERGENCE`
+//! trackers, driven per step by `driver::step_and_check` rather than
+//! `check_all`'s pure fold.
+
+use std::collections::BTreeMap;
 
 use rune_db::{DbEvent, OpOutcome, SyncKind};
 use rune_tui::document::DocumentId;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
 use rune_tui::runtime::Msg;
@@ -235,6 +239,119 @@ impl RedivergenceTracker {
         }
         None
     }
+}
+
+/// `SAVE-AGREES-WITH-DIVERGENCE` (issue #65) — a publish may never commit
+/// once the store's own prepare-time verdict said the disk holds changes
+/// the buffer does not, unless the user explicitly forced it.
+///
+/// The verdict comes from the `MaterializePrepare` ack itself — the exact
+/// value the production gate decides on — read off the raw `Msg` before
+/// `update` consumes it, the way `MERGE-THEIRS-CONFIRMED` reads its own.
+/// `SaveMode::Force` never reaches a `Snapshot`, so authorization is taken
+/// at the step the save arms, where the disk-conflict Guard the `[S]ave
+/// anyway` answer dismisses is still up.
+#[derive(Debug, Default)]
+pub struct DivergentSaveTracker {
+    attempts: BTreeMap<DocumentId, Attempt>,
+}
+
+#[derive(Debug)]
+struct Attempt {
+    forced: bool,
+    divergent_verdict_step: Option<usize>,
+}
+
+impl DivergentSaveTracker {
+    /// Reads the prepare ack `doc`'s in-flight save is waiting on, before
+    /// `update` delivers it to the gate. `doc` is the document the pending
+    /// op was recorded for.
+    pub fn note_prepare_ack(&mut self, msg: &Msg, doc: Option<DocumentId>, step: usize) {
+        let Msg::Db(DbEvent::Ok {
+            result: OpOutcome::MaterializePrep(prep),
+            ..
+        }) = msg
+        else {
+            return;
+        };
+        if !prep.sync.is_some_and(SyncKind::is_disk_divergent) {
+            return;
+        }
+        let Some(attempt) = doc.and_then(|doc| self.attempts.get_mut(&doc)) else {
+            return;
+        };
+        attempt.divergent_verdict_step = Some(step);
+    }
+
+    /// Feeds one checked step, in order, exactly like
+    /// [`RedivergenceTracker::observe`].
+    pub fn observe(
+        &mut self,
+        prev: &Snapshot,
+        next: &Snapshot,
+        ctx: &StepCtx,
+    ) -> Option<Violation> {
+        for (&doc, &in_flight) in &next.save_in_flight_by_doc {
+            if in_flight && !save_in_flight(prev, doc) {
+                let forced = matches!(
+                    &prev.guard,
+                    Some((guarded, GuardKind::DiskConflict)) if *guarded == doc
+                );
+                self.attempts.insert(
+                    doc,
+                    Attempt {
+                        forced,
+                        divergent_verdict_step: None,
+                    },
+                );
+            }
+        }
+        let resolved: Vec<DocumentId> = self
+            .attempts
+            .keys()
+            .copied()
+            .filter(|&doc| !save_in_flight(next, doc))
+            .collect();
+        let mut violation = None;
+        for doc in resolved {
+            let Some(attempt) = self.attempts.remove(&doc) else {
+                continue;
+            };
+            let committed = saved_version(next, doc) > saved_version(prev, doc);
+            let Some(verdict_step) = attempt.divergent_verdict_step else {
+                continue;
+            };
+            if attempt.forced || !committed || violation.is_some() {
+                continue;
+            }
+            violation = Some(Violation {
+                id: "SAVE-AGREES-WITH-DIVERGENCE",
+                message: format!(
+                    "{doc:?}'s save committed on step {} ({:?}) although the prepare ack it \
+                     published on (step {verdict_step}) carried a disk-divergent verdict, and no \
+                     force was authorized",
+                    ctx.step, ctx.msg
+                ),
+            });
+        }
+        violation
+    }
+}
+
+fn save_in_flight(snapshot: &Snapshot, doc: DocumentId) -> bool {
+    snapshot
+        .save_in_flight_by_doc
+        .get(&doc)
+        .copied()
+        .unwrap_or(false)
+}
+
+fn saved_version(snapshot: &Snapshot, doc: DocumentId) -> u64 {
+    snapshot
+        .saved_version_by_doc
+        .get(&doc)
+        .copied()
+        .unwrap_or(0)
 }
 
 /// `MERGE-THEIRS-CONFIRMED` (WP-A task 2ii/7): checked against the raw

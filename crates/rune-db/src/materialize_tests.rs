@@ -57,7 +57,8 @@ fn prepare_materialize_is_vfs_free_and_returns_the_bound_path_and_expect_hash() 
     let doc_id = seed_doc_with_path(&conn, "/doc.md");
     let expect = record_obs(&conn, doc_id, session_id, "original");
 
-    let prep = prepare_materialize(&mut conn, doc_id, expect, false).expect("prepare");
+    let prep = prepare_materialize(&mut conn, DocSession { doc_id, session_id }, expect, false)
+        .expect("prepare");
     assert_eq!(prep.bound_path.as_deref(), Some("/doc.md"));
     assert_eq!(prep.expect_hash, observation::hash_bytes(b"original"));
 }
@@ -70,7 +71,16 @@ fn prepare_materialize_bind_new_is_a_pure_default_no_query() {
     // No document row at all — if `prepare_materialize` tried to read
     // one for `bind_new`, this would error instead of returning
     // cleanly.
-    let prep = prepare_materialize(&mut conn, 999, 0, true).expect("prepare bind_new");
+    let prep = prepare_materialize(
+        &mut conn,
+        DocSession {
+            doc_id: 999,
+            session_id: 999,
+        },
+        0,
+        true,
+    )
+    .expect("prepare bind_new");
     assert_eq!(prep, MaterializePrep::default());
 }
 
@@ -84,7 +94,7 @@ fn prepare_materialize_refuses_an_untitled_document() {
     let doc_id = seed_doc_with_path(&conn, "");
     let expect = record_obs(&conn, doc_id, session_id, "irrelevant");
 
-    let err = prepare_materialize(&mut conn, doc_id, expect, false)
+    let err = prepare_materialize(&mut conn, DocSession { doc_id, session_id }, expect, false)
         .expect_err("untitled document must refuse");
     assert!(matches!(err, Error::Invalid(_)));
 }

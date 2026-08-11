@@ -35,6 +35,8 @@
 // home under `tests/invariants/` instead.
 #[path = "invariants/clipboard.rs"]
 mod clipboard;
+#[path = "invariants/divergent_save.rs"]
+mod divergent_save;
 #[path = "invariants/highlight.rs"]
 mod highlight;
 #[path = "invariants/journal.rs"]
