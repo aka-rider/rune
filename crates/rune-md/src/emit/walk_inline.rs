@@ -102,10 +102,8 @@ fn emit_inline(
             }
         }
         Inline::Code(m) => {
-            if m.sm.state() == RevealState::Revealed {
-                // MAJOR fix (verification round 9): `m.content_lines`,
-                // matching `Emphasis`'s own revealed-path fix above.
-                for &line in &m.content_lines {
+            if m.state() == RevealState::Revealed {
+                for &line in m.content_lines() {
                     push_span_split_by_line(
                         content,
                         starts,
@@ -117,14 +115,8 @@ fn emit_inline(
                     );
                 }
             } else {
-                hide_range(out.hidden, out.accounted, content, starts, m.open);
-                // MAJOR fix (verification round 9): `m.inner_lines` —
-                // never `m.content` directly — a code span's INNER text
-                // can soft-wrap across lines exactly like its outer
-                // `range` can (verified empirically: "> `a\n> b`" used
-                // to re-claim the continuation line's own "> " marker as
-                // part of the code span's rendered content).
-                for &line in &m.inner_lines {
+                hide_range(out.hidden, out.accounted, content, starts, m.open());
+                for &line in m.inner_lines() {
                     push_span_split_by_line(
                         content,
                         starts,
@@ -135,7 +127,7 @@ fn emit_inline(
                         out.accounted,
                     );
                 }
-                hide_range(out.hidden, out.accounted, content, starts, m.close);
+                hide_range(out.hidden, out.accounted, content, starts, m.close());
             }
         }
         Inline::Link(m) => {
