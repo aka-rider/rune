@@ -229,6 +229,12 @@ pub(super) fn step_and_check(
     let step_index = state.steps;
     let is_save_done_ok = matches!(&tag, MsgTag::SaveDone { ok: true, .. });
 
+    if let MsgTag::Db { doc, .. } = &tag {
+        state
+            .divergent_save
+            .note_prepare_ack(&msg, *doc, step_index);
+    }
+
     if let Some(v) = invariant::merge_theirs_confirmed(&msg) {
         outcome.violation = Some(v);
         outcome.final_snapshot = Some(prev.clone());

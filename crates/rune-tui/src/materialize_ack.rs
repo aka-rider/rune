@@ -1,26 +1,22 @@
-//! The ack/reaction side of the save flow (split out of `save.rs` to keep
-//! it under the 500-line budget): recording what the caller-side `vfs` work
-//! concluded, the snapshot-autosave enqueue, the dirty-cache recompute
-//! chokepoint, and `on_store_failure`'s whole-store degrade. `save.rs` owns
-//! building and submitting the materialize/save operation in the first
-//! place (`trigger_save`/`materialize_now`/`bind_new_now`); this module
-//! owns everything from the recovery store's first reply onward.
+//! The ack/reaction side of the save flow: recording what the caller-side
+//! `vfs` work concluded, the snapshot-autosave enqueue, the dirty-cache
+//! recompute chokepoint, and `on_store_failure`'s whole-store degrade.
+//! `save` owns building and submitting the materialize/save operation in
+//! the first place; this module owns everything from the recovery store's
+//! first reply onward.
 //!
 //! Every function here is per-document except `on_store_failure`, which
 //! stays app-wide: a hard write failure degrades the ONE shared `Store`,
 //! never just the document that happened to trigger it — but its own sweep
-//! is now state-aware per document (`Document::save_phase`), rather than
+//! is state-aware per document (`Document::save_phase`), rather than
 //! abandoning every in-flight save uniformly.
 //!
 //! Two siblings carry the halves that would otherwise push this file past
 //! the 500-line budget. [`publish`] holds the prepare ack (with its
 //! divergence gate), the `vfs` `Cmd` it spawns, and that `Cmd`'s own
 //! outcome reaction. [`reactions`] holds what happens once a save attempt
-//! actually resolves — `handle_materialize_ack`/`handle_save_done`'s
-//! success/failure arms, the close-on-save-ack and quit-save-fan-out
-//! chokepoints (`close_if_pending`/`quit_if_pending`) they both funnel
-//! through, and the local materialize failure path
-//! (`fail_materialize_locally`).
+//! actually resolves — the success/failure arms, the continuation
+//! chokepoint they funnel through, and the local materialize failure path.
 
 use std::path::Path;
 
@@ -48,17 +44,20 @@ pub(crate) const DURABILITY_UNCONFIRMED_WARNING: &str =
 pub(crate) const SAVE_REFUSED_DISK_CHANGED: &str =
     "save refused \u{2014} the file changed on disk since it was opened";
 
-/// The chokepoint both of those refusals raise their answer prompt through:
-/// seeds `last_sync` with the classification this refusal established (a
-/// save-time refusal IS fresh evidence about the disk, and `merge::begin`'s
-/// own fast pre-check reads that field, so leaving it on a stale `Clean`
-/// would refuse `[M]erge`/`[D]iscard` the moment the user picked one), then
-/// offers the disk-conflict Guard. The AUTHORITATIVE classification still
-/// happens fresh inside the `MergePrep` either answer starts.
-pub(crate) fn raise_disk_conflict(app: &mut App, id: DocumentId, kind: SyncKind) {
+/// A save-time refusal IS fresh evidence about the disk, and `merge::begin`'s
+/// own fast pre-check reads `last_sync`, so leaving it on a stale `Clean`
+/// would refuse `[M]erge`/`[D]iscard` the moment the user picked one. The
+/// AUTHORITATIVE classification still happens fresh inside the `MergePrep`
+/// either answer starts.
+pub(crate) fn seed_refusal_classification(app: &mut App, id: DocumentId, kind: SyncKind) {
     if let Some(doc) = app.doc_mut(id) {
         doc.last_sync = Some(kind);
     }
+}
+
+/// The chokepoint both of those refusals raise their answer prompt through.
+pub(crate) fn raise_disk_conflict(app: &mut App, id: DocumentId, kind: SyncKind) {
+    seed_refusal_classification(app, id, kind);
     let _ = guard::set_guard_or_warn(
         app,
         GuardPrompt {
@@ -233,10 +232,12 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
         let Some(doc) = app.doc(id) else { continue };
         match doc.save_phase() {
             SavePhase::Preparing | SavePhase::Recording { published: false } => {
+                let pending_version = doc.pending_save_version();
                 if let Some(doc) = app.doc_mut(id) {
                     doc.abandon_save();
                 }
                 recompute_dirty(app, id);
+                reactions::resolve_continuations(app, id, pending_version, false);
                 abandoned_any = true;
             }
             SavePhase::Recording { published: true } => {

@@ -1,12 +1,9 @@
-//! The ack-reaction functions (split out of `materialize_ack.rs` for the
-//! 500-line budget, plan WP2: the `quit_if_pending` addition pushed the
-//! parent file over): what happens once a save/materialize attempt actually
-//! resolves — `handle_materialize_ack`/`handle_save_done`'s success/failure
-//! arms, the close-on-save-ack and quit-save-fan-out chokepoints they both
-//! funnel through, and a local (non-`rune-db`) materialize failure. The
-//! parent module keeps everything upstream of the first reply (`handle_
-//! prepare_ack`/`handle_materialize_vfs_done`/`record_outcome`/`on_store_
-//! failure`) and the dirty-cache chokepoint itself.
+//! The ack-reaction functions: what happens once a save/materialize attempt
+//! actually resolves — `handle_materialize_ack`/`handle_save_done`'s
+//! success/failure arms, the close-on-save-ack and quit-save-fan-out
+//! continuations every one of them funnels through, and a local
+//! (non-`rune-db`) materialize failure. The parent module keeps everything
+//! upstream of the first reply and the dirty-cache chokepoint itself.
 
 use rune_db::MatResult;
 
@@ -29,7 +26,7 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
     }
     messages::error(app, message.into());
     recompute_dirty(app, id);
-    quit_if_pending(app, id, pending_version, false);
+    resolve_continuations(app, id, pending_version, false);
 }
 
 /// Detects "a `bind_new` create lost the race": a concurrent writer's file
@@ -293,19 +290,10 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                     app,
                     "save failed: the target was created by something else; your changes are unsaved \u{2014} ^M to merge",
                 );
-                // A save-time refusal IS fresh evidence the disk moved —
-                // seed it conservatively (`Diverged` is the superset of
-                // what this refusal can mean) so the merge route this
-                // hand-off is meant to reach is genuinely reachable, the
-                // same way the CAS-conflict arm below already seeds it.
-                // Without it, the Load this hand-off enqueues installs a
-                // fresh CAS baseline straight off the racer's own current
-                // bytes, and a later plain ⌘S would then CAS-match and
-                // silently overwrite the racer instead of leaving `^M`
-                // reachable as the way to reconcile the two.
-                if let Some(doc) = app.doc_mut(id) {
-                    doc.last_sync = Some(rune_db::SyncKind::Diverged);
-                }
+                // `Diverged` is the superset of what this refusal can mean:
+                // the racer's file proves only that something else wrote the
+                // target, never how the two sides relate.
+                super::seed_refusal_classification(app, id, rune_db::SyncKind::Diverged);
                 let _ = crate::db_enqueue::load_document(app, id, &path, true);
             } else {
                 messages::error(
@@ -359,8 +347,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         }
     }
     recompute_dirty(app, id);
-    close_if_pending(app, id, mat.committed);
-    quit_if_pending(app, id, pending_version, mat.committed);
+    resolve_continuations(app, id, pending_version, mat.committed);
 }
 
 /// The reaction to `Msg::SaveDone` — the no-store fallback save path's own
@@ -399,15 +386,24 @@ pub(crate) fn handle_save_done(
         }
     }
     recompute_dirty(app, id);
-    close_if_pending(app, id, succeeded);
-    quit_if_pending(app, id, Some(version), succeeded);
+    resolve_continuations(app, id, Some(version), succeeded);
 }
 
-/// The close-on-save-ack chokepoint (plan WP5.S3): both save completion
-/// paths (`handle_materialize_ack`'s store-backed flow and this module's
-/// own no-store `handle_save_done` fallback — Assumption A1 documents with
-/// `db: None` take THIS path, never the other) funnel through here. Only
-/// closes when `id` is STILL the document `pending_close_on_save` names —
+/// Every way a save attempt can end — committed, refused, abandoned before
+/// it ever reached disk — funnels through here, so a continuation waiting
+/// on that save (a `^w` close, a quit fan-out) is answered exactly once and
+/// can never outlive the attempt that armed it.
+pub(super) fn resolve_continuations(
+    app: &mut App,
+    id: DocumentId,
+    version: Option<u64>,
+    succeeded: bool,
+) {
+    close_if_pending(app, id, succeeded);
+    quit_if_pending(app, id, version, succeeded);
+}
+
+/// Only closes when `id` is STILL the document `pending_close_on_save` names —
 /// a later unrelated `^w`/Guard interaction on a DIFFERENT document
 /// overwrites that single global slot, which correctly abandons (never
 /// mis-fires) this document's stale close intent — and only when the save
@@ -427,11 +423,7 @@ fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
     }
 }
 
-/// The quit-save fan-out's ack-side chokepoint (plan WP2): both save
-/// completion paths funnel through here exactly like `close_if_pending`
-/// above, and for the same reason — a document's own save ack is the only
-/// place that can correctly resolve whatever OTHER continuation (close,
-/// quit) was waiting on it. Retires `id`'s entry in `App::quit_intent` iff
+/// Retires `id`'s entry in `App::quit_intent` iff
 /// `version` matches what THIS entry recorded (idempotent — a later,
 /// unrelated ack for the same document, or a duplicate delivery, can never
 /// retire an entry twice or retire the wrong capture) and, if the map is
@@ -444,12 +436,7 @@ fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
 /// A no-op when `id` isn't in `App::quit_intent` at all — every OTHER
 /// document's save ack, and every ack once no quit-save fan-out is
 /// outstanding, must never touch this state.
-pub(crate) fn quit_if_pending(
-    app: &mut App,
-    id: DocumentId,
-    version: Option<u64>,
-    succeeded: bool,
-) {
+fn quit_if_pending(app: &mut App, id: DocumentId, version: Option<u64>, succeeded: bool) {
     let Some(intent) = app.quit_intent.as_ref() else {
         return;
     };
