@@ -18,12 +18,22 @@ use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
 
 pub fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
+    synced_at(content, &[cursor_offset], focused, 0)
+}
+
+pub fn synced_at(
+    content: &str,
+    cursor_offsets: &[usize],
+    focused: bool,
+    width: u16,
+) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
+    doc.set_width(width);
     doc.set_reveal_mode(focused);
     doc.sync_content(&buf);
-    let offset = cursor_offset.min(buf.len());
-    let cursors = CursorSet::new(offset);
+    let positions: Vec<usize> = cursor_offsets.iter().map(|&o| o.min(buf.len())).collect();
+    let cursors = CursorSet::new_from_positions(&positions);
     doc.sync_cursors(&buf, &cursors);
     (buf, doc)
 }
@@ -68,11 +78,15 @@ pub fn assert_full_line_coverage(
     }
 }
 
-#[allow(clippy::needless_range_loop)] // `line` also indexes buf.line()/snap.hidden_byte_count(), not just `lines`
 pub fn assert_no_duplicate_content(content: &str) {
+    assert_no_duplicate_content_at(content, &[0], 80);
+}
+
+#[allow(clippy::needless_range_loop)] // `line` also indexes buf.line()/snap.hidden_byte_count(), not just `lines`
+pub fn assert_no_duplicate_content_at(content: &str, cursor_offsets: &[usize], width: u16) {
     for &focused in &[true, false] {
-        let (buf, doc) = synced(content, 0, focused);
-        let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
+        let (buf, doc) = synced_at(content, cursor_offsets, focused, width);
+        let (lines, snap) = emit(buf.content(), doc.blocks(), width);
         assert_full_line_coverage(&buf, &lines, &snap);
 
         for line in 0..buf.line_count() {
