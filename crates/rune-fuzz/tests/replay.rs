@@ -14,6 +14,13 @@
 //! - `println!`s the file name of every script it actually runs, so
 //!   `--nocapture` output is direct proof of what ran, not an inference
 //!   from the test passing.
+//!
+//! Set `RUNE_FUZZ_REPLAY` to replay specific scripts instead of scanning
+//! `repros/` — for example a fresh `crates/rune-fuzz/artifacts/<id>-<hash>/script.rune`
+//! under triage. Paths are separated by `:` (a colon cannot occur in a
+//! macOS/Linux path) and may be absolute or relative to the package root.
+//! The same non-vacuity guarantee applies: an override that names zero
+//! readable paths fails the test.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -30,6 +37,19 @@ use rune_fuzz::{driver, script};
 /// runs integration tests with CWD = the package root (plan G11's same
 /// observation, reused here).
 const REPROS_DIR: &str = "repros";
+
+const REPLAY_OVERRIDE_VAR: &str = "RUNE_FUZZ_REPLAY";
+const REPLAY_OVERRIDE_SEPARATOR: char = ':';
+
+fn replay_override() -> Option<Vec<PathBuf>> {
+    let raw = std::env::var(REPLAY_OVERRIDE_VAR).ok()?;
+    Some(
+        raw.split(REPLAY_OVERRIDE_SEPARATOR)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+    )
+}
 
 /// Collects every `*.rune` path directly under `REPROS_DIR`, skipping the
 /// `strict-known/` subdirectory (not a file, so a plain `is_file` +
@@ -49,23 +69,33 @@ fn collect_repro_scripts(dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn every_checked_in_repro_replays_clean() {
-    let dir = Path::new(REPROS_DIR);
-    assert!(
-        dir.is_dir(),
-        "{} must exist and be a directory (checked-in fuzz repros) — \
-         a missing directory here would make this test vacuously pass \
-         over zero scripts (plan Gotcha G2)",
-        dir.display()
-    );
+    let scripts = if let Some(paths) = replay_override() {
+        assert!(
+            !paths.is_empty(),
+            "{REPLAY_OVERRIDE_VAR} was set but named zero paths — an empty \
+             override must never silently pass (plan Gotcha G2)",
+        );
+        paths
+    } else {
+        let dir = Path::new(REPROS_DIR);
+        assert!(
+            dir.is_dir(),
+            "{} must exist and be a directory (checked-in fuzz repros) — \
+             a missing directory here would make this test vacuously pass \
+             over zero scripts (plan Gotcha G2)",
+            dir.display()
+        );
 
-    let scripts = collect_repro_scripts(dir);
-    assert!(
-        !scripts.is_empty(),
-        "found zero `*.rune` scripts directly under {} — an empty glob must \
-         never silently pass (plan Gotcha G2); repros/tripwire-clean.rune \
-         is checked in for exactly this reason",
-        dir.display()
-    );
+        let scripts = collect_repro_scripts(dir);
+        assert!(
+            !scripts.is_empty(),
+            "found zero `*.rune` scripts directly under {} — an empty glob must \
+             never silently pass (plan Gotcha G2); repros/tripwire-clean.rune \
+             is checked in for exactly this reason",
+            dir.display()
+        );
+        scripts
+    };
 
     for path in &scripts {
         let name = path
