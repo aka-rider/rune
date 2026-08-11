@@ -1,0 +1,15 @@
+content 
+key char:v ---u
+clip \n\n\n
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:[ ----
+key char:m --c-
+key tab ----
+key down -a-u
+key down -a-u
+key up -a-u
+type ***bold*** _em_ `code`
+key char:c ---u

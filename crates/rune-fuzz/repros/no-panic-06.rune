@@ -1,0 +1,20 @@
+content 
+type 
+key left ----
+type - 
+key char:t --c-
+key escape ----
+key char:h ----
+highlight live 0
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:[ ----
+key char:m --c-
+key down ----
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+key up -a-u
+type 
+key char:c ---u
+key tab ----

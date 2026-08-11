@@ -1,0 +1,40 @@
+content # Notes\n\n```rust\nfn main() {}\n```\n\n```python\ndef f():\n    return 1\n```\n\n```klingon\nQapla\'\n```\n\n```\nuntagged fence\n```\n\ntail\n
+path /fuzz/notes.md
+key backspace ---u
+key left ----
+key left ----
+key right s---
+key char:v ---u
+clip line1\r\nline2
+key char:t --c-
+key escape ----
+key char:h ----
+highlight live 0
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d} hello world
+type hello world hello world \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:o ----
+key char:m --c-
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:[ ----
+key char:m --c-
+key up -a-u
+key up -a-u
+type hello world
+key char:c ---u
+key home ----
+key right ----
+key pagedown ----
+key up ----
+key up ----
+key down -a-u
+type hello world
+key char:c ---u
+type 
+type 
