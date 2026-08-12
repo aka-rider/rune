@@ -603,6 +603,34 @@ fn translate_event(event: termina::Event) -> Option<Msg> {
         termina::Event::Paste(text) => Some(Msg::Paste(text)),
         termina::Event::WindowResized(size) => Some(Msg::Resize(size.cols, size.rows)),
         termina::Event::Mouse(mouse) => crate::pointer::from_termina(mouse).map(Msg::Mouse),
+        termina::Event::Csi(csi) => {
+            Some(Msg::Error(format!("unsolicited terminal reply: {csi:?}")))
+        }
+        termina::Event::Osc(osc) => {
+            Some(Msg::Error(format!("unsolicited terminal reply: {osc:?}")))
+        }
+        termina::Event::Dcs(dcs) => {
+            Some(Msg::Error(format!("unsolicited terminal reply: {dcs:?}")))
+        }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod translate_event_tests {
+    use termina::escape::csi::{Csi, Cursor};
+
+    use super::{Msg, translate_event};
+
+    #[test]
+    fn an_unsolicited_csi_reply_surfaces_as_an_error() {
+        let event = termina::Event::Csi(Csi::Cursor(Cursor::RequestActivePositionReport));
+        assert!(matches!(translate_event(event), Some(Msg::Error(_))));
+    }
+
+    #[test]
+    fn a_focus_change_stays_silent() {
+        assert!(translate_event(termina::Event::FocusIn).is_none());
+        assert!(translate_event(termina::Event::FocusOut).is_none());
     }
 }
