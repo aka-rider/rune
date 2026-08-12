@@ -98,38 +98,69 @@ impl ScopeTable {
     }
 }
 
-/// The canonical markdown scope vocabulary (WP4.S2's `StyleId` -> scope
-/// mapping) in the order that fixes each name's `ScopeId`. `rune-md`'s
-/// emitter resolves against [`scope_table`] built from this exact list,
-/// and `rune-tui`'s `Theme` walks the SAME table when it builds its
-/// `scopes: Vec<Style>` — one shared table is what keeps both sides
-/// agreeing on which id means which name, without either depending on the
-/// other.
-pub const MARKDOWN_SCOPES: &[&str] = &[
-    "text",
-    "markup.heading.1",
-    "markup.heading.2",
-    "markup.heading.3",
-    "markup.heading.4",
-    "markup.heading.5",
-    "markup.heading.6",
-    "markup.strong",
-    "markup.italic",
-    "markup.strikethrough",
-    "markup.raw.inline",
-    "markup.raw.block",
-    "markup.link",
-    "markup.quote",
-    "markup.list",
-    "markup.list.checked",
-    "markup.table",
-    "markup.table.header",
-    "markup.table.separator",
-    "markup.table.border",
-    "punctuation.special",
-    "comment",
-    "markup.quote.marker",
-];
+macro_rules! markdown_scopes {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        pub const MARKDOWN_SCOPES: &[&str] = &[$($name),+];
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum MarkdownScope {
+            $($variant),+
+        }
+
+        impl MarkdownScope {
+            pub const ALL: &'static [MarkdownScope] = &[$(MarkdownScope::$variant),+];
+
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(MarkdownScope::$variant => $name),+
+                }
+            }
+        }
+
+        impl From<MarkdownScope> for ScopeId {
+            fn from(scope: MarkdownScope) -> ScopeId {
+                ScopeId(scope as u16)
+            }
+        }
+
+        impl TryFrom<ScopeId> for MarkdownScope {
+            type Error = ();
+
+            fn try_from(id: ScopeId) -> Result<MarkdownScope, ()> {
+                match id.0 {
+                    $(x if x == MarkdownScope::$variant as u16 => Ok(MarkdownScope::$variant),)+
+                    _ => Err(()),
+                }
+            }
+        }
+    };
+}
+
+markdown_scopes! {
+    Text => "text",
+    Heading1 => "markup.heading.1",
+    Heading2 => "markup.heading.2",
+    Heading3 => "markup.heading.3",
+    Heading4 => "markup.heading.4",
+    Heading5 => "markup.heading.5",
+    Heading6 => "markup.heading.6",
+    Strong => "markup.strong",
+    Italic => "markup.italic",
+    Strikethrough => "markup.strikethrough",
+    RawInline => "markup.raw.inline",
+    RawBlock => "markup.raw.block",
+    Link => "markup.link",
+    Quote => "markup.quote",
+    List => "markup.list",
+    ListChecked => "markup.list.checked",
+    Table => "markup.table",
+    TableHeader => "markup.table.header",
+    TableSeparator => "markup.table.separator",
+    TableBorder => "markup.table.border",
+    PunctuationSpecial => "punctuation.special",
+    Comment => "comment",
+    QuoteMarker => "markup.quote.marker",
+}
 
 /// The canonical code-token scope vocabulary a tree-sitter producer resolves
 /// its grammar captures against, appended after [`MARKDOWN_SCOPES`] so
@@ -167,9 +198,10 @@ pub const CODE_SCOPES: &[&str] = &[
 /// earlier table (WP7): appending here keeps [`MARKDOWN_SCOPES`] fixed at
 /// `0..=22` and every [`CODE_SCOPES`] id exactly where it already was —
 /// inserting a new name into either earlier table would renumber every id
-/// that follows it, since ids are assigned by registration order. `rune-md`'s
-/// image emission (`emit::style::image_scope`) is the one resolver today.
+/// that follows it, since ids are assigned by registration order.
 pub const EXTENDED_SCOPES: &[&str] = &["markup.image"];
+
+pub const IMAGE_SCOPE_ID: ScopeId = ScopeId((MARKDOWN_SCOPES.len() + CODE_SCOPES.len()) as u16);
 
 /// Builds a fresh `ScopeTable` pre-registered with [`MARKDOWN_SCOPES`], then
 /// [`CODE_SCOPES`], then [`EXTENDED_SCOPES`], in that order. Exposed as a
@@ -306,5 +338,36 @@ mod tests {
             table.resolve("markup.quote.marker"),
             table.resolve("markup.quote")
         );
+    }
+
+    #[test]
+    fn markdown_scope_variants_match_the_registration_list_by_position() {
+        assert_eq!(MarkdownScope::ALL.len(), MARKDOWN_SCOPES.len());
+        for (i, (scope, name)) in MarkdownScope::ALL.iter().zip(MARKDOWN_SCOPES).enumerate() {
+            assert_eq!(scope.name(), *name);
+            assert_eq!(ScopeId::from(*scope), ScopeId(i as u16));
+        }
+    }
+
+    #[test]
+    fn markdown_scope_round_trips_through_scope_id() {
+        for scope in MarkdownScope::ALL {
+            let id = ScopeId::from(*scope);
+            assert_eq!(MarkdownScope::try_from(id), Ok(*scope));
+        }
+    }
+
+    #[test]
+    fn markdown_scope_agrees_with_the_shared_table() {
+        let table = scope_table();
+        for scope in MarkdownScope::ALL {
+            assert_eq!(table.resolve(scope.name()), Some(ScopeId::from(*scope)));
+        }
+    }
+
+    #[test]
+    fn image_scope_id_matches_table_resolution() {
+        let table = scope_table();
+        assert_eq!(table.resolve("markup.image"), Some(IMAGE_SCOPE_ID));
     }
 }

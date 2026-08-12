@@ -24,7 +24,7 @@ use ratatui::style::{Color, Modifier, Style};
 use catppuccin::Mocha;
 use quantize::to_ansi256;
 use rune_syntax::ScopeId;
-use rune_syntax::scope::{CODE_SCOPES, MARKDOWN_SCOPES, scope_table};
+use rune_syntax::scope::{CODE_SCOPES, IMAGE_SCOPE_ID, MarkdownScope, scope_table};
 
 /// Every chrome (non-markdown/code) style an earlier `styles.rs` used to
 /// build from a raw `Color::Indexed` literal — one field per former
@@ -152,12 +152,14 @@ impl Theme {
 
         let table = scope_table();
         let mut scopes = vec![Style::default(); table.len()];
-        for name in MARKDOWN_SCOPES {
-            if let Some(id) = table.resolve(name)
-                && let Some(slot) = scopes.get_mut(id.0 as usize)
-            {
-                *slot = markdown_scope_style(name, &p, &c);
+        for scope in MarkdownScope::ALL {
+            let id: ScopeId = (*scope).into();
+            if let Some(slot) = scopes.get_mut(id.0 as usize) {
+                *slot = markdown_scope_style(*scope, &p, &c);
             }
+        }
+        if let Some(slot) = scopes.get_mut(IMAGE_SCOPE_ID.0 as usize) {
+            *slot = Style::default();
         }
         for name in CODE_SCOPES {
             if let Some(id) = table.resolve(name)
@@ -218,19 +220,19 @@ fn blend(a: Color, b: Color, t: f32) -> Color {
 /// reaches here as a combined tag — `rune-md`'s `StyleCtx::resolve` already
 /// picked the single strongest scope before tagging the span, so this
 /// match only ever sees one emphasis kind at a time.
-fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
+fn markdown_scope_style(scope: MarkdownScope, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
     let base = Style::default();
-    match name {
-        "text" => base.fg(c(p.text)),
-        "markup.heading.1" => base.fg(c(p.red)).add_modifier(Modifier::BOLD),
-        "markup.heading.2" => base.fg(c(p.peach)).add_modifier(Modifier::BOLD),
-        "markup.heading.3" => base.fg(c(p.yellow)).add_modifier(Modifier::BOLD),
-        "markup.heading.4" => base.fg(c(p.green)),
-        "markup.heading.5" => base.fg(c(p.teal)),
-        "markup.heading.6" => base.fg(c(p.overlay1)),
-        "markup.strong" => base.add_modifier(Modifier::BOLD),
-        "markup.italic" => base.add_modifier(Modifier::ITALIC),
-        "markup.strikethrough" => base.add_modifier(Modifier::CROSSED_OUT),
+    match scope {
+        MarkdownScope::Text => base.fg(c(p.text)),
+        MarkdownScope::Heading1 => base.fg(c(p.red)).add_modifier(Modifier::BOLD),
+        MarkdownScope::Heading2 => base.fg(c(p.peach)).add_modifier(Modifier::BOLD),
+        MarkdownScope::Heading3 => base.fg(c(p.yellow)).add_modifier(Modifier::BOLD),
+        MarkdownScope::Heading4 => base.fg(c(p.green)),
+        MarkdownScope::Heading5 => base.fg(c(p.teal)),
+        MarkdownScope::Heading6 => base.fg(c(p.overlay1)),
+        MarkdownScope::Strong => base.add_modifier(Modifier::BOLD),
+        MarkdownScope::Italic => base.add_modifier(Modifier::ITALIC),
+        MarkdownScope::Strikethrough => base.add_modifier(Modifier::CROSSED_OUT),
         // Sapphire, not peach: peach is `markup.heading.2`, so an inline
         // code span and an H2 title used to render in the same warm
         // orange — code read as structure and cluttered the prose around
@@ -238,36 +240,29 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         // and stays distinct from `markup.link`'s blue (also underlined)
         // and heading 5's teal. The `surface1` chip is what makes a span
         // legible mid-prose and stays.
-        "markup.raw.inline" => base.fg(c(p.sapphire)).bg(c(p.surface1)),
+        MarkdownScope::RawInline => base.fg(c(p.sapphire)).bg(c(p.surface1)),
         // Foreground only. A code block's background is a REGION colour
         // (`ChromeStyles::code_bg`), painted as a rectangle by its own
         // render pass: a span's `bg` can only reach cells that exist, so it
         // left a block's blank lines bare and stopped at each short line's
         // last character.
-        "markup.raw.block" => base.fg(c(p.text)),
-        "markup.link" => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
-        "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
-        "markup.quote.marker" => base.fg(c(p.overlay0)),
-        "markup.list" => base.fg(c(p.overlay1)),
-        "markup.list.checked" => base.fg(c(p.green)),
+        MarkdownScope::RawBlock => base.fg(c(p.text)),
+        MarkdownScope::Link => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
+        MarkdownScope::Quote => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
+        MarkdownScope::QuoteMarker => base.fg(c(p.overlay0)),
+        MarkdownScope::List => base.fg(c(p.overlay1)),
+        MarkdownScope::ListChecked => base.fg(c(p.green)),
         // Table chrome reads as body text with dimmer rules around it, so
         // it is expressed in palette terms like every scope above rather
         // than as raw ANSI indices. The literals these replace bypassed
         // `c(..)` entirely, which meant the quantized path stayed indexed
         // only by accident of the constants already being indexed.
-        "markup.table.header" => base.fg(c(p.text)).add_modifier(Modifier::BOLD),
-        "markup.table" => base.fg(c(p.text)),
-        "markup.table.separator" => base.fg(c(p.surface2)),
-        "markup.table.border" => base.fg(c(p.surface2)),
-        "punctuation.special" => base.fg(c(p.overlay0)),
-        "comment" => base.fg(c(p.overlay1)),
-        // Unreachable in practice: `name` is always drawn from this same
-        // table's own `MARKDOWN_SCOPES` (the loop in
-        // `Theme::catppuccin_mocha` walks `table.iter()`), so every arm
-        // above is exhaustive over the names that ever reach here — a
-        // future scope this match hasn't been taught yet degrades to
-        // plain, unstyled text rather than panicking.
-        _ => base,
+        MarkdownScope::TableHeader => base.fg(c(p.text)).add_modifier(Modifier::BOLD),
+        MarkdownScope::Table => base.fg(c(p.text)),
+        MarkdownScope::TableSeparator => base.fg(c(p.surface2)),
+        MarkdownScope::TableBorder => base.fg(c(p.surface2)),
+        MarkdownScope::PunctuationSpecial => base.fg(c(p.overlay0)),
+        MarkdownScope::Comment => base.fg(c(p.overlay1)),
     }
 }
 

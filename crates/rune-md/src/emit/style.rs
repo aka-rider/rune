@@ -1,70 +1,45 @@
 //! The emphasis-nesting resolver (plan Context, "Nested styling ... falls
 //! out of the tree via the Emitter's style stack — no `InlineMarks`
-//! bitfield") plus WP4.S2's `StyleId` -> canonical scope name mapping: every
-//! markdown token this emitter tags resolves against the shared
-//! [`rune_syntax::scope::scope_table`] (via [`SCOPES`] below) rather than
-//! a closed enum variant, so an unstyled scope degrades through
-//! longest-dotted-prefix fallback instead of failing to compile.
-
-use std::sync::LazyLock;
+//! bitfield").
 
 use crate::element::inline::EmphasisKind;
 use rune_syntax::ScopeId;
 use rune_syntax::kind::DocumentKind;
-use rune_syntax::scope::{ScopeTable, scope_table};
-
-/// The one canonical scope table this emitter resolves every markdown token
-/// against — built once (`rune_syntax::scope::scope_table`, WP4.S1/S2),
-/// shared by every `sync` call. `rune-tui`'s `Theme` walks a table built
-/// from the exact same constructor to size and fill its `scopes: Vec<Style>`
-/// — the two sides agree on which `ScopeId` means which name without either
-/// depending on the other.
-pub static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
-
-/// Resolves `name` against [`SCOPES`]. Every name passed below is drawn
-/// verbatim from `rune_syntax::scope::MARKDOWN_SCOPES` or (since WP7)
-/// `rune_syntax::scope::EXTENDED_SCOPES`, so resolution always succeeds
-/// through `ScopeTable::resolve`'s exact-match branch — the `unwrap_or`
-/// fallback to `ScopeId(0)` (`"text"`, registered first) exists only so a
-/// future typo here degrades gracefully instead of panicking, never
-/// because it's expected to fire.
-fn scope(name: &str) -> ScopeId {
-    SCOPES.resolve(name).unwrap_or(ScopeId(0))
-}
+use rune_syntax::scope::{IMAGE_SCOPE_ID, MarkdownScope};
 
 pub(crate) fn heading_style(level: u8) -> ScopeId {
     match level {
-        1 => scope("markup.heading.1"),
-        2 => scope("markup.heading.2"),
-        3 => scope("markup.heading.3"),
-        4 => scope("markup.heading.4"),
-        5 => scope("markup.heading.5"),
-        _ => scope("markup.heading.6"),
+        1 => MarkdownScope::Heading1.into(),
+        2 => MarkdownScope::Heading2.into(),
+        3 => MarkdownScope::Heading3.into(),
+        4 => MarkdownScope::Heading4.into(),
+        5 => MarkdownScope::Heading5.into(),
+        _ => MarkdownScope::Heading6.into(),
     }
 }
 
 pub(crate) fn list_marker_style(has_task: bool) -> ScopeId {
     if has_task {
-        scope("markup.list.checked")
+        MarkdownScope::ListChecked.into()
     } else {
-        scope("markup.list")
+        MarkdownScope::List.into()
     }
 }
 
 pub(crate) fn verbatim_style() -> ScopeId {
-    scope("text")
+    MarkdownScope::Text.into()
 }
 
 /// The plain-text scope — `fill_gaps`' per-byte safety net (`emit::mod`)
 /// tags every gap-filled span with this, same as `verbatim_style` above.
 pub(crate) fn text_scope() -> ScopeId {
-    scope("text")
+    MarkdownScope::Text.into()
 }
 
 /// A fenced code block's body text (`walk.rs::emit_code_fence` pushes every
 /// content line at this one scope).
 pub(crate) fn code_fence_scope() -> ScopeId {
-    scope("markup.raw.block")
+    MarkdownScope::RawBlock.into()
 }
 
 /// The scope a document's UNCLAIMED bytes fall back to, chosen by the
@@ -88,18 +63,18 @@ pub(crate) fn base_scope(kind: DocumentKind) -> ScopeId {
 
 /// An inline code span (`` `like this` ``).
 pub(crate) fn code_scope() -> ScopeId {
-    scope("markup.raw.inline")
+    MarkdownScope::RawInline.into()
 }
 
 /// A link's visible label. `WikiLink` has no separate scope of its own —
 /// same as the pre-WP4 `StyleId` mapping, where `WikiLink` shared `Link`'s
 /// style — so it resolves through this same function too.
 pub(crate) fn link_scope() -> ScopeId {
-    scope("markup.link")
+    MarkdownScope::Link.into()
 }
 
 pub(crate) fn blockquote_scope() -> ScopeId {
-    scope("markup.quote")
+    MarkdownScope::Quote.into()
 }
 
 /// A blockquote marker's DECOR bar (plan WP2.S5) — distinct from
@@ -107,37 +82,37 @@ pub(crate) fn blockquote_scope() -> ScopeId {
 /// when Revealed; the bar is the decor-channel glyph a Rendered quote line
 /// carries instead.
 pub(crate) fn quote_marker_scope() -> ScopeId {
-    scope("markup.quote.marker")
+    MarkdownScope::QuoteMarker.into()
 }
 
 /// A rendered table's body-row base scope (WP2.S1's `markup.table`) —
 /// `table::render::render_cell`'s substitute for plain (non-emphasized)
 /// cell text, and `table::layout::grid_row`'s padding scope for a body row.
 pub(crate) fn table_scope() -> ScopeId {
-    scope("markup.table")
+    MarkdownScope::Table.into()
 }
 
 /// A rendered table's header-row base scope.
 pub(crate) fn table_header_scope() -> ScopeId {
-    scope("markup.table.header")
+    MarkdownScope::TableHeader.into()
 }
 
 /// The synthesised delimiter-replacing separator row (`├───┼───┤`) —
 /// `table::layout::separator_row`'s one scope for every char, corners and
 /// fill alike.
 pub(crate) fn table_separator_scope() -> ScopeId {
-    scope("markup.table.separator")
+    MarkdownScope::TableSeparator.into()
 }
 
 /// A Grid row's `│` column borders and side padding — `table::layout::
 /// grid_row`'s bar scope specifically (padding uses the row's own role
 /// scope instead, see that function's docs).
 pub(crate) fn table_border_scope() -> ScopeId {
-    scope("markup.table.border")
+    MarkdownScope::TableBorder.into()
 }
 
 pub(crate) fn hr_scope() -> ScopeId {
-    scope("punctuation.special")
+    MarkdownScope::PunctuationSpecial.into()
 }
 
 /// An image's visible label — its alt text (or target when alt is empty) in
@@ -147,7 +122,7 @@ pub(crate) fn hr_scope() -> ScopeId {
 /// scope table, so it can't renumber any id both sides of the shared
 /// `scope_table()` constructor already agree on.
 pub(crate) fn image_scope() -> ScopeId {
-    scope("markup.image")
+    IMAGE_SCOPE_ID
 }
 
 /// Frontmatter's `---` DELIMITER lines get their own dim, de-emphasized
@@ -155,7 +130,7 @@ pub(crate) fn image_scope() -> ScopeId {
 /// between them is a code region and uses `code_fence_scope` like any other
 /// code.
 pub(crate) fn frontmatter_scope() -> ScopeId {
-    scope("comment")
+    MarkdownScope::Comment.into()
 }
 
 /// Per-parent accumulator resolving nested emphasis to one `ScopeId` at leaf
@@ -226,10 +201,10 @@ impl StyleCtx {
                 italic,
                 strike,
             } => match (bold, italic, strike) {
-                (false, false, false) => scope("text"),
-                (true, _, _) => scope("markup.strong"),
-                (false, true, _) => scope("markup.italic"),
-                (false, false, true) => scope("markup.strikethrough"),
+                (false, false, false) => MarkdownScope::Text.into(),
+                (true, _, _) => MarkdownScope::Strong.into(),
+                (false, true, _) => MarkdownScope::Italic.into(),
+                (false, false, true) => MarkdownScope::Strikethrough.into(),
             },
         }
     }
