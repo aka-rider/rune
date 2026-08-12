@@ -138,7 +138,6 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1064 (test file)
   - `crates/rune-tui/src/global.rs` — 767
   - `crates/rune-tui/src/pane.rs` — 862
-  - `crates/rune-tui/src/layout.rs` — 736
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
   - `crates/rune-tui/src/runtime/mod.rs` — 608
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
