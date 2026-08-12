@@ -136,12 +136,12 @@ entry is deleted in the same commit that fixes it.
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
   - `crates/rune-db/src/sync.rs` — 801 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1064 (test file)
-  - `crates/rune-tui/src/global.rs` — 767
-  - `crates/rune-tui/src/pane.rs` — 862
+  - `crates/rune-tui/src/global.rs` — 793 (grew from 767: `GlobalCommand::NavBack`/`NavForward` and their four bindings)
+  - `crates/rune-tui/src/pane.rs` — 866 (grew from 862: the `NavBack`/`NavForward` dispatch arms)
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
   - `crates/rune-tui/src/runtime/mod.rs` — 621 (grew from 608: `Msg::BootstrapViewReady`, issue #11's deferred-compute reply)
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
-  - `crates/rune-tui/src/app.rs` — 591
+  - `crates/rune-tui/src/app.rs` — 602 (grew from 591: the `nav_history` field and its `update` seam wiring)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 586 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 608 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)

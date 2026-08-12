@@ -323,6 +323,7 @@ pub struct App {
     /// `App` that never reaches that loop never spawns one (mirrors
     /// `db.bridge`'s own bootstrap/live split).
     pub(crate) snapshot_timer: Arc<crate::runtime::SnapshotTimer>,
+    pub nav_history: crate::navhistory::NavHistory,
 }
 
 impl App {
@@ -387,6 +388,7 @@ impl App {
             graphics: crate::graphics::GraphicsCaps::default(),
             root: PathBuf::new(),
             snapshot_timer: crate::runtime::SnapshotTimer::new(),
+            nav_history: crate::navhistory::NavHistory::default(),
         }
     }
 
@@ -551,10 +553,19 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let active_before = app.active;
     let buffer_version_before = app.active_doc().buffer.version();
     let focus_before = app.focus();
+    let nav_index_before = app.nav_history.index();
+    let nav_caret_snapshot: Vec<(DocumentId, usize)> = app
+        .documents
+        .iter()
+        .map(|(&id, doc)| (id, doc.cursors.primary().position))
+        .collect();
     dispatch::update_inner(app, msg, effects);
     if app.active_doc().journal.pos() != journal_pos_before {
         let id = app.active;
         save::schedule_snapshot_debounce(app, id);
+    }
+    if app.nav_history.index() == nav_index_before {
+        crate::navhistory::observe(app, active_before, &nav_caret_snapshot);
     }
     // The rest of the post-dispatch chokepoint (highlight scheduling, a
     // newly-active image document's decode, the embed reconciler) lives
