@@ -112,14 +112,6 @@ entry is deleted in the same commit that fixes it.
 - **Done when**: `DocDb` no longer carries a bare `bind_new: bool`; every site listed above matches on a named publish-mode enum instead.
 - **Update**: `rune-db`'s own equivalent flag was already promoted to the `MaterializeTarget` enum (`crates/rune-db/src/materialize_types.rs`); `rune-tui`'s `bind_new` was deliberately left as a `bool` when that landed, and this entry is the deferred follow-up on the `rune-tui` side.
 
-## Rendering
-
-### A ragged table row's dropped cells desync the box's row-width invariant
-- **Where**: `crates/rune-tui/tests/tui_render_tables.rs`'s `caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused` (fails on main independent of the navhistory work: `every row in the table's own box must share the same summed cell width, got [15, 15, 15, 15, 20, 0, 4]`)
-- **Wrong**: a table row with a ragged (short) source line drops cells during rendering, and the row's own painted width no longer matches its sibling rows in the same box — the table box's row-width invariant this test pins no longer holds.
-- **Instead**: root-cause the ragged-row cell-drop path (`render::build_rows`/the table box painter) and restore the shared row width, or confirm the width-drop is now intentional and adjust the test's own invariant claim to match.
-- **Done when**: the test passes again (or is deliberately rewritten with a reviewed rationale) on a tree with no other unrelated changes.
-
 ## Mechanical
 
 ### Typed errors flattened to String
