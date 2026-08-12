@@ -66,7 +66,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     }
     let mut lines = Vec::with_capacity(area.height as usize);
     let order = app.documents.order();
-    let window = app.tabs.nav.window(order.len(), area.height as usize);
+    let window = app.tabs.nav.window(order.len(), super::entry_rows(area));
     let start = window.start;
     let visible = order.get(window).unwrap_or(&[]);
     let show_cursor = app.focus() == Pane::Tabs;

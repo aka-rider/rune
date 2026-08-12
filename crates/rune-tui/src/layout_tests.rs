@@ -287,3 +287,73 @@ fn closing_filesearch_restores_the_pre_open_geometry() {
     assert_eq!(after.left_block, before.left_block);
     assert_eq!(after.center, before.center);
 }
+
+fn corners(rect: Rect) -> [(u16, u16); 2] {
+    [
+        (rect.x, rect.y),
+        (
+            rect.right().saturating_sub(1),
+            rect.bottom().saturating_sub(1),
+        ),
+    ]
+}
+
+/// Every pane the mouse can land in owns its own rect end to end, and the
+/// chrome between them belongs to nobody.
+#[test]
+fn pane_at_maps_each_rect_to_its_own_pane() {
+    let mut app = app_with_left_shown();
+    let mut effects = crate::runtime::Effects::default();
+    crate::messages::toggle(&mut app, &mut effects);
+    let area = Rect::new(0, 0, 80, 24);
+    let geo = geometry(area, &app);
+
+    let messages = geo.messages.expect("messages pane open");
+    assert!(geo.explorer_inner.height > 0 && geo.tabs_inner.height > 0);
+
+    for (rect, pane) in [
+        (messages, crate::pane::Pane::Messages),
+        (geo.explorer_inner, crate::pane::Pane::Explorer),
+        (geo.tabs_inner, crate::pane::Pane::Tabs),
+        (geo.editor, crate::pane::Pane::Editor),
+    ] {
+        for (column, row) in corners(rect) {
+            assert_eq!(
+                geo.pane_at(column, row),
+                Some(pane),
+                "{rect:?} corner ({column}, {row})"
+            );
+        }
+    }
+}
+
+#[test]
+fn pane_at_leaves_the_chrome_unowned() {
+    let mut app = app_with_left_shown();
+    let mut effects = crate::runtime::Effects::default();
+    crate::messages::toggle(&mut app, &mut effects);
+    let area = Rect::new(0, 0, 80, 24);
+    let geo = geometry(area, &app);
+    let block = geo.left_block.expect("left column shown");
+    let divider = geo.tabs_divider.expect("Open divider shown");
+
+    assert_eq!(geo.pane_at(0, geo.footer.y), None, "the footer row");
+    assert_eq!(
+        geo.pane_at(block.x, geo.explorer_inner.y),
+        None,
+        "the block's left border column"
+    );
+    assert_eq!(geo.pane_at(divider.x, divider.y), None, "the Open divider");
+}
+
+/// The unpainted left column reports the zero rect for both sections, and a
+/// zero rect must never claim the point (0, 0).
+#[test]
+fn pane_at_never_claims_a_zero_sized_section() {
+    let app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+    let area = Rect::new(0, 0, 80, 24);
+    let geo = geometry(area, &app);
+    assert_eq!(geo.explorer_inner, Rect::new(0, 0, 0, 0));
+    assert_eq!(geo.tabs_inner, Rect::new(0, 0, 0, 0));
+    assert_eq!(geo.pane_at(0, 0), None);
+}

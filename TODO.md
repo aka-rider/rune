@@ -114,6 +114,12 @@ entry is deleted in the same commit that fixes it.
 
 ## Mechanical
 
+### A ragged table's box rows render at unequal widths (red test on `main`)
+- **Where**: `crates/rune-tui/tests/tui_render_tables.rs`'s `caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused`, failing on the current tree with summed row widths `[15, 15, 15, 15, 20, 0, 4]`.
+- **Wrong**: a table whose rows carry fewer cells than the header renders a box whose rows disagree on width — the last rows are 20/0/4 cells wide where the header is 15, so the drawn box is visibly broken. Confirmed pre-existing: the same failure reproduces with every uncommitted change stashed.
+- **Instead**: root-cause the row builder's handling of dropped cells so every row of one table's box sums to the same display width.
+- **Done when**: `cargo test -p rune-tui --test tui_render_tables` is green with no change to the test's own assertions.
+
 ### Typed errors flattened to String
 - **Where**: ~9 `map_err(|e| e.to_string())` at Cmd boundaries across `runtime/mod.rs`, `save.rs`, `trash.rs`, `rename_create.rs`, `graphics/*`; inside `rune-db::Error` (`crates/rune-db/src/error.rs:17,37,49,60`): `ReplayFailed(String)`, `CorruptPayload(String)`, `SessionEstablish(String)` stringify their sources while `Sqlite(rusqlite::Error)` proves the crate can hold typed sources
 - **Wrong**: stringifying erases the `ErrorKind`/error type that `rune-vfs::WrappedIo` and `rusqlite::Error` deliberately preserve.
@@ -167,6 +173,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/workspace/mod.rs` — 561 (pushed over by the `resolve_or_report` chokepoint added alongside the `resolve` signature change; split candidate: move the `#[cfg(test)] mod tests` block to a sibling test module)
   - `crates/rune-db/tests/multiprocess/scenarios.rs` — 509 (test file)
   - `crates/rune-tui/src/save/materialize_tests.rs` — 531 (test file; newly over — split candidate: move `snapshot_due_with_the_current_generation_enqueues_a_snapshot`/`snapshot_due_with_a_stale_generation_is_ignored`, which exercise `handle_snapshot_due` from `materialize_ack.rs` rather than this file's own CAS/publish path, to a sibling test module)
+  - `crates/rune-tui/src/layout.rs` — 518 (newly over — `Geometry::pane_at`, the mouse hit test, carried a file that was already 499 past the line; split candidate: move the pane-limit constants, `Splits`, `explorer_budget` and `explorer_fallback` to a sibling `layout_splits.rs`, leaving `resolve`/`geometry` and `Geometry` itself here)
   - `crates/rune-tui/src/footer_hints.rs` — 517 (newly over — split candidate: move its `#[cfg(test)] mod tests` block, over half the file, to a sibling `footer_hints_tests.rs`)
 - **Wrong**: source files exceed the 500-line house rule, none ledgered. Five files dropped below 500 and are removed from this list: `crates/rune-tui/src/materialize_ack.rs` (305), `crates/rune-tui/src/materialize_ack/reactions.rs` (378), `crates/rune-fuzz/src/script/decode.rs` (413), `crates/rune-md/src/emit/mod.rs` (343), `crates/rune-syntax/src/wrap/mod.rs` (494). `crates/rune-syntax/src/syntax.rs` (466) and `crates/rune-tui/src/save/materialize.rs` (329) remain under the threshold from an earlier drop.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.

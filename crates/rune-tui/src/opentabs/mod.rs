@@ -1,5 +1,7 @@
 //! The tab display order and MRU activation order live on `DocumentMap`.
 
+use ratatui::layout::Rect;
+
 use crate::app::App;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
@@ -91,14 +93,16 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
     match cmd {
         TabsCommand::Up => move_selection(app, -1),
         TabsCommand::Down => move_selection(app, 1),
-        TabsCommand::Select => {
-            app.blur_title(effects);
-            workspace::switch_to_index(app, app.tabs.nav.cursor);
-            app.set_focus_pane(Pane::Editor, effects);
-        }
+        TabsCommand::Select => activate(app, effects),
         TabsCommand::Leave => app.set_focus_pane(Pane::Editor, effects),
     }
     KeyOutcome::Consumed
+}
+
+pub(crate) fn activate(app: &mut App, effects: &mut Effects) {
+    app.blur_title(effects);
+    workspace::switch_to_index(app, app.tabs.nav.cursor);
+    app.set_focus_pane(Pane::Editor, effects);
 }
 
 fn move_selection(app: &mut App, delta: isize) {
@@ -122,7 +126,24 @@ fn ensure_visible(app: &mut App) {
 /// title row here (unlike Explorer's root-path row).
 fn visible_rows(app: &App) -> usize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    (crate::layout::geometry(area, app).tabs_inner.height as usize).max(1)
+    entry_rows(crate::layout::geometry(area, app).tabs_inner).max(1)
+}
+
+pub(crate) fn entry_rows(rect: Rect) -> usize {
+    rect.height as usize
+}
+
+#[expect(dead_code)]
+pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
+    if row >= rect.height {
+        return None;
+    }
+    let window = app
+        .tabs
+        .nav
+        .window(app.documents.order().len(), entry_rows(rect));
+    let index = window.start.saturating_add(row as usize);
+    (index < window.end).then_some(index)
 }
 
 #[cfg(test)]

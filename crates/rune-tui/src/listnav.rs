@@ -59,6 +59,17 @@ impl List {
         self.top = offset.min(max_offset);
     }
 
+    pub fn scroll_by(&mut self, delta: isize, len: usize, height: usize) {
+        if len == 0 || height == 0 {
+            self.top = 0;
+            return;
+        }
+        self.top = self
+            .top
+            .saturating_add_signed(delta)
+            .min(len.saturating_sub(height));
+    }
+
     /// Returns the visible index range [top, top+height) clamped to [0, len).
     pub fn window(&self, len: usize, height: usize) -> Range<usize> {
         if height == 0 || len == 0 {
@@ -160,6 +171,39 @@ mod tests {
         // top must be reset to 0 when len or height is 0, not left stale
         let mut list = List { cursor: 0, top: 9 };
         list.follow(0, 5, 1, 0);
+        assert_eq!(list.top, 0);
+    }
+
+    #[test]
+    fn scroll_down_clamps_at_the_last_full_window() {
+        let mut list = List { cursor: 3, top: 0 };
+        list.scroll_by(100, 20, 5);
+        assert_eq!(list.top, 15);
+    }
+
+    #[test]
+    fn scroll_up_clamps_at_the_start() {
+        let mut list = List { cursor: 3, top: 4 };
+        list.scroll_by(-100, 20, 5);
+        assert_eq!(list.top, 0);
+    }
+
+    #[test]
+    fn scrolling_never_moves_the_cursor() {
+        let mut list = List { cursor: 3, top: 0 };
+        list.scroll_by(9, 20, 5);
+        assert_eq!(list.cursor, 3);
+        list.scroll_by(-9, 20, 5);
+        assert_eq!(list.cursor, 3);
+    }
+
+    #[test]
+    fn scroll_resets_top_on_an_empty_list() {
+        let mut list = List { cursor: 0, top: 9 };
+        list.scroll_by(1, 0, 5);
+        assert_eq!(list.top, 0);
+        list.top = 9;
+        list.scroll_by(1, 20, 0);
         assert_eq!(list.top, 0);
     }
 
