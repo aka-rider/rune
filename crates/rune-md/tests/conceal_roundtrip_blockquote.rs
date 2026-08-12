@@ -18,6 +18,11 @@
 //!   aware means a marker can legitimately sit MID-buffer-line — fixed by
 //!   sorting each line's spans by `buffer_start` once at the `emit()`
 //!   chokepoint.
+//! - A bare quote marker immediately after an inline code span: the code
+//!   span's own closing delimiter used to be derived by subtracting a
+//!   fixed byte count from its outer range instead of locating the actual
+//!   backtick run, so it could run past its own paragraph and swallow the
+//!   next sibling block's first byte — here, the blockquote marker itself.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod conceal_common;
@@ -67,6 +72,11 @@ fn thematic_break_empty_continuation_controls_stay_clean() {
     assert_no_duplicate_content(">===\n>");
     assert_no_duplicate_content("> a\n> ---\n>");
     assert_no_duplicate_content("> ---\n>>");
+}
+
+#[test]
+fn bare_quote_marker_after_inline_code_span_does_not_double_claim() {
+    assert_no_duplicate_content("t\n  -```\na```\n>");
 }
 
 #[test]
