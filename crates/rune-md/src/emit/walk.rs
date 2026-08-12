@@ -18,7 +18,7 @@ use super::style::{
 };
 use super::table::emit_table;
 use super::walk_inline::emit_inlines;
-use super::{EmitOut, hide_range, push_span_split_by_line};
+use super::{EmitOut, hide_range, line_local, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, FrontmatterM, ListItemM};
 use crate::parse::line_at;
 use rune_core::assert_invariant;
@@ -237,7 +237,16 @@ fn push_task_checkbox(content: &str, starts: &[usize], task: ByteRange, out: &mu
     let glyph = if checked { "\u{2611}" } else { "\u{2610}" };
     let line = line_at(starts, task.start);
 
-    let Ok(granted) = out.claim_whole(line, task.start, task.end) else {
+    let Some(ll) = line_local(content.len(), starts, line, task.start..task.end) else {
+        assert_invariant!(false, || {
+            format!(
+                "task checkbox range [{},{}) escaped line {line}'s own physical bounds — producer bug",
+                task.start, task.end
+            )
+        });
+        return;
+    };
+    let Ok(granted) = out.claim_whole(ll) else {
         return;
     };
 

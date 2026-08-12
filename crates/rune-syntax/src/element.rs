@@ -16,6 +16,7 @@
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::CursorSet;
+use std::ops::Range;
 
 /// Whether a concealable element is showing its rendered (folded, styled)
 /// form or its raw revealed markdown.
@@ -128,6 +129,41 @@ impl ByteRange {
         let start = self.start.min(len);
         let end = self.end.min(len).max(start);
         ByteRange { start, end }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineLocal {
+    line: usize,
+    range: Range<usize>,
+}
+
+impl LineLocal {
+    pub fn clip(line: usize, bounds: Range<usize>, range: Range<usize>) -> Option<LineLocal> {
+        if range.start > range.end || range.start < bounds.start || range.end > bounds.end {
+            return None;
+        }
+        Some(LineLocal { line, range })
+    }
+
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    pub fn start(&self) -> usize {
+        self.range.start
+    }
+
+    pub fn end(&self) -> usize {
+        self.range.end
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.range.is_empty()
     }
 }
 
@@ -283,5 +319,31 @@ mod tests {
         assert!(r.start <= r.end);
         let r2 = ByteRange::new(3, 20).clamp(10);
         assert_eq!(r2, ByteRange::new(3, 10));
+    }
+
+    #[test]
+    fn line_local_clip_refuses_a_range_outside_bounds() {
+        assert!(LineLocal::clip(3, 10..20, 5..25).is_none());
+        assert!(LineLocal::clip(3, 10..20, 0..10).is_none());
+        assert!(LineLocal::clip(3, 10..20, 25..30).is_none());
+        let (inverted_start, inverted_end) = (15, 12);
+        assert!(LineLocal::clip(3, 10..20, inverted_start..inverted_end).is_none());
+    }
+
+    #[test]
+    fn line_local_clip_accepts_an_empty_range_inside_bounds() {
+        let ll = LineLocal::clip(3, 10..20, 15..15).unwrap();
+        assert!(ll.is_empty());
+        assert_eq!(ll.line(), 3);
+        assert_eq!(ll.start(), 15);
+        assert_eq!(ll.end(), 15);
+        assert_eq!(ll.range(), 15..15);
+    }
+
+    #[test]
+    fn line_local_clip_accepts_a_range_touching_both_bounds() {
+        let ll = LineLocal::clip(0, 10..20, 10..20).unwrap();
+        assert!(!ll.is_empty());
+        assert_eq!(ll.range(), 10..20);
     }
 }

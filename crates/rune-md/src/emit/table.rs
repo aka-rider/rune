@@ -5,10 +5,11 @@
 //! tree walk.
 
 use super::style::{table_header_scope, table_scope, verbatim_style};
-use super::{EmitOut, hide_range, push_span_split_by_line};
+use super::{EmitOut, hide_range, line_local, push_span_split_by_line};
 use crate::element::table::TableM;
 use crate::parse::line_at;
 use crate::table::{CellSrc, extra_row_spans, layout, pivot, render, row_spans, wrapped};
+use rune_core::assert_invariant;
 use rune_syntax::ScopeId;
 use rune_syntax::SyntaxSpan;
 use rune_syntax::element::RevealState;
@@ -237,8 +238,25 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         let spans = row_spans(line_start, line_len, &row1_runs);
         if spans.is_empty() {
             hide_range(content, starts, content_line, out);
-        } else if let Ok(granted) = out.claim_whole(line, line_start, line_start + line_len) {
-            granted.push_visible(spans);
+        } else {
+            match line_local(
+                content.len(),
+                starts,
+                line,
+                line_start..line_start + line_len,
+            ) {
+                Some(ll) => {
+                    if let Ok(granted) = out.claim_whole(ll) {
+                        granted.push_visible(spans);
+                    }
+                }
+                None => assert_invariant!(false, || {
+                    format!(
+                        "table row on line {line}: rendered row range [{line_start},{}) escaped its own physical line bounds — producer bug",
+                        line_start + line_len
+                    )
+                }),
+            }
         }
 
         let extra_rows: Vec<Vec<SyntaxSpan>> = extra_row_runs
