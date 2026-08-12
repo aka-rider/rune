@@ -307,7 +307,11 @@ impl Inline {
 /// second image, a Revealed image under the caret — disqualifies THAT
 /// line, so a truly-inline image falls back to its alt text instead of a
 /// placeholder.
-pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Vec<&'a ImageM> {
+pub fn standalone_image<'a>(
+    content: &str,
+    starts: &[usize],
+    inlines: &'a [Inline],
+) -> Vec<&'a ImageM> {
     let mut candidates: HashMap<usize, &'a ImageM> = HashMap::new();
     let mut disqualified: HashSet<usize> = HashSet::new();
 
@@ -316,7 +320,7 @@ pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Vec<&'a Ima
             Inline::Text(t) => {
                 for r in &t.content_lines {
                     if !range_is_whitespace_only(content, r) {
-                        disqualified.insert(line_of(content, r.start));
+                        disqualified.insert(crate::parse::line_at(starts, r.start));
                     }
                 }
             }
@@ -335,8 +339,9 @@ pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Vec<&'a Ima
             }
             other => {
                 let range = other.range();
-                let first = line_of(content, range.start);
-                let last = line_of(content, range.end.saturating_sub(1).max(range.start));
+                let first = crate::parse::line_at(starts, range.start);
+                let last =
+                    crate::parse::line_at(starts, range.end.saturating_sub(1).max(range.start));
                 for l in first..=last {
                     disqualified.insert(l);
                 }
@@ -355,18 +360,4 @@ fn range_is_whitespace_only(content: &str, r: &ByteRange) -> bool {
     content
         .get(r.start..r.end)
         .is_some_and(|s| s.chars().all(char::is_whitespace))
-}
-
-/// 0-indexed physical line containing `offset` — the number of `\n` bytes
-/// in `content[..offset]`, matching `parse::line_starts`'s "a line ends at
-/// `\n`, nothing else" model (the same one `ImageM::line` is derived
-/// from), without needing that module's own `starts` index in scope here.
-fn line_of(content: &str, offset: usize) -> usize {
-    content
-        .as_bytes()
-        .get(..offset.min(content.len()))
-        .unwrap_or(&[])
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count()
 }

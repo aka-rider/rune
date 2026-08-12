@@ -64,6 +64,13 @@ pub enum CmdKind {
     /// reader thread's reply time is out of `update`'s control, and this
     /// must never block the main loop waiting on it.
     SearchHistory,
+    /// The one-shot display-pipeline compute (`sync_content`, `set_width`,
+    /// `sync_cursors`, `snapshot`) `bootstrap` defers off-thread for a
+    /// document at/over its large-document threshold, so the first draw
+    /// never blocks on it. Never spawned outside `bootstrap` — every later
+    /// edit runs this same pipeline synchronously through the ordinary
+    /// `App::sync_view` path.
+    BootstrapView,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
@@ -140,5 +147,9 @@ impl Cmd {
 
     pub fn search_history(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
         Self::of(CmdKind::SearchHistory, run)
+    }
+
+    pub fn bootstrap_view(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
+        Self::of(CmdKind::BootstrapView, run)
     }
 }

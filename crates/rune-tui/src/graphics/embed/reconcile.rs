@@ -52,8 +52,9 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
     // itself): the spawn/despawn passes further down need `App::doc_mut`,
     // which cannot coexist with an immutable borrow still rooted in `doc`.
     let content = doc.buffer.content().to_string();
+    let starts = rune_md::parse::line_starts(&content);
     let mut anchors: HashMap<usize, &ImageM> = HashMap::new();
-    rune_md::snapshot::collect_standalone_images(doc.doc.blocks(), &content, &mut anchors);
+    rune_md::snapshot::collect_standalone_images(doc.doc.blocks(), &content, &starts, &mut anchors);
     // `HashMap` iteration order is arbitrary, so when the same target
     // appears on more than one line, which line's `ImageM` survives the
     // dedupe below must not depend on it — sort by line first so the

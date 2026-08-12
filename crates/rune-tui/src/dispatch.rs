@@ -127,6 +127,12 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             version,
             result,
         } => handle_highlighted(app, doc, version, result, effects),
+        Msg::BootstrapViewReady {
+            id,
+            version,
+            machine,
+            view,
+        } => handle_bootstrap_view_ready(app, id, version, machine, view),
         Msg::ImageDecoded {
             doc,
             generation,
@@ -192,6 +198,29 @@ pub(crate) fn after_update(
             .cmds
             .push(crate::messages::collapse_timeout_cmd(generation));
     }
+}
+
+/// Applies a `Msg::BootstrapViewReady` reply: a plain wholesale swap when
+/// the buffer hasn't moved on since the compute was dispatched (the
+/// ordinary bootstrap case — nothing else reaches `update` before this
+/// reply lands), dropped otherwise. A dropped reply is not a hazard: the
+/// next `App::sync_view` the main loop already runs after every message
+/// recomputes from the live, edited buffer through the ordinary synchronous
+/// path — the same one `bootstrap`'s large-document branch deferred, now
+/// fast per issue #11's own fix.
+fn handle_bootstrap_view_ready(
+    app: &mut App,
+    id: DocumentId,
+    version: u64,
+    machine: Box<rune_md::element::doc::DocMachine>,
+    view: rune_md::element::doc::ViewSnapshots,
+) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    if doc.buffer.version() != version {
+        return;
+    }
+    doc.doc = *machine;
+    doc.view = Some(view);
 }
 
 /// Applies a `Msg::Highlighted` reply, in the fixed order `[R2]` requires:

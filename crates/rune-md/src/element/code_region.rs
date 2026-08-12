@@ -29,6 +29,7 @@ use rune_core::buffer::Buffer;
 /// tree-sitter's error recovery silently absorbs a stray `"> "` for some
 /// grammars but not for indentation-sensitive ones, which lose most of their
 /// structure to it.
+#[derive(Clone, Debug)]
 pub struct CodeRegion {
     /// A fence's info string, the detected language name for a `Code`
     /// document, or — for frontmatter — the language its opening delimiter

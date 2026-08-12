@@ -74,8 +74,9 @@ impl DisplaySnapshot {
         content: &str,
         dims: &ImageDims,
     ) -> DisplaySnapshot {
+        let starts = crate::parse::line_starts(content);
         let mut anchors: HashMap<usize, &ImageM> = HashMap::new();
-        collect_standalone_images(blocks, content, &mut anchors);
+        collect_standalone_images(blocks, content, &starts, &mut anchors);
 
         let segments = wrap.segments();
         let mut rows: Vec<SnapshotRow> = Vec::with_capacity(self.rows.len());
@@ -172,19 +173,20 @@ fn synthetic_image_row(
 pub fn collect_standalone_images<'a>(
     blocks: &'a [Block],
     content: &str,
+    starts: &[usize],
     out: &mut HashMap<usize, &'a ImageM>,
 ) {
     for block in blocks {
         match block {
             Block::Paragraph(p) => {
-                for img in standalone_image(content, &p.inlines) {
+                for img in standalone_image(content, starts, &p.inlines) {
                     out.insert(img.line, img);
                 }
             }
-            Block::Blockquote(bq) => collect_standalone_images(&bq.children, content, out),
+            Block::Blockquote(bq) => collect_standalone_images(&bq.children, content, starts, out),
             Block::List(list) => {
                 for item in &list.items {
-                    collect_standalone_images(&item.children, content, out);
+                    collect_standalone_images(&item.children, content, starts, out);
                 }
             }
             _ => {}

@@ -26,7 +26,7 @@ use rune_syntax::wrap::WrapSnapshot;
 /// table borders synthesised in (WP3's `DisplaySnapshot::expand_tables`) —
 /// every display-space consumer (rendering, the viewport, mouse
 /// hit-testing) reads row geometry from `display`, never `wrap` directly.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
@@ -66,6 +66,7 @@ pub fn reveal_all(blocks: &mut [Block]) {
     }
 }
 
+#[derive(Debug)]
 pub struct DocMachine {
     reveal_mode: RevealMode,
     wrap: WrapState,

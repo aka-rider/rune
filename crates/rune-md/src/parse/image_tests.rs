@@ -10,13 +10,17 @@
     clippy::panic
 )]
 
-use super::parse;
+use super::{line_starts, parse};
 use crate::element::block::Block;
 use crate::element::inline::{Inline, standalone_image};
 use rune_syntax::element::ByteRange;
 
 fn text_of(content: &str, r: ByteRange) -> &str {
     content.get(r.start..r.end).unwrap()
+}
+
+fn standalone<'a>(content: &str, inlines: &'a [Inline]) -> Vec<&'a crate::element::inline::ImageM> {
+    standalone_image(content, &line_starts(content), inlines)
 }
 
 /// WP7: an inline image now parses to a real `ImageM`, not a plain text
@@ -67,7 +71,7 @@ fn image_between_words_is_not_a_standalone_line() {
     let Block::Paragraph(p) = &blocks[0] else {
         panic!("expected paragraph");
     };
-    assert!(standalone_image(content, &p.inlines).is_empty());
+    assert!(standalone(content, &p.inlines).is_empty());
 }
 
 #[test]
@@ -80,7 +84,7 @@ fn list_item_image_is_a_standalone_line() {
     let Block::Paragraph(p) = &list.items[0].children[0] else {
         panic!("expected paragraph");
     };
-    let found = standalone_image(content, &p.inlines);
+    let found = standalone(content, &p.inlines);
     assert_eq!(found.len(), 1, "expected exactly one standalone image");
     assert_eq!(text_of(content, found[0].target), "x.png");
 }
@@ -92,7 +96,7 @@ fn whitespace_padded_image_line_is_standalone() {
     let Block::Paragraph(p) = &blocks[0] else {
         panic!("expected paragraph");
     };
-    assert_eq!(standalone_image(content, &p.inlines).len(), 1);
+    assert_eq!(standalone(content, &p.inlines).len(), 1);
 }
 
 /// WP1: the reported bug — an embed with prose directly above and below,
@@ -108,7 +112,7 @@ fn embed_line_inside_multiline_paragraph_is_standalone() {
     let Block::Paragraph(p) = &blocks[0] else {
         panic!("expected paragraph");
     };
-    let found = standalone_image(content, &p.inlines);
+    let found = standalone(content, &p.inlines);
     assert_eq!(found.len(), 1, "expected exactly one standalone image");
     assert_eq!(found[0].target_text, "image.png");
     assert_eq!(found[0].line, 1);
@@ -128,7 +132,7 @@ fn revealed_image_on_its_own_line_is_not_standalone() {
         panic!("expected an image");
     };
     m.sm.transition(rune_syntax::element::RevealState::Revealed);
-    assert!(standalone_image(content, &p.inlines).is_empty());
+    assert!(standalone(content, &p.inlines).is_empty());
 }
 
 /// A paragraph with two qualifying embed lines (separated by a prose line
@@ -140,7 +144,7 @@ fn two_qualifying_lines_in_one_paragraph_return_both() {
     let Block::Paragraph(p) = &blocks[0] else {
         panic!("expected paragraph");
     };
-    let mut found = standalone_image(content, &p.inlines);
+    let mut found = standalone(content, &p.inlines);
     found.sort_by_key(|m| m.line);
     assert_eq!(found.len(), 2, "expected both embed lines");
     assert_eq!(found[0].target_text, "a.png");

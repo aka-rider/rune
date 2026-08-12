@@ -211,6 +211,8 @@ pub fn draw(app: &App, frame: &mut Frame) {
         // some other document.
         crate::merge::paint::paint(&mut rows, &app.merge, app.active, &app.theme);
         blit(&rows, geo.editor, frame);
+    } else {
+        draw_pending(app.active_doc(), geo.editor, frame);
     }
 
     if geo.center_bordered {
@@ -223,6 +225,31 @@ pub fn draw(app: &App, frame: &mut Frame) {
         messages::draw(app, messages_area, frame);
     }
     crate::footer::draw(app, geo.footer, frame);
+}
+
+/// The pre-snapshot frame `draw` falls back to while `doc.view` is still
+/// `None` — a large document's first display-pipeline compute runs on a
+/// background `Cmd` (`runtime::bootstrap`'s large-document branch), and
+/// nothing is ever representable as a PARTIAL `DisplaySnapshot` (issue #11:
+/// `DisplaySnapshot::total_rows`/`wrap_to_display`/`display_to_wrap` clamp a
+/// short prefix indistinguishably from a genuinely short document, which
+/// would silently corrupt every scroll/caret/hit-test query built against
+/// it). This reads straight from `Buffer`, unstyled, no wrap/emit pass, no
+/// syntax highlighting — and bounded to `area.height` lines via `str::
+/// lines().take(..)`, which stops walking the string the moment enough
+/// lines are found, so drawing this frame costs the same tiny constant
+/// regardless of how large the document is; the message pane (`runtime::
+/// bootstrap`'s own call into `messages::info`) is the on-screen indicator
+/// that the real content is still being prepared.
+fn draw_pending(doc: &Document, area: ratatui::layout::Rect, frame: &mut Frame) {
+    let lines: Vec<ratatui::text::Line> = doc
+        .buffer
+        .content()
+        .lines()
+        .take(area.height as usize)
+        .map(ratatui::text::Line::from)
+        .collect();
+    frame.render_widget(ratatui::widgets::Paragraph::new(lines), area);
 }
 
 /// The left column: ONE titled, bordered block (" Files ") holding both
