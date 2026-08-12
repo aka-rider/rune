@@ -7,6 +7,18 @@ pub struct CellSize {
     pub h: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelSize {
+    pub w: usize,
+    pub h: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellFootprint {
+    pub cols: usize,
+    pub rows: usize,
+}
+
 /// The conventional 8x16 fallback used when the terminal does not report its
 /// cell pixel dimensions. Aspect ratio may be slightly off on a terminal with
 /// a different cell geometry, but rendering is never broken.
@@ -18,26 +30,18 @@ fn ceil_div(a: usize, b: usize) -> usize {
     if b == 0 { 0 } else { a.div_ceil(b) }
 }
 
-/// Computes how many terminal columns and rows an image of `px_w` x `px_h`
-/// pixels should occupy, preserving aspect ratio and fitting within
-/// `max_cols` x `max_rows`. Both results are at least 1 for a non-degenerate
-/// image.
-pub fn fit_cells(
-    px_w: usize,
-    px_h: usize,
-    max_cols: usize,
-    max_rows: usize,
-    cs: CellSize,
-) -> (usize, usize) {
-    if px_w == 0 || px_h == 0 || cs.w == 0 || cs.h == 0 {
-        return (0, 0);
+/// Fits `px` into `max` terminal cells, preserving aspect ratio. Both
+/// results are at least 1 for a non-degenerate image.
+pub fn fit_cells(px: PixelSize, max: CellFootprint, cs: CellSize) -> CellFootprint {
+    if px.w == 0 || px.h == 0 || cs.w == 0 || cs.h == 0 {
+        return CellFootprint { cols: 0, rows: 0 };
     }
-    let max_cols = max_cols.max(1);
-    let max_rows = max_rows.max(1);
+    let max_cols = max.cols.max(1);
+    let max_rows = max.rows.max(1);
 
     // Natural cell footprint, rounding up so the image is never clipped.
-    let mut cols = ceil_div(px_w, cs.w);
-    let mut rows = ceil_div(px_h, cs.h);
+    let mut cols = ceil_div(px.w, cs.w);
+    let mut rows = ceil_div(px.h, cs.h);
 
     // Scale down preserving aspect if it exceeds the allowed box.
     if cols > max_cols || rows > max_rows {
@@ -49,5 +53,8 @@ pub fn fit_cells(
         rows = (rows as f64 * s) as usize;
     }
 
-    (cols.max(1), rows.max(1))
+    CellFootprint {
+        cols: cols.max(1),
+        rows: rows.max(1),
+    }
 }

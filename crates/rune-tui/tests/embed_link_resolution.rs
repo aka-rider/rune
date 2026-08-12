@@ -90,7 +90,8 @@ fn a_link_and_an_embed_with_the_same_relative_target_resolve_to_the_same_path() 
 
     let doc = app.doc(id).expect("doc");
     let embed = doc
-        .embeds
+        .embeds()
+        .expect("embeds tracked")
         .images
         .get("assets/pic.png")
         .expect("embed tracked");
@@ -142,11 +143,15 @@ fn a_wiki_embed_in_a_subdirectory_resolves_and_goes_live() {
 
     let doc = app.doc(id).expect("doc");
     let embed = doc
-        .embeds
+        .embeds()
+        .expect("embeds tracked")
         .images
         .get("assets/pic.png")
         .expect("embed tracked");
-    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
+    assert!(
+        matches!(embed.status, ImageStatus::Live { .. }),
+        "decode must have landed"
+    );
 }
 
 /// A wiki embed target containing spaces must resolve just as cleanly as
@@ -159,11 +164,15 @@ fn a_wiki_embed_target_containing_spaces_resolves() {
 
     let doc = app.doc(id).expect("doc");
     let embed = doc
-        .embeds
+        .embeds()
+        .expect("embeds tracked")
         .images
         .get("my picture.png")
         .expect("embed tracked");
-    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
+    assert!(
+        matches!(embed.status, ImageStatus::Live { .. }),
+        "decode must have landed"
+    );
 }
 
 /// An extension-less wiki embed target must still resolve: `rune_md`
@@ -177,11 +186,15 @@ fn a_wiki_embed_target_with_no_extension_still_resolves() {
 
     let doc = app.doc(id).expect("doc");
     let embed = doc
-        .embeds
+        .embeds()
+        .expect("embeds tracked")
         .images
         .get("assets/attachment")
         .expect("embed tracked");
-    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
+    assert!(
+        matches!(embed.status, ImageStatus::Live { .. }),
+        "decode must have landed"
+    );
 }
 
 /// WP2.S2 regression guard: `sync_embeds`'s dedupe used to key off an
@@ -199,12 +212,13 @@ fn the_same_target_in_two_forms_produces_the_same_tracked_embed_across_repeated_
         discover_and_decode(&mut app);
 
         let doc = app.doc(id).expect("doc");
+        let embeds = doc.embeds().expect("embeds tracked");
         assert_eq!(
-            doc.embeds.images.len(),
+            embeds.images.len(),
             1,
             "both forms name the same target and must collapse to one tracked embed"
         );
-        let embed = doc.embeds.images.get("x.png").expect("embed tracked");
+        let embed = embeds.images.get("x.png").expect("embed tracked");
         match &first {
             None => first = Some(embed.abs_path.clone()),
             Some(expected) => assert_eq!(

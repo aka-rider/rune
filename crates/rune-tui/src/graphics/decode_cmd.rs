@@ -17,7 +17,7 @@
 //! reply lands, at least one `sync_view`/`relayout` has already run for
 //! this document, so its `viewport.width` is trustworthy.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_vfs::Vfs;
@@ -37,8 +37,8 @@ use crate::runtime::{Cmd, Effects, Msg};
 /// itself first.
 pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let Some(image) = &doc.image else { return };
-    if image.status != ImageStatus::Pending || image.in_flight.is_some() {
+    let Some(image) = doc.image() else { return };
+    if !matches!(image.status, ImageStatus::Pending) || image.in_flight.is_some() {
         return;
     }
     spawn_decode(app, id, effects);
@@ -67,7 +67,7 @@ pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut
 /// the document opened with.
 pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    if doc.image.is_none() {
+    if doc.image().is_none() {
         return;
     }
     spawn_decode(app, id, effects);
@@ -83,13 +83,13 @@ pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects)
 /// `in_flight`, and pushes the decode `Cmd`.
 fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let Some(image) = &doc.image else { return };
+    let Some(image) = doc.image() else { return };
     let generation = image.next_generation.wrapping_add(1);
     let path = image.path.clone();
     let vfs = Arc::clone(&app.vfs);
 
     let Some(doc) = app.doc_mut(id) else { return };
-    let Some(image) = doc.image.as_mut() else {
+    let Some(image) = doc.image_mut() else {
         return;
     };
     image.next_generation = generation;
@@ -104,6 +104,12 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// CPU work, and a large/degraded-filesystem image must never block the
 /// main loop. No `catch_unwind` of its own: `spawn_cmd` already contains a
 /// decoder panic on malformed input.
+fn read_and_decode(vfs: &dyn Vfs, path: &Path) -> Result<rune_image::decode::Decoded, String> {
+    rune_vfs::get(vfs, path, None)
+        .map_err(|e| e.to_string())
+        .and_then(|sighting| rune_image::decode_still(&sighting.bytes).map_err(|e| e.to_string()))
+}
+
 pub(super) fn decode_image_cmd(
     doc: DocumentId,
     vfs: Arc<dyn Vfs + Send + Sync>,
@@ -111,12 +117,24 @@ pub(super) fn decode_image_cmd(
     generation: u64,
 ) -> Cmd {
     Cmd::image_decode(move || {
-        let result = rune_vfs::get(vfs.as_ref(), &path, None)
-            .map_err(|e| e.to_string())
-            .and_then(|sighting| {
-                rune_image::decode_still(&sighting.bytes).map_err(|e| e.to_string())
-            });
+        let result = read_and_decode(vfs.as_ref(), &path);
         Some(Msg::ImageDecoded {
+            doc,
+            generation,
+            result,
+        })
+    })
+}
+
+pub(super) fn decode_embed_cmd(
+    doc: DocumentId,
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    generation: u64,
+) -> Cmd {
+    Cmd::image_decode(move || {
+        let result = read_and_decode(vfs.as_ref(), &path);
+        Some(Msg::EmbedDecoded {
             doc,
             generation,
             result,
@@ -150,7 +168,7 @@ pub(crate) fn handle_image_decoded(
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    let Some(image) = &doc.image else { return };
+    let Some(image) = doc.image() else { return };
     if image.in_flight != Some(generation) {
         return;
     }
@@ -162,10 +180,10 @@ pub(crate) fn handle_image_decoded(
     // be byte-identical to the ones already on screen while the pixels behind
     // them changed, so the renderer would skip them. A first transmit replaces
     // the info card with placeholder cells, which the diff sees on its own.
-    let was_live = image.status == ImageStatus::Live;
+    let was_live = matches!(image.status, ImageStatus::Live { .. });
 
     let Some(doc) = app.doc_mut(id) else { return };
-    let Some(image) = doc.image.as_mut() else {
+    let Some(image) = doc.image_mut() else {
         return;
     };
     image.in_flight = None;
@@ -178,14 +196,22 @@ pub(crate) fn handle_image_decoded(
         }
     };
 
-    image.dims = Some((decoded.width, decoded.height));
-    let (cols, rows) = super::footprint::fit(decoded.width, decoded.height, pane_width, cell);
-    image.cells = Some((cols, rows));
+    image.dims = Some(rune_image::PixelSize {
+        w: decoded.width,
+        h: decoded.height,
+    });
+    let cells = super::footprint::fit(
+        rune_image::PixelSize {
+            w: decoded.width,
+            h: decoded.height,
+        },
+        pane_width,
+        cell,
+    );
     let raw = kitty
-        .then(|| rune_image::fit_and_encode(&decoded, img_id, cols, rows, cell).ok())
+        .then(|| rune_image::fit_and_encode(&decoded, img_id, cells.cols, cells.rows, cell).ok())
         .flatten();
-    image.decoded = Some(decoded);
-    image.status = ImageStatus::Live;
+    image.status = ImageStatus::Live { decoded, cells };
     if let Some(bytes) = raw {
         effects.raw.push(bytes.into_bytes());
         effects.force_redraw |= was_live;

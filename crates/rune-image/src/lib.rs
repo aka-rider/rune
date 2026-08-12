@@ -15,7 +15,7 @@ pub mod svg;
 pub mod transmit;
 
 pub use anim::clamp_delay;
-pub use cellsize::{CellSize, DEFAULT_CELL_SIZE, fit_cells};
+pub use cellsize::{CellFootprint, CellSize, DEFAULT_CELL_SIZE, PixelSize, fit_cells};
 pub use decode::{Decoded, Format, decode_still, probe_dimensions, sniff_format};
 pub use ids::{alloc_id, frame_id_seed};
 pub use placeholder::{PLACEHOLDER, diacritic};

@@ -17,6 +17,7 @@
 //! `scroll_to_cursor`, `sync`) as a second `impl Document` block, since none
 //! of that sequence depends on anything declared only in this file.
 
+mod graphics;
 mod replica;
 mod save_state;
 mod sync;
@@ -191,23 +192,14 @@ pub struct Document {
     /// version tag, and the in-flight/pending bookkeeping that bounds a
     /// document to at most one running highlight `Cmd` at a time.
     pub highlight: HighlightState,
-    /// This document's image state — `Some` only for a
-    /// `DocumentKind::Image` document, populated by `workspace::open_bytes`
-    /// at open time. `None` for every other document, including a document
-    /// that used to be an image and no longer is (`kind` never changes back
-    /// once bound — a document only ever acquires its `kind` once, at
-    /// `bind_path`).
-    pub image: Option<crate::graphics::ImageState>,
-    /// This document's inline embed set — the several
-    /// `![alt](x.png)`/`![[x.png]]` images a markdown document may hold at
-    /// once, each independently spawned/decoded/transmitted/despawned.
-    /// Distinct from `image` above (which describes a whole `DocumentKind::
-    /// Image` document, exactly one image): the two are mutually exclusive
-    /// in practice (an image document has no embeds; a markdown document is
-    /// never `DocumentKind::Image`), but nothing enforces that at the type
-    /// level — `embeds` just stays empty and `sync_embeds` a no-op for
-    /// every document kind other than `Markdown`.
-    pub embeds: crate::graphics::EmbedSet,
+    /// This document's graphics state — `Image` only for a
+    /// `DocumentKind::Image` document (populated by `workspace::open_bytes`
+    /// at open time), `Embeds` only for a `Markdown` document that has
+    /// spawned at least one inline embed, `None` otherwise (including a
+    /// document that used to be an image and no longer is: `kind` never
+    /// changes back once bound — a document only ever acquires its `kind`
+    /// once, at `bind_path`).
+    graphics: crate::graphics::Graphics,
     /// The latest known [`rune_db::SyncKind`] classification for this
     /// document. Written only from authoritative ack data inside `update`
     /// dispatch — `Probe`/`Load` acks, a save-time CAS refusal, and merge's
@@ -335,7 +327,7 @@ impl Document {
     /// answers `false` here, matching the no-op `reload_embeds` performs on
     /// it.
     pub fn has_reloadable_graphics(&self) -> bool {
-        self.image.is_some() || self.embeds.has_wedged()
+        self.image().is_some() || self.embeds().is_some_and(|e| e.has_wedged())
     }
 
     /// Whether a save is currently running for this document — derived
@@ -414,8 +406,7 @@ impl Document {
             kind: DocumentKind::Markdown,
             icons: IconSet::unicode(),
             highlight: HighlightState::default(),
-            image: None,
-            embeds: crate::graphics::EmbedSet::new(),
+            graphics: crate::graphics::Graphics::None,
             last_sync: None,
             nlink: None,
             pinned: false,

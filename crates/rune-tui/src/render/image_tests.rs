@@ -11,6 +11,18 @@ use rune_vfs::Mem;
 use super::*;
 use crate::graphics::ImageState;
 
+const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
+
+fn decoded_fixture() -> rune_image::decode::Decoded {
+    rune_image::decode_still(X_PNG).expect("decode x.png")
+}
+
+fn app_with_kitty(kitty: bool) -> App {
+    let mut app = App::new(Buffer::new(""), None, Arc::new(Mem::new()), None);
+    app.graphics.kitty = kitty;
+    app
+}
+
 fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
     let mut app = App::new(Buffer::new(""), None, Arc::new(Mem::new()), None);
     app.graphics.kitty = kitty;
@@ -19,13 +31,11 @@ fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
     doc.bind_path(PathBuf::from("/vault/x.png"));
     doc.read_only = crate::document::ReadOnly::Always;
     doc.display_name = Some("x.png".to_string());
-    doc.image = Some(ImageState {
+    doc.set_image(ImageState {
         path: PathBuf::from("/vault/x.png"),
         bytes_len: 146,
         id: 1,
-        dims: Some((64, 48)),
-        cells: None,
-        decoded: None,
+        dims: Some(rune_image::PixelSize { w: 64, h: 48 }),
         status,
         in_flight: None,
         next_generation: 0,
@@ -36,7 +46,7 @@ fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
 #[test]
 fn info_card_lines_include_name_dims_and_kitty_reason() {
     let mut app = app_with_image_doc(true, ImageStatus::Pending);
-    if let Some(image) = app.active_doc_mut().image.as_mut() {
+    if let Some(image) = app.active_doc_mut().image_mut() {
         image.in_flight = Some(1);
     }
     let doc = app.doc(app.active).expect("doc");
@@ -69,7 +79,7 @@ fn pending_without_an_in_flight_decode_reads_differently_from_a_running_one() {
         "it must name the recovery available to the user: {not_scheduled:?}"
     );
 
-    if let Some(image) = app.active_doc_mut().image.as_mut() {
+    if let Some(image) = app.active_doc_mut().image_mut() {
         image.in_flight = Some(7);
     }
     let running = {
@@ -88,7 +98,13 @@ fn pending_without_an_in_flight_decode_reads_differently_from_a_running_one() {
 
 #[test]
 fn reason_line_ignores_status_when_kitty_is_unavailable() {
-    let app = app_with_image_doc(false, ImageStatus::Live);
+    let app = app_with_image_doc(
+        false,
+        ImageStatus::Live {
+            decoded: decoded_fixture(),
+            cells: rune_image::CellFootprint { cols: 8, rows: 3 },
+        },
+    );
     let doc = app.doc(app.active).expect("doc");
     assert_eq!(
         reason_line(&app, doc),
@@ -135,20 +151,25 @@ fn embed_row_ref(row: usize, width: usize, target: &str) -> ImageRowRef {
 
 #[test]
 fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_id() {
-    let mut app = app_with_image_doc(true, ImageStatus::Pending);
-    app.doc_mut(app.active).expect("doc").embeds.images.insert(
-        "x.png".to_string(),
-        crate::graphics::EmbedState {
-            abs_path: PathBuf::from("/vault/x.png"),
-            id: 0x00_10_20,
-            mtime: None,
-            dims: Some((64, 48)),
-            cells: Some((8, 3)),
-            decoded: None,
-            status: ImageStatus::Live,
-            in_flight: None,
-        },
-    );
+    let mut app = app_with_kitty(true);
+    app.doc_mut(app.active)
+        .expect("doc")
+        .ensure_embeds()
+        .images
+        .insert(
+            "x.png".to_string(),
+            crate::graphics::EmbedState {
+                abs_path: PathBuf::from("/vault/x.png"),
+                id: 0x00_10_20,
+                mtime: None,
+                dims: Some(rune_image::PixelSize { w: 64, h: 48 }),
+                status: ImageStatus::Live {
+                    decoded: decoded_fixture(),
+                    cells: rune_image::CellFootprint { cols: 8, rows: 3 },
+                },
+                in_flight: None,
+            },
+        );
     let doc = app.doc(app.active).expect("doc");
     let cells = row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20)
         .expect("a live, Kitty-capable embed row is Some");
@@ -163,14 +184,14 @@ fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_i
 
 #[test]
 fn an_embed_with_kitty_unavailable_falls_through_to_alt_text() {
-    let app = app_with_image_doc(false, ImageStatus::Pending);
+    let app = app_with_kitty(false);
     let doc = app.doc(app.active).expect("doc");
     assert!(row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20).is_none());
 }
 
 #[test]
 fn an_embed_not_yet_live_reserves_blank_cells() {
-    let app = app_with_image_doc(true, ImageStatus::Pending);
+    let app = app_with_kitty(true);
     let doc = app.doc(app.active).expect("doc");
     let cells = row_cells(&app, doc, embed_row_ref(0, 8, "untracked.png"), 20)
         .expect("Kitty-capable, not-yet-live embed row still reserves blanks");

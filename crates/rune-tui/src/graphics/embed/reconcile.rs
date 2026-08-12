@@ -108,7 +108,8 @@ fn spawn_or_respawn(
         let mtime = file_mtime(vfs.as_ref(), &abs_path);
 
         let Some(doc) = app.doc_mut(id) else { return };
-        if let Some(existing) = doc.embeds.images.get(target) {
+        let embeds = doc.ensure_embeds();
+        if let Some(existing) = embeds.images.get(target) {
             // Retry rule (plan WP9.S5): an unchanged mtime never respawns
             // (Failed is sticky per (path, mtime)); an in-flight decode
             // never respawns either — it must run to completion first.
@@ -123,31 +124,27 @@ fn spawn_or_respawn(
             // conservative, no reuse, no collision.
             // WP9 tracks no frame ids at all (animation is WP10's scope),
             // so there is nothing else to delete here.
-            let Some(state) = doc.embeds.images.get_mut(target) else {
+            let Some(state) = embeds.images.get_mut(target) else {
                 continue;
             };
             state.abs_path = abs_path;
             state.mtime = mtime;
             state.status = ImageStatus::Pending;
             state.dims = None;
-            state.cells = None;
-            state.decoded = None;
             state.in_flight = None;
             schedule_embed_decode(app, id, target, effects);
             continue;
         }
 
         let key = abs_path.to_string_lossy().into_owned();
-        let embed_id = doc.embeds.alloc.alloc_free_id(&key);
-        doc.embeds.images.insert(
+        let embed_id = embeds.alloc.alloc_free_id(&key);
+        embeds.images.insert(
             target.to_string(),
             EmbedState {
                 abs_path,
                 id: embed_id,
                 mtime,
                 dims: None,
-                cells: None,
-                decoded: None,
                 status: ImageStatus::Pending,
                 in_flight: None,
             },
@@ -172,8 +169,8 @@ fn spawn_or_respawn(
 /// no embeds at all, or none currently wedged.
 pub(crate) fn reload_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let wedged: Vec<String> = doc
-        .embeds
+    let Some(embeds) = doc.embeds() else { return };
+    let wedged: Vec<String> = embeds
         .images
         .iter()
         .filter(|(_, s)| s.in_flight.is_some())
@@ -181,7 +178,8 @@ pub(crate) fn reload_embeds(app: &mut App, id: DocumentId, effects: &mut Effects
         .collect();
     for target in &wedged {
         if let Some(doc) = app.doc_mut(id)
-            && let Some(state) = doc.embeds.images.get_mut(target.as_str())
+            && let Some(embeds) = doc.embeds_mut()
+            && let Some(state) = embeds.images.get_mut(target.as_str())
         {
             state.in_flight = None;
         }
@@ -191,18 +189,18 @@ pub(crate) fn reload_embeds(app: &mut App, id: DocumentId, effects: &mut Effects
 
 fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effects: &mut Effects) {
     let Some(doc) = app.doc_mut(id) else { return };
-    let gone: Vec<String> = doc
-        .embeds
+    let Some(embeds) = doc.embeds_mut() else {
+        return;
+    };
+    let gone: Vec<String> = embeds
         .images
         .keys()
         .filter(|k| !present.contains(k.as_str()))
         .cloned()
         .collect();
     for key in gone {
-        if let Some(state) = doc.embeds.images.remove(&key) {
-            doc.embeds
-                .alloc
-                .free_all_for(&state.abs_path.to_string_lossy());
+        if let Some(state) = embeds.images.remove(&key) {
+            embeds.alloc.free_all_for(&state.abs_path.to_string_lossy());
             effects
                 .raw
                 .push(rune_image::encode_delete(state.id).into_bytes());

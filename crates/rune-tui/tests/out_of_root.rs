@@ -103,10 +103,14 @@ fn a_bare_basename_wiki_embed_in_an_out_of_root_document_reaches_live() {
     discover_and_decode(&mut app);
 
     let doc = app.doc(id).expect("doc");
-    let embed = doc.embeds.images.get("image.png").expect("embed tracked");
-    assert_eq!(
-        embed.status,
-        ImageStatus::Live,
+    let embed = doc
+        .embeds()
+        .expect("embeds tracked")
+        .images
+        .get("image.png")
+        .expect("embed tracked");
+    assert!(
+        matches!(embed.status, ImageStatus::Live { .. }),
         "a bare-basename wiki embed in a document outside app.root must \
          still resolve against the document's own directory"
     );

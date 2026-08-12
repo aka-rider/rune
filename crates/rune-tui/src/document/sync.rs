@@ -34,15 +34,15 @@ impl Document {
         self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);
         // An image document's reserved row count/width — read
-        // from `self.image.cells` once the fit computation sets it,
-        // falling back to `render::image::INFO_CARD_ROWS` while it's still
-        // `None` (nothing decoded yet). `self.image` is `Some` only for a
-        // `DocumentKind::Image` document, so this whole block is a no-op
-        // for every other kind.
-        if let Some(image) = &self.image {
-            let (width, rows) = image
-                .cells
-                .unwrap_or((0, crate::render::image::INFO_CARD_ROWS));
+        // from `self.image().status` once the fit computation lands it as
+        // `Live`, falling back to `render::image::INFO_CARD_ROWS` until
+        // then. `self.image()` is `Some` only for a `DocumentKind::Image`
+        // document, so this whole block is a no-op for every other kind.
+        if let Some(image) = self.image() {
+            let (width, rows) = match &image.status {
+                crate::graphics::ImageStatus::Live { cells, .. } => (cells.cols, cells.rows),
+                _ => (0, crate::render::image::INFO_CARD_ROWS),
+            };
             self.doc.set_image_document_dims(width, rows);
         }
         // The inline embed footprints `sync_embeds`/
@@ -50,7 +50,11 @@ impl Document {
         // no-op past `set_embed_dims`'s own `dims != self.images` guard)
         // for every document that isn't a markdown one with at least one
         // decoded embed.
-        self.doc.set_embed_dims(self.embeds.to_image_dims());
+        let embed_dims = self
+            .embeds()
+            .map(crate::graphics::EmbedSet::to_image_dims)
+            .unwrap_or_default();
+        self.doc.set_embed_dims(embed_dims);
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)
     }

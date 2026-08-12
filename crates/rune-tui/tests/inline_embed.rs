@@ -95,8 +95,16 @@ fn a_standalone_image_line_renders_placeholder_cells_with_the_allocated_id() {
     discover_and_decode(&mut app);
 
     let doc = app.doc(id).expect("doc");
-    let embed = doc.embeds.images.get("x.png").expect("embed tracked");
-    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
+    let embed = doc
+        .embeds()
+        .expect("embeds tracked")
+        .images
+        .get("x.png")
+        .expect("embed tracked");
+    assert!(
+        matches!(embed.status, ImageStatus::Live { .. }),
+        "decode must have landed"
+    );
     let expected_id = embed.id;
 
     let buf = testgrid::draw(&app, 60, 20);
@@ -192,7 +200,8 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
     let embed = app
         .doc(id)
         .expect("doc")
-        .embeds
+        .embeds()
+        .expect("embeds tracked")
         .images
         .get("x.png")
         .expect("embed tracked");
@@ -238,7 +247,8 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     assert!(
         app.doc(id)
             .expect("doc")
-            .embeds
+            .embeds()
+            .expect("embeds tracked")
             .images
             .contains_key("x.png"),
         "test setup: the embed must have spawned"
@@ -261,7 +271,8 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     assert!(
         app.doc(id)
             .expect("doc")
-            .embeds
+            .embeds()
+            .expect("embeds tracked")
             .images
             .contains_key("x.png"),
         "revealing the embed's own line must never despawn it"
@@ -292,9 +303,8 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     assert!(
         !app.doc(id)
             .expect("doc")
-            .embeds
-            .images
-            .contains_key("x.png"),
+            .embeds()
+            .is_some_and(|embeds| embeds.images.contains_key("x.png")),
         "deleting the embed's line must despawn it"
     );
     assert!(
@@ -321,14 +331,14 @@ fn an_unchanged_mtime_after_a_failure_does_not_respawn_a_changed_mtime_does() {
         if cmd.kind() != CmdKind::ImageDecode {
             continue;
         }
-        if let Some(Msg::ImageDecoded {
+        if let Some(Msg::EmbedDecoded {
             doc, generation, ..
         }) = cmd.run()
         {
             let mut reply_effects = Effects::default();
             update(
                 &mut app,
-                Msg::ImageDecoded {
+                Msg::EmbedDecoded {
                     doc,
                     generation,
                     result: Err("boom".to_string()),
@@ -345,7 +355,8 @@ fn an_unchanged_mtime_after_a_failure_does_not_respawn_a_changed_mtime_does() {
     assert!(matches!(
         app.doc(id)
             .expect("doc")
-            .embeds
+            .embeds()
+            .expect("embeds tracked")
             .images
             .get("x.png")
             .expect("tracked")
@@ -368,7 +379,8 @@ fn an_unchanged_mtime_after_a_failure_does_not_respawn_a_changed_mtime_does() {
     assert!(matches!(
         app.doc(id)
             .expect("doc")
-            .embeds
+            .embeds()
+            .expect("embeds tracked")
             .images
             .get("x.png")
             .expect("tracked")
@@ -436,15 +448,18 @@ fn the_geometry_variant_and_build_rows_agree_on_cell_count_for_an_image_row() {
 fn super_r_on_a_document_with_only_live_embeds_refuses_with_a_message() {
     let (mut app, id) = app_with_embed("![caption](x.png)\n");
     discover_and_decode(&mut app);
-    assert_eq!(
-        app.doc(id)
-            .expect("doc")
-            .embeds
-            .images
-            .get("x.png")
-            .expect("embed tracked")
-            .status,
-        ImageStatus::Live,
+    assert!(
+        matches!(
+            app.doc(id)
+                .expect("doc")
+                .embeds()
+                .expect("embeds tracked")
+                .images
+                .get("x.png")
+                .expect("embed tracked")
+                .status,
+            ImageStatus::Live { .. }
+        ),
         "the embed must have finished decoding before this test's own assertion means anything"
     );
 

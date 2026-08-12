@@ -66,13 +66,13 @@ fn an_embed_with_prose_directly_above_and_below_reaches_live() {
 
     let doc = app.doc(id).expect("doc");
     let embed = doc
-        .embeds
+        .embeds()
+        .expect("embeds tracked")
         .images
         .get("image.png")
         .expect("the embed must be tracked even though prose sits on the adjacent lines");
-    assert_eq!(
-        embed.status,
-        ImageStatus::Live,
+    assert!(
+        matches!(embed.status, ImageStatus::Live { .. }),
         "an embed alone on its own line must decode even inside a larger paragraph"
     );
 }
@@ -86,8 +86,13 @@ fn an_embed_isolated_by_blank_lines_still_reaches_live() {
     discover_and_decode(&mut app);
 
     let doc = app.doc(id).expect("doc");
-    let embed = doc.embeds.images.get("image.png").expect("embed tracked");
-    assert_eq!(embed.status, ImageStatus::Live);
+    let embed = doc
+        .embeds()
+        .expect("embeds tracked")
+        .images
+        .get("image.png")
+        .expect("embed tracked");
+    assert!(matches!(embed.status, ImageStatus::Live { .. }));
 }
 
 /// A truly-inline image — text on the SAME line — must still be left as alt
@@ -100,7 +105,7 @@ fn an_image_with_text_on_the_same_line_is_not_an_embed() {
 
     let doc = app.doc(id).expect("doc");
     assert!(
-        doc.embeds.images.is_empty(),
+        doc.embeds().is_none_or(|embeds| embeds.images.is_empty()),
         "an image sharing its line with text must never be spawned"
     );
 }

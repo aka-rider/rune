@@ -20,6 +20,12 @@ pub use caps::{EnvSource, GraphicsCaps, ProcessEnv, detect};
 pub use embed::{EmbedSet, EmbedState};
 pub use state::{ImageState, ImageStatus};
 
+pub enum Graphics {
+    None,
+    Image(ImageState),
+    Embeds(EmbedSet),
+}
+
 // Crate-internal: `dispatch.rs` and `app.rs` call these by this
 // `graphics::` path, but no external consumer of this crate (`rune-cli`,
 // an integration test) has any business spawning a decode or re-fitting a

@@ -127,24 +127,16 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             version,
             result,
         } => handle_highlighted(app, doc, version, result, effects),
-        // The SAME `Msg` variant carries both a whole image
-        // document's decode reply and one embed's — reusing it (rather
-        // than adding a second variant) keeps `runtime/mod.rs` from
-        // growing past its already-over-budget line count. A document is
-        // exclusively one or the other (`doc.image.is_some()` iff it's a
-        // `DocumentKind::Image` document, which never holds embeds), so
-        // this fork is unambiguous.
         Msg::ImageDecoded {
             doc,
             generation,
             result,
-        } => {
-            if app.doc(doc).is_some_and(|d| d.image.is_some()) {
-                crate::graphics::handle_image_decoded(app, doc, generation, result, effects)
-            } else {
-                crate::graphics::handle_embed_decoded(app, doc, generation, result, effects)
-            }
-        }
+        } => crate::graphics::handle_image_decoded(app, doc, generation, result, effects),
+        Msg::EmbedDecoded {
+            doc,
+            generation,
+            result,
+        } => crate::graphics::handle_embed_decoded(app, doc, generation, result, effects),
         Msg::Error(e) => crate::messages::error(app, e),
         Msg::Warning(w) => crate::messages::warn(app, w),
         Msg::SearchHistory { generation, result } => {

@@ -32,7 +32,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use rune_image::{
-    decode_still, encode_delete, encode_delete_all, encode_transmit, fit_box, resize,
+    PixelSize, decode_still, encode_delete, encode_delete_all, encode_transmit, fit_box, resize,
 };
 
 /// Per-channel RGBA tolerance for comparing this crate's CatmullRom
@@ -170,8 +170,17 @@ fn check_encode_golden(golden_file: &str, asset_file: &str) {
 
     // FitBox against the DEFAULT 8x16 cell size's pixel box for the
     // requested cols x rows.
-    let (fit_w, fit_h) = fit_box(decoded.width, decoded.height, cols * 8, rows * 16);
-    let resized = resize(&decoded.image, fit_w, fit_h);
+    let fitted = fit_box(
+        PixelSize {
+            w: decoded.width,
+            h: decoded.height,
+        },
+        PixelSize {
+            w: cols * 8,
+            h: rows * 16,
+        },
+    );
+    let resized = resize(&decoded.image, fitted.w, fitted.h);
 
     let seq = encode_transmit(&resized, id, cols, rows)
         .unwrap_or_else(|e| panic!("encode_transmit {asset_file}: {e}"));
@@ -307,8 +316,17 @@ fn noise_png_multi_chunk_framing_matches_reference_rules() {
 
     let data = fs::read(asset_path("noise.png")).expect("read noise.png");
     let decoded = decode_still(&data).expect("decode noise.png");
-    let (fit_w, fit_h) = fit_box(decoded.width, decoded.height, cols * 8, rows * 16);
-    let resized = resize(&decoded.image, fit_w, fit_h);
+    let fitted = fit_box(
+        PixelSize {
+            w: decoded.width,
+            h: decoded.height,
+        },
+        PixelSize {
+            w: cols * 8,
+            h: rows * 16,
+        },
+    );
+    let resized = resize(&decoded.image, fitted.w, fitted.h);
     let seq = encode_transmit(&resized, id, cols, rows).expect("encode_transmit noise.png");
     let apcs = split_apcs(&seq);
     assert!(

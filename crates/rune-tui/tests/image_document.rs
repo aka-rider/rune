@@ -47,7 +47,7 @@ fn decode_x_png_via_update(app: &mut App, id: rune_tui::document::DocumentId) ->
     // never through `schedule_image_decode` — arm `in_flight` by hand so
     // this reply isn't dropped as stale, exactly as a real spawn would.
     const GENERATION: u64 = 0;
-    app.doc_mut(id).unwrap().image.as_mut().unwrap().in_flight = Some(GENERATION);
+    app.doc_mut(id).unwrap().image_mut().unwrap().in_flight = Some(GENERATION);
     let generation = GENERATION;
     let decoded = rune_image::decode_still(X_PNG).expect("decode x.png");
     let mut effects = Effects::default();
@@ -75,7 +75,7 @@ fn opening_an_image_path_yields_a_read_only_image_document() {
         "an image document has no recovery binding"
     );
     assert_eq!(doc.kind, DocumentKind::Image);
-    assert!(doc.image.is_some());
+    assert!(doc.image().is_some());
 }
 
 /// The image producer, not just the renderer, sees the reserved row count:
@@ -87,10 +87,12 @@ fn a_known_reserved_row_count_is_visible_to_the_producer_and_scrollable() {
     let n = 7usize;
     app.doc_mut(id)
         .expect("doc")
-        .image
-        .as_mut()
+        .image_mut()
         .expect("image")
-        .cells = Some((40, n));
+        .status = ImageStatus::Live {
+        decoded: rune_image::decode_still(X_PNG).expect("decode x.png"),
+        cells: rune_image::CellFootprint { cols: 40, rows: n },
+    };
     app.sync_view();
 
     let view = app.doc(id).expect("doc").view.clone().expect("view");
@@ -222,7 +224,7 @@ fn a_live_image_document_renders_a_placeholder_cell_with_the_allocated_id() {
     decode_x_png_via_update(&mut app, id);
     app.sync_view();
 
-    let expected_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
+    let expected_id = app.doc(id).unwrap().image().unwrap().id;
     let expected = rune_image::alloc_id(b"/vault/x.png");
     assert_eq!(
         expected_id, expected,
@@ -261,8 +263,11 @@ fn a_decoded_fixture_reserves_the_fit_to_width_row_count() {
     decode_x_png_via_update(&mut app, id);
     app.sync_view();
 
-    let cells = app.doc(id).unwrap().image.as_ref().unwrap().cells;
-    assert_eq!(cells, Some((8, 3)));
+    let cells = match &app.doc(id).unwrap().image().unwrap().status {
+        ImageStatus::Live { cells, .. } => Some(*cells),
+        _ => None,
+    };
+    assert_eq!(cells, Some(rune_image::CellFootprint { cols: 8, rows: 3 }));
     let view = app.doc(id).unwrap().view.clone().expect("view");
     assert_eq!(view.display.total_rows(), 3);
 }
@@ -323,10 +328,10 @@ fn the_decode_reply_transmits_only_when_kitty_is_enabled() {
     let effects = decode_x_png_via_update(&mut app, id);
     assert!(!effects.raw.is_empty());
     assert!(effects.raw[0].starts_with(b"\x1b_G"));
-    assert_eq!(
-        app.doc(id).unwrap().image.as_ref().unwrap().status,
-        ImageStatus::Live
-    );
+    assert!(matches!(
+        app.doc(id).unwrap().image().unwrap().status,
+        ImageStatus::Live { .. }
+    ));
 
     let (mut app2, id2) = app_with_image();
     app2.graphics.kitty = false;
@@ -344,7 +349,7 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
     app.graphics.kitty = true;
     app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
     decode_x_png_via_update(&mut app, id);
-    let image_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
+    let image_id = app.doc(id).unwrap().image().unwrap().id;
     app.active = id;
     app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
@@ -383,7 +388,7 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
     app.graphics.kitty = true;
     app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
     decode_x_png_via_update(&mut app, id);
-    let image_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
+    let image_id = app.doc(id).unwrap().image().unwrap().id;
     app.active = id;
     app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
@@ -420,7 +425,7 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
         "reload must force a full redraw"
     );
     assert_eq!(
-        app.doc(id).unwrap().image.as_ref().unwrap().id,
+        app.doc(id).unwrap().image().unwrap().id,
         image_id,
         "reload must retransmit under the same deterministic id"
     );

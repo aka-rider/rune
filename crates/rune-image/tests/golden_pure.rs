@@ -11,7 +11,9 @@
 use serde_json::Value;
 use std::fs;
 
-use rune_image::{CellSize, alloc_id, clamp_delay, diacritic, fit_box, fit_cells};
+use rune_image::{
+    CellFootprint, CellSize, PixelSize, alloc_id, clamp_delay, diacritic, fit_box, fit_cells,
+};
 
 fn load_golden() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/pure.json");
@@ -57,14 +59,18 @@ fn fit_box_matches_golden() {
     for case in list {
         let input = &case["input"];
         let output = &case["output"];
-        let (w, h) = fit_box(
-            as_usize(input, "src_w"),
-            as_usize(input, "src_h"),
-            as_usize(input, "max_w"),
-            as_usize(input, "max_h"),
+        let fitted = fit_box(
+            PixelSize {
+                w: as_usize(input, "src_w"),
+                h: as_usize(input, "src_h"),
+            },
+            PixelSize {
+                w: as_usize(input, "max_w"),
+                h: as_usize(input, "max_h"),
+            },
         );
         assert_eq!(
-            (w, h),
+            (fitted.w, fitted.h),
             (as_usize(output, "w"), as_usize(output, "h")),
             "fit_box({input})"
         );
@@ -83,15 +89,19 @@ fn fit_cells_matches_golden() {
             w: as_usize(input, "cell_w"),
             h: as_usize(input, "cell_h"),
         };
-        let (cols, rows) = fit_cells(
-            as_usize(input, "px_w"),
-            as_usize(input, "px_h"),
-            as_usize(input, "max_cols"),
-            as_usize(input, "max_rows"),
+        let fitted = fit_cells(
+            PixelSize {
+                w: as_usize(input, "px_w"),
+                h: as_usize(input, "px_h"),
+            },
+            CellFootprint {
+                cols: as_usize(input, "max_cols"),
+                rows: as_usize(input, "max_rows"),
+            },
             cs,
         );
         assert_eq!(
-            (cols, rows),
+            (fitted.cols, fitted.rows),
             (as_usize(output, "cols"), as_usize(output, "rows")),
             "fit_cells({input})"
         );

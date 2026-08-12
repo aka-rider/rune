@@ -298,7 +298,7 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
 /// no `ratatui`/protocol dependency) — enough for the info card to show
 /// `WIDTHxHEIGHT` before any decode `Cmd` exists at all (WP5).
 fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
-    let dims = rune_image::probe_dimensions(&bytes).map(|(w, h, _)| (w, h));
+    let dims = rune_image::probe_dimensions(&bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
     let id = rune_image::alloc_id(resolved.as_os_str().as_encoded_bytes());
     let bytes_len = bytes.len() as u64;
     let file_name = resolved
@@ -312,13 +312,11 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Do
         doc.bind_path(resolved.to_path_buf());
         doc.read_only = ReadOnly::Always;
         doc.display_name = Some(file_name);
-        doc.image = Some(ImageState {
+        doc.set_image(ImageState {
             path: resolved.to_path_buf(),
             bytes_len,
             id,
             dims,
-            cells: None,
-            decoded: None,
             status: ImageStatus::Pending,
             in_flight: None,
             next_generation: 0,

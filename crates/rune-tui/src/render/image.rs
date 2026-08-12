@@ -73,8 +73,8 @@ fn doc_image_row_cells(
     width: u16,
 ) -> Vec<Cell> {
     if app.graphics.kitty
-        && let Some(image) = &doc.image
-        && image.status == ImageStatus::Live
+        && let Some(image) = doc.image()
+        && matches!(image.status, ImageStatus::Live { .. })
     {
         return live_row_cells(image.id, image_ref.row, image_ref.width, width as usize, 0);
     }
@@ -103,8 +103,8 @@ fn embed_row_cells(
         return None;
     }
     let width = width as usize;
-    match doc.embeds.images.get(target) {
-        Some(embed) if embed.status == ImageStatus::Live => Some(live_row_cells(
+    match doc.embeds().and_then(|embeds| embeds.images.get(target)) {
+        Some(embed) if matches!(embed.status, ImageStatus::Live { .. }) => Some(live_row_cells(
             embed.id,
             image_ref.row,
             image_ref.width,
@@ -183,14 +183,12 @@ fn info_card_lines(app: &App, doc: &Document) -> Vec<String> {
         .map(str::to_uppercase)
         .unwrap_or_else(|| "?".to_string());
     let dims = doc
-        .image
-        .as_ref()
+        .image()
         .and_then(|i| i.dims)
-        .map(|(w, h)| format!("{w}x{h}"))
+        .map(|d| format!("{}x{}", d.w, d.h))
         .unwrap_or_else(|| "dimensions unknown".to_string());
     let size = doc
-        .image
-        .as_ref()
+        .image()
         .map(|i| human_size(i.bytes_len))
         .unwrap_or_default();
     vec![
@@ -216,13 +214,13 @@ fn reason_line(app: &App, doc: &Document) -> String {
     if !app.graphics.kitty {
         return "this terminal does not support inline images".to_string();
     }
-    let Some(image) = doc.image.as_ref() else {
+    let Some(image) = doc.image() else {
         return "could not decode this image".to_string();
     };
     match &image.status {
         ImageStatus::Pending if image.in_flight.is_some() => "decoding\u{2026}".to_string(),
         ImageStatus::Pending => "not decoded — press the reload key to retry".to_string(),
-        ImageStatus::Live => String::new(),
+        ImageStatus::Live { .. } => String::new(),
         ImageStatus::Failed(reason) => format!("could not decode this image: {reason}"),
     }
 }

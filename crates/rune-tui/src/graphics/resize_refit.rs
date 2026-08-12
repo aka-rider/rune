@@ -40,35 +40,42 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     let pane_width = doc.viewport.width as usize;
     let cell = app.graphics.cell;
     let kitty = app.graphics.kitty;
-    let Some(image) = &doc.image else { return };
-    if image.status != ImageStatus::Live {
-        return;
-    }
-    let Some(decoded_dims) = image.decoded.as_ref().map(|d| (d.width, d.height)) else {
+    let Some(image) = doc.image() else { return };
+    let ImageStatus::Live {
+        cells: current_cells,
+        ..
+    } = &image.status
+    else {
         return;
     };
-    let (cols, rows) = super::footprint::fit(decoded_dims.0, decoded_dims.1, pane_width, cell);
-    if Some((cols, rows)) == image.cells {
+    let Some(decoded_px) = image.dims else { return };
+    let cells = super::footprint::fit(decoded_px, pane_width, cell);
+    if cells == *current_cells {
         return;
     }
     let img_id = image.id;
 
     let raw = kitty
         .then(|| {
-            doc.image
-                .as_ref()
-                .and_then(|i| i.decoded.as_ref())
-                .and_then(|decoded| {
-                    rune_image::fit_and_encode(decoded, img_id, cols, rows, cell).ok()
-                })
+            doc.image().and_then(|i| match &i.status {
+                ImageStatus::Live { decoded, .. } => {
+                    rune_image::fit_and_encode(decoded, img_id, cells.cols, cells.rows, cell).ok()
+                }
+                _ => None,
+            })
         })
         .flatten();
 
     let Some(doc) = app.doc_mut(id) else { return };
-    let Some(image) = doc.image.as_mut() else {
+    let Some(image) = doc.image_mut() else {
         return;
     };
-    image.cells = Some((cols, rows));
+    let ImageStatus::Live { decoded, .. } =
+        std::mem::replace(&mut image.status, ImageStatus::Pending)
+    else {
+        return;
+    };
+    image.status = ImageStatus::Live { decoded, cells };
 
     if let Some(bytes) = raw {
         effects.raw.push(bytes.into_bytes());
@@ -123,17 +130,24 @@ mod tests {
         (app, id)
     }
 
+    fn live_cells(app: &App, id: DocumentId) -> Option<rune_image::CellFootprint> {
+        match &app.doc(id).unwrap().image().unwrap().status {
+            ImageStatus::Live { cells, .. } => Some(*cells),
+            _ => None,
+        }
+    }
+
     #[test]
     fn a_footprint_change_retransmits_and_forces_a_redraw() {
         let (mut app, id) = app_with_live_image();
-        let before = app.doc(id).unwrap().image.as_ref().unwrap().cells;
+        let before = live_cells(&app, id);
         // Narrow the pane so the fit-to-width footprint must shrink.
         app.doc_mut(id).expect("doc").viewport.set_size(4, 24);
 
         let mut effects = Effects::default();
         refit_on_resize(&mut app, &mut effects);
 
-        let after = app.doc(id).unwrap().image.as_ref().unwrap().cells;
+        let after = live_cells(&app, id);
         assert_ne!(before, after, "the footprint must actually have changed");
         assert_eq!(effects.raw.len(), 1);
         assert!(effects.raw[0].starts_with(b"\x1b_G"));

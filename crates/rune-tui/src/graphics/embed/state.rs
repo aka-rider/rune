@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use rune_image::PixelSize;
 use rune_md::snapshot::ImageDims;
 
 use super::EmbedAllocator;
@@ -27,9 +28,7 @@ pub struct EmbedState {
     /// or `None` when the stat itself failed — the retry rule's own
     /// sentinel (plan gotcha: "`Failed` is sticky per `(path, mtime)`").
     pub mtime: Option<SystemTime>,
-    pub dims: Option<(usize, usize)>,
-    pub cells: Option<(usize, usize)>,
-    pub decoded: Option<rune_image::decode::Decoded>,
+    pub dims: Option<PixelSize>,
     pub status: ImageStatus,
     pub in_flight: Option<u64>,
 }
@@ -61,15 +60,15 @@ impl EmbedSet {
 
     /// The per-embed cell footprint map `DocMachine::set_embed_dims` needs
     /// (plan WP8/WP9 wiring) — only embeds whose fit computation has
-    /// already run (`cells.is_some()`) are included; an embed still
+    /// already run (`status` is `Live`) are included; an embed still
     /// `Pending` with no footprint yet is absent from the map, which
     /// `expand_images` already treats as "reserve exactly 1 row" (plan
     /// WP8.S4).
     pub fn to_image_dims(&self) -> ImageDims {
         let mut dims = ImageDims::new();
         for (key, state) in &self.images {
-            if let Some((cols, rows)) = state.cells {
-                dims.insert(key.clone(), cols, rows);
+            if let ImageStatus::Live { cells, .. } = &state.status {
+                dims.insert(key.clone(), cells.cols, cells.rows);
             }
         }
         dims

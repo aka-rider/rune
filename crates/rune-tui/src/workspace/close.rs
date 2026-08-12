@@ -149,7 +149,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
         crate::merge::auto_exit(app);
     }
     if app.graphics.kitty
-        && let Some(image) = app.doc(id).and_then(|d| d.image.as_ref())
+        && let Some(image) = app.doc(id).and_then(|d| d.image())
     {
         effects
             .raw
@@ -266,7 +266,7 @@ mod tests {
         app.graphics.kitty = true;
         let image_id =
             crate::workspace::open_path(&mut app, Path::new("/vault/x.png")).expect("open");
-        let expected_id = app.doc(image_id).unwrap().image.as_ref().unwrap().id;
+        let expected_id = app.doc(image_id).unwrap().image().unwrap().id;
 
         let mut effects = Effects::default();
         let _ = close_now(&mut app, image_id, &mut effects);

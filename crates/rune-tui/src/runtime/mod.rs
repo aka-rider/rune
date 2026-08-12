@@ -204,6 +204,11 @@ pub enum Msg {
         generation: u64,
         result: Result<rune_image::decode::Decoded, String>,
     },
+    EmbedDecoded {
+        doc: DocumentId,
+        generation: u64,
+        result: Result<rune_image::decode::Decoded, String>,
+    },
     Error(String),
     /// The same transport as `Error`, tagged one severity down: a
     /// background task hit something worth telling the user

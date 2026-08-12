@@ -22,7 +22,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
-use crate::cellsize::CellSize;
+use crate::cellsize::{CellSize, PixelSize};
 use crate::decode::{Decoded, ImageError};
 use crate::resize::{fit_box, resize};
 
@@ -134,8 +134,17 @@ pub fn fit_and_encode(
     rows: usize,
     cell: CellSize,
 ) -> Result<String, ImageError> {
-    let (w, h) = fit_box(decoded.width, decoded.height, cols * cell.w, rows * cell.h);
-    let resized = resize(&decoded.image, w, h);
+    let fitted = fit_box(
+        PixelSize {
+            w: decoded.width,
+            h: decoded.height,
+        },
+        PixelSize {
+            w: cols * cell.w,
+            h: rows * cell.h,
+        },
+    );
+    let resized = resize(&decoded.image, fitted.w, fitted.h);
     encode_transmit(&resized, id, cols, rows)
 }
 
