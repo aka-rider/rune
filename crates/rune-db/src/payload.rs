@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use rune_core::buffer::AppliedEdit;
-use rune_core::cursor::Cursor;
+use rune_core::cursor::{Cursor, CursorId};
 
 use crate::Error;
 
@@ -73,19 +73,23 @@ impl From<&Cursor> for CursorPayload {
             position: c.position,
             anchor: c.anchor,
             desired_col: c.desired_col,
-            id: c.id,
+            id: c.id.get(),
         }
     }
 }
 
-impl From<CursorPayload> for Cursor {
-    fn from(p: CursorPayload) -> Self {
-        Cursor {
+impl TryFrom<CursorPayload> for Cursor {
+    type Error = Error;
+
+    fn try_from(p: CursorPayload) -> Result<Self, Self::Error> {
+        let id = CursorId::try_from(p.id)
+            .map_err(|_| Error::CorruptPayload(format!("cursor id {} must be non-zero", p.id)))?;
+        Ok(Cursor {
             position: p.position,
             anchor: p.anchor,
             desired_col: p.desired_col,
-            id: p.id,
-        }
+            id,
+        })
     }
 }
 
@@ -114,7 +118,7 @@ pub(crate) fn cursors_to_json(cursors: &[Cursor]) -> Result<String, Error> {
 pub(crate) fn cursors_from_json(json: &str) -> Result<Vec<Cursor>, Error> {
     let payload: Vec<CursorPayload> =
         serde_json::from_str(json).map_err(|e| Error::CorruptPayload(e.to_string()))?;
-    Ok(payload.into_iter().map(Cursor::from).collect())
+    payload.into_iter().map(Cursor::try_from).collect()
 }
 
 #[cfg(test)]
@@ -142,7 +146,7 @@ mod tests {
             position: 5,
             anchor: 2,
             desired_col: 1,
-            id: 3,
+            id: CursorId::try_from(3).expect("test id is non-zero"),
         }];
         let json = cursors_to_json(&cursors).expect("serialize");
         assert!(json.contains("\"ID\":3"), "json: {json}");
@@ -153,6 +157,13 @@ mod tests {
     #[test]
     fn corrupt_json_surfaces_as_error_never_silently_empty() {
         let err = edits_from_json("not valid json").expect_err("must error");
+        assert!(matches!(err, Error::CorruptPayload(_)));
+    }
+
+    #[test]
+    fn a_zero_cursor_id_is_refused_not_repaired() {
+        let json = r#"[{"Position":0,"Anchor":0,"DesiredCol":0,"ID":0}]"#;
+        let err = cursors_from_json(json).expect_err("id 0 must be refused");
         assert!(matches!(err, Error::CorruptPayload(_)));
     }
 }

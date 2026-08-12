@@ -12,7 +12,7 @@
 //! buffer conversion independently: whatever glyph is on screen at a
 //! clicked cell is, by construction, what the click resolves to.
 
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorSet, CursorSpec};
 
 use crate::app::App;
 use crate::commands::mouse_hit::hit_test;
@@ -141,13 +141,11 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         // unavailable here: the SGR mouse protocol encodes only shift/alt/
         // ctrl, never Super.
         let doc = app.active_doc_mut();
-        let placed = Cursor {
+        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
             position: offset,
             anchor: offset,
             desired_col,
-            id: 0,
-        };
-        doc.cursors = CursorSet::new_from(&[placed]);
+        }]);
         app.pointer.drag = None;
         navigate::follow(app, effects);
         return;
@@ -159,13 +157,11 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     if input.alt {
         // Alt-click: add a cursor, never disturbing the existing set.
         let doc = app.active_doc_mut();
-        let added = Cursor {
+        doc.cursors = doc.cursors.add(CursorSpec {
             position: offset,
             anchor: offset,
             desired_col,
-            id: 0,
-        };
-        doc.cursors = doc.cursors.add(added);
+        });
         app.pointer.drag = None;
         return;
     }
@@ -229,13 +225,11 @@ pub(crate) fn place_click_cursor(
 ) -> bool {
     match count {
         1 => {
-            let placed = Cursor {
+            doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
                 position: offset,
                 anchor: offset,
                 desired_col,
-                id: 0,
-            };
-            doc.cursors = CursorSet::new_from(&[placed]);
+            }]);
             true
         }
         2 => {

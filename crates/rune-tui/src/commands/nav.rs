@@ -291,8 +291,8 @@ pub(crate) fn move_cursors(
     let new_cursors: Vec<Cursor> = doc
         .cursors
         .all()
-        .into_iter()
-        .map(|c| step(&view, &doc.buffer, c, select))
+        .iter()
+        .map(|&c| step(&view, &doc.buffer, c, select))
         .collect();
     doc.cursors = CursorSet::new_from(&new_cursors);
 }
@@ -322,8 +322,7 @@ pub fn word_right(doc: &mut Document, select: bool) {
 }
 
 pub fn select_all(doc: &mut Document) {
-    let all = doc.cursors.all();
-    let mut c = all.first().copied().unwrap_or_default();
+    let mut c = doc.cursors.primary();
     c.position = doc.buffer.len();
     c.anchor = 0;
     c.desired_col = 0;
@@ -364,6 +363,7 @@ pub fn escape(doc: &mut Document) -> EscapeOutcome {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use rune_core::cursor::CursorId;
 
     #[test]
     fn prev_next_rune_offset_never_split_a_multibyte_char() {
@@ -419,7 +419,7 @@ mod tests {
             position: 0,
             anchor: 5,
             desired_col: 0,
-            id: 1,
+            id: CursorId::FIRST,
         };
         // Anchor byte is '\n' at offset 5: must NOT advance past it.
         assert_eq!(selection_end_inclusive(&reversed, &buf), 5);
@@ -428,7 +428,7 @@ mod tests {
             position: 0,
             anchor: 4,
             desired_col: 0,
-            id: 1,
+            id: CursorId::FIRST,
         };
         // Anchor byte is 'o' (not '\n'): advances one rune past it.
         assert_eq!(selection_end_inclusive(&reversed2, &buf), 5);

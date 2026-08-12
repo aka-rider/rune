@@ -11,7 +11,7 @@
 //! one journal push, one undo step.
 
 use rune_core::buffer::{AppliedEdit, Edit};
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_core::undo::Step;
 
 use crate::app::App;
@@ -70,9 +70,9 @@ use crate::messages;
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
-    mut infos: Vec<(Edit, u32)>,
+    mut infos: Vec<(Edit, CursorId)>,
     cursors_before: CursorSet,
-    cursors_after: impl FnOnce(&[AppliedEdit], &[u32]) -> Vec<Cursor>,
+    cursors_after: impl FnOnce(&[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
 ) -> bool {
     let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
@@ -95,7 +95,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
 
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
-    let ids: Vec<u32> = infos.iter().map(|(_, cid)| *cid).collect();
+    let ids: Vec<CursorId> = infos.iter().map(|(_, cid)| *cid).collect();
 
     match doc.buffer.apply_edits(&edits) {
         Ok((new_buf, applied)) => {
@@ -105,17 +105,17 @@ pub(crate) fn apply_edit_batch_with_cursors(
             };
             doc.buffer = new_buf;
             doc.cursors = CursorSet::new_from(&new_cursors);
-            let cursors_after = doc.cursors.all();
+            let cursors_after = doc.cursors.all().to_vec();
             doc.journal.push(Step {
                 edits: applied.clone(),
-                cursors_before: cursors_before.all(),
+                cursors_before: cursors_before.all().to_vec(),
                 cursors_after: cursors_after.clone(),
             });
             // Async replica journaling (plan WP5.S3): the LOCAL journal
             // above is already the authoritative, synchronous source of
             // truth — this enqueue can never roll it back, only mark the
             // store degraded on failure (`db::append_edit`'s doc comment).
-            db::append_edit(app, id, &applied, &cursors_before.all(), &cursors_after);
+            db::append_edit(app, id, &applied, cursors_before.all(), &cursors_after);
             materialize_ack::recompute_dirty(app, id);
             true
         }
@@ -180,8 +180,8 @@ pub(crate) fn apply_edit_batch_with_cursors(
 /// inverse — rather than a second copy of the pure-delete merge condition.
 /// The surviving cursor id is the lower of the two merged edits' ids,
 /// matching this function's own doc above.
-fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
-    rune_core::undo::coalesce_touching_deletes(infos, u32::min)
+fn coalesce_touching_edits(infos: Vec<(Edit, CursorId)>) -> Vec<(Edit, CursorId)> {
+    rune_core::undo::coalesce_touching_deletes(infos, CursorId::min)
 }
 
 /// The generic per-cursor rule every command except `edit_lines_move::
@@ -200,7 +200,7 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
 pub(crate) fn commit_edit_batch(
     app: &mut App,
     id: DocumentId,
-    infos: Vec<(Edit, u32)>,
+    infos: Vec<(Edit, CursorId)>,
     cursors_before: CursorSet,
 ) -> bool {
     apply_edit_batch_with_cursors(app, id, infos, cursors_before, |applied, ids| {

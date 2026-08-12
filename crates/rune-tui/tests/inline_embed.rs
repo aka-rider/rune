@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{CursorSet, CursorSpec};
 use rune_tui::app::{App, update};
 use rune_tui::document::DocumentId;
 use rune_tui::graphics::ImageStatus;
@@ -169,11 +169,10 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
         .expect("newline");
     {
         let doc = app.doc_mut(id).expect("doc");
-        doc.cursors = CursorSet::new_from(&[Cursor {
+        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
             position: end_of_line,
             anchor: end_of_line,
             desired_col: 0,
-            id: 0,
         }]);
     }
     app.sync_view();
@@ -251,11 +250,10 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     let image_line_start = content.find("![caption]").expect("image line");
     {
         let doc = app.doc_mut(id).expect("doc");
-        doc.cursors = CursorSet::new_from(&[Cursor {
+        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
             position: image_line_start + 2,
             anchor: image_line_start + 2,
             desired_col: 0,
-            id: 0,
         }]);
     }
     let mut effects = Effects::default();

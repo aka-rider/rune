@@ -87,8 +87,8 @@ fn move_row_cursors(doc: &mut Document, select: bool, delta: isize) {
     let new_cursors: Vec<Cursor> = doc
         .cursors
         .all()
-        .into_iter()
-        .map(|c| move_row(&view, &doc.buffer, c, delta, select))
+        .iter()
+        .map(|&c| move_row(&view, &doc.buffer, c, delta, select))
         .collect();
     doc.cursors = CursorSet::new_from(&new_cursors);
 }

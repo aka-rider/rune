@@ -17,7 +17,7 @@
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferPoint, VisualCol, WrapPoint};
-use rune_core::cursor::Cursor;
+use rune_core::cursor::CursorSpec;
 use rune_md::element::doc::ViewSnapshots;
 
 use crate::document::Document;
@@ -67,11 +67,10 @@ fn add_cursor(doc: &mut Document, dir: isize) {
     let new_bp = visual_col_on_line(&view, &doc.buffer, target_line, desired);
     let new_offset = doc.buffer.line_col_to_offset(new_bp);
 
-    let new_cursor = Cursor {
+    let new_cursor = CursorSpec {
         position: new_offset,
         anchor: new_offset,
         desired_col: desired.0,
-        id: 0,
     };
 
     doc.cursors = doc.cursors.add(new_cursor);
@@ -190,14 +189,12 @@ mod tests {
         // feeding it straight into a byte-column buffer API silently lands
         // the cursor mid-character (or on the wrong character entirely).
         let mut doc = doc_with("x\n日本CDEFGH", 0);
-        let cursor = Cursor {
+        // 5 CELLS: "日"(2) + "本"(2) + "C"(1).
+        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
             position: 0,
             anchor: 0,
-            // 5 CELLS: "日"(2) + "本"(2) + "C"(1).
             desired_col: 5,
-            id: 1,
-        };
-        doc.cursors = CursorSet::new_from(&[cursor]);
+        }]);
 
         add_cursor_below(&mut doc);
 
@@ -218,11 +215,10 @@ mod tests {
         // (adjacent to the BOTTOMMOST existing cursor), not line 1
         // (adjacent to the topmost).
         let mut doc = doc_with("aaa\nbbb\nccc\nddd", 0);
-        doc.cursors = doc.cursors.add(Cursor {
+        doc.cursors = doc.cursors.add(CursorSpec {
             position: "aaa\n".len(),
             anchor: "aaa\n".len(),
             desired_col: 0,
-            id: 0,
         });
         assert_eq!(doc.cursors.len(), 2, "fixture must hold two cursors");
         add_cursor_below(&mut doc);

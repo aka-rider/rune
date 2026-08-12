@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_fuzz::snapshot::Snapshot;
 use rune_fuzz::step::{MsgTag, StepCtx};
 use rune_tui::app::App;
@@ -35,7 +35,7 @@ pub(crate) fn collapsed_cursor(id: u32, position: usize) -> Cursor {
         position,
         anchor: position,
         desired_col: 0,
-        id,
+        id: CursorId::try_from(id).expect("test ids are non-zero"),
     }
 }
 
@@ -44,7 +44,7 @@ pub(crate) fn selection_cursor(id: u32, anchor: usize, position: usize) -> Curso
         position,
         anchor,
         desired_col: 0,
-        id,
+        id: CursorId::try_from(id).expect("test ids are non-zero"),
     }
 }
 

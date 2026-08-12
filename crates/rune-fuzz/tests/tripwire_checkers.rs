@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
-use rune_core::cursor::Cursor;
+use rune_core::cursor::{Cursor, CursorId};
 use rune_fuzz::invariant::{buf_line_index, cur_bounds, cur_id, cur_order, version_monotone};
 use rune_fuzz::snapshot::Snapshot;
 use rune_tui::app::App;
@@ -31,7 +31,7 @@ fn collapsed_cursor(id: u32, position: usize) -> Cursor {
         position,
         anchor: position,
         desired_col: 0,
-        id,
+        id: CursorId::try_from(id).expect("test ids are non-zero"),
     }
 }
 
@@ -40,7 +40,7 @@ fn selection_cursor(id: u32, anchor: usize, position: usize) -> Cursor {
         position,
         anchor,
         desired_col: 0,
-        id,
+        id: CursorId::try_from(id).expect("test ids are non-zero"),
     }
 }
 
@@ -185,14 +185,6 @@ fn cur_id_detects_duplicate() {
     let mut snap = base_snapshot("abcdefgh");
     snap.cursors = vec![collapsed_cursor(1, 0), collapsed_cursor(1, 3)];
     let v = cur_id(&snap).expect("two cursors sharing an id must trip CUR-ID");
-    assert_eq!(v.id, "CUR-ID");
-}
-
-#[test]
-fn cur_id_detects_zero() {
-    let mut snap = base_snapshot("abcdefgh");
-    snap.cursors = vec![collapsed_cursor(0, 0)];
-    let v = cur_id(&snap).expect("a cursor with id=0 must trip CUR-ID");
     assert_eq!(v.id, "CUR-ID");
 }
 

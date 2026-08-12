@@ -189,7 +189,7 @@ proptest! {
 
                     if let (Some((step, new_pos)), Some(db_step)) = (ground, db_step) {
                         buf = apply_inverse(&buf, &step.edits).expect("apply_inverse");
-                        journal.move_pos(new_pos);
+                        journal.commit(new_pos);
                         move_undo_pos(&tx, session_id, doc_id, db_step.new_pos)
                             .expect("db move_undo_pos (undo)");
                     }
@@ -208,7 +208,7 @@ proptest! {
 
                     if let (Some((step, new_pos)), Some(db_step)) = (ground, db_step) {
                         buf = reapply(&buf, &step.edits).expect("reapply");
-                        journal.move_pos(new_pos);
+                        journal.commit(new_pos);
                         move_undo_pos(&tx, session_id, doc_id, db_step.new_pos)
                             .expect("db move_undo_pos (redo)");
                     }

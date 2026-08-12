@@ -194,6 +194,15 @@ pub struct Step {
     pub cursors_after: Vec<Cursor>,
 }
 
+#[derive(Debug)]
+pub struct JournalCommit(usize);
+
+impl JournalCommit {
+    pub fn target(&self) -> usize {
+        self.0
+    }
+}
+
 /// In-memory undo/redo journal. `push` truncates any redo tail, matching a
 /// normal editor undo stack (the durable store adds persistence behind the
 /// same peek-then-commit shape, not a new one).
@@ -219,30 +228,23 @@ impl Journal {
         self.pos = self.steps.len();
     }
 
-    /// Peek the step undo would apply and the position undo would commit
-    /// to — does NOT move `pos`. Callers apply the buffer edit first
-    /// (`apply_inverse`) and call `move_pos` only on success.
-    pub fn undo_peek(&self) -> Option<(&Step, usize)> {
+    pub fn undo_peek(&self) -> Option<(&Step, JournalCommit)> {
         if self.pos == 0 {
             return None;
         }
         let new_pos = self.pos - 1;
-        self.steps.get(new_pos).map(|step| (step, new_pos))
+        self.steps
+            .get(new_pos)
+            .map(|step| (step, JournalCommit(new_pos)))
     }
 
-    /// Peek the step redo would apply and the position redo would commit
-    /// to — does NOT move `pos`. Mirrors `undo_peek`.
-    pub fn redo_peek(&self) -> Option<(&Step, usize)> {
+    pub fn redo_peek(&self) -> Option<(&Step, JournalCommit)> {
         let step = self.steps.get(self.pos)?;
-        Some((step, self.pos + 1))
+        Some((step, JournalCommit(self.pos + 1)))
     }
 
-    /// Commit a journal position move. Call ONLY after the corresponding
-    /// buffer edit (`apply_inverse`/`reapply`) has already succeeded — a
-    /// failed apply must leave `pos` untouched so the journal never runs
-    /// ahead of the buffer.
-    pub fn move_pos(&mut self, pos: usize) {
-        self.pos = pos.min(self.steps.len());
+    pub fn commit(&mut self, token: JournalCommit) {
+        self.pos = token.0;
     }
 
     pub fn pos(&self) -> usize {
@@ -408,13 +410,13 @@ mod tests {
 
         let (_, new_pos) = journal.undo_peek().expect("one step to undo");
         assert_eq!(journal.pos(), 1, "peek must not move pos");
-        journal.move_pos(new_pos);
+        journal.commit(new_pos);
         assert_eq!(journal.pos(), 0);
 
         assert!(journal.undo_peek().is_none());
         let (_, redo_pos) = journal.redo_peek().expect("one step to redo");
         assert_eq!(journal.pos(), 0, "peek must not move pos");
-        journal.move_pos(redo_pos);
+        journal.commit(redo_pos);
         assert_eq!(journal.pos(), 1);
     }
 
@@ -423,7 +425,8 @@ mod tests {
         let mut journal = Journal::new();
         journal.push(Step::default());
         journal.push(Step::default());
-        journal.move_pos(1);
+        let (_, pos) = journal.undo_peek().expect("one step to undo");
+        journal.commit(pos);
         journal.push(Step::default());
         assert_eq!(journal.len(), 2, "the discarded redo step must be gone");
         assert_eq!(journal.pos(), 2);

@@ -4,7 +4,7 @@
 //! only through `db_dispatch::handle_db_event`'s `OpOutcome::MergePrep` arm.
 
 use rune_core::buffer::Edit;
-use rune_core::cursor::Cursor;
+use rune_core::cursor::{CursorId, CursorSet};
 use rune_db::{AncestorRung, MergePrepResult, ObsId, SyncKind};
 
 use crate::app::App;
@@ -266,14 +266,13 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
         end: old_len,
         insert: text.to_string(),
     };
-    apply_edit_batch_with_cursors(app, doc, vec![(edit, 0)], cursors_before, move |_, _| {
-        vec![Cursor {
-            position: cursor_at,
-            anchor: cursor_at,
-            desired_col: 0,
-            id: 0,
-        }]
-    })
+    apply_edit_batch_with_cursors(
+        app,
+        doc,
+        vec![(edit, CursorId::FIRST)],
+        cursors_before,
+        move |_, _| vec![CursorSet::new(cursor_at).primary()],
+    )
 }
 
 /// Records the `origin='resolve'` observation for `theirs_obs`, correlated

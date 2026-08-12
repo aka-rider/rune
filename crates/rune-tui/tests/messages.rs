@@ -24,7 +24,7 @@
 
 mod messages_common;
 
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_tui::app;
 use rune_tui::keymap::KeyCode;
 use rune_tui::messages;
@@ -419,7 +419,7 @@ fn a_pane_with_a_selection_arms_nothing() {
         position: 0,
         anchor: 3,
         desired_col: 0,
-        id: 1,
+        id: CursorId::FIRST,
     }]);
 
     let mut effects = Effects::default();

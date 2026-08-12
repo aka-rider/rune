@@ -21,6 +21,7 @@ use std::fmt;
 
 mod lineindex;
 
+use lineindex::LineStarts;
 pub use lineindex::line_starts;
 
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
@@ -93,31 +94,17 @@ impl std::error::Error for BufferError {}
 /// An immutable snapshot of document content. Every mutation returns a new
 /// `Buffer`; the receiver is untouched (fuzz-proven in
 /// `tests/buffer_roundtrip.rs`).
-///
-/// Invariant: `line_starts` is never empty and `line_starts[0] == 0` —
-/// every method below assumes it (`line_start`/`line_end`/`find_line`/
-/// `update_line_starts` all read `line_starts` under this assumption). A
-/// derived `#[derive(Default)]` would produce `line_starts: vec![]` instead
-/// — an unrepresentable-by-construction fix: `Buffer` gets a manual
-/// `Default` impl below that routes through `Buffer::new("")`, so no
-/// `Buffer` can ever exist with a malformed line index in the first place.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Buffer {
     content: String,
-    line_starts: Vec<usize>,
+    line_starts: LineStarts,
     version: u64,
-}
-
-impl Default for Buffer {
-    fn default() -> Self {
-        Buffer::new("")
-    }
 }
 
 impl Buffer {
     pub fn new(content: impl Into<String>) -> Buffer {
         let content = content.into();
-        let line_starts = lineindex::line_starts(&content);
+        let line_starts = LineStarts::from_full(lineindex::line_starts(&content));
         Buffer {
             content,
             line_starts,

@@ -2,11 +2,54 @@
 //! Phase 1 runs a single cursor; `CursorSet` is built to grow into the
 //! multi-cursor future.
 
+use std::fmt;
+use std::num::NonZeroU32;
+
 use crate::assert_invariant;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct CursorId(NonZeroU32);
+
+impl CursorId {
+    pub const FIRST: CursorId = CursorId(NonZeroU32::MIN);
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+
+    fn next(self) -> CursorId {
+        CursorId(self.0.saturating_add(1))
+    }
+}
+
+impl fmt::Display for CursorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CursorIdZero;
+
+impl fmt::Display for CursorIdZero {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cursor id must be non-zero")
+    }
+}
+
+impl std::error::Error for CursorIdZero {}
+
+impl TryFrom<u32> for CursorId {
+    type Error = CursorIdZero;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        NonZeroU32::new(value).map(CursorId).ok_or(CursorIdZero)
+    }
+}
 
 /// One cursor: `position` is the head (blinks), `anchor` is the tail
 /// (`position == anchor` means no selection).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
     /// Byte offset — the "head" (where the cursor blinks).
     pub position: usize,
@@ -15,9 +58,7 @@ pub struct Cursor {
     pub anchor: usize,
     /// Preserved column for vertical movement (Syntax Space).
     pub desired_col: usize,
-    /// Stable identifier; never 0 for a real cursor (see
-    /// `CursorSet::next_id`).
-    pub id: u32,
+    pub id: CursorId,
 }
 
 impl Cursor {
@@ -55,6 +96,13 @@ impl Cursor {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CursorSpec {
+    pub position: usize,
+    pub anchor: usize,
+    pub desired_col: usize,
+}
+
 /// An ordered, non-overlapping set of cursors. `merge()` is the
 /// invariant-preserving chokepoint every constructor and mutator routes
 /// through.
@@ -62,16 +110,12 @@ impl Cursor {
 /// Invariant: `cursors` is never empty — every public constructor produces
 /// at least one cursor, and `merge` only ever coalesces cursors together,
 /// never down to zero. A derived `#[derive(Default)]` would produce
-/// `cursors: vec![]` with `next_id: 0` instead — the same malformed-empty
-/// shape `Buffer`'s manual `Default` exists to prevent, and a `next_id` of
-/// 0 would additionally hand the first cursor `add`s onto the set an id
-/// of 0, colliding with `Cursor::id`'s own "no real cursor" meaning.
-/// `CursorSet` gets a manual `Default` below that routes through
-/// `CursorSet::new(0)` so no `CursorSet` can ever exist empty.
+/// `cursors: vec![]`, so `CursorSet` gets a manual `Default` below that
+/// routes through `CursorSet::new(0)` instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorSet {
     cursors: Vec<Cursor>,
-    next_id: u32,
+    next_id: CursorId,
 }
 
 impl Default for CursorSet {
@@ -82,68 +126,68 @@ impl Default for CursorSet {
 
 impl CursorSet {
     pub fn new(offset: usize) -> CursorSet {
-        CursorSet {
-            cursors: vec![Cursor {
-                position: offset,
-                anchor: offset,
-                desired_col: 0,
-                id: 1,
-            }],
-            next_id: 2,
-        }
+        CursorSet::new_from_specs(&[CursorSpec {
+            position: offset,
+            anchor: offset,
+            desired_col: 0,
+        }])
     }
 
     pub fn new_from(cursors: &[Cursor]) -> CursorSet {
         if cursors.is_empty() {
             return CursorSet::new(0);
         }
-        let mut cp = cursors.to_vec();
-        let mut max_id = 0u32;
-        for c in &cp {
-            if c.id > max_id {
-                max_id = c.id;
-            }
-        }
-        for c in &mut cp {
-            if c.id == 0 {
-                max_id += 1;
-                c.id = max_id;
+        let mut next_id = CursorId::FIRST;
+        for c in cursors {
+            if c.id >= next_id {
+                next_id = c.id.next();
             }
         }
         let cs = CursorSet {
-            cursors: cp,
-            next_id: max_id + 1,
+            cursors: cursors.to_vec(),
+            next_id,
         };
+        cs.merge()
+    }
+
+    pub fn new_from_specs(specs: &[CursorSpec]) -> CursorSet {
+        if specs.is_empty() {
+            return CursorSet::new(0);
+        }
+        let mut next_id = CursorId::FIRST;
+        let cursors: Vec<Cursor> = specs
+            .iter()
+            .map(|s| {
+                let cursor = Cursor {
+                    position: s.position,
+                    anchor: s.anchor,
+                    desired_col: s.desired_col,
+                    id: next_id,
+                };
+                next_id = next_id.next();
+                cursor
+            })
+            .collect();
+        let cs = CursorSet { cursors, next_id };
         cs.merge()
     }
 
     pub fn new_from_positions(positions: &[usize]) -> CursorSet {
-        if positions.is_empty() {
-            return CursorSet::new(0);
-        }
-        let cursors: Vec<Cursor> = positions
+        let specs: Vec<CursorSpec> = positions
             .iter()
-            .enumerate()
-            .map(|(i, &p)| Cursor {
+            .map(|&p| CursorSpec {
                 position: p,
                 anchor: p,
                 desired_col: 0,
-                id: (i as u32) + 1,
             })
             .collect();
-        let cs = CursorSet {
-            cursors,
-            next_id: (positions.len() as u32) + 1,
-        };
-        cs.merge()
+        CursorSet::new_from_specs(&specs)
     }
 
     /// The first (lowest-`selection_start`) cursor. `cursors` is never
     /// empty (see the struct invariant above) — checked here rather than
-    /// silently falling back to a defaulted `Cursor` (whose derived `id: 0`
-    /// would collide with the "no real cursor" sentinel) so a future change
-    /// that breaks the invariant is caught in tests instead of handing back
-    /// a look-alike cursor.
+    /// silently falling back to a look-alike cursor, so a future change
+    /// that breaks the invariant is caught in tests.
     pub fn primary(&self) -> Cursor {
         assert_invariant!(!self.cursors.is_empty(), || {
             "CursorSet::cursors must never be empty".to_string()
@@ -152,12 +196,12 @@ impl CursorSet {
             position: 0,
             anchor: 0,
             desired_col: 0,
-            id: 1,
+            id: CursorId::FIRST,
         })
     }
 
-    pub fn all(&self) -> Vec<Cursor> {
-        self.cursors.clone()
+    pub fn all(&self) -> &[Cursor] {
+        &self.cursors
     }
 
     pub fn len(&self) -> usize {
@@ -172,17 +216,18 @@ impl CursorSet {
         self.cursors.len() > 1
     }
 
-    pub fn add(&self, mut c: Cursor) -> CursorSet {
-        let mut next_id = self.next_id;
-        if c.id == 0 {
-            c.id = next_id;
-        }
-        next_id += 1;
+    pub fn add(&self, spec: CursorSpec) -> CursorSet {
+        let cursor = Cursor {
+            position: spec.position,
+            anchor: spec.anchor,
+            desired_col: spec.desired_col,
+            id: self.next_id,
+        };
         let mut cp = self.cursors.clone();
-        cp.push(c);
+        cp.push(cursor);
         let res = CursorSet {
             cursors: cp,
-            next_id,
+            next_id: self.next_id.next(),
         };
         res.merge()
     }
@@ -226,7 +271,7 @@ impl CursorSet {
             position: 0,
             anchor: 0,
             desired_col: 0,
-            id: 1,
+            id: CursorId::FIRST,
         });
         let mut merged: Vec<Cursor> = Vec::new();
 
@@ -282,12 +327,16 @@ impl CursorSet {
 mod tests {
     use super::*;
 
+    fn id(n: u32) -> CursorId {
+        CursorId::try_from(n).expect("test ids are non-zero")
+    }
+
     #[test]
     fn new_single_cursor_has_id_one() {
         let cs = CursorSet::new(5);
         assert_eq!(cs.len(), 1);
         assert_eq!(cs.primary().position, 5);
-        assert_eq!(cs.primary().id, 1);
+        assert_eq!(cs.primary().id, CursorId::FIRST);
     }
 
     #[test]
@@ -296,13 +345,13 @@ mod tests {
             position: 5,
             anchor: 0,
             desired_col: 0,
-            id: 1,
+            id: id(1),
         };
         let b = Cursor {
             position: 3,
             anchor: 8,
             desired_col: 0,
-            id: 2,
+            id: id(2),
         };
         let cs = CursorSet::new_from(&[a, b]);
         assert_eq!(cs.len(), 1);
@@ -320,17 +369,17 @@ mod tests {
             position: 8,
             anchor: 0,
             desired_col: 0,
-            id: 1,
+            id: id(1),
         };
         // `b` (id 2) IS reversed and sorts first by selection_start.
         let b = Cursor {
             position: 3,
             anchor: 6,
             desired_col: 0,
-            id: 2,
+            id: id(2),
         };
         let merged = CursorSet::new_from(&[a, b]).primary();
-        assert_eq!(merged.id, 1, "lower id survives");
+        assert_eq!(merged.id, id(1), "lower id survives");
         assert!(
             !merged.reversed(),
             "the survivor's own reversed flag (id 1, not reversed) must win, \
@@ -339,30 +388,24 @@ mod tests {
         assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
     }
 
-    /// [rune-core 14]: `new_from` assigns fresh ids to any cursor with
-    /// `id == 0`, past the highest id already present.
     #[test]
-    fn new_from_assigns_fresh_ids_to_zero_id_cursors() {
-        let a = Cursor {
-            position: 0,
-            anchor: 0,
-            desired_col: 0,
-            id: 5,
-        };
-        let b = Cursor {
-            position: 20,
-            anchor: 20,
-            desired_col: 0,
-            id: 0,
-        };
-        let cs = CursorSet::new_from(&[a, b]);
+    fn new_from_specs_assigns_distinct_fresh_ids() {
+        let specs = [
+            CursorSpec {
+                position: 0,
+                anchor: 0,
+                desired_col: 0,
+            },
+            CursorSpec {
+                position: 20,
+                anchor: 20,
+                desired_col: 0,
+            },
+        ];
+        let cs = CursorSet::new_from_specs(&specs);
         assert_eq!(cs.len(), 2);
-        let ids: Vec<u32> = cs.all().iter().map(|c| c.id).collect();
-        assert!(ids.contains(&5));
-        assert!(
-            ids.iter().all(|&id| id != 0),
-            "id 0 must be reassigned: {ids:?}"
-        );
+        let ids: Vec<CursorId> = cs.all().iter().map(|c| c.id).collect();
+        assert_ne!(ids[0], ids[1], "each spec gets a distinct id");
     }
 
     /// [rune-core 14]: `new_from` does not itself deduplicate ids — two
@@ -374,17 +417,17 @@ mod tests {
             position: 0,
             anchor: 0,
             desired_col: 0,
-            id: 7,
+            id: id(7),
         };
         let b = Cursor {
             position: 50,
             anchor: 50,
             desired_col: 0,
-            id: 7,
+            id: id(7),
         };
         let cs = CursorSet::new_from(&[a, b]);
         assert_eq!(cs.len(), 2, "non-touching cursors are not merged by id");
-        let ids: Vec<u32> = cs.all().iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec![7, 7]);
+        let ids: Vec<CursorId> = cs.all().iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![id(7), id(7)]);
     }
 }

@@ -3,8 +3,41 @@
 //! rebuild `apply_edits` drives on every edit.
 
 use super::{Buffer, Edit};
-use crate::assert_invariant;
 use crate::coords::BufferPoint;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct LineStarts {
+    subsequent: Vec<usize>,
+}
+
+impl LineStarts {
+    pub(super) fn from_full(full: Vec<usize>) -> LineStarts {
+        LineStarts {
+            subsequent: full.into_iter().skip(1).collect(),
+        }
+    }
+
+    fn to_full(&self) -> Vec<usize> {
+        std::iter::once(0)
+            .chain(self.subsequent.iter().copied())
+            .collect()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.subsequent.len() + 1
+    }
+
+    pub(super) fn get(&self, n: usize) -> Option<usize> {
+        match n {
+            0 => Some(0),
+            _ => self.subsequent.get(n - 1).copied(),
+        }
+    }
+
+    fn line_at(&self, offset: usize) -> usize {
+        self.subsequent.partition_point(|&s| s <= offset)
+    }
+}
 
 impl Buffer {
     pub fn line_count(&self) -> usize {
@@ -14,7 +47,7 @@ impl Buffer {
     /// `None` when `n` is not a valid line index — `0` used to double as
     /// both "line 0 starts at byte 0" and "no such line".
     pub fn line_start(&self, n: usize) -> Option<usize> {
-        self.line_starts.get(n).copied()
+        self.line_starts.get(n)
     }
 
     /// `None` when `n` is not a valid line index (see `line_start`).
@@ -26,7 +59,7 @@ impl Buffer {
         if n == count - 1 {
             return Some(self.content.len());
         }
-        Some(self.line_starts.get(n + 1).copied()?.saturating_sub(1))
+        Some(self.line_starts.get(n + 1)?.saturating_sub(1))
     }
 
     pub fn line(&self, n: usize) -> &str {
@@ -42,8 +75,8 @@ impl Buffer {
 
     pub fn offset_to_line_col(&self, offset: usize) -> BufferPoint {
         let offset = offset.min(self.content.len());
-        let line = find_line(&self.line_starts, offset);
-        let line_start = self.line_starts.get(line).copied().unwrap_or(0);
+        let line = self.line_starts.line_at(offset);
+        let line_start = self.line_starts.get(line).unwrap_or(0);
         BufferPoint {
             line,
             col: offset.saturating_sub(line_start),
@@ -55,7 +88,7 @@ impl Buffer {
         if bp.line >= count {
             return self.content.len();
         }
-        let line_start = self.line_starts.get(bp.line).copied().unwrap_or(0);
+        let line_start = self.line_starts.get(bp.line).unwrap_or(0);
         let offset = line_start + bp.col;
         let end = if bp.line == count - 1 {
             self.content.len()
@@ -76,8 +109,8 @@ impl Buffer {
     /// An incremental `line_starts` rebuild scanning `edits` right-to-left
     /// (descending `start`), so each edit only touches the portion of
     /// `line_starts` it actually displaces.
-    pub(super) fn update_line_starts(&self, edits: &[Edit]) -> Vec<usize> {
-        let mut line_starts = self.line_starts.clone();
+    pub(super) fn update_line_starts(&self, edits: &[Edit]) -> LineStarts {
+        let mut line_starts = self.line_starts.to_full();
         for e in edits {
             let start_line = find_line(&line_starts, e.start);
             let end_line = find_line(&line_starts, e.end);
@@ -98,8 +131,7 @@ impl Buffer {
             }
             line_starts = next_starts;
         }
-        assert_line_starts_invariant(&line_starts);
-        line_starts
+        LineStarts::from_full(line_starts)
     }
 }
 
@@ -111,22 +143,7 @@ pub fn line_starts(content: &str) -> Vec<usize> {
             starts.push(i + 1);
         }
     }
-    assert_line_starts_invariant(&starts);
     starts
-}
-
-/// The invariant every `Buffer::line_starts` must uphold: non-empty, with
-/// `line_starts[0] == 0`. Checked wherever `line_starts` is built or
-/// rebuilt (`line_starts`, `update_line_starts`) rather than only
-/// documented — via the `assert_invariant` chokepoint, so a future change
-/// that reintroduces the malformed-empty state (a derived `Default`
-/// producing `line_starts: vec![]`, the exact shape `Buffer`'s manual
-/// `Default` above exists to prevent) is caught in tests without an
-/// ordinary build ever paying for it.
-fn assert_line_starts_invariant(line_starts: &[usize]) {
-    assert_invariant!(line_starts.first().copied() == Some(0), || {
-        "line_starts must be non-empty and start with 0".to_string()
-    });
 }
 
 fn compute_added_starts(base_offset: usize, text: &str) -> Vec<usize> {

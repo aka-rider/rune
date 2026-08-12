@@ -19,6 +19,7 @@
 use std::collections::HashSet;
 
 use rune_core::buffer::{Buffer, Edit};
+use rune_core::cursor::CursorId;
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
@@ -43,9 +44,9 @@ pub(crate) fn per_line_edits(
         return;
     }
 
-    let mut infos: Vec<(Edit, u32)> = Vec::new();
+    let mut infos: Vec<(Edit, CursorId)> = Vec::new();
     let mut seen: HashSet<usize> = HashSet::new();
-    for c in &all {
+    for c in all {
         let Some(doc) = app.doc(id) else { return };
         let bp = doc.buffer.offset_to_line_col(c.position);
         if dedupe && !seen.insert(bp.line) {

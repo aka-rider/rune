@@ -5,8 +5,13 @@
 use super::*;
 use crate::commands::edit;
 use rune_core::buffer::Buffer;
+use rune_core::cursor::CursorSpec;
 use rune_vfs::Mem;
 use std::sync::Arc;
+
+fn cid(n: u32) -> CursorId {
+    CursorId::try_from(n).expect("test ids are non-zero")
+}
 
 /// Two independent, non-touching CURSORS — `CursorSet::merge` correctly
 /// leaves positions 0 and 1 separate, since neither's (zero-width)
@@ -26,7 +31,7 @@ fn merges_two_adjacent_bare_deletes() {
                 end: 2,
                 insert: String::new(),
             },
-            2,
+            cid(2),
         ),
         (
             Edit {
@@ -34,7 +39,7 @@ fn merges_two_adjacent_bare_deletes() {
                 end: 1,
                 insert: String::new(),
             },
-            1,
+            cid(1),
         ),
     ];
     let merged = coalesce_touching_edits(infos);
@@ -51,7 +56,7 @@ fn merges_two_adjacent_bare_deletes() {
                 end: 2,
                 insert: String::new(),
             },
-            1,
+            cid(1),
         )),
         "the lower cursor id survives, matching CursorSet::merge's own rule"
     );
@@ -71,7 +76,7 @@ fn merges_overlapping_word_deletes() {
                 end: 7,
                 insert: String::new(),
             },
-            9,
+            cid(9),
         ),
         (
             Edit {
@@ -79,7 +84,7 @@ fn merges_overlapping_word_deletes() {
                 end: 5,
                 insert: String::new(),
             },
-            3,
+            cid(3),
         ),
     ];
     let merged = coalesce_touching_edits(infos);
@@ -98,7 +103,7 @@ fn leaves_genuinely_separated_edits_alone() {
                 end: 6,
                 insert: String::new(),
             },
-            2,
+            cid(2),
         ),
         (
             Edit {
@@ -106,7 +111,7 @@ fn leaves_genuinely_separated_edits_alone() {
                 end: 1,
                 insert: String::new(),
             },
-            1,
+            cid(1),
         ),
     ];
     let merged = coalesce_touching_edits(infos);
@@ -150,11 +155,10 @@ fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
     let mut app = app_with("ab");
     let id = app.active;
     let doc = app.doc_mut(id).expect("fixture doc must exist");
-    doc.cursors = CursorSet::new(1).add(Cursor {
+    doc.cursors = CursorSet::new(1).add(CursorSpec {
         position: 2,
         anchor: 2,
         desired_col: 0,
-        id: 0,
     });
     assert_eq!(
         doc.cursors.len(),
@@ -270,7 +274,7 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
                 end: 1,
                 insert: String::new(),
             },
-            0,
+            cid(4),
         ),
         (
             Edit {
@@ -278,7 +282,7 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
                 end: 2,
                 insert: String::new(),
             },
-            1,
+            cid(1),
         ),
     ];
     commit_edit_batch(&mut app, id, infos, cursors_before);
@@ -303,11 +307,10 @@ fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
     let mut app = app_with("ab");
     let id = app.active;
     let doc = app.doc_mut(id).expect("doc");
-    doc.cursors = CursorSet::new(1).add(Cursor {
+    doc.cursors = CursorSet::new(1).add(CursorSpec {
         position: 2,
         anchor: 2,
         desired_col: 0,
-        id: 0,
     });
     assert_eq!(doc.cursors.len(), 2, "fixture must hold two cursors");
 
@@ -322,7 +325,8 @@ fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
         "the touching pair must collapse to a single surviving cursor"
     );
     assert_eq!(
-        cursors[0].id, 1,
+        cursors[0].id,
+        CursorId::FIRST,
         "the lower cursor id must be the survivor, matching CursorSet::merge's own rule"
     );
 }

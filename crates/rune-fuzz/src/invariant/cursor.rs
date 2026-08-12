@@ -80,8 +80,8 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CUR-ID` (L0) — at least one cursor, every id non-zero, all
-/// ids distinct. Subsumes any separate cursor-count check.
+/// `CUR-ID` (L0) — at least one cursor, all ids distinct. Subsumes any
+/// separate cursor-count check.
 ///
 /// Active-document-switch-safe: L0, checks one `Snapshot`'s cursor set in
 /// isolation.
@@ -89,15 +89,7 @@ pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
     if snap.cursors.is_empty() {
         return Some(Violation::new("CUR-ID", "cursor set is empty".to_string()));
     }
-    for c in &snap.cursors {
-        if c.id == 0 {
-            return Some(Violation::new(
-                "CUR-ID",
-                format!("cursor with id=0 at position={}", c.position),
-            ));
-        }
-    }
-    let mut ids: Vec<u32> = snap.cursors.iter().map(|c| c.id).collect();
+    let mut ids: Vec<_> = snap.cursors.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     if ids.windows(2).any(|w| matches!(w, [a, b] if a == b)) {
         return Some(Violation::new(

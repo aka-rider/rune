@@ -12,7 +12,7 @@
 
 mod tui_render_common;
 
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_tui::document::ReadOnly;
 use rune_tui::testgrid;
 
@@ -80,7 +80,7 @@ fn selection_not_highlighted_when_unfocused() {
         position: 5,
         anchor: 0,
         desired_col: 0,
-        id: 1,
+        id: CursorId::FIRST,
     }]);
     unfocused.sync_view();
     let buf = render_to_test_backend(&unfocused);
@@ -100,7 +100,7 @@ fn selection_not_highlighted_when_unfocused() {
         position: 5,
         anchor: 0,
         desired_col: 0,
-        id: 1,
+        id: CursorId::FIRST,
     }]);
     focused.sync_view();
     let buf = render_to_test_backend(&focused);

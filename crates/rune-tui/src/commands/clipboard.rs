@@ -58,7 +58,7 @@ pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &
 /// cursor.
 pub(crate) fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
     let all = cursors.all();
-    match all.as_slice() {
+    match all {
         [] => String::new(),
         [c] => copy_text_for_cursor(buf, c),
         _ => all

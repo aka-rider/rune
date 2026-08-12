@@ -18,7 +18,7 @@
 use std::ops::Range;
 
 use rune_core::buffer::{Buffer, Edit};
-use rune_core::cursor::Cursor;
+use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{self, Journal, Step};
 
 use crate::commands::nav;
@@ -37,20 +37,13 @@ pub struct TextField {
 
 impl TextField {
     /// A field seeded with `text`, cursor at the end, no selection, empty
-    /// undo history. The cursor's `id` is minted non-zero (1) and is
-    /// never reset to the "not a real cursor" zero-`id` sentinel by any
-    /// mutation below.
+    /// undo history.
     pub fn new(text: &str) -> TextField {
         let buffer = Buffer::new(text);
-        let len = buffer.len();
+        let cursor = CursorSet::new(buffer.len()).primary();
         TextField {
             buffer,
-            cursor: Cursor {
-                position: len,
-                anchor: len,
-                desired_col: 0,
-                id: 1,
-            },
+            cursor,
             journal: Journal::new(),
         }
     }
@@ -303,7 +296,7 @@ impl TextField {
         };
         self.buffer = new_buf;
         self.restore_cursor(cursors_before.first().copied());
-        self.journal.move_pos(new_pos);
+        self.journal.commit(new_pos);
         KeyOutcome::Consumed
     }
 
@@ -319,7 +312,7 @@ impl TextField {
         };
         self.buffer = new_buf;
         self.restore_cursor(cursors_after.first().copied());
-        self.journal.move_pos(new_pos);
+        self.journal.commit(new_pos);
         KeyOutcome::Consumed
     }
 

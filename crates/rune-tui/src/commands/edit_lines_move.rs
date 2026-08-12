@@ -57,7 +57,7 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
 pub fn move_line_up(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
     let cursors_before = doc.cursors.clone();
-    let Some(c) = cursors_before.all().into_iter().next() else {
+    let Some(c) = cursors_before.all().first() else {
         return;
     };
     let bp = doc.buffer.offset_to_line_col(c.position);
@@ -113,7 +113,7 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
 pub fn move_line_down(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
     let cursors_before = doc.cursors.clone();
-    let Some(c) = cursors_before.all().into_iter().next() else {
+    let Some(c) = cursors_before.all().first() else {
         return;
     };
     let bp = doc.buffer.offset_to_line_col(c.position);
@@ -173,7 +173,7 @@ mod tests {
     use crate::commands::edit::undo;
     use crate::commands::edit_lines::{delete_line, indent, outdent};
     use rune_core::buffer::Buffer;
-    use rune_core::cursor::CursorSet;
+    use rune_core::cursor::{CursorSet, CursorSpec};
     use rune_vfs::Mem;
     use std::sync::Arc;
 
@@ -232,11 +232,10 @@ mod tests {
         let mut app = app_with("one\ntwo", 4);
         let id = app.active;
         let doc = app.doc_mut(id).unwrap();
-        doc.cursors = doc.cursors.clone().add(Cursor {
+        doc.cursors = doc.cursors.clone().add(CursorSpec {
             position: 7,
             anchor: 7,
             desired_col: 0,
-            id: 0,
         });
         assert_eq!(
             doc.cursors.len(),

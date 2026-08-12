@@ -299,7 +299,7 @@ impl Snapshot {
             version: doc.buffer.version(),
             saved_version: doc.saved_version,
             is_dirty: app.is_dirty(),
-            cursors: doc.cursors.all(),
+            cursors: doc.cursors.all().to_vec(),
             line_count,
             line_starts,
             line_ends,

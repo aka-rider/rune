@@ -239,20 +239,7 @@ fn cmd_x_is_still_cut_never_a_focus_chord() {
 fn escape_with_multiple_cursors_collapses_and_stays_in_the_editor() {
     let mut app = app_for("hello world");
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[
-        Cursor {
-            position: 0,
-            anchor: 0,
-            desired_col: 0,
-            id: 1,
-        },
-        Cursor {
-            position: 6,
-            anchor: 6,
-            desired_col: 0,
-            id: 2,
-        },
-    ]);
+    app.doc_mut(id).unwrap().cursors = CursorSet::new_from_positions(&[0, 6]);
 
     press(&mut app, KeyCode::Escape, NONE);
 

@@ -30,7 +30,7 @@
 //! cluster — a deliberate choice, not an oversight.
 
 use rune_core::buffer::{AppliedEdit, Buffer, Edit};
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
@@ -57,7 +57,7 @@ fn per_cursor_selection_edits(
         return;
     }
 
-    let mut infos: Vec<(Edit, u32)> = Vec::new();
+    let mut infos: Vec<(Edit, CursorId)> = Vec::new();
     for (i, c) in all.iter().enumerate() {
         let Some(doc) = app.doc(id) else { return };
         let buf = &doc.buffer;
@@ -244,11 +244,12 @@ pub fn undo(app: &mut App, id: DocumentId) {
 
     match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
         Ok(new_buf) => {
+            let target = new_pos.target();
             let Some(doc) = app.doc_mut(id) else { return };
             doc.buffer = new_buf;
             doc.cursors = CursorSet::new_from(&cursors_before);
-            doc.journal.move_pos(new_pos);
-            db::move_undo_pos(app, id, new_pos);
+            doc.journal.commit(new_pos);
+            db::move_undo_pos(app, id, target);
             materialize_ack::recompute_dirty(app, id);
             resync_after_journal_jump(app, id, affected);
         }
@@ -292,11 +293,12 @@ pub fn redo(app: &mut App, id: DocumentId) {
 
     match rune_core::undo::reapply(&doc.buffer, &edits) {
         Ok(new_buf) => {
+            let target = new_pos.target();
             let Some(doc) = app.doc_mut(id) else { return };
             doc.buffer = new_buf;
             doc.cursors = CursorSet::new_from(&cursors_after);
-            doc.journal.move_pos(new_pos);
-            db::move_undo_pos(app, id, new_pos);
+            doc.journal.commit(new_pos);
+            db::move_undo_pos(app, id, target);
             materialize_ack::recompute_dirty(app, id);
             resync_after_journal_jump(app, id, affected);
         }
@@ -350,6 +352,7 @@ fn resync_after_journal_jump(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use rune_core::cursor::CursorSpec;
     use rune_vfs::Mem;
     use std::sync::Arc;
 
@@ -381,11 +384,10 @@ mod tests {
     fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
         let mut app = app_with("abcd", 0);
         let id = app.active;
-        let two = CursorSet::new(0).add(Cursor {
+        let two = CursorSet::new(0).add(CursorSpec {
             position: 1,
             anchor: 1,
             desired_col: 0,
-            id: 0,
         });
         assert_eq!(
             two.len(),

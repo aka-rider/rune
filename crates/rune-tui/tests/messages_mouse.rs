@@ -15,7 +15,7 @@ mod messages_common;
 
 use ratatui::layout::Rect;
 
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_tui::app::{self, App};
 use rune_tui::clipboard::{OSC52_MAX_PAYLOAD_BYTES, osc52_copy};
 use rune_tui::keymap::KeyInput;
@@ -74,7 +74,7 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
             position: end,
             anchor: start,
             desired_col: 0,
-            id: 1,
+            id: CursorId::FIRST,
         }]);
 
         let mut effects = Effects::default();
