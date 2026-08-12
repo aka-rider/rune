@@ -112,22 +112,22 @@ fn refresh_cause_preserves_the_selected_entry_by_name() {
                 rune_vfs::DirEntry {
                     name: "new.md".to_string(),
                     path: PathBuf::from("/root/new.md"),
-                    is_dir: false,
+                    kind: rune_vfs::FileKind::File,
                 },
                 rune_vfs::DirEntry {
                     name: "a.md".to_string(),
                     path: PathBuf::from("/root/a.md"),
-                    is_dir: false,
+                    kind: rune_vfs::FileKind::File,
                 },
                 rune_vfs::DirEntry {
                     name: "b.md".to_string(),
                     path: PathBuf::from("/root/b.md"),
-                    is_dir: false,
+                    kind: rune_vfs::FileKind::File,
                 },
                 rune_vfs::DirEntry {
                     name: "sub".to_string(),
                     path: PathBuf::from("/root/sub"),
-                    is_dir: true,
+                    kind: rune_vfs::FileKind::Dir,
                 },
             ],
             cause: rune_tui::runtime::DirCause::Refresh,
@@ -170,7 +170,7 @@ fn an_out_of_order_stale_dir_loaded_reply_is_ignored() {
             entries: vec![rune_vfs::DirEntry {
                 name: "should-not-appear".to_string(),
                 path: PathBuf::from("/stale/should-not-appear"),
-                is_dir: false,
+                kind: rune_vfs::FileKind::File,
             }],
             cause: rune_tui::runtime::DirCause::Nav,
             generation: stale_generation,

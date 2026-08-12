@@ -74,7 +74,11 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push('\n');
             for entry in entries {
                 out.push_str("dirloaded-entry ");
-                out.push(if entry.is_dir { 'd' } else { 'f' });
+                out.push(if entry.kind == rune_vfs::FileKind::Dir {
+                    'd'
+                } else {
+                    'f'
+                });
                 out.push(' ');
                 out.push_str(&escape(&entry.name));
                 out.push('\n');

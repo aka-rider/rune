@@ -116,6 +116,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/render/filesearch.rs` — 546
   - `crates/rune-tui/src/rename.rs` — 555
   - `crates/rune-vfs/src/mem.rs` — 706 (`fail_resolve` and its tests pushed this further over)
+  - `crates/rune-vfs/src/publish.rs` — 548 (already over before the narrow `put_force`/`put_if_absent` outcome types, which moved to a sibling `put_result.rs` rather than growing this further; split candidate: move the `#[cfg(test)] mod tests` block, well over half the file, to a `#[path]`-included sibling `publish_tests.rs` so it keeps access to the private `put_if_match`/`put_if_absent`/`finish_over_existing` it exercises)
   - `crates/rune-tui/src/dispatch.rs` — 539
   - `crates/rune-tui/src/document/mod.rs` — 676 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)

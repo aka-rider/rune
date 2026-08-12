@@ -177,7 +177,7 @@ mod tests {
     use std::sync::Arc;
 
     use rune_core::buffer::Buffer;
-    use rune_vfs::{DirEntry, Mem};
+    use rune_vfs::{DirEntry, FileKind, Mem};
 
     use super::*;
     use crate::explorer;
@@ -197,7 +197,7 @@ mod tests {
             .map(|name| DirEntry {
                 name: (*name).to_string(),
                 path: PathBuf::from(*name),
-                is_dir: false,
+                kind: FileKind::File,
             })
             .collect()
     }

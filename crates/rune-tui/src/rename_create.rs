@@ -150,7 +150,7 @@ fn create_cmd(
                 to: path.clone(),
                 durable,
             }),
-            Ok(rune_vfs::PutOutcome::Conflict { current }) => match current.stat {
+            Ok(rune_vfs::PutOutcome::Conflict { current }) => match current.sighted.stat() {
                 Some(seen) => Ok(RenameOutcome::Collided { seen }),
                 None => Err("target already exists".to_string()),
             },

@@ -1,8 +1,10 @@
 use std::io;
 use std::path::Path;
 
-use crate::sighting::{GetRefusal, Sighting, bracketed_stat, get};
-use crate::{Etag, Stat, Vfs, etag_of, published_not_durable};
+use crate::sighting::{GetRefusal, Sighted, Sighting, bracketed_stat, get};
+use crate::{Etag, Vfs, etag_of, published_not_durable};
+
+pub use crate::put_result::{ForceOutcome, IfAbsentOutcome, Published};
 
 #[derive(Debug)]
 pub enum PutCondition {
@@ -15,8 +17,7 @@ pub enum PutCondition {
 pub enum PutOutcome {
     Committed {
         etag: Etag,
-        stat: Option<Stat>,
-        stat_confirmed: bool,
+        sighted: Sighted,
         durable: bool,
     },
     Conflict {
@@ -24,8 +25,7 @@ pub enum PutOutcome {
     },
     Raced {
         etag: Etag,
-        stat: Option<Stat>,
-        stat_confirmed: bool,
+        sighted: Sighted,
         durable: bool,
         displaced: Sighting,
     },
@@ -47,7 +47,7 @@ fn finish_over_existing<V: Vfs + ?Sized>(
     publish: io::Result<()>,
     new_etag: &Etag,
     race_baseline: &Etag,
-) -> io::Result<PutOutcome> {
+) -> io::Result<ForceOutcome> {
     let durable = match publish {
         Ok(()) => true,
         Err(e) if published_not_durable(&e) => false,
@@ -56,48 +56,43 @@ fn finish_over_existing<V: Vfs + ?Sized>(
             return Err(e);
         }
     };
-    let (stat, stat_confirmed) = bracketed_stat(vfs, path);
+    let sighted = bracketed_stat(vfs, path);
+    let published = Published {
+        etag: new_etag.clone(),
+        sighted,
+        durable,
+    };
     // The publish already took effect: a failure reading the displaced
     // bytes back off the temp is NOT a failed save. The temp is kept — it
     // may hold the sole copy of the displaced content — and the raced-ness
     // stays unclassified, so this reports a plain commit.
     let Ok(displaced_bytes) = vfs.read(temp) else {
-        return Ok(PutOutcome::Committed {
-            etag: new_etag.clone(),
-            stat,
-            stat_confirmed,
-            durable,
-        });
+        return Ok(ForceOutcome::Committed(published));
+    };
+    let displaced_sighted = match vfs.stat(temp) {
+        Ok(stat) => Sighted::Confirmed(stat),
+        Err(_) => Sighted::Unconfirmed(None),
     };
     let displaced = Sighting {
         etag: etag_of(&displaced_bytes),
-        stat: vfs.stat(temp).ok(),
-        confirmed: true,
+        sighted: displaced_sighted,
         bytes: displaced_bytes,
     };
     if durable {
         let _ = vfs.remove(temp);
     }
     let outcome = if &displaced.etag != race_baseline {
-        PutOutcome::Raced {
-            etag: new_etag.clone(),
-            stat,
-            stat_confirmed,
-            durable,
+        ForceOutcome::Raced {
+            published,
             displaced,
         }
     } else {
-        PutOutcome::Committed {
-            etag: new_etag.clone(),
-            stat,
-            stat_confirmed,
-            durable,
-        }
+        ForceOutcome::Committed(published)
     };
     Ok(outcome)
 }
 
-fn put_if_match<V: Vfs + ?Sized>(
+pub(crate) fn put_if_match<V: Vfs + ?Sized>(
     vfs: &V,
     path: &Path,
     bytes: &[u8],
@@ -106,20 +101,21 @@ fn put_if_match<V: Vfs + ?Sized>(
     let Some(mut sighting) = current_sighting(vfs, path)? else {
         return Ok(PutOutcome::Missing);
     };
-    if !sighting.confirmed || &sighting.etag != expect {
+    if !sighting.sighted.is_confirmed() || &sighting.etag != expect {
         let Some(retry) = current_sighting(vfs, path)? else {
             return Ok(PutOutcome::Missing);
         };
         sighting = retry;
     }
-    if !sighting.confirmed || &sighting.etag != expect {
+    if !sighting.sighted.is_confirmed() || &sighting.etag != expect {
         return Ok(PutOutcome::Conflict { current: sighting });
     }
     let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
     let publish = vfs.exchange(&temp, &dest);
     let new_etag = etag_of(bytes);
-    finish_over_existing(vfs, &dest, &temp, publish, &new_etag, expect)
+    let landed = finish_over_existing(vfs, &dest, &temp, publish, &new_etag, expect)?;
+    Ok(landed.into())
 }
 
 fn finish_fresh_create<V: Vfs + ?Sized>(
@@ -127,22 +123,24 @@ fn finish_fresh_create<V: Vfs + ?Sized>(
     dest: &Path,
     bytes: &[u8],
     publish: io::Result<()>,
-) -> io::Result<PutOutcome> {
+) -> io::Result<Published> {
     let durable = match publish {
         Ok(()) => true,
         Err(e) if published_not_durable(&e) => false,
         Err(e) => return Err(e),
     };
-    let (stat, stat_confirmed) = bracketed_stat(vfs, dest);
-    Ok(PutOutcome::Committed {
+    Ok(Published {
         etag: etag_of(bytes),
-        stat,
-        stat_confirmed,
+        sighted: bracketed_stat(vfs, dest),
         durable,
     })
 }
 
-fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Result<PutOutcome> {
+pub(crate) fn put_if_absent<V: Vfs + ?Sized>(
+    vfs: &V,
+    path: &Path,
+    bytes: &[u8],
+) -> io::Result<IfAbsentOutcome> {
     let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
     let publish = match vfs.rename_excl(&temp, &dest) {
@@ -154,19 +152,20 @@ fn put_if_absent<V: Vfs + ?Sized>(vfs: &V, path: &Path, bytes: &[u8]) -> io::Res
                     "winner vanished after AlreadyExists",
                 )
             })?;
-            return Ok(PutOutcome::Conflict { current });
+            return Ok(IfAbsentOutcome::Conflict { current });
         }
         other => other,
     };
-    finish_fresh_create(vfs, &dest, bytes, publish)
+    let published = finish_fresh_create(vfs, &dest, bytes, publish)?;
+    Ok(IfAbsentOutcome::Committed(published))
 }
 
-fn put_force<V: Vfs + ?Sized>(
+pub(crate) fn put_force<V: Vfs + ?Sized>(
     vfs: &V,
     path: &Path,
     bytes: &[u8],
     expect: Option<&Etag>,
-) -> io::Result<PutOutcome> {
+) -> io::Result<ForceOutcome> {
     let dest = vfs.resolve(path)?;
     let dest_existed = vfs.stat(&dest).is_ok();
     let temp = vfs.write_durable(&dest, bytes)?;
@@ -178,7 +177,8 @@ fn put_force<V: Vfs + ?Sized>(
             }
             other => other,
         };
-        return finish_fresh_create(vfs, &dest, bytes, publish);
+        let published = finish_fresh_create(vfs, &dest, bytes, publish)?;
+        return Ok(ForceOutcome::Committed(published));
     }
     let publish = vfs.exchange(&temp, &dest);
     let new_etag = etag_of(bytes);
@@ -194,8 +194,10 @@ pub fn put<V: Vfs + ?Sized>(
 ) -> io::Result<PutOutcome> {
     match cond {
         PutCondition::IfMatch(expect) => put_if_match(vfs, path, bytes, &expect),
-        PutCondition::IfAbsent => put_if_absent(vfs, path, bytes),
-        PutCondition::Force { expect } => put_force(vfs, path, bytes, expect.as_ref()),
+        PutCondition::IfAbsent => put_if_absent(vfs, path, bytes).map(Into::into),
+        PutCondition::Force { expect } => {
+            put_force(vfs, path, bytes, expect.as_ref()).map(Into::into)
+        }
     }
 }
 
@@ -278,7 +280,7 @@ mod tests {
         fn trash(&self, path: &Path) -> io::Result<()> {
             self.inner.trash(path)
         }
-        fn stat(&self, path: &Path) -> io::Result<Stat> {
+        fn stat(&self, path: &Path) -> io::Result<crate::Stat> {
             let mut stat = self.inner.stat(path)?;
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             stat.identity = Identity {
@@ -404,13 +406,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(
-            outcome,
-            PutOutcome::Committed {
-                stat_confirmed: false,
-                ..
-            }
-        ));
+        let PutOutcome::Committed { sighted, .. } = outcome else {
+            unreachable!("expected Committed, got {outcome:?}");
+        };
+        assert!(!sighted.is_confirmed());
     }
 
     #[test]
@@ -426,13 +425,10 @@ mod tests {
             PutCondition::IfMatch(etag_of(b"original")),
         )
         .unwrap();
-        assert!(matches!(
-            outcome,
-            PutOutcome::Committed {
-                stat_confirmed: true,
-                ..
-            }
-        ));
+        let PutOutcome::Committed { sighted, .. } = outcome else {
+            unreachable!("expected Committed, got {outcome:?}");
+        };
+        assert!(sighted.is_confirmed());
     }
 
     #[test]

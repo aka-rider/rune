@@ -1,18 +1,51 @@
 use std::io;
 use std::path::Path;
 
+use rune_core::assert_invariant;
+
 use crate::{Etag, FileKind, Stat, Vfs, etag_of};
 
 const BRACKET_MAX_ATTEMPTS: u32 = 3;
 
 pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Sighted {
+    Confirmed(Stat),
+    Unconfirmed(Option<Stat>),
+}
+
+impl Sighted {
+    pub fn stat(&self) -> Option<Stat> {
+        match self {
+            Sighted::Confirmed(stat) => Some(*stat),
+            Sighted::Unconfirmed(stat) => *stat,
+        }
+    }
+
+    pub fn is_confirmed(&self) -> bool {
+        matches!(self, Sighted::Confirmed(_))
+    }
+}
+
+fn sighted(stable: bool, stat: Option<Stat>) -> Sighted {
+    match (stable, stat) {
+        (true, Some(stat)) => Sighted::Confirmed(stat),
+        (true, None) => {
+            assert_invariant!(false, || {
+                "a confirmed sighting must carry a stat".to_string()
+            });
+            Sighted::Unconfirmed(None)
+        }
+        (false, stat) => Sighted::Unconfirmed(stat),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sighting {
     pub bytes: Vec<u8>,
     pub etag: Etag,
-    pub stat: Option<Stat>,
-    pub confirmed: bool,
+    pub sighted: Sighted,
 }
 
 #[derive(Debug)]
@@ -67,32 +100,26 @@ fn stat_matches(a: &Stat, b: &Stat) -> bool {
     a.size == b.size && a.mtime == b.mtime && a.identity == b.identity
 }
 
-fn one_get_bracket<V: Vfs + ?Sized>(
-    vfs: &V,
-    path: &Path,
-) -> io::Result<(Vec<u8>, Option<Stat>, bool)> {
+fn one_get_bracket<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<(Vec<u8>, Sighted)> {
     let before = stat_with_identity(vfs, path);
     let bytes = vfs.read(path)?;
     let after = stat_with_identity(vfs, path);
     let confirmed = matches!((&before, &after), (Some(b), Some(a)) if stat_matches(b, a));
     let stat = after.or(before);
-    Ok((bytes, stat, confirmed))
+    Ok((bytes, sighted(confirmed, stat)))
 }
 
-fn bracketed_get<V: Vfs + ?Sized>(
-    vfs: &V,
-    path: &Path,
-) -> io::Result<(Vec<u8>, Option<Stat>, bool)> {
+fn bracketed_get<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<(Vec<u8>, Sighted)> {
     let mut result = one_get_bracket(vfs, path)?;
     let mut attempts = 1;
-    while !result.2 && attempts < BRACKET_MAX_ATTEMPTS {
+    while !result.1.is_confirmed() && attempts < BRACKET_MAX_ATTEMPTS {
         result = one_get_bracket(vfs, path)?;
         attempts += 1;
     }
     Ok(result)
 }
 
-pub(crate) fn bracketed_stat<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> (Option<Stat>, bool) {
+pub(crate) fn bracketed_stat<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> Sighted {
     let mut last = None;
     for _ in 0..BRACKET_MAX_ATTEMPTS {
         let first = stat_with_identity(vfs, path);
@@ -100,11 +127,11 @@ pub(crate) fn bracketed_stat<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> (Option<S
         if let (Some(a), Some(b)) = (&first, &second)
             && stat_matches(a, b)
         {
-            return (second, true);
+            return sighted(true, second);
         }
         last = second.or(first);
     }
-    (last, false)
+    sighted(false, last)
 }
 
 pub fn get<V: Vfs + ?Sized>(
@@ -125,13 +152,12 @@ pub fn get<V: Vfs + ?Sized>(
             limit,
         });
     }
-    let (bytes, stat, confirmed) = bracketed_get(vfs, &resolved).map_err(GetRefusal::Io)?;
+    let (bytes, sighted) = bracketed_get(vfs, &resolved).map_err(GetRefusal::Io)?;
     let etag = etag_of(&bytes);
     Ok(Sighting {
         bytes,
         etag,
-        stat,
-        confirmed,
+        sighted,
     })
 }
 
@@ -153,7 +179,7 @@ mod tests {
         publish(&vfs, path, b"hello");
 
         let sighting = get(&vfs, path, None).expect("get");
-        assert!(sighting.confirmed);
+        assert!(sighting.sighted.is_confirmed());
         assert_eq!(sighting.bytes, b"hello");
         assert_eq!(sighting.etag, etag_of(b"hello"));
     }
@@ -203,7 +229,7 @@ mod tests {
         vfs.set_churning(path, true);
 
         let sighting = get(&vfs, path, None).expect("get");
-        assert!(!sighting.confirmed);
+        assert!(!sighting.sighted.is_confirmed());
     }
 
     struct FailOneStatCallVfs {
@@ -268,7 +294,7 @@ mod tests {
 
         let sighting = get(&vfs, path, None).expect("get");
         assert!(
-            sighting.confirmed,
+            sighting.sighted.is_confirmed(),
             "the bracket's retry must recover once the transient failure is consumed"
         );
     }
@@ -281,7 +307,7 @@ mod tests {
         vfs.mutate_after_next_stat(path, b"after".to_vec());
 
         let sighting = get(&vfs, path, None).expect("get");
-        assert!(sighting.confirmed);
+        assert!(sighting.sighted.is_confirmed());
         assert_eq!(sighting.bytes, b"after");
     }
 
@@ -342,7 +368,7 @@ mod tests {
         };
 
         let sighting = get(&vfs, Path::new("/doc.md"), None).expect("get");
-        assert!(!sighting.confirmed);
-        assert!(sighting.stat.is_none());
+        assert!(!sighting.sighted.is_confirmed());
+        assert!(sighting.sighted.stat().is_none());
     }
 }

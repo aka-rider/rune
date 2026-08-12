@@ -471,8 +471,8 @@ fn execute_op(
                 crate::writer_ops::LoadSource::Taken(sighting) => {
                     let read = crate::bracket::BracketedRead {
                         data: sighting.bytes,
-                        stat: crate::bracket::stat_facts_from(sighting.stat),
-                        confirmed: sighting.confirmed,
+                        stat: crate::bracket::stat_facts_from(sighting.sighted.stat()),
+                        confirmed: sighting.sighted.is_confirmed(),
                     };
                     crate::load::load_from_read(
                         conn,

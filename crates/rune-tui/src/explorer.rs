@@ -20,7 +20,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use rune_vfs::DirEntry;
+use rune_vfs::{DirEntry, FileKind};
 
 use crate::app::App;
 use crate::document::DocumentId;
@@ -273,8 +273,9 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             cursor_row = Some(lines.len() as u16);
         }
         let prefix = if selected { "\u{203a} " } else { "  " };
-        let suffix = if entry.is_dir { "/" } else { "" };
-        let style = if entry.is_dir {
+        let is_dir = entry.kind == FileKind::Dir;
+        let suffix = if is_dir { "/" } else { "" };
+        let style = if is_dir {
             app.theme.chrome.dir_normal
         } else {
             app.theme.chrome.file_normal

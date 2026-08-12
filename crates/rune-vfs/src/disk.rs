@@ -209,14 +209,16 @@ impl Vfs for Disk {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            let is_dir = match entry.file_type() {
-                Ok(ft) => ft.is_dir(),
+            let kind = match entry.file_type() {
+                Ok(ft) if ft.is_dir() => FileKind::Dir,
+                Ok(ft) if ft.is_file() => FileKind::File,
+                Ok(_) => FileKind::Other,
                 Err(_) => continue,
             };
             entries.push(DirEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
                 path: entry.path(),
-                is_dir,
+                kind,
             });
         }
         sort_dir_entries(&mut entries);

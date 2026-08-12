@@ -72,7 +72,7 @@ pub(super) fn arb_mods() -> impl Strategy<Value = Mods> {
 
 /// An arbitrary `DirEntry`: a short ASCII name (bounded so proptest doesn't
 /// waste its shrink budget on absurdly long ones) plus an arbitrary
-/// `is_dir`.
+/// dir/file `kind`.
 pub(super) fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
     ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| {
         // WP13.S1: the fuzzer's fixture names are always plain ASCII, so
@@ -81,7 +81,12 @@ pub(super) fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
         // real, non-UTF-8 filenames, which `rune-vfs`'s own tests cover
         // directly.
         let path = PathBuf::from(&name);
-        DirEntry { name, path, is_dir }
+        let kind = if is_dir {
+            rune_vfs::FileKind::Dir
+        } else {
+            rune_vfs::FileKind::File
+        };
+        DirEntry { name, path, kind }
     })
 }
 

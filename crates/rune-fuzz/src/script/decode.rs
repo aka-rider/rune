@@ -176,9 +176,9 @@ fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
     let mut parts = rest.splitn(2, ' ');
     let flag = parts.next().ok_or_else(malformed)?;
     let name_field = parts.next().ok_or_else(malformed)?;
-    let is_dir = match flag {
-        "d" => true,
-        "f" => false,
+    let kind = match flag {
+        "d" => rune_vfs::FileKind::Dir,
+        "f" => rune_vfs::FileKind::File,
         _ => return Err(malformed()),
     };
     // WP13.S1: the script codec is text-only (its whole point is a
@@ -187,7 +187,7 @@ fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
     // never carries anything but valid Unicode.
     let name = unescape(name_field, line)?;
     let path = PathBuf::from(&name);
-    Ok(DirEntry { name, path, is_dir })
+    Ok(DirEntry { name, path, kind })
 }
 
 /// Parses a `highlight <live|stale|future> <n>` line plus its `n`

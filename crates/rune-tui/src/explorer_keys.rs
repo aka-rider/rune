@@ -173,7 +173,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         .explorer
         .entries
         .get(app.explorer.nav.cursor)
-        .map(|e| (e.path.clone(), e.is_dir))
+        .map(|e| (e.path.clone(), e.kind == rune_vfs::FileKind::Dir))
     else {
         return;
     };
@@ -233,7 +233,7 @@ mod tests {
     use std::sync::Arc;
 
     use rune_core::buffer::Buffer;
-    use rune_vfs::{DirEntry, Mem};
+    use rune_vfs::{DirEntry, FileKind, Mem};
 
     use super::*;
     use crate::runtime::DirCause;
@@ -250,7 +250,11 @@ mod tests {
             .map(|(name, is_dir)| DirEntry {
                 name: (*name).to_string(),
                 path: PathBuf::from(*name),
-                is_dir: *is_dir,
+                kind: if *is_dir {
+                    FileKind::Dir
+                } else {
+                    FileKind::File
+                },
             })
             .collect()
     }

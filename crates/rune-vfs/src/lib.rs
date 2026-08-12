@@ -15,6 +15,7 @@ mod disk;
 mod etag;
 mod mem;
 mod publish;
+mod put_result;
 mod sighting;
 
 use std::path::{Path, PathBuf};
@@ -26,7 +27,7 @@ pub use disk::Disk;
 pub use etag::{Etag, etag_of};
 pub use mem::{Mem, OpKind};
 pub use publish::{PutCondition, PutOutcome, put};
-pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighting, get};
+pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, get};
 
 /// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping
 /// `e` itself reachable as [`std::error::Error::source`] — so a caller can
@@ -166,7 +167,7 @@ pub struct DirEntry {
     /// `file_name()` `OsString` (never round-tripped through `String`) and
     /// what `Mem` derived from its own key. Always safe to open.
     pub path: PathBuf,
-    pub is_dir: bool,
+    pub kind: FileKind,
 }
 
 /// A virtual file system exposing the materialize-complete primitive set,
@@ -244,27 +245,23 @@ pub trait Vfs {
     /// way). Kept only so existing callers (the plain `super+s` save path)
     /// keep working unchanged through this work package.
     fn save_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        let outcome = publish::put(self, path, bytes, PutCondition::Force { expect: None })?;
-        match outcome {
-            PutOutcome::Committed { durable: true, .. }
-            | PutOutcome::Raced { durable: true, .. } => Ok(()),
-            PutOutcome::Committed { durable: false, .. }
-            | PutOutcome::Raced { durable: false, .. } => {
-                // The publish already took effect but its durability could
-                // not be confirmed — the sibling temp holding the displaced
-                // content stays on disk rather than being removed; the
-                // marker is carried onto the re-wrapped error so the
-                // condition remains observable further up.
-                Err(wrap_io_published(
-                    io::Error::other("durability could not be confirmed after publish"),
-                    "save published but durability could not be confirmed; \
-                     the prior content is preserved on a sibling temp file",
-                ))
-            }
-            PutOutcome::Missing | PutOutcome::Conflict { .. } => Err(io::Error::other(
-                "save_atomic: an unconditional Force publish reported Missing or Conflict",
-            )),
+        let outcome = publish::put_force(self, path, bytes, None)?;
+        let durable = match &outcome {
+            publish::ForceOutcome::Committed(published) => published.durable,
+            publish::ForceOutcome::Raced { published, .. } => published.durable,
+        };
+        if durable {
+            return Ok(());
         }
+        // The publish already took effect but its durability could not be
+        // confirmed — the sibling temp holding the displaced content stays
+        // on disk rather than being removed; the marker is carried onto the
+        // re-wrapped error so the condition remains observable further up.
+        Err(wrap_io_published(
+            io::Error::other("durability could not be confirmed after publish"),
+            "save published but durability could not be confirmed; \
+             the prior content is preserved on a sibling temp file",
+        ))
     }
 }
 
@@ -278,14 +275,17 @@ pub trait Vfs {
 /// to hand them in.
 pub(crate) fn sort_dir_entries(entries: &mut [DirEntry]) {
     entries.sort_by(|a, b| {
-        // `is_dir: true` (dirs) must sort before `false` (files): reverse
-        // the natural bool order, then break ties case-insensitively, then
-        // by exact name for determinism.
-        b.is_dir
-            .cmp(&a.is_dir)
+        // Directories sort before everything else; break ties
+        // case-insensitively, then by exact name for determinism.
+        dir_rank(a.kind)
+            .cmp(&dir_rank(b.kind))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.name.cmp(&b.name))
     });
+}
+
+fn dir_rank(kind: FileKind) -> u8 {
+    if kind == FileKind::Dir { 0 } else { 1 }
 }
 
 /// The sibling temp filename a durable write uses for `path`:

@@ -70,12 +70,12 @@ fn dir_loaded_never_panics_and_never_touches_editor_content() {
         DirEntry {
             name: "\u{0}weird\u{0}".to_string(),
             path: std::path::PathBuf::from("\u{0}weird\u{0}"),
-            is_dir: true,
+            kind: rune_vfs::FileKind::Dir,
         },
         DirEntry {
             name: String::new(),
             path: std::path::PathBuf::new(),
-            is_dir: false,
+            kind: rune_vfs::FileKind::File,
         },
     ];
     let result = driver::run(

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer as CoreBuffer;
-use rune_vfs::{DirEntry, Mem, Vfs};
+use rune_vfs::{DirEntry, FileKind, Mem, Vfs};
 
 use super::*;
 use crate::runtime::{DirCause, Msg};
@@ -24,7 +24,7 @@ fn load_entries(app: &mut App, names: &[&str]) {
         .map(|name| DirEntry {
             name: (*name).to_string(),
             path: PathBuf::from("/root").join(name),
-            is_dir: false,
+            kind: FileKind::File,
         })
         .collect();
     crate::explorer::handle_dir_loaded(app, PathBuf::from("/root"), entries, DirCause::Nav, 0);
@@ -238,12 +238,12 @@ fn a_directory_row_produces_no_read_and_keeps_the_previous_preview() {
         DirEntry {
             name: "a.md".to_string(),
             path: PathBuf::from("/root/a.md"),
-            is_dir: false,
+            kind: FileKind::File,
         },
         DirEntry {
             name: "sub".to_string(),
             path: PathBuf::from("/root/sub"),
-            is_dir: true,
+            kind: FileKind::Dir,
         },
     ];
     crate::explorer::handle_dir_loaded(&mut app, PathBuf::from("/root"), entries, DirCause::Nav, 0);

@@ -53,8 +53,8 @@ pub fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
     match rune_vfs::get(vfs, path, None) {
         Ok(sighting) => Ok(BracketedRead {
             data: sighting.bytes,
-            stat: stat_facts_from(sighting.stat),
-            confirmed: sighting.confirmed,
+            stat: stat_facts_from(sighting.sighted.stat()),
+            confirmed: sighting.sighted.is_confirmed(),
         }),
         Err(refusal) => Err(refusal.into()),
     }

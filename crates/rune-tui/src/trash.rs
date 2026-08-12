@@ -43,7 +43,7 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
             .explorer
             .entries
             .get(app.explorer.nav.cursor)
-            .map(|e| (e.path.clone(), e.is_dir))
+            .map(|e| (e.path.clone(), e.kind == rune_vfs::FileKind::Dir))
         else {
             messages::error(app, "nothing to trash \u{2014} no file selected");
             return;

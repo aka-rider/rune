@@ -181,7 +181,7 @@ fn explorer_directory_selection_is_refused() {
         .explorer
         .entries
         .iter()
-        .position(|e| e.is_dir)
+        .position(|e| e.kind == rune_vfs::FileKind::Dir)
         .expect("sub is listed");
     app.explorer.nav.cursor = idx;
 

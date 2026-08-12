@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use rune_vfs::{DirEntry, Vfs};
+use rune_vfs::{DirEntry, FileKind, Vfs};
 
 /// Past this many collected files, or this many directory levels below
 /// `root`, the walk stops early rather than risking a multi-second `Cmd`
@@ -89,16 +89,17 @@ fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize
 
         let mut children = Vec::new();
         for entry in &entries {
+            let entry_is_dir = entry.kind == FileKind::Dir;
             if is_ignore_file(&entry.name) {
                 continue; // consumed into the matcher above, never a candidate
             }
-            if is_hidden(&entry.name) || is_skiplisted(&entry.name, entry.is_dir) {
+            if is_hidden(&entry.name) || is_skiplisted(&entry.name, entry_is_dir) {
                 continue;
             }
-            if is_ignored(&matchers, &entry.path, entry.is_dir) {
+            if is_ignored(&matchers, &entry.path, entry_is_dir) {
                 continue;
             }
-            if entry.is_dir {
+            if entry_is_dir {
                 if depth + 1 > max_depth {
                     truncated = true;
                     continue;
@@ -158,7 +159,7 @@ fn is_ignored(matchers: &[Gitignore], path: &Path, is_dir: bool) -> bool {
 fn build_matcher(vfs: &dyn Vfs, dir: &Path, entries: &[DirEntry]) -> Gitignore {
     let mut builder = GitignoreBuilder::new(dir);
     for entry in entries {
-        if entry.is_dir || !is_ignore_file(&entry.name) {
+        if entry.kind == FileKind::Dir || !is_ignore_file(&entry.name) {
             continue;
         }
         let Ok(sighting) = rune_vfs::get(vfs, &entry.path, None) else {

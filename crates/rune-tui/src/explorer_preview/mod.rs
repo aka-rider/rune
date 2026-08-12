@@ -57,7 +57,7 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
     let Some(entry) = app.explorer.entries.get(app.explorer.nav.cursor) else {
         return;
     };
-    if entry.is_dir {
+    if entry.kind == rune_vfs::FileKind::Dir {
         return;
     }
     let target = entry.path.clone();
@@ -155,7 +155,7 @@ fn is_current_target(app: &App, path: &Path) -> bool {
     app.explorer
         .entries
         .get(app.explorer.nav.cursor)
-        .is_some_and(|e| !e.is_dir && e.path == path)
+        .is_some_and(|e| e.kind != rune_vfs::FileKind::Dir && e.path == path)
 }
 
 /// Mints the FIRST preview of this Explorer session, or replaces the

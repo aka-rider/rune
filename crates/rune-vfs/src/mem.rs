@@ -581,22 +581,21 @@ impl Vfs for Mem {
     /// once as a synthetic directory (some key goes deeper below it) and
     /// once as an exact file key itself (e.g. `path/a` stored as a file AND
     /// `path/a/b.md` stored too, an inconsistent-but-representable `Mem`
-    /// state): the directory claim always wins, contributing `is_dir:
-    /// true`, and the file claim for the same name is dropped rather than
-    /// contributing a second, `is_dir: false` entry. Every key under `path`
-    /// is folded into a `name -> is_dir` map first (dir overwrites file,
-    /// never the reverse; a HashMap's iteration order can visit either key
-    /// first) and only THEN turned into `entries`, so the result never
-    /// depends on which of the colliding keys `state.files` happens to
-    /// iterate first.
+    /// state): the directory claim always wins, contributing `FileKind::
+    /// Dir`, and the file claim for the same name is dropped rather than
+    /// contributing a second entry. Every key under `path` is folded into a
+    /// `name -> kind` map first (dir overwrites file, never the reverse; a
+    /// HashMap's iteration order can visit either key first) and only THEN
+    /// turned into `entries`, so the result never depends on which of the
+    /// colliding keys `state.files` happens to iterate first.
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         self.take_failure(OpKind::ReadDir)?;
         let state = self.lock_state();
-        // WP13.S1: the `PathBuf` travels alongside `is_dir` in the same
-        // fold, built from `path.join(first)` — the byte-exact `Component`
+        // WP13.S1: the `PathBuf` travels alongside `kind` in the same fold,
+        // built from `path.join(first)` — the byte-exact `Component`
         // straight off the stored key, never round-tripped through the
         // lossy `String` `name` also computed below.
-        let mut by_name: HashMap<String, (bool, PathBuf)> = HashMap::new();
+        let mut by_name: HashMap<String, (FileKind, PathBuf)> = HashMap::new();
         // WP1.S6: `Disk::read_dir` on a nonexistent path errors `NotFound`;
         // `Mem` used to report an empty listing instead, since it derives
         // everything from key shape and a path with zero matching keys
@@ -616,12 +615,13 @@ impl Vfs for Mem {
             path_exists = true;
             let name = first.as_os_str().to_string_lossy().to_string();
             let child_path = path.join(first.as_os_str());
-            // A key sits strictly below `child_path` itself: `first` is a
-            // synthetic directory, not the file itself.
-            let is_dir = sits_strictly_below(key, &child_path);
-            let entry = by_name.entry(name).or_insert((is_dir, child_path));
-            if is_dir {
-                entry.0 = true;
+            let kind = sits_strictly_below(key, &child_path)
+                .then_some(FileKind::Dir)
+                .or_else(|| state.files.get(&child_path).map(|f| f.kind))
+                .unwrap_or(FileKind::File);
+            let entry = by_name.entry(name).or_insert((kind, child_path));
+            if kind == FileKind::Dir {
+                entry.0 = FileKind::Dir;
             }
         }
         if !path_exists {
@@ -629,7 +629,7 @@ impl Vfs for Mem {
         }
         let mut entries: Vec<DirEntry> = by_name
             .into_iter()
-            .map(|(name, (is_dir, path))| DirEntry { name, path, is_dir })
+            .map(|(name, (kind, path))| DirEntry { name, path, kind })
             .collect();
         sort_dir_entries(&mut entries);
         Ok(entries)

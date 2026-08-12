@@ -3,7 +3,7 @@
 //! original-case name), for both `Disk` and `Mem`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{DirEntry, Disk, Mem, Vfs};
+use rune_vfs::{DirEntry, Disk, FileKind, Mem, Vfs};
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,22 +37,22 @@ fn disk_read_dir_lists_children_sorted_dirs_first() {
             DirEntry {
                 name: "Aardvark".to_string(),
                 path: tmp.join("Aardvark"),
-                is_dir: true
+                kind: FileKind::Dir
             },
             DirEntry {
                 name: "beta".to_string(),
                 path: tmp.join("beta"),
-                is_dir: true
+                kind: FileKind::Dir
             },
             DirEntry {
                 name: "alpha.md".to_string(),
                 path: tmp.join("alpha.md"),
-                is_dir: false
+                kind: FileKind::File
             },
             DirEntry {
                 name: "zeta.md".to_string(),
                 path: tmp.join("zeta.md"),
-                is_dir: false
+                kind: FileKind::File
             },
         ]
     );
@@ -93,12 +93,12 @@ fn disk_read_dir_not_recursive() {
             DirEntry {
                 name: "sub".to_string(),
                 path: tmp.join("sub"),
-                is_dir: true
+                kind: FileKind::Dir
             },
             DirEntry {
                 name: "top.md".to_string(),
                 path: tmp.join("top.md"),
-                is_dir: false
+                kind: FileKind::File
             },
         ],
         "read_dir must list only direct children, not descend into `sub`"
@@ -165,12 +165,12 @@ fn mem_read_dir_files_at_root() {
             DirEntry {
                 name: "one.md".to_string(),
                 path: PathBuf::from("/one.md"),
-                is_dir: false
+                kind: FileKind::File
             },
             DirEntry {
                 name: "two.md".to_string(),
                 path: PathBuf::from("/two.md"),
-                is_dir: false
+                kind: FileKind::File
             },
         ]
     );
@@ -196,12 +196,12 @@ fn mem_read_dir_synthetic_dir_from_nested_key() {
             DirEntry {
                 name: "b".to_string(),
                 path: PathBuf::from("/a/b"),
-                is_dir: true
+                kind: FileKind::Dir
             },
             DirEntry {
                 name: "d.md".to_string(),
                 path: PathBuf::from("/a/d.md"),
-                is_dir: false
+                kind: FileKind::File
             },
         ]
     );
@@ -227,7 +227,7 @@ fn mem_read_dir_dedups_synthetic_dir_from_multiple_keys() {
         vec![DirEntry {
             name: "b".to_string(),
             path: PathBuf::from("/a/b"),
-            is_dir: true
+            kind: FileKind::Dir
         }],
         "one synthetic `b` entry, deduplicated across all keys under it"
     );
@@ -259,22 +259,22 @@ fn mem_read_dir_sort_order_dirs_first_then_case_insensitive_name() {
             DirEntry {
                 name: "Aardvark".to_string(),
                 path: PathBuf::from("/r/Aardvark"),
-                is_dir: true
+                kind: FileKind::Dir
             },
             DirEntry {
                 name: "beta".to_string(),
                 path: PathBuf::from("/r/beta"),
-                is_dir: true
+                kind: FileKind::Dir
             },
             DirEntry {
                 name: "alpha.md".to_string(),
                 path: PathBuf::from("/r/alpha.md"),
-                is_dir: false
+                kind: FileKind::File
             },
             DirEntry {
                 name: "zeta.md".to_string(),
                 path: PathBuf::from("/r/zeta.md"),
-                is_dir: false
+                kind: FileKind::File
             },
         ]
     );
@@ -307,22 +307,22 @@ fn mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak() {
             DirEntry {
                 name: "apple".to_string(),
                 path: PathBuf::from("/r/apple"),
-                is_dir: false
+                kind: FileKind::File
             },
             DirEntry {
                 name: "Banana".to_string(),
                 path: PathBuf::from("/r/Banana"),
-                is_dir: false
+                kind: FileKind::File
             },
             DirEntry {
                 name: "File.md".to_string(),
                 path: PathBuf::from("/r/File.md"),
-                is_dir: false
+                kind: FileKind::File
             },
             DirEntry {
                 name: "file.md".to_string(),
                 path: PathBuf::from("/r/file.md"),
-                is_dir: false
+                kind: FileKind::File
             },
         ],
         "case-insensitive primary order (apple before Banana), exact-name tiebreak (File.md before file.md)"
@@ -347,7 +347,7 @@ fn mem_read_dir_excludes_the_queried_path_itself() {
         vec![DirEntry {
             name: "b.md".to_string(),
             path: PathBuf::from("/a/b.md"),
-            is_dir: false
+            kind: FileKind::File
         }],
         "the key `/a` itself must not appear as a child of `/a`"
     );
@@ -358,7 +358,7 @@ fn mem_read_dir_excludes_the_queried_path_itself() {
 /// makes `a` a synthetic directory under `/`). Listing `/a`'s own children
 /// correctly excludes `/a` itself (the test above) — but listing `/a`'s
 /// PARENT must show `a` exactly ONCE, as a directory, never twice (once
-/// `is_dir: false` from the `/a` key, once `is_dir: true` from the
+/// `FileKind::File` from the `/a` key, once `FileKind::Dir` from the
 /// `/a/b.md` key) — the bug this fix removes.
 #[test]
 fn mem_read_dir_parent_listing_dedups_a_name_claimed_as_both_file_and_dir() {
@@ -376,7 +376,7 @@ fn mem_read_dir_parent_listing_dedups_a_name_claimed_as_both_file_and_dir() {
         vec![DirEntry {
             name: "a".to_string(),
             path: PathBuf::from("/a"),
-            is_dir: true
+            kind: FileKind::Dir
         }],
         "`a` must appear exactly once, as a directory — the directory claim wins"
     );

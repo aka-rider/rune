@@ -14,7 +14,7 @@
 //! Nerd Fonts cheat sheet without re-deriving it; the codepoint itself is
 //! not memorable and must never be retyped by hand from memory.
 
-use rune_vfs::DirEntry;
+use rune_vfs::{DirEntry, FileKind};
 
 use crate::theme::icons::IconTier;
 
@@ -89,7 +89,7 @@ pub fn icon(tier: IconTier, entry: &DirEntry) -> Option<&'static str> {
 }
 
 fn resolve_nerd(entry: &DirEntry) -> &'static str {
-    if entry.is_dir {
+    if entry.kind == FileKind::Dir {
         return FOLDER;
     }
     if let Some(glyph) = FILENAME_GLYPHS
@@ -128,7 +128,7 @@ mod tests {
         DirEntry {
             name: name.to_string(),
             path: PathBuf::from(name),
-            is_dir: false,
+            kind: FileKind::File,
         }
     }
 
@@ -136,7 +136,7 @@ mod tests {
         DirEntry {
             name: name.to_string(),
             path: PathBuf::from(name),
-            is_dir: true,
+            kind: FileKind::Dir,
         }
     }
 

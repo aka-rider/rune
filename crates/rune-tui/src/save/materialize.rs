@@ -271,34 +271,30 @@ fn map_put_outcome(
         Ok(PutOutcome::Conflict { current }) => MaterializeVfsOutcome::Conflict {
             data: current.bytes,
             origin: rune_db::ObsOrigin::Probe,
-            stat: rune_db::stat_facts_from(current.stat),
-            confirmed: current.confirmed,
+            stat: rune_db::stat_facts_from(current.sighted.stat()),
+            confirmed: current.sighted.is_confirmed(),
             resolved_path,
         },
         Ok(PutOutcome::Committed {
-            stat,
-            stat_confirmed,
-            durable,
-            ..
+            sighted, durable, ..
         }) => MaterializeVfsOutcome::Committed {
             data: data.to_vec(),
-            confirmed: stat_confirmed,
-            stat: rune_db::stat_facts_from(stat),
+            confirmed: sighted.is_confirmed(),
+            stat: rune_db::stat_facts_from(sighted.stat()),
             resolved_path,
             durable,
         },
         Ok(PutOutcome::Raced {
-            stat,
-            stat_confirmed,
+            sighted,
             durable,
             displaced,
             ..
         }) => MaterializeVfsOutcome::Raced {
             data: data.to_vec(),
-            confirmed: stat_confirmed,
-            stat: rune_db::stat_facts_from(stat),
+            confirmed: sighted.is_confirmed(),
+            stat: rune_db::stat_facts_from(sighted.stat()),
             displaced: displaced.bytes,
-            displaced_stat: rune_db::stat_facts_from(displaced.stat),
+            displaced_stat: rune_db::stat_facts_from(displaced.sighted.stat()),
             resolved_path,
             durable,
         },
