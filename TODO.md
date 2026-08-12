@@ -28,12 +28,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: every publish site branches on `published_not_durable` before deciding what to do with the temp, same as `materialize.rs`.
 - **Done when**: all four sites branch on the predicate identically.
 
-### A table row is drawn even when another producer already claimed its bytes
-- **Where**: `emit_table` in `crates/rune-md/src/emit/table.rs`; the guard it calls, `claim_visible`, in `crates/rune-md/src/emit/mod.rs`
-- **Wrong**: `claim_visible` answers which bytes on a line no other producer has claimed yet. Three of its four callers act on that answer. `emit_table` throws it away with `let _` and pushes the whole rendered row regardless. So when a claim is refused, the row is drawn over bytes another producer also draws — content invented on the visible side, and the display stops matching the user's bytes. The refusal is reported only by the assertion inside `claim_visible`, which is armed under `cfg(test)` and the `strict-invariants` feature; a shipped build clips the bytes and says nothing. No fuzz catch has reached this path yet, so the defect is latent rather than observed. Found during the survey for the emitter's duplicate visible-byte claims (issue #94).
-- **Instead**: make the span buffer unreachable without a granted claim. `claim_visible` returns an opaque token, `EmitOut`'s span and hidden buffers become private, and the only write path consumes that token. `emit_table` then cannot compile until it states what it does when a claim is refused. Choosing that policy changes behaviour, so first capture a document where a table row's claim is actually refused.
-- **Done when**: no producer can push a `SyntaxSpan` without a claim granted by `claim_visible`, and `emit_table` states a refusal policy in code instead of discarding the answer.
-
 ## Architecture
 
 ### Shadow state
