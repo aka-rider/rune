@@ -203,7 +203,7 @@ fn journaled_edit_past_the_install_abandons_the_merge_on_restart() {
         .unwrap()
         .store
         .append_edit(
-            db_id,
+            rune_db::DocId(db_id),
             &[AppliedEdit {
                 start: 0,
                 end: 0,

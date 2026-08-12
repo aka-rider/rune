@@ -25,11 +25,8 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::confirmation::Confirmation;
+use crate::ids::{BlobHash, DocId, ObsId, SessionId};
 use crate::obs_origin::ObsOrigin;
-
-/// Identifies a row in `observations`. AUTOINCREMENT ids start at 1 — the
-/// zero value is never a valid observation.
-pub type ObsId = i64;
 
 /// One recorded sighting of a document's disk state. `inode`/`device`/
 /// `nlink` are `Option` (D13): a stat failure or unusable identity is a
@@ -38,12 +35,12 @@ pub type ObsId = i64;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Observation {
     pub id: ObsId,
-    pub doc_id: i64,
+    pub doc_id: DocId,
     /// WHO recorded this sighting (v10) — required so `ancestor_at`'s
     /// eligibility filter can be scoped to "my own prior agreement";
     /// `newest_observation` ("theirs") deliberately stays unscoped.
-    pub session_id: i64,
-    pub blob_hash: String,
+    pub session_id: SessionId,
+    pub blob_hash: BlobHash,
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible) — a bare sighting.
     pub seq: Option<i64>,
@@ -161,8 +158,8 @@ pub(crate) struct ParentEdges {
 /// goes through [`insert_observation_row`] directly.
 pub fn record_observation(
     tx: &Transaction<'_>,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     at: &str,
@@ -185,8 +182,8 @@ pub fn record_observation(
 /// never drift between the three.
 pub(crate) fn insert_observation_row(
     tx: &Transaction<'_>,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     at: &str,
@@ -212,7 +209,7 @@ pub(crate) fn insert_observation_row(
             meta.confirmed
         ],
     )?;
-    Ok(tx.last_insert_rowid())
+    crate::ids::obs_id_from_rowid(tx.last_insert_rowid())
 }
 
 /// The lineage edge a CONFIRMED fresh sighting records: the doc's own prior
@@ -222,7 +219,7 @@ pub(crate) fn insert_observation_row(
 /// isn't trusted as a stable fact earns no lineage claim either.
 fn confirmed_sighting_parent(
     tx: &Transaction<'_>,
-    doc_id: i64,
+    doc_id: DocId,
     confirmed: Confirmation,
     new_hash: &str,
 ) -> Result<Option<ObsId>, Error> {
@@ -230,7 +227,7 @@ fn confirmed_sighting_parent(
         return Ok(None);
     }
     Ok(newest_observation(tx, doc_id)?
-        .filter(|prior| prior.blob_hash != new_hash)
+        .filter(|prior| prior.blob_hash.as_str() != new_hash)
         .map(|prior| prior.id))
 }
 
@@ -263,8 +260,8 @@ pub struct ObserveInput<'a> {
 /// its own statements instead of opening a second transaction.
 pub(crate) fn observe_from_stat_tx(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     stat: &StatFacts,
     at: &str,
     input: ObserveInput<'_>,
@@ -292,7 +289,7 @@ pub(crate) fn observe_from_stat_tx(
         id,
         doc_id,
         session_id,
-        blob_hash: hash,
+        blob_hash: BlobHash(hash),
         seq: input.seq,
         size: stat.size,
         mtime: stat.mtime.clone(),
@@ -326,7 +323,10 @@ pub fn get_observation(tx: &Transaction<'_>, id: ObsId) -> Result<Observation, E
 /// the "Theirs" derivation (module doc comment). Deliberately session-
 /// UNSCOPED (B1): the ONE query in this module that stays that way.
 /// Decision-input (plan decision 8).
-pub fn newest_observation(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<Observation>, Error> {
+pub fn newest_observation(
+    tx: &Transaction<'_>,
+    doc_id: DocId,
+) -> Result<Option<Observation>, Error> {
     tx.query_row(
         &format!("SELECT {OBS_COLUMNS} FROM observations WHERE doc_id=?1 ORDER BY id DESC LIMIT 1"),
         params![doc_id],
@@ -353,22 +353,21 @@ pub fn newest_observation(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<Ob
 /// Decision-input (plan decision 8).
 pub fn ancestor_at(
     tx: &Transaction<'_>,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     pos: i64,
     exclude_obs: Option<ObsId>,
 ) -> Result<Option<Observation>, Error> {
-    let exclude = exclude_obs.unwrap_or(0);
     let eligible = crate::obs_origin::ancestor_eligible_sql_list();
     let resolve = ObsOrigin::Resolve.as_str();
     tx.query_row(
         &format!(
             "SELECT {OBS_COLUMNS} FROM observations \
              WHERE doc_id=?1 AND session_id=?2 AND origin IN ({eligible}) \
-               AND seq IS NOT NULL AND seq <= ?3 AND (id != ?4 OR seq < ?3 OR origin = '{resolve}') \
+               AND seq IS NOT NULL AND seq <= ?3 AND (?4 IS NULL OR id != ?4 OR seq < ?3 OR origin = '{resolve}') \
              ORDER BY seq DESC, id DESC LIMIT 1"
         ),
-        params![doc_id, session_id, pos, exclude],
+        params![doc_id, session_id, pos, exclude_obs],
         scan_observation,
     )
     .optional()
@@ -383,10 +382,10 @@ pub fn ancestor_at(
 /// (plan decision 8).
 pub fn saved_obs_for(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
 ) -> Result<Option<Observation>, Error> {
-    let obs_id: Option<i64> = tx
+    let obs_id: Option<ObsId> = tx
         .query_row(
             "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
             params![session_id, doc_id],
@@ -413,13 +412,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc(tx: &Transaction<'_>) -> i64 {
+    fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
     /// `observations.blob_hash` is FK-constrained to `blobs.hash` — every
@@ -436,7 +435,8 @@ mod tests {
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
         let _ = session_id;
-        let err = get_observation(&tx, 999).expect_err("missing id must error");
+        let err = get_observation(&tx, ObsId::new(999).expect("nonzero"))
+            .expect_err("missing id must error");
         assert!(matches!(err, Error::NotFound(_)));
         let _ = doc_id;
     }

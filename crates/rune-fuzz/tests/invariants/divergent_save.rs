@@ -39,7 +39,7 @@ fn prepare_ack(sync: SyncKind) -> Msg {
         id: 1,
         result: OpOutcome::MaterializePrep(Box::new(MaterializePrep::Overwrite {
             bound_path: String::new(),
-            expect_hash: String::new(),
+            expect_hash: rune_db::BlobHash(String::new()),
             sync,
         })),
     })

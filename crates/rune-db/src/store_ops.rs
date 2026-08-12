@@ -8,8 +8,8 @@ use std::path::Path;
 use rune_vfs::Stat;
 
 use crate::Error;
+use crate::ids::{DocId, ObsId};
 use crate::materialize::MaterializeTarget;
-use crate::observation::ObsId;
 use crate::store::Store;
 use crate::writer::OpKind;
 
@@ -24,7 +24,7 @@ impl Store {
     /// `journal::append_edit` for the transaction itself.
     pub fn append_edit(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         edits: &[rune_core::buffer::AppliedEdit],
         cursors_before: &[rune_core::cursor::Cursor],
         cursors_after: &[rune_core::cursor::Cursor],
@@ -46,7 +46,7 @@ impl Store {
     /// writer thread resolves `local_pos` to the exact durable seq itself
     /// at execution time (`OpKind::MoveUndoPos`'s own doc comment) — this
     /// method never resolves it.
-    pub fn move_undo_pos(&self, doc_id: i64, local_pos: i64) -> Result<u64, Error> {
+    pub fn move_undo_pos(&self, doc_id: DocId, local_pos: i64) -> Result<u64, Error> {
         self.enqueue(OpKind::MoveUndoPos {
             session_id: self.session_id,
             doc_id,
@@ -71,7 +71,7 @@ impl Store {
     /// fresh by the writer thread at execution time (`OpKind::CreateSnapshot`'s
     /// own doc comment). See `snapshot::create_snapshot` for the transaction
     /// itself.
-    pub fn create_snapshot(&self, doc_id: i64, content: &str) -> Result<u64, Error> {
+    pub fn create_snapshot(&self, doc_id: DocId, content: &str) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::CreateSnapshot {
             session_id: self.session_id,
@@ -84,7 +84,7 @@ impl Store {
     /// Builds the `Probe` op payload — the one construction site both
     /// `probe` and `probe_blocking_for_test` enqueue through, so the two
     /// never drift apart.
-    fn probe_op(&self, doc_id: i64) -> OpKind {
+    fn probe_op(&self, doc_id: DocId) -> OpKind {
         OpKind::Probe {
             session_id: self.session_id,
             doc_id,
@@ -96,7 +96,7 @@ impl Store {
     /// `probe::probe` for the transaction sequence. The resulting
     /// `SyncState` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::Sync`).
-    pub fn probe(&self, doc_id: i64) -> Result<u64, Error> {
+    pub fn probe(&self, doc_id: DocId) -> Result<u64, Error> {
         self.enqueue(self.probe_op(doc_id))
     }
 
@@ -108,7 +108,7 @@ impl Store {
     /// cross the crate boundary into `rune-tui`'s own integration tests,
     /// where this crate's own `cfg(test)` never applies.
     #[cfg(feature = "test-support")]
-    pub fn probe_blocking_for_test(&self, doc_id: i64) -> Result<u64, Error> {
+    pub fn probe_blocking_for_test(&self, doc_id: DocId) -> Result<u64, Error> {
         let op = self.probe_op(doc_id);
         self.enqueue_blocking(op)
     }
@@ -116,7 +116,7 @@ impl Store {
     /// Enqueues a `MergePrep` op — merge entry's fresh-state read. The
     /// resulting `MergePrepResult` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::MergePrep`).
-    pub fn merge_prep(&self, doc_id: i64) -> Result<u64, Error> {
+    pub fn merge_prep(&self, doc_id: DocId) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::MergePrep {
             session_id: self.session_id,
@@ -130,7 +130,7 @@ impl Store {
     /// (`OpOutcome::None`).
     pub fn merge_open(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         base_obs: Option<ObsId>,
         theirs_obs: ObsId,
         marker_content: &str,
@@ -155,7 +155,7 @@ impl Store {
     /// (`OpOutcome::None`).
     pub fn merge_progress(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         marker_content: &str,
         blocks_json: &str,
     ) -> Result<u64, Error> {
@@ -174,7 +174,7 @@ impl Store {
     /// (`OpOutcome::None`).
     pub fn merge_close(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         state: crate::merge_state::MergeRowState,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MergeClose {
@@ -193,7 +193,7 @@ impl Store {
     /// store binding at all) rather than being unable to save.
     pub fn materialize_prepare(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         target: MaterializeTarget,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MaterializePrepare {
@@ -214,7 +214,7 @@ impl Store {
     /// which degrades the store, never the save.
     pub fn materialize_record(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         resolved_path: &Path,
         seq: i64,
         outcome: crate::materialize::MaterializeOutcome,
@@ -234,7 +234,7 @@ impl Store {
     /// `to` without clobbering anything. A collision arrives as
     /// `OpOutcome::Rename(RenameOutcome::Collided)` — a refusal the caller
     /// turns into a guard prompt, not an error.
-    pub fn rename_file(&self, doc_id: i64, from: &Path, to: &Path) -> Result<u64, Error> {
+    pub fn rename_file(&self, doc_id: DocId, from: &Path, to: &Path) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::RenameFile {
             session_id: self.session_id,
@@ -251,7 +251,7 @@ impl Store {
     /// (a consent check; the safety mechanism is the post-swap capture).
     pub fn rename_replace(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         from: &Path,
         to: &Path,
         seen: Stat,
@@ -307,7 +307,7 @@ impl Store {
     /// durable seq synchronously.
     pub fn resolve_adopt(
         &self,
-        doc_id: i64,
+        doc_id: DocId,
         obs: ObsId,
         edit_seq: Option<i64>,
     ) -> Result<u64, Error> {
@@ -323,7 +323,7 @@ impl Store {
 
     /// Enqueues a `ResolveAbandon` op — the Esc-abort-out-of-the-merge-
     /// resolver counterpart to `resolve_adopt`.
-    pub fn resolve_abandon(&self, doc_id: i64) -> Result<u64, Error> {
+    pub fn resolve_abandon(&self, doc_id: DocId) -> Result<u64, Error> {
         self.enqueue(OpKind::ResolveAbandon {
             session_id: self.session_id,
             doc_id,
@@ -357,7 +357,7 @@ impl Store {
     /// `DbEvent::Ok.result` (`OpOutcome::Reconstructed`). This `Store`'s
     /// currently-installed liveness check travels with the op, exactly like
     /// `load`'s.
-    pub fn reconstruct_scratch(&self, doc_id: i64) -> Result<u64, Error> {
+    pub fn reconstruct_scratch(&self, doc_id: DocId) -> Result<u64, Error> {
         let liveness_check = self.liveness_check();
         self.enqueue(OpKind::ReconstructScratch {
             liveness_check,

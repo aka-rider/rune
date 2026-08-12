@@ -458,7 +458,7 @@ mod tests {
             .expect("open in-memory store");
         let bridge = crate::db::DbBridge::bootstrap();
         let db = Db::new(store, bridge, degraded);
-        let doc_db = DocDb::new(1, true, 0);
+        let doc_db = DocDb::new(1, true, rune_db::Seq(0));
         let mut app = App::new(
             Buffer::new("hi"),
             Some(PathBuf::from("/doc.md")),
@@ -467,7 +467,7 @@ mod tests {
         );
         let id = app.active;
         app.doc_mut(id).unwrap().replica = Replica::Bound(doc_db);
-        app.install_or_join_file_binding(1, 0);
+        app.install_or_join_file_binding(1, None);
         app
     }
 

@@ -10,10 +10,11 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_vfs::Stat;
 
+use crate::ids::{DocId, ObsId, SessionId};
 use crate::load::LoadResult;
 use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
 use crate::merge_prep::MergePrepResult;
-use crate::observation::{ObsId, Observation};
+use crate::observation::Observation;
 use crate::rename::RenameOutcome;
 use crate::store::LivenessCheckFn;
 use crate::sync::SyncState;
@@ -78,9 +79,9 @@ pub enum OpKind {
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// journal seq of the inserted (or coalesced) event.
     AppendEdit {
-        session_id: i64,
+        session_id: SessionId,
         now: SystemTime,
-        doc_id: i64,
+        doc_id: DocId,
         edits: Vec<AppliedEdit>,
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
@@ -96,8 +97,8 @@ pub enum OpKind {
     /// exact, never a guess at an unacknowledged in-flight op the way
     /// resolving it app-side (before this rework) had to.
     MoveUndoPos {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         local_pos: i64,
     },
     /// On success, the completion's `DbEvent::Ok.result` carries the new
@@ -110,16 +111,16 @@ pub enum OpKind {
     /// produced `content` — has already committed, so a fresh read is exact
     /// where a caller-carried seq could only ever be a stale guess.
     CreateSnapshot {
-        session_id: i64,
+        session_id: SessionId,
         now: SystemTime,
-        doc_id: i64,
+        doc_id: DocId,
         content: String,
     },
     /// Disk I/O (`vfs.resolve`/`stat`/`read`) happens between this op's own
     /// internal transactions, never inside one — see `probe::probe`.
     Probe {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         now: SystemTime,
     },
     /// Merge entry's fresh-state read — runs `probe::probe`
@@ -129,14 +130,14 @@ pub enum OpKind {
     /// than a `SyncState` alone (which carries only hashes, never bytes)
     /// plus a second, separately-timed read.
     MergePrep {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         now: SystemTime,
     },
     MergeOpen {
-        session_id: i64,
+        session_id: SessionId,
         liveness_check: LivenessCheckFn,
-        doc_id: i64,
+        doc_id: DocId,
         base_obs: Option<ObsId>,
         theirs_obs: ObsId,
         marker_content: String,
@@ -144,15 +145,15 @@ pub enum OpKind {
         now: SystemTime,
     },
     MergeProgress {
-        session_id: i64,
+        session_id: SessionId,
         liveness_check: LivenessCheckFn,
-        doc_id: i64,
+        doc_id: DocId,
         marker_content: String,
         blocks_json: String,
     },
     MergeClose {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         state: crate::merge_state::MergeRowState,
     },
     /// The bookkeeping-only half of `Materialize` that runs
@@ -161,8 +162,8 @@ pub enum OpKind {
     /// happen entirely off this thread, on the caller's own (`rune-tui`'s
     /// save `Cmd`).
     MaterializePrepare {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         target: MaterializeTarget,
     },
     /// The recording half of `Materialize`: records what the caller's own
@@ -172,8 +173,8 @@ pub enum OpKind {
     /// either. `resolved_path`/`seq` are the caller's own
     /// enqueue-time-captured facts, never re-derived here.
     MaterializeRecord {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         resolved_path: PathBuf,
         seq: i64,
         now: SystemTime,
@@ -188,7 +189,7 @@ pub enum OpKind {
     /// `crate::load::load_from_read`) — the single-sighting fix: a caller
     /// that already read `path` once must never have this op read it again.
     Load {
-        session_id: i64,
+        session_id: SessionId,
         liveness_check: LivenessCheckFn,
         path: PathBuf,
         now: SystemTime,
@@ -199,8 +200,8 @@ pub enum OpKind {
     /// an `Err` — carrying the destination's stat as the consent baseline
     /// for a possible [`OpKind::RenameReplace`].
     RenameFile {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         from: PathBuf,
         to: PathBuf,
         now: SystemTime,
@@ -211,8 +212,8 @@ pub enum OpKind {
     /// unlink is deliberately ONE op: splitting it across a message
     /// boundary would make "swapped but not captured" representable.
     RenameReplace {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         from: PathBuf,
         to: PathBuf,
         seen: Stat,
@@ -224,49 +225,40 @@ pub enum OpKind {
     /// (see that function's own doc comment) — the merge-entry flow's own
     /// case.
     ResolveAdopt {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         obs: ObsId,
         edit_seq: Option<i64>,
         now: SystemTime,
     },
     ResolveAbandon {
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
     },
     /// Quit-guard support: inserts a brand-new unbound scratch
     /// `documents` row. On success, the completion's `DbEvent::Ok.result`
     /// carries the new row's id.
-    CreateScratch {
-        now: SystemTime,
-    },
+    CreateScratch { now: SystemTime },
     /// See `scratch::gc_empty_scratch` for why this filter is
     /// stricter.
-    GcEmptyScratch {
-        keep_id: i64,
-    },
+    GcEmptyScratch { keep_id: i64 },
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// candidate ids, newest first.
-    RecoverableScratch {
-        exclude_id: i64,
-    },
+    RecoverableScratch { exclude_id: i64 },
     /// For an untitled document — see `scratch::reconstruct_scratch`.
     /// `liveness_check` travels with the op for the same reason `Load`
     /// carries its own copy: the writer thread never touches `Store`'s
     /// mutex.
     ReconstructScratch {
         liveness_check: LivenessCheckFn,
-        doc_id: i64,
+        doc_id: DocId,
     },
     /// Records `query` as just-used, bumping its `search_history` row's
     /// `last_used_at` (insert-or-touch — see `search_history::touch`). A
     /// cosmetic write: its own `Store` convenience method is the one place
     /// that decides an `Err` here must never sticky-degrade the store the
     /// way a failed recovery write does.
-    TouchSearchQuery {
-        query: String,
-        now: SystemTime,
-    },
+    TouchSearchQuery { query: String, now: SystemTime },
     /// The writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER
@@ -276,7 +268,7 @@ pub enum OpKind {
     /// FINAL op before closing the queue, so it always runs strictly after
     /// every write already queued ahead of it.
     Shutdown {
-        session_id: i64,
+        session_id: SessionId,
         liveness_check: LivenessCheckFn,
     },
 }
@@ -291,7 +283,7 @@ pub enum OpOutcome {
     /// No meaningful return value (`Noop`, `MoveUndoPos`, `ResolveAbandon`).
     None,
     /// `AppendEdit`'s journal seq.
-    Seq(i64),
+    Seq(crate::ids::Seq),
     /// `CreateSnapshot`'s new `snapshots.id`.
     RowId(i64),
     /// `Probe`'s resulting [`SyncState`]. Boxed: `SyncState` carries several

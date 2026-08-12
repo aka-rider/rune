@@ -210,7 +210,7 @@ mod tests {
     use crate::db::{Db, DbBridge, DocDb};
     use crate::document::Replica;
     use rune_core::buffer::Buffer;
-    use rune_db::{ClockFn, Store, SyncKind, SyncState, Version};
+    use rune_db::{BlobHash, ClockFn, Store, SyncKind, SyncState, Version};
     use rune_vfs::{Mem, Vfs};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -228,7 +228,7 @@ mod tests {
             kind: SyncKind::Clean,
             ancestor: None,
             ours: Version {
-                hash: "same".to_string(),
+                hash: BlobHash("same".to_string()),
                 obs: None,
             },
             theirs: None,
@@ -248,8 +248,9 @@ mod tests {
             Some(in_memory_db()),
         );
         let id = app.active;
-        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(1, false, 0));
-        app.install_or_join_file_binding(1, 0);
+        app.doc_mut(id).expect("doc exists").replica =
+            Replica::Bound(DocDb::new(1, false, rune_db::Seq(0)));
+        app.install_or_join_file_binding(1, None);
 
         crate::db_enqueue::probe(&mut app, id);
         let op_id = *app

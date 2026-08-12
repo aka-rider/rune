@@ -21,6 +21,7 @@ use rusqlite::{Connection, Transaction, params};
 use std::time::SystemTime;
 
 use crate::Error;
+use crate::ids::{DocId, SessionId};
 use crate::inherit::most_recent_session_for_doc;
 use crate::retry;
 use crate::session::parse_rfc3339_nanos;
@@ -37,7 +38,7 @@ pub fn reap_dead_sessions(
     is_alive: &dyn Fn(i64, &str) -> bool,
     boot: Option<SystemTime>,
 ) -> Result<(), Error> {
-    let candidates: Vec<(i64, i64, String, String)> = {
+    let candidates: Vec<(SessionId, i64, String, String)> = {
         let mut stmt = conn.prepare("SELECT id, pid, proc_started_at, opened_at FROM sessions")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         let mut v = Vec::new();
@@ -77,8 +78,8 @@ fn predates_boot(opened_at: &str, boot: Option<std::time::SystemTime>) -> bool {
 /// Reports whether `session_id` is safe to reap: for EVERY `doc_id` it ever
 /// touched, some OTHER session must now hold the higher seq. A session that
 /// never touched any doc (vacuously true) is reapable.
-fn session_is_reapable(tx: &Transaction<'_>, session_id: i64) -> Result<bool, Error> {
-    let doc_ids: Vec<i64> = {
+fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bool, Error> {
+    let doc_ids: Vec<DocId> = {
         let mut stmt = tx.prepare(
             "SELECT DISTINCT doc_id FROM ( \
                 SELECT doc_id FROM events    WHERE session_id=?1 \
@@ -108,7 +109,7 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: i64) -> Result<bool, Er
 /// then the `sessions` row itself too — but only if it recorded no
 /// `observations`; a row with at least one stays behind as that dead
 /// session's own permanent "theirs" provenance for every other session.
-fn reap_session_footprint(tx: &Transaction<'_>, session_id: i64) -> Result<(), Error> {
+fn reap_session_footprint(tx: &Transaction<'_>, session_id: SessionId) -> Result<(), Error> {
     tx.execute(
         "DELETE FROM session_documents WHERE session_id=?1",
         params![session_id],
@@ -140,13 +141,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc(conn: &Connection) -> i64 {
+    fn seed_doc(conn: &Connection) -> DocId {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        conn.last_insert_rowid()
+        DocId(conn.last_insert_rowid())
     }
 
     /// Inserts a `sessions` row directly with a caller-chosen `pid`, rather
@@ -155,13 +156,13 @@ mod tests {
     /// two `establish_session` calls would be indistinguishable to
     /// `is_alive`'s `(pid, started_at)` signature. Fabricated pids let each
     /// test simulate distinct processes deterministically.
-    fn seed_session(conn: &Connection, pid: i64) -> i64 {
+    fn seed_session(conn: &Connection, pid: i64) -> SessionId {
         conn.execute(
             "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES(?1, 'started', 'opened')",
             params![pid],
         )
         .expect("seed session");
-        conn.last_insert_rowid()
+        SessionId(conn.last_insert_rowid())
     }
 
     fn seed_blob(conn: &Connection, hash: &str) {
@@ -172,7 +173,7 @@ mod tests {
         .expect("seed blob");
     }
 
-    fn seed_observation(conn: &Connection, session_id: i64, doc_id: i64) {
+    fn seed_observation(conn: &Connection, session_id: SessionId, doc_id: DocId) {
         let hash = format!("hash-{session_id}-{doc_id}");
         seed_blob(conn, &hash);
         conn.execute(
@@ -183,7 +184,7 @@ mod tests {
         .expect("seed observation");
     }
 
-    fn journal_one_edit(conn: &mut Connection, session_id: i64, doc_id: i64) {
+    fn journal_one_edit(conn: &mut Connection, session_id: SessionId, doc_id: DocId) {
         let tx = conn.transaction().expect("tx");
         crate::journal::append_edit(
             &tx,
@@ -203,7 +204,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    fn sessions_row_exists(conn: &Connection, session_id: i64) -> bool {
+    fn sessions_row_exists(conn: &Connection, session_id: SessionId) -> bool {
         conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
             params![session_id],
@@ -412,13 +413,18 @@ mod tests {
         );
     }
 
-    fn seed_session_at(conn: &Connection, pid: i64, proc_started_at: &str, opened_at: &str) -> i64 {
+    fn seed_session_at(
+        conn: &Connection,
+        pid: i64,
+        proc_started_at: &str,
+        opened_at: &str,
+    ) -> SessionId {
         conn.execute(
             "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES(?1, ?2, ?3)",
             params![pid, proc_started_at, opened_at],
         )
         .expect("seed session");
-        conn.last_insert_rowid()
+        SessionId(conn.last_insert_rowid())
     }
 
     /// A legacy row that never captured a real `proc_started_at` (the

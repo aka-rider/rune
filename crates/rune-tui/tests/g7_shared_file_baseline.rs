@@ -51,9 +51,9 @@ fn bind_second_tab(
     {
         let doc = app.doc_mut(id).unwrap();
         doc.file_path = Some(path.to_path_buf());
-        doc.set_doc_db_for_test(DocDb::new(db_id, false, 0));
+        doc.set_doc_db_for_test(DocDb::new(db_id, false, rune_db::Seq(0)));
     }
-    app.install_or_join_file_binding(db_id, 0);
+    app.install_or_join_file_binding(db_id, None);
     id
 }
 
@@ -304,7 +304,7 @@ fn a_stale_probe_for_tab_b_issued_before_tab_as_save_is_dropped_by_the_epoch_ech
         kind: SyncKind::Diverged,
         ancestor: None,
         ours: Version {
-            hash: "ours".to_string(),
+            hash: rune_db::BlobHash("ours".to_string()),
             obs: None,
         },
         theirs: None,

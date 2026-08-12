@@ -8,6 +8,7 @@ use rusqlite::params;
 
 use crate::Error;
 use crate::doc_kind::DocKind;
+use crate::ids::DocId;
 use crate::observation;
 
 /// The path/identity half of a document rebind, bundled for the same
@@ -39,7 +40,7 @@ pub(crate) struct Rebind<'a> {
 /// inside, so it is safe to run under an open tx (invariant I1).
 pub(crate) fn rebind_document_tx(
     tx: &rusqlite::Connection,
-    doc_id: i64,
+    doc_id: DocId,
     rebind: Rebind<'_>,
 ) -> Result<(), Error> {
     let stat = rebind.stat;
@@ -66,7 +67,7 @@ pub(crate) fn rebind_document_tx(
 pub(crate) fn evict_path_claim_tx(
     tx: &rusqlite::Connection,
     path: &str,
-    keep_id: i64,
+    keep_id: DocId,
 ) -> Result<(), Error> {
     tx.execute(
         "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
@@ -82,7 +83,7 @@ pub(crate) fn evict_path_claim_tx(
 /// calls this once a real, on-disk file is confirmed.
 pub(crate) fn set_identity_tx(
     tx: &rusqlite::Connection,
-    doc_id: i64,
+    doc_id: DocId,
     path: &str,
     inode: Option<i64>,
     device: Option<i64>,

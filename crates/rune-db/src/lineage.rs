@@ -10,7 +10,10 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
-use crate::observation::{self, ObsId, Observation};
+use crate::ids::ObsId;
+#[cfg(test)]
+use crate::ids::{DocId, SessionId};
+use crate::observation::{self, Observation};
 
 /// The recursive-CTE body [`common_ancestor`] runs once per side:
 /// starting from `param` (a bound-parameter placeholder), walks every
@@ -76,19 +79,19 @@ mod tests {
         conn
     }
 
-    fn seed_doc(tx: &Transaction<'_>) -> i64 {
+    fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
     fn seed_obs(
         tx: &Transaction<'_>,
-        doc_id: i64,
-        session_id: i64,
+        doc_id: DocId,
+        session_id: SessionId,
         content: &str,
         parent_a: Option<ObsId>,
     ) -> ObsId {

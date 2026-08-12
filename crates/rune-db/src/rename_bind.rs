@@ -8,6 +8,8 @@ use std::time::SystemTime;
 use rune_vfs::Vfs;
 
 use crate::Error;
+#[cfg(test)]
+use crate::ids::DocId;
 use crate::materialize::DocSession;
 use crate::rename::{RenameOutcome, rebind};
 
@@ -68,13 +70,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc_with_path(conn: &Connection, path: &str) -> i64 {
+    fn seed_doc_with_path(conn: &Connection, path: &str) -> DocId {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES (?1, 'x', 'x')",
             params![path],
         )
         .expect("seed doc");
-        conn.last_insert_rowid()
+        DocId(conn.last_insert_rowid())
     }
 
     fn disk(vfs: &Mem, path: &Path) -> Vec<u8> {
@@ -95,7 +97,7 @@ mod tests {
             .expect("count observations")
     }
 
-    fn doc_path(conn: &Connection, doc_id: i64) -> String {
+    fn doc_path(conn: &Connection, doc_id: DocId) -> String {
         conn.query_row(
             "SELECT path FROM documents WHERE id=?1",
             params![doc_id],

@@ -9,6 +9,8 @@ use std::time::SystemTime;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
+#[cfg(test)]
+use crate::ids::DocId;
 use crate::materialize::DocSession;
 use crate::rename::{RenameOutcome, capture_and_rebind};
 
@@ -127,13 +129,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc_with_path(conn: &Connection, path: &str) -> i64 {
+    fn seed_doc_with_path(conn: &Connection, path: &str) -> DocId {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES (?1, 'x', 'x')",
             params![path],
         )
         .expect("seed doc");
-        conn.last_insert_rowid()
+        DocId(conn.last_insert_rowid())
     }
 
     fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
@@ -146,7 +148,7 @@ mod tests {
             .expect("count observations")
     }
 
-    fn doc_path(conn: &Connection, doc_id: i64) -> String {
+    fn doc_path(conn: &Connection, doc_id: DocId) -> String {
         conn.query_row(
             "SELECT path FROM documents WHERE id=?1",
             params![doc_id],
@@ -202,13 +204,13 @@ mod tests {
         assert_eq!(displaced.doc_id, f.ds.doc_id, "captured under OUR doc");
         assert_eq!(displaced.origin, ObsOrigin::Swap);
         assert_eq!(
-            displaced.blob_hash,
+            displaced.blob_hash.as_str(),
             observation::hash_bytes(b"theirs"),
             "the blob must be the REPLACED file's bytes"
         );
 
         let blob = retry::with_retry(&mut f.conn, |tx| {
-            crate::blob::get_blob(tx, &displaced.blob_hash)
+            crate::blob::get_blob(tx, displaced.blob_hash.as_str())
         })
         .expect("displaced bytes durably stored");
         assert_eq!(blob, b"theirs");
@@ -242,7 +244,7 @@ mod tests {
             panic!("expected Replaced, got {out:?}");
         };
         let blob = retry::with_retry(&mut f.conn, |tx| {
-            crate::blob::get_blob(tx, &displaced.blob_hash)
+            crate::blob::get_blob(tx, displaced.blob_hash.as_str())
         })
         .expect("blob");
         assert_eq!(blob, theirs, "displaced bytes must round-trip byte-exact");
@@ -376,7 +378,7 @@ mod tests {
             panic!("expected Replaced, got {out:?}");
         };
         let blob = retry::with_retry(&mut f.conn, |tx| {
-            crate::blob::get_blob(tx, &displaced.blob_hash)
+            crate::blob::get_blob(tx, displaced.blob_hash.as_str())
         })
         .expect("blob committed");
         assert_eq!(blob, b"theirs");

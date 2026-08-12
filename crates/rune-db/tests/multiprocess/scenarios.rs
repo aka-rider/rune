@@ -162,7 +162,7 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     let dir = temp_dir("kill-mid-storm");
     let path = dir.join("rune-v1.db");
     let doc_ids = seed_schema_and_docs(&path, 1);
-    let doc_id = doc_ids[0];
+    let doc_id = rune_db::DocId(doc_ids[0]);
     let count = 200usize;
     let checkpoint = 50usize;
 
@@ -201,11 +201,13 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     child.kill().expect("sigkill child");
     let _ = child.wait_with_output();
 
-    let killed_session_id: i64 = std::fs::read_to_string(&session_marker)
-        .expect("read session marker")
-        .trim()
-        .parse()
-        .expect("parse session id");
+    let killed_session_id = rune_db::SessionId(
+        std::fs::read_to_string(&session_marker)
+            .expect("read session marker")
+            .trim()
+            .parse()
+            .expect("parse session id"),
+    );
 
     // Parent "reopens": a fresh Store::open against the same path.
     let (tx, rx) = mpsc::channel::<DbEvent>();

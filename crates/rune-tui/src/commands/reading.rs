@@ -69,6 +69,7 @@ pub fn toggle(app: &mut App) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use rune_core::buffer::Buffer;
@@ -118,7 +119,7 @@ mod tests {
             blocks: Vec::new(),
             cur: 0,
             saved_display_name: None,
-            theirs_obs: 0,
+            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
 
         toggle(&mut app);

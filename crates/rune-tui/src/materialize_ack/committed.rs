@@ -47,7 +47,7 @@ pub(super) fn handle_committed_ack(
     if let Some(saved) = &saved
         && let Some(binding) = app.doc_file_binding_mut(id)
     {
-        binding.expect_obs = saved.id;
+        binding.expect_obs = Some(saved.id);
         binding.pending_rebaseline_hash = None;
     }
     let was_hardlinked = app.doc(id).is_some_and(|d| d.nlink.is_some_and(|n| n > 1));

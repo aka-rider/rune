@@ -249,7 +249,7 @@ fn diverged_load_bridges_the_dead_sessions_own_baseline_not_disk() {
     .expect("saved_obs_for")
     .expect("session b adopted a baseline");
     assert_eq!(
-        saved_obs.blob_hash,
+        saved_obs.blob_hash.as_str(),
         observation::hash_bytes(b"session A's content"),
         "saved_obs (CAS baseline) must be A's own H0, not disk's H1"
     );
@@ -357,7 +357,7 @@ fn load_from_read_adopts_the_taken_bytes_never_a_fresh_disk_read() {
     .expect("saved_obs_for")
     .expect("first load must adopt a baseline");
     assert_eq!(
-        saved_obs.blob_hash,
+        saved_obs.blob_hash.as_str(),
         observation::hash_bytes(b"taken bytes"),
         "the CAS baseline must be the taken read's own hash, never the current disk hash"
     );

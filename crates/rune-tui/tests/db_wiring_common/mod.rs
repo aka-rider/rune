@@ -85,9 +85,9 @@ pub fn db_from(store: Store, bridge: Arc<DbBridge>, degraded: bool) -> Db {
 
 pub fn doc_db_from(load: &LoadResult) -> DocDb {
     DocDb::new(
-        load.doc_id,
+        load.doc_id.0,
         false, // bind_new: the doc already exists on disk in every test here
-        0,
+        rune_db::Seq(0),
     )
 }
 
@@ -99,7 +99,7 @@ pub fn doc_db_from(load: &LoadResult) -> DocDb {
 /// baseline reads back as the unseeded default instead of what its own
 /// fixture `Load` actually observed.
 pub fn join_binding_from(app: &mut App, load: &LoadResult) {
-    app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
+    app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
 }
 
 pub fn press(app: &mut App, ch: char) {

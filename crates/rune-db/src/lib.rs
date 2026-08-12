@@ -40,6 +40,7 @@ mod doc_kind;
 mod document;
 mod error;
 mod gc;
+mod ids;
 mod inherit;
 mod journal;
 mod journal_append;
@@ -81,6 +82,7 @@ pub use bracket::{BracketedRead, bracketed_read, stat_facts_from};
 pub use confirmation::Confirmation;
 pub use document::{DocRef, open_path, recent_paths};
 pub use error::Error;
+pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};
 pub use journal::{
     EditRow, Step, append_edit, current_seq, edits_in_range, move_undo_pos, redo_peek, undo_peek,
 };
@@ -92,7 +94,7 @@ pub use materialize::{
 pub use merge_prep::{AncestorRung, MergePrepOutcome, MergePrepResult};
 pub use merge_state::{MergeRowState, ResumableMerge};
 pub use obs_origin::ObsOrigin;
-pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
+pub use observation::{Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};
 pub use reaper::reap_dead_sessions;

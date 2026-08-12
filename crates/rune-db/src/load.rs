@@ -22,10 +22,11 @@ use crate::adopt;
 use crate::bracket;
 use crate::confirmation::Confirmation;
 use crate::document::{self, DocRef};
+use crate::ids::{DocId, ObsId, Seq, SessionId};
 use crate::inherit::find_inheritable_draft;
 use crate::load_anchor::{LoadContext, anchor_first_load};
 use crate::obs_origin::ObsOrigin;
-use crate::observation::{self, ObsId};
+use crate::observation;
 use crate::retry;
 use crate::sync::SyncState;
 
@@ -34,7 +35,7 @@ use crate::sync::SyncState;
 /// and the [`SyncState`] that follows from recording this sighting.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadResult {
-    pub doc_id: i64,
+    pub doc_id: DocId,
     pub renamed_from: Option<String>,
     pub disk_content: String,
     pub recovered: String,
@@ -65,7 +66,7 @@ pub struct LoadResult {
     /// committing `move_undo_pos` before its first ordinary `AppendEdit` ack
     /// lands would otherwise silently regress this session's own
     /// `current_seq` past a bridge edit that already advanced it.
-    pub bridge_seq: Option<i64>,
+    pub bridge_seq: Option<Seq>,
     /// A dead session's still-`active` merge whose recorded working form
     /// byte-matches this load's own journal reconstruction — the caller may
     /// re-enter it; the row stays `active` until a hydrating ack actually
@@ -76,7 +77,11 @@ pub struct LoadResult {
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
 /// `session_id`.
-pub fn has_history(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<bool, Error> {
+pub fn has_history(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<bool, Error> {
     tx.query_row(
         "SELECT EXISTS( \
             SELECT 1 FROM events WHERE doc_id=?1 AND session_id=?2 \
@@ -97,7 +102,7 @@ pub fn has_history(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 pub fn load(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
+    session_id: SessionId,
     liveness_check: &dyn Fn(i64, &str) -> bool,
     path: &Path,
     now: SystemTime,
@@ -124,7 +129,7 @@ pub fn load(
 pub fn load_from_read(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
+    session_id: SessionId,
     liveness_check: &dyn Fn(i64, &str) -> bool,
     path: &Path,
     read: bracket::BracketedRead,
@@ -209,7 +214,7 @@ pub fn load_from_read(
         })?;
         let needs_heal = match &cur {
             None => true,
-            Some(c) => c.blob_hash != hash,
+            Some(c) => c.blob_hash.as_str() != hash,
         };
         if needs_heal {
             adopt::record_adoption(
@@ -218,7 +223,7 @@ pub fn load_from_read(
                 session_id,
                 observation::ObservationMeta {
                     blob_hash: &hash,
-                    seq: Some(load_seq),
+                    seq: Some(load_seq.0),
                     origin: ObsOrigin::Resolve,
                     confirmed: Confirmation::from_bracket(disk_confirmed),
                 },

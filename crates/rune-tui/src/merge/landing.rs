@@ -5,6 +5,8 @@
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::{CursorId, CursorSet};
+#[cfg(test)]
+use rune_db::BlobHash;
 use rune_db::{MergePrepOutcome, MergePrepResult, ObsId, SyncKind};
 
 use crate::app::App;
@@ -291,7 +293,10 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
     if db.degraded {
         return false;
     }
-    match db.store.resolve_adopt(db_id, theirs_obs, None) {
+    match db
+        .store
+        .resolve_adopt(rune_db::DocId(db_id), theirs_obs, None)
+    {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
             true
@@ -311,7 +316,7 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
 /// hash-mismatches into a fresh conflict.
 pub(super) fn advance_expect_obs(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
     if let Some(binding) = app.doc_file_binding_mut(doc) {
-        binding.expect_obs = theirs_obs;
+        binding.expect_obs = Some(theirs_obs);
     }
 }
 
@@ -341,7 +346,12 @@ mod tests {
         let mut app = app_with("<<<<<<< editor\nours\n=======\ntheirs\n>>>>>>> disk\n");
         let doc = app.active;
 
-        discard_install(&mut app, doc, "disk replacement\n", 42);
+        discard_install(
+            &mut app,
+            doc,
+            "disk replacement\n",
+            rune_db::ObsId::new(42).expect("nonzero"),
+        );
 
         assert_eq!(app.doc(doc).unwrap().buffer.content(), "disk replacement\n");
         assert_eq!(app.merge, MergeState::Inactive);
@@ -367,7 +377,7 @@ mod tests {
                 kind: SyncKind::Diverged,
                 ancestor: None,
                 ours: rune_db::Version {
-                    hash: String::new(),
+                    hash: BlobHash(String::new()),
                     obs: None,
                 },
                 theirs: None,
@@ -397,7 +407,7 @@ mod tests {
                 kind: SyncKind::Diverged,
                 ancestor: None,
                 ours: rune_db::Version {
-                    hash: String::new(),
+                    hash: BlobHash(String::new()),
                     obs: None,
                 },
                 theirs: None,
@@ -429,7 +439,10 @@ mod tests {
             &mut app,
             doc,
             Some(0),
-            diverged_prep(b"shared-start\ntheirs-only\nshared-end\n", 3),
+            diverged_prep(
+                b"shared-start\ntheirs-only\nshared-end\n",
+                rune_db::ObsId::new(3).expect("nonzero"),
+            ),
             &mut effects,
         );
 
@@ -474,7 +487,7 @@ mod tests {
                 kind: SyncKind::Clean,
                 ancestor: None,
                 ours: rune_db::Version {
-                    hash: String::new(),
+                    hash: BlobHash(String::new()),
                     obs: None,
                 },
                 theirs: None,
@@ -499,7 +512,12 @@ mod tests {
         let mut app = app_with("ours");
         let doc = app.active;
 
-        discard_install(&mut app, doc, "theirs\n", 0);
+        discard_install(
+            &mut app,
+            doc,
+            "theirs\n",
+            rune_db::ObsId::new(1).expect("nonzero"),
+        );
 
         assert_eq!(app.doc(doc).unwrap().last_sync, Some(SyncKind::Clean));
         assert_eq!(app.merge, MergeState::Inactive);
@@ -514,9 +532,10 @@ mod tests {
         let doc = app.active;
         if let Some(d) = app.doc_mut(doc) {
             d.read_only = crate::document::ReadOnly::Always;
-            d.replica = crate::document::Replica::Bound(crate::db::DocDb::new(1, false, 0));
+            d.replica =
+                crate::document::Replica::Bound(crate::db::DocDb::new(1, false, rune_db::Seq(0)));
         }
-        app.install_or_join_file_binding(1, 7);
+        app.install_or_join_file_binding(1, Some(rune_db::ObsId::new(7).expect("nonzero")));
         app.merge = MergeState::Pending {
             doc,
             generation: 0,
@@ -528,14 +547,17 @@ mod tests {
             &mut app,
             doc,
             Some(0),
-            diverged_prep(b"disk\n", 9),
+            diverged_prep(b"disk\n", rune_db::ObsId::new(9).expect("nonzero")),
             &mut effects,
         );
 
         assert_eq!(app.merge, MergeState::Inactive);
         assert_eq!(app.doc(doc).unwrap().buffer.content(), "hello");
         assert_eq!(app.doc(doc).unwrap().last_sync, None);
-        assert_eq!(app.file_binding(1).unwrap().expect_obs, 7);
+        assert_eq!(
+            app.file_binding(1).unwrap().expect_obs,
+            Some(rune_db::ObsId::new(7).expect("nonzero"))
+        );
         assert!(
             messages::newest_text(&app)
                 .unwrap_or_default()

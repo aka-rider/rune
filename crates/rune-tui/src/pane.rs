@@ -563,7 +563,7 @@ mod tests {
             .expect("active doc exists")
             .saved_content = Arc::from("");
         app.doc_mut(app.active).expect("active doc exists").replica =
-            Replica::Bound(crate::db::DocDb::new(1, true, 0));
+            Replica::Bound(crate::db::DocDb::new(1, true, rune_db::Seq(0)));
         app.db = Some(live_db());
 
         let mut effects = Effects::default();
@@ -843,7 +843,7 @@ mod tests {
             blocks: Vec::new(),
             cur: 0,
             saved_display_name: None,
-            theirs_obs: 0,
+            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
         let mut effects = Effects::default();
 

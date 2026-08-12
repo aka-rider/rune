@@ -1,7 +1,14 @@
+use rune_core::assert_invariant;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Etag(String);
+
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+}
 
 impl Etag {
     pub fn as_str(&self) -> &str {
@@ -9,7 +16,11 @@ impl Etag {
     }
 
     pub fn from_stored(hash: impl Into<String>) -> Etag {
-        Etag(hash.into())
+        let hash = hash.into();
+        assert_invariant!(is_sha256_hex(&hash), || format!(
+            "Etag::from_stored: {hash:?} is not a lowercase SHA-256 hex digest"
+        ));
+        Etag(hash)
     }
 }
 
@@ -61,5 +72,17 @@ mod tests {
         let etag = etag_of(b"hello");
         assert!(etag.to_string().chars().all(|c| c.is_ascii_hexdigit()));
         assert_eq!(etag.to_string(), etag.as_str());
+    }
+
+    #[test]
+    fn from_stored_accepts_a_real_sha256_hex_digest() {
+        let etag = Etag::from_stored(etag_of(b"hello").to_string());
+        assert_eq!(etag, etag_of(b"hello"));
+    }
+
+    #[test]
+    #[should_panic(expected = "not a lowercase SHA-256 hex digest")]
+    fn from_stored_rejects_a_malformed_hash() {
+        Etag::from_stored("not-a-hash");
     }
 }

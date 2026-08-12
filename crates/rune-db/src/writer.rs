@@ -40,6 +40,9 @@ use rune_core::assert_invariant;
 use rune_vfs::Vfs;
 
 use crate::Error;
+#[cfg(test)]
+use crate::ids::SessionId;
+use crate::ids::{DocId, Seq};
 use crate::retry;
 use crate::writer_lifecycle::{
     IDLE_TIMEOUT, fatal, run_idle_maintenance, run_shutdown_maintenance,
@@ -62,8 +65,8 @@ pub use crate::writer_ops::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH};
 /// exact instead of a guess at an in-flight ack.
 #[derive(Default)]
 struct DocUndoState {
-    base_seq: i64,
-    local_seq: Vec<i64>,
+    base_seq: Seq,
+    local_seq: Vec<Seq>,
 }
 
 impl DocUndoState {
@@ -74,12 +77,22 @@ impl DocUndoState {
     /// actually run, both of which are invariant violations the writer's
     /// single FIFO queue should make unreachable (see `OpKind::MoveUndoPos`'s
     /// doc comment) — never silently approximated.
-    fn resolve(&self, local_pos: i64) -> Option<i64> {
+    fn resolve(&self, local_pos: i64) -> Option<Seq> {
         if local_pos == 0 {
             return Some(self.base_seq);
         }
         let idx = usize::try_from(local_pos - 1).ok()?;
         self.local_seq.get(idx).copied()
+    }
+
+    fn push_seq(&mut self, doc_id: DocId, seq: Seq) {
+        assert_invariant!(self.local_seq.last().is_none_or(|&last| seq > last), || {
+            format!(
+                "append_edit doc {doc_id}: seq {seq} did not advance past local_seq.last() {:?}",
+                self.local_seq.last()
+            )
+        });
+        self.local_seq.push(seq);
     }
 }
 
@@ -160,7 +173,7 @@ fn writer_loop(
 ) {
     // Owned by this thread alone, alongside `conn` — see `DocUndoState`'s
     // own doc comment.
-    let mut undo_state: HashMap<i64, DocUndoState> = HashMap::new();
+    let mut undo_state: HashMap<DocId, DocUndoState> = HashMap::new();
     loop {
         match receiver.recv_timeout(idle_timeout) {
             Ok(op) => {
@@ -225,7 +238,7 @@ fn execute_op(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     kind: OpKind,
-    undo_state: &mut HashMap<i64, DocUndoState>,
+    undo_state: &mut HashMap<DocId, DocUndoState>,
 ) -> Result<OpOutcome, Error> {
     match kind {
         OpKind::Noop => {
@@ -277,16 +290,7 @@ fn execute_op(
             // mean the journal grew a coalescing path again without
             // updating this mapping.
             let state = undo_state.entry(doc_id).or_default();
-            assert_invariant!(
-                state.local_seq.last().is_none_or(|&last| seq > last),
-                || {
-                    format!(
-                        "append_edit doc {doc_id}: seq {seq} did not advance past local_seq.last() {:?}",
-                        state.local_seq.last()
-                    )
-                }
-            );
-            state.local_seq.push(seq);
+            state.push_seq(doc_id, seq);
             Ok(OpOutcome::Seq(seq))
         }
         OpKind::MoveUndoPos {
@@ -493,7 +497,7 @@ fn execute_op(
             undo_state.insert(
                 result.doc_id,
                 DocUndoState {
-                    base_seq: result.bridge_seq.unwrap_or(0),
+                    base_seq: result.bridge_seq.unwrap_or(Seq(0)),
                     local_seq: Vec::new(),
                 },
             );
@@ -519,7 +523,7 @@ fn execute_op(
             // A brand-new row, never bound before — local position `0`
             // starts at durable seq `0`, same as `Load`'s doc comment.
             undo_state.insert(id, DocUndoState::default());
-            Ok(OpOutcome::RowId(id))
+            Ok(OpOutcome::RowId(id.0))
         }
         OpKind::GcEmptyScratch { keep_id } => {
             crate::scratch::gc_empty_scratch(conn, keep_id)?;

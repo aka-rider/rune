@@ -23,6 +23,7 @@ use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
 use crate::confirmation::Confirmation;
+use crate::ids::{DocId, SessionId};
 use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, ObserveInput, StatFacts};
 use crate::retry;
@@ -65,7 +66,7 @@ pub fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
 /// compare against. Deliberately ignores unconfirmed observations entirely —
 /// an unconfirmed fact decides nothing, including what counts as a
 /// suspicious shrink relative to it.
-fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<i64>, Error> {
+fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: DocId) -> Result<Option<i64>, Error> {
     tx.query_row(
         "SELECT size FROM observations WHERE doc_id=?1 AND confirmed=1 ORDER BY id DESC LIMIT 1",
         params![doc_id],
@@ -80,7 +81,7 @@ fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<i64
 /// status — deliberately unlike [`newest_confirmed_size`], since a shrink
 /// hypothesis this function helps validate is itself recorded unconfirmed
 /// and must still be visible as "the thing sighted last time".
-fn newest_observation_hash(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<String>, Error> {
+fn newest_observation_hash(tx: &Transaction<'_>, doc_id: DocId) -> Result<Option<String>, Error> {
     tx.query_row(
         "SELECT blob_hash FROM observations WHERE doc_id=?1 ORDER BY id DESC LIMIT 1",
         params![doc_id],
@@ -107,7 +108,7 @@ fn newest_observation_hash(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<S
 /// of length.
 pub fn confirm_against_history(
     tx: &Transaction<'_>,
-    doc_id: i64,
+    doc_id: DocId,
     bracket_confirmed: bool,
     new_len: usize,
     new_hash: &str,
@@ -147,8 +148,8 @@ pub struct ObserveDiskMeta {
 pub fn observe_disk(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     path: &Path,
     meta: ObserveDiskMeta,
     now: SystemTime,
@@ -188,13 +189,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc(tx: &Transaction<'_>) -> i64 {
+    fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
     fn seed_blob(tx: &Transaction<'_>, content: &str) -> String {
@@ -286,7 +287,7 @@ mod tests {
         assert_eq!(facts.nlink, None);
     }
 
-    fn seed_confirmed(tx: &Transaction<'_>, doc_id: i64, session_id: i64, content: &str) {
+    fn seed_confirmed(tx: &Transaction<'_>, doc_id: DocId, session_id: SessionId, content: &str) {
         let hash = seed_blob(tx, content);
         observation::record_observation(
             tx,

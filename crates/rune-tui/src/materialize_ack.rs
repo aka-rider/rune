@@ -120,10 +120,12 @@ fn record_outcome(
         }
         return;
     };
-    match db
-        .store
-        .materialize_record(target.db_id, target.resolved_path, target.seq, outcome)
-    {
+    match db.store.materialize_record(
+        rune_db::DocId(target.db_id),
+        target.resolved_path,
+        target.seq,
+        outcome,
+    ) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
             if let Some(doc) = app.doc_mut(id) {
@@ -174,7 +176,7 @@ fn record_orphan_outcome(
     let Some(db) = app.db.as_ref() else { return };
     let _ = db
         .store
-        .materialize_record(db_id, resolved_path, seq, outcome);
+        .materialize_record(rune_db::DocId(db_id), resolved_path, seq, outcome);
 }
 
 /// A store enqueue-time error or an async `DbEvent::Err`/`Fatal` landed: the
@@ -268,7 +270,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     };
     let content = doc.buffer.content().to_string();
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.create_snapshot(db_id, &content);
+    let result = db.store.create_snapshot(rune_db::DocId(db_id), &content);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));

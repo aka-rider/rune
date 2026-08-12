@@ -55,7 +55,7 @@ pub(crate) fn handle_prepare_ack(
                 refuse_divergent_publish(app, id, sync);
                 return;
             }
-            (expect_hash, Some(bound_path))
+            (expect_hash.to_string(), Some(bound_path))
         }
     };
     // A baseline left unconfirmed by a prior commit whose observation was

@@ -5,8 +5,9 @@
 //! [`prepare_materialize`]: crate::materialize::prepare_materialize
 //! [`record_materialize_outcome`]: crate::materialize::record_materialize_outcome
 
+use crate::ids::{BlobHash, DocId, ObsId, SessionId};
 use crate::obs_origin::ObsOrigin;
-use crate::observation::{ObsId, Observation, StatFacts};
+use crate::observation::{Observation, StatFacts};
 use crate::sync::SyncKind;
 
 /// `doc_id`/`session_id` bundled together — every materialize operation
@@ -16,8 +17,8 @@ use crate::sync::SyncKind;
 /// allow outside test code).
 #[derive(Clone, Copy, Debug)]
 pub struct DocSession {
-    pub doc_id: i64,
-    pub session_id: i64,
+    pub doc_id: DocId,
+    pub session_id: SessionId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +47,7 @@ pub enum MaterializePrep {
     Create,
     Overwrite {
         bound_path: String,
-        expect_hash: String,
+        expect_hash: BlobHash,
         sync: SyncKind,
     },
 }

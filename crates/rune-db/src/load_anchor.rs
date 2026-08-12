@@ -30,6 +30,7 @@ use rune_core::buffer::AppliedEdit;
 use crate::Error;
 use crate::adopt;
 use crate::confirmation::Confirmation;
+use crate::ids::{DocId, Seq, SessionId};
 use crate::inherit::Inherited;
 use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, StatFacts};
@@ -40,7 +41,7 @@ use crate::retry;
 /// edit that produced it (`None` when nothing was bridged).
 pub(crate) struct AnchorOutcome {
     pub(crate) recovered: String,
-    pub(crate) bridge_seq: Option<i64>,
+    pub(crate) bridge_seq: Option<Seq>,
 }
 
 /// The load-time facts every anchor/bridge step below needs, bundled so
@@ -49,9 +50,9 @@ pub(crate) struct AnchorOutcome {
 /// test code) — the same "bundle instead of allow" shape `observation.rs`'s
 /// `StatFacts`/`ObservationMeta` split already uses.
 pub(crate) struct LoadContext<'a> {
-    pub(crate) session_id: i64,
-    pub(crate) doc_id: i64,
-    pub(crate) load_seq: i64,
+    pub(crate) session_id: SessionId,
+    pub(crate) doc_id: DocId,
+    pub(crate) load_seq: Seq,
     pub(crate) disk_hash: &'a str,
     /// Whether `load`'s own bracketed read of `disk_hash`'s content was
     /// confirmed — carried into every observation this module records FROM
@@ -86,7 +87,7 @@ fn anchor_on_disk_tx(
         ctx.session_id,
         observation::ObservationMeta {
             blob_hash: hash,
-            seq: Some(ctx.load_seq),
+            seq: Some(ctx.load_seq.0),
             origin: ObsOrigin::Load,
             confirmed: Confirmation::from_bracket(ctx.disk_confirmed),
         },
@@ -106,7 +107,7 @@ fn bridge_edit_tx(
     ctx: &LoadContext<'_>,
     from: &str,
     to: &str,
-) -> Result<i64, Error> {
+) -> Result<Seq, Error> {
     let edit = vec![AppliedEdit {
         start: 0,
         end: from.len(),
@@ -137,7 +138,7 @@ fn anchor_diverged(
     baseline: &observation::Observation,
 ) -> Result<Option<AnchorOutcome>, Error> {
     retry::with_retry(conn, |tx| {
-        let h0_bytes = match crate::blob::get_blob(tx, &baseline.blob_hash) {
+        let h0_bytes = match crate::blob::get_blob(tx, baseline.blob_hash.as_str()) {
             Ok(bytes) => bytes,
             Err(Error::NotFound(_) | Error::BlobHashMismatch { .. }) => return Ok(None),
             Err(e) => return Err(e),
@@ -159,8 +160,8 @@ fn anchor_diverged(
             ctx.doc_id,
             ctx.session_id,
             observation::ObservationMeta {
-                blob_hash: &baseline.blob_hash,
-                seq: Some(ctx.load_seq),
+                blob_hash: baseline.blob_hash.as_str(),
+                seq: Some(ctx.load_seq.0),
                 origin: ObsOrigin::Load,
                 // Copy-forward of a PRIOR observation's own fact, not a
                 // fresh read of this call's — carries `baseline`'s own
@@ -252,13 +253,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc(conn: &Connection) -> i64 {
+    fn seed_doc(conn: &Connection) -> DocId {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        conn.last_insert_rowid()
+        DocId(conn.last_insert_rowid())
     }
 
     /// Through `load::load`'s full two-session scenario, A's own H0 blob
@@ -295,7 +296,7 @@ mod tests {
         let ctx = LoadContext {
             session_id: session_b,
             doc_id,
-            load_seq: 0,
+            load_seq: Seq(0),
             disk_hash: &disk_hash,
             disk_confirmed: true,
             live_stat: &live_stat,
@@ -308,10 +309,10 @@ mod tests {
         // observation still references, so this can only be reached by a
         // genuinely pathological loss of the row itself).
         let baseline = Observation {
-            id: 1,
+            id: crate::ids::ObsId::new(1).expect("nonzero"),
             doc_id,
             session_id: session_a,
-            blob_hash: h0_hash.clone(),
+            blob_hash: crate::ids::BlobHash(h0_hash.clone()),
             seq: Some(0),
             size: Some(0),
             mtime: Some("t".to_string()),
@@ -356,7 +357,8 @@ mod tests {
         .expect("saved_obs_for")
         .expect("session b adopted a baseline");
         assert_eq!(
-            saved_obs.blob_hash, disk_hash,
+            saved_obs.blob_hash.as_str(),
+            disk_hash,
             "with H0 unusable, the fallback anchors on disk's current content (H1)"
         );
 

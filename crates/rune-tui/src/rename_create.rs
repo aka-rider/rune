@@ -31,7 +31,7 @@ pub(crate) fn enqueue_rename(
     if let Some(db_id) = app.doc(id).and_then(|d| d.doc_db()).map(|d| d.db_id)
         && let Some(db) = app.db.as_ref()
     {
-        return match db.store.rename_file(db_id, from, to) {
+        return match db.store.rename_file(rune_db::DocId(db_id), from, to) {
             Ok(op_id) => {
                 app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
                 Some(Ticket::Db(op_id))

@@ -49,7 +49,7 @@ fn noop_op_round_trips_ok() {
     // `shutdown` also enqueues its own `OpKind::Shutdown` housekeeping
     // op (WP6.S2), which posts a second `DbEvent` for id 0 — assert on
     // the noop's own id rather than the events vec's exact length.
-    handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+    handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
 
     let events = events.lock().unwrap_or_else(|p| p.into_inner());
     assert!(
@@ -79,7 +79,7 @@ fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
         [],
     )
     .expect("seed document");
-    let doc_id = conn.last_insert_rowid();
+    let doc_id = DocId(conn.last_insert_rowid());
     let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
 
     let (tx, rx) = mpsc::channel::<DbEvent>();
@@ -112,7 +112,7 @@ fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
         DbEvent::Ok { id: 1, result } => {
             assert_eq!(
                 result,
-                OpOutcome::Seq(1),
+                OpOutcome::Seq(Seq(1)),
                 "first event for this doc must be seq 1"
             );
         }
@@ -161,5 +161,5 @@ fn stalled_writer_returns_full_without_blocking_or_panicking() {
     // thread can exit cleanly during shutdown.
     let _ = block_tx.send(());
     drop(block_tx);
-    handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+    handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
 }

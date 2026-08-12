@@ -7,6 +7,7 @@ use std::path::Path;
 use rune_vfs::{Mem, Vfs};
 
 use super::*;
+use crate::ids::{DocId, SessionId};
 
 fn open() -> Connection {
     let conn = Connection::open_in_memory().expect("open");
@@ -14,13 +15,13 @@ fn open() -> Connection {
     conn
 }
 
-fn seed_doc_with_path(conn: &Connection, path: &str) -> i64 {
+fn seed_doc_with_path(conn: &Connection, path: &str) -> DocId {
     conn.execute(
         "INSERT INTO documents(path, created_at, last_seen_at) VALUES (?1, 'x', 'x')",
         params![path],
     )
     .expect("seed doc");
-    conn.last_insert_rowid()
+    DocId(conn.last_insert_rowid())
 }
 
 fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
@@ -32,7 +33,7 @@ fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
 /// `content` — `blob_hash` is FK-constrained to `blobs.hash`, so
 /// `content` is durably stored first via `put_blob` (never a
 /// hand-picked hash string with no backing row).
-fn record_obs(conn: &Connection, doc_id: i64, session_id: i64, content: &str) -> ObsId {
+fn record_obs(conn: &Connection, doc_id: DocId, session_id: SessionId, content: &str) -> ObsId {
     let hash = crate::blob::put_blob(conn, content.as_bytes()).expect("seed blob");
     conn.execute(
         "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, origin, at) \
@@ -40,7 +41,7 @@ fn record_obs(conn: &Connection, doc_id: i64, session_id: i64, content: &str) ->
         params![doc_id, session_id, hash],
     )
     .expect("seed observation");
-    conn.last_insert_rowid()
+    crate::ids::obs_id_from_rowid(conn.last_insert_rowid()).expect("nonzero")
 }
 
 fn stat_of(vfs: &Mem, path: &Path) -> StatFacts {
@@ -72,7 +73,10 @@ fn prepare_materialize_is_vfs_free_and_returns_the_bound_path_and_expect_hash() 
         MaterializePrep::Create => unreachable!("expected Overwrite, got Create"),
     };
     assert_eq!(bound_path, "/doc.md");
-    assert_eq!(expect_hash, observation::hash_bytes(b"original"));
+    assert_eq!(
+        expect_hash,
+        crate::ids::BlobHash(observation::hash_bytes(b"original"))
+    );
 }
 
 /// `BindNew` skips the bound-path/CAS-baseline lookup entirely —
@@ -86,8 +90,8 @@ fn prepare_materialize_create_target_is_a_pure_no_query() {
     let prep = prepare_materialize(
         &mut conn,
         DocSession {
-            doc_id: 999,
-            session_id: 999,
+            doc_id: DocId(999),
+            session_id: SessionId(999),
         },
         MaterializeTarget::BindNew,
     )
@@ -148,7 +152,7 @@ fn record_materialize_outcome_conflict_records_fresh_and_never_commits() {
     };
     assert_eq!(fresh.origin, ObsOrigin::Probe);
     assert_eq!(
-        fresh.blob_hash,
+        fresh.blob_hash.as_str(),
         observation::hash_bytes(b"external content")
     );
     assert_eq!(fresh.confirmed, Confirmation::Confirmed);
@@ -222,7 +226,10 @@ fn record_materialize_outcome_committed_records_save_and_rebinds() {
     let saved = saved.expect("saved observation recorded");
     assert_eq!(saved.origin, ObsOrigin::Save);
     assert_eq!(saved.seq, Some(7));
-    assert_eq!(saved.blob_hash, observation::hash_bytes(b"new content"));
+    assert_eq!(
+        saved.blob_hash.as_str(),
+        observation::hash_bytes(b"new content")
+    );
     assert_eq!(saved.confirmed, Confirmation::Confirmed);
 
     let bound_path: String = conn
@@ -268,11 +275,17 @@ fn record_materialize_outcome_raced_records_both_displaced_and_committed() {
         unreachable!("expected CommittedRaced");
     };
     assert_eq!(displaced.origin, ObsOrigin::Swap);
-    assert_eq!(displaced.blob_hash, observation::hash_bytes(b"racer bytes"));
-    assert_eq!(saved.blob_hash, observation::hash_bytes(b"our content"));
+    assert_eq!(
+        displaced.blob_hash.as_str(),
+        observation::hash_bytes(b"racer bytes")
+    );
+    assert_eq!(
+        saved.blob_hash.as_str(),
+        observation::hash_bytes(b"our content")
+    );
 
     let blob = retry::with_retry(&mut conn, |tx| {
-        crate::blob::get_blob(tx, &displaced.blob_hash)
+        crate::blob::get_blob(tx, displaced.blob_hash.as_str())
     })
     .expect("racer bytes durably stored as a blob");
     assert_eq!(blob, b"racer bytes");
@@ -306,7 +319,9 @@ fn record_materialize_outcome_conflict_with_non_utf8_bytes_captures_them_byte_ex
     let MatResult::Refused { fresh } = result else {
         unreachable!("expected Refused");
     };
-    let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
-        .expect("non-utf8 bytes must still be durably stored as a blob");
+    let blob = retry::with_retry(&mut conn, |tx| {
+        crate::blob::get_blob(tx, fresh.blob_hash.as_str())
+    })
+    .expect("non-utf8 bytes must still be durably stored as a blob");
     assert_eq!(blob, racer_bytes);
 }

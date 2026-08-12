@@ -30,7 +30,7 @@ use rename_common::{next_event, send, sup, type_text};
 fn wait_for_writer_death(store: &rune_db::Store, doc_id: i64) {
     let max_attempts = 4 * rune_db::QUEUE_DEPTH;
     for attempt in 0..=max_attempts {
-        match store.probe_blocking_for_test(doc_id) {
+        match store.probe_blocking_for_test(rune_db::DocId(doc_id)) {
             Ok(_) => assert!(
                 attempt < max_attempts,
                 "writer never confirmed dead after {max_attempts} blocking probes"
@@ -85,11 +85,15 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
     {
         let doc = app.doc_mut(id_b).unwrap();
         doc.file_path = Some(std::path::PathBuf::from("/root/b.md"));
-        doc.set_doc_db_for_test(rune_tui::db::DocDb::new(db_id_b.doc_id, false, 0));
+        doc.set_doc_db_for_test(rune_tui::db::DocDb::new(
+            db_id_b.doc_id.0,
+            false,
+            rune_db::Seq(0),
+        ));
         doc.viewport
             .set_size(rename_common::WIDTH, rename_common::HEIGHT - 1);
     }
-    app.install_or_join_file_binding(db_id_b.doc_id, db_id_b.saved_obs.unwrap_or(0));
+    app.install_or_join_file_binding(db_id_b.doc_id.0, db_id_b.saved_obs);
 
     // Dirty and save BOTH documents, each up through a physically-committed
     // write whose `MaterializeRecord` ack has not landed yet.

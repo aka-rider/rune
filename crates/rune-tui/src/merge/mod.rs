@@ -64,7 +64,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         return;
     }
 
-    match db.store.merge_prep(db_id) {
+    match db.store.merge_prep(rune_db::DocId(db_id)) {
         Ok(op_id) => {
             let generation = app.next_merge_gen;
             app.next_merge_gen = app.next_merge_gen.wrapping_add(1);
@@ -242,7 +242,7 @@ fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
     if db.degraded {
         return;
     }
-    match db.store.resolve_abandon(db_id) {
+    match db.store.resolve_abandon(rune_db::DocId(db_id)) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
         }
@@ -348,7 +348,7 @@ mod tests {
             blocks,
             cur: 0,
             saved_display_name: Some("saved-name".to_string()),
-            theirs_obs: 7,
+            theirs_obs: rune_db::ObsId::new(7).expect("nonzero"),
         }
     }
 

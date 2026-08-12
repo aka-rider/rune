@@ -17,10 +17,10 @@ use crate::messages;
 
 fn racer_observation(doc_id: i64) -> Observation {
     Observation {
-        id: 1,
-        doc_id,
-        session_id: 1,
-        blob_hash: "racer".to_string(),
+        id: rune_db::ObsId::new(1).expect("nonzero"),
+        doc_id: rune_db::DocId(doc_id),
+        session_id: rune_db::SessionId(1),
+        blob_hash: rune_db::BlobHash("racer".to_string()),
         seq: None,
         size: Some(11),
         mtime: Some("t".to_string()),
@@ -60,8 +60,8 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut().replica = Replica::Bound(DocDb::new(row_id, true, 0));
-    app.install_or_join_file_binding(row_id, 0);
+    app.active_doc_mut().replica = Replica::Bound(DocDb::new(row_id, true, rune_db::Seq(0)));
+    app.install_or_join_file_binding(row_id, None);
     (app, row_id)
 }
 

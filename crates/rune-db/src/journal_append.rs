@@ -9,6 +9,7 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 
 use crate::Error;
+use crate::ids::{DocId, Seq, SessionId};
 use crate::payload::{cursors_to_json, edits_to_json};
 use crate::session::format_rfc3339_nanos;
 
@@ -23,15 +24,15 @@ use crate::session::format_rfc3339_nanos;
 /// two pushes. Returns the journal seq of the inserted event.
 pub fn append_edit(
     tx: &Transaction<'_>,
-    session_id: i64,
+    session_id: SessionId,
     now: SystemTime,
-    doc_id: i64,
+    doc_id: DocId,
     edits: &[AppliedEdit],
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
-) -> Result<i64, Error> {
+) -> Result<Seq, Error> {
     if edits.is_empty() {
-        return Ok(0);
+        return Ok(Seq(0));
     }
 
     // Read this session's current undo position; NULL (or no row at all —
@@ -85,7 +86,7 @@ pub fn append_edit(
         ],
         |r| r.get(0),
     )?;
-    Ok(new_seq)
+    Ok(Seq(new_seq))
 }
 
 #[cfg(test)]
@@ -104,13 +105,13 @@ mod tests {
         conn
     }
 
-    fn insert_test_document(tx: &Transaction<'_>) -> i64 {
+    fn insert_test_document(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("insert document");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
     fn insert_char(pos: usize, ch: &str) -> Vec<AppliedEdit> {
@@ -185,7 +186,7 @@ mod tests {
             .expect("something to undo");
         assert_eq!(
             step.new_pos,
-            seq_c - 1,
+            Seq(seq_c.0 - 1),
             "one undo step must land exactly one row back"
         );
         move_undo_pos(&tx, session_id, doc_id, step.new_pos).expect("move_undo_pos");
@@ -225,7 +226,7 @@ mod tests {
         }
         assert_eq!(
             current_seq(&tx, session_id, doc_id).expect("current_seq"),
-            1
+            Seq(1)
         );
 
         t += Duration::from_millis(400);

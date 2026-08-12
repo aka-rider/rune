@@ -492,7 +492,10 @@ pub fn replace_confirmed(app: &mut App) {
     };
     let Some(db) = app.db.as_ref() else { return };
 
-    match db.store.rename_replace(db_id, &from, &to, seen) {
+    match db
+        .store
+        .rename_replace(rune_db::DocId(db_id), &from, &to, seen)
+    {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(doc));
             app.rename = RenameState::Capturing {

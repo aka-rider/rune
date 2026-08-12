@@ -10,11 +10,12 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::Error;
 use crate::obs_origin::ObsOrigin;
-use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
+use crate::observation::{self, Observation, ObservationMeta, StatFacts};
 use crate::retry;
 
 #[cfg(test)]
 use crate::confirmation::Confirmation;
+use crate::ids::{BlobHash, DocId, ObsId, SessionId};
 
 /// The shared one-tx BODY behind every path that moves `saved_obs` to a
 /// NEWLY-inserted observation: a fresh row is inserted (tagged
@@ -30,8 +31,8 @@ use crate::confirmation::Confirmation;
 /// callers.
 pub(crate) fn record_adoption_tx(
     tx: &Transaction<'_>,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     at: &str,
@@ -69,7 +70,7 @@ pub(crate) fn record_adoption_tx(
         id: new_id,
         doc_id,
         session_id,
-        blob_hash: meta.blob_hash.to_string(),
+        blob_hash: BlobHash(meta.blob_hash.to_string()),
         seq: meta.seq,
         size: stat.size,
         mtime: stat.mtime.clone(),
@@ -90,8 +91,8 @@ pub(crate) fn record_adoption_tx(
 /// cases.
 pub(crate) fn record_adoption(
     conn: &mut Connection,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     meta: ObservationMeta<'_>,
     stat: &StatFacts,
     now: SystemTime,
@@ -112,8 +113,8 @@ pub(crate) fn record_adoption(
 /// path — never used for an ordinary divergence.
 pub fn adopt_equal(
     conn: &mut Connection,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     obs: ObsId,
     head_seq: i64,
     now: SystemTime,
@@ -125,7 +126,7 @@ pub fn adopt_equal(
         doc_id,
         session_id,
         ObservationMeta {
-            blob_hash: &source.blob_hash,
+            blob_hash: source.blob_hash.as_str(),
             seq: Some(head_seq),
             origin: ObsOrigin::Resolve,
             // Copy-forward of `source`'s own confirmed status — this
@@ -160,8 +161,8 @@ pub fn adopt_equal(
 /// two-parent join alongside `parent_a`'s prior `saved_obs` baseline.
 pub fn resolve_adopt(
     conn: &mut Connection,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     obs: ObsId,
     edit_seq: Option<i64>,
     now: SystemTime,
@@ -170,16 +171,19 @@ pub fn resolve_adopt(
     let stat = source.stat();
     let seq = match edit_seq {
         Some(seq) => seq,
-        None => retry::with_retry(conn, |tx| {
-            crate::journal::current_seq(tx, session_id, doc_id)
-        })?,
+        None => {
+            retry::with_retry(conn, |tx| {
+                crate::journal::current_seq(tx, session_id, doc_id)
+            })?
+            .0
+        }
     };
     record_adoption(
         conn,
         doc_id,
         session_id,
         ObservationMeta {
-            blob_hash: &source.blob_hash,
+            blob_hash: source.blob_hash.as_str(),
             seq: Some(seq),
             origin: ObsOrigin::Resolve,
             // Copy-forward of `source`'s own confirmed status — see
@@ -203,9 +207,13 @@ pub fn resolve_adopt(
 /// and nothing else; deleting a genuine `'save'`/`'load'` baseline would
 /// destroy real observation history. A doc with no `saved_obs` at all is a
 /// safe no-op.
-pub fn resolve_abandon(conn: &mut Connection, session_id: i64, doc_id: i64) -> Result<(), Error> {
+pub fn resolve_abandon(
+    conn: &mut Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<(), Error> {
     retry::with_retry(conn, |tx| {
-        let current: Option<i64> = tx
+        let current: Option<ObsId> = tx
             .query_row(
                 "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
                 params![session_id, doc_id],
@@ -251,13 +259,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc(conn: &Connection) -> i64 {
+    fn seed_doc(conn: &Connection) -> DocId {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        conn.last_insert_rowid()
+        DocId(conn.last_insert_rowid())
     }
 
     /// `observations.blob_hash` is FK-constrained to `blobs.hash` — every
@@ -313,7 +321,7 @@ mod tests {
 
         resolve_abandon(&mut conn, session_id, doc_id).expect("resolve_abandon");
 
-        let current: Option<i64> = conn
+        let current: Option<ObsId> = conn
             .query_row(
                 "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
                 params![session_id, doc_id],

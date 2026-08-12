@@ -37,7 +37,13 @@ pub(super) fn enqueue_merge_open(
         return;
     };
     enqueue(app, doc, |store, db_id| {
-        store.merge_open(db_id, base_obs, theirs_obs, marker_content, &json)
+        store.merge_open(
+            rune_db::DocId(db_id),
+            base_obs,
+            theirs_obs,
+            marker_content,
+            &json,
+        )
     });
 }
 
@@ -53,12 +59,14 @@ pub(super) fn enqueue_merge_progress(
         return;
     };
     enqueue(app, doc, |store, db_id| {
-        store.merge_progress(db_id, marker_content, &json)
+        store.merge_progress(rune_db::DocId(db_id), marker_content, &json)
     });
 }
 
 pub(super) fn enqueue_merge_close(app: &mut App, doc: DocumentId, state: MergeRowState) {
-    enqueue(app, doc, |store, db_id| store.merge_close(db_id, state));
+    enqueue(app, doc, |store, db_id| {
+        store.merge_close(rune_db::DocId(db_id), state)
+    });
 }
 
 fn enqueue(

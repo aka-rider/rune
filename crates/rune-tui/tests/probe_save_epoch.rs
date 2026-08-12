@@ -29,7 +29,7 @@ use merge_common::{
 
 fn fake_version(hash: &str) -> Version {
     Version {
-        hash: hash.to_string(),
+        hash: rune_db::BlobHash(hash.to_string()),
         obs: None,
     }
 }

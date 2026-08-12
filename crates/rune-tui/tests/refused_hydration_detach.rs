@@ -34,7 +34,7 @@ fn refused_hydration_detaches() {
     let issued_version = app.doc(id).unwrap().buffer.version();
 
     let load_result = rune_db::LoadResult {
-        doc_id: db_id,
+        doc_id: rune_db::DocId(db_id),
         renamed_from: None,
         disk_content: REFUSING_DISK.to_string(),
         recovered: REFUSING_RECOVERED.to_string(),
@@ -43,14 +43,14 @@ fn refused_hydration_detaches() {
             kind: rune_db::SyncKind::Clean,
             ancestor: None,
             ours: rune_db::Version {
-                hash: String::new(),
+                hash: rune_db::BlobHash(String::new()),
                 obs: None,
             },
             theirs: None,
         },
         nlink: 1,
-        saved_obs: Some(99),
-        bridge_seq: Some(1),
+        saved_obs: rune_db::ObsId::new(99),
+        bridge_seq: Some(rune_db::Seq(1)),
         resumable_merge: None,
     };
 

@@ -141,7 +141,7 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
         .as_ref()
         .unwrap()
         .store
-        .probe(app.doc(id).unwrap().doc_db().unwrap().db_id)
+        .probe(rune_db::DocId(app.doc(id).unwrap().doc_db().unwrap().db_id))
         .expect("enqueue probe");
     let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
         DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == probe_op,

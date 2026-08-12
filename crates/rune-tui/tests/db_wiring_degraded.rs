@@ -278,7 +278,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         .expect("open in-memory store");
     let bridge = rune_tui::db::DbBridge::bootstrap();
     let db = Db::new(store, bridge, true);
-    let doc_db = DocDb::new(1, true, 0);
+    let doc_db = DocDb::new(1, true, rune_db::Seq(0));
 
     let mut app = App::new(
         Buffer::new("hi"),

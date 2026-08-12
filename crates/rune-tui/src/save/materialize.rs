@@ -67,13 +67,20 @@ pub(super) fn materialize_now(
         return;
     };
     let expect_obs = binding.expect_obs;
-    let Some(db) = app.db.as_ref() else { return };
-    let target = if bind_new {
-        rune_db::MaterializeTarget::BindNew
-    } else {
-        rune_db::MaterializeTarget::Existing { expect: expect_obs }
+    let target = match (bind_new, expect_obs) {
+        (true, _) => rune_db::MaterializeTarget::BindNew,
+        (false, Some(expect)) => rune_db::MaterializeTarget::Existing { expect },
+        (false, None) => {
+            materialize_ack::on_store_failure(
+                app,
+                format!("materialize: document {id:?} bound to db_id {db_id} has no CAS baseline"),
+            );
+            fall_back_to_direct(app, id, path, version, content, effects);
+            return;
+        }
     };
-    let result = db.store.materialize_prepare(db_id, target);
+    let Some(db) = app.db.as_ref() else { return };
+    let result = db.store.materialize_prepare(rune_db::DocId(db_id), target);
 
     match result {
         Ok(op_id) => {
@@ -86,7 +93,7 @@ pub(super) fn materialize_now(
                         path,
                         bind_new,
                         db_id,
-                        seq: last_known_seq,
+                        seq: last_known_seq.0,
                         mode,
                         bind_target: None,
                     },
@@ -155,11 +162,11 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     let seq = app
         .doc(id)
         .and_then(|d| d.doc_db())
-        .map(|d| d.last_known_seq)
+        .map(|d| d.last_known_seq.0)
         .unwrap_or(0);
     let result = db
         .store
-        .materialize_prepare(db_id, rune_db::MaterializeTarget::BindNew);
+        .materialize_prepare(rune_db::DocId(db_id), rune_db::MaterializeTarget::BindNew);
 
     match result {
         Ok(op_id) => {

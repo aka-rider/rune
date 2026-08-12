@@ -11,6 +11,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 
 use crate::diag::background_note;
+use crate::ids::SessionId;
 use crate::retry;
 use crate::store::LivenessCheckFn;
 use crate::writer::{DbEvent, OnEvent, OpKind, WriteOp, WriterHandle};
@@ -37,7 +38,7 @@ impl WriterHandle {
     /// this to force two real processes into a genuine TRUNCATE race).
     /// Best-effort: a full queue (a wedged writer) just skips the
     /// housekeeping — shutdown itself must never block or fail.
-    pub fn shutdown(self, session_id: i64, liveness_check: LivenessCheckFn) {
+    pub fn shutdown(self, session_id: SessionId, liveness_check: LivenessCheckFn) {
         let WriterHandle { sender, thread } = self;
         let _ = sender.try_send(WriteOp {
             id: 0,
@@ -108,7 +109,7 @@ pub(crate) fn run_idle_maintenance(conn: &mut Connection) {
 /// simultaneously both attempt TRUNCATE ... swallowed by design").
 pub(crate) fn run_shutdown_maintenance(
     conn: &mut Connection,
-    session_id: i64,
+    session_id: SessionId,
     is_alive: &dyn Fn(i64, &str) -> bool,
 ) {
     if is_last_live_session(conn, session_id, is_alive) {
@@ -148,7 +149,7 @@ pub(crate) fn run_shutdown_maintenance(
 /// a `sessions` table this call couldn't even read would not be.
 fn is_last_live_session(
     conn: &Connection,
-    session_id: i64,
+    session_id: SessionId,
     is_alive: &dyn Fn(i64, &str) -> bool,
 ) -> bool {
     let others: Vec<(i64, String)> = match conn
@@ -262,7 +263,7 @@ mod tests {
         }
         assert!(swept, "idle timer must eventually sweep the orphaned blob");
 
-        handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+        handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -309,7 +310,7 @@ mod tests {
         // only returns once the writer thread's loop has actually exited —
         // this call itself is the regression assertion (it must return at
         // all, not hang).
-        handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+        handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
 
         let events = events.lock().unwrap_or_else(|p| p.into_inner());
         assert!(

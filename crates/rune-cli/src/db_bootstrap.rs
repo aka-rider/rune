@@ -23,10 +23,8 @@ pub(crate) struct DbBootstrap {
     /// The CAS baseline `main` joins `App::file_bindings` with for `doc_db`'s
     /// `db_id`, the same shared-per-file entry every later document bound to
     /// this `db_id` reads and advances — never installed directly on
-    /// `doc_db` itself. `Some` alongside `doc_db` on every
-    /// construction path: a genuine baseline for a real `Load`, or `0` (the
-    /// same fabricated, never-queried value `doc_db`'s own `bind_new: true`
-    /// paths use) for a fresh scratch row.
+    /// `doc_db` itself. A genuine baseline for a real `Load`, `None` for a
+    /// fresh scratch row (`doc_db`'s own `bind_new: true`).
     pub(crate) expect_obs: Option<rune_db::ObsId>,
     /// `Some` whenever `rune-db`'s `Load` returned reconstructed content
     /// (which may or may not differ from the buffer `load_sighting` already
@@ -222,7 +220,7 @@ pub(crate) fn bootstrap_db(
 
     let db = Db::new(store, bridge, degraded_at_open);
     let doc_db = DocDb::new(
-        load_result.doc_id,
+        load_result.doc_id.0,
         false, // bind_new: the caller only reaches here when `sighting` confirms the target exists
         // last_known_seq: `load` may have already durably journaled a
         // cross-session-inheritance bridge edit under THIS session's own
@@ -231,7 +229,7 @@ pub(crate) fn bootstrap_db(
         // session journals nothing else during `load`). `0` would silently
         // regress behind it for any `move_undo_pos`/`materialize` issued
         // before the first ordinary `AppendEdit` ack lands (finding 8).
-        load_result.bridge_seq.unwrap_or(0),
+        load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
     );
 
     let banner = if degraded_at_open {
@@ -343,7 +341,7 @@ pub(crate) fn bootstrap_untitled_db(
 
     let mut scratch_docs = Vec::new();
     for db_id in recoverable_ids {
-        match blocking_call(&bridge, || store.reconstruct_scratch(db_id)) {
+        match blocking_call(&bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
             Ok(OpOutcome::Reconstructed(Some(content))) if !content.trim().is_empty() => {
                 scratch_docs.push(ScratchDoc { db_id, content });
             }
@@ -410,10 +408,10 @@ pub(crate) fn bootstrap_untitled_db(
 /// the same no-clobber publish every named draft already uses. Journaling
 /// is live from the first keystroke.
 ///
-/// `expect_obs: 0` / `last_known_seq: 0` mirror `open::adopt_scratch_doc`'s
+/// `expect_obs: None` / `last_known_seq: 0` mirror `open::adopt_scratch_doc`'s
 /// own scratch binding: `prepare_materialize` short-circuits to
-/// `MaterializePrep::Create` on `BindNew`, so the fabricated `ObsId` is
-/// never queried.
+/// `MaterializePrep::Create` on `BindNew`, so there is no CAS baseline to
+/// seed in the first place.
 ///
 /// Deliberately does not sweep other sessions' empty scratch rows the way
 /// [`bootstrap_untitled_db`] does — a launch this common widens the window
@@ -448,7 +446,7 @@ pub(crate) fn bootstrap_new_file(
     };
 
     let db = Db::new(store, bridge, degraded_at_open);
-    let doc_db = DocDb::new(db_id, /* bind_new */ true, 0);
+    let doc_db = DocDb::new(db_id, /* bind_new */ true, rune_db::Seq(0));
     let banner = if degraded_at_open {
         Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
     } else {
@@ -458,7 +456,7 @@ pub(crate) fn bootstrap_new_file(
     DbBootstrap {
         db: Some(db),
         doc_db: Some(doc_db),
-        expect_obs: Some(0),
+        expect_obs: None,
         recovered_content: None,
         sync_kind: None,
         nlink: None,

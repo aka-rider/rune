@@ -38,6 +38,7 @@ use crate::Error;
 use crate::adopt;
 use crate::bracket;
 use crate::confirmation::Confirmation;
+use crate::ids::{DocId, SessionId};
 use crate::obs_origin::ObsOrigin;
 use crate::observation;
 use crate::retry;
@@ -51,8 +52,8 @@ use crate::sync::{self, SyncKind, SyncState, Version};
 pub fn probe(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     now: SystemTime,
 ) -> Result<SyncState, Error> {
     let path: String = retry::with_retry(conn, |tx| {
@@ -147,7 +148,7 @@ pub fn probe(
             let pos = retry::with_retry(conn, |tx| {
                 crate::journal::current_seq(tx, session_id, doc_id)
             })?;
-            let _ = adopt::adopt_equal(conn, session_id, doc_id, theirs_obs.id, pos, now)?;
+            let _ = adopt::adopt_equal(conn, session_id, doc_id, theirs_obs.id, pos.0, now)?;
         }
     }
 
@@ -183,7 +184,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
 
         let state = probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe");
         assert_eq!(state.kind, SyncKind::Clean);
@@ -200,7 +201,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
 
         let err =
             probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect_err("must error");
@@ -225,7 +226,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
 
         let count = |conn: &Connection| -> i64 {
             conn.query_row(
@@ -328,7 +329,7 @@ mod tests {
             session_id,
             doc_id,
             disk_obs,
-            Some(head),
+            Some(head.0),
             SystemTime::now(),
         )
         .expect("resolve_adopt");
@@ -361,7 +362,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
 
         // Seed an UNCONFIRMED observation whose stat facts already match
         // the live file exactly — the only way the short-circuit could ever
@@ -420,7 +421,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
 
         // Journal reconstruction at head must equal disk content ("hello")
         // for auto-adopt to trigger — journal an edit that produces it.

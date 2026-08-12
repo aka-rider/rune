@@ -7,6 +7,8 @@ use crate::app::App;
 use crate::db::DocDb;
 use crate::document::{DocumentId, Replica, ReplicaStep};
 use crate::messages;
+#[cfg(test)]
+use rune_db::BlobHash;
 use rune_db::LoadResult;
 
 /// The reaction to a `Load` op's ack — routed from
@@ -68,7 +70,7 @@ pub fn handle_load_ack(
     };
 
     if binding_only {
-        app.rebaseline_file_binding(load_result.doc_id, expect_obs);
+        app.rebaseline_file_binding(load_result.doc_id.0, expect_obs);
         let pending = install_doc_db(app, id, &load_result, 0);
         crate::db_enqueue::replay_pending(app, id, pending);
         return;
@@ -127,7 +129,7 @@ pub fn handle_load_ack(
     // save has already advanced. Done BEFORE installing the DocDb below: the
     // join itself never touches `id`'s own document, so there is no reason
     // to interleave it with the borrow that does.
-    app.install_or_join_file_binding(load_result.doc_id, expect_obs);
+    app.install_or_join_file_binding(load_result.doc_id.0, Some(expect_obs));
     let pending = install_doc_db(app, id, &load_result, u8::from(adopted));
     crate::db_enqueue::replay_pending(app, id, pending);
     let Some(doc) = app.doc_mut(id) else { return };
@@ -171,9 +173,9 @@ fn install_doc_db(
     };
     let pending = doc.replica.take_pending();
     let mut doc_db = DocDb::new(
-        load_result.doc_id,
+        load_result.doc_id.0,
         false,
-        load_result.bridge_seq.unwrap_or(0),
+        load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
     );
     doc_db.undo_base = undo_base;
     doc.replica = Replica::Bound(doc_db);
@@ -218,7 +220,7 @@ pub fn warn_hard_links(app: &mut App, nlink: i64) {
 /// already resolved the ack's op id to `id`. `id` no longer live (an ack
 /// racing a future close) is a correct, silent drop — the document it would
 /// have updated is already gone.
-pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
+pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: rune_db::Seq) {
     let Some(doc) = app.doc_mut(id) else { return };
     if let Some(doc_db) = doc.doc_db_mut() {
         doc_db.resolve_append_ack(seq);
@@ -230,9 +232,7 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
 /// document binds to it exactly like a recovered launch-time scratch draft
 /// does (`rune-cli::open::adopt_scratch_doc`), `bind_new` true because a
 /// scratch row has never been bound to a real file, so its NEXT save must
-/// still go through the create-only path. `expect_obs` is `0`, the same
-/// fabricated, never-queried `ObsId` `adopt_scratch_doc` uses — `bind_new`
-/// skips the CAS-baseline lookup entirely. `id` no longer live (the draft
+/// still go through the create-only path. `id` no longer live (the draft
 /// was closed while this op was still in flight) is a correct, silent
 /// drop — `close_now` already sweeps `db_ops` of any entry pointing at a
 /// closed document, but a race between that sweep and this ack landing is
@@ -243,8 +243,8 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
 pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
     let Some(doc) = app.doc_mut(id) else { return };
     let pending = doc.replica.take_pending();
-    doc.replica = Replica::Bound(DocDb::new(row_id, true, 0));
-    app.install_or_join_file_binding(row_id, 0);
+    doc.replica = Replica::Bound(DocDb::new(row_id, true, rune_db::Seq(0)));
+    app.install_or_join_file_binding(row_id, None);
     crate::db_enqueue::replay_pending(app, id, pending);
 }
 
@@ -283,8 +283,10 @@ mod tests {
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
 
-        app.doc_mut(id_a).expect("doc a exists").replica = Replica::Bound(DocDb::new(1, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").replica = Replica::Bound(DocDb::new(2, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").replica =
+            Replica::Bound(DocDb::new(1, true, rune_db::Seq(0)));
+        app.doc_mut(id_b).expect("doc b exists").replica =
+            Replica::Bound(DocDb::new(2, true, rune_db::Seq(0)));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -307,9 +309,9 @@ mod tests {
         // Simulate the acks arriving in reverse enqueue order — routing
         // must key off the op id, not arrival order.
         let doc_for_b = app.db_ops.remove(&op_for_b).expect("routes to doc b").doc;
-        resolve_append_ack(&mut app, doc_for_b, 42);
+        resolve_append_ack(&mut app, doc_for_b, rune_db::Seq(42));
         let doc_for_a = app.db_ops.remove(&op_for_a).expect("routes to doc a").doc;
-        resolve_append_ack(&mut app, doc_for_a, 7);
+        resolve_append_ack(&mut app, doc_for_a, rune_db::Seq(7));
 
         assert_eq!(
             app.doc(id_a)
@@ -317,7 +319,7 @@ mod tests {
                 .doc_db()
                 .expect("doc a has a DocDb")
                 .last_known_seq,
-            7
+            rune_db::Seq(7)
         );
         assert_eq!(
             app.doc(id_b)
@@ -325,7 +327,7 @@ mod tests {
                 .doc_db()
                 .expect("doc b has a DocDb")
                 .last_known_seq,
-            42
+            rune_db::Seq(42)
         );
         assert!(app.db_ops.is_empty());
     }
@@ -340,8 +342,10 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").replica = Replica::Bound(DocDb::new(1, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").replica = Replica::Bound(DocDb::new(2, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").replica =
+            Replica::Bound(DocDb::new(1, true, rune_db::Seq(0)));
+        app.doc_mut(id_b).expect("doc b exists").replica =
+            Replica::Bound(DocDb::new(2, true, rune_db::Seq(0)));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         let op_for_a = *app
@@ -356,7 +360,7 @@ mod tests {
             &mut app,
             crate::runtime::Msg::Db(DbEvent::Ok {
                 id: op_for_a,
-                result: OpOutcome::Seq(99),
+                result: OpOutcome::Seq(rune_db::Seq(99)),
             }),
             &mut effects,
         );
@@ -371,7 +375,7 @@ mod tests {
                 .doc_db()
                 .expect("doc a has a DocDb")
                 .last_known_seq,
-            99
+            rune_db::Seq(99)
         );
     }
 
@@ -390,8 +394,10 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").replica = Replica::Bound(DocDb::new(1, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").replica = Replica::Bound(DocDb::new(2, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").replica =
+            Replica::Bound(DocDb::new(1, true, rune_db::Seq(0)));
+        app.doc_mut(id_b).expect("doc b exists").replica =
+            Replica::Bound(DocDb::new(2, true, rune_db::Seq(0)));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -428,7 +434,7 @@ mod tests {
         let issued_version = app.doc(id).expect("doc exists").buffer.version();
 
         let load_result = rune_db::LoadResult {
-            doc_id: 1,
+            doc_id: rune_db::DocId(1),
             renamed_from: None,
             disk_content: "on disk".to_string(),
             recovered: "recovered draft".to_string(),
@@ -437,13 +443,13 @@ mod tests {
                 kind: rune_db::SyncKind::BufferAhead,
                 ancestor: None,
                 ours: rune_db::Version {
-                    hash: String::new(),
+                    hash: BlobHash(String::new()),
                     obs: None,
                 },
                 theirs: None,
             },
             nlink: 1,
-            saved_obs: Some(1),
+            saved_obs: rune_db::ObsId::new(1),
             bridge_seq: None,
             resumable_merge: None,
         };
@@ -475,12 +481,13 @@ mod tests {
         // Starts `bind_new: true`, on a DIFFERENT `db_id` than the ack
         // below carries — the exact shape the lost-create-race hand-off
         // leaves behind right before its own `binding_only` `Load` lands.
-        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(3, true, 0));
-        app.install_or_join_file_binding(3, 0);
+        app.doc_mut(id).expect("doc exists").replica =
+            Replica::Bound(DocDb::new(3, true, rune_db::Seq(0)));
+        app.install_or_join_file_binding(3, None);
         let issued_version = app.doc(id).expect("doc exists").buffer.version();
 
         let load_result = rune_db::LoadResult {
-            doc_id: 7,
+            doc_id: rune_db::DocId(7),
             renamed_from: None,
             disk_content: "on disk".to_string(),
             recovered: "a stale recovery row".to_string(),
@@ -489,14 +496,14 @@ mod tests {
                 kind: rune_db::SyncKind::Clean,
                 ancestor: None,
                 ours: rune_db::Version {
-                    hash: String::new(),
+                    hash: BlobHash(String::new()),
                     obs: None,
                 },
                 theirs: None,
             },
             nlink: 1,
-            saved_obs: Some(42),
-            bridge_seq: Some(9),
+            saved_obs: rune_db::ObsId::new(42),
+            bridge_seq: Some(rune_db::Seq(9)),
             resumable_merge: None,
         };
 
@@ -520,7 +527,7 @@ mod tests {
             !doc_db.bind_new,
             "a binding_only ack always installs bind_new: false"
         );
-        assert_eq!(doc_db.last_known_seq, 9);
+        assert_eq!(doc_db.last_known_seq, rune_db::Seq(9));
         assert_eq!(
             app.doc(id).expect("doc exists").last_sync,
             None,
@@ -528,7 +535,7 @@ mod tests {
         );
         assert_eq!(
             app.file_binding(7).expect("binding exists").expect_obs,
-            42,
+            Some(rune_db::ObsId::new(42).expect("nonzero")),
             "the shared per-file baseline must advance for the ack's OWN db_id"
         );
     }
@@ -623,8 +630,8 @@ mod tests {
         );
         let id = app.active;
         app.doc_mut(id).expect("doc exists").replica =
-            Replica::Bound(DocDb::new(load.doc_id, false, 0));
-        app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
+            Replica::Bound(DocDb::new(load.doc_id.0, false, rune_db::Seq(0)));
+        app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
 
         // Simulates exactly the state a `saved: None` `MaterializeRecord`
         // ack leaves behind (`materialize_ack.rs`'s own `record_outcome`
@@ -632,7 +639,7 @@ mod tests {
         // produces it for real would make this test racy against the
         // writer thread (same rationale `force_save.rs`'s own lost-
         // bookkeeping fixture states).
-        app.file_binding_mut(load.doc_id)
+        app.file_binding_mut(load.doc_id.0)
             .expect("binding exists")
             .pending_rebaseline_hash = Some(rune_db::hash_bytes(b"hello"));
 
@@ -675,10 +682,11 @@ mod tests {
         );
 
         let binding = app
-            .file_binding(load.doc_id)
+            .file_binding(load.doc_id.0)
             .expect("the shared binding must survive a binding_only re-baseline");
         assert_eq!(
-            binding.expect_obs, fresh_obs,
+            binding.expect_obs,
+            Some(fresh_obs),
             "expect_obs must advance to the re-baseline Load's own fresh observation"
         );
         assert!(

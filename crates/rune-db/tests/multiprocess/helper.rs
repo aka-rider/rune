@@ -49,7 +49,7 @@ fn expect_ok(rx: &mpsc::Receiver<DbEvent>, id: u64) {
 /// ready/go marker handshake so the storm genuinely overlaps in time.
 pub(crate) fn append_storm() {
     let path = db_path();
-    let doc_id: i64 = env_var("RUNE_DB_DOC_ID").parse().expect("doc id");
+    let doc_id = rune_db::DocId(env_var("RUNE_DB_DOC_ID").parse().expect("doc id"));
     let count: usize = env_var("RUNE_DB_COUNT").parse().expect("count");
     let ready = PathBuf::from(env_var("RUNE_DB_READY_MARKER"));
     let go = PathBuf::from(env_var("RUNE_DB_GO_MARKER"));
@@ -89,7 +89,7 @@ pub(crate) fn append_storm() {
 /// kill").
 pub(crate) fn append_storm_checkpoint() {
     let path = db_path();
-    let doc_id: i64 = env_var("RUNE_DB_DOC_ID").parse().expect("doc id");
+    let doc_id = rune_db::DocId(env_var("RUNE_DB_DOC_ID").parse().expect("doc id"));
     let count: usize = env_var("RUNE_DB_COUNT").parse().expect("count");
     let checkpoint: usize = env_var("RUNE_DB_CHECKPOINT").parse().expect("checkpoint");
     let session_marker = PathBuf::from(env_var("RUNE_DB_SESSION_MARKER"));
@@ -166,7 +166,7 @@ pub(crate) fn race_close() {
     std::process::exit(0);
 }
 
-fn recv_seq(rx: &mpsc::Receiver<DbEvent>, id: u64) -> i64 {
+fn recv_seq(rx: &mpsc::Receiver<DbEvent>, id: u64) -> rune_db::Seq {
     match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {
             id: got,
@@ -193,7 +193,7 @@ fn recv_seq(rx: &mpsc::Receiver<DbEvent>, id: u64) -> i64 {
 /// to fail or corrupt.
 pub(crate) fn gc_editor() {
     let path = db_path();
-    let doc_id: i64 = env_var("RUNE_DB_DOC_ID").parse().expect("doc id");
+    let doc_id = rune_db::DocId(env_var("RUNE_DB_DOC_ID").parse().expect("doc id"));
     let count: usize = env_var("RUNE_DB_COUNT").parse().expect("count");
     let ready = PathBuf::from(env_var("RUNE_DB_READY_MARKER"));
     let go = PathBuf::from(env_var("RUNE_DB_GO_MARKER"));

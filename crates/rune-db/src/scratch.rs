@@ -12,6 +12,7 @@ use rusqlite::{Connection, params};
 
 use crate::Error;
 use crate::doc_kind::DocKind;
+use crate::ids::DocId;
 use crate::inherit::{is_session_alive, most_recent_session_for_doc};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
@@ -22,14 +23,14 @@ use crate::session::format_rfc3339_nanos;
 /// permits `'scratch'`, and both unique indexes are partial (`WHERE path !=
 /// ''`, `WHERE inode IS NOT NULL`), so many `path=''` rows are legal side by
 /// side.
-pub fn create_scratch(conn: &mut Connection, now: SystemTime) -> Result<i64, Error> {
+pub fn create_scratch(conn: &mut Connection, now: SystemTime) -> Result<DocId, Error> {
     let at = format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
         tx.execute(
             "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('',?1,?2,?2)",
             params![DocKind::Scratch.as_str(), at],
         )?;
-        Ok(tx.last_insert_rowid())
+        Ok(DocId(tx.last_insert_rowid()))
     })
 }
 
@@ -97,7 +98,7 @@ pub fn recoverable_scratch(conn: &Connection, exclude_id: i64) -> Result<Vec<i64
 pub fn reconstruct_scratch(
     conn: &mut Connection,
     liveness_check: &dyn Fn(i64, &str) -> bool,
-    doc_id: i64,
+    doc_id: DocId,
 ) -> Result<Option<String>, Error> {
     let other_session_id = retry::with_retry(conn, |tx| most_recent_session_for_doc(tx, doc_id))?;
     let Some(other_session_id) = other_session_id else {
@@ -171,8 +172,8 @@ mod tests {
         let this_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("this session");
 
-        let ids = recoverable_scratch(&conn, this_session).expect("recoverable_scratch");
-        assert_eq!(ids, vec![doc_id], "the dead session's draft must surface");
+        let ids = recoverable_scratch(&conn, this_session.0).expect("recoverable_scratch");
+        assert_eq!(ids, vec![doc_id.0], "the dead session's draft must surface");
 
         let reconstructed =
             reconstruct_scratch(&mut conn, &always_dead, doc_id).expect("reconstruct_scratch");
@@ -202,7 +203,7 @@ mod tests {
             tx.commit().expect("commit");
         }
 
-        let deleted = gc_empty_scratch(&mut conn, keep_id).expect("gc");
+        let deleted = gc_empty_scratch(&mut conn, keep_id.0).expect("gc");
         assert_eq!(deleted, 1, "only the truly empty scratch must be swept");
 
         let remaining_ids: Vec<i64> = conn
@@ -212,9 +213,9 @@ mod tests {
             .expect("query")
             .collect::<Result<Vec<i64>, _>>()
             .expect("collect");
-        assert!(remaining_ids.contains(&keep_id));
-        assert!(remaining_ids.contains(&with_history_id));
-        assert!(!remaining_ids.contains(&empty_id));
+        assert!(remaining_ids.contains(&keep_id.0));
+        assert!(remaining_ids.contains(&with_history_id.0));
+        assert!(!remaining_ids.contains(&empty_id.0));
     }
 
     /// The load-bearing filter: an evicted BOUND row (a real file whose path
@@ -240,7 +241,7 @@ mod tests {
                 &tx,
                 session_id,
                 SystemTime::now(),
-                evicted_id,
+                DocId(evicted_id),
                 &text_insert("real file content"),
                 &[],
                 &[],
@@ -256,7 +257,7 @@ mod tests {
         );
 
         let keep_id = create_scratch(&mut conn, SystemTime::now()).expect("keep");
-        gc_empty_scratch(&mut conn, keep_id).expect("gc");
+        gc_empty_scratch(&mut conn, keep_id.0).expect("gc");
         let still_present: bool = conn
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",

@@ -359,7 +359,7 @@ pub struct DocDb {
     /// this field — see `rune_db::OpKind::MoveUndoPos`/`OpKind::
     /// CreateSnapshot`'s own doc comments for why an app-side estimate can
     /// never be exact for either.
-    pub last_known_seq: i64,
+    pub last_known_seq: rune_db::Seq,
     /// Bumped on every journal mutation; the debounce token for the 2s
     /// snapshot-autosave timer (plan WP5.S6) — a `Msg::SnapshotDue`
     /// arriving with a stale generation means a later edit already
@@ -377,7 +377,7 @@ pub struct DocDb {
 }
 
 impl DocDb {
-    pub fn new(db_id: i64, bind_new: bool, last_known_seq: i64) -> DocDb {
+    pub fn new(db_id: i64, bind_new: bool, last_known_seq: rune_db::Seq) -> DocDb {
         DocDb {
             db_id,
             bind_new,
@@ -391,7 +391,7 @@ impl DocDb {
     /// as a lagging estimate of "the durable journal's current head" for
     /// `materialize`'s informational `seq` tag (`last_known_seq`'s own doc
     /// comment); `MoveUndoPos`/`CreateSnapshot` no longer read this at all.
-    pub(crate) fn resolve_append_ack(&mut self, seq: i64) {
+    pub(crate) fn resolve_append_ack(&mut self, seq: rune_db::Seq) {
         self.last_known_seq = self.last_known_seq.max(seq);
     }
 }
@@ -413,7 +413,7 @@ pub struct FileBinding {
     /// from a terminal merge/discard adoption
     /// (`merge::landing::advance_expect_obs`). Seeded from the first
     /// `LoadResult::saved_obs` this `db_id` ever saw.
-    pub expect_obs: ObsId,
+    pub expect_obs: Option<ObsId>,
     /// Set when a write physically committed but the observation that would
     /// have advanced `expect_obs` was lost to a failing writer — `expect_obs`
     /// itself is left untouched (it may be the only row this session has
@@ -450,7 +450,7 @@ pub struct FileBinding {
 }
 
 impl FileBinding {
-    pub fn new(expect_obs: ObsId) -> FileBinding {
+    pub fn new(expect_obs: Option<ObsId>) -> FileBinding {
         FileBinding {
             expect_obs,
             pending_rebaseline_hash: None,
@@ -471,7 +471,7 @@ impl crate::app::App {
     /// never observe a baseline OLDER than what a sibling document's own
     /// earlier save already advanced the shared entry to, so joining rather
     /// than reseeding never regresses it.
-    pub fn install_or_join_file_binding(&mut self, db_id: i64, seed_expect_obs: ObsId) {
+    pub fn install_or_join_file_binding(&mut self, db_id: i64, seed_expect_obs: Option<ObsId>) {
         if let std::collections::hash_map::Entry::Vacant(vacant) = self.file_bindings.entry(db_id) {
             vacant.insert(FileBinding::new(seed_expect_obs));
         }
@@ -496,10 +496,10 @@ impl crate::app::App {
         self.file_bindings
             .entry(db_id)
             .and_modify(|binding| {
-                binding.expect_obs = obs;
+                binding.expect_obs = Some(obs);
                 binding.pending_rebaseline_hash = None;
             })
-            .or_insert_with(|| FileBinding::new(obs));
+            .or_insert_with(|| FileBinding::new(Some(obs)));
     }
 
     pub fn file_binding(&self, db_id: i64) -> Option<&FileBinding> {

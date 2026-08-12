@@ -3,8 +3,8 @@ use std::time::SystemTime;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::Error;
+use crate::ids::{DocId, ObsId, SessionId};
 use crate::inherit::is_session_alive;
-use crate::observation::ObsId;
 use crate::retry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,8 +31,8 @@ pub struct ResumableMerge {
 }
 
 pub(crate) struct MergeOpenArgs<'a> {
-    pub doc_id: i64,
-    pub session_id: i64,
+    pub doc_id: DocId,
+    pub session_id: SessionId,
     pub base_obs: Option<ObsId>,
     pub theirs_obs: ObsId,
     pub marker_content: &'a str,
@@ -74,8 +74,8 @@ pub(crate) fn merge_open(
 pub(crate) fn merge_progress(
     conn: &mut Connection,
     liveness_check: &dyn Fn(i64, &str) -> bool,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     marker_content: &str,
     blocks_json: &str,
 ) -> Result<(), Error> {
@@ -98,8 +98,8 @@ pub(crate) fn merge_progress(
 
 pub(crate) fn merge_close(
     conn: &mut Connection,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
     state: MergeRowState,
 ) -> Result<(), Error> {
     retry::with_retry(conn, |tx| {
@@ -113,7 +113,7 @@ pub(crate) fn merge_close(
 pub(crate) fn resume_candidate(
     tx: &Transaction<'_>,
     liveness_check: &dyn Fn(i64, &str) -> bool,
-    doc_id: i64,
+    doc_id: DocId,
     recovered_hash: &str,
 ) -> Result<Option<ResumableMerge>, Error> {
     for (row_id, session_id) in active_rows_newest_first(tx, doc_id)? {
@@ -137,21 +137,24 @@ pub(crate) fn resume_candidate(
     Ok(None)
 }
 
-fn active_rows_newest_first(tx: &Transaction<'_>, doc_id: i64) -> Result<Vec<(i64, i64)>, Error> {
+fn active_rows_newest_first(
+    tx: &Transaction<'_>,
+    doc_id: DocId,
+) -> Result<Vec<(i64, SessionId)>, Error> {
     let mut stmt = tx.prepare(&format!(
         "SELECT id, session_id FROM merges WHERE doc_id=?1 AND state='{}' ORDER BY id DESC",
         MergeRowState::Active.as_str()
     ))?;
     let rows = stmt
         .query_map(params![doc_id], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<Result<Vec<(i64, i64)>, rusqlite::Error>>()?;
+        .collect::<Result<Vec<(i64, SessionId)>, rusqlite::Error>>()?;
     Ok(rows)
 }
 
 fn newest_active_owned(
     tx: &Transaction<'_>,
-    doc_id: i64,
-    session_id: i64,
+    doc_id: DocId,
+    session_id: SessionId,
 ) -> Result<Option<i64>, Error> {
     tx.query_row(
         &format!(
@@ -169,7 +172,7 @@ fn newest_active_owned(
 fn newest_active_dead(
     tx: &Transaction<'_>,
     liveness_check: &dyn Fn(i64, &str) -> bool,
-    doc_id: i64,
+    doc_id: DocId,
 ) -> Result<Option<i64>, Error> {
     for (row_id, session_id) in active_rows_newest_first(tx, doc_id)? {
         if !is_session_alive(tx, liveness_check, session_id)? {
@@ -201,16 +204,16 @@ mod tests {
         conn
     }
 
-    fn seed_doc(conn: &Connection) -> i64 {
+    fn seed_doc(conn: &Connection) -> DocId {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        conn.last_insert_rowid()
+        DocId(conn.last_insert_rowid())
     }
 
-    fn seed_observation(conn: &mut Connection, doc_id: i64, session_id: i64) -> ObsId {
+    fn seed_observation(conn: &mut Connection, doc_id: DocId, session_id: SessionId) -> ObsId {
         retry::with_retry(conn, |tx| {
             let hash = crate::blob::put_blob(tx, b"theirs bytes")?;
             observation::record_observation(
@@ -233,8 +236,8 @@ mod tests {
     fn open_merge(
         conn: &mut Connection,
         liveness: &dyn Fn(i64, &str) -> bool,
-        doc_id: i64,
-        session_id: i64,
+        doc_id: DocId,
+        session_id: SessionId,
         theirs_obs: ObsId,
         marker: &str,
         blocks: &str,
@@ -255,13 +258,13 @@ mod tests {
         .expect("merge_open");
     }
 
-    fn row_states(conn: &Connection, doc_id: i64) -> Vec<(i64, String)> {
+    fn row_states(conn: &Connection, doc_id: DocId) -> Vec<(SessionId, String)> {
         let mut stmt = conn
             .prepare("SELECT session_id, state FROM merges WHERE doc_id=?1 ORDER BY id")
             .expect("prepare");
         stmt.query_map(params![doc_id], |r| Ok((r.get(0)?, r.get(1)?)))
             .expect("query")
-            .collect::<Result<Vec<(i64, String)>, _>>()
+            .collect::<Result<Vec<(SessionId, String)>, _>>()
             .expect("rows")
     }
 

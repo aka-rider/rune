@@ -252,7 +252,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
         .insert(op_id, PendingOp::load(id, issued_version, false));
 
     let load_result = LoadResult {
-        doc_id: 1,
+        doc_id: rune_db::DocId(1),
         renamed_from: None,
         disk_content: "hello".to_string(),
         recovered: "hello".to_string(),
@@ -261,7 +261,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
             kind: SyncKind::Clean,
             ancestor: None,
             ours: Version {
-                hash: String::new(),
+                hash: rune_db::BlobHash(String::new()),
                 obs: None,
             },
             theirs: None,
@@ -318,7 +318,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
         .insert(op_id, PendingOp::load(id, issued_version, false));
 
     let load_result = LoadResult {
-        doc_id: 1,
+        doc_id: rune_db::DocId(1),
         renamed_from: None,
         disk_content: disk_content.to_string(),
         // A suspicious "recovered" empty string — the exact destructive
@@ -329,13 +329,13 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
             kind: SyncKind::Clean,
             ancestor: None,
             ours: Version {
-                hash: String::new(),
+                hash: rune_db::BlobHash(String::new()),
                 obs: None,
             },
             theirs: None,
         },
         nlink: 1,
-        saved_obs: Some(1),
+        saved_obs: rune_db::ObsId::new(1),
         bridge_seq: None,
         resumable_merge: None,
     };

@@ -230,18 +230,19 @@ mod tests {
 
     use super::*;
     use crate::confirmation::Confirmation;
+    use crate::ids::{DocId, SessionId};
     use crate::obs_origin::ObsOrigin;
     use crate::observation::{self, ObservationMeta, StatFacts};
 
     /// Seeds one `documents` row, one `sessions` row, and one `blobs` row —
     /// the minimum an `observations` row's FKs need.
-    fn seed_minimal(conn: &Connection) -> (i64, i64, String) {
+    fn seed_minimal(conn: &Connection) -> (DocId, SessionId, String) {
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
         let session_id =
             crate::session::establish_session(conn, SystemTime::now()).expect("seed session");
         let hash = crate::blob::put_blob(conn, b"content").expect("seed blob");

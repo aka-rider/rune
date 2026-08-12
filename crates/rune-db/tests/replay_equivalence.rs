@@ -36,7 +36,10 @@ use rusqlite::Connection;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::undo::{Journal, Step as CoreStep, apply_inverse, reapply};
-use rune_db::{append_edit, current_seq, move_undo_pos, recover_document, redo_peek, undo_peek};
+use rune_db::{
+    DocId, SessionId, append_edit, current_seq, move_undo_pos, recover_document, redo_peek,
+    undo_peek,
+};
 
 #[derive(Debug, Clone)]
 enum Action {
@@ -88,7 +91,7 @@ fn resolve_delete(len: usize, at_frac: u8, len_frac: u8) -> Option<(usize, usize
 /// involved (this property test drives the domain functions directly
 /// against a single connection for full determinism across hundreds of
 /// cases, matching `journal.rs`'s own unit tests).
-fn open_test_db() -> (Connection, i64, i64) {
+fn open_test_db() -> (Connection, SessionId, DocId) {
     let conn = Connection::open_in_memory().expect("open in-memory connection");
     conn.execute_batch(rune_db::SCHEMA).expect("apply schema");
     conn.pragma_update(None, "foreign_keys", "ON")
@@ -99,14 +102,14 @@ fn open_test_db() -> (Connection, i64, i64) {
         [],
     )
     .expect("insert session");
-    let session_id = conn.last_insert_rowid();
+    let session_id = SessionId(conn.last_insert_rowid());
 
     conn.execute(
         "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
         [],
     )
     .expect("insert document");
-    let doc_id = conn.last_insert_rowid();
+    let doc_id = DocId(conn.last_insert_rowid());
 
     (conn, session_id, doc_id)
 }

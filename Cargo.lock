@@ -2396,6 +2396,8 @@ name = "rune-vfs"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rune-core",
+ "rune-vfs",
  "sha2 0.11.0",
  "trash",
 ]

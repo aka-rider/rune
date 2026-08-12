@@ -167,8 +167,8 @@ pub fn app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
     app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(load.doc_id, false, 0));
-    app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
+        .set_doc_db_for_test(DocDb::new(load.doc_id.0, false, rune_db::Seq(0)));
+    app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     (app, bridge)
@@ -210,8 +210,8 @@ pub fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     // The default untitled document's own shape (`App::new_untitled`).
     app.active_doc_mut().display_name = Some("Untitled 1".to_string());
     app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(load.doc_id, true, 0));
-    app.install_or_join_file_binding(load.doc_id, load.saved_obs.unwrap_or(0));
+        .set_doc_db_for_test(DocDb::new(load.doc_id.0, true, rune_db::Seq(0)));
+    app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     (app, bridge)
@@ -263,8 +263,8 @@ pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
     app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(row_id, true, 0));
-    app.install_or_join_file_binding(row_id, 0);
+        .set_doc_db_for_test(DocDb::new(row_id, true, rune_db::Seq(0)));
+    app.install_or_join_file_binding(row_id, None);
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     type_text(&mut app, UNPUBLISHED_BODY);

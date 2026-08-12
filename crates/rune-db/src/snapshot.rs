@@ -16,6 +16,7 @@ use rune_core::undo::reapply;
 
 use crate::Error;
 use crate::blob::{get_blob, put_blob};
+use crate::ids::{DocId, Seq, SessionId};
 use crate::journal::edits_in_range;
 use crate::session::format_rfc3339_nanos;
 
@@ -27,11 +28,11 @@ use crate::session::format_rfc3339_nanos;
 /// the closest anchor for any replay.
 pub fn create_snapshot(
     tx: &Transaction<'_>,
-    session_id: i64,
+    session_id: SessionId,
     now: SystemTime,
-    doc_id: i64,
+    doc_id: DocId,
     content: &str,
-    seq: i64,
+    seq: Seq,
 ) -> Result<i64, Error> {
     let hash = put_blob(tx, content.as_bytes())?;
     let at = format_rfc3339_nanos(now);
@@ -69,18 +70,22 @@ pub fn create_snapshot(
 /// callers (inside `retry::with_retry`'s `&Transaction`) and read-only
 /// callers (`reader.rs`, a plain `&Connection`) share this ONE
 /// implementation instead of two copies of the same query sequence.
-pub fn recover_document(conn: &Connection, session_id: i64, doc_id: i64) -> Result<String, Error> {
-    let current_seq: Option<i64> = conn
+pub fn recover_document(
+    conn: &Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<String, Error> {
+    let current_seq: Option<Seq> = conn
         .query_row(
             "SELECT current_seq FROM session_documents WHERE session_id=?1 AND doc_id=?2",
             params![session_id, doc_id],
-            |r| r.get::<_, Option<i64>>(0),
+            |r| r.get::<_, Option<Seq>>(0),
         )
         .optional()?
         .flatten();
-    let target = current_seq.unwrap_or(i64::MAX);
+    let target = current_seq.unwrap_or(Seq(i64::MAX));
 
-    let anchor: Option<(i64, String)> = conn
+    let anchor: Option<(Seq, String)> = conn
         .query_row(
             "SELECT seq, blob_hash FROM snapshots \
              WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3 \
@@ -105,7 +110,7 @@ pub fn recover_document(conn: &Connection, session_id: i64, doc_id: i64) -> Resu
             })?;
             (seq, content)
         }
-        None => (0, String::new()),
+        None => (Seq(0), String::new()),
     };
 
     let rows = edits_in_range(conn, session_id, doc_id, anchor_seq, target)?;
@@ -136,16 +141,16 @@ mod tests {
         conn
     }
 
-    fn insert_test_document(tx: &Transaction<'_>) -> i64 {
+    fn insert_test_document(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("insert document");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
-    fn insert_test_session(conn: &Connection) -> i64 {
+    fn insert_test_session(conn: &Connection) -> SessionId {
         crate::session::establish_session(conn, SystemTime::now()).expect("establish session")
     }
 

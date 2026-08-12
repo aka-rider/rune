@@ -449,7 +449,8 @@ fn app_with_db() -> App {
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let id = app.active;
     if let Some(doc) = app.doc_mut(id) {
-        doc.replica = crate::document::Replica::Bound(crate::db::DocDb::new(1, false, 0));
+        doc.replica =
+            crate::document::Replica::Bound(crate::db::DocDb::new(1, false, rune_db::Seq(0)));
     }
     app
 }

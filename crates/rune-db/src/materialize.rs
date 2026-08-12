@@ -38,8 +38,9 @@ use rusqlite::{Connection, params};
 
 use crate::Error;
 use crate::confirmation::Confirmation;
+use crate::ids::ObsId;
 use crate::obs_origin::ObsOrigin;
-use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
+use crate::observation::{self, Observation, ObservationMeta, StatFacts};
 use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
 

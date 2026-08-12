@@ -42,7 +42,7 @@ use rename_common::{seeded_vfs, send, sup, type_text};
 fn wait_for_writer_death(store: &rune_db::Store, doc_id: i64) {
     let max_attempts = 4 * rune_db::QUEUE_DEPTH;
     for attempt in 0..=max_attempts {
-        match store.probe_blocking_for_test(doc_id) {
+        match store.probe_blocking_for_test(rune_db::DocId(doc_id)) {
             Ok(_) => assert!(
                 attempt < max_attempts,
                 "writer never confirmed dead after {max_attempts} blocking probes"

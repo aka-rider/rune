@@ -147,7 +147,7 @@ mod tests {
             blocks,
             cur: 0,
             saved_display_name: None,
-            theirs_obs: 0,
+            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
 
         paint(&mut rows, &state, id, &theme);
@@ -186,7 +186,7 @@ mod tests {
             blocks,
             cur: 0,
             saved_display_name: None,
-            theirs_obs: 0,
+            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
 
         paint(&mut rows, &state, id, &theme);
@@ -222,7 +222,7 @@ mod tests {
             blocks: blocks.clone(),
             cur: 0,
             saved_display_name: None,
-            theirs_obs: 0,
+            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
 
         paint(&mut rows, &state, id, &theme);

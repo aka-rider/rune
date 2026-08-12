@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime};
 use rusqlite::Connection;
 
 use crate::Error;
+use crate::ids::SessionId;
 
 /// Extracts a `struct timeval` (`i64` seconds + `i32` microseconds, 4 bytes
 /// padding, 12 bytes total) from the front of a `sysctl` result buffer.
@@ -186,7 +187,7 @@ pub fn is_process_alive(pid: i64, started_at: &str) -> bool {
 /// at construction time; `opened_at` is informational bookkeeping only,
 /// never consulted by any liveness/inheritance/reaper decision (those use
 /// `proc_started_at`).
-pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<i64, Error> {
+pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<SessionId, Error> {
     let pid = std::process::id() as i64;
     let started_at = proc_started_at(pid as i32).ok_or_else(|| {
         Error::SessionEstablish(format!("could not read start time of own pid {pid}"))
@@ -198,7 +199,7 @@ pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<i64, Erro
         rusqlite::params![pid, started_at, opened_at],
     )
     .map_err(|e| Error::SessionEstablish(e.to_string()))?;
-    Ok(conn.last_insert_rowid())
+    Ok(SessionId(conn.last_insert_rowid()))
 }
 
 /// Formats `t` as UTC RFC3339 with nanosecond precision (`opened_at`'s
@@ -378,7 +379,7 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory connection");
         crate::schema::apply(&conn).expect("apply schema");
         let id = establish_session(&conn, SystemTime::now()).expect("establish session");
-        assert_eq!(id, 1);
+        assert_eq!(id, SessionId(1));
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))

@@ -69,7 +69,7 @@ fn append_edit_bound(
     let Some(db) = app.db.as_ref() else { return };
     let result = db
         .store
-        .append_edit(db_id, edits, cursors_before, cursors_after);
+        .append_edit(rune_db::DocId(db_id), edits, cursors_before, cursors_after);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(id));
@@ -117,7 +117,9 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
     let db_id = doc_db.db_id;
     let resolved_pos = local_pos.saturating_sub(doc_db.undo_base as usize);
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.move_undo_pos(db_id, resolved_pos as i64);
+    let result = db
+        .store
+        .move_undo_pos(rune_db::DocId(db_id), resolved_pos as i64);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::move_undo_pos(id));
@@ -254,7 +256,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
     }
     let save_epoch = app.file_binding(db_id).map(|b| b.save_epoch).unwrap_or(0);
     let Some(db) = app.db.as_ref() else { return };
-    match db.store.probe(db_id) {
+    match db.store.probe(rune_db::DocId(db_id)) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::probe(id, save_epoch));
         }

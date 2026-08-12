@@ -21,6 +21,7 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 
 use crate::Error;
+use crate::ids::{DocId, Seq, SessionId};
 use crate::payload::{cursors_from_json, edits_from_json};
 
 pub use crate::journal_append::append_edit;
@@ -32,13 +33,13 @@ pub use crate::journal_append::append_edit;
 pub struct Step {
     pub edits: Vec<AppliedEdit>,
     pub cursors: Vec<Cursor>,
-    pub new_pos: i64,
+    pub new_pos: Seq,
 }
 
 /// One edit row tagged with the journal seq it was recorded at.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditRow {
-    pub seq: i64,
+    pub seq: Seq,
     pub edits: Vec<AppliedEdit>,
 }
 
@@ -51,8 +52,8 @@ pub struct EditRow {
 /// — surfaced, never folded into `Ok(None)`.
 pub fn undo_peek(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
 ) -> Result<Option<Step>, Error> {
     let position = current_seq(tx, session_id, doc_id)?;
 
@@ -73,7 +74,7 @@ pub fn undo_peek(
     Ok(Some(Step {
         edits,
         cursors,
-        new_pos: seq - 1,
+        new_pos: Seq(seq - 1),
     }))
 }
 
@@ -83,8 +84,8 @@ pub fn undo_peek(
 /// corrupt payload is `Err`, never folded into `Ok(None)`.
 pub fn redo_peek(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
 ) -> Result<Option<Step>, Error> {
     let position = current_seq(tx, session_id, doc_id)?;
 
@@ -105,7 +106,7 @@ pub fn redo_peek(
     Ok(Some(Step {
         edits,
         cursors,
-        new_pos: seq,
+        new_pos: Seq(seq),
     }))
 }
 
@@ -118,9 +119,9 @@ pub fn redo_peek(
 /// from a value this call itself reads.
 pub fn move_undo_pos(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
-    pos: i64,
+    session_id: SessionId,
+    doc_id: DocId,
+    pos: Seq,
 ) -> Result<(), Error> {
     tx.execute(
         "INSERT INTO session_documents(session_id, doc_id, current_seq) VALUES(?1,?2,?3) \
@@ -134,7 +135,11 @@ pub fn move_undo_pos(
 /// this session's own undo pointer if set, else `MAX(seq)` among only this
 /// session's own events for `doc_id`, else 0 if this session has no events
 /// for `doc_id` at all.
-pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<i64, Error> {
+pub fn current_seq(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<Seq, Error> {
     let seq: i64 = tx.query_row(
         "SELECT COALESCE(
             (SELECT current_seq FROM session_documents WHERE session_id = ?1 AND doc_id = ?2),
@@ -143,7 +148,7 @@ pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
         params![session_id, doc_id],
         |r| r.get(0),
     )?;
-    Ok(seq)
+    Ok(Seq(seq))
 }
 
 /// `doc_id`'s own edit rows with seq in `(from_seq, to_seq]`, each tagged
@@ -154,17 +159,17 @@ pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 /// connection.
 pub fn edits_in_range(
     conn: &rusqlite::Connection,
-    session_id: i64,
-    doc_id: i64,
-    from_seq: i64,
-    to_seq: i64,
+    session_id: SessionId,
+    doc_id: DocId,
+    from_seq: Seq,
+    to_seq: Seq,
 ) -> Result<Vec<EditRow>, Error> {
     let mut stmt = conn.prepare(
         "SELECT seq, edits FROM events \
          WHERE doc_id=?1 AND session_id=?2 AND seq > ?3 AND seq <= ?4 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(params![doc_id, session_id, from_seq, to_seq], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        Ok((r.get::<_, Seq>(0)?, r.get::<_, String>(1)?))
     })?;
 
     let mut result = Vec::new();
@@ -191,13 +196,13 @@ mod tests {
         conn
     }
 
-    fn insert_test_document(tx: &Transaction<'_>) -> i64 {
+    fn insert_test_document(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("insert document");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
     /// A corrupt edits payload must be returned as an error, never

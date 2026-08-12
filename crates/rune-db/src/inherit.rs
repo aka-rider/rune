@@ -6,6 +6,9 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
+#[cfg(test)]
+use crate::ids::Seq;
+use crate::ids::{DocId, SessionId};
 use crate::observation::{self, Observation};
 use crate::retry;
 
@@ -16,8 +19,8 @@ use crate::retry;
 /// `reaper::session_is_reapable`.
 pub(crate) fn most_recent_session_for_doc(
     tx: &Transaction<'_>,
-    doc_id: i64,
-) -> Result<Option<i64>, Error> {
+    doc_id: DocId,
+) -> Result<Option<SessionId>, Error> {
     tx.query_row(
         "SELECT session_id FROM ( \
             SELECT session_id, seq FROM events    WHERE doc_id=?1 \
@@ -40,7 +43,7 @@ pub(crate) fn most_recent_session_for_doc(
 pub(crate) fn is_session_alive(
     tx: &Transaction<'_>,
     liveness_check: &dyn Fn(i64, &str) -> bool,
-    session_id: i64,
+    session_id: SessionId,
 ) -> Result<bool, Error> {
     let row: Option<(i64, String)> = tx
         .query_row(
@@ -82,7 +85,7 @@ pub(crate) enum Inherited {
 fn unsaved_against(baseline: Option<&Observation>, draft: &str) -> bool {
     match baseline {
         None => true,
-        Some(b) => b.blob_hash != observation::hash_bytes(draft.as_bytes()),
+        Some(b) => b.blob_hash.as_str() != observation::hash_bytes(draft.as_bytes()),
     }
 }
 
@@ -92,7 +95,7 @@ fn unsaved_against(baseline: Option<&Observation>, draft: &str) -> bool {
 pub(crate) fn find_inheritable_draft(
     conn: &mut rusqlite::Connection,
     liveness_check: &dyn Fn(i64, &str) -> bool,
-    doc_id: i64,
+    doc_id: DocId,
     disk_hash: &str,
 ) -> Result<Inherited, Error> {
     let other_session_id = retry::with_retry(conn, |tx| most_recent_session_for_doc(tx, doc_id))?;
@@ -138,7 +141,7 @@ pub(crate) fn find_inheritable_draft(
     }
 
     match other_baseline {
-        Some(baseline) if baseline.blob_hash != disk_hash => Ok(Inherited::Diverged {
+        Some(baseline) if baseline.blob_hash.as_str() != disk_hash => Ok(Inherited::Diverged {
             draft: recovered_draft,
             baseline: Box::new(baseline),
         }),
@@ -196,7 +199,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
 
         let session_a =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
@@ -212,7 +215,7 @@ mod tests {
                 SystemTime::now(),
                 doc_id,
                 "session A's content",
-                0,
+                Seq(0),
             )
             .expect("anchor snapshot");
             adopt::record_adoption_tx(
@@ -263,7 +266,7 @@ mod tests {
             Inherited::Diverged { draft, baseline } => {
                 assert_eq!(draft, "UNSAVED session A's content");
                 assert_eq!(
-                    baseline.blob_hash,
+                    baseline.blob_hash.as_str(),
                     observation::hash_bytes(b"session A's content"),
                     "baseline must be the dead session's own H0, not disk's H1"
                 );
@@ -282,7 +285,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
         let session_a =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
 
@@ -296,7 +299,7 @@ mod tests {
                 SystemTime::now(),
                 doc_id,
                 disk_content,
-                0,
+                Seq(0),
             )
             .expect("anchor snapshot");
             adopt::record_adoption_tx(
@@ -355,7 +358,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
         let session_a =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
 
@@ -367,7 +370,7 @@ mod tests {
                 SystemTime::now(),
                 doc_id,
                 "session A's content",
-                0,
+                Seq(0),
             )
             .expect("anchor snapshot");
             adopt::record_adoption_tx(
@@ -413,7 +416,7 @@ mod tests {
             [],
         )
         .expect("seed doc");
-        let doc_id = conn.last_insert_rowid();
+        let doc_id = DocId(conn.last_insert_rowid());
         let session_a =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
 
@@ -427,7 +430,7 @@ mod tests {
                 SystemTime::now(),
                 doc_id,
                 disk_content,
-                0,
+                Seq(0),
             )
             .expect("anchor snapshot");
             crate::journal::append_edit(

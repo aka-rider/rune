@@ -21,14 +21,15 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::doc_kind::DocKind;
+use crate::ids::DocId;
 use crate::retry;
 
 /// The stable document identity `open_path` resolves to, plus whether the
 /// path arrived at a different name than the row already on file (a
 /// detected rename).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocRef {
-    pub id: i64,
+    pub id: DocId,
     pub renamed_from: Option<String>,
 }
 
@@ -64,7 +65,7 @@ pub fn open_path(
 }
 
 fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRef, Error> {
-    let existing: Option<i64> = tx
+    let existing: Option<DocId> = tx
         .query_row(
             "SELECT id FROM documents WHERE path=?1 AND inode IS NULL",
             params![path],
@@ -79,7 +80,7 @@ fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRe
                 params![path, DocKind::File.as_str(), at],
             )?;
             Ok(DocRef {
-                id: tx.last_insert_rowid(),
+                id: DocId(tx.last_insert_rowid()),
                 renamed_from: None,
             })
         }
@@ -103,7 +104,7 @@ fn open_path_by_inode(
     device: i64,
     at: &str,
 ) -> Result<DocRef, Error> {
-    let existing: Option<(i64, String)> = tx
+    let existing: Option<(DocId, String)> = tx
         .query_row(
             "SELECT id, path FROM documents WHERE inode=?1 AND device=?2",
             params![inode, device],
@@ -130,7 +131,7 @@ fn open_path_by_inode(
             // A unique partial index enforces that at most one row can ever
             // claim a given non-empty path, so there is no tie to break
             // here.
-            let claimant: Option<i64> = tx
+            let claimant: Option<DocId> = tx
                 .query_row(
                     "SELECT id FROM documents WHERE path=?1",
                     params![path],
@@ -152,7 +153,7 @@ fn open_path_by_inode(
                 params![path, inode, device, DocKind::File.as_str(), at],
             )?;
             Ok(DocRef {
-                id: tx.last_insert_rowid(),
+                id: DocId(tx.last_insert_rowid()),
                 renamed_from: None,
             })
         }

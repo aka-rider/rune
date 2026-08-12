@@ -7,7 +7,10 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
-use crate::observation::{self, ObsId};
+#[cfg(test)]
+use crate::ids::Seq;
+use crate::ids::{BlobHash, DocId, ObsId, SessionId};
+use crate::observation;
 
 #[cfg(test)]
 use crate::{confirmation::Confirmation, obs_origin::ObsOrigin};
@@ -19,7 +22,7 @@ use crate::{confirmation::Confirmation, obs_origin::ObsOrigin};
 /// absent facts" rule).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
-    pub hash: String,
+    pub hash: BlobHash,
     pub obs: Option<ObsId>,
 }
 
@@ -65,10 +68,10 @@ pub struct SyncState {
 
 /// The SHA-256 of the empty string — the "nothing to save yet" baseline for
 /// a document with no disk fact at all.
-fn empty_hash() -> &'static str {
+fn empty_hash() -> &'static BlobHash {
     use std::sync::OnceLock;
-    static EMPTY: OnceLock<String> = OnceLock::new();
-    EMPTY.get_or_init(|| observation::hash_bytes(b""))
+    static EMPTY: OnceLock<BlobHash> = OnceLock::new();
+    EMPTY.get_or_init(|| BlobHash(observation::hash_bytes(b"")))
 }
 
 /// The Conflict lifecycle comparison.
@@ -78,7 +81,7 @@ pub fn classify_sync(
     theirs: Option<&Version>,
 ) -> SyncKind {
     let Some(theirs) = theirs else {
-        return if ours.hash == empty_hash() {
+        return if &ours.hash == empty_hash() {
             SyncKind::Clean
         } else {
             SyncKind::BufferAhead
@@ -105,7 +108,7 @@ pub fn classify_sync(
 /// hash coincidence must not make it invisible.
 fn theirs_is_our_newest_publish(
     tx: &Transaction<'_>,
-    doc_id: i64,
+    doc_id: DocId,
     theirs: Option<&Version>,
 ) -> Result<bool, Error> {
     let Some(theirs) = theirs else {
@@ -126,8 +129,8 @@ fn theirs_is_our_newest_publish(
 
 fn buffer_unwound_past(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     pos: i64,
 ) -> Result<bool, Error> {
     Ok(tx.query_row(
@@ -140,7 +143,11 @@ fn buffer_unwound_past(
 /// Compares the journal reconstruction, the newest recorded observation
 /// (ANY origin, ANY session — "theirs"), and the derived ancestor for
 /// `doc_id`, AS SEEN BY `session_id`.
-pub fn sync(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<SyncState, Error> {
+pub fn sync(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<SyncState, Error> {
     let newest = observation::newest_observation(tx, doc_id)?;
     let theirs = newest.map(|o| Version {
         hash: o.blob_hash,
@@ -155,19 +162,19 @@ pub fn sync(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<SyncSt
 /// never plain `DiskAhead`, since adopting would silently drop the undo.
 pub fn sync_with_theirs(
     tx: &Transaction<'_>,
-    session_id: i64,
-    doc_id: i64,
+    session_id: SessionId,
+    doc_id: DocId,
     theirs: Option<Version>,
 ) -> Result<SyncState, Error> {
     let pos = crate::journal::current_seq(tx, session_id, doc_id)?;
     let ours_content = crate::snapshot::recover_document(tx, session_id, doc_id)?;
     let ours = Version {
-        hash: observation::hash_bytes(ours_content.as_bytes()),
+        hash: BlobHash(observation::hash_bytes(ours_content.as_bytes())),
         obs: None,
     };
 
     let exclude = theirs.as_ref().and_then(|v| v.obs);
-    let ancestor_obs = observation::ancestor_at(tx, doc_id, session_id, pos, exclude)?;
+    let ancestor_obs = observation::ancestor_at(tx, doc_id, session_id, pos.0, exclude)?;
     let ancestor = ancestor_obs.map(|o| Version {
         hash: o.blob_hash,
         obs: Some(o.id),
@@ -175,7 +182,7 @@ pub fn sync_with_theirs(
 
     let mut kind = classify_sync(ancestor.as_ref(), &ours, theirs.as_ref());
 
-    if kind == SyncKind::DiskAhead && buffer_unwound_past(tx, session_id, doc_id, pos)? {
+    if kind == SyncKind::DiskAhead && buffer_unwound_past(tx, session_id, doc_id, pos.0)? {
         kind = SyncKind::Diverged;
     }
 
@@ -211,13 +218,13 @@ mod tests {
         conn
     }
 
-    fn seed_doc(tx: &Transaction<'_>) -> i64 {
+    fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
             [],
         )
         .expect("seed doc");
-        tx.last_insert_rowid()
+        DocId(tx.last_insert_rowid())
     }
 
     fn stat_of(content: &str, at: &str) -> crate::observation::StatFacts {
@@ -228,7 +235,7 @@ mod tests {
         }
     }
 
-    fn open_document(tx: &Transaction<'_>, session_id: i64, doc_id: i64, disk: &str) {
+    fn open_document(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId, disk: &str) {
         let now = SystemTime::now();
         let seq = crate::journal::current_seq(tx, session_id, doc_id).expect("current_seq");
         crate::snapshot::create_snapshot(tx, session_id, now, doc_id, disk, seq)
@@ -240,7 +247,7 @@ mod tests {
             session_id,
             crate::observation::ObservationMeta {
                 blob_hash: &hash,
-                seq: Some(seq),
+                seq: Some(seq.0),
                 origin: ObsOrigin::Load,
                 confirmed: Confirmation::Confirmed,
             },
@@ -251,7 +258,7 @@ mod tests {
         .expect("record the load adoption");
     }
 
-    fn type_text(tx: &Transaction<'_>, session_id: i64, doc_id: i64, text: &str) -> i64 {
+    fn type_text(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId, text: &str) -> Seq {
         let ours = crate::snapshot::recover_document(tx, session_id, doc_id).expect("recover");
         let end = ours.len();
         crate::journal::append_edit(
@@ -271,11 +278,17 @@ mod tests {
         .expect("append_edit")
     }
 
-    fn undo_to(tx: &Transaction<'_>, session_id: i64, doc_id: i64, seq: i64) {
+    fn undo_to(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId, seq: Seq) {
         crate::journal::move_undo_pos(tx, session_id, doc_id, seq).expect("move_undo_pos");
     }
 
-    fn publish_save(tx: &Transaction<'_>, session_id: i64, doc_id: i64, bytes: &str, at: &str) {
+    fn publish_save(
+        tx: &Transaction<'_>,
+        session_id: SessionId,
+        doc_id: DocId,
+        bytes: &str,
+        at: &str,
+    ) {
         let hash = crate::blob::put_blob(tx, bytes.as_bytes()).expect("put the published blob");
         let seq = crate::journal::current_seq(tx, session_id, doc_id).expect("current_seq");
         crate::adopt::record_adoption_tx(
@@ -284,7 +297,7 @@ mod tests {
             session_id,
             crate::observation::ObservationMeta {
                 blob_hash: &hash,
-                seq: Some(seq),
+                seq: Some(seq.0),
                 origin: ObsOrigin::Save,
                 confirmed: Confirmation::Confirmed,
             },
@@ -297,8 +310,8 @@ mod tests {
 
     fn external_write(
         tx: &Transaction<'_>,
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         bytes: &str,
         at: &str,
     ) -> crate::observation::Observation {
@@ -320,18 +333,18 @@ mod tests {
 
     fn resolve_against(
         tx: &Transaction<'_>,
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         theirs: &crate::observation::Observation,
-        edit_seq: i64,
+        edit_seq: Seq,
     ) {
         crate::adopt::record_adoption_tx(
             tx,
             doc_id,
             session_id,
             crate::observation::ObservationMeta {
-                blob_hash: &theirs.blob_hash,
-                seq: Some(edit_seq),
+                blob_hash: theirs.blob_hash.as_str(),
+                seq: Some(edit_seq.0),
                 origin: ObsOrigin::Resolve,
                 confirmed: theirs.confirmed,
             },
@@ -342,7 +355,7 @@ mod tests {
         .expect("record the resolve adoption");
     }
 
-    fn verdict(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> SyncKind {
+    fn verdict(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId) -> SyncKind {
         sync(tx, session_id, doc_id).expect("sync").kind
     }
 
@@ -465,7 +478,11 @@ mod tests {
     /// Seeds the merge story up to the resolution: this session saves, an
     /// external write lands, the user merges and installs the result. Hands
     /// back the seq the install can be undone past.
-    fn merge_after_an_external_write(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> i64 {
+    fn merge_after_an_external_write(
+        tx: &Transaction<'_>,
+        session_id: SessionId,
+        doc_id: DocId,
+    ) -> Seq {
         open_document(tx, session_id, doc_id, "base");
         let saved_seq = type_text(tx, session_id, doc_id, "-one");
         publish_save(
@@ -622,8 +639,8 @@ mod tests {
     /// past the resolve seq.
     fn seed_resolve_at_head(
         tx: &Transaction<'_>,
-        session_id: i64,
-        doc_id: i64,
+        session_id: SessionId,
+        doc_id: DocId,
         load_blob: &[u8],
         resolve_blob: &[u8],
     ) {

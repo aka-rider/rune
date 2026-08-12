@@ -24,6 +24,9 @@ use rusqlite::Connection;
 
 use rune_vfs::Vfs;
 
+#[cfg(test)]
+use crate::ids::DocId;
+use crate::ids::SessionId;
 use crate::open_ladder::{LadderResult, memory_uri, open_ladder, open_memory_backed};
 use crate::writer::{OnEvent, OpKind, WriteOp};
 use crate::{Error, reader, retry, session, writer};
@@ -47,7 +50,7 @@ pub struct Store {
     writer: writer::WriterHandle,
     reader: reader::ReaderHandle,
     warning: Option<String>,
-    pub(crate) session_id: i64,
+    pub(crate) session_id: SessionId,
     next_op_id: AtomicU64,
     // `Mutex`, not `RefCell`: `Store` has no `Sync`/`Send` requirement of
     // its own yet, but the poison idiom below (`lock().unwrap_or_else(|p|
@@ -176,7 +179,7 @@ impl Store {
 
     /// This process's own row in `sessions` — established once at
     /// construction and never mutated after.
-    pub fn session_id(&self) -> i64 {
+    pub fn session_id(&self) -> SessionId {
         self.session_id
     }
 
@@ -423,7 +426,7 @@ mod tests {
         let store =
             Store::open_in_memory(clock, test_vfs(), noop_on_event()).expect("open in memory");
         assert!(!store.degraded());
-        assert_eq!(store.session_id(), 1);
+        assert_eq!(store.session_id(), SessionId(1));
         store.shutdown();
     }
 
@@ -451,7 +454,7 @@ mod tests {
         // is a real failure to report loudly, not a hang.
         let max_attempts = 4 * QUEUE_DEPTH;
         for attempt in 0..=max_attempts {
-            match store.probe_blocking_for_test(1) {
+            match store.probe_blocking_for_test(DocId(1)) {
                 Ok(_) => {
                     assert!(
                         attempt < max_attempts,

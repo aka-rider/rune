@@ -215,15 +215,15 @@ pub(crate) fn open_untitled(
 /// load`'s `recovered_content`). `bind_new` is always `true`: a scratch
 /// document — recovered or freshly minted — has never been bound to a real
 /// file, so its NEXT save must still go through the create-only path.
-/// `expect_obs` is `0`, a fabricated `ObsId` that is never actually queried
-/// (`materialize::prepare_materialize` skips the CAS-baseline lookup
-/// entirely when `bind_new` is set) — never handed to a caller that would
-/// treat it as a genuine baseline.
 fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
     if let Some(doc) = app.doc_mut(id) {
-        doc.bind_doc_db(rune_tui::db::DocDb::new(scratch.db_id, true, 0));
+        doc.bind_doc_db(rune_tui::db::DocDb::new(
+            scratch.db_id,
+            true,
+            rune_db::Seq(0),
+        ));
     }
-    app.install_or_join_file_binding(scratch.db_id, 0);
+    app.install_or_join_file_binding(scratch.db_id, None);
     if scratch.content.is_empty() {
         return;
     }
