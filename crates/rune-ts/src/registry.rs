@@ -6,9 +6,11 @@
 
 use std::sync::{LazyLock, OnceLock};
 
+use rune_core::assert_invariant;
+use rune_syntax::LangId;
 use tree_sitter::{Language, Parser, Query};
 
-use crate::lang::LANGUAGES;
+use crate::lang::{LANGUAGES, LangDef};
 
 /// Compiled language and its highlight query, or a compilation error message.
 type LanguageEntry = OnceLock<Result<(Language, Query), String>>;
@@ -16,42 +18,48 @@ type LanguageEntry = OnceLock<Result<(Language, Query), String>>;
 /// A lazily-compiling registry of tree-sitter languages and their highlight
 /// queries. Each language is compiled only when first requested via [`get`],
 /// not when the registry is constructed. Errors are recorded and surfaced
-/// through [`failures`], never panicking.
+/// through [`failures`], never panicking. Indexed by [`LangId`]: entry `i`
+/// holds the language whose id's index is `i`, or `None` when no `LangDef`
+/// in [`LANGUAGES`] names that id's language.
 pub struct LanguageRegistry {
-    entries: Vec<(&'static crate::lang::LangDef, LanguageEntry)>,
+    entries: Vec<Option<(&'static LangDef, LanguageEntry)>>,
 }
 
 impl LanguageRegistry {
     /// Creates a new registry without compiling any languages. Compilation
     /// occurs on the first call to [`get`] for each language.
     pub fn new() -> LanguageRegistry {
-        let entries = LANGUAGES.iter().map(|def| (def, OnceLock::new())).collect();
+        let entries = LangId::all()
+            .map(|id| {
+                let def = LANGUAGES.iter().find(|def| def.name == id.name());
+                assert_invariant!(def.is_some(), || format!(
+                    "no rune-ts LangDef for rune-syntax language {:?}",
+                    id.name()
+                ));
+                def.map(|def| (def, OnceLock::new()))
+            })
+            .collect();
         LanguageRegistry { entries }
     }
 
-    /// The compiled `(Language, Query)` pair for a canonical language name.
-    /// Compilation happens on first call for each language. If that language
-    /// failed to load or compile, returns `None` — see [`failures`] for the
-    /// error message.
-    pub fn get(&self, name: &str) -> Option<&(Language, Query)> {
-        self.entries.iter().find_map(|(def, slot)| {
-            if def.name == name {
-                let result = slot.get_or_init(|| {
-                    let language = (def.language)();
-                    let mut parser = Parser::new();
-                    if let Err(err) = parser.set_language(&language) {
-                        return Err(err.to_string());
-                    }
-                    let source = (def.highlights)();
-                    Query::new(&language, &source)
-                        .map(|query| (language, query))
-                        .map_err(|err| err.to_string())
-                });
-                result.as_ref().ok()
-            } else {
-                None
+    /// The compiled `(Language, Query)` pair for a language. Compilation
+    /// happens on first call for each language. If that language failed to
+    /// load or compile, returns `None` — see [`failures`] for the error
+    /// message.
+    pub fn get(&self, id: LangId) -> Option<&(Language, Query)> {
+        let (def, slot) = self.entries.get(id.index())?.as_ref()?;
+        let result = slot.get_or_init(|| {
+            let language = (def.language)();
+            let mut parser = Parser::new();
+            if let Err(err) = parser.set_language(&language) {
+                return Err(err.to_string());
             }
-        })
+            let source = (def.highlights)();
+            Query::new(&language, &source)
+                .map(|query| (language, query))
+                .map_err(|err| err.to_string())
+        });
+        result.as_ref().ok()
     }
 
     /// Every language that failed to load or whose query failed to compile,
@@ -61,6 +69,7 @@ impl LanguageRegistry {
     pub fn failures(&self) -> Vec<(&'static str, String)> {
         self.entries
             .iter()
+            .flatten()
             .filter_map(|(def, slot)| {
                 slot.get()
                     .and_then(|r| r.as_ref().err())
@@ -73,7 +82,7 @@ impl LanguageRegistry {
     /// not. All 22 languages are always listed, regardless of whether they
     /// have been requested or have compiled successfully.
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.entries.iter().map(|(def, _)| def.name)
+        self.entries.iter().flatten().map(|(def, _)| def.name)
     }
 
     /// The count of languages that have been compiled successfully. A language
@@ -82,6 +91,7 @@ impl LanguageRegistry {
     pub fn compiled_count(&self) -> usize {
         self.entries
             .iter()
+            .flatten()
             .filter(|(_, slot)| slot.get().is_some_and(|r| r.is_ok()))
             .count()
     }

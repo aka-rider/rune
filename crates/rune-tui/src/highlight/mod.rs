@@ -174,7 +174,7 @@ fn region_language(info: &str) -> Option<RegionLang> {
     if token.eq_ignore_ascii_case("markdown") || token.eq_ignore_ascii_case("md") {
         return Some(RegionLang::Markdown);
     }
-    rune_ts::lang::resolve(token).map(RegionLang::Ts)
+    rune_ts::lang::resolve(token).map(|id| RegionLang::Ts(id.name()))
 }
 
 /// Every code region this document has a highlighter for, each carrying its

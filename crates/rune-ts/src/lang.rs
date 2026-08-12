@@ -6,6 +6,8 @@
 //! compiling half lives in a separate module reached only from a
 //! background command.
 
+use rune_core::assert_invariant;
+use rune_syntax::LangId;
 use tree_sitter::Language;
 
 /// One language's identity plus the two closures needed to load it later —
@@ -188,17 +190,25 @@ pub static ALIASES: &[(&str, &str)] = &[
 ];
 
 /// Resolves a fence info string or a file extension (with or without a
-/// leading `.`) to a canonical language name, case-insensitively. A pure
-/// `&'static` table lookup — no tree-sitter call, so it is safe on the UI
-/// thread. Returns `None` for markdown and for anything unrecognised.
-pub fn resolve(key: &str) -> Option<&'static str> {
+/// leading `.`) to a language, case-insensitively. A pure `&'static` table
+/// lookup — no tree-sitter call, so it is safe on the UI thread. Returns
+/// `None` for markdown and for anything unrecognised.
+pub fn resolve(key: &str) -> Option<LangId> {
     let key = key.strip_prefix('.').unwrap_or(key).to_lowercase();
     let key = key.as_str();
-    if let Some(def) = LANGUAGES.iter().find(|def| def.name == key) {
-        return Some(def.name);
-    }
-    ALIASES
+    let name = LANGUAGES
         .iter()
-        .find(|(alias, _)| *alias == key)
-        .map(|(_, name)| *name)
+        .find(|def| def.name == key)
+        .map(|def| def.name)
+        .or_else(|| {
+            ALIASES
+                .iter()
+                .find(|(alias, _)| *alias == key)
+                .map(|(_, name)| *name)
+        })?;
+    let id = LangId::from_name(name);
+    assert_invariant!(id.is_some(), || format!(
+        "language {name:?} known to rune-ts has no rune-syntax LangId"
+    ));
+    id
 }

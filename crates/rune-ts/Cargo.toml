@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+rune-core = { path = "../rune-core" }
 rune-syntax = { path = "../rune-syntax" }
 tree-sitter = "0.26.11"
 tree-sitter-rust = "0.24.2"
@@ -30,6 +31,10 @@ tree-sitter-swift = "0.7.3"
 
 [dev-dependencies]
 proptest = { workspace = true }
+rune-ts = { path = ".", features = ["strict-invariants"] }
+
+[features]
+strict-invariants = []
 
 [lints]
 workspace = true

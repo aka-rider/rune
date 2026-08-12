@@ -211,8 +211,10 @@ impl StyleCtx {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use rune_syntax::LangId;
 
     /// The identity this module exists to make structural: a code
     /// DOCUMENT's text and a fenced code BLOCK's body are one scope, not
@@ -222,7 +224,8 @@ mod tests {
     /// duplication this removes.
     #[test]
     fn a_code_document_shares_the_code_fence_scope() {
-        assert_eq!(base_scope(DocumentKind::Code("rust")), code_fence_scope());
+        let rust = LangId::from_name("rust").unwrap();
+        assert_eq!(base_scope(DocumentKind::Code(rust)), code_fence_scope());
     }
 
     /// Everything else falls back to prose. `Plain` is the interesting

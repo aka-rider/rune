@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rune_syntax::scope::scope_table;
+use rune_syntax::{LangId, scope::scope_table};
 use rune_ts::{highlight, registry};
 
 #[test]
@@ -12,8 +12,8 @@ fn every_language_loads_and_its_query_compiles() {
     let reg = registry();
     // First, trigger compilation of all languages by requesting each one.
     let names: Vec<_> = reg.names().collect();
-    for name in &names {
-        let _ = reg.get(name);
+    for id in LangId::all() {
+        let _ = reg.get(id);
     }
     // Now assert that all languages compiled successfully.
     assert!(
@@ -32,7 +32,8 @@ fn registry_compiles_only_requested_language() {
         0,
         "a fresh registry must have compiled no languages"
     );
-    let result = reg.get("rust");
+    let rust = LangId::from_name("rust").expect("rust is a known language");
+    let result = reg.get(rust);
     assert!(result.is_some(), "rust language must compile successfully");
     assert_eq!(
         reg.compiled_count(),

@@ -10,13 +10,17 @@ use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_syntax::DocumentKind;
+use rune_syntax::{DocumentKind, LangId};
 use rune_tui::app::App;
 use rune_tui::testgrid;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
+
+fn lang(name: &str) -> LangId {
+    LangId::from_name(name).unwrap()
+}
 
 fn app_for(content: &str, path: Option<&str>) -> App {
     let mut app = App::new(
@@ -46,7 +50,7 @@ fn rs_extension_is_code_rust_and_renders_verbatim() {
     let content = "# not a heading\nfn main() {}\n";
     let app = app_for(content, Some("/x/main.rs"));
 
-    assert_eq!(app.active_doc().kind, DocumentKind::Code("rust"));
+    assert_eq!(app.active_doc().kind, DocumentKind::Code(lang("rust")));
 
     let text = grid_text(&app);
     assert!(
@@ -114,7 +118,7 @@ fn png_extension_is_image() {
 #[test]
 fn extensionless_shebang_is_code_bash() {
     let app = app_for("#!/bin/bash\necho hi\n", Some("/x/deploy"));
-    assert_eq!(app.active_doc().kind, DocumentKind::Code("bash"));
+    assert_eq!(app.active_doc().kind, DocumentKind::Code(lang("bash")));
 }
 
 /// An extensionless documentation file name resolves to `Markdown` via
@@ -130,7 +134,7 @@ fn extensionless_readme_is_markdown() {
 #[test]
 fn dotfile_is_code_bash() {
     let app = app_for("export PATH=$PATH\n", Some("/x/.zshrc"));
-    assert_eq!(app.active_doc().kind, DocumentKind::Code("bash"));
+    assert_eq!(app.active_doc().kind, DocumentKind::Code(lang("bash")));
 }
 
 /// An unrecognised extension is overridden by an explicit modeline in the
@@ -138,5 +142,5 @@ fn dotfile_is_code_bash() {
 #[test]
 fn modeline_overrides_unknown_extension() {
     let app = app_for("# vim: ft=python\nx = 1\n", Some("/x/thing.inc"));
-    assert_eq!(app.active_doc().kind, DocumentKind::Code("python"));
+    assert_eq!(app.active_doc().kind, DocumentKind::Code(lang("python")));
 }

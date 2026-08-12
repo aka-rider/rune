@@ -2339,7 +2339,9 @@ name = "rune-ts"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "rune-core",
  "rune-syntax",
+ "rune-ts",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",

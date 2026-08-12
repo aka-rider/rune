@@ -212,7 +212,8 @@ fn a_code_document_is_exactly_one_region_covering_every_line() {
     // single region comes from the buffer's line structure instead. It is
     // otherwise an ordinary region: same shape, same per-line content.
     let content = "fn main() {\n    println!(\"hi\");\n}\n";
-    let (buf, regions) = regions_of(content, DocumentKind::Code("rust"));
+    let rust = rune_syntax::LangId::from_name("rust").unwrap();
+    let (buf, regions) = regions_of(content, DocumentKind::Code(rust));
 
     assert_eq!(regions.len(), 1, "a code document is one whole region");
     let region = &regions[0];

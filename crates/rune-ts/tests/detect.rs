@@ -5,15 +5,20 @@
 
 use std::path::Path;
 
+use rune_syntax::LangId;
 use rune_ts::detect::{Detected, FILENAMES, INTERPRETERS, detect};
 use rune_ts::lang;
+
+fn lang_id(name: &str) -> LangId {
+    LangId::from_name(name).unwrap()
+}
 
 /// A dotfile whole-filename match resolves through the shell alias.
 #[test]
 fn dotfile_whole_name_resolves_to_bash() {
     assert_eq!(
         detect(Some(Path::new("/x/.zshrc")), ""),
-        Some(Detected::Lang("bash"))
+        Some(Detected::Lang(lang_id("bash")))
     );
 }
 
@@ -22,7 +27,7 @@ fn dotfile_whole_name_resolves_to_bash() {
 fn gemfile_resolves_to_ruby() {
     assert_eq!(
         detect(Some(Path::new("/x/Gemfile")), ""),
-        Some(Detected::Lang("ruby"))
+        Some(Detected::Lang(lang_id("ruby")))
     );
 }
 
@@ -49,7 +54,7 @@ fn lowercase_readme_resolves_to_markdown() {
 fn cargo_lock_resolves_to_toml() {
     assert_eq!(
         detect(Some(Path::new("/x/Cargo.lock")), ""),
-        Some(Detected::Lang("toml"))
+        Some(Detected::Lang(lang_id("toml")))
     );
 }
 
@@ -58,7 +63,7 @@ fn cargo_lock_resolves_to_toml() {
 fn sh_shebang_resolves_to_bash() {
     assert_eq!(
         detect(Some(Path::new("/x/deploy")), "#!/bin/sh\necho hi\n"),
-        Some(Detected::Lang("bash"))
+        Some(Detected::Lang(lang_id("bash")))
     );
 }
 
@@ -71,7 +76,7 @@ fn env_dash_s_shebang_resolves_to_python() {
             Some(Path::new("/x/deploy")),
             "#!/usr/bin/env -S python3 -u\n"
         ),
-        Some(Detected::Lang("python"))
+        Some(Detected::Lang(lang_id("python")))
     );
 }
 
@@ -80,7 +85,7 @@ fn env_dash_s_shebang_resolves_to_python() {
 fn env_node_shebang_resolves_to_javascript() {
     assert_eq!(
         detect(Some(Path::new("/x/serve")), "#!/usr/bin/env node\n"),
-        Some(Detected::Lang("javascript"))
+        Some(Detected::Lang(lang_id("javascript")))
     );
 }
 
@@ -90,7 +95,7 @@ fn env_node_shebang_resolves_to_javascript() {
 fn vim_modeline_resolves_to_python() {
     assert_eq!(
         detect(Some(Path::new("/x/a.txt")), "# vim: ft=python\n"),
-        Some(Detected::Lang("python"))
+        Some(Detected::Lang(lang_id("python")))
     );
 }
 
@@ -99,7 +104,7 @@ fn vim_modeline_resolves_to_python() {
 fn vim_modeline_beats_extension() {
     assert_eq!(
         detect(Some(Path::new("/x/a.rs")), "// vim: ft=bash\n"),
-        Some(Detected::Lang("bash"))
+        Some(Detected::Lang(lang_id("bash")))
     );
 }
 
@@ -108,7 +113,7 @@ fn vim_modeline_beats_extension() {
 fn emacs_modeline_resolves_to_ruby() {
     assert_eq!(
         detect(Some(Path::new("/x/a.rb")), "# -*- mode: ruby -*-\n"),
-        Some(Detected::Lang("ruby"))
+        Some(Detected::Lang(lang_id("ruby")))
     );
 }
 
@@ -121,7 +126,7 @@ fn trailing_modeline_is_found() {
             Some(Path::new("/x/notes")),
             "body\nbody\nbody\nbody\nbody\nbody\nbody\n# vim: ft=yaml\n"
         ),
-        Some(Detected::Lang("yaml"))
+        Some(Detected::Lang(lang_id("yaml")))
     );
 }
 
@@ -130,7 +135,7 @@ fn trailing_modeline_is_found() {
 fn extension_still_works_without_modeline() {
     assert_eq!(
         detect(Some(Path::new("/x/a.rs")), ""),
-        Some(Detected::Lang("rust"))
+        Some(Detected::Lang(lang_id("rust")))
     );
 }
 
@@ -140,7 +145,7 @@ fn extension_still_works_without_modeline() {
 fn unknown_modeline_value_falls_through_to_extension() {
     assert_eq!(
         detect(Some(Path::new("/x/a.rs")), "# vim: ft=cobol\n"),
-        Some(Detected::Lang("rust"))
+        Some(Detected::Lang(lang_id("rust")))
     );
 }
 

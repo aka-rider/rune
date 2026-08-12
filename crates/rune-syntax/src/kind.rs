@@ -1,9 +1,11 @@
 //! Producer-selection vocabulary (plan WP4): which producer a document's
-//! content goes through. `Markdown` is comrak's; `Code` is a named
-//! tree-sitter language (WP5 wires the actual highlight); `Plain` has no
-//! producer at all and renders every line verbatim. Lives here, not
-//! duplicated in `rune-md` and `rune-tui`, because this crate is already
-//! the producer-agnostic layer both depend on.
+//! content goes through. `Markdown` is comrak's; `Code` is a tree-sitter
+//! language, identified by `LangId`; `Plain` has no producer at all and
+//! renders every line verbatim. Lives here, not duplicated in `rune-md`
+//! and `rune-tui`, because this crate is already the producer-agnostic
+//! layer both depend on.
+
+use crate::lang::LangId;
 
 /// Which producer a document's content is parsed by. `#[default]` is
 /// `Markdown` so a document that never explicitly picks a kind (an
@@ -12,10 +14,9 @@
 pub enum DocumentKind {
     #[default]
     Markdown,
-    /// A code document bound to a canonical language name (`rune_ts::lang::
-    /// resolve`'s output) — a fenced code block's info string or a file
-    /// extension.
-    Code(&'static str),
+    /// A code document bound to a language (`rune_ts::lang::resolve`'s
+    /// output) — a fenced code block's info string or a file extension.
+    Code(LangId),
     /// No known producer: rendered verbatim, exactly like `Code`, but with
     /// no language to highlight against.
     Plain,
@@ -38,15 +39,20 @@ impl DocumentKind {
     /// at all), and `Image` (no text to highlight at all).
     pub fn language(&self) -> Option<&'static str> {
         match self {
-            DocumentKind::Code(lang) => Some(lang),
+            DocumentKind::Code(lang) => Some(lang.name()),
             DocumentKind::Markdown | DocumentKind::Plain | DocumentKind::Image => None,
         }
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn rust() -> LangId {
+        LangId::from_name("rust").unwrap()
+    }
 
     #[test]
     fn default_is_markdown() {
@@ -58,13 +64,13 @@ mod tests {
         assert_eq!(DocumentKind::Markdown.language(), None);
         assert_eq!(DocumentKind::Plain.language(), None);
         assert_eq!(DocumentKind::Image.language(), None);
-        assert_eq!(DocumentKind::Code("rust").language(), Some("rust"));
+        assert_eq!(DocumentKind::Code(rust()).language(), Some("rust"));
     }
 
     #[test]
     fn is_markdown_is_true_only_for_markdown() {
         assert!(DocumentKind::Markdown.is_markdown());
-        assert!(!DocumentKind::Code("rust").is_markdown());
+        assert!(!DocumentKind::Code(rust()).is_markdown());
         assert!(!DocumentKind::Plain.is_markdown());
         assert!(!DocumentKind::Image.is_markdown());
     }

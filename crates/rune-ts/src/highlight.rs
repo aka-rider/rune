@@ -19,7 +19,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use rune_syntax::scope::scope_table;
-use rune_syntax::{ScopeId, ScopeTable};
+use rune_syntax::{LangId, ScopeId, ScopeTable};
 use tree_sitter::{ParseOptions, ParseState, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::lang;
@@ -78,7 +78,7 @@ impl From<Vec<(Range<usize>, ScopeId)>> for HighlightResult {
 #[derive(Debug)]
 pub struct ParsedTree {
     tree: Tree,
-    lang: &'static str,
+    lang: LangId,
     source: Arc<str>,
 }
 
@@ -104,8 +104,8 @@ impl ParsedTree {
 /// attempted; the grammar-crash risk that guards against is not worth the
 /// saved cycles.
 pub fn parse(lang: &str, source: &str, budget: Duration) -> Option<ParsedTree> {
-    let name = lang::resolve(lang)?;
-    let (language, _query) = registry().get(name)?;
+    let id = lang::resolve(lang)?;
+    let (language, _query) = registry().get(id)?;
 
     let mut parser = Parser::new();
     parser.set_language(language).ok()?;
@@ -139,7 +139,7 @@ pub fn parse(lang: &str, source: &str, budget: Duration) -> Option<ParsedTree> {
 
     Some(ParsedTree {
         tree,
-        lang: name,
+        lang: id,
         source: Arc::from(source),
     })
 }

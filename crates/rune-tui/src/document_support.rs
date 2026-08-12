@@ -41,7 +41,7 @@ pub(crate) fn kind_for(path: Option<&Path>, content: &str) -> DocumentKind {
     }
     match rune_ts::detect(Some(path), content) {
         Some(rune_ts::Detected::Markdown) => DocumentKind::Markdown,
-        Some(rune_ts::Detected::Lang(name)) => DocumentKind::Code(name),
+        Some(rune_ts::Detected::Lang(id)) => DocumentKind::Code(id),
         None => DocumentKind::Plain,
     }
 }
@@ -93,8 +93,14 @@ pub(crate) fn is_suspicious_shrink(disk_content: &str, recovered: &str) -> bool 
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use rune_syntax::LangId;
+
+    fn bash() -> LangId {
+        LangId::from_name("bash").unwrap()
+    }
 
     #[test]
     fn image_extension_resolves_to_image_kind() {
@@ -134,7 +140,7 @@ mod tests {
     fn dotfile_resolves_via_whole_filename() {
         assert_eq!(
             kind_for(Some(Path::new(".zshrc")), ""),
-            DocumentKind::Code("bash")
+            DocumentKind::Code(bash())
         );
     }
 
@@ -154,7 +160,7 @@ mod tests {
     fn extensionless_shebang_resolves_via_interpreter() {
         assert_eq!(
             kind_for(Some(Path::new("deploy")), "#!/bin/bash\n"),
-            DocumentKind::Code("bash")
+            DocumentKind::Code(bash())
         );
     }
 

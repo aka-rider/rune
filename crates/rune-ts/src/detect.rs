@@ -9,15 +9,17 @@
 
 use std::path::Path;
 
+use rune_syntax::LangId;
+
 use crate::lang;
 
 /// What a path plus its content identify a document as. `Markdown` is a
-/// distinct variant rather than a `lang::resolve` name because markdown
+/// distinct variant rather than a `lang::resolve` result because markdown
 /// is comrak's, never a tree-sitter grammar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Detected {
     Markdown,
-    Lang(&'static str),
+    Lang(LangId),
 }
 
 /// Whole-file-name matches, compared case-insensitively against
@@ -247,12 +249,12 @@ fn from_shebang(content: &str) -> Option<Detected> {
     let capped = first_line.get(..end).unwrap_or("");
     let interpreter = shebang_interpreter(capped)?;
     let name = interpreter_basename(interpreter)?;
-    INTERPRETERS
+    let canonical = INTERPRETERS
         .iter()
         .find(|(key, _)| *key == name)
         .map(|(_, value)| *value)
-        .or_else(|| lang::resolve(&name))
-        .map(Detected::Lang)
+        .unwrap_or(&name);
+    lang::resolve(canonical).map(Detected::Lang)
 }
 
 /// The one language decision for a file: a modeline (explicit author

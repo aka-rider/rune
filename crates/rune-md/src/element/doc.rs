@@ -203,7 +203,7 @@ impl DocMachine {
     /// because a non-markdown kind is never parsed into `blocks` at all.
     fn code_regions(&self, buf: &Buffer) -> Arc<[CodeRegion]> {
         match self.kind {
-            DocumentKind::Code(lang) => Arc::from([code_region::whole_document(lang, buf)]),
+            DocumentKind::Code(lang) => Arc::from([code_region::whole_document(lang.name(), buf)]),
             DocumentKind::Markdown => {
                 let mut out = Vec::new();
                 code_region::collect(&self.blocks, buf, &mut out);

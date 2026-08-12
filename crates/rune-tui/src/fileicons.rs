@@ -109,7 +109,7 @@ fn resolve_nerd(entry: &DirEntry) -> &'static str {
         if let Some(lang) = rune_ts::resolve(ext)
             && let Some(glyph) = LANGUAGE_GLYPHS
                 .iter()
-                .find(|(name, _)| *name == lang)
+                .find(|(name, _)| *name == lang.name())
                 .map(|(_, glyph)| *glyph)
         {
             return glyph;
