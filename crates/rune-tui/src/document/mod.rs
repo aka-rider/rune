@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
-use rune_core::undo::{Journal, Step};
+use rune_core::undo::{EditKind, Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_md::icons::IconSet;
 use rune_syntax::DocumentKind;
@@ -638,6 +638,7 @@ impl Document {
             edits: applied,
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),
+            kind: EditKind::Other,
         });
         Hydration::Adopted
     }

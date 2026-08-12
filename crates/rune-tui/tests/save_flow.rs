@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::undo::EditKind;
 use rune_tui::app::{App, update};
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -231,7 +232,7 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
             None,
         );
         let id = app.active;
-        edit::insert_text(&mut app, id, content);
+        edit::insert_text(&mut app, id, content, EditKind::Insert);
 
         let effects = press_save(&mut app);
         assert_eq!(effects.cmds.len(), 1, "one save Cmd must be spawned");
@@ -348,7 +349,7 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
     // byte-exact assertion below.
     let mut app = App::new(Buffer::new(""), Some(path.clone()), vfs, None);
     let id = app.active;
-    edit::insert_text(&mut app, id, "brand new file\n");
+    edit::insert_text(&mut app, id, "brand new file\n", EditKind::Insert);
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);
@@ -406,7 +407,7 @@ fn preview_document_refuses_save_and_never_touches_disk() {
         None,
     );
     let id = app.active;
-    edit::insert_text(&mut app, id, "!");
+    edit::insert_text(&mut app, id, "!", EditKind::Insert);
     assert!(app.is_dirty(), "the fixture must actually be dirty");
 
     app.doc_mut(id).unwrap().read_only = rune_tui::document::ReadOnly::Preview;

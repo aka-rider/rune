@@ -12,7 +12,7 @@
 
 use rune_core::buffer::{AppliedEdit, Edit};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
-use rune_core::undo::Step;
+use rune_core::undo::{EditKind, Step};
 
 use crate::app::App;
 use crate::db_enqueue as db;
@@ -72,6 +72,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     id: DocumentId,
     mut infos: Vec<(Edit, CursorId)>,
     cursors_before: CursorSet,
+    kind: EditKind,
     cursors_after: impl FnOnce(&[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
 ) -> bool {
     let Some(doc) = app.doc(id) else { return false };
@@ -110,6 +111,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
                 edits: applied.clone(),
                 cursors_before: cursors_before.all().to_vec(),
                 cursors_after: cursors_after.clone(),
+                kind,
             });
             // Async replica journaling (plan WP5.S3): the LOCAL journal
             // above is already the authoritative, synchronous source of
@@ -202,8 +204,9 @@ pub(crate) fn commit_edit_batch(
     id: DocumentId,
     infos: Vec<(Edit, CursorId)>,
     cursors_before: CursorSet,
+    kind: EditKind,
 ) -> bool {
-    apply_edit_batch_with_cursors(app, id, infos, cursors_before, |applied, ids| {
+    apply_edit_batch_with_cursors(app, id, infos, cursors_before, kind, |applied, ids| {
         applied
             .iter()
             .zip(ids.iter())

@@ -31,6 +31,7 @@
 
 use rune_core::buffer::{AppliedEdit, Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
+use rune_core::undo::EditKind;
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
@@ -47,6 +48,7 @@ use crate::messages;
 fn per_cursor_selection_edits(
     app: &mut App,
     id: DocumentId,
+    kind: EditKind,
     text_for: impl Fn(usize, &Cursor, &Buffer) -> String,
     bare: impl Fn(&Buffer, &Cursor) -> Option<(usize, usize)>,
 ) {
@@ -81,20 +83,21 @@ fn per_cursor_selection_edits(
         infos.push((edit, c.id));
     }
 
-    let _ = commit_edit_batch(app, id, infos, cursors_before);
+    let _ = commit_edit_batch(app, id, infos, cursors_before, kind);
 }
 
 /// Generalized to arbitrary text so it doubles as the selection-replacing
 /// insert path for bracketed paste (`Msg::Paste`, plan Context:
 /// "Bracketed-paste `Msg::Paste` may insert text through the same insert
-/// path").
-pub fn insert_text(app: &mut App, id: DocumentId, text: &str) {
+/// path") — `kind` tells the two apart for the undo journal.
+pub fn insert_text(app: &mut App, id: DocumentId, text: &str, kind: EditKind) {
     if text.is_empty() {
         return;
     }
     per_cursor_selection_edits(
         app,
         id,
+        kind,
         move |_i, _c, _buf| text.to_string(),
         |_buf, c| Some((c.position, c.position)),
     );
@@ -102,7 +105,7 @@ pub fn insert_text(app: &mut App, id: DocumentId, text: &str) {
 
 pub fn insert_char(app: &mut App, id: DocumentId, ch: char) {
     let mut buf = [0u8; 4];
-    insert_text(app, id, ch.encode_utf8(&mut buf));
+    insert_text(app, id, ch.encode_utf8(&mut buf), EditKind::Insert);
 }
 
 /// The Enter hardcoded fast path (plan Context, "Hardcoded fast paths
@@ -112,6 +115,7 @@ pub fn newline(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
+        EditKind::Insert,
         |_i, c, buf| {
             let pos = if c.has_selection() {
                 c.selection_start()
@@ -139,6 +143,7 @@ pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
+        EditKind::Cut,
         |_i, _c, _buf| String::new(),
         |buf, c| Some(nav_line::line_range_incl_newline(buf, c.position)),
     );
@@ -148,6 +153,7 @@ pub fn delete_left(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
+        EditKind::DeleteLeft,
         |_i, _c, _buf| String::new(),
         |buf, c| {
             if c.position == 0 {
@@ -163,6 +169,7 @@ pub fn delete_right(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
+        EditKind::DeleteRight,
         |_i, _c, _buf| String::new(),
         |buf, c| {
             if c.position >= buf.len() {
@@ -182,6 +189,7 @@ pub fn delete_word_left(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
+        EditKind::DeleteLeft,
         |_i, _c, _buf| String::new(),
         |buf, c| {
             if c.position == 0 {
@@ -197,6 +205,7 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
+        EditKind::DeleteRight,
         |_i, _c, _buf| String::new(),
         |buf, c| {
             if c.position >= buf.len() {

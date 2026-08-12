@@ -147,7 +147,7 @@ pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     if app.doc(id).is_none_or(|doc| doc.cursors.is_empty()) {
         return;
     }
-    edit::insert_text(app, id, text);
+    edit::insert_text(app, id, text, rune_core::undo::EditKind::Paste);
 }
 
 /// Deliberately NOT gated on `app.guard`, unlike the key pipeline's stage 1:

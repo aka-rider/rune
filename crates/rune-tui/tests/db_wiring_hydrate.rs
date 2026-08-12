@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use rune_core::buffer::{AppliedEdit, Buffer};
 use rune_core::cursor::CursorSet;
-use rune_core::undo::Step;
+use rune_core::undo::{EditKind, Step};
 use rune_db::{DbEvent, LoadResult, OpOutcome, Store, SyncKind, SyncState, Version};
 use rune_tui::app::{self, App};
 use rune_tui::commands::edit;
@@ -139,6 +139,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
             edits: vec![bridge_edit],
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),
+            kind: EditKind::Other,
         });
     }
 

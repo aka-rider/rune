@@ -20,6 +20,7 @@ use std::collections::HashSet;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::cursor::CursorId;
+use rune_core::undo::EditKind;
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
@@ -58,7 +59,7 @@ pub(crate) fn per_line_edits(
         }
     }
 
-    let _ = commit_edit_batch(app, id, infos, cursors_before);
+    let _ = commit_edit_batch(app, id, infos, cursors_before, EditKind::Other);
 }
 
 /// Indents the line under each cursor by one tab.

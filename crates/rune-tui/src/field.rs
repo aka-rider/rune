@@ -19,7 +19,7 @@ use std::ops::Range;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
-use rune_core::undo::{self, Journal, Step};
+use rune_core::undo::{self, EditKind, Journal, Step};
 
 use crate::commands::nav;
 use crate::keymap::{Command, Extend, KeyOutcome, Motion};
@@ -273,6 +273,7 @@ impl TextField {
             edits: applied,
             cursors_before: vec![before],
             cursors_after: vec![self.cursor],
+            kind: EditKind::Other,
         });
         KeyOutcome::Consumed
     }

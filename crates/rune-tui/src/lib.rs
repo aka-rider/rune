@@ -63,6 +63,7 @@ pub mod testgrid;
 pub mod theme;
 pub mod title;
 pub mod trash;
+pub mod undogroup;
 pub mod viewport;
 pub mod width;
 pub mod workspace;
