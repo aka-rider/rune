@@ -1,11 +1,11 @@
 //! The recursive tree walk: `Block`/`Inline` -> `SyntaxSpan`s, via the
-//! shared `push_span_split_by_line`/`hide_range`/`claim_visible` chokepoints
-//! in `emit::mod`. Concealment is physical here, uniformly for block markers
-//! AND inline delimiters: a `Rendered` element's marker/delimiter bytes are
-//! dropped from the emitted text (recorded as a hidden range for
-//! coordinate conversion) rather than kept-but-restyled — see the crate
-//! root emit module docs for why this unifies block and inline
-//! concealment under one policy.
+//! shared `push_span_split_by_line`/`hide_range`/`EmitOut::claim_free`
+//! chokepoints in `emit::mod`. Concealment is physical here, uniformly for
+//! block markers AND inline delimiters: a `Rendered` element's
+//! marker/delimiter bytes are dropped from the emitted text (recorded as a
+//! hidden range for coordinate conversion) rather than kept-but-restyled —
+//! see the crate root emit module docs for why this unifies block and
+//! inline concealment under one policy.
 //!
 //! Every `emit_block`/`emit_inline` call threads one `&mut EmitOut` (WP2.S3)
 //! instead of three loose out-params (`spans`, `hidden`, `accounted`) plus a
@@ -18,7 +18,7 @@ use super::style::{
 };
 use super::table::emit_table;
 use super::walk_inline::emit_inlines;
-use super::{Accounted, EmitOut, claim_visible, hide_range, push_span_split_by_line};
+use super::{EmitOut, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, FrontmatterM, ListItemM};
 use crate::parse::line_at;
 use rune_core::assert_invariant;
@@ -53,15 +53,7 @@ fn emit_delimited_revealed(
     out: &mut EmitOut,
 ) {
     let push = |range: ByteRange, scope: ScopeId, out: &mut EmitOut| {
-        push_span_split_by_line(
-            content,
-            starts,
-            range,
-            scope,
-            RevealState::Revealed,
-            out.spans,
-            out.accounted,
-        );
+        push_span_split_by_line(content, starts, range, scope, RevealState::Revealed, out);
     };
     push(block.open, block.delimiter_scope, out);
     for &line in block.content_lines {
@@ -92,9 +84,9 @@ fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut E
     // stays. Each is hidden or pushed one physical line at a time, so a
     // container's own repeating prefix in the gaps between them is never
     // claimed a second time.
-    hide_range(out.hidden, out.accounted, content, starts, cf.fence_open);
+    hide_range(content, starts, cf.fence_open, out);
     if let Some(close) = cf.fence_close {
-        hide_range(out.hidden, out.accounted, content, starts, close);
+        hide_range(content, starts, close, out);
     }
     for &line in &cf.content_lines {
         push_span_split_by_line(
@@ -103,8 +95,7 @@ fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut E
             line,
             code_fence_scope(),
             RevealState::Rendered,
-            out.spans,
-            out.accounted,
+            out,
         );
     }
 }
@@ -153,8 +144,7 @@ fn emit_list_item(
             item.marker,
             list_marker_style(item.task.is_some()),
             RevealState::Revealed,
-            out.spans,
-            out.accounted,
+            out,
         );
     } else if let Some(task) = item.task {
         // A task item's checkbox substitutes to a glyph even
@@ -164,8 +154,8 @@ fn emit_list_item(
         // The "- "/"1. " prefix before the checkbox is hidden exactly like
         // a plain marker; only the checkbox itself substitutes.
         let before = ByteRange::new(item.marker.start, task.start);
-        hide_range(out.hidden, out.accounted, content, starts, before);
-        push_task_checkbox(content, starts, task, out.spans, out.hidden, out.accounted);
+        hide_range(content, starts, before, out);
+        push_task_checkbox(content, starts, task, out);
         // Whatever sits between the checkbox and the item's own content
         // (normally exactly one space) is deliberately left UNCLAIMED here:
         // `fill_gaps` (`emit/mod.rs`) supplies it verbatim as an ordinary
@@ -175,7 +165,7 @@ fn emit_list_item(
         // hidden-ranges-only coordinate model instead of hand-rolling a
         // second hidden-range delta for the difference.
     } else {
-        hide_range(out.hidden, out.accounted, content, starts, item.marker);
+        hide_range(content, starts, item.marker, out);
         // Task items keep their `☐`/`☑` checkbox substitution (the `if let
         // Some(task)` arm above) and get NO bullet decor on top of it — the
         // checkbox already communicates the marker.
@@ -203,11 +193,9 @@ fn emit_list_item(
 /// content, it doesn't hide it — and deliberately NOT built via
 /// `push_span_split_by_line` (which only ever copies `content[range]`
 /// itself into `Substituted::text`, never a genuinely different string).
-/// Routes the claim itself through `claim_visible` — the same
-/// unclaimed-subranges-plus-assert chokepoint every other own-text
-/// producer in this crate uses — instead of writing `out`/`accounted`
-/// directly, so an overlapping claim here is clipped and reported instead
-/// of silently invented.
+/// Routes the claim itself through `EmitOut::claim_whole` — there is no
+/// half-glyph substitution, so an overlap refuses the whole claim instead
+/// of drawing over bytes another producer already owns.
 ///
 /// Byte-length-preserving BY CONSTRUCTION, which is why this needs no
 /// extra hidden-range bookkeeping: `☐`/`☑` are each exactly 3 bytes in
@@ -226,14 +214,7 @@ fn emit_list_item(
 /// any other length, and (in every build, not just a strict one) it falls
 /// through to hiding the range like a plain marker instead of emitting a
 /// glyph whose byte length would lie about the range it replaces.
-fn push_task_checkbox(
-    content: &str,
-    starts: &[usize],
-    task: ByteRange,
-    out: &mut [Vec<SyntaxSpan>],
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
-) {
+fn push_task_checkbox(content: &str, starts: &[usize], task: ByteRange, out: &mut EmitOut) {
     let Some(bytes) = content.get(task.start..task.end) else {
         return;
     };
@@ -249,33 +230,24 @@ fn push_task_checkbox(
         // Can't substitute a glyph whose byte length would disagree with
         // the range it replaces (this function's own docs) — fall through
         // to hiding it verbatim, exactly like a plain, non-task marker.
-        hide_range(hidden, accounted, content, starts, task);
+        hide_range(content, starts, task, out);
         return;
     }
     let checked = bytes.as_bytes().get(1).is_some_and(|&b| b != b' ');
     let glyph = if checked { "\u{2611}" } else { "\u{2610}" };
     let line = line_at(starts, task.start);
 
-    let pieces = claim_visible(accounted, line, task.start, task.end);
-    if pieces != [(task.start, task.end)] {
-        // The whole range was not cleanly unclaimed (an overlap
-        // `claim_visible`'s own assert already flagged) — there is no
-        // half-glyph substitution, so skip rather than desync the
-        // byte-length-neutral invariant this function exists for.
+    let Ok(granted) = out.claim_whole(line, task.start, task.end) else {
         return;
-    }
+    };
 
     let span = SyntaxSpan::Substituted {
-        // Pre-WP4 this was `StyleId::TaskMarker`; WP4 folded that variant
-        // into `list_marker_style`'s task arm ("markup.list.checked").
         scope: list_marker_style(true),
         text: glyph.to_string(),
         range: task.start..task.end,
         cell_map: vec![task.start as i64],
     };
-    if let Some(bucket) = out.get_mut(line) {
-        bucket.push(span);
-    }
+    granted.push_visible(vec![span]);
 }
 
 pub(crate) fn emit_block(
@@ -305,12 +277,11 @@ pub(crate) fn emit_block(
                         line,
                         heading_style(h.level),
                         RevealState::Revealed,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 }
             } else {
-                hide_range(out.hidden, out.accounted, content, starts, h.marker);
+                hide_range(content, starts, h.marker, out);
                 emit_inlines(
                     content,
                     starts,
@@ -325,7 +296,7 @@ pub(crate) fn emit_block(
                 // rule in the heading's own style, not the thematic-break
                 // style (user-decided target behavior).
                 if let Some(underline) = h.underline {
-                    hide_range(out.hidden, out.accounted, content, starts, underline);
+                    hide_range(content, starts, underline, out);
                     let underline_line = line_at(starts, underline.start);
                     super::decor::push_heading_rule_decor(out, underline_line, h.level);
                 }
@@ -340,11 +311,10 @@ pub(crate) fn emit_block(
                         m.marker,
                         blockquote_scope(),
                         RevealState::Revealed,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 } else {
-                    hide_range(out.hidden, out.accounted, content, starts, m.marker);
+                    hide_range(content, starts, m.marker, out);
                     super::decor::push_quote_marker_decor(out, m.line);
                 }
             }
@@ -366,11 +336,10 @@ pub(crate) fn emit_block(
                     hr.range,
                     hr_scope(),
                     RevealState::Revealed,
-                    out.spans,
-                    out.accounted,
+                    out,
                 );
             } else {
-                hide_range(out.hidden, out.accounted, content, starts, hr.range);
+                hide_range(content, starts, hr.range, out);
                 super::decor::push_hr_decor(out, hr.line);
             }
         }
@@ -390,8 +359,7 @@ pub(crate) fn emit_block(
                     line,
                     verbatim_style(),
                     RevealState::Revealed,
-                    out.spans,
-                    out.accounted,
+                    out,
                 );
             }
         }

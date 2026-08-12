@@ -5,7 +5,7 @@
 //! tree walk.
 
 use super::style::{table_header_scope, table_scope, verbatim_style};
-use super::{EmitOut, claim_visible, push_span_split_by_line};
+use super::{EmitOut, hide_range, push_span_split_by_line};
 use crate::element::table::TableM;
 use crate::parse::line_at;
 use crate::table::{CellSrc, extra_row_spans, layout, pivot, render, row_spans, wrapped};
@@ -37,17 +37,20 @@ use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 ///   keep their real offsets.
 ///
 /// Every layout still tiles row 1 onto the source line's own byte range
-/// exactly (`table::row_spans`, claimed through `claim_visible` — the SAME
-/// duplicate-claim guard `push_span_split_by_line` uses). Deliberately NOT
-/// routed through `push_span_split_by_line` itself (it only ever copies
-/// `content[range]` verbatim) — this substitutes a wholly different string
-/// for the claimed bytes, `push_task_checkbox`'s "substitutes visible
-/// content" shape, one call per source line rather than one call per
-/// delimiter/content sub-range. A Wrapped/Pivoted line's visual rows 2..N
-/// carry NO byte claim at all (Gotcha 2): they become
-/// `TableRowInfo::extra_rows` via `table::extra_row_spans`, never touching
-/// `out.spans`/`accounted`, so a table line's visible-plus-hidden byte
-/// accounting stays whole regardless of how many visual rows it expands to.
+/// exactly (`table::row_spans`, claimed whole through `EmitOut::claim_whole`
+/// — a rendered row has no byte-for-byte relationship to its source, so a
+/// refused claim is skipped rather than drawn over whatever already
+/// occupies part of the line; the row's raw markdown then reaches the
+/// display through `fill_gaps` instead). Deliberately NOT routed through
+/// `push_span_split_by_line` itself (it only ever copies `content[range]`
+/// verbatim) — this substitutes a wholly different string for the claimed
+/// bytes, `push_task_checkbox`'s "substitutes visible content" shape, one
+/// call per source line rather than one call per delimiter/content
+/// sub-range. A Wrapped/Pivoted line's visual rows 2..N carry NO byte claim
+/// at all: they become `TableRowInfo::extra_rows` via
+/// `table::extra_row_spans`, never touching the emitted spans or
+/// accounting, so a table line's visible-plus-hidden byte accounting stays
+/// whole regardless of how many visual rows it expands to.
 pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut EmitOut) {
     if t.sm.state() == RevealState::Revealed {
         for &line in &t.content_lines {
@@ -57,8 +60,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 line,
                 verbatim_style(),
                 RevealState::Revealed,
-                out.spans,
-                out.accounted,
+                out,
             );
         }
         return;
@@ -161,8 +163,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 content_line,
                 verbatim_style(),
                 RevealState::Revealed,
-                out.spans,
-                out.accounted,
+                out,
             );
             continue;
         };
@@ -235,15 +236,10 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         let line_start = content_line.start;
         let line_len = content_line.len();
         let spans = row_spans(line_start, line_len, &row1_runs);
-        // The returned pieces are discarded deliberately: this call exists
-        // to register the claim in `out.accounted` so no OTHER producer can
-        // re-claim these bytes, not to clip `spans` — the row layout above
-        // already owns this line's content in full, and `claim_visible`'s
-        // own `assert_invariant` (strict-invariants builds) is what catches
-        // an actual overlap, the same accounting failure `hide_range` guards.
-        let _ = claim_visible(out.accounted, line, line_start, line_start + line_len);
-        if let Some(bucket) = out.spans.get_mut(line) {
-            bucket.extend(spans);
+        if spans.is_empty() {
+            hide_range(content, starts, content_line, out);
+        } else if let Ok(granted) = out.claim_whole(line, line_start, line_start + line_len) {
+            granted.push_visible(spans);
         }
 
         let extra_rows: Vec<Vec<SyntaxSpan>> = extra_row_runs
