@@ -1,3 +1,0 @@
-# This file is intentionally empty.
-# A transient proptest failure was recorded here but the test passes consistently without this file,
-# indicating a non-deterministic proptest artifact rather than a real regression.
