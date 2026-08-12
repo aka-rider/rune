@@ -248,18 +248,16 @@ impl Buffer {
             .iter()
             .map(|e| edit_delta(e.end - e.start, e.insert.len()))
             .sum();
-        let cap = (len as isize + net_change).max(0) as usize;
+        let cap = len.saturating_add_signed(net_change);
         let mut new_content = String::with_capacity(cap);
 
         // Precompute each edit's cumulative shift, scanning right-to-left
         // (descending `start` order matches array order here).
         let mut shifts = vec![0isize; edits.len()];
         let mut current_shift: isize = 0;
-        for i in (0..edits.len()).rev() {
-            if let (Some(e), Some(slot)) = (edits.get(i), shifts.get_mut(i)) {
-                *slot = current_shift;
-                current_shift += edit_delta(e.end - e.start, e.insert.len());
-            }
+        for (e, slot) in edits.iter().zip(shifts.iter_mut()).rev() {
+            *slot = current_shift;
+            current_shift += edit_delta(e.end - e.start, e.insert.len());
         }
 
         let mut applied: Vec<AppliedEdit> = Vec::with_capacity(edits.len());
@@ -269,13 +267,7 @@ impl Buffer {
         // which is why this loop also runs in reverse over the
         // descending-sorted `edits` array.
         let mut last_end = 0usize;
-        for i in (0..edits.len()).rev() {
-            let e = match edits.get(i) {
-                Some(e) => e,
-                None => continue,
-            };
-            let shift = shifts.get(i).copied().unwrap_or(0);
-
+        for (i, (e, shift)) in edits.iter().zip(&shifts).enumerate().rev() {
             let prefix = self
                 .content
                 .get(last_end..e.start)
@@ -288,7 +280,7 @@ impl Buffer {
             new_content.push_str(&e.insert);
             last_end = e.end;
 
-            let start = (e.start as isize + shift).max(0) as usize;
+            let start = e.start.saturating_add_signed(*shift);
             let deleted = self
                 .content
                 .get(e.start..e.end)

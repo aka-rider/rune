@@ -14,9 +14,7 @@ impl List {
             self.cursor = 0;
             return;
         }
-        let pos = self.cursor as isize + delta;
-        let pos = pos.clamp(0, (len - 1) as isize);
-        self.cursor = pos as usize;
+        self.cursor = self.cursor.saturating_add_signed(delta).min(len - 1);
     }
 
     pub fn first(&mut self) {
@@ -39,42 +37,26 @@ impl List {
             return;
         }
 
-        let size = height as isize;
-        let total = len as isize;
-        let mut offset = self.top as isize;
-        let cursor = self.cursor as isize;
+        let m = if margin * 2 > height {
+            height.saturating_sub(1) / 2
+        } else {
+            margin
+        };
 
-        // Clamp margin to (size-1)/2 if margin*2 > size
-        let mut m = margin as isize;
-        if m * 2 > size {
-            m = (size - 1) / 2;
-        }
-        if m < 0 {
-            m = 0;
-        }
+        let j = jump.min(height.saturating_sub(1 + 2 * m));
 
-        // Clamp jump to size-1-2*margin, then >= 0
-        let mut j = jump as isize;
-        let max_jump = size - 1 - 2 * m;
-        if j > max_jump {
-            j = max_jump;
-        }
-        if j < 0 {
-            j = 0;
-        }
+        let max_offset = len.saturating_sub(height);
 
-        let max_offset = (total - size).max(0);
+        let mut offset = self.top;
+        let cursor = self.cursor;
 
         if cursor < offset + m {
-            // Cursor is above the visible window → scroll up
-            offset = cursor - m - j;
-        } else if cursor >= offset + size - 1 - m {
-            // Cursor is below the visible window → scroll down
-            offset = cursor - (size - 1 - m) + j;
+            offset = cursor.saturating_sub(m + j);
+        } else if cursor >= offset + height.saturating_sub(1 + m) {
+            offset = cursor.saturating_sub(height.saturating_sub(1 + m)) + j;
         }
 
-        offset = offset.clamp(0, max_offset);
-        self.top = offset as usize;
+        self.top = offset.min(max_offset);
     }
 
     /// Returns the visible index range [top, top+height) clamped to [0, len).
@@ -164,6 +146,13 @@ mod tests {
         let w = list.window(18, 5);
         // top=17, height=5 → 17..18 (clamped to len=18)
         assert_eq!(w, 17..18);
+    }
+
+    #[test]
+    fn follow_margin_boundary_height10_margin5() {
+        let mut list = List { cursor: 5, top: 0 };
+        list.follow(100, 10, 5, 0);
+        assert_eq!(list.top, 1);
     }
 
     #[test]

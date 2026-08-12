@@ -85,7 +85,7 @@ impl Buffer {
             let delta = e.insert.len() as isize - (e.end - e.start) as isize;
 
             for v in line_starts.iter_mut().skip(end_line + 1) {
-                *v = (*v as isize + delta).max(0) as usize;
+                *v = v.saturating_add_signed(delta);
             }
 
             let mut next_starts = Vec::with_capacity(line_starts.len() + added_starts.len());
