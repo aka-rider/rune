@@ -111,7 +111,7 @@ fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
 
     if let Some(id) = existing_document_for(app, &resolved) {
         // Re-activation moves the Tabs cursor only — never reorders
-        // `tabs.order` (plan WP5.S1's own chokepoint list).
+        // `documents.order()`.
         switch_to(app, id);
         return ReadOutcome::Reactivated(id);
     }
@@ -339,7 +339,7 @@ pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId
 /// for (Open Tabs' `Select`), reused by `open_path`'s re-activation path
 /// above. A no-op if `id` doesn't reference a live document (a stale id from
 /// some racing close). Also moves — never reorders — the Tabs pane's own
-/// cursor to `id`'s position in `tabs.order`, so the next Up/Down there
+/// cursor to `id`'s position in `documents.order()`, so the next Up/Down there
 /// starts from the tab that's actually now showing.
 ///
 /// Writes no focus of its own (plan decision 6): this is the one function
@@ -376,13 +376,13 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
         crate::merge::auto_exit(app);
     }
     app.active = id;
-    app.tabs.touch(id);
+    app.documents.touch(id);
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding
     // the previous document's name (no shadow state).
     let name = crate::title::name_for(app.active_doc());
     app.title.seed(&name);
-    if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
+    if let Some(idx) = app.documents.order().iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
     // Plan WP2.S4: re-check this document's disk fact on every switch onto
@@ -398,7 +398,7 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
 /// into [`switch_to`], so a positional switch can never skip the title
 /// reseed or the cursor move.
 pub fn switch_to_index(app: &mut App, idx: usize) {
-    if let Some(&id) = app.tabs.order.get(idx) {
+    if let Some(&id) = app.documents.order().get(idx) {
         switch_to(app, id);
     }
 }

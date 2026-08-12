@@ -29,14 +29,14 @@ fn opening_a_non_file_from_the_explorer_posts_an_error_and_opens_nothing() {
     let mut app = App::new(Buffer::new(""), None, vfs, None);
     app.frame_width = 80;
     app.frame_height = 24;
-    let docs_before = app.tabs.order.len();
+    let docs_before = app.documents.order().len();
 
     let mut effects = Effects::default();
     let opened = workspace::open_path_checked(&mut app, Path::new("/fifo.md"), &mut effects);
 
     assert!(opened.is_none(), "a non-file must never open a document");
     assert_eq!(
-        app.tabs.order.len(),
+        app.documents.order().len(),
         docs_before,
         "no new tab may appear for a refused open"
     );

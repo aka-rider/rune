@@ -30,12 +30,12 @@ pub fn toggle_pin(app: &mut App, id: DocumentId) {
 pub const MAX_TABS: usize = 10;
 
 /// Whether the strip has room for one more interactive tab: occupied slots
-/// (`tabs.order`'s length, minus one when a live Explorer preview still
-/// holds a place) under [`MAX_TABS`]. A preview is displaced by the very
+/// (`documents.order()`'s length, minus one when a live Explorer preview
+/// still holds a place) under [`MAX_TABS`]. A preview is displaced by the very
 /// switch that lands whatever open is about to proceed, so it never holds a
 /// lasting slot and must not count toward the cap.
 fn room_available(app: &App) -> bool {
-    let occupied = app.tabs.order.len();
+    let occupied = app.documents.order().len();
     let occupied = if app.explorer.preview.is_some_and(|id| app.doc(id).is_some()) {
         occupied.saturating_sub(1)
     } else {
@@ -56,8 +56,8 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
         return true;
     }
     let eligible: Vec<DocumentId> = app
-        .tabs
-        .mru
+        .documents
+        .mru()
         .iter()
         .copied()
         .filter(|&id| {
@@ -205,9 +205,9 @@ mod tests {
         assert!(ensure_room(&mut app, &mut effects));
         app.open_document(Buffer::new("eleventh"));
 
-        assert!(app.tabs.order.len() <= MAX_TABS);
+        assert!(app.documents.order().len() <= MAX_TABS);
         assert!(
-            !app.tabs.order.contains(&expected_victim),
+            !app.documents.order().contains(&expected_victim),
             "the oldest non-active, non-pinned, clean tab must have been evicted"
         );
     }
@@ -221,7 +221,7 @@ mod tests {
 
         let mut effects = Effects::default();
         assert!(!ensure_room(&mut app, &mut effects));
-        assert_eq!(app.tabs.order.len(), MAX_TABS);
+        assert_eq!(app.documents.order().len(), MAX_TABS);
         assert_eq!(
             messages::newest_text(&app),
             Some("Tab limit reached — close or unpin a tab")
@@ -244,7 +244,7 @@ mod tests {
             Some(GuardPrompt { doc, kind: GuardKind::DirtyClose }) if *doc == expected_victim
         ));
         assert_eq!(app.active, expected_victim, "the victim was switched to");
-        assert_eq!(app.tabs.order.len(), MAX_TABS);
+        assert_eq!(app.documents.order().len(), MAX_TABS);
     }
 
     #[test]
@@ -259,11 +259,11 @@ mod tests {
         app.open_document(Buffer::new("eleventh"));
 
         assert!(
-            app.tabs.order.contains(&pinned),
+            app.documents.order().contains(&pinned),
             "the pinned tab must survive"
         );
         assert!(
-            !app.tabs.order.contains(&next_lra),
+            !app.documents.order().contains(&next_lra),
             "the next least-recently-active clean tab must have been evicted instead"
         );
     }
@@ -301,7 +301,7 @@ mod tests {
             crate::runtime::DirCause::Nav,
             0,
         );
-        let tabs_before = app.tabs.order.len();
+        let tabs_before = app.documents.order().len();
         let newest_before = messages::newest_text(&app).map(str::to_string);
 
         let mut effects = Effects::default();
@@ -322,7 +322,11 @@ mod tests {
             }
         }
 
-        assert_eq!(app.tabs.order.len(), tabs_before, "no new tab at cap");
+        assert_eq!(
+            app.documents.order().len(),
+            tabs_before,
+            "no new tab at cap"
+        );
         assert_eq!(
             messages::newest_text(&app).map(str::to_string),
             newest_before,
@@ -375,9 +379,9 @@ mod tests {
         let mut effects = Effects::default();
         assert!(ensure_room(&mut app, &mut effects));
 
-        assert_eq!(app.tabs.order.len(), MAX_TABS, "no tab was evicted");
+        assert_eq!(app.documents.order().len(), MAX_TABS, "no tab was evicted");
         assert!(
-            app.tabs.order.contains(&preview),
+            app.documents.order().contains(&preview),
             "the preview itself is still open — it is displaced by the switch \
              the incoming document performs, not by ensure_room"
         );
@@ -405,7 +409,7 @@ mod tests {
 
         assert_eq!(reopened, Some(target));
         assert_eq!(app.active, target);
-        assert_eq!(app.tabs.order.len(), MAX_TABS);
+        assert_eq!(app.documents.order().len(), MAX_TABS);
         assert_eq!(
             messages::newest_text(&app).map(str::to_string),
             newest_before,
@@ -429,9 +433,9 @@ mod tests {
         );
 
         assert!(opened.is_some());
-        assert!(app.tabs.order.len() <= MAX_TABS);
+        assert!(app.documents.order().len() <= MAX_TABS);
         assert!(
-            !app.tabs.order.contains(&expected_victim),
+            !app.documents.order().contains(&expected_victim),
             "the least-recently-active clean tab must have been evicted"
         );
     }

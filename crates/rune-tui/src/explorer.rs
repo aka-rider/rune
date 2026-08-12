@@ -58,7 +58,7 @@ pub struct Explorer {
     /// the request that superseded it.
     pub pending_reveal: Option<PathBuf>,
     /// The minted `ReadOnly::Preview` document currently occupying a slot in
-    /// `tabs.order`, if the cursor is sitting on a file that isn't already
+    /// `documents.order()`, if the cursor is sitting on a file that isn't already
     /// open as a real tab — `explorer_preview`'s own state, kept here
     /// because it's the Explorer's cursor position that drives it. At most
     /// one preview exists at a time: moving the cursor onto a different

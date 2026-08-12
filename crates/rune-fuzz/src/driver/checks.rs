@@ -224,8 +224,8 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
     if state.app.active != state.seed_doc
         && let Some(idx) = state
             .app
-            .tabs
-            .order
+            .documents
+            .order()
             .iter()
             .position(|&t| t == state.seed_doc)
         && let Some(key) = tab_switch_key(idx)

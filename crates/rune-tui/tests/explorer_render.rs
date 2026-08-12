@@ -178,68 +178,6 @@ fn the_nerd_tier_inserts_a_two_cell_icon_column_the_unicode_tier_does_not() {
 }
 
 #[test]
-fn a_skipped_tabs_row_does_not_misplace_the_cursor_bar_onto_the_wrong_tab() {
-    let mut app = App::new(Buffer::new("first"), None, Arc::new(Mem::new()), None);
-    app.active_doc_mut().viewport.set_size(80, 23);
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
-    app.splits.left.show();
-    let unresolvable = app.open_document(Buffer::new("second"));
-    let target = app.open_document(Buffer::new("third"));
-
-    // `documents` is removed directly (not through `workspace::close_now`)
-    // so `unresolvable` stays in `tabs.order` — a skipped row ahead of the
-    // cursor's own tab — exactly the state `opentabs::render::draw`'s
-    // `continue` on an unresolvable id must not misplace against.
-    app.documents.remove(&unresolvable);
-
-    app.tabs.nav.cursor = app
-        .tabs
-        .order
-        .iter()
-        .position(|&id| id == target)
-        .expect("target is still in tabs.order");
-    app.tabs.nav.top = 0;
-
-    let mut effects = Effects::default();
-    app.set_focus_pane(Pane::Tabs, &mut effects);
-    assert_eq!(app.focus(), Pane::Tabs);
-
-    let area = ratatui::layout::Rect::new(0, 0, WIDTH, HEIGHT);
-    let geo = rune_tui::layout::geometry(area, &app);
-    let tabs_inner = geo.tabs_inner;
-
-    let buf = testgrid::draw(&app, WIDTH, HEIGHT);
-    let cursor_bg = app.theme.chrome.row_cursor_bg.bg.unwrap();
-
-    // The pushed-line index for `target` is 1 (row 0: the initial doc,
-    // "second" is skipped entirely, row 1: "third") — NOT
-    // `cursor - window.start` (which would be 2, `target`'s position in
-    // `tabs.order`).
-    let bar_row = tabs_inner.y + 1;
-    let mut bar_found = false;
-    for x in tabs_inner.x..tabs_inner.x + tabs_inner.width {
-        if buf.cell((x, bar_row)).is_some_and(|c| c.bg == cursor_bg) {
-            bar_found = true;
-            break;
-        }
-    }
-    assert!(
-        bar_found,
-        "the cursor bar must land on the cursor's own pushed row"
-    );
-
-    let wrong_row = tabs_inner.y + 2;
-    for x in tabs_inner.x..tabs_inner.x + tabs_inner.width {
-        let cell = buf.cell((x, wrong_row)).expect("row past the pushed lines");
-        assert_ne!(
-            cell.bg, cursor_bg,
-            "a delta-derived rect would have landed here instead"
-        );
-    }
-}
-
-#[test]
 fn an_out_of_window_cursor_paints_no_bar_and_does_not_panic() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
@@ -280,11 +218,11 @@ fn tabs_active_row_is_always_shown_and_the_cursor_row_only_when_tabs_is_focused_
     let geo = rune_tui::layout::geometry(area, &app);
     let tabs_inner = geo.tabs_inner;
     let active_idx = app
-        .tabs
-        .order
+        .documents
+        .order()
         .iter()
         .position(|&id| id == active)
-        .expect("active doc is in tabs.order");
+        .expect("active doc is in documents.order()");
     let row_y = tabs_inner.y + active_idx as u16;
 
     let active_bg = app.theme.chrome.row_active_bg.bg.unwrap();

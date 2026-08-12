@@ -211,14 +211,18 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     );
     run_cmds(&mut app, &mut effects);
     let id = app.explorer.preview.expect("preview minted");
-    let tabs_before = app.tabs.order.len();
+    let tabs_before = app.documents.order().len();
 
     let _ = keys::handle_key(&mut app, enter_key(), &mut effects);
 
     assert!(app.filesearch().is_none());
     assert_eq!(app.doc(id).expect("doc").read_only, ReadOnly::No);
     assert!(app.explorer.preview.is_none());
-    assert_eq!(app.tabs.order.len(), tabs_before, "promotion mints no tab");
+    assert_eq!(
+        app.documents.order().len(),
+        tabs_before,
+        "promotion mints no tab"
+    );
     assert!(
         app.db_ops
             .values()

@@ -171,8 +171,6 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
         active_changed = true;
     }
     app.documents.remove(&id);
-    app.tabs.order.retain(|&t| t != id);
-    app.tabs.mru.retain(|&t| t != id);
     app.db_ops.retain(|_, pending| pending.doc != id);
     if app.pending_close_on_save == Some(id) {
         app.pending_close_on_save = None;
@@ -206,12 +204,12 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if active_changed {
         let name = crate::title::name_for(app.active_doc());
         app.title.seed(&name);
-        app.tabs.touch(app.active);
+        app.documents.touch(app.active);
     }
 
     app.tabs.nav.cursor = app
-        .tabs
-        .order
+        .documents
+        .order()
         .iter()
         .position(|&t| t == app.active)
         .unwrap_or(0);
@@ -219,20 +217,21 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
 }
 
 /// The neighbor `close_now` reassigns `active` to when the closed document
-/// WAS active: the next tab in `tabs.order`, else the previous one (plan
-/// WP5.S3). Falls back to any other live document if `id` isn't in
-/// `tabs.order` at all — shouldn't happen (every document has a tab), but
-/// keeps this total rather than leaving `active` dangling.
+/// WAS active: the next tab in `documents.order()`, else the previous one
+/// (plan WP5.S3). Falls back to any other live document if `id` isn't in
+/// `documents.order()` at all — shouldn't happen (every document has a
+/// tab), but keeps this total rather than leaving `active` dangling.
 ///
 /// `pub(crate)`: `explorer_preview::discard_active` reuses this exact pick
 /// as its own fallback rather than growing a second neighbour picker.
 pub(crate) fn neighbor_of(app: &App, id: DocumentId) -> Option<DocumentId> {
-    if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
-        if let Some(&next) = app.tabs.order.get(idx + 1) {
+    let order = app.documents.order();
+    if let Some(idx) = order.iter().position(|&t| t == id) {
+        if let Some(&next) = order.get(idx + 1) {
             return Some(next);
         }
         if idx > 0 {
-            return app.tabs.order.get(idx - 1).copied();
+            return order.get(idx - 1).copied();
         }
     }
     app.documents.keys().find(|&&k| k != id).copied()

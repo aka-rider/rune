@@ -350,7 +350,7 @@ impl App {
             frame_height: 0,
             frame_width: 0,
             explorer: Explorer::default(),
-            tabs: OpenTabs::new(id),
+            tabs: OpenTabs::new(),
             help_doc: None,
             help_return_to: None,
             title: crate::title::TitleField::default(),
@@ -452,10 +452,6 @@ impl App {
     pub fn open_document(&mut self, buffer: Buffer) -> DocumentId {
         let id = self.mint_doc_id();
         self.documents.insert(id, Document::new(buffer));
-        // The Open Tabs chokepoint: every document, however
-        // it was opened, gets a tab the moment it exists.
-        self.tabs.order.push(id);
-        self.tabs.mru.push(id);
         id
     }
 

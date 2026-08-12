@@ -1,7 +1,7 @@
 //! Explorer live-preview: moving the Explorer cursor shows the file under
 //! it in the Editor immediately, without minting a permanent tab the way
 //! `workspace::open_path` does. The previewed document occupies a REAL slot
-//! in `tabs.order` (`ReadOnly::Preview`, `document/mod.rs`) rather than an
+//! in `documents.order()` (`ReadOnly::Preview`, `document/mod.rs`) rather than an
 //! out-of-band one — that's deliberate, so `^1`-`^0`, the Tabs pane, and
 //! `workspace::close`'s own neighbour logic all keep working on it by
 //! construction instead of needing an untabbed-active special case.
@@ -201,7 +201,7 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
             // the messages pane on every Explorer cursor step once the
             // strip is at capacity, for a document the user only glanced
             // at.
-            if app.tabs.order.len() >= crate::opentabs::limit::MAX_TABS {
+            if app.documents.order().len() >= crate::opentabs::limit::MAX_TABS {
                 return;
             }
             let id = app.open_document(buffer);
@@ -250,7 +250,7 @@ fn apply_failed(app: &mut App, path: &Path, reason: &str) {
             id
         }
         None => {
-            if app.tabs.order.len() >= crate::opentabs::limit::MAX_TABS {
+            if app.documents.order().len() >= crate::opentabs::limit::MAX_TABS {
                 return;
             }
             let id = app.open_document(Buffer::new(text));
@@ -343,7 +343,7 @@ pub(crate) fn promote(app: &mut App, id: DocumentId) {
 /// rather than a second neighbour picker — when the remembered document
 /// has itself been closed in the meantime. The target is resolved BEFORE
 /// `id` is removed: `neighbor_of` reads `id`'s own position in
-/// `tabs.order`, exactly like `close_now`'s own reassign-before-remove
+/// `documents.order()`, exactly like `close_now`'s own reassign-before-remove
 /// order.
 fn discard_active(app: &mut App) {
     let Some(id) = app.explorer.preview else {
@@ -363,23 +363,21 @@ fn discard_active(app: &mut App) {
         workspace::switch_to(app, target);
     }
     app.tabs.nav.cursor = app
-        .tabs
-        .order
+        .documents
+        .order()
         .iter()
         .position(|&t| t == app.active)
         .unwrap_or(0);
 }
 
-/// The shared tail of every discard path: removes `id` from BOTH
-/// `app.documents` and `app.tabs.order` and clears the preview slot (and
-/// its remembered return-to document). A preview is never dirty and never
+/// The shared tail of every discard path: removes `id` from `app.documents`
+/// (its tab membership with it) and clears the preview slot (and its
+/// remembered return-to document). A preview is never dirty and never
 /// contacted the recovery store, so unlike `workspace::close::close_now`
 /// there is no guard prompt, no `db_ops`/`pending_*` sweep, and no
 /// image-delete effect to run — closing a preview is pure bookkeeping.
 fn remove_preview_document(app: &mut App, id: DocumentId) {
     app.documents.remove(&id);
-    app.tabs.order.retain(|&t| t != id);
-    app.tabs.mru.retain(|&t| t != id);
     app.explorer.preview = None;
     app.explorer.preview_return_to = None;
     app.explorer.preview_failed = None;

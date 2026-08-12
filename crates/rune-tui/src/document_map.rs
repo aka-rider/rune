@@ -31,6 +31,8 @@ use crate::document::{Document, DocumentId};
 pub struct DocumentMap {
     anchor: (DocumentId, Document),
     rest: BTreeMap<DocumentId, Document>,
+    order: Vec<DocumentId>,
+    mru: Vec<DocumentId>,
 }
 
 impl DocumentMap {
@@ -38,7 +40,22 @@ impl DocumentMap {
         DocumentMap {
             anchor: (id, doc),
             rest: BTreeMap::new(),
+            order: vec![id],
+            mru: vec![id],
         }
+    }
+
+    pub fn order(&self) -> &[DocumentId] {
+        &self.order
+    }
+
+    pub fn mru(&self) -> &[DocumentId] {
+        &self.mru
+    }
+
+    pub fn touch(&mut self, id: DocumentId) {
+        self.mru.retain(|&t| t != id);
+        self.mru.push(id);
     }
 
     pub fn len(&self) -> usize {
@@ -95,11 +112,16 @@ impl DocumentMap {
     }
 
     pub fn insert(&mut self, id: DocumentId, doc: Document) -> Option<Document> {
-        if id == self.anchor.0 {
+        let previous = if id == self.anchor.0 {
             Some(std::mem::replace(&mut self.anchor.1, doc))
         } else {
             self.rest.insert(id, doc)
+        };
+        if previous.is_none() {
+            self.order.push(id);
+            self.mru.push(id);
         }
+        previous
     }
 
     /// Removes `id`, refusing (returning `None`, leaving `self` unchanged)
@@ -108,12 +130,16 @@ impl DocumentMap {
     /// this, kept here too as this type's own structural guarantee rather
     /// than trusting every future caller to remember it independently.
     pub fn remove(&mut self, id: &DocumentId) -> Option<Document> {
-        if *id != self.anchor.0 {
-            return self.rest.remove(id);
-        }
-        let (&next_id, _) = self.rest.iter().next()?;
-        let next_doc = self.rest.remove(&next_id)?;
-        Some(std::mem::replace(&mut self.anchor, (next_id, next_doc)).1)
+        let removed = if *id != self.anchor.0 {
+            self.rest.remove(id)?
+        } else {
+            let (&next_id, _) = self.rest.iter().next()?;
+            let next_doc = self.rest.remove(&next_id)?;
+            std::mem::replace(&mut self.anchor, (next_id, next_doc)).1
+        };
+        self.order.retain(|t| t != id);
+        self.mru.retain(|t| t != id);
+        Some(removed)
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &DocumentId> {

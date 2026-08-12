@@ -375,12 +375,12 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
     let mut app = app_with(&mem);
     // A second document, so the last-document floor doesn't refuse.
     workspace::open_path(&mut app, Path::new("/root/b.md"));
-    let first_tab = app.tabs.order[0];
+    let first_tab = app.documents.order()[0];
     workspace::switch_to(&mut app, first_tab);
     let renaming = app.active;
     let background = *app
-        .tabs
-        .order
+        .documents
+        .order()
         .iter()
         .find(|&&t| t != renaming)
         .expect("a second, non-active tab");
@@ -492,7 +492,7 @@ fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
         .expect("seed b.md");
     let mut app = app_with(&mem);
     workspace::open_path(&mut app, Path::new("/root/b.md"));
-    let first_tab = app.tabs.order[0];
+    let first_tab = app.documents.order()[0];
     workspace::switch_to(&mut app, first_tab);
     let victim = app.active;
 

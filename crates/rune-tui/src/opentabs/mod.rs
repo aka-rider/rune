@@ -1,12 +1,9 @@
-//! The Open Tabs pane (plan WP5.S1): the tab display order (`order`, kept
-//! in sync at its own chokepoints — `App::open_document` pushes,
-//! `workspace::close_now` removes, `workspace::switch_to` only moves the
-//! cursor, never reorders), its own `listnav::List` cursor/scroll, and its
-//! key handling (`Pane::Tabs`-focused, dispatched from `app::handle_key`'s
-//! stage 3). Rendering lives in the `render` module.
+//! The Open Tabs pane: its own `listnav::List` cursor/scroll, and its key
+//! handling (`Pane::Tabs`-focused, dispatched from `app::handle_key`'s
+//! stage 3). The tab display order and MRU activation order live on
+//! `DocumentMap`. Rendering lives in the `render` module.
 
 use crate::app::App;
-use crate::document::DocumentId;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::pane::Pane;
@@ -18,39 +15,21 @@ pub mod render;
 
 pub use render::{draw, draw_divider};
 
-/// The Open Tabs pane's own state (plan WP5.S1): the tab DISPLAY order
-/// (distinct from `App.documents`' `BTreeMap` iteration order, plan
-/// Assumption A2) and its cursor/scroll position. `order` always contains
-/// every live `DocumentId` exactly once — the initial document from
-/// `App::new` is in it from the start (`OpenTabs::new`), every later
-/// `App::open_document` call pushes its new id, and `workspace::close_now`
-/// removes a closed one.
 pub struct OpenTabs {
-    pub order: Vec<DocumentId>,
-    /// Activation order, oldest-first — the last entry is the most recently
-    /// active document. Always the same membership as `order`, just a
-    /// different order; kept in lockstep at every `app.active` write via
-    /// `touch`.
-    pub mru: Vec<DocumentId>,
     pub nav: listnav::List,
 }
 
 impl OpenTabs {
-    /// Seeds `order` with the ONE document `App::new` always starts with —
-    /// mirroring how `App::new` mints that document directly rather than
-    /// going through `App::open_document`.
-    pub fn new(initial: DocumentId) -> OpenTabs {
+    pub fn new() -> OpenTabs {
         OpenTabs {
-            order: vec![initial],
-            mru: vec![initial],
             nav: listnav::List { cursor: 0, top: 0 },
         }
     }
+}
 
-    /// Moves `id` to the end of `mru` — the most-recently-active slot.
-    pub fn touch(&mut self, id: DocumentId) {
-        self.mru.retain(|&t| t != id);
-        self.mru.push(id);
+impl Default for OpenTabs {
+    fn default() -> OpenTabs {
+        OpenTabs::new()
     }
 }
 
@@ -126,7 +105,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
 }
 
 fn move_selection(app: &mut App, delta: isize) {
-    let len = app.tabs.order.len();
+    let len = app.documents.order().len();
     app.tabs.nav.move_by(delta, len);
     ensure_visible(app);
 }
@@ -134,7 +113,7 @@ fn move_selection(app: &mut App, delta: isize) {
 /// Scrolls the Tabs pane's window to keep the cursor visible — same
 /// follow-margin convention as `explorer::ensure_visible`.
 fn ensure_visible(app: &mut App) {
-    let len = app.tabs.order.len();
+    let len = app.documents.order().len();
     let height = visible_rows(app);
     let margin = (height / 4).min(4);
     app.tabs.nav.follow(len, height, margin, 0);
@@ -168,10 +147,10 @@ mod tests {
     fn open_document_pushes_onto_tabs_order() {
         let mut app = app();
         let initial = app.active;
-        assert_eq!(app.tabs.order, vec![initial]);
+        assert_eq!(app.documents.order(), &[initial]);
 
         let second = app.open_document(Buffer::new("second"));
-        assert_eq!(app.tabs.order, vec![initial, second]);
+        assert_eq!(app.documents.order(), &[initial, second]);
     }
 
     #[test]
@@ -212,10 +191,10 @@ mod tests {
 
         crate::workspace::switch_to(&mut app, first);
 
-        assert_eq!(app.tabs.mru.last(), Some(&first));
+        assert_eq!(app.documents.mru().last(), Some(&first));
 
-        let mut order_sorted = app.tabs.order.clone();
-        let mut mru_sorted = app.tabs.mru.clone();
+        let mut order_sorted = app.documents.order().to_vec();
+        let mut mru_sorted = app.documents.mru().to_vec();
         order_sorted.sort();
         mru_sorted.sort();
         assert_eq!(order_sorted, mru_sorted);
@@ -235,10 +214,10 @@ mod tests {
         crate::workspace::request_close(&mut app, target, &mut effects);
 
         assert_ne!(app.active, target);
-        assert_eq!(app.tabs.mru.last(), Some(&app.active));
+        assert_eq!(app.documents.mru().last(), Some(&app.active));
 
-        let mut order_sorted = app.tabs.order.clone();
-        let mut mru_sorted = app.tabs.mru.clone();
+        let mut order_sorted = app.documents.order().to_vec();
+        let mut mru_sorted = app.documents.mru().to_vec();
         order_sorted.sort();
         mru_sorted.sort();
         assert_eq!(order_sorted, mru_sorted);
@@ -257,11 +236,11 @@ mod tests {
 
         crate::workspace::switch_to(&mut app, target);
 
-        assert!(!app.tabs.order.contains(&preview));
-        assert!(!app.tabs.mru.contains(&preview));
+        assert!(!app.documents.order().contains(&preview));
+        assert!(!app.documents.mru().contains(&preview));
 
-        let mut order_sorted = app.tabs.order.clone();
-        let mut mru_sorted = app.tabs.mru.clone();
+        let mut order_sorted = app.documents.order().to_vec();
+        let mut mru_sorted = app.documents.mru().to_vec();
         order_sorted.sort();
         mru_sorted.sort();
         assert_eq!(order_sorted, mru_sorted);

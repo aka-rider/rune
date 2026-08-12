@@ -30,14 +30,14 @@ fn frame_text(app: &App) -> String {
     testgrid::grid(app, WIDTH, HEIGHT).concat()
 }
 
-/// Opening two documents populates `tabs.order`, and both render with their
+/// Opening two documents populates `documents.order()`, and both render with their
 /// digit shortcut and name below the `Open` divider row.
 #[test]
 fn tabs_render_both_open_documents_with_digit_shortcuts() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     open_second(&mut app);
-    assert_eq!(app.tabs.order.len(), 2);
+    assert_eq!(app.documents.order().len(), 2);
 
     app.splits.left.show();
     app.set_focus_pane(Pane::Tabs, &mut Effects::default());
@@ -223,7 +223,7 @@ fn discard_closes_and_activates_the_neighbor() {
     assert!(!app.documents.contains_key(&second), "b.md must be closed");
     assert_eq!(app.documents.len(), 1);
     assert_eq!(app.active, first, "the sole remaining document takes over");
-    assert!(!app.tabs.order.contains(&second));
+    assert!(!app.documents.order().contains(&second));
     assert!(
         app.pending_save_confirm.is_none(),
         "a pending_save_confirm targeting the closed doc must be cleared too"

@@ -210,7 +210,7 @@ fn closing_the_renaming_document_clears_the_machine_and_the_prompt() {
     let mut app = app_with(&mem);
     // A second document, so the last-document floor doesn't refuse.
     workspace::open_path(&mut app, Path::new("/root/c.md"));
-    let first_tab = app.tabs.order[0];
+    let first_tab = app.documents.order()[0];
     workspace::switch_to(&mut app, first_tab);
     let victim = app.active;
 

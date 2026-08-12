@@ -136,7 +136,7 @@ fn ctrl_1_switches_to_the_first_tab() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl('1')), &mut effects);
 
-    assert_eq!(app.active, app.tabs.order[0]);
+    assert_eq!(app.active, app.documents.order()[0]);
     assert_eq!(app.active, first);
 }
 
@@ -149,9 +149,9 @@ fn ctrl_0_switches_to_the_tenth_tab() {
     for i in 0..9 {
         app.open_document(Buffer::new(format!("doc {i}")));
     }
-    assert_eq!(app.tabs.order.len(), 10);
-    let tenth = app.tabs.order[9];
-    let away = app.tabs.order[0];
+    assert_eq!(app.documents.order().len(), 10);
+    let tenth = app.documents.order()[9];
+    let away = app.documents.order()[0];
     workspace::switch_to(&mut app, away); // away from the tenth
     app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
@@ -159,7 +159,7 @@ fn ctrl_0_switches_to_the_tenth_tab() {
     app::update(&mut app, Msg::Key(ctrl('0')), &mut effects);
 
     assert_eq!(app.active, tenth);
-    assert_eq!(app.active, app.tabs.order[9]);
+    assert_eq!(app.active, app.documents.order()[9]);
 }
 
 /// The routing proof (WP4): `^1` fired from EXPLORER focus still switches
@@ -181,7 +181,7 @@ fn ctrl_1_from_explorer_focus_switches_tabs() {
     app::update(&mut app, Msg::Key(ctrl('1')), &mut effects);
 
     assert_eq!(app.active, first, "^1 switched to the first tab");
-    assert_eq!(app.active, app.tabs.order[0]);
+    assert_eq!(app.active, app.documents.order()[0]);
 }
 
 /// A digit chord past the number of open tabs is a silent no-op (WP4) —
@@ -191,7 +191,7 @@ fn an_out_of_range_tab_digit_is_a_no_op() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     open_second(&mut app);
-    assert_eq!(app.tabs.order.len(), 2);
+    assert_eq!(app.documents.order().len(), 2);
     let before = app.active;
     app.set_focus_pane(Pane::Editor, &mut Effects::default());
 

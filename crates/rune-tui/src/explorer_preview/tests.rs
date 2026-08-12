@@ -72,7 +72,7 @@ fn arrowing_down_n_files_leaves_exactly_one_extra_tab_and_one_preview_document()
     }
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md", "b.md", "c.md"]);
-    let tabs_before = app.tabs.order.len();
+    let tabs_before = app.documents.order().len();
     let mut effects = Effects::default();
 
     for _ in 0..3 {
@@ -81,7 +81,7 @@ fn arrowing_down_n_files_leaves_exactly_one_extra_tab_and_one_preview_document()
         run_cmds(&mut app, &mut effects);
     }
 
-    assert_eq!(app.tabs.order.len(), tabs_before + 1);
+    assert_eq!(app.documents.order().len(), tabs_before + 1);
     let preview_docs = app
         .documents
         .values()
@@ -102,13 +102,13 @@ fn enter_on_a_file_promotes_the_preview() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let id = app.explorer.preview.expect("preview minted");
-    let tabs_before = app.tabs.order.len();
+    let tabs_before = app.documents.order().len();
 
     promote(&mut app, id);
 
     assert_eq!(app.doc(id).unwrap().read_only, ReadOnly::No);
     assert!(app.explorer.preview.is_none());
-    assert_eq!(app.tabs.order.len(), tabs_before);
+    assert_eq!(app.documents.order().len(), tabs_before);
 }
 
 #[test]
@@ -124,17 +124,17 @@ fn switching_away_discards_the_preview_from_both_collections() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let preview_id = app.explorer.preview.expect("preview minted");
-    let tabs_before_preview_removed = app.tabs.order.len();
+    let tabs_before_preview_removed = app.documents.order().len();
 
     workspace::switch_to(&mut app, real);
 
     assert!(app.explorer.preview.is_none());
     assert!(app.doc(preview_id).is_none(), "removed from documents");
     assert!(
-        !app.tabs.order.contains(&preview_id),
-        "removed from tabs.order"
+        !app.documents.order().contains(&preview_id),
+        "removed from documents.order()"
     );
-    assert_eq!(app.tabs.order.len(), tabs_before_preview_removed - 1);
+    assert_eq!(app.documents.order().len(), tabs_before_preview_removed - 1);
 }
 
 #[test]
@@ -497,14 +497,14 @@ fn ctrl_2_while_previewing_discards_and_restores_the_original_tab_count() {
     // Two real tabs BEFORE the preview mints a third, so `^2` (`TabSwitch(1)`,
     // the SECOND tab) targets the pre-existing real one, not the preview.
     app.open_document(CoreBuffer::new("second"));
-    let tabs_before = app.tabs.order.len();
+    let tabs_before = app.documents.order().len();
     load_entries(&mut app, &["c.md"]);
     let mut effects = Effects::default();
     app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let preview_id = app.explorer.preview.expect("preview minted");
-    assert_eq!(app.tabs.order.len(), tabs_before + 1);
+    assert_eq!(app.documents.order().len(), tabs_before + 1);
 
     let ctrl_2 = crate::keymap::KeyInput {
         code: crate::keymap::KeyCode::Char('2'),
@@ -517,7 +517,7 @@ fn ctrl_2_while_previewing_discards_and_restores_the_original_tab_count() {
     };
     crate::app::update(&mut app, Msg::Key(ctrl_2), &mut effects);
 
-    assert_eq!(app.tabs.order.len(), tabs_before);
+    assert_eq!(app.documents.order().len(), tabs_before);
     assert!(app.explorer.preview.is_none());
     assert!(app.doc(preview_id).is_none(), "removed from app.documents");
 }
@@ -543,7 +543,7 @@ fn escape_from_the_explorer_promotes_the_live_preview() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let id = app.explorer.preview.expect("preview minted");
-    let tabs_before = app.tabs.order.len();
+    let tabs_before = app.documents.order().len();
     // `on_focus_changed` only reacts to an actual TRANSITION — land on the
     // Explorer first (browsing it is what minted the preview above in the
     // first place).
@@ -559,12 +559,12 @@ fn escape_from_the_explorer_promotes_the_live_preview() {
     assert_eq!(app.doc(id).unwrap().read_only, ReadOnly::No);
     assert!(app.explorer.preview.is_none(), "preview slot cleared");
     assert_eq!(
-        app.tabs.order.iter().filter(|&&t| t == id).count(),
+        app.documents.order().iter().filter(|&&t| t == id).count(),
         1,
-        "promoted document appears exactly once in tabs.order"
+        "promoted document appears exactly once in documents.order()"
     );
     assert_eq!(
-        app.tabs.order.len(),
+        app.documents.order().len(),
         tabs_before,
         "promotion mints no extra tab"
     );
@@ -627,7 +627,7 @@ fn enter_on_a_file_row_promotes_the_preview_via_the_direct_call_path() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let id = app.explorer.preview.expect("preview minted");
-    let tabs_before = app.tabs.order.len();
+    let tabs_before = app.documents.order().len();
     app.set_focus_pane(Pane::Explorer, &mut effects);
 
     let enter = crate::keymap::KeyInput {
@@ -640,11 +640,15 @@ fn enter_on_a_file_row_promotes_the_preview_via_the_direct_call_path() {
     assert_eq!(app.doc(id).unwrap().read_only, ReadOnly::No);
     assert!(app.explorer.preview.is_none());
     assert_eq!(
-        app.tabs.order.iter().filter(|&&t| t == id).count(),
+        app.documents.order().iter().filter(|&&t| t == id).count(),
         1,
         "exactly one tab for the promoted document"
     );
-    assert_eq!(app.tabs.order.len(), tabs_before, "no second tab appears");
+    assert_eq!(
+        app.documents.order().len(),
+        tabs_before,
+        "no second tab appears"
+    );
 }
 
 /// Escape from the Tabs pane also lands on the Editor — the same
@@ -697,7 +701,7 @@ fn escape_from_the_tabs_pane_has_no_preview_left_to_promote() {
     assert_eq!(app.focus(), Pane::Editor);
     assert!(app.explorer.preview.is_none());
     assert!(
-        !app.tabs.order.contains(&preview_id),
+        !app.documents.order().contains(&preview_id),
         "the discarded preview never reappears"
     );
     assert_eq!(app.active, real, "the surviving real tab stays active");
@@ -883,7 +887,7 @@ fn focus_entering_the_tabs_pane_discards_the_live_preview() {
 /// active, discarding a preview via `^t` (`GlobalCommand::FocusTabs`,
 /// routed through `on_focus_changed`'s `Pane::Tabs` arm) must restore the
 /// document the user was actually editing before browsing — not
-/// `tabs.order.first()`, which this test's setup deliberately makes a
+/// `documents.order().first()`, which this test's setup deliberately makes a
 /// DIFFERENT document so the old tab-0 fallback would be caught.
 #[test]
 fn discarding_a_preview_via_ctrl_t_restores_the_document_active_before_previewing() {
@@ -905,7 +909,7 @@ fn discarding_a_preview_via_ctrl_t_restores_the_document_active_before_previewin
         "browsing lands on the preview itself"
     );
     assert_ne!(
-        app.tabs.order.first().copied(),
+        app.documents.order().first().copied(),
         Some(third),
         "tab 0 must NOT be the document that was active before previewing, \
          or this test could not tell the fix from the old tab-0 fallback"
@@ -989,8 +993,8 @@ fn discarding_a_preview_via_ctrl_digit_selects_exactly_the_named_tab() {
     run_cmds(&mut app, &mut effects);
     let preview_id = app.explorer.preview.expect("preview minted");
     let third_index = app
-        .tabs
-        .order
+        .documents
+        .order()
         .iter()
         .position(|&t| t == third)
         .expect("third tab is open");
