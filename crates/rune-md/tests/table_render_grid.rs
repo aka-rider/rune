@@ -136,6 +136,27 @@ fn zwj_family_split_by_emphasis_and_cjk_row_widths_agree() {
     assert_eq!(info.col_widths[0], 5);
 }
 
+#[test]
+fn two_zwj_family_emoji_split_by_emphasis_row_widths_agree() {
+    let content = "| 👩*\u{200d}👧\u{200d}👦* | 世界 |\n| --- | --- |\n| x | y |\n";
+    let (buf, doc) = synced(content, 0, false);
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
+    let w0 = per_span_display_width(&lines, 0, buf.content());
+    let w1 = per_span_display_width(&lines, 1, buf.content());
+    let w2 = per_span_display_width(&lines, 2, buf.content());
+    assert_eq!(
+        w0, w1,
+        "separator row must match header row's true rendered width"
+    );
+    assert_eq!(
+        w1, w2,
+        "body row must match header row's true rendered width"
+    );
+
+    let info = lines[0].table.as_ref().expect("rendered table row");
+    assert_eq!(info.col_widths[0], 5);
+}
+
 /// Every rendered table line's span ranges must tile `[line_start,
 /// line_end)` exactly — Gotcha 1: any unclaimed byte comes back through
 /// `fill_gaps` as a spurious `Identical` span carrying raw markdown text.
