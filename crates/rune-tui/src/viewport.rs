@@ -27,6 +27,7 @@ pub enum ScrollMode {
     #[default]
     FollowCursor,
     Independent,
+    EnsureVisible,
 }
 
 /// The visible window onto the wrapped document: `width`/`height` in cells,
@@ -136,7 +137,8 @@ impl Viewport {
         let bottom = (self.scroll_row + height - 1 - off).min(last_row);
 
         match self.mode {
-            ScrollMode::FollowCursor => {
+            ScrollMode::FollowCursor | ScrollMode::EnsureVisible => {
+                self.mode = ScrollMode::FollowCursor;
                 if cursor_row < top {
                     self.scroll_row = cursor_row - off;
                 } else if cursor_row > bottom {

@@ -19,6 +19,7 @@ use crate::app::App;
 use crate::document::DocumentId;
 use crate::messages;
 use crate::runtime::{Cmd, Effects, Msg};
+use crate::viewport::ScrollMode;
 use crate::workspace;
 
 /// Finds the first `Ref` in the ACTIVE document's catalogue whose `site`
@@ -92,7 +93,9 @@ fn follow_same_doc(app: &mut App, anchor: &Anchor) {
         );
         return;
     };
-    app.active_doc_mut().cursors = CursorSet::new(offset);
+    let doc = app.active_doc_mut();
+    doc.cursors = CursorSet::new(offset);
+    doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 
 /// Opens (or reactivates) the document at `path` and, if `anchor` is
@@ -136,6 +139,7 @@ pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
         return;
     };
     doc.cursors = CursorSet::new(offset);
+    doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 
 /// The byte offset `anchor` refers to: a `Named` anchor is name-based and
