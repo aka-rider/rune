@@ -9,6 +9,7 @@
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 
 use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
@@ -98,15 +99,21 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         insert: format!("{text_l}\n{text_prev}"),
     };
 
-    let _ =
-        apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
+    let _ = apply_edit_batch_with_cursors(
+        app,
+        id,
+        vec![(edit, cid)],
+        cursors_before,
+        EditKind::Other,
+        move |_, _| {
             vec![Cursor {
                 position: new_pos,
                 anchor: new_pos,
                 desired_col,
                 id: cid,
             }]
-        });
+        },
+    );
 }
 
 /// Mirror of `move_line_up` above.
@@ -155,15 +162,21 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         insert: format!("{text_next}\n{text_l}"),
     };
 
-    let _ =
-        apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
+    let _ = apply_edit_batch_with_cursors(
+        app,
+        id,
+        vec![(edit, cid)],
+        cursors_before,
+        EditKind::Other,
+        move |_, _| {
             vec![Cursor {
                 position: new_pos,
                 anchor: new_pos,
                 desired_col,
                 id: cid,
             }]
-        });
+        },
+    );
 }
 
 #[cfg(test)]

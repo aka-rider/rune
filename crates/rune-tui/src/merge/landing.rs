@@ -5,6 +5,7 @@
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::{CursorId, CursorSet};
+use rune_core::undo::EditKind;
 #[cfg(test)]
 use rune_db::BlobHash;
 use rune_db::{MergePrepOutcome, MergePrepResult, ObsId, SyncKind};
@@ -263,6 +264,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
         doc,
         vec![(edit, CursorId::FIRST)],
         cursors_before,
+        EditKind::Other,
         move |_, _| vec![CursorSet::new(cursor_at).primary()],
     )
 }

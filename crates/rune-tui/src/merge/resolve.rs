@@ -8,6 +8,7 @@
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::CursorId;
+use rune_core::undo::EditKind;
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
@@ -74,7 +75,13 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
         end: block.range.end,
         insert: text.clone(),
     };
-    if !commit_edit_batch(app, doc, vec![(edit, CursorId::FIRST)], cursors_before) {
+    if !commit_edit_batch(
+        app,
+        doc,
+        vec![(edit, CursorId::FIRST)],
+        cursors_before,
+        EditKind::Other,
+    ) {
         messages::error(
             app,
             "merge: the block could not be applied — left unresolved",

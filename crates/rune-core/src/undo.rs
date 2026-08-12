@@ -185,6 +185,17 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
     Ok(work)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EditKind {
+    Insert,
+    DeleteLeft,
+    DeleteRight,
+    Paste,
+    Cut,
+    #[default]
+    Other,
+}
+
 /// One undo/redo unit: the edits applied plus cursor state before/after, so
 /// undo/redo restores selection alongside content.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -192,6 +203,7 @@ pub struct Step {
     pub edits: Vec<AppliedEdit>,
     pub cursors_before: Vec<Cursor>,
     pub cursors_after: Vec<Cursor>,
+    pub kind: EditKind,
 }
 
 #[derive(Debug)]
@@ -249,6 +261,10 @@ impl Journal {
 
     pub fn pos(&self) -> usize {
         self.pos
+    }
+
+    pub fn steps(&self) -> &[Step] {
+        &self.steps
     }
 
     pub fn len(&self) -> usize {

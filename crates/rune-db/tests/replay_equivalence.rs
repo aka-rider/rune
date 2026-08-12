@@ -35,7 +35,7 @@ use proptest::prelude::*;
 use rusqlite::Connection;
 
 use rune_core::buffer::{Buffer, Edit};
-use rune_core::undo::{Journal, Step as CoreStep, apply_inverse, reapply};
+use rune_core::undo::{EditKind, Journal, Step as CoreStep, apply_inverse, reapply};
 use rune_db::{
     DocId, SessionId, append_edit, current_seq, move_undo_pos, recover_document, redo_peek,
     undo_peek,
@@ -148,6 +148,7 @@ proptest! {
                         edits: applied.clone(),
                         cursors_before: vec![],
                         cursors_after: vec![],
+                        kind: EditKind::Insert,
                     });
 
                     let tx = conn.transaction().expect("begin tx");
@@ -172,6 +173,7 @@ proptest! {
                         edits: applied.clone(),
                         cursors_before: vec![],
                         cursors_after: vec![],
+                        kind: EditKind::DeleteRight,
                     });
 
                     let tx = conn.transaction().expect("begin tx");
