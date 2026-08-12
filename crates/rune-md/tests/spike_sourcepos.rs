@@ -11,10 +11,9 @@
 //! Sourcepos needs no option: `parse_document` always populates
 //! `Ast.sourcepos` on every node, block and inline alike.
 //!
-//! The model has ONE caveat, pinned by the tab cases below: a line whose
-//! leading tab a container consumes only in part, and which then joins an
-//! already-open block lazily, reports columns shifted right by the spaces
-//! comrak substitutes for the tab's remainder.
+//! Columns are offsets into `parse_shadow`'s copy of the document — the
+//! bytes comrak is fed — so every test here parses that copy and converts
+//! against the real source, exactly as `rune_md::parse::parse` does.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -24,7 +23,12 @@
 
 use comrak::nodes::{AstNode, NodeValue, Sourcepos};
 use comrak::{Arena, parse_document};
-use rune_md::parse::{line_starts, options, sourcepos_to_range};
+use rune_md::parse::{line_starts, options, parse_shadow, sourcepos_to_range};
+
+/// Parses what the crate parses: the shadow copy of `src`.
+fn parse_shadowed<'a>(arena: &'a Arena<'a>, src: &str) -> &'a AstNode<'a> {
+    parse_document(arena, &parse_shadow(src), &options())
+}
 
 /// The WP0-proven conversion formula, byte-exact — now the shared
 /// `rune_md::parse::sourcepos_to_range` (Ground rule 3: "make it a shared fn
@@ -70,7 +74,7 @@ fn nested_bold_italic_link_delimiters_are_byte_exact() {
     let src = "**[bo*ld*](url)**";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(src, &starts, root, |v| matches!(v, NodeValue::Strong), src);
     assert_node_text(
@@ -102,7 +106,7 @@ fn wikilink_range_and_url_are_byte_exact() {
     let src = "[[wiki|label]]";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let node = assert_node_text(
         src,
@@ -129,7 +133,7 @@ fn cjk_surrounding_bold_is_byte_exact() {
     let src = "汉字テスト **粗体** end";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(
         src,
@@ -166,7 +170,7 @@ fn zwj_emoji_family_preceding_bold_is_byte_exact() {
     let src = "a \u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466} **b**";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let text_prefix = "a \u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466} ";
     assert_node_text(
@@ -197,7 +201,7 @@ fn tasklist_marker_and_text_are_byte_exact() {
     let src = "- [x] task";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let item = assert_node_text(
         src,
@@ -226,7 +230,7 @@ fn heading_marker_and_text_are_byte_exact() {
     let src = "## heading";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let heading = assert_node_text(
         src,
@@ -256,7 +260,7 @@ fn tab_indented_list_item_content_is_byte_exact() {
     let src = "-\n\t你 tail";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(
         src,
@@ -272,7 +276,7 @@ fn tab_indented_blockquote_content_is_byte_exact() {
     let src = ">\t你 tail";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(
         src,
@@ -288,7 +292,7 @@ fn tab_indented_code_block_is_byte_exact() {
     let src = "\ta code line";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(
         src,
@@ -304,7 +308,7 @@ fn lazy_paragraph_continuation_after_a_tab_is_byte_exact() {
     let src = "a\n\tcontinued";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(
         src,
@@ -320,7 +324,7 @@ fn tab_immediately_before_a_wide_char_is_byte_exact() {
     let src = "- x\n\t你";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     assert_node_text(
         src,
@@ -331,36 +335,33 @@ fn tab_immediately_before_a_wide_char_is_byte_exact() {
     );
 }
 
-/// The one shape where a column is NOT a byte column: the list consumes 2
-/// of the leading tab's 4 columns, the blockquote prefix is absent, so the
-/// line joins the open paragraph lazily and comrak substitutes the tab's
-/// remaining 2 columns with spaces — every column on that line comes back
-/// 2 too far right. The conversion cannot undo a shift it cannot see, so
-/// it keeps the range inside its own line and on char boundaries.
+/// The shape that used to shift every column on its line: the list
+/// consumes 2 of the leading tab's 4 columns, the blockquote prefix is
+/// absent, so the line joins the open paragraph lazily and comrak
+/// substitutes the tab's remaining 2 columns with spaces. Parsing the
+/// shadow copy leaves comrak no tab to half-consume.
 #[test]
-fn partially_consumed_tab_on_a_lazy_line_shifts_columns() {
+fn partially_consumed_tab_on_a_lazy_line_is_byte_exact() {
     let src = "-\n\t>d\n\t你";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let text = find_node(
         root,
         |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "你"),
     );
     let sp = text.data.borrow().sourcepos;
-    let byte_column = src.find('你').unwrap() - starts[2] + 1;
-    assert_eq!((sp.start.column, byte_column), (4, 2));
     assert_eq!(to_range(src, &starts, sp), (7, 10));
     assert_eq!(&src[7..10], "你");
 }
 
 #[test]
-fn partially_consumed_tab_shift_survives_as_a_shorter_range() {
+fn partially_consumed_tab_on_a_lazy_line_keeps_the_whole_word() {
     let src = "-\n\t>d\n\tabc";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let text = find_node(
         root,
@@ -368,9 +369,102 @@ fn partially_consumed_tab_shift_survives_as_a_shorter_range() {
     );
     let sp = text.data.borrow().sourcepos;
     let (start, end) = to_range(src, &starts, sp);
-    assert_eq!(sp.start.column, 4);
     assert!(starts[2] <= start && end <= src.len());
-    assert_eq!(&src[start..end], "c");
+    assert_eq!(&src[start..end], "abc");
+}
+
+/// The shifted line starts with `>`, not whitespace: comrak consumes the
+/// `>` and one column of the tab, the list-item prefix then fails, and the
+/// line goes lazy. Expanding leading whitespace alone would miss it.
+#[test]
+fn partially_consumed_tab_after_a_quote_marker_is_byte_exact() {
+    let src = ">   -    a\n>\tb";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_shadowed(&arena, src);
+
+    let text = find_node(
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "b"),
+    );
+    let (start, end) = to_range(src, &starts, text.data.borrow().sourcepos);
+    assert_eq!((start, end), (src.rfind('b').unwrap(), src.len()));
+}
+
+/// A lone `\r` is itself a prefix byte once blanked to a space, so the tab
+/// after it is indentation: this fails if the blanking and the tab
+/// expansion are two independent passes.
+#[test]
+fn a_tab_after_a_lone_carriage_return_is_byte_exact() {
+    let src = "a\n\r\t你";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_shadowed(&arena, src);
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::Text(t) if t.as_ref() == "你"),
+        "你",
+    );
+}
+
+/// comrak steps over a leading byte-order mark without counting a column,
+/// so the tab after it still starts at column 0.
+#[test]
+fn a_tab_after_a_byte_order_mark_is_byte_exact() {
+    let src = "\u{feff}\t你 x";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_shadowed(&arena, src);
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::CodeBlock(_)),
+        "你 x",
+    );
+}
+
+/// The one residual case: a tab padding a LIST MARKER is not container
+/// prefix and stays a tab in the shadow copy, because the columns it
+/// spans are the padding comrak matches sibling items on. comrak can
+/// still half-consume it — harmlessly, because the line becomes an
+/// indented code block, which carries no inlines and whose own bounds
+/// comrak counts in bytes. Pinned so a comrak release that moves it fails
+/// here rather than silently.
+#[test]
+fn a_tab_padding_a_list_marker_stays_byte_exact() {
+    for (src, expected) in [("- x\n\n  \t\tcode", (8, 13)), ("-\t\tcode", (2, 7))] {
+        let starts = line_starts(src);
+        let arena = Arena::new();
+        let root = parse_shadowed(&arena, src);
+
+        let code = find_node(root, |v| matches!(v, NodeValue::CodeBlock(_)));
+        let (start, end) = to_range(src, &starts, code.data.borrow().sourcepos);
+        assert_eq!((start, end), expected, "for {src:?}");
+        assert_eq!(&src[start..end], "\tcode");
+    }
+}
+
+/// comrak measures a block's end column against the shadow copy's line
+/// length, so this fails if the past-the-region translation is wrong.
+#[test]
+fn a_block_ending_on_an_expanded_line_is_byte_exact() {
+    let src = "> a\n>\tb";
+    let starts = line_starts(src);
+    let arena = Arena::new();
+    let root = parse_shadowed(&arena, src);
+
+    assert_node_text(
+        src,
+        &starts,
+        root,
+        |v| matches!(v, NodeValue::Paragraph),
+        "a\n>\tb",
+    );
 }
 
 #[test]
@@ -378,7 +472,7 @@ fn fenced_code_block_spans_open_and_close_fences() {
     let src = "```rust\nfn f() {}\n```";
     let starts = line_starts(src);
     let arena = Arena::new();
-    let root = parse_document(&arena, src, &options());
+    let root = parse_shadowed(&arena, src);
 
     let block = assert_node_text(
         src,

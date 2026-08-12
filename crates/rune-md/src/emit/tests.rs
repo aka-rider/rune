@@ -1,6 +1,7 @@
-//! Tests for `emit::mod`'s core machinery (`unclaimed_subranges`,
-//! `push_span_split_by_line`, `emit` itself) — split out from `mod.rs` to
-//! keep it under the 500-line budget.
+//! Tests for `emit::mod`'s core machinery (`push_span_split_by_line`,
+//! `emit` itself) — split out from `mod.rs` to keep it under the 500-line
+//! budget. The claim primitive's own tests live with `EmitOut` in
+//! `emit::claim`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
@@ -8,33 +9,6 @@ use crate::element::doc::DocMachine;
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::CursorSet;
-
-/// The visible-side dedup computation, tested in isolation (no assert
-/// involved — `unclaimed_subranges` itself never panics, it just
-/// computes what's left). Mirrors "- \n  > q"'s shape: a claim
-/// ([0,8)) that overlaps a bit already claimed in the middle ([2,6)),
-/// leaving two disjoint unclaimed pieces.
-#[test]
-fn unclaimed_subranges_skips_already_claimed_bytes() {
-    let pieces = unclaimed_subranges(0, 8, &[(2, 6)]);
-    assert_eq!(pieces, vec![(0, 2), (6, 8)]);
-
-    // Fully covered: nothing left.
-    assert_eq!(
-        unclaimed_subranges(2, 6, &[(0, 8)]),
-        Vec::<(usize, usize)>::new()
-    );
-
-    // Disjoint existing claim: the whole requested range survives.
-    assert_eq!(unclaimed_subranges(0, 4, &[(10, 12)]), vec![(0, 4)]);
-
-    // Overlapping, unsorted, and touching existing entries are all
-    // handled via the same `merge_overlapping` the hidden side uses.
-    assert_eq!(
-        unclaimed_subranges(0, 10, &[(6, 8), (1, 3), (3, 4)]),
-        vec![(0, 1), (4, 6), (8, 10)]
-    );
-}
 
 /// Proves `push_span_split_by_line`'s strict-invariants-gated assert
 /// actually fires when a second visible claim overlaps a byte an
@@ -44,13 +18,46 @@ fn unclaimed_subranges_skips_already_claimed_bytes() {
 /// This crate's own test binary always has the gate armed (tied to
 /// `cfg(test)`, not `cfg(debug_assertions)` — see the `emit` module
 /// docs), so this fires in `cargo test --release` too.
+fn test_out<'a>(
+    spans: &'a mut [Vec<SyntaxSpan>],
+    hidden: &'a mut Accounted,
+    accounted: &'a mut Accounted,
+    tables: &'a mut [Option<TableRowInfo>],
+    decors: &'a mut [Option<LineDecor>],
+    icons: &'a IconSet,
+) -> EmitOut<'a> {
+    EmitOut::new(
+        Sinks {
+            spans,
+            hidden,
+            accounted,
+        },
+        tables,
+        80,
+        icons,
+        decors,
+    )
+}
+
 #[test]
 #[should_panic(expected = "already-claimed byte")]
 fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
     let content = "abcdefgh\n";
     let starts = vec![0usize, 9];
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
     let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let icons = IconSet::unicode();
+    let mut out = test_out(
+        &mut spans,
+        &mut hidden,
+        &mut accounted,
+        &mut tables,
+        &mut decors,
+        &icons,
+    );
 
     push_span_split_by_line(
         content,
@@ -58,8 +65,7 @@ fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
         ByteRange::new(2, 6),
         style::text_scope(),
         RevealState::Revealed,
-        &mut spans,
-        &mut accounted,
+        &mut out,
     );
     // Overlaps the [2,6) already claimed above.
     push_span_split_by_line(
@@ -68,8 +74,7 @@ fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
         ByteRange::new(0, 8),
         style::text_scope(),
         RevealState::Revealed,
-        &mut spans,
-        &mut accounted,
+        &mut out,
     );
 }
 
@@ -87,7 +92,19 @@ fn push_span_split_by_line_asserts_on_non_char_boundary_span() {
     let content = "a日\n";
     let starts = vec![0usize, content.len()];
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
     let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let icons = IconSet::unicode();
+    let mut out = test_out(
+        &mut spans,
+        &mut hidden,
+        &mut accounted,
+        &mut tables,
+        &mut decors,
+        &icons,
+    );
 
     push_span_split_by_line(
         content,
@@ -95,8 +112,7 @@ fn push_span_split_by_line_asserts_on_non_char_boundary_span() {
         ByteRange::new(0, 2), // byte 2 sits inside '日' — not a char boundary
         style::text_scope(),
         RevealState::Revealed,
-        &mut spans,
-        &mut accounted,
+        &mut out,
     );
 }
 

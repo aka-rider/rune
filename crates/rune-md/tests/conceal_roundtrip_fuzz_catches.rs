@@ -37,6 +37,16 @@ fn minimal_multiline_code_span_after_tab_indent() {
     assert_no_duplicate_content_at("`\n\t` `\n`c", &[6], 78);
 }
 
+/// The same catch reduced one line further, where comrak reports the code
+/// span's end column past the end of the line it names. An indent of tabs
+/// and the indent of spaces it stands for must behave identically.
+#[test]
+fn minimal_multiline_code_span_ending_past_its_own_line() {
+    for (content, cursor) in [("`\n\t` `\n`\nk", 8), ("`\n    ` `\n`\nk", 11)] {
+        assert_no_duplicate_content_at(content, &[cursor], 78);
+    }
+}
+
 #[test]
 fn case_conflict_markers_with_fences_and_multiline_code_span() {
     assert_no_duplicate_content_at(
