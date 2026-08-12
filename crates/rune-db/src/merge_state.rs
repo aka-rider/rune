@@ -24,6 +24,21 @@ impl MergeRowState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergeCloseState {
+    Completed,
+    Abandoned,
+}
+
+impl From<MergeCloseState> for MergeRowState {
+    fn from(state: MergeCloseState) -> MergeRowState {
+        match state {
+            MergeCloseState::Completed => MergeRowState::Completed,
+            MergeCloseState::Abandoned => MergeRowState::Abandoned,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResumableMerge {
     pub blocks_json: String,
@@ -100,13 +115,13 @@ pub(crate) fn merge_close(
     conn: &mut Connection,
     doc_id: DocId,
     session_id: SessionId,
-    state: MergeRowState,
+    state: MergeCloseState,
 ) -> Result<(), Error> {
     retry::with_retry(conn, |tx| {
         let Some(row_id) = newest_active_owned(tx, doc_id, session_id)? else {
             return Ok(());
         };
-        set_state(tx, row_id, state)
+        set_state(tx, row_id, state.into())
     })
 }
 
@@ -301,13 +316,14 @@ mod tests {
         assert_eq!(marker_hash, observation::hash_bytes(b"markers'"));
         assert_eq!(state, MergeRowState::Active.as_str());
 
-        merge_close(&mut conn, doc_id, session_id, MergeRowState::Completed).expect("merge_close");
+        merge_close(&mut conn, doc_id, session_id, MergeCloseState::Completed)
+            .expect("merge_close");
         assert_eq!(
             row_states(&conn, doc_id),
             vec![(session_id, MergeRowState::Completed.as_str().to_string())]
         );
 
-        merge_close(&mut conn, doc_id, session_id, MergeRowState::Completed)
+        merge_close(&mut conn, doc_id, session_id, MergeCloseState::Completed)
             .expect("close with no active row is a no-op");
     }
 

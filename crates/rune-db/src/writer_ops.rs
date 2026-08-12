@@ -154,7 +154,7 @@ pub enum OpKind {
     MergeClose {
         session_id: SessionId,
         doc_id: DocId,
-        state: crate::merge_state::MergeRowState,
+        state: crate::merge_state::MergeCloseState,
     },
     /// The bookkeeping-only half of `Materialize` that runs
     /// BEFORE any `vfs` call — hands the caller the decision data
@@ -286,7 +286,6 @@ pub enum OpOutcome {
     Seq(crate::ids::Seq),
     /// `CreateSnapshot`'s new `snapshots.id`.
     SnapshotRowId(i64),
-    /// `CreateScratch`'s new `documents.id`.
     ScratchDocId(DocId),
     /// `Probe`'s resulting [`SyncState`]. Boxed: `SyncState` carries several
     /// `Option<Version>`/`String` fields, large enough that clippy's

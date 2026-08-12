@@ -273,9 +273,6 @@ pub enum DirCause {
     Refresh,
 }
 
-// `Cmd`, `CmdKind`, and the one constructor per `CmdKind` variant moved to
-// `runtime::cmd` (500-line budget) — re-exported below so every existing
-// `runtime::` call site keeps working unchanged.
 mod cmd;
 pub use cmd::{Cmd, CmdKind};
 

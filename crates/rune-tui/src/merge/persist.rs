@@ -1,4 +1,4 @@
-use rune_db::{MergeRowState, ObsId};
+use rune_db::{MergeCloseState, ObsId};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
@@ -91,7 +91,7 @@ pub(super) fn enqueue_merge_progress(
     });
 }
 
-pub(super) fn enqueue_merge_close(app: &mut App, doc: DocumentId, state: MergeRowState) {
+pub(super) fn enqueue_merge_close(app: &mut App, doc: DocumentId, state: MergeCloseState) {
     enqueue(app, doc, |store, db_id| {
         store.merge_close(rune_db::DocId(db_id), state)
     });
@@ -143,7 +143,7 @@ pub(crate) fn resume_from_store(
 
     let unresolved = pairs.iter().filter(|p| !p.block.resolved).count();
     if unresolved == 0 {
-        enqueue_merge_close(app, doc, MergeRowState::Completed);
+        enqueue_merge_close(app, doc, MergeCloseState::Completed);
         return;
     }
 
@@ -178,11 +178,11 @@ mod tests {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
     }
 
-    /// Captured by serializing two blocks/conflicts with the CURRENT code
-    /// BEFORE `Block` grew a `Range<usize>` field — the parallel-array,
-    /// start/end-field shape recovery-store rows already hold on disk. A
-    /// stored merge decoding to anything other than this exact pairing
-    /// would mean an upgrade silently discarded a user's in-flight merge.
+    /// The parallel-array, start/end-field shape recovery-store rows
+    /// already hold on disk, from BEFORE `Block` grew a `Range<usize>`
+    /// field. A stored merge decoding to anything other than this exact
+    /// pairing would mean an upgrade silently discarded a user's in-flight
+    /// merge.
     const PRE_CHANGE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false},{"start":30,"end":40,"resolved":true}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
 
     #[test]
@@ -226,5 +226,6 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(blocks_json(pairs).expect("encodes"), PRE_CHANGE_BLOCKS_JSON);
     }
 }

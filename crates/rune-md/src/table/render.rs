@@ -47,7 +47,7 @@ impl RenderedCell {
             // untouched — this is a display decision only.
             self.text.push(if ch == '\t' { ' ' } else { ch });
             self.src.push(CellSrc {
-                buf: Some((range.start + i) as u32),
+                buf: u32::try_from(range.start + i).ok(),
                 scope,
             });
         }

@@ -121,7 +121,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // genuinely reconciled the buffer with the disk bytes the merge
         // read, so only now does the save-CAS baseline advance to them.
         landing::advance_expect_obs(app, doc, theirs_obs);
-        persist::enqueue_merge_close(app, doc, rune_db::MergeRowState::Completed);
+        persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Completed);
         messages::info(app, "merge complete — \u{2318}S to save");
     } else {
         // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
@@ -158,7 +158,7 @@ fn abandon_active(
         d.display_name = saved_display_name;
     }
     enqueue_resolve_abandon(app, doc);
-    persist::enqueue_merge_close(app, doc, rune_db::MergeRowState::Abandoned);
+    persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Abandoned);
     messages::info(app, message);
 }
 

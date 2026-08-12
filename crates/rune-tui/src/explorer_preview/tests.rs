@@ -215,7 +215,7 @@ fn search_live_suppresses_preview_and_clearing_it_produces_one() {
         .unwrap();
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md"]);
-    app.explorer_find_or_start().push('a');
+    app.explorer_find_push('a');
     let mut effects = Effects::default();
 
     app.explorer.nav.move_by(1, app.explorer.entries.len());

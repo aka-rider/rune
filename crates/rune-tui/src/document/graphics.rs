@@ -1,8 +1,3 @@
-//! `Document`'s graphics accessors (split out of `document.rs` for the
-//! 500-line-file budget): the `image`/`embeds` read/write pairs plus
-//! `ensure_embeds`, the sole place `graphics` ever transitions into the
-//! `Embeds` variant.
-
 use rune_core::assert_invariant;
 
 use crate::graphics::{EmbedSet, Graphics, ImageState};
@@ -42,17 +37,20 @@ impl Document {
         }
     }
 
-    pub(crate) fn ensure_embeds(&mut self) -> &mut EmbedSet {
+    pub(crate) fn ensure_embeds(&mut self) -> Option<&mut EmbedSet> {
         assert_invariant!(
             !matches!(self.graphics, Graphics::Image(_)),
             || "ensure_embeds called on an image document"
         );
-        if !matches!(self.graphics, Graphics::Embeds(_)) {
+        if matches!(self.graphics, Graphics::Image(_)) {
+            return None;
+        }
+        if matches!(self.graphics, Graphics::None) {
             self.graphics = Graphics::Embeds(EmbedSet::new());
         }
-        let Graphics::Embeds(set) = &mut self.graphics else {
-            unreachable!()
-        };
-        set
+        match &mut self.graphics {
+            Graphics::Embeds(set) => Some(set),
+            _ => None,
+        }
     }
 }

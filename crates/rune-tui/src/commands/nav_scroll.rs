@@ -138,11 +138,13 @@ fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
 pub fn scroll_lines(doc: &mut Document, delta: isize) {
     let total = doc.view().display.total_rows();
     let max_row = DisplayRow(total.saturating_sub(1));
+    let current = doc.viewport.scroll_row;
     doc.viewport.scroll_row = if delta >= 0 {
-        (doc.viewport.scroll_row + delta as usize).min(max_row)
+        current + delta as usize
     } else {
-        doc.viewport.scroll_row - (-delta) as usize
-    };
+        current - (-delta) as usize
+    }
+    .min(max_row);
     doc.viewport.mode = ScrollMode::Independent;
 }
 

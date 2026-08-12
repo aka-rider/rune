@@ -33,11 +33,6 @@ impl Document {
         self.sync_catalogue();
         self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);
-        // An image document's reserved row count/width — read
-        // from `self.image().status` once the fit computation lands it as
-        // `Live`, falling back to `render::image::INFO_CARD_ROWS` until
-        // then. `self.image()` is `Some` only for a `DocumentKind::Image`
-        // document, so this whole block is a no-op for every other kind.
         if let Some(image) = self.image() {
             let (width, rows) = match &image.status {
                 crate::graphics::ImageStatus::Live { cells, .. } => (cells.cols, cells.rows),

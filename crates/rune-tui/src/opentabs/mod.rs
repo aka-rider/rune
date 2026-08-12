@@ -1,7 +1,4 @@
-//! The Open Tabs pane: its own `listnav::List` cursor/scroll, and its key
-//! handling (`Pane::Tabs`-focused, dispatched from `app::handle_key`'s
-//! stage 3). The tab display order and MRU activation order live on
-//! `DocumentMap`. Rendering lives in the `render` module.
+//! The tab display order and MRU activation order live on `DocumentMap`.
 
 use crate::app::App;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};

@@ -94,11 +94,17 @@ impl std::error::Error for BufferError {}
 /// An immutable snapshot of document content. Every mutation returns a new
 /// `Buffer`; the receiver is untouched (fuzz-proven in
 /// `tests/buffer_roundtrip.rs`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Buffer {
     content: String,
     line_starts: LineStarts,
     version: u64,
+}
+
+impl Default for Buffer {
+    fn default() -> Buffer {
+        Buffer::new("")
+    }
 }
 
 impl Buffer {

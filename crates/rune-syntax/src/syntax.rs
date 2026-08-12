@@ -80,11 +80,6 @@ impl SyntaxSpan {
         }
     }
 
-    /// Checked constructor for a `Substituted` span whose `text` is a
-    /// contiguous, unbroken slice of the buffer starting at
-    /// `content_start` — the common case (a concealed delimiter dropped,
-    /// the rest kept verbatim). Builds the `cell_map` itself: one entry per
-    /// `char`, each the absolute buffer offset that char started at.
     pub fn substituted(
         content_start: usize,
         text: String,
@@ -94,7 +89,7 @@ impl SyntaxSpan {
         let mut cell_map = Vec::with_capacity(text.chars().count());
         let mut offset = content_start;
         for ch in text.chars() {
-            cell_map.push(Some(offset as u32));
+            cell_map.push(u32::try_from(offset).ok());
             offset += ch.len_utf8();
         }
         SyntaxSpan::Substituted {

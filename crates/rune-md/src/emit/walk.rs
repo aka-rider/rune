@@ -271,7 +271,7 @@ fn push_task_checkbox(
         list_marker_style(true),
         glyph.to_string(),
         task.start..task.end,
-        vec![Some(task.start as u32)],
+        vec![u32::try_from(task.start).ok()],
     );
     if let Some(bucket) = out.get_mut(line) {
         bucket.push(span);

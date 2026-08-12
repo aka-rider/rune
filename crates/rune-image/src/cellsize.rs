@@ -30,8 +30,6 @@ fn ceil_div(a: usize, b: usize) -> usize {
     if b == 0 { 0 } else { a.div_ceil(b) }
 }
 
-/// Fits `px` into `max` terminal cells, preserving aspect ratio. Both
-/// results are at least 1 for a non-degenerate image.
 pub fn fit_cells(px: PixelSize, max: CellFootprint, cs: CellSize) -> CellFootprint {
     if px.w == 0 || px.h == 0 || cs.w == 0 || cs.h == 0 {
         return CellFootprint { cols: 0, rows: 0 };

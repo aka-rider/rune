@@ -155,6 +155,7 @@ fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_i
     app.doc_mut(app.active)
         .expect("doc")
         .ensure_embeds()
+        .expect("markdown document")
         .images
         .insert(
             "x.png".to_string(),

@@ -90,7 +90,6 @@ pub struct DisplaySnapshot {
 }
 
 impl DisplaySnapshot {
-    /// The identity mapping: one `SnapshotRow` per wrap row, none synthetic.
     pub fn from_wrap(wrap: &WrapSnapshot) -> DisplaySnapshot {
         let rows: Vec<SnapshotRow> = wrap
             .segments()

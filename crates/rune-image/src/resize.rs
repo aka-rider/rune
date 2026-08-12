@@ -3,9 +3,6 @@
 
 use crate::cellsize::PixelSize;
 
-/// Returns the largest size that preserves `src`'s aspect ratio and fits
-/// within `max`. Never upscales beyond `src`, and never returns a dimension
-/// below 1 for a non-degenerate source.
 pub fn fit_box(src: PixelSize, max: PixelSize) -> PixelSize {
     if src.w == 0 || src.h == 0 || max.w == 0 || max.h == 0 {
         return PixelSize { w: 0, h: 0 };

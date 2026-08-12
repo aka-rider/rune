@@ -133,7 +133,7 @@ pub(crate) fn handle_search(
             // pattern (a non-control `Char`) — any other shape is
             // unreachable here, so there is nothing to push on a mismatch.
             if let KeyCode::Char(c) = key.code {
-                app.explorer_find_or_start().push(c);
+                app.explorer_find_push(c);
                 apply_search(app);
             }
         }

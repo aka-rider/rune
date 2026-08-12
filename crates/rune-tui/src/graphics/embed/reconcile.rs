@@ -108,7 +108,9 @@ fn spawn_or_respawn(
         let mtime = file_mtime(vfs.as_ref(), &abs_path);
 
         let Some(doc) = app.doc_mut(id) else { return };
-        let embeds = doc.ensure_embeds();
+        let Some(embeds) = doc.ensure_embeds() else {
+            continue;
+        };
         if let Some(existing) = embeds.images.get(target) {
             // Retry rule (plan WP9.S5): an unchanged mtime never respawns
             // (Failed is sticky per (path, mtime)); an in-flight decode

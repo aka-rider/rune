@@ -1,12 +1,12 @@
-//! `row_spans` (WP2.S5) is the tiling chokepoint every table row (Grid
-//! today; Wrapped/Pivoted extra rows later) funnels through before its
-//! output ever reaches `SyntaxLine::spans`. The reason it has to be exact:
-//! a table row substitutes its ENTIRE rendered text for the source line's
-//! raw `| a | b |`, but `fill_gaps` (`emit::mod`) still runs over every
-//! line afterward — any byte of the source line left unclaimed in
-//! `accounted` comes back as a spurious `Identical` span carrying literal
-//! markdown text, spliced into the middle of the rendered row. So row 1's
-//! spans (this function's own output) MUST tile `[line_start, line_start +
+//! `row_spans` is the tiling chokepoint every table row (Grid today;
+//! Wrapped/Pivoted extra rows later) funnels through before its output ever
+//! reaches `SyntaxLine::spans`. The reason it has to be exact: a table row
+//! substitutes its ENTIRE rendered text for the source line's raw
+//! `| a | b |`, but `fill_gaps` (`emit::mod`) still runs over every line
+//! afterward — any byte of the source line left unclaimed in `accounted`
+//! comes back as a spurious `Identical` span carrying literal markdown
+//! text, spliced into the middle of the rendered row. So row 1's spans
+//! (this function's own output) MUST tile `[line_start, line_start +
 //! line_len)` exactly, with no gap and no overlap, or that safety net
 //! corrupts the render instead of protecting it.
 
@@ -15,16 +15,10 @@ use rune_syntax::{ScopeId, SyntaxSpan};
 
 use super::CellSrc;
 
-/// The first `Some` `buf` in `run`, if any.
 fn anchor(run: &[CellSrc]) -> Option<usize> {
     run.iter().find_map(|c| c.buf).map(|b| b as usize)
 }
 
-/// The last `Some` `buf` in `run` plus that char's UTF-8 byte length —
-/// i.e. the buffer offset one past the run's own last real (non-decorative)
-/// char — if any. `text` and `run` are the same run's chars/provenance,
-/// zipped by position (both always the same length, `render_cell`'s own
-/// invariant).
 fn content_end(text: &str, run: &[CellSrc]) -> Option<usize> {
     let mut end = None;
     for (ch, src) in text.chars().zip(run.iter()) {
@@ -43,11 +37,10 @@ fn content_end(text: &str, run: &[CellSrc]) -> Option<usize> {
 /// all (fully decorative: a `│` border, a padding run) borrows its start
 /// from the previous run's content end, or — if THAT has none either — the
 /// previous run's own start, collapsing to a zero-length range rather than
-/// inventing a position. Ported literally from the plan's worked example
-/// (WP2.S5): `starts[0] = line_start`; for `i > 0`, `starts[i] = anchor(i)`,
-/// else `content_end(i-1)`, else `starts[i-1]`, then clamped to never go
-/// backwards; `ends[i] = starts[i+1]` for all but the last run, whose end
-/// is pinned to `line_start + line_len`.
+/// inventing a position: `starts[0] = line_start`; for `i > 0`, `starts[i]
+/// = anchor(i)`, else `content_end(i-1)`, else `starts[i-1]`, then clamped
+/// to never go backwards; `ends[i] = starts[i+1]` for all but the last run,
+/// whose end is pinned to `line_start + line_len`.
 pub fn row_spans(
     line_start: usize,
     line_len: usize,
@@ -126,13 +119,13 @@ pub fn row_spans(
 }
 
 /// Builds the `SyntaxSpan`s for a Wrapped/Pivoted table row's CONTINUATION
-/// visual row (row 2..N of one source line — `TableRowInfo::extra_rows`,
-/// WP4). Unlike `row_spans`, this does NOT tile `[line_start, line_start +
-/// line_len)`: an extra row claims no bytes at all (Gotcha 2). Every span
-/// gets the SAME empty `range` (`line_start..line_start`), so it never
-/// enters `accounted`/`fill_gaps`'s bookkeeping — that machinery only ever
-/// sees a line's OWN `spans`, never its `extra_rows`. One `SyntaxSpan` per
-/// run, preserving each run's own scope and per-char `cell_map` — only the
+/// visual row (row 2..N of one source line — `TableRowInfo::extra_rows`).
+/// Unlike `row_spans`, this does NOT tile `[line_start, line_start +
+/// line_len)`: an extra row claims no bytes at all. Every span gets the
+/// SAME empty `range` (`line_start..line_start`), so it never enters
+/// `accounted`/`fill_gaps`'s bookkeeping — that machinery only ever sees a
+/// line's OWN `spans`, never its `extra_rows`. One `SyntaxSpan` per run,
+/// preserving each run's own scope and per-char `cell_map` — only the
 /// `range` is synthetic.
 pub fn extra_row_spans(
     line_start: usize,
@@ -158,10 +151,10 @@ mod tests {
         }
     }
 
-    /// The plan's own worked example (WP2.S5): `"| a | bb |"`, column
-    /// widths 2/2, tiled from runs `[│␠, a, ␠, ␠│␠, bb, ␠│]` (decorative
-    /// runs carry `buf = None` for every char). Buffer offsets: `'a'` sits
-    /// at 2, `'bb'` at 6-7 (0-indexed into the 10-byte line).
+    /// `"| a | bb |"`, column widths 2/2, tiled from runs `[│␠, a, ␠, ␠│␠,
+    /// bb, ␠│]` (decorative runs carry `buf = None` for every char). Buffer
+    /// offsets: `'a'` sits at 2, `'bb'` at 6-7 (0-indexed into the 10-byte
+    /// line).
     #[test]
     fn worked_example_tiles_exactly_as_the_plan_specifies() {
         let runs: Vec<(String, Vec<CellSrc>, ScopeId)> = vec![

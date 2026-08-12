@@ -92,7 +92,7 @@ pub use materialize::{
     prepare_materialize, record_materialize_outcome,
 };
 pub use merge_prep::{AncestorRung, MergePrepOutcome, MergePrepResult};
-pub use merge_state::{MergeRowState, ResumableMerge};
+pub use merge_state::{MergeCloseState, MergeRowState, ResumableMerge};
 pub use obs_origin::ObsOrigin;
 pub use observation::{Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;

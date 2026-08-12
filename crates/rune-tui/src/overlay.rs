@@ -78,13 +78,12 @@ impl App {
         }
     }
 
-    pub(crate) fn explorer_find_or_start(&mut self) -> &mut String {
+    pub(crate) fn explorer_find_push(&mut self, c: char) {
         if !matches!(self.overlay, Overlay::ExplorerFind(_)) {
             self.overlay = Overlay::ExplorerFind(String::new());
         }
-        match &mut self.overlay {
-            Overlay::ExplorerFind(query) => query,
-            _ => unreachable!(),
+        if let Overlay::ExplorerFind(query) = &mut self.overlay {
+            query.push(c);
         }
     }
 

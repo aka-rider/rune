@@ -107,9 +107,6 @@ fn indices_for(
     indices
 }
 
-/// `idx`'s own display string, resolved back through `candidate_by` — an
-/// out-of-range `idx` (never expected: every `Scored` comes from a real
-/// candidate) sorts as the empty string rather than panicking.
 fn display_of<'a>(recents: &'a [Candidate], walk: &'a [Candidate], idx: usize) -> &'a str {
     candidate_by(recents, walk, idx).map_or("", |c| c.display.as_str())
 }
