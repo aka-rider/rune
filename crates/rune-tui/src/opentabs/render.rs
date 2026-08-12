@@ -41,6 +41,11 @@ pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
     );
 }
 
+fn clip_tab_name(name: &str, prefix_width: usize, area_width: u16) -> String {
+    let budget = (area_width as usize).saturating_sub(prefix_width);
+    truncate_to_width(name, budget)
+}
+
 /// Draws the Tabs pane's content into `area` — the rows below the `Open`
 /// divider, inside the left column's single bordered block: one row
 /// per open tab, in `order`: a `>` cursor prefix (shown only while the
@@ -111,14 +116,23 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             app.theme.chrome.tab_normal
         };
 
+        let shortcut_label = format!("{shortcut}:");
+        let prefix_width = display_width(prefix)
+            + display_width(&shortcut_label)
+            + display_width(pin_marker)
+            + display_width(dirty_marker)
+            + display_width(sync_marker)
+            + 1;
+        let name = clip_tab_name(doc.file_name(), prefix_width, area.width);
+
         lines.push(Line::from(vec![
             Span::raw(prefix),
-            Span::styled(format!("{shortcut}:"), app.theme.chrome.tabs_divider),
+            Span::styled(shortcut_label, app.theme.chrome.tabs_divider),
             Span::styled(pin_marker, app.theme.chrome.tab_pinned),
             Span::styled(dirty_marker, app.theme.chrome.tab_dirty),
             Span::styled(sync_marker, app.theme.chrome.error),
             Span::raw(" "),
-            Span::styled(doc.file_name().to_string(), name_style),
+            Span::styled(name, name_style),
         ]));
     }
 
@@ -198,5 +212,25 @@ mod tests {
     fn a_zero_width_divider_draws_nothing() {
         let app = app();
         assert_eq!(divider_row(&app, 0), "");
+    }
+
+    #[test]
+    fn clip_tab_name_truncates_a_multi_cell_grapheme_name_at_a_grapheme_boundary() {
+        let name = "\u{4e2d}\u{6587}\u{4e2d}\u{6587}report.md";
+        assert_eq!(clip_tab_name(name, 8, 9), "");
+        assert_eq!(clip_tab_name(name, 8, 10), "\u{4e2d}");
+        assert_eq!(clip_tab_name(name, 8, 12), "\u{4e2d}\u{6587}");
+        assert_eq!(clip_tab_name(name, 8, 200), name);
+    }
+
+    #[test]
+    fn a_wide_grapheme_document_name_renders_without_panicking() {
+        let mut app = app();
+        app.active_doc_mut().display_name =
+            Some("\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600} report.md".to_string());
+        for width in 1u16..=20 {
+            let area = Rect::new(0, 0, width, 1);
+            let _ = crate::testgrid::draw_with(width, 1, |frame| draw(&app, area, frame));
+        }
     }
 }
