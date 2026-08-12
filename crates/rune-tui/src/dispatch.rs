@@ -370,7 +370,11 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     // Escape -> collapse selection. Neither is a resolver-bound chord (plan
     // Context, "Keymap").
     if key.code == KeyCode::Enter && key.mods == Mods::NONE {
-        edit::newline(app, app.active);
+        if app.active_doc().is_read_only() {
+            navigate::follow(app, effects);
+        } else {
+            edit::newline(app, app.active);
+        }
         return keymap::KeyOutcome::Consumed;
     }
     if key.code == KeyCode::Escape && key.mods == Mods::NONE {

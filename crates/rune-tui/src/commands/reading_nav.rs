@@ -21,11 +21,14 @@
 
 use rune_core::coords::{DisplayRow, WrapPoint};
 use rune_core::cursor::CursorSet;
+use rune_nav::{Ref, RefKind, UseRole};
+use rune_syntax::element::ByteRange;
 
 use crate::app::App;
 use crate::commands::nav_scroll;
 use crate::document::Document;
 use crate::keymap::{Command, Motion};
+use crate::viewport::ScrollMode;
 
 fn pin_caret_to_first_visible_line(doc: &mut Document) {
     let view = doc.view();
@@ -52,6 +55,18 @@ fn pin_caret_to_first_visible_line(doc: &mut Document) {
 pub fn intercept(app: &mut App, command: Command) -> bool {
     if !app.active_doc().is_read_only() {
         return false;
+    }
+
+    match command {
+        Command::Indent => {
+            focus_link(app, LinkStep::Next);
+            return true;
+        }
+        Command::Outdent => {
+            focus_link(app, LinkStep::Prev);
+            return true;
+        }
+        _ => {}
     }
 
     let scrolled = match command {
@@ -101,4 +116,57 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
         pin_caret_to_first_visible_line(app.active_doc_mut());
     }
     true
+}
+
+enum LinkStep {
+    Next,
+    Prev,
+}
+
+fn link_sites(catalogue: &[Ref]) -> impl Iterator<Item = ByteRange> + '_ {
+    catalogue.iter().filter_map(|r| match &r.kind {
+        RefKind::Use {
+            role: UseRole::Link,
+            ..
+        } => Some(r.site),
+        _ => None,
+    })
+}
+
+fn focus_link(app: &mut App, step: LinkStep) {
+    let doc = app.active_doc();
+    let bound = doc.reading_link_focus.map(|site| site.start);
+    let caret = doc.cursors.primary().position;
+    let sites: Vec<ByteRange> = link_sites(&doc.catalogue).collect();
+
+    let target = match step {
+        LinkStep::Next => {
+            let after = bound.unwrap_or(caret);
+            let inclusive = bound.is_none();
+            sites
+                .iter()
+                .find(|site| {
+                    if inclusive {
+                        site.start >= after
+                    } else {
+                        site.start > after
+                    }
+                })
+                .or_else(|| sites.first())
+        }
+        LinkStep::Prev => {
+            let before = bound.unwrap_or(caret);
+            sites
+                .iter()
+                .rev()
+                .find(|site| site.start < before)
+                .or_else(|| sites.last())
+        }
+    };
+    let Some(&site) = target else { return };
+
+    let doc = app.active_doc_mut();
+    doc.reading_link_focus = Some(site);
+    doc.cursors = CursorSet::new(site.start);
+    doc.viewport.mode = ScrollMode::EnsureVisible;
 }
