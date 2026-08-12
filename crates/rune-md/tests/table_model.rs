@@ -26,7 +26,7 @@
 )]
 
 use rune_md::element::block::Block;
-use rune_md::element::table::{TableAlign, TableM};
+use rune_md::element::table::{TableAlign, TableM, TableRowShape};
 use rune_md::parse::parse;
 
 fn only_table(content: &str) -> TableM {
@@ -92,6 +92,12 @@ fn escaped_pipe_stays_inside_one_cell() {
     assert_eq!(header.cells.len(), 2);
     let first = &header.cells[0].range;
     assert!(content[first.start..first.end].contains('|'));
+    // Anti-regression gate for the row-shape detector: a raw pipe count
+    // reads three separators here (the escaped one included), which would
+    // wrongly read as more cells than the header declares. The detector
+    // must read comrak's own cell ranges instead, so this well-formed row
+    // stays `Exact`.
+    assert_eq!(header.shape, TableRowShape::Exact);
 }
 
 #[test]
@@ -130,4 +136,21 @@ fn pipe_inside_inline_code_in_body_row_splits_the_code_span_and_drops_a_column()
         &content[body.cells[1].range.start..body.cells[1].range.end],
         "y` "
     );
+    // The row-shape detector reads leftover source bytes past the last
+    // modeled cell, not raw pipes, so it never has to know a code span was
+    // involved. Here that tail is `"| z |"` (the dropped column's own text)
+    // — genuinely non-whitespace content past the last cell, so this row
+    // reads `Truncated` exactly like the ordinary ragged-row case: the
+    // code-span pipe corrupted the split, but the detector correctly
+    // reports the same real defect, a lost column, either way.
+    assert_eq!(body.shape, TableRowShape::Truncated);
+}
+
+#[test]
+fn long_row_with_an_extra_cell_is_classified_truncated() {
+    let content = "| Name | Age |\n| ---- | --- |\n| Alice | 30 | EXTRA |\n";
+    let t = only_table(content);
+    let body = &t.rows[1];
+    assert_eq!(body.cells.len(), 2);
+    assert_eq!(body.shape, TableRowShape::Truncated);
 }

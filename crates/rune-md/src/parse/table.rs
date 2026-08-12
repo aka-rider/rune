@@ -8,7 +8,7 @@
 use super::inline::build_inlines;
 use super::{ScanHint, line_at, node_range, per_line_content};
 use crate::element::block::Block;
-use crate::element::table::{TableAlign, TableCellM, TableM, TableRowM};
+use crate::element::table::{TableAlign, TableCellM, TableM, TableRowM, TableRowShape};
 use comrak::nodes::{AstNode, NodeValue, TableAlignment};
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
@@ -19,6 +19,38 @@ fn to_align(a: TableAlignment) -> TableAlign {
         TableAlignment::Center => TableAlign::Center,
         TableAlignment::Right => TableAlign::Right,
     }
+}
+
+/// comrak autocompletes a short row by appending cells whose raw sourcepos
+/// is a single COLUMN position (`start.column == end.column` — verified
+/// against comrak 0.54.0's `try_opening_row`, which sets both to
+/// `last_column + 1` and never advances `last_column` again). A real cell's
+/// start and end column only ever coincide for a pathological empty
+/// same-position scan, never for GFM's ordinary padded-with-spaces cells,
+/// so this reads as "was this cell autocompleted" rather than "is this
+/// cell short".
+fn cell_is_padded(cell_node: &AstNode) -> bool {
+    let sp = cell_node.data.borrow().sourcepos;
+    sp.start.column == sp.end.column
+}
+
+/// comrak's row scanner truncates a ragged row's extra raw cells before
+/// they ever become `TableCell` nodes (module docs), so the loss can't be
+/// seen by counting `TableCellM`s — `cells.len()` is `aligns.len()`
+/// whether the row was exact, padded, or truncated. What DOES differ is
+/// the source bytes: a truncated row's line has non-whitespace content
+/// left over past its last modeled cell (the dropped columns themselves),
+/// where an exact or padded row's line ends at its last cell (padding's
+/// own phantom cell already reaches the line's own end — see
+/// `TableCellM::range`'s docs) plus at most the row's own closing `|`.
+fn row_is_truncated(content: &str, line_range: ByteRange, cells: &[TableCellM]) -> bool {
+    let last_end = cells
+        .last()
+        .map_or(line_range.start, |c| c.range.end)
+        .clamp(line_range.start, line_range.end);
+    let tail = content.get(last_end..line_range.end).unwrap_or("");
+    let after_pipe = tail.trim().strip_prefix('|').unwrap_or(tail.trim()).trim();
+    !after_pipe.is_empty()
 }
 
 /// `None` for a non-`Table` node or a table with no rows, so the caller
@@ -45,6 +77,10 @@ pub(super) fn build_table<'a>(
         t.alignments.iter().copied().map(to_align).collect()
     };
 
+    let first_line = line_at(starts, range.start);
+    let last_line = line_at(starts, range.end.saturating_sub(1).max(range.start));
+    let content_lines = per_line_content(content, starts, range, hint);
+
     let mut rows: Vec<TableRowM> = Vec::new();
     let mut header_line: Option<usize> = None;
 
@@ -60,10 +96,12 @@ pub(super) fn build_table<'a>(
         }
 
         let mut cells: Vec<TableCellM> = Vec::new();
+        let mut any_padded = false;
         for cell_node in row_node.children() {
             if !matches!(cell_node.data.borrow().value, NodeValue::TableCell) {
                 continue;
             }
+            any_padded |= cell_is_padded(cell_node);
             let cell_range = node_range(content, starts, cell_node);
             let inlines = build_inlines(content, starts, cell_node, hint);
             cells.push(TableCellM {
@@ -72,9 +110,22 @@ pub(super) fn build_table<'a>(
             });
         }
 
+        let row_line_range = content_lines
+            .get(row_line.saturating_sub(first_line))
+            .copied()
+            .unwrap_or(row_range);
+        let shape = if row_is_truncated(content, row_line_range, &cells) {
+            TableRowShape::Truncated
+        } else if any_padded {
+            TableRowShape::Padded
+        } else {
+            TableRowShape::Exact
+        };
+
         rows.push(TableRowM {
             line: row_line,
             is_header,
+            shape,
             cells,
         });
     }
@@ -83,8 +134,6 @@ pub(super) fn build_table<'a>(
         return None;
     }
 
-    let first_line = line_at(starts, range.start);
-    let last_line = line_at(starts, range.end.saturating_sub(1).max(range.start));
     // The `|---|---|` delimiter row has no comrak node at all: derive it as
     // the line right after the header row, clamped so a malformed/truncated
     // table can never point past its own last line.
@@ -124,8 +173,7 @@ pub(super) fn build_table<'a>(
     // A container-explained start is NOT
     // affected and still renders, so this doesn't disable tables in
     // blockquotes or list items.
-    let first = line_at(starts, range.start);
-    if range.start != hint.start_for_line(starts, first) {
+    if range.start != hint.start_for_line(starts, first_line) {
         return None;
     }
     let mut claimed: Vec<usize> = rows.iter().map(|r| r.line).collect();
@@ -136,8 +184,6 @@ pub(super) fn build_table<'a>(
     if claimed.len() != claimed_total {
         return None;
     }
-
-    let content_lines = per_line_content(content, starts, range, hint);
 
     Some(Block::Table(TableM {
         sm: RevealSm::new(RevealState::Rendered),

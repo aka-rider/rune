@@ -6,7 +6,7 @@
 
 use super::style::{table_header_scope, table_scope, verbatim_style};
 use super::{EmitOut, hide_range, line_local, push_span_split_by_line};
-use crate::element::table::TableM;
+use crate::element::table::{TableM, TableRowShape};
 use crate::parse::line_at;
 use crate::table::{CellSrc, extra_row_spans, layout, pivot, render, row_spans, wrapped};
 use rune_core::assert_invariant;
@@ -72,24 +72,32 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
     let body_scope = table_scope();
 
     // Every row's cells are rendered up front: `col_widths` is the max over
-    // ALL rows, so no row can be laid out until every row's own cells are
-    // known.
-    let rendered_rows: Vec<Vec<render::RenderedCell>> = t
+    // ALL boxed rows, so no row can be laid out until every row's own cells
+    // are known. A `Truncated` row never joins that box (its shape's own
+    // docs) and renders as raw source instead, so it contributes nothing
+    // here — `None` rather than rendered cells nobody will read.
+    let rendered_rows: Vec<Option<Vec<render::RenderedCell>>> = t
         .rows
         .iter()
-        .map(|row| {
-            let base = if row.is_header {
-                header_scope
-            } else {
-                body_scope
-            };
-            row.cells
-                .iter()
-                .map(|c| render::render_cell(content, c, base))
-                .collect()
+        .map(|row| match row.shape {
+            TableRowShape::Truncated => None,
+            TableRowShape::Exact | TableRowShape::Padded => {
+                let base = if row.is_header {
+                    header_scope
+                } else {
+                    body_scope
+                };
+                Some(
+                    row.cells
+                        .iter()
+                        .map(|c| render::render_cell(content, c, base))
+                        .collect(),
+                )
+            }
         })
         .collect();
-    let (natural_widths, min_widths) = layout::col_widths(&rendered_rows, n_cols);
+    let (natural_widths, min_widths) =
+        layout::col_widths(rendered_rows.iter().filter_map(|c| c.as_deref()), n_cols);
 
     let avail = out.width as usize;
     let table_layout = layout::choose(&natural_widths, &min_widths, avail);
@@ -117,12 +125,37 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         .iter()
         .zip(rendered_rows.iter())
         .find(|(r, _)| r.is_header)
-        .map_or(&[], |(_, cells)| cells.as_slice());
+        .and_then(|(_, cells)| cells.as_deref())
+        .unwrap_or(&[]);
     let first_body_line = t.rows.iter().find(|r| !r.is_header).map(|r| r.line);
 
     let total_lines = t.content_lines.len();
     for (i, &content_line) in t.content_lines.iter().enumerate() {
         let line = line_at(starts, content_line.start);
+
+        if let Some(row) = t.rows.iter().find(|r| r.line == line) {
+            match row.shape {
+                TableRowShape::Exact | TableRowShape::Padded => {}
+                TableRowShape::Truncated => {
+                    // comrak's own row scanner drops this row's extra
+                    // cell(s) before they ever reach the AST, so the box
+                    // can't show columns it never modeled — raw source
+                    // instead of `claim_whole`'s substitution.
+                    // `out.tables[line]` stays `None`, which is what keeps
+                    // this row out of the table's own width group.
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        content_line,
+                        verbatim_style(),
+                        RevealState::Revealed,
+                        out,
+                    );
+                    continue;
+                }
+            }
+        }
+
         let boundary = if total_lines <= 1 {
             RowBoundary::Only
         } else if i == 0 {
@@ -145,7 +178,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 } else {
                     TableRole::Body
                 };
-                Some((role, cells.as_slice()))
+                Some((role, cells.as_deref().unwrap_or(&[])))
             } else if line == t.sep_line {
                 Some((TableRole::Separator, &[]))
             } else {

@@ -60,6 +60,29 @@ fn body_row_renders_exact_grid_text() {
     assert_eq!(joined_line(&lines, 2, buf.content()), "│ Alice │ 30  │");
 }
 
+/// A row with more raw cells than the header renders as its own raw
+/// source line rather than dropping the extra cell's text — the break in
+/// the box is the signal the row is malformed. The header/separator above
+/// it stay boxed and table-affiliated; the raw row itself carries no
+/// `TableRowInfo` at all, so it never joins that box's width group.
+#[test]
+fn row_with_an_extra_cell_renders_raw_with_the_dropped_text_visible() {
+    let content = "| Name | Age |\n| ---- | --- |\n| Alice | 30 | EXTRA |\n";
+    let (buf, doc) = synced(content, 0, false);
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
+
+    let raw_row = joined_line(&lines, 2, buf.content());
+    assert!(raw_row.contains("EXTRA"), "raw_row was {raw_row:?}");
+    assert_eq!(raw_row, "| Alice | 30 | EXTRA |");
+
+    assert!(lines[0].table.is_some(), "header row stays boxed");
+    assert!(lines[1].table.is_some(), "separator row stays boxed");
+    assert!(
+        lines[2].table.is_none(),
+        "a truncated row carries no TableRowInfo, so it leaves the table group"
+    );
+}
+
 #[test]
 fn bar_and_corner_columns_align_across_every_row() {
     let (buf, doc) = synced(NAME_AGE_TABLE, 0, false);

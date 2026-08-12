@@ -28,6 +28,18 @@ pub struct TableCellM {
     pub inlines: Vec<Inline>,
 }
 
+/// How a raw row's cell count compares to the table's own column count
+/// (`aligns.len()`), read off comrak's own cell ranges rather than a pipe
+/// count (`TableRowShape`'s producer, `parse::table::build_table`, spells
+/// out why). The emitter matches this exhaustively, so a future variant is
+/// a compile error at every call site instead of a silently narrower table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableRowShape {
+    Exact,
+    Padded,
+    Truncated,
+}
+
 /// One table row — the header row or a body row. The `|---|---|` delimiter
 /// row itself has no comrak node and is not modeled as a `TableRowM`; see
 /// `TableM::sep_line`.
@@ -35,6 +47,7 @@ pub struct TableCellM {
 pub struct TableRowM {
     pub line: usize,
     pub is_header: bool,
+    pub shape: TableRowShape,
     pub cells: Vec<TableCellM>,
 }
 

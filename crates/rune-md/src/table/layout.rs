@@ -55,14 +55,18 @@ pub(crate) fn cell_display_width(cell: &RenderedCell) -> usize {
 }
 
 /// Per column, the max rendered display width over every row's own cell
-/// (`rows`, one `Vec<RenderedCell>` per non-separator row — the delimiter
-/// row has no `RenderedCell`s of its own to contribute, Gotcha 10), sized
-/// to `n_cols`: a row shorter than `n_cols` contributes 0 to the columns it
-/// doesn't reach rather than panicking. Also returns each column's own
-/// MINIMUM width — the longest atomic (never-broken) unit any row's cell
-/// contains — which Wrapped layout's selector and column-shrinking both
-/// need (WP4.S2) and Grid never reads.
-pub fn col_widths(rows: &[Vec<RenderedCell>], n_cols: usize) -> (Vec<usize>, Vec<usize>) {
+/// (`rows`, one cell slice per row this table actually boxes — a
+/// `Truncated` row's own cells never reach here, since it leaves the box
+/// entirely rather than being laid out inside it), sized to `n_cols`: a row
+/// shorter than `n_cols` contributes 0 to the columns it doesn't reach
+/// rather than panicking. Also returns each column's own MINIMUM width —
+/// the longest atomic (never-broken) unit any row's cell contains — which
+/// Wrapped layout's selector and column-shrinking both need (WP4.S2) and
+/// Grid never reads.
+pub fn col_widths<'a>(
+    rows: impl IntoIterator<Item = &'a [RenderedCell]>,
+    n_cols: usize,
+) -> (Vec<usize>, Vec<usize>) {
     let mut widths = vec![0usize; n_cols];
     let mut min_widths = vec![0usize; n_cols];
     for row in rows {
