@@ -20,8 +20,8 @@ use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
     EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL, FILESEARCH_KEY_SUP, MARKDOWN_FRAGMENTS, MERGE_KEY,
-    MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
-    SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
+    MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, REDO_KEY_ALT, SAVE_KEY,
+    SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
 };
 
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
@@ -57,14 +57,22 @@ fn cluster_delete() -> impl Strategy<Value = Vec<Action>> {
         .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
 }
 
-/// 7 — 1-4 `sup+z`, optionally then 1-3 `sup+shift+z`.
+/// 7 — 1-4 `sup+z`, optionally then 1-3 `sup+shift+z` (or the alternate form).
 fn cluster_undo_redo() -> impl Strategy<Value = Vec<Action>> {
-    (1usize..=4, proptest::option::of(1usize..=3)).prop_map(|(undo_n, redo_n)| {
-        let mut actions = vec![Action::Key(UNDO_KEY); undo_n];
-        if let Some(n) = redo_n {
-            actions.extend(std::iter::repeat_n(Action::Key(REDO_KEY), n));
+    (1usize..=4, proptest::option::of(1usize..=3)).prop_flat_map(|(undo_n, redo_n)| {
+        let actions = vec![Action::Key(UNDO_KEY); undo_n];
+        match redo_n {
+            Some(n) => (0..n)
+                .map(|_| prop_oneof![Just(REDO_KEY), Just(REDO_KEY_ALT)])
+                .collect::<Vec<_>>()
+                .prop_map(move |redo_keys| {
+                    let mut result = actions.clone();
+                    result.extend(redo_keys.into_iter().map(Action::Key));
+                    result
+                })
+                .boxed(),
+            None => Just(actions).boxed(),
         }
-        actions
     })
 }
 

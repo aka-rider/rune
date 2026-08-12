@@ -122,6 +122,13 @@ pub(crate) const REDO_SUP_SHIFT: Binding<Command> = Binding {
     alias: false,
 };
 
+pub(crate) const REDO_SUP_SHIFT_ALT: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('Z'), SUP),
+    cmd: Command::Redo,
+    help: "redo",
+    alias: true,
+};
+
 pub(crate) const REDO_CTRL_Y: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('y'), CTRL),
     cmd: Command::Redo,
@@ -134,6 +141,13 @@ pub(crate) const DELETE_LINE: Binding<Command> = Binding {
     cmd: Command::DeleteLine,
     help: "delete line",
     alias: false,
+};
+
+pub(crate) const DELETE_LINE_ALT: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('K'), SUP),
+    cmd: Command::DeleteLine,
+    help: "delete line",
+    alias: true,
 };
 
 pub(crate) const SAVE: Binding<Command> = Binding {

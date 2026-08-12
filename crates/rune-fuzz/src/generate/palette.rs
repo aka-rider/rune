@@ -328,6 +328,15 @@ pub(super) const REDO_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
+pub(super) const REDO_KEY_ALT: KeyInput = KeyInput {
+    code: KeyCode::Char('Z'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
 pub(super) const ENTER_KEY: KeyInput = KeyInput {
     code: KeyCode::Enter,
     mods: Mods::NONE,
