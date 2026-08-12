@@ -23,12 +23,11 @@ pub(crate) struct Lines {
 ///
 /// `open` starts at `range.start`, NOT at a `hint`-derived start — a node's
 /// own sourcepos already bakes in every ancestor's first-line prefix (a
-/// blockquote's `"> "` AND a list item's `"- "`/`"1. "`), whereas `hint`
-/// only tracks REPEATING blockquote markers and would fall back to the
-/// physical line start, re-claiming bytes a list item's own marker already
-/// hid. Every later line IS a continuation line, which is exactly what
-/// `hint` handles, and each gets its own range — never one contiguous span —
-/// because a single range cannot exclude an interior container prefix.
+/// blockquote's `"> "` AND a list item's `"- "`/`"1. "`), so re-deriving it
+/// from `hint` would be redundant. Every later line IS a continuation line,
+/// which is exactly what `hint` handles, and each gets its own range —
+/// never one contiguous span — because a single range cannot exclude an
+/// interior container prefix.
 pub(crate) fn split(
     content: &str,
     starts: &[usize],

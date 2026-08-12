@@ -116,13 +116,50 @@ fn a_fence_inside_a_list_item_is_found_and_excludes_the_list_marker() {
         !text.contains('-'),
         "the list marker must never reach a parser as source: {text:?}"
     );
-    // A list item's CONTINUATION indent is retained, unlike a blockquote's
-    // repeating `"> "` marker: the parser's per-line breakdown skips only
-    // prefixes it can attribute to a repeating container marker, and a list
-    // item's indent is not one. Pinned here as the behaviour that actually
-    // holds so a future change to it is a deliberate, visible decision rather
-    // than a silent drift.
-    assert_eq!(text, "  let x = 1;");
+    assert_eq!(text, "let x = 1;");
+}
+
+#[test]
+fn a_fence_inside_a_list_item_inside_a_blockquote_excludes_both_prefixes() {
+    let (buf, regions) = markdown_regions("> - item\n>\n>   ```rust\n>   let x = 1;\n>   ```\n");
+
+    assert_eq!(
+        regions.len(),
+        1,
+        "a fence nested in a list item inside a blockquote is found"
+    );
+    let region = &regions[0];
+    assert_eq!(region.info, "rust");
+    let text = reconstructed(&buf, region);
+    assert!(
+        !text.contains('>'),
+        "the blockquote marker must never reach a parser as source: {text:?}"
+    );
+    assert!(
+        !text.contains('-'),
+        "the list marker must never reach a parser as source: {text:?}"
+    );
+    assert_eq!(text, "let x = 1;");
+}
+
+#[test]
+fn a_fence_inside_a_list_item_nested_in_another_list_item_excludes_both_indents() {
+    let (buf, regions) =
+        markdown_regions("- outer\n  - inner\n\n    ```rust\n    let x = 1;\n    ```\n");
+
+    assert_eq!(
+        regions.len(),
+        1,
+        "a fence nested two list items deep is found"
+    );
+    let region = &regions[0];
+    assert_eq!(region.info, "rust");
+    let text = reconstructed(&buf, region);
+    assert!(
+        !text.contains('-'),
+        "neither list item's marker may reach a parser as source: {text:?}"
+    );
+    assert_eq!(text, "let x = 1;");
 }
 
 #[test]
@@ -156,14 +193,7 @@ fn an_indented_code_block_is_a_region() {
         2..4,
         "rows cover exactly the lines the block occupies"
     );
-    // The parser's per-line breakdown trusts the block's own start offset for
-    // the FIRST line (comrak reports it past the 4-space indent) but falls
-    // back to the physical line start for every continuation line, so the
-    // indent survives on all lines but the first. Pinned as-is: it is
-    // pre-existing behaviour of the shared per-line splitter, shared with
-    // every other multi-line construct, and no consumer reads an empty-info
-    // region's text today.
-    assert_eq!(reconstructed(&buf, region), "let x = 1;\n    let y = 2;");
+    assert_eq!(reconstructed(&buf, region), "let x = 1;\nlet y = 2;");
 }
 
 #[test]

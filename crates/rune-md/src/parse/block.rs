@@ -143,7 +143,20 @@ fn build_block<'a>(
             // A setext heading's underline is always its LAST content line
             // — its text may itself span several lines (`Foo\nBar\n---`),
             // so `content_lines[1]` would be wrong for that shape.
-            let underline = underline_of_setext_heading(setext, &content_lines, &inlines);
+            //
+            // Widened past its own content-only start to `hint`'s own
+            // `concealment_baseline`: a depth without an independent
+            // concealment claim of its own (a list item's fixed
+            // continuation width, unlike a blockquote's per-line
+            // `BlockquoteMarkerM`) has nothing else that will ever hide
+            // its prefix on this row, so the underline's own hide must
+            // reach back and cover it.
+            let underline =
+                underline_of_setext_heading(setext, &content_lines, &inlines).map(|u| {
+                    let underline_line = super::line_at(starts, u.start);
+                    let baseline = hint.concealment_baseline(starts, underline_line);
+                    ByteRange::new(baseline, u.end)
+                });
             let last_line = last_line_of(starts, range);
 
             Some(Block::Heading(HeadingM {
@@ -172,6 +185,7 @@ fn build_block<'a>(
                 .collect();
             let child_hint = ScanHint::Nested {
                 marker_ends,
+                conceals_own_prefix: true,
                 parent: hint,
             };
             let children = build_blocks(content, starts, node, &child_hint);
@@ -187,7 +201,21 @@ fn build_block<'a>(
             closed,
         } => {
             if !fenced {
-                let content_lines = super::per_line_content(content, starts, range, hint);
+                // Comrak reports `range.start` past this block's own
+                // leading indentation (see `sourcepos_to_range`'s docs) —
+                // `width` recovers exactly how much that is, so every
+                // CONTINUATION line strips the same fixed amount instead of
+                // trusting its raw physical start.
+                let baseline = hint.start_for_line(starts, line);
+                let width = range.start.saturating_sub(baseline);
+                let marker_ends =
+                    super::indent::fixed_indent_ends(content, starts, range, width, hint);
+                let local_hint = ScanHint::Nested {
+                    marker_ends,
+                    conceals_own_prefix: false,
+                    parent: hint,
+                };
+                let content_lines = super::per_line_content(content, starts, range, &local_hint);
                 return Some(Block::Verbatim(VerbatimM {
                     sm: RevealSm::new(RevealState::Revealed),
                     range,
@@ -355,7 +383,20 @@ fn build_list_items<'a>(
             .min(range.end)
             .min(line_end_at(content.len(), starts, comrak_line));
         let marker = ByteRange::new(range.start, marker_end);
-        let children = build_blocks(content, starts, item_node, hint);
+
+        // A list item's continuation indent is a fixed width established
+        // once from its own marker, not a marker rescanned per line like a
+        // blockquote's `"> "` — `fixed_indent_ends` derives it and threads
+        // it to every child the same way `BlockQuote` threads its own
+        // per-line markers.
+        let width = marker_end.saturating_sub(range.start);
+        let marker_ends = super::indent::fixed_indent_ends(content, starts, range, width, hint);
+        let child_hint = ScanHint::Nested {
+            marker_ends,
+            conceals_own_prefix: false,
+            parent: hint,
+        };
+        let children = build_blocks(content, starts, item_node, &child_hint);
 
         items.push(ListItemM {
             sm: RevealSm::new(RevealState::Rendered),

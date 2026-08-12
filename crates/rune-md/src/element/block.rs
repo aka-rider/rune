@@ -53,12 +53,14 @@ pub struct HeadingM {
     /// plan Context "Parse"). Empty for a setext heading (no leading prefix
     /// on its own text line).
     pub marker: ByteRange,
-    /// The setext underline's own row (`content_lines`'s last entry,
-    /// already container-prefix-clamped) — `None` for an ATX heading, and
-    /// also `None` when a defensive guard degrades a genuinely setext
-    /// heading (see `underline_of_setext_heading`'s docs). This is a
-    /// conceal-eligibility signal, not a setext-ness signal — use `setext`
-    /// for that.
+    /// The setext underline's own row, widened past `content_lines`'s last
+    /// entry to also cover any enclosing depth's prefix nothing else will
+    /// ever hide (a list item's fixed continuation indent, unlike a
+    /// blockquote's own independently concealed `"> "`) — `None` for an
+    /// ATX heading, and also `None` when a defensive guard degrades a
+    /// genuinely setext heading (see `underline_of_setext_heading`'s
+    /// docs). This is a conceal-eligibility signal, not a setext-ness
+    /// signal — use `setext` for that.
     pub underline: Option<ByteRange>,
     pub inlines: Vec<Inline>,
     /// One entry per physical line `range` spans, each already clamped to

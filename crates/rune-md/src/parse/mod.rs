@@ -10,6 +10,7 @@ mod blockquote;
 mod delimited;
 mod embed;
 pub(crate) mod frontmatter;
+mod indent;
 mod inline;
 mod shadow;
 mod table;
@@ -195,26 +196,35 @@ pub(crate) fn per_line_content(
         .collect()
 }
 
-/// Per-line scan-start hints for locating a blockquote depth's own `"> "`
-/// marker. Only line 0 of a nested `BlockQuote` node's OWN sourcepos tells
-/// us where that depth's content starts; for a CONTINUATION line (line >
-/// first_line) within a multi-line blockquote, comrak gives no such
-/// per-line signal, so scanning from the physical line start would find
-/// the OUTERMOST `'>'` regardless of depth — every nested depth would
-/// report the identical marker range on that line, double-hiding the same
-/// bytes and leaving the inner depths' actual `"> "` unmodeled (MAJOR 4,
-/// the multi-line-continuation half of the bug: `"> > nested\n> > nested"`
-/// — line 1 needs the SAME depth-aware treatment line 0 gets from
-/// `range.start`). `ScanHint` threads that knowledge down the recursion:
-/// each nested depth's hint is built from its own immediately enclosing
-/// depth's just-computed markers (mapping line -> marker end), falling
-/// back to the enclosing depth's own hint on a line where the enclosing
-/// depth found no marker (a lazy continuation line).
+/// Per-line scan-start hints for locating a container's own claim on a
+/// content line: a blockquote depth's `"> "`, re-scanned fresh per line
+/// (`blockquote_markers`), or a list item's/indented code block's own
+/// fixed continuation width, computed once from its first line and held
+/// constant (`indent::fixed_indent_ends`). Both populate the same
+/// `marker_ends` map — line -> the byte offset right after whatever this
+/// depth claims on it — because both need the identical fallback: a line
+/// this depth found no claim on (a lazy continuation line, e.g. `"> >
+/// nested\n> > nested"`'s line 1 for the inner depth, or an under-indented
+/// paragraph continuation inside a list item) defers to `parent`, the
+/// immediately enclosing depth's own hint, rather than the raw physical
+/// line start. Nesting composes by construction: each depth's hint is
+/// built with `parent` set to the depth it sits inside, so a fence inside
+/// a list item inside a blockquote strips both prefixes without either
+/// depth needing to know about the other.
 pub(crate) enum ScanHint<'p> {
     /// The document root: every line scans from its own physical start.
     Root,
     Nested {
         marker_ends: std::collections::HashMap<usize, usize>,
+        /// Whether THIS depth's own claim already has an independent
+        /// concealment claim elsewhere (a blockquote's `BlockquoteMarkerM`,
+        /// hidden per line in its own right) rather than depending on a
+        /// descendant's range to cover it (a list item's/indented code
+        /// block's fixed width, which has no such independent claim —
+        /// nothing hides it if a descendant's own range stops excluding
+        /// it). `concealment_baseline` reads this to find the nearest
+        /// depth whose prefix is safe to leave uncovered.
+        conceals_own_prefix: bool,
         parent: &'p ScanHint<'p>,
     },
 }
@@ -226,10 +236,38 @@ impl ScanHint<'_> {
             ScanHint::Nested {
                 marker_ends,
                 parent,
+                ..
             } => marker_ends
                 .get(&line)
                 .copied()
                 .unwrap_or_else(|| parent.start_for_line(starts, line)),
+        }
+    }
+
+    /// The earliest byte on `line` that is either genuinely unclaimed by
+    /// any container, or claimed by a depth with its OWN independent
+    /// concealment (so hiding stops there rather than double-claiming
+    /// it). A descendant whose own concealment needs to hide everything
+    /// back to the nearest such boundary — a setext heading's underline
+    /// row, say — uses this instead of `start_for_line` (which composes
+    /// every depth's claim, INCLUDING ones nothing else hides on its
+    /// behalf).
+    pub(crate) fn concealment_baseline(&self, starts: &[usize], line: usize) -> usize {
+        match self {
+            ScanHint::Root => line_start_at(starts, line),
+            ScanHint::Nested {
+                marker_ends,
+                conceals_own_prefix: true,
+                parent,
+            } => marker_ends
+                .get(&line)
+                .copied()
+                .unwrap_or_else(|| parent.concealment_baseline(starts, line)),
+            ScanHint::Nested {
+                conceals_own_prefix: false,
+                parent,
+                ..
+            } => parent.concealment_baseline(starts, line),
         }
     }
 }
@@ -430,6 +468,7 @@ mod tests {
         let range = ByteRange::new(0, 15);
         let hint = ScanHint::Nested {
             marker_ends: std::collections::HashMap::from([(1, 12)]),
+            conceals_own_prefix: true,
             parent: &ScanHint::Root,
         };
         let lines = per_line_content(&content, &starts, range, &hint);
