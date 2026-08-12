@@ -118,6 +118,7 @@ fn action_variant_name(action: &Action) -> &'static str {
         Action::Key(_) => "Key",
         Action::Type(_) => "Type",
         Action::Paste(_) => "Paste",
+        Action::OpenFileSearch => "OpenFileSearch",
         Action::Resize(_, _) => "Resize",
         Action::ClipboardReply(_) => "ClipboardReply",
         Action::ConfirmTimeout => "ConfirmTimeout",
@@ -133,7 +134,7 @@ fn action_variant_name(action: &Action) -> &'static str {
     }
 }
 
-fn every_action_variant_witness() -> [Action; 15] {
+fn every_action_variant_witness() -> [Action; 16] {
     [
         Action::Key(KeyInput {
             code: KeyCode::Char('a'),
@@ -141,6 +142,7 @@ fn every_action_variant_witness() -> [Action; 15] {
         }),
         Action::Type(String::new()),
         Action::Paste(String::new()),
+        Action::OpenFileSearch,
         Action::Resize(1, 1),
         Action::ClipboardReply(String::new()),
         Action::ConfirmTimeout,

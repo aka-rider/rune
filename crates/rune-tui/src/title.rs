@@ -60,7 +60,7 @@ const INVALID_NAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>'];
 /// `/` and `\` here is what keeps `rename::target_path`'s `Path::join`
 /// inside the parent directory: `join` with an absolute path REPLACES the
 /// base rather than appending to it.
-pub(crate) fn is_name_char(ch: char) -> bool {
+pub fn is_name_char(ch: char) -> bool {
     !ch.is_control() && !INVALID_NAME_CHARS.contains(&ch)
 }
 

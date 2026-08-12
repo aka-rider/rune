@@ -19,6 +19,10 @@ impl App {
         }
     }
 
+    pub fn search_draft(&self) -> Option<&str> {
+        self.search().map(|state| state.draft.as_str())
+    }
+
     pub(crate) fn search_mut(&mut self) -> Option<&mut SearchState> {
         match &mut self.overlay {
             Overlay::Search(state) => Some(state),

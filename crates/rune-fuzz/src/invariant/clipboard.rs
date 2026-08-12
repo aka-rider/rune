@@ -6,6 +6,7 @@ use base64::engine::general_purpose::STANDARD;
 
 use rune_core::buffer::Buffer;
 use rune_tui::commands::nav;
+use rune_tui::focus::FocusTarget;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
 use rune_tui::runtime::PasteTarget;
@@ -14,42 +15,151 @@ use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `PASTE-VERBATIM` — on a non-empty `Paste`/`ClipboardRead` into
-/// a single cursor, `next.content` must equal `prev.content` with exactly
-/// the pasted text's bytes substituted at the cursor: inserted at the
-/// caret when collapsed, or replacing `[selection_start, selection_end_
-/// inclusive)` when there's a selection (CODE-REVIEW.md rune-fuzz finding
-/// 12) — `commands::edit::insert_text`'s `per_cursor_selection_edits`
-/// (via `per_cursor_selection_edits`'s own `has_selection` arm) uses the
-/// SAME `nav::selection_end_inclusive` reversed-selection nudge
-/// `clip_osc52` below already accounts for; it is a shared selection-
-/// range convention for every selection-consuming command in this crate,
-/// not a copy-extraction-only rule. `handle_paste_content` inserts
-/// unfiltered (`commands/clipboard.rs`), the ONE path that can carry
-/// control bytes at all (G3). Inert on a `read_only` document (the Help
-/// virtual document, reachable since `F1` joined `arb_any_keycode` —
-/// CODE-REVIEW.md rune-fuzz finding 9): every mutating command chokepoint
-/// refuses a read-only document by construction, so a paste there
-/// correctly inserts nothing, and asserting verbatim insertion anyway
-/// would be asserting a property production never claimed to begin with.
-///
-/// Title-targeted-safe: the title field has its own in-memory buffer, out
-/// of this checker's domain entirely (it is unjournaled and never
-/// reaches the document). A `MsgTag::Paste` step only asserts when
-/// `prev.focus == Pane::Editor` (a title-focused `Paste` never touches
-/// `app.active`), and a `MsgTag::ClipboardRead` step only asserts when its
-/// captured `target` names `prev.active` (a `PasteTarget::Title` reply
-/// inserts into the field, not the document). Both guards are also what
-/// keeps `prev.active == next.active`, since neither guarded path can
-/// switch the active document.
+/// `PASTE-VERBATIM` — dispatches on `prev.focus_target`, the same
+/// `FocusTarget` `commands::clipboard::route_bracketed_paste` itself reads,
+/// so a `Msg::Paste` step is checked against exactly where production sent
+/// it, never a parallel re-derivation. `Msg::ClipboardRead` carries its own
+/// `target`, captured at request time, so that arm checks against it
+/// directly instead.
 pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
-    let text = match &ctx.msg {
-        MsgTag::Paste(t) if prev.focus == Pane::Editor => t,
+    match &ctx.msg {
+        MsgTag::Paste(text) => bracketed_paste_violation(prev, next, text),
         MsgTag::ClipboardRead { text, target } if *target == PasteTarget::Document(prev.active) => {
-            text
+            document_paste_violation(prev, next, text)
         }
-        _ => return None,
+        _ => None,
+    }
+}
+
+fn bracketed_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
+    if text.is_empty() {
+        return None;
+    }
+    match prev.focus_target {
+        FocusTarget::SearchField => search_paste_violation(prev, next, text),
+        FocusTarget::FileSearch => filesearch_paste_violation(prev, next, text),
+        FocusTarget::Title => title_paste_violation(prev, next, text),
+        FocusTarget::Explorer
+        | FocusTarget::Tabs
+        | FocusTarget::Editor
+        | FocusTarget::Messages
+        | FocusTarget::ReplaceField => document_paste_violation(prev, next, text),
+    }
+}
+
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or("")
+}
+
+fn strip_control(text: &str) -> String {
+    first_line(text)
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
+fn append_violation(
+    field: &str,
+    prev: &Option<String>,
+    next: &Option<String>,
+    sanitized: &str,
+) -> Option<Violation> {
+    let prev_text = prev.clone().unwrap_or_default();
+    let expected = format!("{prev_text}{sanitized}");
+    let actual = next.clone().unwrap_or_default();
+    if actual == expected {
+        return None;
+    }
+    Some(Violation::new(
+        "PASTE-VERBATIM",
+        format!(
+            "pasted text not appended to the {field}: expected={:?} got={:?}",
+            trunc(&expected, 120),
+            trunc(&actual, 120)
+        ),
+    ))
+}
+
+fn search_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
+    let sanitized = strip_control(text);
+    append_violation(
+        "search field",
+        &prev.search_draft,
+        &next.search_draft,
+        &sanitized,
+    )
+}
+
+fn filesearch_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
+    let sanitized = strip_control(text);
+    append_violation(
+        "file-search query",
+        &prev.filesearch_query,
+        &next.filesearch_query,
+        &sanitized,
+    )
+}
+
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn title_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
+    let sanitized: String = first_line(text)
+        .chars()
+        .filter(|&c| rune_tui::title::is_name_char(c))
+        .collect();
+
+    if sanitized.is_empty() {
+        if next.title_text == prev.title_text {
+            return None;
+        }
+        return Some(Violation::new(
+            "PASTE-VERBATIM",
+            format!(
+                "title field changed despite an empty sanitized paste: {:?} -> {:?}",
+                trunc(&prev.title_text, 120),
+                trunc(&next.title_text, 120)
+            ),
+        ));
+    }
+
+    let cursor = prev.title_cursor;
+    let (raw_start, raw_end) = if cursor.has_selection() {
+        cursor.selection_range()
+    } else {
+        (cursor.position, cursor.position)
     };
+    let window = &prev.title_window;
+    let start = floor_char_boundary(&prev.title_text, raw_start.clamp(window.start, window.end));
+    let end = floor_char_boundary(&prev.title_text, raw_end.clamp(window.start, window.end));
+    if start > end || end > prev.title_text.len() {
+        return None; // a malformed field cursor is CUR-BOUNDS's job to report
+    }
+
+    let mut expected = String::with_capacity(prev.title_text.len() + sanitized.len());
+    expected.push_str(&prev.title_text[..start]);
+    expected.push_str(&sanitized);
+    expected.push_str(&prev.title_text[end..]);
+
+    if next.title_text == expected {
+        return None;
+    }
+    Some(Violation::new(
+        "PASTE-VERBATIM",
+        format!(
+            "pasted text not inserted into the title field at [{start}, {end}): expected={:?} got={:?}",
+            trunc(&expected, 120),
+            trunc(&next.title_text, 120)
+        ),
+    ))
+}
+
+fn document_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
     if text.is_empty() || prev.read_only != rune_tui::document::ReadOnly::No {
         return None;
     }

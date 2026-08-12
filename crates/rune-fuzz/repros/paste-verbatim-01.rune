@@ -1,0 +1,4 @@
+content 
+resize 1 2
+key char:F --c-
+paste hello world

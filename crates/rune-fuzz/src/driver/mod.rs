@@ -348,6 +348,12 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                     break 'session;
                 }
             }
+            Action::OpenFileSearch => {
+                let (msg, tag) = key_step(crate::action::OPEN_FILESEARCH_KEY);
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break 'session;
+                }
+            }
             Action::Paste(s) => {
                 let tag = MsgTag::Paste(s.clone());
                 if step_and_check(

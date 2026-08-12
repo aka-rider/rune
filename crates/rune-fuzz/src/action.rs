@@ -7,9 +7,19 @@
 //! enum would just be three names for one behaviour `[fixes R1]`.
 
 use rune_syntax::ScopeId;
-use rune_tui::keymap::KeyInput;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
+
+pub const OPEN_FILESEARCH_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('F'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
 
 /// Which buffer generation a synthesized `Msg::Highlighted` reply should
 /// claim, resolved against the LIVE buffer version at delivery time (never
@@ -55,6 +65,10 @@ pub enum Action {
     /// A bracketed paste, delivered as `Msg::Paste`. The ONLY path that
     /// inserts control bytes verbatim (G3).
     Paste(String),
+    /// `Msg::Key(OPEN_FILESEARCH_KEY)` — opens the fuzzy file finder
+    /// overlay by construction, rather than leaving `Action::Key`'s own
+    /// random `KeyInput` generation to stumble onto the chord.
+    OpenFileSearch,
     /// `Msg::Resize(w, h)`.
     Resize(u16, u16),
     /// Answer a pending `CmdKind::ClipboardRead` with this text

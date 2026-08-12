@@ -13,6 +13,7 @@ use rune_fuzz::snapshot::Snapshot;
 use rune_fuzz::step::{MsgTag, StepCtx};
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
+use rune_tui::focus::FocusTarget;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::layout::{self, Geometry};
 use rune_tui::pane::Pane;
@@ -126,9 +127,14 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         should_quit: false,
         status: String::new(),
         focus: Pane::Editor,
+        focus_target: FocusTarget::Editor,
         modal_open: false,
         active: base_active_id(),
         title_text: String::new(),
+        title_cursor: collapsed_cursor(1, 0),
+        title_window: 0..0,
+        filesearch_query: None,
+        search_draft: None,
         read_only: rune_tui::document::ReadOnly::No,
         caret_visible: true,
         cells: Vec::new(),
