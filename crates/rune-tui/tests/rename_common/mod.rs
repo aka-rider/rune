@@ -250,10 +250,10 @@ pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     store.create_scratch().expect("enqueue create_scratch");
     let row_id = match next_event(&bridge) {
         DbEvent::Ok {
-            result: OpOutcome::RowId(row_id),
+            result: OpOutcome::ScratchDocId(doc_id),
             ..
-        } => row_id,
-        other => panic!("expected a RowId ack, got {other:?}"),
+        } => doc_id.0,
+        other => panic!("expected a ScratchDocId ack, got {other:?}"),
     };
 
     let mut app = App::new(

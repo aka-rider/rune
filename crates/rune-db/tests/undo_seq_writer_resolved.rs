@@ -73,8 +73,8 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
 
     let scratch_op = store.create_scratch().expect("enqueue create_scratch");
     let doc_id = match recv(&rx, scratch_op) {
-        OpOutcome::RowId(id) => rune_db::DocId(id),
-        other => panic!("expected RowId from CreateScratch, got {other:?}"),
+        OpOutcome::ScratchDocId(id) => id,
+        other => panic!("expected ScratchDocId from CreateScratch, got {other:?}"),
     };
 
     let mut buf = String::new();

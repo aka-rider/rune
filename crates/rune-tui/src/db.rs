@@ -156,13 +156,6 @@ pub struct PendingOp {
     /// The issuing document's `buffer.version()` at the moment a `Load` op
     /// was enqueued — `None` for every other op kind, which never needs it.
     pub issued_version: Option<u64>,
-    /// True iff this op is a `CreateScratch` minting `doc`'s OWN recovery
-    /// row (`db_enqueue::create_scratch`). `CreateSnapshot` also resolves to
-    /// `OpOutcome::RowId` (`materialize_ack::handle_snapshot_due`'s own
-    /// enqueue), so the ack router needs this flag to tell "bind a fresh
-    /// `DocDb`" apart from "a snapshot anchor landed, nothing else to do" —
-    /// both share the same outcome shape but need opposite reactions.
-    pub mints_scratch: bool,
     /// True iff this op is a `Probe` (plan WP2.S4) — lets
     /// `workspace::switch_to` skip enqueueing a second probe for a document
     /// that already has one in flight (`probe.rs`'s own doc comment: each
@@ -213,7 +206,6 @@ impl PendingOp {
         PendingOp {
             doc,
             issued_version: None,
-            mints_scratch: false,
             is_probe: false,
             probe_epoch: None,
             merge_gen: None,
@@ -226,7 +218,6 @@ impl PendingOp {
         PendingOp {
             doc,
             issued_version: Some(issued_version),
-            mints_scratch: false,
             is_probe: false,
             probe_epoch: None,
             merge_gen: None,
@@ -235,24 +226,10 @@ impl PendingOp {
         }
     }
 
-    pub fn create_scratch(doc: DocumentId) -> PendingOp {
-        PendingOp {
-            doc,
-            issued_version: None,
-            mints_scratch: true,
-            is_probe: false,
-            probe_epoch: None,
-            merge_gen: None,
-            binding_only: false,
-            doc_scoped: false,
-        }
-    }
-
     pub fn probe(doc: DocumentId, save_epoch: u32) -> PendingOp {
         PendingOp {
             doc,
             issued_version: None,
-            mints_scratch: false,
             is_probe: true,
             probe_epoch: Some(save_epoch),
             merge_gen: None,
@@ -271,7 +248,6 @@ impl PendingOp {
         PendingOp {
             doc,
             issued_version: None,
-            mints_scratch: false,
             is_probe: false,
             probe_epoch: None,
             merge_gen: None,
@@ -284,7 +260,6 @@ impl PendingOp {
         PendingOp {
             doc,
             issued_version: None,
-            mints_scratch: false,
             is_probe: false,
             probe_epoch: None,
             merge_gen: Some(generation),

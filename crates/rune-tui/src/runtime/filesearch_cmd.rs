@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use rune_vfs::{FileKind, Vfs};
 
-use super::{Cmd, CmdKind, Msg};
+use super::{Cmd, Msg};
 use crate::filesearch::walk;
 
 /// Runs the ignore-aware recursive walk off-thread from `root`, replying
@@ -27,7 +27,7 @@ pub(crate) fn filesearch_scan_cmd(
     root: PathBuf,
     generation: u64,
 ) -> Cmd {
-    Cmd::new(CmdKind::ReadDir, move || {
+    Cmd::read_dir(move || {
         let result = match vfs.stat(&root) {
             Ok(stat) if stat.kind == FileKind::Dir => Ok(walk::scan(vfs.as_ref(), &root)),
             Ok(_) => Err(format!("{} is not a directory", root.display())),

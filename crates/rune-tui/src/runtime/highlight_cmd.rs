@@ -10,7 +10,7 @@ use crate::document::DocumentId;
 use crate::highlight::{HighlightReply, RegionJob, RegionLang, RegionPayload, RegionResult};
 
 use super::md_fence::markdown_fence_spans;
-use super::{Cmd, CmdKind, Msg};
+use super::{Cmd, Msg};
 
 /// The wall-clock budget ONE region's parse is allowed before it aborts and
 /// reports nothing for that region — one attempt, no retry: a region
@@ -103,7 +103,7 @@ impl PassBudget {
 /// `None`, never `ts_assert`'s `SIGABRT`, since every parse is a full parse
 /// — no incremental-reparse edit is ever fed back into it).
 pub(crate) fn highlight_cmd(doc: DocumentId, version: u64, jobs: Vec<RegionJob>) -> Cmd {
-    Cmd::new(CmdKind::Highlight, move || {
+    Cmd::highlight(move || {
         let result = run_regions(jobs, PassBudget::new(PARSE_BUDGET, PASS_BUDGET));
         Some(Msg::Highlighted {
             doc,

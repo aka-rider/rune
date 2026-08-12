@@ -361,8 +361,8 @@ pub(crate) fn bootstrap_untitled_db(
 
     if scratch_docs.is_empty() {
         match blocking_call(&bridge, || store.create_scratch()) {
-            Ok(OpOutcome::RowId(db_id)) => scratch_docs.push(ScratchDoc {
-                db_id,
+            Ok(OpOutcome::ScratchDocId(id)) => scratch_docs.push(ScratchDoc {
+                db_id: id.0,
                 content: String::new(),
             }),
             Ok(_) => {
@@ -438,7 +438,7 @@ pub(crate) fn bootstrap_new_file(
     };
 
     let db_id = match blocking_call(&bridge, || store.create_scratch()) {
-        Ok(OpOutcome::RowId(db_id)) => db_id,
+        Ok(OpOutcome::ScratchDocId(id)) => id.0,
         Ok(_) => {
             return degrade(store, "internal error: unexpected reply to CreateScratch");
         }

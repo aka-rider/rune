@@ -26,6 +26,7 @@ use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::document::DocumentId;
 use crate::messages;
+use crate::pane::Pane;
 use crate::runtime::{Effects, PasteTarget};
 
 /// Pushes `text`'s OSC 52 write into `effects.raw`, or — over `clipboard::
@@ -147,6 +148,37 @@ pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
         return;
     }
     edit::insert_text(app, id, text);
+}
+
+/// The `Msg::Paste` (bracketed paste) routing chokepoint, called directly
+/// from `dispatch::update_inner`. Deliberately NOT gated on `app.guard`,
+/// unlike the key pipeline's stage 1: a paste carries user content, and
+/// dropping it because a prompt happens to be up discards something the
+/// user explicitly asked to insert — the buffer is journaled and undoable,
+/// so landing it there is the safer failure mode than losing it.
+/// `PASTE-VERBATIM` pins this.
+///
+/// Bracketed paste has no request to attach a target to, so it routes by
+/// LIVE focus — unlike `Msg::ClipboardRead`, whose `target` was captured
+/// when the paste was requested. The search bar and the file finder are
+/// checked first, mirroring the key pipeline's own "second input checked
+/// before the chrome-level `Pane`" rule (`focus::target`'s doc).
+pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Effects) {
+    match crate::focus::target(app) {
+        crate::focus::FocusTarget::SearchField => crate::search::keys::paste(app, text),
+        crate::focus::FocusTarget::FileSearch => crate::filesearch::keys::paste(app, text, effects),
+        crate::focus::FocusTarget::ReplaceField => {}
+        crate::focus::FocusTarget::Explorer
+        | crate::focus::FocusTarget::Tabs
+        | crate::focus::FocusTarget::Editor
+        | crate::focus::FocusTarget::Title
+        | crate::focus::FocusTarget::Messages => match app.focus() {
+            Pane::Title => crate::title::keys::paste(app, app.active, text),
+            Pane::Explorer | Pane::Tabs | Pane::Editor | Pane::Messages => {
+                handle_paste_content(app, app.active, text)
+            }
+        },
+    }
 }
 
 #[cfg(test)]

@@ -47,34 +47,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             // fit-to-width footprint can need re-fitting and retransmitting.
             crate::graphics::refit_on_resize(app, effects);
         }
-        Msg::Paste(text) => {
-            // Deliberately NOT gated on `app.guard`, unlike the key
-            // pipeline's stage 1. A paste carries user content, and
-            // dropping it because a prompt happens to be up discards
-            // something the user explicitly asked to insert — the buffer is
-            // journaled and undoable, so landing it there is the safer
-            // failure mode than losing it. `PASTE-VERBATIM` pins this.
-            //
-            // Bracketed paste has no request to attach a target to, so it
-            // routes by LIVE focus — unlike `Msg::ClipboardRead` below,
-            // whose `target` was captured when the paste was requested.
-            // The search bar and the file finder are checked first,
-            // mirroring the key pipeline's own "second input checked before
-            // the chrome-level `Pane`" rule (`focus::target`'s doc) —
-            // otherwise a paste while either is open falls through to the
-            // `_` arm and lands in the document underneath instead of the
-            // draft/query.
-            match crate::focus::target(app) {
-                crate::focus::FocusTarget::SearchField => crate::search::keys::paste(app, &text),
-                crate::focus::FocusTarget::FileSearch => {
-                    crate::filesearch::keys::paste(app, &text, effects)
-                }
-                _ => match app.focus() {
-                    Pane::Title => crate::title::keys::paste(app, app.active, &text),
-                    _ => clipboard::handle_paste_content(app, app.active, &text),
-                },
-            }
-        }
+        Msg::Paste(text) => clipboard::route_bracketed_paste(app, &text, effects),
         Msg::ClipboardRead { text, target } => {
             // Same deliberate no-modal-gate rule as bracketed paste above.
             match target {

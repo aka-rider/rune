@@ -25,7 +25,7 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 
 /// Spawns a decode for `id` if — and only if — it is an image document
 /// still waiting on its very first decode: `status == Pending` (a prior
@@ -110,7 +110,7 @@ pub(super) fn decode_image_cmd(
     path: PathBuf,
     generation: u64,
 ) -> Cmd {
-    Cmd::new(CmdKind::ImageDecode, move || {
+    Cmd::image_decode(move || {
         let result = rune_vfs::get(vfs.as_ref(), &path, None)
             .map_err(|e| e.to_string())
             .and_then(|sighting| {

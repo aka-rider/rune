@@ -59,7 +59,11 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
             // Anything else (a wheel tick, a right-button press, a fresh
             // left press) means the gesture is over. Clear it and let the
             // event fall through to its normal handling below.
-            _ => app.pointer.drag = None,
+            MouseKind::Down(_)
+            | MouseKind::Up(_)
+            | MouseKind::Drag(_)
+            | MouseKind::ScrollUp
+            | MouseKind::ScrollDown => app.pointer.drag = None,
         }
     }
 
@@ -74,7 +78,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
                 match pane {
                     Pane::Editor => handle_left_drag(app, anchor, input),
                     Pane::Messages => messages::mouse(app, input, effects),
-                    _ => {}
+                    Pane::Explorer | Pane::Tabs | Pane::Title => {}
                 }
                 return;
             }
@@ -85,7 +89,11 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
                 }
                 return;
             }
-            _ => app.pointer.drag = None,
+            MouseKind::Down(_)
+            | MouseKind::Up(_)
+            | MouseKind::Drag(_)
+            | MouseKind::ScrollUp
+            | MouseKind::ScrollDown => app.pointer.drag = None,
         }
     }
 
@@ -122,7 +130,9 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
         MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
         MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row, effects),
-        _ => {}
+        MouseKind::Down(MouseButton::Right | MouseButton::Middle)
+        | MouseKind::Up(_)
+        | MouseKind::Drag(_) => {}
     }
 }
 

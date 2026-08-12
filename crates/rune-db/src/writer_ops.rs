@@ -285,7 +285,9 @@ pub enum OpOutcome {
     /// `AppendEdit`'s journal seq.
     Seq(crate::ids::Seq),
     /// `CreateSnapshot`'s new `snapshots.id`.
-    RowId(i64),
+    SnapshotRowId(i64),
+    /// `CreateScratch`'s new `documents.id`.
+    ScratchDocId(DocId),
     /// `Probe`'s resulting [`SyncState`]. Boxed: `SyncState` carries several
     /// `Option<Version>`/`String` fields, large enough that clippy's
     /// `large_enum_variant` flags the unboxed enum — the common, cheap

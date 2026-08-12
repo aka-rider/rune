@@ -48,10 +48,10 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
     store.create_scratch().expect("enqueue create_scratch");
     let row_id = match bridge.wait_for_bootstrap_event(|_| true) {
         DbEvent::Ok {
-            result: OpOutcome::RowId(row_id),
+            result: OpOutcome::ScratchDocId(doc_id),
             ..
-        } => row_id,
-        other => panic!("expected a RowId ack, got {other:?}"),
+        } => doc_id.0,
+        other => panic!("expected a ScratchDocId ack, got {other:?}"),
     };
 
     let mut app = App::new(

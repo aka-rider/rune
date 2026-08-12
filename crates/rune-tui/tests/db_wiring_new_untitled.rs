@@ -29,7 +29,7 @@ use db_wiring_common::{app_with_store, recv_ok};
 fn pending_scratch_op(app: &app::App, id: DocumentId) -> u64 {
     *app.db_ops
         .iter()
-        .find(|(_, pending)| pending.doc == id && pending.mints_scratch)
+        .find(|(_, pending)| pending.doc == id)
         .map(|(op_id, _)| op_id)
         .expect("new_untitled_document must enqueue a CreateScratch op when a store is live")
 }
@@ -50,9 +50,9 @@ fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
 
     let op_id = pending_scratch_op(&app, id);
     let result = recv_ok(&bridge, op_id);
-    let row_id = match result {
-        OpOutcome::RowId(row_id) => row_id,
-        other => panic!("expected OpOutcome::RowId from CreateScratch, got {other:?}"),
+    let doc_id = match result {
+        OpOutcome::ScratchDocId(doc_id) => doc_id,
+        other => panic!("expected OpOutcome::ScratchDocId from CreateScratch, got {other:?}"),
     };
 
     let mut effects = Effects::default();
@@ -60,13 +60,13 @@ fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
         &mut app,
         Msg::Db(DbEvent::Ok {
             id: op_id,
-            result: OpOutcome::RowId(row_id),
+            result: OpOutcome::ScratchDocId(doc_id),
         }),
         &mut effects,
     );
 
     let doc_db = app.doc(id).unwrap().doc_db().expect("db_id bound");
-    assert_eq!(doc_db.db_id, row_id);
+    assert_eq!(doc_db.db_id, doc_id.0);
     assert!(
         doc_db.bind_new,
         "a scratch row has never been bound to a real file, so bind_new stays true"
@@ -133,16 +133,16 @@ fn closing_the_only_document_registers_the_replacement_untitled_too() {
 
     let op_id = pending_scratch_op(&app, replacement);
     let result = recv_ok(&bridge, op_id);
-    let row_id = match result {
-        OpOutcome::RowId(row_id) => row_id,
-        other => panic!("expected OpOutcome::RowId from CreateScratch, got {other:?}"),
+    let doc_id = match result {
+        OpOutcome::ScratchDocId(doc_id) => doc_id,
+        other => panic!("expected OpOutcome::ScratchDocId from CreateScratch, got {other:?}"),
     };
 
     app::update(
         &mut app,
         Msg::Db(DbEvent::Ok {
             id: op_id,
-            result: OpOutcome::RowId(row_id),
+            result: OpOutcome::ScratchDocId(doc_id),
         }),
         &mut effects,
     );
@@ -152,13 +152,13 @@ fn closing_the_only_document_registers_the_replacement_untitled_too() {
         .unwrap()
         .doc_db()
         .expect("replacement's own row bound");
-    assert_eq!(doc_db.db_id, row_id);
+    assert_eq!(doc_db.db_id, doc_id.0);
 }
 
-/// A `CreateSnapshot` ack also resolves to `OpOutcome::RowId` — the router
-/// must not mistake it for a `CreateScratch` ack and bind a `DocDb` onto an
-/// unrelated document (`db::PendingOp::mints_scratch`'s whole reason to
-/// exist).
+/// A `CreateSnapshot` ack resolves to `OpOutcome::SnapshotRowId`, a distinct
+/// variant from `CreateScratch`'s own `OpOutcome::ScratchDocId` — the router
+/// must not mistake one for the other and bind a `DocDb` onto an unrelated
+/// document.
 #[test]
 fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
@@ -167,15 +167,15 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     app.doc_mut(id)
         .unwrap()
         .set_doc_db_for_test(DocDb::new(1, true, rune_db::Seq(0)));
-    // A bare, unrouted RowId ack with no matching db_ops entry at all must
-    // be a harmless no-op — the fire-and-forget shape any snapshot ack
-    // whose entry was already popped elsewhere would take.
+    // A bare, unrouted SnapshotRowId ack with no matching db_ops entry at
+    // all must be a harmless no-op — the fire-and-forget shape any snapshot
+    // ack whose entry was already popped elsewhere would take.
     let mut effects = Effects::default();
     app::update(
         &mut app,
         Msg::Db(DbEvent::Ok {
             id: 999,
-            result: OpOutcome::RowId(42),
+            result: OpOutcome::SnapshotRowId(42),
         }),
         &mut effects,
     );
@@ -183,6 +183,6 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     assert_eq!(
         app.doc(id).unwrap().doc_db().unwrap().db_id,
         1,
-        "an unrelated RowId ack must never overwrite an existing DocDb"
+        "an unrelated SnapshotRowId ack must never overwrite an existing DocDb"
     );
 }

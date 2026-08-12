@@ -323,7 +323,7 @@ fn execute_op(
                 let seq = crate::journal::current_seq(tx, session_id, doc_id)?;
                 crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, seq)
             })?;
-            Ok(OpOutcome::RowId(row_id))
+            Ok(OpOutcome::SnapshotRowId(row_id))
         }
         OpKind::Probe {
             session_id,
@@ -523,7 +523,7 @@ fn execute_op(
             // A brand-new row, never bound before — local position `0`
             // starts at durable seq `0`, same as `Load`'s doc comment.
             undo_state.insert(id, DocUndoState::default());
-            Ok(OpOutcome::RowId(id.0))
+            Ok(OpOutcome::ScratchDocId(id))
         }
         OpKind::GcEmptyScratch { keep_id } => {
             crate::scratch::gc_empty_scratch(conn, keep_id)?;

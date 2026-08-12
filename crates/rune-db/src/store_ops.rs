@@ -332,7 +332,7 @@ impl Store {
 
     /// Enqueues a `CreateScratch` op — mints a brand-new unbound scratch
     /// `documents` row. The new row's id arrives asynchronously as
-    /// `DbEvent::Ok.result` (`OpOutcome::RowId`).
+    /// `DbEvent::Ok.result` (`OpOutcome::ScratchDocId`).
     pub fn create_scratch(&self) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::CreateScratch { now })

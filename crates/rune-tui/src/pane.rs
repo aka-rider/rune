@@ -12,7 +12,7 @@ use crate::explorer;
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::keymap::{GlobalCommand, QuitKey};
 use crate::messages;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 use crate::save;
 
 /// The quit-confirm arm-to-quit window: the first press arms and spawns a
@@ -71,39 +71,10 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     // `on_blur`) harmless.
     app.blur_title(effects);
 
-    // A second hoisted gate, same shape as the title blur above: the
-    // search bar and the file finder are both their own focus state, never
-    // a `Pane` (`focus.rs`'s recorded decision — "bar-open == bar-focused,
-    // one state"), so a global that moves the chrome-level `Pane`
-    // underneath either would otherwise leave it still claiming focus over
-    // a `Pane` that just changed — the double-caret/stolen-keystroke defect
-    // this closes. Runs for exactly the globals that move `App::focus`,
-    // switch the active document, or start a merge (which claims every
-    // editor key for itself); `ToggleSearch` handles its own bar open/close
-    // below (only the finder half of `close_modal_bars` applies there —
-    // pre-closing the bar itself would turn its own toggle-close into a
-    // reopen), and `SearchNext`/`SearchPrev` must NOT close a bar they're
-    // navigating within. `Save` belongs here too: on a pathless draft it
-    // focuses the title field directly, and without closing the finder
-    // first that focus move would land underneath a `FocusTarget` still
-    // resolving to the finder — the exact stolen-keystroke shape this gate
-    // exists to prevent.
-    if matches!(
-        cmd,
-        GlobalCommand::ToggleLeft
-            | GlobalCommand::FocusTitle
-            | GlobalCommand::FocusTabs
-            | GlobalCommand::ToggleMessages
-            | GlobalCommand::Merge
-            | GlobalCommand::Help
-            | GlobalCommand::NewDocument
-            | GlobalCommand::TabSwitch(_)
-            | GlobalCommand::CloseFile
-            | GlobalCommand::Save
-    ) {
-        close_modal_bars(app, effects);
-    } else if matches!(cmd, GlobalCommand::ToggleSearch) {
-        close_filesearch(app, effects);
+    match bar_policy(cmd) {
+        BarPolicy::CloseBars => close_modal_bars(app, effects),
+        BarPolicy::ToggleSearch => close_filesearch(app, effects),
+        BarPolicy::LeaveOpen => {}
     }
 
     match cmd {
@@ -263,6 +234,36 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarPolicy {
+    CloseBars,
+    ToggleSearch,
+    LeaveOpen,
+}
+
+fn bar_policy(cmd: GlobalCommand) -> BarPolicy {
+    match cmd {
+        GlobalCommand::ToggleLeft
+        | GlobalCommand::FocusTitle
+        | GlobalCommand::FocusTabs
+        | GlobalCommand::ToggleMessages
+        | GlobalCommand::Merge
+        | GlobalCommand::Help
+        | GlobalCommand::NewDocument
+        | GlobalCommand::TabSwitch(_)
+        | GlobalCommand::CloseFile
+        | GlobalCommand::Save => BarPolicy::CloseBars,
+        GlobalCommand::ToggleSearch => BarPolicy::ToggleSearch,
+        GlobalCommand::QuitChord(_)
+        | GlobalCommand::ToggleReadOnly
+        | GlobalCommand::Trash
+        | GlobalCommand::SearchNext
+        | GlobalCommand::SearchPrev
+        | GlobalCommand::TogglePin
+        | GlobalCommand::ToggleFileSearch => BarPolicy::LeaveOpen,
+    }
+}
+
 /// Closes both modal overlays — the in-file search bar and the fuzzy file
 /// finder — for every global that moves focus, switches the active
 /// document, or opens another surface. The finder closes via
@@ -397,7 +398,7 @@ pub(crate) fn unpreserved_dirty_docs(app: &mut App) -> Vec<DocumentId> {
 /// hack — so `std::thread::sleep` here is correct (this `Cmd` runs on its
 /// own dedicated thread by runtime design, never blocking the main loop).
 fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
-    Cmd::new(CmdKind::QuitTimeout, move || {
+    Cmd::quit_timeout(move || {
         std::thread::sleep(CONFIRM_TIMEOUT);
         Some(Msg::ConfirmTimeout { generation })
     })
@@ -410,6 +411,7 @@ mod tests {
     use crate::app::App;
     use crate::db::{Db, DbBridge};
     use crate::document::Replica;
+    use crate::runtime::CmdKind;
     use rune_core::buffer::Buffer;
     use rune_db::{ClockFn, Store};
     use rune_vfs::{Mem, Vfs};

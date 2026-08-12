@@ -21,7 +21,7 @@ use crate::app::App;
 use crate::document::DocumentId;
 use crate::materialize_ack;
 use crate::messages;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 
 mod materialize;
 use materialize::materialize_now;
@@ -251,7 +251,7 @@ pub(crate) fn trigger_save(
 /// decision 3): the doc tag lives in `App::pending_save_confirm`'s `Option`
 /// tuple itself, not in this `Msg`.
 fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
-    Cmd::new(CmdKind::SaveConfirmTimeout, move || {
+    Cmd::save_confirm_timeout(move || {
         std::thread::sleep(SAVE_CONFIRM_TIMEOUT);
         Some(Msg::SaveConfirmTimeout { generation })
     })
@@ -275,7 +275,7 @@ pub(crate) fn save_cmd(
     bytes: Vec<u8>,
     version: u64,
 ) -> Cmd {
-    Cmd::new(CmdKind::Save, move || {
+    Cmd::save(move || {
         let (result, durable) = match rune_vfs::put(
             vfs.as_ref(),
             &path,

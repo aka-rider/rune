@@ -9,7 +9,7 @@ use rune_vfs::Vfs;
 
 use crate::filesearch::Candidate;
 
-use super::{Cmd, CmdKind, Msg};
+use super::{Cmd, Msg};
 
 /// Loads the finder's MRU document list off-thread through a cloned
 /// `ReaderQuery` — the reader thread's own connection, never the writer's,
@@ -30,7 +30,7 @@ pub fn load_filesearch_recents_cmd(
     root: PathBuf,
     generation: u64,
 ) -> Cmd {
-    Cmd::new(CmdKind::SearchHistory, move || {
+    Cmd::search_history(move || {
         let result = load(&reader, vfs.as_ref(), &root);
         Some(Msg::FileSearchRecentsLoaded { generation, result })
     })

@@ -328,9 +328,9 @@ fn launch_missing_first_positional_never_sweeps_another_sessions_empty_scratch_r
             rune_db::DbEvent::Fatal { .. } => true,
         }) {
             rune_db::DbEvent::Ok {
-                result: rune_db::OpOutcome::RowId(id),
+                result: rune_db::OpOutcome::ScratchDocId(id),
                 ..
-            } => id,
+            } => id.0,
             other => panic!("expected a CreateScratch ack, got {other:?}"),
         };
 
@@ -488,9 +488,9 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
             rune_db::DbEvent::Fatal { .. } => true,
         }) {
             rune_db::DbEvent::Ok {
-                result: rune_db::OpOutcome::RowId(id),
+                result: rune_db::OpOutcome::ScratchDocId(id),
                 ..
-            } => id,
+            } => id.0,
             other => panic!("expected a CreateScratch ack, got {other:?}"),
         };
 

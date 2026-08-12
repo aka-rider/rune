@@ -268,96 +268,11 @@ pub enum DirCause {
     Refresh,
 }
 
-/// What kind of off-thread work a `Cmd` performs. Exists so a consumer that
-/// must NOT execute certain effects (a headless driver: `QuitTimeout` sleeps
-/// 2 real seconds, `ClipboardRead` forks `/usr/bin/pbpaste`) can decide by
-/// inspection instead of inferring it from `App` field diffs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CmdKind {
-    /// `vfs.save_atomic` — the durable publish.
-    Save,
-    /// The 2s quit-confirm timer. Sleeps; never run it inline.
-    QuitTimeout,
-    /// `/usr/bin/pbpaste`. Spawns a subprocess and reads the live OS
-    /// clipboard; never run it inline.
-    ClipboardRead,
-    /// The 2s degraded-save confirm-gate timer. Sleeps;
-    /// never run it inline.
-    SaveConfirmTimeout,
-    /// The message pane's 5s auto-collapse timer. Sleeps; never
-    /// run it inline.
-    MessagesCollapseTimeout,
-    /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a
-    /// draft create) for the no-store route — the no-clobber atomic
-    /// publish. Off-thread, never inline in `update`.
-    Rename,
-    /// `vfs.read_dir` for the Explorer pane. Not a sleeping/
-    /// forking `Cmd` like the three above, but still off-thread so
-    /// a slow or degraded filesystem (an NFS mount, a huge directory) never
-    /// blocks the main loop.
-    ReadDir,
-    /// `vfs.read` for a single FILE —
-    /// `workspace::open_path_async`'s own off-thread read, the `ReadDir`
-    /// sibling for opening (rather than listing) a path: a slow or
-    /// degraded filesystem must never block the main loop just because the
-    /// target happens to be a file instead of a directory.
-    ReadFile,
-    /// `/usr/bin/open` on an external link's URL. Spawns a
-    /// subprocess; never run it inline. The session fuzzer's driver keeps
-    /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
-    /// be spawned from a fuzz run.
-    OpenExternal,
-    /// A tree-sitter parse (`rune_ts::parse`) of every code region of one
-    /// document that needs one, each bounded by [`PARSE_BUDGET`] and all of
-    /// them together by [`PASS_BUDGET`].
-    /// Off-thread: a large region's parse must never
-    /// block the main loop, and grammar crashes (`ts_assert`) are
-    /// architecturally avoided rather than caught —
-    /// every parse is a full parse, never an incremental reparse fed a
-    /// prior edit's location. The ONE sanctioned exception is a single
-    /// bounded synchronous attempt at the startup document, made from
-    /// `runtime::run`'s bootstrap strictly before the first draw — see
-    /// `highlight::first_paint_highlight` — where nothing is on screen yet
-    /// to block.
-    Highlight,
-    /// `vfs.read` + `rune_image::decode_still` for an image document.
-    /// Off-thread: decode is CPU work and must never
-    /// block the main loop.
-    ImageDecode,
-    /// `vfs.trash` — a blocking `NSFileManager` call, off-thread, never
-    /// inline in `update`.
-    Trash,
-    /// `ReaderQuery::query(RecentSearches)` for the search bar's history
-    /// list. Off-thread for the same reason `ReadDir` is: the
-    /// reader thread's reply time is out of `update`'s control, and this
-    /// must never block the main loop waiting on it.
-    SearchHistory,
-}
-
-/// Off-thread work `update` asks the runtime to perform, spawned one
-/// `std::thread` each. Returns the `Msg` to feed back once the work
-/// completes, or `None` to produce nothing.
-pub struct Cmd {
-    kind: CmdKind,
-    run: Box<dyn FnOnce() -> Option<Msg> + Send + 'static>,
-}
-
-impl Cmd {
-    pub fn new(kind: CmdKind, run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
-        Cmd {
-            kind,
-            run: Box::new(run),
-        }
-    }
-
-    pub fn kind(&self) -> CmdKind {
-        self.kind
-    }
-
-    pub fn run(self) -> Option<Msg> {
-        (self.run)()
-    }
-}
+// `Cmd`, `CmdKind`, and the one constructor per `CmdKind` variant moved to
+// `runtime::cmd` (500-line budget) — re-exported below so every existing
+// `runtime::` call site keeps working unchanged.
+mod cmd;
+pub use cmd::{Cmd, CmdKind};
 
 /// What one `update` call asks the runtime to do. `raw` is escape-byte
 /// output (OSC 52): the main loop drains it to the terminal writer with
@@ -546,7 +461,7 @@ pub fn load_dir_cmd(
     cause: DirCause,
     generation: u32,
 ) -> Cmd {
-    Cmd::new(CmdKind::ReadDir, move || match vfs.read_dir(&root) {
+    Cmd::read_dir(move || match vfs.read_dir(&root) {
         Ok(entries) => Some(Msg::DirLoaded {
             root,
             entries,
@@ -571,7 +486,7 @@ pub fn read_file_cmd(
     path: PathBuf,
     anchor: Option<rune_nav::Anchor>,
 ) -> Cmd {
-    Cmd::new(CmdKind::ReadFile, move || {
+    Cmd::read_file(move || {
         let result = rune_vfs::get(vfs.as_ref(), &path, Some(rune_vfs::MAX_DOCUMENT_BYTES))
             .map(|sighting| sighting.bytes)
             .map_err(|e| e.to_string());
@@ -593,7 +508,7 @@ pub fn read_file_cmd(
 /// failure as to a success instead of always surfacing a message even for a
 /// reply nobody's still waiting on.
 pub fn load_search_history_cmd(reader: rune_db::ReaderQuery, generation: u64) -> Cmd {
-    Cmd::new(CmdKind::SearchHistory, move || {
+    Cmd::search_history(move || {
         let result = reader
             .query(rune_db::ReaderRequestKind::RecentSearches { limit: 200 })
             .map(|reply| match reply {
@@ -622,7 +537,7 @@ pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 /// banner `workspace::handle_file_opened` would otherwise raise. `anchor`
 /// is always `None`: a preview never lands a navigation anchor.
 pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
-    Cmd::new(CmdKind::ReadFile, move || {
+    Cmd::read_file(move || {
         let result = (|| -> Result<Vec<u8>, String> {
             let bytes = match rune_vfs::get(vfs.as_ref(), &path, Some(MAX_PREVIEW_BYTES)) {
                 Ok(sighting) => sighting.bytes,

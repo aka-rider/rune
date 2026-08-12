@@ -9,6 +9,8 @@ use rune_core::buffer::Buffer;
 use rune_image::CellSize;
 use rune_vfs::Mem;
 
+use crate::runtime::CmdKind;
+
 use super::*;
 
 const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");

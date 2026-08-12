@@ -13,7 +13,7 @@ use std::process::Command as ProcessCommand;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use crate::runtime::{Cmd, CmdKind, Msg, PasteTarget};
+use crate::runtime::{Cmd, Msg, PasteTarget};
 
 /// The largest raw (pre-base64) payload `osc52_copy` will encode (plan
 /// WP13.S4, `rune-tui C 6`). Terminal multiplexers (tmux, screen) cap how
@@ -57,7 +57,7 @@ pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {
 /// inserting nothing is the same trade this crate makes everywhere else
 /// user-visible content could be silently altered.
 pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
-    Cmd::new(CmdKind::ClipboardRead, move || {
+    Cmd::clipboard_read(move || {
         let output = match ProcessCommand::new("/usr/bin/pbpaste").output() {
             Ok(output) => output,
             Err(e) => return Some(Msg::Error(format!("pbpaste failed to run: {e}"))),

@@ -282,7 +282,7 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
     let Some(db) = app.db.as_ref() else { return };
     match db.store.create_scratch() {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::create_scratch(id));
+            app.db_ops.insert(op_id, PendingOp::new(id));
             if let Some(doc) = app.doc_mut(id)
                 && matches!(doc.replica, Replica::Detached)
             {

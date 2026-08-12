@@ -26,7 +26,7 @@ use crate::document::{Document, ReadOnly};
 use crate::keymap::{Command, KeyCode, KeyInput};
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 
 pub use render::draw;
 
@@ -447,7 +447,7 @@ pub fn is_armed(app: &App, generation: u32) -> bool {
 /// on its own dedicated `Cmd` thread, then hands back the generation it was
 /// armed with so a superseded timer is ignored on arrival.
 pub fn collapse_timeout_cmd(generation: u32) -> Cmd {
-    Cmd::new(CmdKind::MessagesCollapseTimeout, move || {
+    Cmd::messages_collapse_timeout(move || {
         std::thread::sleep(AUTO_COLLAPSE);
         Some(Msg::MessagesCollapseTimeout { generation })
     })

@@ -16,7 +16,7 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::rename::{RenameState, Ticket};
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 
 /// Enqueues the rename on whichever route this document has: the `rune-db`
 /// writer FIFO when it is store-bound, else a plain `Cmd` over the injected
@@ -68,7 +68,7 @@ pub(crate) fn rename_cmd(
     to: PathBuf,
     generation: u32,
 ) -> Cmd {
-    Cmd::new(CmdKind::Rename, move || {
+    Cmd::rename(move || {
         let result = match vfs.rename_excl(&from, &to) {
             Ok(()) => Ok(RenameOutcome::Renamed { to, durable: true }),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match vfs.stat(&to) {
@@ -139,7 +139,7 @@ fn create_cmd(
     bytes: Vec<u8>,
     generation: u32,
 ) -> Cmd {
-    Cmd::new(CmdKind::Rename, move || {
+    Cmd::rename(move || {
         let result = match rune_vfs::put(
             vfs.as_ref(),
             &path,

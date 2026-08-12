@@ -22,7 +22,7 @@ use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::materialize_ack;
 use crate::messages;
 use crate::pane::Pane;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 use crate::workspace;
 
 /// Resolves the trash target from the current focus and raises the confirm
@@ -116,7 +116,7 @@ fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
 /// The off-thread `vfs.trash` call — mirrors `rename_create::rename_cmd`'s
 /// shape.
 fn trash_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, generation: u32) -> Cmd {
-    Cmd::new(CmdKind::Trash, move || {
+    Cmd::trash(move || {
         let result = vfs.trash(&path).map_err(|e| e.to_string());
         Some(Msg::TrashDone {
             generation,

@@ -15,7 +15,7 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::{DocumentId, PublishParams, SaveTicket};
 use crate::messages;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, Effects, Msg};
 use crate::save::{self, SaveMode};
 
 use super::reactions::{fail_materialize_locally, handle_materialize_ack};
@@ -163,7 +163,7 @@ fn materialize_vfs_cmd(
     expect_hash: String,
     bound_path: Option<String>,
 ) -> Cmd {
-    Cmd::new(CmdKind::Save, move || {
+    Cmd::save(move || {
         let outcome = save::run_materialize_vfs(
             vfs.as_ref(),
             &params.path,
