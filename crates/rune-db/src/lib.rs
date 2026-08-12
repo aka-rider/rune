@@ -34,7 +34,9 @@
 mod adopt;
 mod blob;
 mod bracket;
+mod confirmation;
 mod diag;
+mod doc_kind;
 mod document;
 mod error;
 mod gc;
@@ -48,6 +50,7 @@ mod materialize;
 mod materialize_types;
 mod merge_prep;
 mod merge_state;
+mod obs_origin;
 mod observation;
 mod open_ladder;
 mod paths;
@@ -75,6 +78,7 @@ mod writer_ops;
 
 pub use adopt::{adopt_equal, resolve_abandon, resolve_adopt};
 pub use bracket::{BracketedRead, bracketed_read, stat_facts_from};
+pub use confirmation::Confirmation;
 pub use document::{DocRef, open_path, recent_paths};
 pub use error::Error;
 pub use journal::{
@@ -86,7 +90,8 @@ pub use materialize::{
     prepare_materialize, record_materialize_outcome,
 };
 pub use merge_prep::{AncestorRung, MergePrepOutcome, MergePrepResult};
-pub use merge_state::{MergeCloseState, ResumableMerge};
+pub use merge_state::{MergeRowState, ResumableMerge};
+pub use obs_origin::ObsOrigin;
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};

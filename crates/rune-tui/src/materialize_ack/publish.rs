@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rune_db::{MatResult, MaterializeOutcome, StatFacts, SyncKind};
+use rune_db::{MatResult, MaterializeOutcome, ObsOrigin, StatFacts, SyncKind};
 use rune_vfs::Vfs;
 
 use crate::app::App;
@@ -115,7 +115,7 @@ pub enum MaterializeVfsOutcome {
     /// must never masquerade as a stable fact.
     Conflict {
         data: Vec<u8>,
-        origin: &'static str,
+        origin: ObsOrigin,
         stat: StatFacts,
         confirmed: bool,
         resolved_path: PathBuf,

@@ -17,7 +17,6 @@ pub(crate) struct LadderResult {
     /// store, or the same `cache=shared` memory URI the writer just created
     /// for a degraded one.
     pub(crate) reader_target: String,
-    pub(crate) degraded: bool,
     pub(crate) warning: Option<String>,
 }
 
@@ -35,7 +34,6 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
         return Ok(LadderResult {
             writer_conn: conn,
             reader_target,
-            degraded: false,
             warning: None,
         });
     }
@@ -48,7 +46,6 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
         return Ok(LadderResult {
             writer_conn: conn,
             reader_target,
-            degraded: false,
             warning: None,
         });
     }
@@ -58,7 +55,6 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
     Ok(LadderResult {
         writer_conn: conn,
         reader_target: uri,
-        degraded: true,
         warning: Some(DEGRADED_WARNING.to_string()),
     })
 }

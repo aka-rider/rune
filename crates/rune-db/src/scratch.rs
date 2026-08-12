@@ -11,6 +11,7 @@ use std::time::SystemTime;
 use rusqlite::{Connection, params};
 
 use crate::Error;
+use crate::doc_kind::DocKind;
 use crate::inherit::{is_session_alive, most_recent_session_for_doc};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
@@ -25,8 +26,8 @@ pub fn create_scratch(conn: &mut Connection, now: SystemTime) -> Result<i64, Err
     let at = format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
         tx.execute(
-            "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('','scratch',?1,?1)",
-            params![at],
+            "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('',?1,?2,?2)",
+            params![DocKind::Scratch.as_str(), at],
         )?;
         Ok(tx.last_insert_rowid())
     })

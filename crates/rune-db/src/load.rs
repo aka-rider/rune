@@ -20,9 +20,11 @@ use rune_vfs::Vfs;
 use crate::Error;
 use crate::adopt;
 use crate::bracket;
+use crate::confirmation::Confirmation;
 use crate::document::{self, DocRef};
 use crate::inherit::find_inheritable_draft;
 use crate::load_anchor::{LoadContext, anchor_first_load};
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, ObsId};
 use crate::retry;
 use crate::sync::SyncState;
@@ -217,8 +219,8 @@ pub fn load_from_read(
                 observation::ObservationMeta {
                     blob_hash: &hash,
                     seq: Some(load_seq),
-                    origin: "resolve",
-                    confirmed: Some(disk_confirmed),
+                    origin: ObsOrigin::Resolve,
+                    confirmed: Confirmation::from_bracket(disk_confirmed),
                 },
                 &stat,
                 now,
@@ -237,8 +239,8 @@ pub fn load_from_read(
                 observation::ObservationMeta {
                     blob_hash: &hash,
                     seq: None,
-                    origin: "load",
-                    confirmed: Some(disk_confirmed),
+                    origin: ObsOrigin::Load,
+                    confirmed: Confirmation::from_bracket(disk_confirmed),
                 },
                 &stat,
                 &at,

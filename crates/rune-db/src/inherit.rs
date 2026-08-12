@@ -142,7 +142,10 @@ pub(crate) fn find_inheritable_draft(
             draft: recovered_draft,
             baseline: Box::new(baseline),
         }),
-        _ => Ok(Inherited::Bridged {
+        Some(_) => Ok(Inherited::Bridged {
+            draft: recovered_draft,
+        }),
+        None => Ok(Inherited::Bridged {
             draft: recovered_draft,
         }),
     }
@@ -163,6 +166,8 @@ mod tests {
 
     use super::*;
     use crate::adopt;
+    use crate::confirmation::Confirmation;
+    use crate::obs_origin::ObsOrigin;
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
@@ -217,8 +222,8 @@ mod tests {
                 observation::ObservationMeta {
                     blob_hash: &observation::hash_bytes(b"session A's content"),
                     seq: Some(0),
-                    origin: "load",
-                    confirmed: None,
+                    origin: ObsOrigin::Load,
+                    confirmed: Confirmation::Unclassified,
                 },
                 &observation::StatFacts {
                     mtime: Some("t".to_string()),
@@ -301,8 +306,8 @@ mod tests {
                 observation::ObservationMeta {
                     blob_hash: &disk_hash,
                     seq: Some(0),
-                    origin: "load",
-                    confirmed: None,
+                    origin: ObsOrigin::Load,
+                    confirmed: Confirmation::Unclassified,
                 },
                 &observation::StatFacts {
                     mtime: Some("t".to_string()),
@@ -372,8 +377,8 @@ mod tests {
                 observation::ObservationMeta {
                     blob_hash: &observation::hash_bytes(b"session A's content"),
                     seq: Some(0),
-                    origin: "load",
-                    confirmed: None,
+                    origin: ObsOrigin::Load,
+                    confirmed: Confirmation::Unclassified,
                 },
                 &observation::StatFacts {
                     mtime: Some("t".to_string()),

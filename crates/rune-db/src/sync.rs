@@ -9,6 +9,9 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use crate::Error;
 use crate::observation::{self, ObsId};
 
+#[cfg(test)]
+use crate::{confirmation::Confirmation, obs_origin::ObsOrigin};
+
 /// A comparable fact for the Sync/Probe three-way comparison: a content
 /// hash, optionally correlated to the [`crate::observation::Observation`]
 /// it came from. An out-of-band validity bit is instead modeled as
@@ -110,7 +113,10 @@ fn theirs_is_our_newest_publish(
     };
     let newest_publish: Option<String> = tx
         .query_row(
-            "SELECT blob_hash FROM observations WHERE doc_id=?1 AND origin='save' ORDER BY id DESC LIMIT 1",
+            &format!(
+                "SELECT blob_hash FROM observations WHERE doc_id=?1 AND origin='{}' ORDER BY id DESC LIMIT 1",
+                crate::obs_origin::ObsOrigin::Save.as_str()
+            ),
             params![doc_id],
             |r| r.get(0),
         )
@@ -235,8 +241,8 @@ mod tests {
             crate::observation::ObservationMeta {
                 blob_hash: &hash,
                 seq: Some(seq),
-                origin: "load",
-                confirmed: Some(true),
+                origin: ObsOrigin::Load,
+                confirmed: Confirmation::Confirmed,
             },
             &stat_of(disk, "load"),
             "load",
@@ -279,8 +285,8 @@ mod tests {
             crate::observation::ObservationMeta {
                 blob_hash: &hash,
                 seq: Some(seq),
-                origin: "save",
-                confirmed: Some(true),
+                origin: ObsOrigin::Save,
+                confirmed: Confirmation::Confirmed,
             },
             &stat_of(bytes, at),
             at,
@@ -305,8 +311,8 @@ mod tests {
             crate::observation::ObserveInput {
                 data: bytes.as_bytes(),
                 seq: None,
-                origin: "probe",
-                confirmed: Some(true),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Confirmed,
             },
         )
         .expect("record the fresh disk sighting")
@@ -326,7 +332,7 @@ mod tests {
             crate::observation::ObservationMeta {
                 blob_hash: &theirs.blob_hash,
                 seq: Some(edit_seq),
-                origin: "resolve",
+                origin: ObsOrigin::Resolve,
                 confirmed: theirs.confirmed,
             },
             &theirs.stat(),
@@ -591,8 +597,8 @@ mod tests {
             crate::observation::ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "watch",
-                confirmed: None,
+                origin: ObsOrigin::Watch,
+                confirmed: Confirmation::Unclassified,
             },
             &crate::observation::StatFacts {
                 size: Some(1),
@@ -629,8 +635,8 @@ mod tests {
             crate::observation::ObservationMeta {
                 blob_hash: &load_hash,
                 seq: Some(0),
-                origin: "load",
-                confirmed: None,
+                origin: ObsOrigin::Load,
+                confirmed: Confirmation::Unclassified,
             },
             &crate::observation::StatFacts {
                 size: Some(load_blob.len() as i64),
@@ -665,8 +671,8 @@ mod tests {
             crate::observation::ObservationMeta {
                 blob_hash: &resolve_hash,
                 seq: Some(1),
-                origin: "resolve",
-                confirmed: None,
+                origin: ObsOrigin::Resolve,
+                confirmed: Confirmation::Unclassified,
             },
             &crate::observation::StatFacts {
                 size: Some(resolve_blob.len() as i64),

@@ -7,6 +7,7 @@
 use rusqlite::params;
 
 use crate::Error;
+use crate::doc_kind::DocKind;
 use crate::observation;
 
 /// The path/identity half of a document rebind, bundled for the same
@@ -88,8 +89,8 @@ pub(crate) fn set_identity_tx(
     at: &str,
 ) -> Result<(), Error> {
     tx.execute(
-        "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
-        params![path, inode, device, at, doc_id],
+        "UPDATE documents SET path=?1, inode=?2, device=?3, kind=?4, last_seen_at=?5 WHERE id=?6",
+        params![path, inode, device, DocKind::File.as_str(), at, doc_id],
     )?;
     Ok(())
 }

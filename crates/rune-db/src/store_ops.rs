@@ -175,7 +175,7 @@ impl Store {
     pub fn merge_close(
         &self,
         doc_id: i64,
-        state: crate::merge_state::MergeCloseState,
+        state: crate::merge_state::MergeRowState,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MergeClose {
             session_id: self.session_id,

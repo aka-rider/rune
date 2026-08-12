@@ -229,6 +229,8 @@ mod tests {
     use std::time::SystemTime;
 
     use super::*;
+    use crate::confirmation::Confirmation;
+    use crate::obs_origin::ObsOrigin;
     use crate::observation::{self, ObservationMeta, StatFacts};
 
     /// Seeds one `documents` row, one `sessions` row, and one `blobs` row —
@@ -260,8 +262,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "probe",
-                confirmed: None,
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Unclassified,
             },
             &StatFacts {
                 size: Some(1),
@@ -272,7 +274,7 @@ mod tests {
         )
         .expect("record observation");
         let obs = observation::get_observation(&tx, obs_id).expect("read back");
-        assert_eq!(obs.confirmed, None);
+        assert_eq!(obs.confirmed, Confirmation::Unclassified);
         tx.commit().expect("commit");
     }
 
@@ -296,8 +298,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "probe",
-                confirmed: Some(true),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Confirmed,
             },
             &stat,
             "t",
@@ -310,8 +312,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "probe",
-                confirmed: Some(false),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Unconfirmed,
             },
             &stat,
             "t",
@@ -322,13 +324,13 @@ mod tests {
             observation::get_observation(&tx, true_id)
                 .expect("read true")
                 .confirmed,
-            Some(true)
+            Confirmation::Confirmed
         );
         assert_eq!(
             observation::get_observation(&tx, false_id)
                 .expect("read false")
                 .confirmed,
-            Some(false)
+            Confirmation::Unconfirmed
         );
         tx.commit().expect("commit");
     }

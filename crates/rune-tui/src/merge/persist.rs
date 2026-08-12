@@ -1,4 +1,4 @@
-use rune_db::{MergeCloseState, ObsId};
+use rune_db::{MergeRowState, ObsId};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
@@ -57,7 +57,7 @@ pub(super) fn enqueue_merge_progress(
     });
 }
 
-pub(super) fn enqueue_merge_close(app: &mut App, doc: DocumentId, state: MergeCloseState) {
+pub(super) fn enqueue_merge_close(app: &mut App, doc: DocumentId, state: MergeRowState) {
     enqueue(app, doc, |store, db_id| store.merge_close(db_id, state));
 }
 
@@ -105,7 +105,7 @@ pub(crate) fn resume_from_store(
     }
     let unresolved = payload.blocks.iter().filter(|b| !b.resolved).count();
     if unresolved == 0 {
-        enqueue_merge_close(app, doc, MergeCloseState::Completed);
+        enqueue_merge_close(app, doc, MergeRowState::Completed);
         return;
     }
 

@@ -37,6 +37,8 @@ use rune_vfs::Vfs;
 use crate::Error;
 use crate::adopt;
 use crate::bracket;
+use crate::confirmation::Confirmation;
+use crate::obs_origin::ObsOrigin;
 use crate::observation;
 use crate::retry;
 use crate::sync::{self, SyncKind, SyncState, Version};
@@ -90,7 +92,7 @@ pub fn probe(
     let stat = observation::stat_identity(vfs, &resolved);
     let existing = retry::with_retry(conn, |tx| observation::newest_observation(tx, doc_id))?;
     let unchanged = existing.filter(|o| {
-        o.confirmed == Some(true)
+        o.confirmed == Confirmation::Confirmed
             && o.size == stat.size
             && o.mtime == stat.mtime
             && o.inode == stat.inode
@@ -115,7 +117,7 @@ pub fn probe(
                 &resolved,
                 bracket::ObserveDiskMeta {
                     seq: None,
-                    origin: "probe",
+                    origin: ObsOrigin::Probe,
                 },
                 now,
             )?
@@ -375,8 +377,8 @@ mod tests {
                 observation::ObservationMeta {
                     blob_hash: &hash,
                     seq: None,
-                    origin: "probe",
-                    confirmed: Some(false),
+                    origin: ObsOrigin::Probe,
+                    confirmed: Confirmation::Unconfirmed,
                 },
                 &stat,
                 "t",

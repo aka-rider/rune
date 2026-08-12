@@ -37,6 +37,8 @@ use std::time::SystemTime;
 use rusqlite::{Connection, params};
 
 use crate::Error;
+use crate::confirmation::Confirmation;
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
 use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
@@ -113,8 +115,15 @@ pub fn record_materialize_outcome(
             stat,
             confirmed,
         } => {
-            let fresh =
-                record_fresh_from_stat(conn, ds, &data, origin, &stat, Some(confirmed), now)?;
+            let fresh = record_fresh_from_stat(
+                conn,
+                ds,
+                &data,
+                origin,
+                &stat,
+                Confirmation::from_bracket(confirmed),
+                now,
+            )?;
             Ok(MatResult::Refused { fresh })
         }
         MaterializeOutcome::Committed {
@@ -142,13 +151,20 @@ pub fn record_materialize_outcome(
             displaced_stat,
         } => {
             // The displaced bytes are a one-shot read of the caller's own
-            // private temp file (never contended) — recorded unclassified
-            // (`None`), same as every other forensic swap capture in this
+            // private temp file (never contended) — recorded unclassified,
+            // same as every other forensic swap capture in this
             // crate; it is never served as a decision input. Its own
             // observation IS the disk-side fact this save's commit
             // reconciles against — `facts.reconciled` below.
-            let fresh =
-                record_fresh_from_stat(conn, ds, &displaced, "swap", &displaced_stat, None, now)?;
+            let fresh = record_fresh_from_stat(
+                conn,
+                ds,
+                &displaced,
+                ObsOrigin::Swap,
+                &displaced_stat,
+                Confirmation::Unclassified,
+                now,
+            )?;
             let resolved_str = crate::paths::to_db_string(resolved_path)?;
             let facts = CommitFacts {
                 resolved_path: &resolved_str,
@@ -180,9 +196,9 @@ pub(crate) fn record_fresh_from_stat(
     conn: &mut Connection,
     ds: DocSession,
     data: &[u8],
-    origin: &str,
+    origin: ObsOrigin,
     stat: &StatFacts,
-    confirmed: Option<bool>,
+    confirmed: Confirmation,
     now: SystemTime,
 ) -> Result<Observation, Error> {
     let at = crate::session::format_rfc3339_nanos(now);
@@ -259,8 +275,8 @@ fn commit_save_from_stat(
             ObservationMeta {
                 blob_hash: &hash,
                 seq: Some(facts.seq),
-                origin: "save",
-                confirmed: Some(facts.confirmed),
+                origin: ObsOrigin::Save,
+                confirmed: Confirmation::from_bracket(facts.confirmed),
             },
             facts.stat,
             &at,

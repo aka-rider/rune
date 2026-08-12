@@ -116,6 +116,8 @@ mod tests {
     use rusqlite::{Connection, params};
 
     use super::*;
+    use crate::confirmation::Confirmation;
+    use crate::obs_origin::ObsOrigin;
     use crate::observation::{self, ObservationMeta, StatFacts};
     use crate::retry;
 
@@ -198,7 +200,7 @@ mod tests {
             panic!("expected Replaced, got {out:?}");
         };
         assert_eq!(displaced.doc_id, f.ds.doc_id, "captured under OUR doc");
-        assert_eq!(displaced.origin, "swap");
+        assert_eq!(displaced.origin, ObsOrigin::Swap);
         assert_eq!(
             displaced.blob_hash,
             observation::hash_bytes(b"theirs"),
@@ -440,8 +442,8 @@ mod tests {
                 ObservationMeta {
                     blob_hash: &blob_hash,
                     seq: Some(0),
-                    origin: "load",
-                    confirmed: None,
+                    origin: ObsOrigin::Load,
+                    confirmed: Confirmation::Unclassified,
                 },
                 &StatFacts {
                     size: Some(6),

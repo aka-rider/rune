@@ -20,6 +20,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use rune_vfs::Vfs;
 
 use crate::Error;
+use crate::doc_kind::DocKind;
 use crate::retry;
 
 /// The stable document identity `open_path` resolves to, plus whether the
@@ -74,8 +75,8 @@ fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRe
     match existing {
         None => {
             tx.execute(
-                "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES(?1,'file',?2,?2)",
-                params![path, at],
+                "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES(?1,?2,?3,?3)",
+                params![path, DocKind::File.as_str(), at],
             )?;
             Ok(DocRef {
                 id: tx.last_insert_rowid(),
@@ -147,8 +148,8 @@ fn open_path_by_inode(
 
             tx.execute(
                 "INSERT INTO documents(path, inode, device, kind, created_at, last_seen_at) \
-                 VALUES(?1,?2,?3,'file',?4,?4)",
-                params![path, inode, device, at],
+                 VALUES(?1,?2,?3,?4,?5,?5)",
+                params![path, inode, device, DocKind::File.as_str(), at],
             )?;
             Ok(DocRef {
                 id: tx.last_insert_rowid(),
@@ -188,10 +189,11 @@ fn open_path_by_inode(
 /// (`path=''`) and a non-`'file'` `kind` (scratch/chat) are excluded: only
 /// a still-named, real file belongs in the finder's list.
 pub fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
-    let mut stmt = conn.prepare(
-        "SELECT path FROM documents WHERE path != '' AND kind = 'file' \
+    let mut stmt = conn.prepare(&format!(
+        "SELECT path FROM documents WHERE path != '' AND kind = '{}' \
          ORDER BY last_seen_at DESC LIMIT ?1",
-    )?;
+        DocKind::File.as_str()
+    ))?;
     let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
     let mut result = Vec::new();
     for row in rows {

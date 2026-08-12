@@ -56,7 +56,9 @@ use std::time::SystemTime;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
+use crate::confirmation::Confirmation;
 use crate::materialize::DocSession;
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, Observation, ObserveInput};
 use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
@@ -129,8 +131,8 @@ pub(crate) fn capture_and_rebind(
             ObserveInput {
                 data: displaced_bytes,
                 seq: None,
-                origin: "swap",
-                confirmed: None,
+                origin: ObsOrigin::Swap,
+                confirmed: Confirmation::Unclassified,
             },
         )?;
 

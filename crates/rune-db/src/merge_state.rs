@@ -8,16 +8,18 @@ use crate::observation::ObsId;
 use crate::retry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MergeCloseState {
+pub enum MergeRowState {
+    Active,
     Completed,
     Abandoned,
 }
 
-impl MergeCloseState {
+impl MergeRowState {
     fn as_str(self) -> &'static str {
         match self {
-            MergeCloseState::Completed => "completed",
-            MergeCloseState::Abandoned => "abandoned",
+            MergeRowState::Active => "active",
+            MergeRowState::Completed => "completed",
+            MergeRowState::Abandoned => "abandoned",
         }
     }
 }
@@ -47,13 +49,13 @@ pub(crate) fn merge_open(
     retry::with_retry(conn, |tx| {
         for (row_id, session_id) in active_rows_newest_first(tx, args.doc_id)? {
             if session_id != args.session_id && !is_session_alive(tx, liveness_check, session_id)? {
-                set_state(tx, row_id, "abandoned")?;
+                set_state(tx, row_id, MergeRowState::Abandoned)?;
             }
         }
         let marker_hash = crate::blob::put_blob(tx, args.marker_content.as_bytes())?;
         tx.execute(
             "INSERT INTO merges(doc_id, session_id, base_obs, theirs_obs, marker_hash, blocks, state, created_at) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 args.doc_id,
                 args.session_id,
@@ -61,6 +63,7 @@ pub(crate) fn merge_open(
                 args.theirs_obs,
                 marker_hash,
                 args.blocks_json,
+                MergeRowState::Active.as_str(),
                 at
             ],
         )?;
@@ -97,13 +100,13 @@ pub(crate) fn merge_close(
     conn: &mut Connection,
     doc_id: i64,
     session_id: i64,
-    state: MergeCloseState,
+    state: MergeRowState,
 ) -> Result<(), Error> {
     retry::with_retry(conn, |tx| {
         let Some(row_id) = newest_active_owned(tx, doc_id, session_id)? else {
             return Ok(());
         };
-        set_state(tx, row_id, state.as_str())
+        set_state(tx, row_id, state)
     })
 }
 
@@ -128,16 +131,17 @@ pub(crate) fn resume_candidate(
                 theirs_obs,
             }));
         }
-        set_state(tx, row_id, "abandoned")?;
+        set_state(tx, row_id, MergeRowState::Abandoned)?;
         return Ok(None);
     }
     Ok(None)
 }
 
 fn active_rows_newest_first(tx: &Transaction<'_>, doc_id: i64) -> Result<Vec<(i64, i64)>, Error> {
-    let mut stmt = tx.prepare(
-        "SELECT id, session_id FROM merges WHERE doc_id=?1 AND state='active' ORDER BY id DESC",
-    )?;
+    let mut stmt = tx.prepare(&format!(
+        "SELECT id, session_id FROM merges WHERE doc_id=?1 AND state='{}' ORDER BY id DESC",
+        MergeRowState::Active.as_str()
+    ))?;
     let rows = stmt
         .query_map(params![doc_id], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<Vec<(i64, i64)>, rusqlite::Error>>()?;
@@ -150,8 +154,11 @@ fn newest_active_owned(
     session_id: i64,
 ) -> Result<Option<i64>, Error> {
     tx.query_row(
-        "SELECT id FROM merges WHERE doc_id=?1 AND session_id=?2 AND state='active' \
-         ORDER BY id DESC LIMIT 1",
+        &format!(
+            "SELECT id FROM merges WHERE doc_id=?1 AND session_id=?2 AND state='{}' \
+             ORDER BY id DESC LIMIT 1",
+            MergeRowState::Active.as_str()
+        ),
         params![doc_id, session_id],
         |r| r.get(0),
     )
@@ -172,10 +179,10 @@ fn newest_active_dead(
     Ok(None)
 }
 
-fn set_state(tx: &Transaction<'_>, row_id: i64, state: &str) -> Result<(), Error> {
+fn set_state(tx: &Transaction<'_>, row_id: i64, state: MergeRowState) -> Result<(), Error> {
     tx.execute(
         "UPDATE merges SET state=?1 WHERE id=?2",
-        params![state, row_id],
+        params![state.as_str(), row_id],
     )?;
     Ok(())
 }
@@ -184,6 +191,8 @@ fn set_state(tx: &Transaction<'_>, row_id: i64, state: &str) -> Result<(), Error
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::confirmation::Confirmation;
+    use crate::obs_origin::ObsOrigin;
     use crate::observation;
 
     fn open() -> Connection {
@@ -211,8 +220,8 @@ mod tests {
                 observation::ObservationMeta {
                     blob_hash: &hash,
                     seq: None,
-                    origin: "probe",
-                    confirmed: Some(true),
+                    origin: ObsOrigin::Probe,
+                    confirmed: Confirmation::Confirmed,
                 },
                 &observation::StatFacts::default(),
                 "t",
@@ -287,16 +296,15 @@ mod tests {
             .expect("row");
         assert_eq!(blocks, "[2]");
         assert_eq!(marker_hash, observation::hash_bytes(b"markers'"));
-        assert_eq!(state, "active");
+        assert_eq!(state, MergeRowState::Active.as_str());
 
-        merge_close(&mut conn, doc_id, session_id, MergeCloseState::Completed)
-            .expect("merge_close");
+        merge_close(&mut conn, doc_id, session_id, MergeRowState::Completed).expect("merge_close");
         assert_eq!(
             row_states(&conn, doc_id),
-            vec![(session_id, "completed".to_string())]
+            vec![(session_id, MergeRowState::Completed.as_str().to_string())]
         );
 
-        merge_close(&mut conn, doc_id, session_id, MergeCloseState::Completed)
+        merge_close(&mut conn, doc_id, session_id, MergeRowState::Completed)
             .expect("close with no active row is a no-op");
     }
 
@@ -316,8 +324,8 @@ mod tests {
         assert_eq!(
             row_states(&conn, doc_id),
             vec![
-                (session_a, "abandoned".to_string()),
-                (session_b, "active".to_string()),
+                (session_a, MergeRowState::Abandoned.as_str().to_string()),
+                (session_b, MergeRowState::Active.as_str().to_string()),
             ]
         );
     }
@@ -338,8 +346,8 @@ mod tests {
         assert_eq!(
             row_states(&conn, doc_id),
             vec![
-                (session_a, "active".to_string()),
-                (session_b, "active".to_string()),
+                (session_a, MergeRowState::Active.as_str().to_string()),
+                (session_b, MergeRowState::Active.as_str().to_string()),
             ]
         );
     }
@@ -359,7 +367,7 @@ mod tests {
 
         assert_eq!(
             row_states(&conn, doc_id),
-            vec![(session_b, "active".to_string())]
+            vec![(session_b, MergeRowState::Active.as_str().to_string())]
         );
     }
 
@@ -393,7 +401,7 @@ mod tests {
         );
         assert_eq!(
             row_states(&conn, doc_id),
-            vec![(session_a, "active".to_string())]
+            vec![(session_a, MergeRowState::Active.as_str().to_string())]
         );
     }
 
@@ -426,7 +434,7 @@ mod tests {
         assert_eq!(resumed, None);
         assert_eq!(
             row_states(&conn, doc_id),
-            vec![(session_a, "abandoned".to_string())]
+            vec![(session_a, MergeRowState::Abandoned.as_str().to_string())]
         );
     }
 
@@ -459,7 +467,7 @@ mod tests {
         assert_eq!(resumed, None);
         assert_eq!(
             row_states(&conn, doc_id),
-            vec![(session_a, "active".to_string())]
+            vec![(session_a, MergeRowState::Active.as_str().to_string())]
         );
     }
 }

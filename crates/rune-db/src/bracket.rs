@@ -7,9 +7,9 @@
 //! brackets the read, folds in the suspicious-shrink gate against the
 //! newest CONFIRMED observation already on file
 //! ([`confirm_against_history`]), then puts the bytes as a blob and records
-//! the referencing observation. Only a `confirmed: Some(true)` observation
+//! the referencing observation. Only a confirmed observation
 //! may short-circuit a probe, serve as a merge Theirs, or become a CAS
-//! baseline — an unconfirmed or unclassified (`None`, legacy) observation
+//! baseline — an unconfirmed or unclassified observation
 //! decides nothing, though its blob is kept exactly like any other (blob
 //! retention is sacred).
 
@@ -22,6 +22,8 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
+use crate::confirmation::Confirmation;
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, ObserveInput, StatFacts};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
@@ -125,12 +127,11 @@ pub fn confirm_against_history(
 /// `observe_disk` always derives for itself from the bracket and never
 /// accepts from a caller.
 #[derive(Clone, Copy, Debug)]
-pub struct ObserveDiskMeta<'a> {
+pub struct ObserveDiskMeta {
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible).
     pub seq: Option<i64>,
-    /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
-    pub origin: &'a str,
+    pub origin: ObsOrigin,
 }
 
 /// Brackets a fresh disk read for `doc_id` (via [`bracketed_read`]) and
@@ -149,7 +150,7 @@ pub fn observe_disk(
     session_id: i64,
     doc_id: i64,
     path: &Path,
-    meta: ObserveDiskMeta<'_>,
+    meta: ObserveDiskMeta,
     now: SystemTime,
 ) -> Result<observation::Observation, Error> {
     let bracket = bracketed_read(vfs, path).map_err(Error::Io)?;
@@ -168,7 +169,7 @@ pub fn observe_disk(
                 data: &bracket.data,
                 seq: meta.seq,
                 origin: meta.origin,
-                confirmed: Some(confirmed),
+                confirmed: Confirmation::from_bracket(confirmed),
             },
         )
     })
@@ -294,8 +295,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "probe",
-                confirmed: Some(true),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Confirmed,
             },
             &StatFacts {
                 size: Some(content.len() as i64),
@@ -351,8 +352,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &shrunk_hash,
                 seq: None,
-                origin: "probe",
-                confirmed: Some(false),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Unconfirmed,
             },
             &StatFacts {
                 size: Some(5),
@@ -400,8 +401,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &empty_hash,
                 seq: None,
-                origin: "probe",
-                confirmed: Some(false),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Unconfirmed,
             },
             &StatFacts {
                 size: Some(0),

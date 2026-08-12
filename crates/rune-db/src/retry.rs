@@ -110,7 +110,17 @@ pub fn with_retry<T>(
                 let _ = tx.rollback();
                 let sqlite_err = match &err {
                     Error::Sqlite(e) => Some(e),
-                    _ => None,
+                    Error::Io(_)
+                    | Error::WriterQueueFull
+                    | Error::WriterGone
+                    | Error::ReaderGone
+                    | Error::SessionEstablish(_)
+                    | Error::WalModeUnavailable(_)
+                    | Error::CorruptPayload(_)
+                    | Error::BlobHashMismatch { .. }
+                    | Error::ReplayFailed(_)
+                    | Error::NotFound(_)
+                    | Error::Invalid(_) => None,
                 };
                 let Some(sqlite_err) = sqlite_err else {
                     return Err(err);

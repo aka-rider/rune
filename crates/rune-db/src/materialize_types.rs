@@ -5,6 +5,7 @@
 //! [`prepare_materialize`]: crate::materialize::prepare_materialize
 //! [`record_materialize_outcome`]: crate::materialize::record_materialize_outcome
 
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{ObsId, Observation, StatFacts};
 use crate::sync::SyncKind;
 
@@ -64,7 +65,7 @@ pub enum MaterializeOutcome {
     /// mid-external-rewrite must never masquerade as a stable fact.
     Conflict {
         data: Vec<u8>,
-        origin: &'static str,
+        origin: ObsOrigin,
         stat: StatFacts,
         confirmed: bool,
     },

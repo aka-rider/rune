@@ -21,6 +21,7 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::blob;
+use crate::confirmation::Confirmation;
 use crate::observation::{self, ObsId};
 use crate::probe;
 use crate::retry;
@@ -75,7 +76,7 @@ fn theirs_confirmed(conn: &mut Connection, sync: &SyncState) -> Result<bool, Err
         return Ok(true);
     };
     let obs = retry::with_retry(conn, |tx| observation::get_observation(tx, obs_id))?;
-    Ok(obs.confirmed == Some(true))
+    Ok(obs.confirmed == Confirmation::Confirmed)
 }
 
 /// Runs the fresh-state read for `doc_id`, collapsing what would otherwise
@@ -166,6 +167,7 @@ fn resolve_ancestor(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::obs_origin::ObsOrigin;
     use rune_vfs::Mem;
     use std::path::Path;
 
@@ -223,8 +225,8 @@ mod tests {
             observation::ObservationMeta {
                 blob_hash: &hash_baseline,
                 seq: None,
-                origin: "resolve",
-                confirmed: Some(true),
+                origin: ObsOrigin::Resolve,
+                confirmed: Confirmation::Confirmed,
             },
             &stat,
             SystemTime::now(),
@@ -335,8 +337,8 @@ mod tests {
                 crate::observation::ObservationMeta {
                     blob_hash: &empty_hash,
                     seq: Some(0),
-                    origin: "load",
-                    confirmed: None,
+                    origin: ObsOrigin::Load,
+                    confirmed: Confirmation::Unclassified,
                 },
                 &crate::observation::StatFacts {
                     mtime: Some("t".to_string()),

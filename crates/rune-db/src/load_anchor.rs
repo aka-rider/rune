@@ -29,7 +29,9 @@ use rune_core::buffer::AppliedEdit;
 
 use crate::Error;
 use crate::adopt;
+use crate::confirmation::Confirmation;
 use crate::inherit::Inherited;
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, StatFacts};
 use crate::retry;
 
@@ -85,8 +87,8 @@ fn anchor_on_disk_tx(
         observation::ObservationMeta {
             blob_hash: hash,
             seq: Some(ctx.load_seq),
-            origin: "load",
-            confirmed: Some(ctx.disk_confirmed),
+            origin: ObsOrigin::Load,
+            confirmed: Confirmation::from_bracket(ctx.disk_confirmed),
         },
         ctx.live_stat,
         &crate::session::format_rfc3339_nanos(ctx.now),
@@ -159,7 +161,7 @@ fn anchor_diverged(
             observation::ObservationMeta {
                 blob_hash: &baseline.blob_hash,
                 seq: Some(ctx.load_seq),
-                origin: "load",
+                origin: ObsOrigin::Load,
                 // Copy-forward of a PRIOR observation's own fact, not a
                 // fresh read of this call's — carries `baseline`'s own
                 // confirmed status forward rather than asserting a new one.
@@ -183,8 +185,8 @@ fn anchor_diverged(
             observation::ObservationMeta {
                 blob_hash: ctx.disk_hash,
                 seq: None,
-                origin: "load",
-                confirmed: Some(ctx.disk_confirmed),
+                origin: ObsOrigin::Load,
+                confirmed: Confirmation::from_bracket(ctx.disk_confirmed),
             },
             ctx.live_stat,
             &crate::session::format_rfc3339_nanos(ctx.now),
@@ -316,11 +318,11 @@ mod tests {
             inode: None,
             device: None,
             nlink: None,
-            origin: "load".to_string(),
+            origin: ObsOrigin::Load,
             parent_a: None,
             parent_b: None,
             at: "t".to_string(),
-            confirmed: None,
+            confirmed: Confirmation::Unclassified,
         };
 
         let outcome = anchor_first_load(

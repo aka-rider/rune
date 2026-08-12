@@ -9,8 +9,12 @@ use std::time::SystemTime;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::Error;
+use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
 use crate::retry;
+
+#[cfg(test)]
+use crate::confirmation::Confirmation;
 
 /// The shared one-tx BODY behind every path that moves `saved_obs` to a
 /// NEWLY-inserted observation: a fresh row is inserted (tagged
@@ -72,7 +76,7 @@ pub(crate) fn record_adoption_tx(
         inode: stat.inode,
         device: stat.device,
         nlink: stat.nlink,
-        origin: meta.origin.to_string(),
+        origin: meta.origin,
         parent_a,
         parent_b,
         at: at.to_string(),
@@ -123,7 +127,7 @@ pub fn adopt_equal(
         ObservationMeta {
             blob_hash: &source.blob_hash,
             seq: Some(head_seq),
-            origin: "resolve",
+            origin: ObsOrigin::Resolve,
             // Copy-forward of `source`'s own confirmed status — this
             // promotes a bare sighting to a genuine adoption, it does not
             // re-read disk, so it has no fresher fact to derive one from.
@@ -177,7 +181,7 @@ pub fn resolve_adopt(
         ObservationMeta {
             blob_hash: &source.blob_hash,
             seq: Some(seq),
-            origin: "resolve",
+            origin: ObsOrigin::Resolve,
             // Copy-forward of `source`'s own confirmed status — see
             // `adopt_equal`'s identical reasoning.
             confirmed: source.confirmed,
@@ -213,13 +217,13 @@ pub fn resolve_abandon(conn: &mut Connection, session_id: i64, doc_id: i64) -> R
             return Ok(()); // no session_documents row, or saved_obs NULL — nothing adopted yet
         };
 
-        let (parent_a, origin): (Option<ObsId>, String) = tx.query_row(
+        let (parent_a, origin): (Option<ObsId>, ObsOrigin) = tx.query_row(
             "SELECT parent_a, origin FROM observations WHERE id=?1",
             params![current],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
 
-        if origin != "resolve" {
+        if !matches!(origin, ObsOrigin::Resolve) {
             return Err(Error::Invalid(format!(
                 "resolve abandon doc {doc_id}: baseline observation {current} has origin {origin:?}, not a resolve adoption — refusing to delete it"
             )));
@@ -286,8 +290,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash_1,
                 seq: Some(1),
-                origin: "save",
-                confirmed: None,
+                origin: ObsOrigin::Save,
+                confirmed: Confirmation::Unclassified,
             },
             &test_stat(),
             SystemTime::now(),
@@ -347,8 +351,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash_1,
                 seq: Some(1),
-                origin: "save",
-                confirmed: None,
+                origin: ObsOrigin::Save,
+                confirmed: Confirmation::Unclassified,
             },
             &test_stat(),
             SystemTime::now(),

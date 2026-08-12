@@ -153,7 +153,7 @@ pub enum OpKind {
     MergeClose {
         session_id: i64,
         doc_id: i64,
-        state: crate::merge_state::MergeCloseState,
+        state: crate::merge_state::MergeRowState,
     },
     /// The bookkeeping-only half of `Materialize` that runs
     /// BEFORE any `vfs` call — hands the caller the decision data

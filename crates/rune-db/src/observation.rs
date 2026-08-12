@@ -11,9 +11,9 @@
 //! `vfs.stat` results turn into `Option`-shaped identity facts (D12/D13 —
 //! NULL, never a literal 0, when the stat failed or exposed no usable
 //! identity). A single successfully-returned read is evidence, never truth
-//! (`bracket.rs`'s own module doc) — only a `confirmed: Some(true)`
+//! (`bracket.rs`'s own module doc) — only a confirmed
 //! observation may short-circuit a probe, serve as a merge Theirs, or
-//! become a CAS baseline; an unconfirmed or unclassified (`None`, legacy)
+//! become a CAS baseline; an unconfirmed or unclassified
 //! observation decides nothing, though its blob is kept exactly like any
 //! other (blob retention is sacred).
 
@@ -24,6 +24,8 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 use rune_vfs::Vfs;
 
 use crate::Error;
+use crate::confirmation::Confirmation;
+use crate::obs_origin::ObsOrigin;
 
 /// Identifies a row in `observations`. AUTOINCREMENT ids start at 1 — the
 /// zero value is never a valid observation.
@@ -50,13 +52,12 @@ pub struct Observation {
     pub inode: Option<i64>,
     pub device: Option<i64>,
     pub nlink: Option<i64>,
-    /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
-    pub origin: String,
+    pub origin: ObsOrigin,
     /// The version DAG's first lineage edge, pointing at the prior row this
     /// one succeeds: for an adoption (`materialize::commit_save`,
     /// `adopt::adopt_equal`/`resolve_adopt`), the `saved_obs` baseline the
     /// adoption replaced; for a CONFIRMED fresh disk sighting
-    /// (`observe_from_stat_tx`, when `confirmed == Some(true)`) whose hash
+    /// (`observe_from_stat_tx`) whose hash
     /// differs from what was newest a moment before, that prior newest row.
     /// `None` for a legacy/root row, or a sighting that matched the hash
     /// already newest (nothing to chain to).
@@ -68,12 +69,7 @@ pub struct Observation {
     /// `None` for every one-parent row.
     pub parent_b: Option<ObsId>,
     pub at: String,
-    /// `None` for a legacy/unclassified row; `Some(true)` for a sighting
-    /// trusted as a stable fact (only such a row may short-circuit a probe,
-    /// serve as a merge Theirs, or become a CAS baseline); `Some(false)`
-    /// for a sighting that failed classification (an unstable bracket, or a
-    /// shrink not yet independently re-sighted) and decides nothing.
-    pub confirmed: Option<bool>,
+    pub confirmed: Confirmation,
 }
 
 impl Observation {
@@ -149,11 +145,8 @@ pub struct ObservationMeta<'a> {
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible).
     pub seq: Option<i64>,
-    /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
-    pub origin: &'a str,
-    /// Carried straight to the `confirmed` column — see [`Observation::confirmed`]
-    /// for what each value means.
-    pub confirmed: Option<bool>,
+    pub origin: ObsOrigin,
+    pub confirmed: Confirmation,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -225,15 +218,15 @@ pub(crate) fn insert_observation_row(
 /// The lineage edge a CONFIRMED fresh sighting records: the doc's own prior
 /// newest observation, but only when `new_hash` actually differs from it —
 /// a re-confirmation of the same content chains to nothing new. Unconfirmed
-/// sightings never chain at all (`confirmed != Some(true)`): a read that
+/// sightings never chain at all: a read that
 /// isn't trusted as a stable fact earns no lineage claim either.
 fn confirmed_sighting_parent(
     tx: &Transaction<'_>,
     doc_id: i64,
-    confirmed: Option<bool>,
+    confirmed: Confirmation,
     new_hash: &str,
 ) -> Result<Option<ObsId>, Error> {
-    if confirmed != Some(true) {
+    if confirmed != Confirmation::Confirmed {
         return Ok(None);
     }
     Ok(newest_observation(tx, doc_id)?
@@ -256,11 +249,8 @@ pub struct ObserveInput<'a> {
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible).
     pub seq: Option<i64>,
-    /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
-    pub origin: &'a str,
-    /// Carried straight to the `confirmed` column — see [`Observation::confirmed`]
-    /// for what each value means.
-    pub confirmed: Option<bool>,
+    pub origin: ObsOrigin,
+    pub confirmed: Confirmation,
 }
 
 /// The tx-scoped body of [`observe_from_stat`]: puts `input.data` as a blob
@@ -309,7 +299,7 @@ pub(crate) fn observe_from_stat_tx(
         inode: stat.inode,
         device: stat.device,
         nlink: stat.nlink,
-        origin: input.origin.to_string(),
+        origin: input.origin,
         parent_a,
         parent_b: None,
         at: at.to_string(),
@@ -369,11 +359,13 @@ pub fn ancestor_at(
     exclude_obs: Option<ObsId>,
 ) -> Result<Option<Observation>, Error> {
     let exclude = exclude_obs.unwrap_or(0);
+    let eligible = crate::obs_origin::ancestor_eligible_sql_list();
+    let resolve = ObsOrigin::Resolve.as_str();
     tx.query_row(
         &format!(
             "SELECT {OBS_COLUMNS} FROM observations \
-             WHERE doc_id=?1 AND session_id=?2 AND origin IN ('load','save','resolve') \
-               AND seq IS NOT NULL AND seq <= ?3 AND (id != ?4 OR seq < ?3 OR origin = 'resolve') \
+             WHERE doc_id=?1 AND session_id=?2 AND origin IN ({eligible}) \
+               AND seq IS NOT NULL AND seq <= ?3 AND (id != ?4 OR seq < ?3 OR origin = '{resolve}') \
              ORDER BY seq DESC, id DESC LIMIT 1"
         ),
         params![doc_id, session_id, pos, exclude],
@@ -473,8 +465,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash_a,
                 seq: None,
-                origin: "probe",
-                confirmed: None,
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Unclassified,
             },
             &stat,
             "t",
@@ -487,8 +479,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash_b,
                 seq: None,
-                origin: "probe",
-                confirmed: None,
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Unclassified,
             },
             &stat,
             "t",
@@ -518,8 +510,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: Some(5),
-                origin: "load",
-                confirmed: None,
+                origin: ObsOrigin::Load,
+                confirmed: Confirmation::Unclassified,
             },
             &StatFacts {
                 size: Some(1),

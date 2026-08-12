@@ -46,7 +46,7 @@ pub const DEGRADED_WARNING: &str = "history disabled — storage unavailable";
 pub struct Store {
     writer: writer::WriterHandle,
     reader: reader::ReaderHandle,
-    degraded: bool,
+    warning: Option<String>,
     pub(crate) session_id: i64,
     next_op_id: AtomicU64,
     // `Mutex`, not `RefCell`: `Store` has no `Sync`/`Send` requirement of
@@ -121,7 +121,7 @@ impl Store {
         Ok(Store {
             writer,
             reader,
-            degraded: false,
+            warning: None,
             session_id,
             next_op_id: AtomicU64::new(1),
             clock: Mutex::new(clock),
@@ -157,7 +157,7 @@ impl Store {
         let store = Store {
             writer,
             reader,
-            degraded: rung.degraded,
+            warning: rung.warning.clone(),
             session_id,
             next_op_id: AtomicU64::new(1),
             clock: Mutex::new(clock),
@@ -171,7 +171,7 @@ impl Store {
     /// [`Store::open_in_memory`]. Drives a persistent footer banner and a
     /// confirm gate before every materialize.
     pub fn degraded(&self) -> bool {
-        self.degraded
+        self.warning.is_some()
     }
 
     /// This process's own row in `sessions` — established once at

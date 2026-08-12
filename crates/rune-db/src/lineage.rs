@@ -64,6 +64,8 @@ pub fn common_ancestor(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::confirmation::Confirmation;
+    use crate::obs_origin::ObsOrigin;
     use crate::observation::{ObservationMeta, ParentEdges, StatFacts};
     use rusqlite::Connection;
     use std::time::SystemTime;
@@ -98,8 +100,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "probe",
-                confirmed: Some(true),
+                origin: ObsOrigin::Probe,
+                confirmed: Confirmation::Confirmed,
             },
             &StatFacts {
                 size: Some(content.len() as i64),
@@ -222,8 +224,8 @@ mod tests {
             ObservationMeta {
                 blob_hash: &hash,
                 seq: None,
-                origin: "resolve",
-                confirmed: Some(true),
+                origin: ObsOrigin::Resolve,
+                confirmed: Confirmation::Confirmed,
             },
             &StatFacts {
                 size: Some(6),

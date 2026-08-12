@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
-use rune_db::{ClockFn, DbEvent, MatResult, Observation, OpOutcome, Store};
+use rune_db::{
+    ClockFn, Confirmation, DbEvent, MatResult, ObsOrigin, Observation, OpOutcome, Store,
+};
 use rune_vfs::{Mem, Vfs};
 
 use super::handle_materialize_ack;
@@ -25,11 +27,11 @@ fn racer_observation(doc_id: i64) -> Observation {
         inode: None,
         device: None,
         nlink: None,
-        origin: "save".to_string(),
+        origin: ObsOrigin::Save,
         parent_a: None,
         parent_b: None,
         at: "t".to_string(),
-        confirmed: Some(true),
+        confirmed: Confirmation::Confirmed,
     }
 }
 

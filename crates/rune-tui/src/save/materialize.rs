@@ -263,7 +263,7 @@ fn map_put_outcome(
         Ok(PutOutcome::Missing) => MaterializeVfsOutcome::Missing,
         Ok(PutOutcome::Conflict { current }) => MaterializeVfsOutcome::Conflict {
             data: current.bytes,
-            origin: "probe",
+            origin: rune_db::ObsOrigin::Probe,
             stat: rune_db::stat_facts_from(current.stat),
             confirmed: current.confirmed,
             resolved_path,

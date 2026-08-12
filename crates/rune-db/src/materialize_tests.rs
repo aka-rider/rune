@@ -136,7 +136,7 @@ fn record_materialize_outcome_conflict_records_fresh_and_never_commits() {
         SystemTime::now(),
         MaterializeOutcome::Conflict {
             data: b"external content".to_vec(),
-            origin: "probe",
+            origin: ObsOrigin::Probe,
             stat,
             confirmed: true,
         },
@@ -146,12 +146,12 @@ fn record_materialize_outcome_conflict_records_fresh_and_never_commits() {
     let MatResult::Refused { fresh } = result else {
         unreachable!("expected Refused");
     };
-    assert_eq!(fresh.origin, "probe");
+    assert_eq!(fresh.origin, ObsOrigin::Probe);
     assert_eq!(
         fresh.blob_hash,
         observation::hash_bytes(b"external content")
     );
-    assert_eq!(fresh.confirmed, Some(true));
+    assert_eq!(fresh.confirmed, Confirmation::Confirmed);
 }
 
 /// A conflict capture the caller's own bracket could not confirm (a
@@ -176,7 +176,7 @@ fn record_materialize_outcome_conflict_unconfirmed_records_confirmed_false() {
         SystemTime::now(),
         MaterializeOutcome::Conflict {
             data: b"external content".to_vec(),
-            origin: "probe",
+            origin: ObsOrigin::Probe,
             stat,
             confirmed: false,
         },
@@ -186,7 +186,7 @@ fn record_materialize_outcome_conflict_unconfirmed_records_confirmed_false() {
     let MatResult::Refused { fresh } = result else {
         unreachable!("expected Refused");
     };
-    assert_eq!(fresh.confirmed, Some(false));
+    assert_eq!(fresh.confirmed, Confirmation::Unconfirmed);
 }
 
 /// A plain committed write records the blob/observation and rebinds the
@@ -220,10 +220,10 @@ fn record_materialize_outcome_committed_records_save_and_rebinds() {
         unreachable!("expected Committed");
     };
     let saved = saved.expect("saved observation recorded");
-    assert_eq!(saved.origin, "save");
+    assert_eq!(saved.origin, ObsOrigin::Save);
     assert_eq!(saved.seq, Some(7));
     assert_eq!(saved.blob_hash, observation::hash_bytes(b"new content"));
-    assert_eq!(saved.confirmed, Some(true));
+    assert_eq!(saved.confirmed, Confirmation::Confirmed);
 
     let bound_path: String = conn
         .query_row(
@@ -267,7 +267,7 @@ fn record_materialize_outcome_raced_records_both_displaced_and_committed() {
     let MatResult::CommittedRaced { saved, displaced } = result else {
         unreachable!("expected CommittedRaced");
     };
-    assert_eq!(displaced.origin, "swap");
+    assert_eq!(displaced.origin, ObsOrigin::Swap);
     assert_eq!(displaced.blob_hash, observation::hash_bytes(b"racer bytes"));
     assert_eq!(saved.blob_hash, observation::hash_bytes(b"our content"));
 
@@ -296,7 +296,7 @@ fn record_materialize_outcome_conflict_with_non_utf8_bytes_captures_them_byte_ex
         SystemTime::now(),
         MaterializeOutcome::Conflict {
             data: racer_bytes.to_vec(),
-            origin: "swap",
+            origin: ObsOrigin::Swap,
             stat: StatFacts::default(),
             confirmed: false,
         },
