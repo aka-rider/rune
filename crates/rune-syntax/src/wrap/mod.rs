@@ -214,9 +214,14 @@ fn slice_spans(
     seg_end: usize,
 ) -> Vec<SyntaxSpan> {
     let mut result = Vec::new();
-    for &(idx, start_off, end_off) in span_refs {
-        if end_off <= seg_start || start_off >= seg_end {
-            continue;
+    // `span_refs` is built by one forward pass over the line's spans (this
+    // module's `wrap_line`), so both offsets rise monotonically — the first
+    // span able to reach `seg_start` is found by binary search, and once a
+    // span starts at or past `seg_end` every later one does too.
+    let first = span_refs.partition_point(|&(_, _, end_off)| end_off <= seg_start);
+    for &(idx, start_off, _) in span_refs.get(first..).unwrap_or_default() {
+        if start_off >= seg_end {
+            break;
         }
         let Some(s) = spans.get(idx) else {
             continue;

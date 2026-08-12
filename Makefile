@@ -36,12 +36,16 @@ bench:
 perf-guard:
 	$(CARGO) test -p rune-md --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 full_pipeline_5k_under_100ms
+	$(CARGO) test -p rune-md --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 full_pipeline_cost_scales_linearly_not_quadratically_with_document_size
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 keystroke_view_cost_under_budget_on_a_5k_line_code_document
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_5k_line_code_document
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_many_fence_markdown_document
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 bootstrap_first_draw_stays_bounded_on_a_large_document
 
 # `--test human_session` + `--exact` for the same reason as perf-guard.
 # Debug profile on purpose: keeps the buffer/undo/render debug_asserts armed.

@@ -8,11 +8,17 @@
 
 /// Build a deterministic 5,000-line markdown document.
 fn build_5k_doc() -> String {
-    let mut doc = String::with_capacity(5_000 * 40);
+    build_doc(5_000)
+}
+
+/// `build_5k_doc`'s parametrized form: the same deterministic mixed-markdown
+/// pattern, cycled to any line count, so a caller can compare pipeline cost
+/// across document sizes without inventing a second fixture shape.
+fn build_doc(lines: usize) -> String {
+    let mut doc = String::with_capacity(lines * 40);
 
     // Pattern: 36 lines per cycle (including a 4-line GFM table block:
-    // header, delimiter, two body rows), repeated 138 times (4,968 lines)
-    // + 32 extra lines = 5,000 total.
+    // header, delimiter, two body rows).
     let pattern: [&str; 36] = [
         "# Heading One",
         "## Heading Two",
@@ -53,8 +59,8 @@ fn build_5k_doc() -> String {
     ];
 
     let pattern_len = pattern.len(); // 36
-    let full_cycles = 5_000 / pattern_len; // 138
-    let remainder = 5_000 % pattern_len; // 32
+    let full_cycles = lines / pattern_len;
+    let remainder = lines % pattern_len;
 
     for _ in 0..full_cycles {
         for line in &pattern {

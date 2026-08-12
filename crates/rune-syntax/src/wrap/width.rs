@@ -170,9 +170,8 @@ pub fn grapheme_width_with_tab(cluster: &str, current_width: usize) -> usize {
 /// fail to land on any real cell (`CELL-ORDER`, `rune-fuzz`).
 pub(super) fn next_grapheme<'a>(text: &'a str, bounds: &[usize], pos: usize) -> Option<&'a str> {
     let limit = bounds
-        .iter()
+        .get(bounds.partition_point(|&b| b <= pos))
         .copied()
-        .find(|&b| b > pos)
         .unwrap_or(text.len());
     text.get(pos..limit)?.graphemes(true).next()
 }

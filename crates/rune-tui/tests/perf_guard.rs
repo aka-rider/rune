@@ -298,3 +298,77 @@ fn render_frame_cost_under_budget_on_a_many_fence_markdown_document() {
         FENCED_FRAME_BUDGET.as_secs_f64() * 1_000.0
     );
 }
+
+/// A 2 MiB single-paragraph markdown document — well over `runtime::
+/// bootstrap`'s large-document threshold (1 MiB), so a real bootstrap would
+/// defer its display-pipeline compute to a background `Cmd` and leave
+/// `Document::view` `None` until that reply lands.
+fn build_2mb_prose_fixture() -> String {
+    let line = "The quick brown fox jumps over the lazy dog near the riverbank at dawn.\n";
+    let mut doc = String::with_capacity(2_100_000);
+    while doc.len() < 2_097_152 {
+        doc.push_str(line);
+    }
+    doc
+}
+
+const BOOTSTRAP_FRAMES: usize = 20;
+
+/// The bound one `render::draw` call may cost while `Document::view` is
+/// still `None` — generous (the fallback path this exercises,
+/// `render::draw_pending`, reads at most `viewport height` lines straight
+/// off `Buffer` via `str::lines().take(..)`, which is bounded by the
+/// viewport regardless of document size, so the true cost is a small,
+/// document-size-independent constant; this budget only needs to catch a
+/// regression back to running the full display pipeline synchronously).
+const BOOTSTRAP_FRAME_BUDGET: Duration = Duration::from_millis(100);
+
+#[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
+            release invocation in Make (rust-perf-guard). It is inherently \
+            flaky inside ordinary parallel debug `cargo test` and is marked \
+            #[ignore] for that reason."]
+#[test]
+fn bootstrap_first_draw_stays_bounded_on_a_large_document() {
+    let mut app = app_for(&build_2mb_prose_fixture(), "/x/big.md");
+    // Mirrors `bootstrap`'s large-document branch exactly: `relayout` sizes
+    // the viewport WITHOUT running the display pipeline, so `doc.view`
+    // stays at its constructed default.
+    app.relayout();
+    assert!(
+        app.active_doc().view.is_none(),
+        "fixture setup must leave the view unset, the same state a real \
+         bootstrap's large-document branch draws its first frame from"
+    );
+
+    let mut elapsed_total = Duration::ZERO;
+    let mut buf = rune_tui::testgrid::draw(&app, 120, 40);
+    for _ in 0..BOOTSTRAP_FRAMES {
+        let start = Instant::now();
+        buf = rune_tui::testgrid::draw(&app, 120, 40);
+        elapsed_total += start.elapsed();
+    }
+    let per_draw = elapsed_total / u32::try_from(BOOTSTRAP_FRAMES).unwrap_or(1);
+
+    let rendered = (0..40)
+        .map(|y| {
+            (0..120)
+                .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol()))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("quick brown fox"),
+        "the pre-snapshot frame must show the document's own raw text, or \
+         this measures an accidentally-cheap no-op instead of the real \
+         fallback path:\n{rendered}"
+    );
+
+    assert!(
+        per_draw < BOOTSTRAP_FRAME_BUDGET,
+        "average render::draw cost with no view yet on a 2 MiB document was \
+         {:.3} ms over {BOOTSTRAP_FRAMES} draws (budget: {:.0} ms)",
+        per_draw.as_secs_f64() * 1_000.0,
+        BOOTSTRAP_FRAME_BUDGET.as_secs_f64() * 1_000.0
+    );
+}

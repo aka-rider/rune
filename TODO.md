@@ -126,6 +126,12 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: fix or delete each citation when touched (per house rule, no `path:line` in comments either).
 - **Done when**: no comment in the tree cites a nonexistent symbol or deleted file.
 
+### `EmitOut`'s per-line claim bookkeeping is quadratic in that line's own claim count
+- **Where**: `crates/rune-md/src/emit/claim.rs`'s `EmitOut::unclaimed`, called from `claim_free`/`claim_whole`.
+- **Wrong**: every claim on a line clones the WHOLE `accounted[line]` history so far and re-merges it (`unclaimed_subranges`/`merge_overlapping`) from scratch; a line carrying K claims (one span/delimiter push per inline element on that line) costs O(K) on its K-th claim, O(K²) summed over the line. Issue #11's own fixture generator (`crates/rune-md/examples/measure_scaling.rs` before it was removed, or an equivalent single very-long-line document with hundreds of `**bold**`/`` `code` ``/link toggles) reproduces this directly: `emit_with` on a 5 MB document made of 20 KB lines each carrying ~285 inline spans took 12.5s, versus under 15ms for the fix already landed for issue #11 (`crates/rune-syntax`'s `wrap` module) on an equally large but span-sparse document. Confirmed, not fixed in the issue #11 work package: the two suspects that package investigated live in `rune-syntax::wrap`, not here, and this fix needs a proper interval-tracked `accounted[line]` (an ordered map keyed by claim start, with `range()` queries) rather than a `Vec<(usize, usize)>` re-merged per claim — a wider change than the wrap-module fix, reaching `claim.rs`'s `Accounted` type and every producer that calls `claim_free`/`claim_whole` (`walk.rs`, `walk_inline.rs`, `table.rs`, `decor.rs`).
+- **Instead**: back `accounted[line]` with a `BTreeMap<usize, usize>` of merged, non-overlapping claimed ranges (start -> end); `unclaimed_subranges` queries only the ranges overlapping `[start, end)` via `range()` (O(log K + overlap count)) instead of the whole line's history.
+- **Done when**: a line's total claim-processing cost across the whole document is O(spans) rather than O(spans-per-line²); re-run the span-dense-long-line shape above and confirm `emit_with` stays linear in document size.
+
 ### O(file) per keystroke is the deliberate design ceiling
 - **Where**: `crates/rune-core/src/buffer/mod.rs`, `crates/rune-core/src/buffer/lineindex.rs`, `crates/rune-tui/src/commands/edit_core.rs`, `crates/rune-tui/src/materialize_ack.rs`; perf-guarded by `crates/rune-tui/tests/perf_guard.rs:92` (`keystroke_view_cost_under_budget_on_a_5k_line_code_document`)
 - **Wrong**: full content copy + full line-index clone + full memcmp + journal clones per edit batch; does not scale past the guard fixture's size.
@@ -139,7 +145,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/global.rs` — 767
   - `crates/rune-tui/src/pane.rs` — 862
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
-  - `crates/rune-tui/src/runtime/mod.rs` — 608
+  - `crates/rune-tui/src/runtime/mod.rs` — 621 (grew from 608: `Msg::BootstrapViewReady`, issue #11's deferred-compute reply)
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
   - `crates/rune-tui/src/app.rs` — 591
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
@@ -153,7 +159,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 559
   - `crates/rune-vfs/src/mem.rs` — 705 (`fail_resolve` and its tests pushed this further over)
   - `crates/rune-vfs/src/publish.rs` — 552 (already over before the narrow `put_force`/`put_if_absent` outcome types, which moved to a sibling `put_result.rs` rather than growing this further; split candidate: move the `#[cfg(test)] mod tests` block, well over half the file, to a `#[path]`-included sibling `publish_tests.rs` so it keeps access to the private `put_if_match`/`put_if_absent`/`finish_over_existing` it exercises)
-  - `crates/rune-tui/src/dispatch.rs` — 507
+  - `crates/rune-tui/src/dispatch.rs` — 536 (grew from 507: `handle_bootstrap_view_ready`, issue #11's deferred-compute reply handler)
   - `crates/rune-tui/src/document/mod.rs` — 671 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 537 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 531 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)

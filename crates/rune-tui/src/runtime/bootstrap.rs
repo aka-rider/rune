@@ -11,10 +11,28 @@ use std::io;
 use std::sync::mpsc;
 use std::thread;
 
+use rune_core::buffer::Buffer;
+use rune_core::cursor::CursorSet;
+use rune_md::element::doc::DocMachine;
+
 use crate::app::App;
+use crate::document::DocumentId;
 use crate::term::Guard;
 
-use super::{Effects, Msg};
+use super::{Cmd, Effects, Msg};
+
+/// The buffer size at/over which `bootstrap` defers the first display-
+/// pipeline compute to a background `Cmd` instead of running it
+/// synchronously ahead of the first draw (issue #11). Chosen from measured
+/// post-fix pipeline cost: every non-pathological shape measured completes
+/// `sync_content` + `snapshot` comfortably under 40ms at 1 MiB (worst case
+/// observed: `many_short_lines`, 31ms sync_content + 38ms snapshot on the
+/// reference machine, release profile) — too fast to justify an extra frame
+/// or a visible flash — while a 5 MiB document in that same shape already
+/// costs several hundred ms, the regime a "still preparing" indicator earns
+/// its keep in. 1 MiB is comfortably above an ordinary note or README and
+/// comfortably below the sizes the issue's "multi-megabyte" title names.
+const LARGE_DOC_BOOTSTRAP_BYTES: usize = 1_048_576;
 
 /// Everything `runtime::run`'s main loop needs once bootstrap has finished:
 /// the terminal guard, the message channel's two ends, and the in-flight
@@ -143,22 +161,49 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         super::discharge(&mut effects, &mut guard, &tx, &mut save_handles)?;
     }
 
-    app.sync_view();
+    if app.active_doc().buffer.content().len() < LARGE_DOC_BOOTSTRAP_BYTES {
+        app.sync_view();
 
-    // Inline embeds are reconciled from the post-dispatch chokepoint, which
-    // only runs once a message arrives — and a user who opens a file and
-    // simply looks at it generates none, so every embed stayed unspawned and
-    // rendered as a blank gap forever. The same startup gap the block above
-    // closes for the highlight and for an image document's own decode.
-    //
-    // It cannot join that block: `sync_embeds` reads the parsed block tree,
-    // which is empty until `sync_view` above has run. Discovery therefore
-    // belongs here, after the first parse and before the loop parks on
-    // `recv`. Decode replies arrive asynchronously and redraw on their own.
-    {
+        // Inline embeds are reconciled from the post-dispatch chokepoint,
+        // which only runs once a message arrives — and a user who opens a
+        // file and simply looks at it generates none, so every embed stayed
+        // unspawned and rendered as a blank gap forever. The same startup
+        // gap the block above closes for the highlight and for an image
+        // document's own decode.
+        //
+        // It cannot join that block: `sync_embeds` reads the parsed block
+        // tree, which is empty until `sync_view` above has run. Discovery
+        // therefore belongs here, after the first parse and before the loop
+        // parks on `recv`. Decode replies arrive asynchronously and redraw
+        // on their own.
         let mut effects = Effects::default();
         crate::graphics::sync_embeds(app, app.active, &mut effects);
         super::discharge(&mut effects, &mut guard, &tx, &mut save_handles)?;
+    } else {
+        // Over the threshold: the synchronous pipeline above `sync_view`
+        // would run is deferred to a background `Cmd` instead, so the first
+        // draw below never blocks on it. `relayout` alone (not `sync_view`)
+        // sizes the viewport — needed both for the frame this draws and for
+        // the wrap width the deferred compute below runs against — without
+        // touching `doc.view`, which stays `None` until the reply lands;
+        // `render::draw` falls back to unstyled raw buffer lines while it
+        // does. Every other `sync_view` concern (focus, reveal, the search
+        // bar, `doc.icons`) is a no-op until a document has a view to paint
+        // a caret or a match onto, and is caught up for free by the
+        // ordinary `App::sync_view` the main loop already runs after every
+        // message — including the reply itself once it arrives.
+        app.relayout();
+        crate::messages::info(app, "Preparing a large document for display…");
+        let doc = app.active_doc();
+        let cmd = bootstrap_view_cmd(
+            app.active,
+            doc.buffer.version(),
+            doc.buffer.content().to_string(),
+            doc.viewport.width,
+            app.icons(),
+            doc.kind,
+        );
+        super::spawn_cmd(cmd, tx.clone(), &mut save_handles);
     }
 
     guard.draw(|frame| crate::render::draw(app, frame))?;
@@ -168,5 +213,42 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         tx,
         rx,
         save_handles,
+    })
+}
+
+/// The large-document bootstrap compute: exactly the pipeline `Document::
+/// view` runs synchronously for every ordinary message (`sync_content` ->
+/// `set_width` -> `sync_cursors` -> `snapshot`), against an owned scratch
+/// `Buffer`/`DocMachine` built from a snapshot of the live document's
+/// content and configuration rather than a live borrow — no other shape
+/// crosses the thread boundary an `FnOnce() -> Option<Msg> + Send + 'static`
+/// `Cmd` requires. Replies with the finished `DocMachine` itself (already
+/// self-consistent: `dirty` cleared, its cache warm) so installing the
+/// reply is a plain replacement rather than a second, redundant rebuild on
+/// the main thread — `dispatch::handle_bootstrap_view_ready` swaps it in
+/// wholesale when the reply is still current.
+fn bootstrap_view_cmd(
+    id: DocumentId,
+    version: u64,
+    content: String,
+    width: u16,
+    icons: rune_md::icons::IconSet,
+    kind: rune_syntax::DocumentKind,
+) -> Cmd {
+    Cmd::bootstrap_view(move || {
+        let buf = Buffer::new(content);
+        let mut machine = DocMachine::new();
+        machine.set_kind(kind);
+        machine.set_width(width);
+        machine.set_icons(icons);
+        machine.sync_content(&buf);
+        machine.sync_cursors(&buf, &CursorSet::new(0));
+        let view = machine.snapshot(&buf);
+        Some(Msg::BootstrapViewReady {
+            id,
+            version,
+            machine: Box::new(machine),
+            view,
+        })
     })
 }

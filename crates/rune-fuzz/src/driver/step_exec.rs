@@ -298,7 +298,8 @@ pub(super) fn step_and_check(
             | CmdKind::ReadFile
             | CmdKind::Highlight
             | CmdKind::ImageDecode
-            | CmdKind::SearchHistory => {
+            | CmdKind::SearchHistory
+            | CmdKind::BootstrapView => {
                 // Deliberately dropped, each for its own already-documented
                 // reason: the four timers/subprocess spawns
                 // (`QuitTimeout`/`ClipboardRead`/`SaveConfirmTimeout`/
@@ -306,11 +307,14 @@ pub(super) fn step_and_check(
                 // run inline in a headless driver; `OpenExternal` forks
                 // `/usr/bin/open` and is unreachable from this driver by
                 // construction; `ReadDir`/`ReadFile`/`Highlight`/
-                // `ImageDecode`/`SearchHistory` are off-thread reads/parses
-                // this driver has no discharge path for yet (their results
-                // never reach `update`, so nothing they'd produce is
-                // observable either way). Each arm above IS discharged —
-                // this arm is the intentional rest, not an accidental one.
+                // `ImageDecode`/`SearchHistory`/`BootstrapView` are off-thread
+                // reads/parses this driver has no discharge path for yet
+                // (their results never reach `update`, so nothing they'd
+                // produce is observable either way — `BootstrapView` is also
+                // unreachable from this driver by construction, since it is
+                // only ever spawned from `runtime::bootstrap`, which this
+                // driver never runs). Each arm above IS discharged — this arm
+                // is the intentional rest, not an accidental one.
             }
         }
     }

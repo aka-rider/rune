@@ -195,6 +195,19 @@ pub enum Msg {
         version: u64,
         result: Option<HighlightReply>,
     },
+    /// The deferred bootstrap display-pipeline compute for a large document
+    /// completed — `bootstrap::bootstrap_view_cmd`'s reply, routed to
+    /// `dispatch::handle_bootstrap_view_ready`. `version` is the buffer
+    /// version the compute ran against; a reply whose `version` no longer
+    /// matches the live buffer (an edit landed during the wait) is dropped —
+    /// the next ordinary `App::sync_view` recomputes from the live buffer
+    /// instead, the same fallback every stale-reply case in this enum takes.
+    BootstrapViewReady {
+        id: DocumentId,
+        version: u64,
+        machine: Box<rune_md::element::doc::DocMachine>,
+        view: rune_md::element::doc::ViewSnapshots,
+    },
     /// An image document's background decode completed,
     /// routed to `graphics::handle_image_decoded`. `generation` echoes
     /// `ImageState::in_flight` — `spawn_cmd` has no cancellation, so a
