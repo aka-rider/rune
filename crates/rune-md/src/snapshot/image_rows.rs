@@ -140,13 +140,8 @@ fn synthetic_image_row(
     target: &str,
 ) -> DisplayRow {
     let text = " ".repeat(width);
-    let cell_map = vec![-1i64; text.chars().count()];
-    let span = SyntaxSpan::Substituted {
-        scope: image_scope(),
-        text,
-        range: 0..0,
-        cell_map,
-    };
+    let cell_map = vec![None; text.chars().count()];
+    let span = SyntaxSpan::substituted_mapped(image_scope(), text, 0..0, cell_map);
     DisplayRow {
         spans: vec![span],
         wrap_row,

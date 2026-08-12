@@ -17,11 +17,11 @@ use rune_syntax::ScopeId;
 /// BEFORE the whole group when `include_separator` (every record but the
 /// first). No `│` anywhere: Pivoted abandons the box shape entirely.
 ///
-/// Label characters carry `buf = -1` (Gotcha 4: the `CELL-ORDER` fuzz
-/// invariant forbids a row's non-negative `buf_offset`s from decreasing,
-/// and a label comes from the HEADER line while `body_cells` comes from
-/// THIS row's own line — mixing them would go backwards; `-1` is also the
-/// honest answer, since a label isn't this row's own byte at all). Value
+/// Label characters carry `buf = None` (the `CELL-ORDER` fuzz invariant
+/// forbids a row's real `buf_offset`s from decreasing, and a label comes
+/// from the HEADER line while `body_cells` comes from THIS row's own line
+/// — mixing them would go backwards; `None` is also the honest answer,
+/// since a label isn't this row's own byte at all). Value
 /// characters keep whatever real buffer offset `render_cell` resolved for
 /// them — unlike Wrapped, which never keeps a real per-char mapping,
 /// Pivoted preserves it verbatim.
@@ -48,7 +48,7 @@ pub fn pivot_rows(
         for _ in 0..sep_width.max(1) {
             flat.push(FlatChar {
                 ch: '─',
-                buf: -1,
+                buf: None,
                 scope: sep_scope,
             });
         }
@@ -67,21 +67,21 @@ pub fn pivot_rows(
         for ch in "  ".chars() {
             flat.push(FlatChar {
                 ch,
-                buf: -1,
+                buf: None,
                 scope: label_scope,
             });
         }
         for ch in label_text.chars() {
             flat.push(FlatChar {
                 ch,
-                buf: -1,
+                buf: None,
                 scope: label_scope,
             });
         }
         for ch in ": ".chars() {
             flat.push(FlatChar {
                 ch,
-                buf: -1,
+                buf: None,
                 scope: value_scope,
             });
         }
@@ -103,10 +103,10 @@ pub fn pivot_rows(
 mod tests {
     use super::*;
 
-    fn rendered(text: &str, start_buf: i64) -> RenderedCell {
-        let src = (0..text.chars().count() as i64)
+    fn rendered(text: &str, start_buf: Option<u32>) -> RenderedCell {
+        let src = (0..text.chars().count() as u32)
             .map(|i| CellSrc {
-                buf: start_buf + i,
+                buf: start_buf.map(|b| b + i),
                 scope: ScopeId(0),
             })
             .collect();
@@ -118,8 +118,8 @@ mod tests {
 
     #[test]
     fn first_record_has_no_leading_separator() {
-        let header = vec![rendered("Name", -1)];
-        let body = vec![rendered("Alice", 10)];
+        let header = vec![rendered("Name", None)];
+        let body = vec![rendered("Alice", Some(10))];
         let rows = pivot_rows(&header, &body, false, 20);
         assert_eq!(rows.len(), 1, "no separator row for the first record");
         let text: String = rows[0].iter().map(|(t, _, _)| t.as_str()).collect();
@@ -129,8 +129,8 @@ mod tests {
 
     #[test]
     fn later_record_gets_a_leading_rule_of_the_requested_width() {
-        let header = vec![rendered("Name", -1)];
-        let body = vec![rendered("Bob", 10)];
+        let header = vec![rendered("Name", None)];
+        let body = vec![rendered("Bob", Some(10))];
         let rows = pivot_rows(&header, &body, true, 8);
         assert_eq!(rows.len(), 2, "one rule row, then one label:value row");
         let rule: String = rows[0].iter().map(|(t, _, _)| t.as_str()).collect();
@@ -139,15 +139,15 @@ mod tests {
 
     #[test]
     fn label_characters_are_decorative_value_characters_keep_real_offsets() {
-        let header = vec![rendered("Name", -1)];
-        let body = vec![rendered("Alice", 10)];
+        let header = vec![rendered("Name", None)];
+        let body = vec![rendered("Alice", Some(10))];
         let rows = pivot_rows(&header, &body, false, 20);
-        // The whole "  Name: " prefix (label) must be buf=-1; "Alice"
+        // The whole "  Name: " prefix (label) must be buf=None; "Alice"
         // (value) keeps the real offsets `rendered` assigned it.
         let mut seen_real = false;
         for (text, src, _) in &rows[0] {
             for (ch, s) in text.chars().zip(src.iter()) {
-                if ch.is_alphabetic() && "Alice".contains(ch) && s.buf >= 0 {
+                if ch.is_alphabetic() && "Alice".contains(ch) && s.buf.is_some() {
                     seen_real = true;
                 }
             }
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn missing_header_label_falls_back_to_col_n() {
-        let body = vec![rendered("x", 0)];
+        let body = vec![rendered("x", Some(0))];
         let rows = pivot_rows(&[], &body, false, 20);
         let text: String = rows[0].iter().map(|(t, _, _)| t.as_str()).collect();
         assert_eq!(text, "  Col1: x");

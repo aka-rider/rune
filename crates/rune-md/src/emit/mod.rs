@@ -53,9 +53,7 @@ use crate::parse::{line_at, line_end_at, line_starts};
 use rune_core::assert_invariant;
 use rune_syntax::element::{ByteRange, RevealState};
 use rune_syntax::syntax::TableRowInfo;
-use rune_syntax::{
-    CellMap, LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping,
-};
+use rune_syntax::{LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping};
 
 /// Every byte of every line is accounted for exactly once: either as part
 /// of a VISIBLE span (pushed by `push_span_split_by_line`) or as a hidden
@@ -212,17 +210,6 @@ fn unclaimed_subranges(
     result
 }
 
-/// One entry per visual char, the absolute buffer offset it maps back to.
-fn build_cell_map(content_start: usize, text: &str) -> CellMap {
-    let mut cm = Vec::with_capacity(text.chars().count());
-    let mut i = 0usize;
-    for ch in text.chars() {
-        cm.push((content_start + i) as i64);
-        i += ch.len_utf8();
-    }
-    cm
-}
-
 /// The workhorse: split an absolute buffer range across the source lines it
 /// covers and push one `SyntaxSpan` per line-slice. Builds a `cell_map` only
 /// for `Rendered` spans (their text is always a direct, contiguous slice of
@@ -288,12 +275,7 @@ pub(crate) fn push_span_split_by_line(
                         (snapped_s, snapped_e, text)
                     }
                 };
-                SyntaxSpan::Substituted {
-                    scope,
-                    text: text.to_string(),
-                    range: s..e,
-                    cell_map: build_cell_map(s, text),
-                }
+                SyntaxSpan::substituted(s, text.to_string(), scope, s..e)
             } else {
                 SyntaxSpan::identical(content, scope, s..e)
             };

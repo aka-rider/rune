@@ -98,7 +98,7 @@ fn longest_atomic_unit_width(text: &str) -> usize {
 /// (separate files) share this exact shape instead of a second copy of it.
 pub(super) struct FlatChar {
     pub(super) ch: char,
-    pub(super) buf: i64,
+    pub(super) buf: Option<u32>,
     pub(super) scope: ScopeId,
 }
 
@@ -138,7 +138,7 @@ pub(super) fn group_runs(flat: &[FlatChar]) -> Vec<(String, Vec<CellSrc>, ScopeI
 /// Pushes one column's content slot, padded to `w` per `align`: `None`/
 /// `Left` pads on the right, `Right` pads on the left, `Center` splits the
 /// fill (the shorter half first, via `(w-content)/2` floor-division).
-/// Padding chars are decorative (`buf = -1`, the row's own
+/// Padding chars are decorative (`buf = None`, the row's own
 /// role scope); the cell's own chars keep whatever [`super::render::render_cell`]
 /// resolved for them.
 fn push_padded_content(
@@ -158,7 +158,7 @@ fn push_padded_content(
     for _ in 0..left_fill {
         flat.push(FlatChar {
             ch: ' ',
-            buf: -1,
+            buf: None,
             scope: role_scope,
         });
     }
@@ -172,7 +172,7 @@ fn push_padded_content(
     for _ in 0..right_fill {
         flat.push(FlatChar {
             ch: ' ',
-            buf: -1,
+            buf: None,
             scope: role_scope,
         });
     }
@@ -180,8 +180,8 @@ fn push_padded_content(
 
 /// One Grid content row (header or body): `│` opens column 0 and closes
 /// every column (`n + 1` bars total, row width `Σw + 3n + 1`), one padding
-/// space each side of every column's content slot. Bars carry `buf = -1`
-/// and `markup.table.border`; padding carries `buf = -1` and `role_scope`
+/// space each side of every column's content slot. Bars carry `buf = None`
+/// and `markup.table.border`; padding carries `buf = None` and `role_scope`
 /// (the row's own header/body scope) — DIFFERENT scopes, so a bar and its
 /// adjacent padding space never merge into one run even though they sit
 /// next to each other.
@@ -199,7 +199,7 @@ pub fn grid_row(
     let mut flat: Vec<FlatChar> = Vec::new();
     flat.push(FlatChar {
         ch: '│',
-        buf: -1,
+        buf: None,
         scope: border,
     });
     for (i, &w) in widths.iter().enumerate() {
@@ -207,18 +207,18 @@ pub fn grid_row(
         let cell = cells.get(i).unwrap_or(&empty);
         flat.push(FlatChar {
             ch: ' ',
-            buf: -1,
+            buf: None,
             scope: role_scope,
         });
         push_padded_content(&mut flat, cell, w, align, role_scope);
         flat.push(FlatChar {
             ch: ' ',
-            buf: -1,
+            buf: None,
             scope: role_scope,
         });
         flat.push(FlatChar {
             ch: '│',
-            buf: -1,
+            buf: None,
             scope: border,
         });
     }
@@ -242,7 +242,7 @@ pub enum BorderKind {
 /// provenance beyond "decorative") doesn't need `render_cell`'s per-char
 /// `CellSrc`; callers that DO need that (`separator_row`, replacing the
 /// source delimiter LINE and therefore needing a byte-tiled span) wrap this
-/// string's chars in `buf = -1` themselves.
+/// string's chars in `buf = None` themselves.
 pub fn border_row(widths: &[usize], kind: BorderKind) -> String {
     let (left, mid, right) = match kind {
         BorderKind::Top => ('┌', '┬', '┐'),
@@ -255,22 +255,20 @@ pub fn border_row(widths: &[usize], kind: BorderKind) -> String {
         if i > 0 {
             s.push(mid);
         }
-        for _ in 0..(w + 2) {
-            s.push('─');
-        }
+        s.push_str(&"─".repeat(w + 2));
     }
     s.push(right);
     s
 }
 
 /// The Grid layout's replacement for the source `|---|---|` delimiter line
-/// — one run, every char decorative (`buf = -1`) and scoped
+/// — one run, every char decorative (`buf = None`) and scoped
 /// `markup.table.separator` (distinct from a content row's
 /// `markup.table.border`, Gotcha/plan WP2.S6).
 pub fn separator_row(widths: &[usize]) -> Vec<(String, Vec<CellSrc>, ScopeId)> {
     let text = border_row(widths, BorderKind::Middle);
     let scope = style::table_separator_scope();
-    let src: Vec<CellSrc> = text.chars().map(|_| CellSrc { buf: -1, scope }).collect();
+    let src: Vec<CellSrc> = text.chars().map(|_| CellSrc { buf: None, scope }).collect();
     vec![(text, src, scope)]
 }
 
@@ -324,8 +322,12 @@ pub fn choose(widths: &[usize], min_widths: &[usize], avail: usize) -> TableLayo
     let equal_share = content_budget / n;
     let mut atomic_budget = 0usize;
     let mut flex_count = 0usize;
-    for i in 0..n {
-        let min_w = min_widths.get(i).copied().unwrap_or(0);
+    for min_w in min_widths
+        .iter()
+        .copied()
+        .chain(std::iter::repeat(0))
+        .take(n)
+    {
         if min_w > equal_share {
             atomic_budget += min_w;
         } else {
@@ -363,17 +365,15 @@ pub fn constrain_widths(
         return Vec::new();
     }
 
-    let mut result = vec![0usize; n];
-    let mut floor_total = 0usize;
-    for i in 0..n {
-        let natural = widths.get(i).copied().unwrap_or(0);
-        let min_w = min_widths.get(i).copied().unwrap_or(0);
-        let floor = 3usize.max(min_w).min(natural);
-        if let Some(r) = result.get_mut(i) {
-            *r = floor;
-        }
-        floor_total += floor;
-    }
+    let widths_or_zero = || widths.iter().copied().chain(std::iter::repeat(0));
+    let min_widths_or_zero = || min_widths.iter().copied().chain(std::iter::repeat(0));
+
+    let result: Vec<usize> = widths_or_zero()
+        .zip(min_widths_or_zero())
+        .take(n)
+        .map(|(natural, min_w)| 3usize.max(min_w).min(natural))
+        .collect();
+    let floor_total: usize = result.iter().sum();
 
     let remaining = (content_budget as isize) - (floor_total as isize);
     if remaining <= 0 {
@@ -381,45 +381,45 @@ pub fn constrain_widths(
     }
     let remaining = remaining as usize;
 
-    let total_stretch: usize = (0..n)
-        .map(|i| {
-            widths
-                .get(i)
-                .copied()
-                .unwrap_or(0)
-                .saturating_sub(result.get(i).copied().unwrap_or(0))
-        })
+    let total_stretch: usize = widths_or_zero()
+        .zip(result.iter().copied())
+        .map(|(natural, floor)| natural.saturating_sub(floor))
         .sum();
 
     if total_stretch == 0 {
         let per_col = remaining / n;
-        for r in &mut result {
-            *r += per_col;
-        }
-        return result;
+        return result.into_iter().map(|r| r + per_col).collect();
     }
+
+    let allocs: Vec<usize> = widths_or_zero()
+        .zip(result.iter().copied())
+        .map(|(natural, floor)| {
+            let stretch = natural.saturating_sub(floor);
+            if stretch == 0 {
+                0
+            } else {
+                ((stretch * remaining) / total_stretch).min(stretch)
+            }
+        })
+        .collect();
 
     let mut leftover = remaining;
-    for i in 0..n {
-        let natural = widths.get(i).copied().unwrap_or(0);
-        let stretch = natural.saturating_sub(result.get(i).copied().unwrap_or(0));
-        if stretch == 0 {
-            continue;
-        }
-        let alloc = ((stretch * remaining) / total_stretch).min(stretch);
-        if let Some(r) = result.get_mut(i) {
-            *r += alloc;
-        }
-        leftover = leftover.saturating_sub(alloc);
-    }
+    let mut result: Vec<usize> = result
+        .into_iter()
+        .zip(allocs)
+        .map(|(floor, alloc)| {
+            leftover = leftover.saturating_sub(alloc);
+            floor + alloc
+        })
+        .collect();
 
     if leftover > 0 {
-        let mut widest = 0usize;
-        for i in 1..n {
-            if widths.get(i).copied().unwrap_or(0) > widths.get(widest).copied().unwrap_or(0) {
-                widest = i;
-            }
-        }
+        let widest = widths
+            .iter()
+            .enumerate()
+            .max_by_key(|&(i, w)| (*w, std::cmp::Reverse(i)))
+            .map(|(i, _)| i)
+            .unwrap_or_default();
         if let Some(r) = result.get_mut(widest) {
             *r += leftover;
         }

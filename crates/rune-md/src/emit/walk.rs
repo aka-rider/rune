@@ -265,14 +265,14 @@ fn push_task_checkbox(
         return;
     }
 
-    let span = SyntaxSpan::Substituted {
+    let span = SyntaxSpan::substituted_mapped(
         // Pre-WP4 this was `StyleId::TaskMarker`; WP4 folded that variant
         // into `list_marker_style`'s task arm ("markup.list.checked").
-        scope: list_marker_style(true),
-        text: glyph.to_string(),
-        range: task.start..task.end,
-        cell_map: vec![task.start as i64],
-    };
+        list_marker_style(true),
+        glyph.to_string(),
+        task.start..task.end,
+        vec![Some(task.start as u32)],
+    );
     if let Some(bucket) = out.get_mut(line) {
         bucket.push(span);
     }

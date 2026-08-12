@@ -35,9 +35,8 @@ use crate::table::layout::{BorderKind, border_row};
 /// table border with no source line at all (`synthetic: true`, `wrap_row`
 /// borrowed from the adjacent content row it was inserted next to — see
 /// `expand_tables`). Every char of a synthetic row's one span carries
-/// `cell_map` entry `-1` and an empty `range`: it has no buffer
-/// correspondence, decorative through and through (plan Gotcha 3, the
-/// `CELL-OFFSET` fuzz invariant).
+/// `cell_map` entry `None` and an empty `range`: it has no buffer
+/// correspondence, decorative through and through.
 #[derive(Clone, Debug)]
 pub struct DisplayRow {
     pub spans: Vec<SyntaxSpan>,
@@ -213,12 +212,12 @@ impl DisplaySnapshot {
         let n = n.max(1);
         let rows = (0..n)
             .map(|row| DisplayRow {
-                spans: vec![SyntaxSpan::Substituted {
-                    scope: table_border_scope(),
-                    text: String::new(),
-                    range: 0..0,
-                    cell_map: Vec::new(),
-                }],
+                spans: vec![SyntaxSpan::substituted(
+                    0,
+                    String::new(),
+                    table_border_scope(),
+                    0..0,
+                )],
                 wrap_row: 0,
                 synthetic: true,
                 decor: None,
@@ -282,13 +281,13 @@ fn synthetic_border(
     line_start: usize,
 ) -> DisplayRow {
     let text = border_row(widths, kind);
-    let cell_map = vec![-1i64; text.chars().count()];
-    let span = SyntaxSpan::Substituted {
-        scope: table_border_scope(),
+    let cell_map = vec![None; text.chars().count()];
+    let span = SyntaxSpan::substituted_mapped(
+        table_border_scope(),
         text,
-        range: line_start..line_start,
+        line_start..line_start,
         cell_map,
-    };
+    );
     DisplayRow {
         spans: vec![span],
         wrap_row,

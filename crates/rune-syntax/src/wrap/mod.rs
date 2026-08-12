@@ -253,9 +253,9 @@ fn slice_spans(
                     .unwrap_or(0);
                 let end_runes = start_runes + sliced.chars().count();
                 // Clamp rather than discard the whole map on a length
-                // mismatch ([rune-syntax 2]): a one-entry-short `cell_map`
+                // mismatch: a one-entry-short `cell_map`
                 // used to cost the entire span (`unwrap_or_default()` ->
-                // every char in it became caret-unreachable via the `-1`
+                // every char in it became caret-unreachable via the `None`
                 // no-correspondence sentinel). Clamping keeps every
                 // in-bounds mapping the producer DID supply; only the
                 // genuinely missing tail is lost, and the mismatch itself
@@ -271,20 +271,20 @@ fn slice_spans(
                         )
                     },
                 );
-                SyntaxSpan::Substituted {
-                    scope: *scope,
-                    text: sliced.to_string(),
-                    range: range.clone(),
+                SyntaxSpan::substituted_mapped(
+                    *scope,
+                    sliced.to_string(),
+                    range.clone(),
                     // `get` + `unwrap_or_default` rather than a raw index:
                     // the clamp above guarantees this `Some`s, but the
                     // fallback stays as defense-in-depth rather than an
                     // indexing panic if that guarantee is ever
                     // violated.
-                    cell_map: cell_map
+                    cell_map
                         .get(clamped_start..clamped_end)
-                        .map(<[i64]>::to_vec)
+                        .map(<[Option<u32>]>::to_vec)
                         .unwrap_or_default(),
-                }
+                )
             }
         };
         result.push(out);
@@ -297,7 +297,6 @@ fn slice_spans(
 mod tests {
     use super::*;
     use crate::scope::ScopeId;
-    use crate::syntax::CellMap;
 
     const TEXT: ScopeId = ScopeId(0);
     const CODE: ScopeId = ScopeId(1);
@@ -390,19 +389,13 @@ mod tests {
         // producer's `SyntaxSnapshot`, irrelevant to `WrapMap`).
         let content = "x `aaaaaaaaaaaaaaaaaaaa` y\n";
         let code_text = "aaaaaaaaaaaaaaaaaaaa";
-        let cell_map: CellMap = (3..3 + code_text.len() as i64).collect();
         let line0 = SyntaxLine {
             spans: vec![
                 SyntaxSpan::Identical {
                     scope: TEXT,
                     range: 0..2,
                 },
-                SyntaxSpan::Substituted {
-                    scope: CODE,
-                    text: code_text.to_string(),
-                    range: 3..23,
-                    cell_map,
-                },
+                SyntaxSpan::substituted(3, code_text.to_string(), CODE, 3..23),
                 SyntaxSpan::Identical {
                     scope: TEXT,
                     range: 24..26,
@@ -471,12 +464,7 @@ mod tests {
     fn visual_col_does_not_fuse_a_zwj_across_a_span_boundary() {
         let content = "a\u{200d}\u{1f469}"; // "a" + ZWJ + 👩
         let spans = vec![
-            SyntaxSpan::Substituted {
-                scope: TEXT,
-                text: "a".to_string(),
-                range: 0..1,
-                cell_map: vec![0],
-            },
+            SyntaxSpan::substituted(0, "a".to_string(), TEXT, 0..1),
             SyntaxSpan::Identical {
                 scope: TEXT,
                 range: 1..content.len(),

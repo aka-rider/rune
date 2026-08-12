@@ -132,7 +132,7 @@ fn hard_break_word(word: &str, max_width: usize) -> (Vec<String>, String, usize)
 
 /// One Wrapped-layout visual row: `│` opens/closes every column exactly
 /// like `layout::grid_row`, always left-aligned, but EVERY char — content,
-/// padding, and border alike — is decorative (`buf = -1`). Never keeps a
+/// padding, and border alike — is decorative (`buf = None`). Never keeps a
 /// real per-char buffer offset for this layout at all, unlike Grid — once
 /// word-wrap has reshuffled a cell's content across several visual rows,
 /// "this char came from that one buffer byte" is no longer a claim this
@@ -147,7 +147,7 @@ pub fn wrapped_row(
     let mut flat: Vec<FlatChar> = Vec::new();
     flat.push(FlatChar {
         ch: '│',
-        buf: -1,
+        buf: None,
         scope: border,
     });
     for (i, &w) in widths.iter().enumerate() {
@@ -158,32 +158,32 @@ pub fn wrapped_row(
             .unwrap_or("");
         flat.push(FlatChar {
             ch: ' ',
-            buf: -1,
+            buf: None,
             scope: role_scope,
         });
         let content_w = display_width(cell_text);
         for ch in cell_text.chars() {
             flat.push(FlatChar {
                 ch,
-                buf: -1,
+                buf: None,
                 scope: role_scope,
             });
         }
         for _ in 0..w.saturating_sub(content_w) {
             flat.push(FlatChar {
                 ch: ' ',
-                buf: -1,
+                buf: None,
                 scope: role_scope,
             });
         }
         flat.push(FlatChar {
             ch: ' ',
-            buf: -1,
+            buf: None,
             scope: role_scope,
         });
         flat.push(FlatChar {
             ch: '│',
-            buf: -1,
+            buf: None,
             scope: border,
         });
     }
@@ -235,7 +235,7 @@ mod tests {
         assert!(text.starts_with("│ ab"));
         assert!(text.ends_with('│'));
         for (_, src, _) in &runs {
-            assert!(src.iter().all(|c| c.buf == -1));
+            assert!(src.iter().all(|c| c.buf.is_none()));
         }
     }
 }

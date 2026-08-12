@@ -225,7 +225,11 @@ fn segment_cells_with(
                 // cell).
                 let mut char_idx = 0usize;
                 for grapheme in text.graphemes(true) {
-                    let offset = cell_map.get(char_idx).copied().unwrap_or(-1);
+                    let offset = cell_map
+                        .get(char_idx)
+                        .copied()
+                        .flatten()
+                        .map_or(-1, |o| o as i64);
                     push_grapheme_cells(&mut cells, &mut visual_col, grapheme, offset, style);
                     char_idx += grapheme.chars().count();
                 }

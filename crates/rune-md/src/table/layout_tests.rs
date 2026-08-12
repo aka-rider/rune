@@ -4,10 +4,10 @@
 
 use super::*;
 
-fn rendered(text: &str, start_buf: i64, scope: ScopeId) -> RenderedCell {
-    let src = (0..text.chars().count() as i64)
+fn rendered(text: &str, start_buf: u32, scope: ScopeId) -> RenderedCell {
+    let src = (0..text.chars().count() as u32)
         .map(|i| CellSrc {
-            buf: start_buf + i,
+            buf: Some(start_buf + i),
             scope,
         })
         .collect();

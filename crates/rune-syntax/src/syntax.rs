@@ -9,19 +9,22 @@ use crate::scope::ScopeId;
 use rune_core::assert_invariant;
 use rune_core::coords::{BufferPoint, SyntaxPoint};
 
-/// Per-visual-char buffer offset, `-1` for decorative/padding cells with no
-/// buffer correspondence. `rune-md`'s synthesized table-border rows already
-/// produce all-`-1` maps (a border
-/// row's text is decorative, with no buffer position to point back to);
-/// this crate itself never constructs one, but must accept whatever a
-/// producer hands it.
-pub type CellMap = Vec<i64>;
+/// Per-visual-char buffer offset, `None` for decorative/padding cells with
+/// no buffer correspondence. `rune-md`'s synthesized table-border rows
+/// already produce all-`None` maps (a border row's text is decorative, with
+/// no buffer position to point back to); this crate itself never
+/// constructs one, but must accept whatever a producer hands it.
+pub type CellMap = Vec<Option<u32>>;
 
 /// A per-run syntax-map span, modeled as
 /// two variants (plan Context: "Span becomes an enum ... Makes 'identical
 /// text carrying a cell map' unrepresentable") so a producer can no longer
 /// pair a `cell_map` with text that's already a verbatim buffer slice, nor
-/// omit one from text that isn't.
+/// omit one from text that isn't. `Substituted` is `#[non_exhaustive]`: a
+/// producer outside this crate must go through [`SyntaxSpan::substituted`]
+/// or [`SyntaxSpan::substituted_mapped`], the only two places a `cell_map`
+/// can be built, so the "length matches the text's char count" invariant
+/// holds by construction rather than by every call site's own discipline.
 #[derive(Clone, Debug)]
 pub enum SyntaxSpan {
     /// The visible text is a direct, verbatim slice of the buffer at
@@ -29,11 +32,13 @@ pub enum SyntaxSpan {
     /// is always recoverable as `&content[range]` (see [`SyntaxSpan::text`]);
     /// no `cell_map` is needed since buffer position and visible position
     /// coincide one-to-one.
+    #[non_exhaustive]
     Identical { scope: ScopeId, range: Range<usize> },
     /// The visible `text` differs from the buffer at `range` (concealed
     /// marker/delimiter bytes were dropped from what's shown), so it carries
     /// its own text plus a `cell_map` mapping each visible char back to its
     /// buffer offset.
+    #[non_exhaustive]
     Substituted {
         scope: ScopeId,
         text: String,
@@ -72,6 +77,59 @@ impl SyntaxSpan {
         SyntaxSpan::Identical {
             scope,
             range: snapped_start..snapped_end,
+        }
+    }
+
+    /// Checked constructor for a `Substituted` span whose `text` is a
+    /// contiguous, unbroken slice of the buffer starting at
+    /// `content_start` — the common case (a concealed delimiter dropped,
+    /// the rest kept verbatim). Builds the `cell_map` itself: one entry per
+    /// `char`, each the absolute buffer offset that char started at.
+    pub fn substituted(
+        content_start: usize,
+        text: String,
+        scope: ScopeId,
+        range: Range<usize>,
+    ) -> SyntaxSpan {
+        let mut cell_map = Vec::with_capacity(text.chars().count());
+        let mut offset = content_start;
+        for ch in text.chars() {
+            cell_map.push(Some(offset as u32));
+            offset += ch.len_utf8();
+        }
+        SyntaxSpan::Substituted {
+            scope,
+            text,
+            range,
+            cell_map,
+        }
+    }
+
+    /// Checked constructor for a `Substituted` span whose `cell_map` is not
+    /// a simple contiguous run — a slice of an existing map, a run of
+    /// decorative (`None`) cells, or a single-offset map for a synthesized
+    /// glyph. Owns the one length-agreement check every such producer used
+    /// to repeat on its own: `cell_map` must carry exactly one entry per
+    /// `char` in `text`, or later per-grapheme lookups (the renderer's own
+    /// `cell_map` walk) would silently misalign.
+    pub fn substituted_mapped(
+        scope: ScopeId,
+        text: String,
+        range: Range<usize>,
+        cell_map: CellMap,
+    ) -> SyntaxSpan {
+        assert_invariant!(cell_map.len() == text.chars().count(), || {
+            format!(
+                "Substituted span cell_map has {} entries for {} chars of text — producer bug",
+                cell_map.len(),
+                text.chars().count()
+            )
+        });
+        SyntaxSpan::Substituted {
+            scope,
+            text,
+            range,
+            cell_map,
         }
     }
 
@@ -412,56 +470,5 @@ pub(crate) fn build_line_conversions(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod tests {
-    use super::*;
-
-    /// The structural-hardening chokepoint: overlapping input intervals
-    /// merge into the minimal disjoint set covering the SAME bytes exactly
-    /// once — an overlapping-range producer bug degrades to a coordinate
-    /// inaccuracy (caught separately by the strict-invariants-gated
-    /// assert below, in tests), never a doubly-counted delta.
-    #[test]
-    fn merge_overlapping_intervals_counts_each_byte_once() {
-        // [0,5) and [3,8) share bytes [3,5) — merged into one [0,8): 8
-        // bytes total, NOT 5+5=10 (which is what a naive unmerged sum
-        // would produce, the exact "delta summed twice" shape reported for
-        // a fence's ranges colliding with its container's marker ranges).
-        let merged = merge_overlapping(vec![(0, 5), (3, 8), (10, 12)]);
-        assert_eq!(merged, vec![(0, 8), (10, 12)]);
-        let total_bytes: usize = merged.iter().map(|&(s, e)| e - s).sum();
-        assert_eq!(total_bytes, 10); // 8 (merged) + 2, not 5+5+2=12
-
-        // Touching-but-not-overlapping ranges also merge (no shared byte,
-        // but no gap either): [0,4) and [4,9).
-        let touching = merge_overlapping(vec![(0, 4), (4, 9)]);
-        assert_eq!(touching, vec![(0, 9)]);
-    }
-
-    #[test]
-    fn has_overlap_distinguishes_overlap_from_mere_adjacency() {
-        assert!(has_overlap(&[(0, 5), (3, 8)])); // shares bytes [3,5)
-        assert!(!has_overlap(&[(0, 4), (4, 9)])); // touches at 4, no shared byte
-        assert!(!has_overlap(&[(0, 2), (5, 7)])); // disjoint with a gap
-        assert!(!has_overlap(&[]));
-    }
-
-    /// Proves the strict-invariants-gated assert in
-    /// `build_line_conversions` is actually wired to fire on overlapping
-    /// input — the two prior findings on this branch (a fence's ranges
-    /// colliding with its container's marker ranges) were both this exact
-    /// shape, and would have tripped this assertion in tests immediately
-    /// instead of silently corrupting coordinate conversion. Unlike the
-    /// old `debug_assert!`-based version, the strict-invariants gate is
-    /// tied to `cfg(test)` (not `cfg(debug_assertions)`), so this fires in
-    /// a `--release` test run too (the assert is test-only, not
-    /// profile-only — a `cargo test --release` run must still catch this).
-    #[test]
-    #[should_panic(expected = "overlapping hidden ranges")]
-    fn build_line_conversions_debug_asserts_on_overlapping_input() {
-        // Two overlapping ranges on line 0: [0,5) and [3,8).
-        let starts = vec![0usize];
-        let hidden = vec![vec![(0usize, 5usize), (3usize, 8usize)]];
-        let _ = build_line_conversions(&starts, &hidden);
-    }
-}
+#[path = "syntax_tests.rs"]
+mod tests;

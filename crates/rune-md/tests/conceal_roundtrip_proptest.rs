@@ -246,16 +246,16 @@ proptest! {
             }
         }
 
-        // Every Substituted span's cell_map entries are -1 or valid char
+        // Every Substituted span's cell_map entries are None or valid char
         // boundaries within its range.
         for line in &lines {
             for sp in &line.spans {
                 let range = sp.range();
                 if let rune_syntax::SyntaxSpan::Substituted { cell_map, .. } = sp {
                     for &off in cell_map {
-                        if off == -1 {
+                        let Some(off) = off else {
                             continue;
-                        }
+                        };
                         let off = off as usize;
                         prop_assert!(off >= range.start && off < range.end);
                         prop_assert!(buf.content().is_char_boundary(off));
