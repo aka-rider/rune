@@ -41,6 +41,7 @@
 // (`style::table_scope`/`table_header_scope`/`table_separator_scope`/
 // `table_border_scope`/`text_scope`/`code_scope`/`link_scope`) — one
 // canonical scope resolver, not a second one reimplemented in `table::`.
+mod claim;
 mod decor;
 pub(crate) mod style;
 mod table;
@@ -53,19 +54,9 @@ use crate::parse::{line_at, line_end_at, line_starts};
 use rune_core::assert_invariant;
 use rune_syntax::element::{ByteRange, RevealState};
 use rune_syntax::syntax::TableRowInfo;
-use rune_syntax::{
-    CellMap, LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping,
-};
+use rune_syntax::{CellMap, LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
 
-/// Every byte of every line is accounted for exactly once: either as part
-/// of a VISIBLE span (pushed by `push_span_split_by_line`) or as a hidden
-/// delimiter range (`hide_range`). `accounted[line]` is the union of both,
-/// recorded so `fill_gaps` can find and surface whatever neither one
-/// covered — trailing/leading whitespace, tabs, a bare `\r` before `\n`,
-/// anything a comrak node's sourcepos doesn't happen to span — as ordinary
-/// visible text rather than silently dropping it (a dropped byte is a data
-/// hazard: the caret could no longer reach it).
-pub(crate) type Accounted = Vec<Vec<(usize, usize)>>;
+pub(crate) use claim::{Accounted, EmitOut};
 
 /// The chokepoint every range->line-bucket routine in this crate is built
 /// on: splits `range` across every source line it touches and calls `f`
@@ -104,128 +95,6 @@ fn for_each_line_slice(
     }
 }
 
-/// The out-params every `emit_block`/`emit_inline` call used to thread
-/// separately (`out`, `hidden`, `accounted`, plus WP2's new per-line table
-/// slot) — bundled so the walk's own recursive signatures stay under the
-/// arg-count the workspace's clippy gate allows (the repo bans
-/// `#[allow(clippy::too_many_arguments)]`). `tables[line]` starts `None` for
-/// every line; only the `Block::Table` arm ever writes it, and only when
-/// the table is `Rendered` (a `Revealed` table line has raw markup, not
-/// rendered geometry, to describe). `width` is `emit()`'s own `width`
-/// parameter, copied in unchanged (plan architectural decision 4: "a value
-/// has exactly one writer" — `DocMachine`'s wrap state, `emit()`'s only
-/// caller, is that one writer; this bundle just carries the SAME value the
-/// rest of the way to the one arm that reads it, `Block::Table`'s layout
-/// selector) — every other producer ignores this field entirely.
-pub(crate) struct EmitOut<'a> {
-    spans: &'a mut [Vec<SyntaxSpan>],
-    hidden: &'a mut Accounted,
-    accounted: &'a mut Accounted,
-    pub tables: &'a mut [Option<TableRowInfo>],
-    pub width: u16,
-    /// The glyph tier decor producers (`emit::decor`) draw from — threaded
-    /// alongside `width` rather than a global, so `emit_with` stays the one
-    /// place a caller controls it (plan WP2.S4/B2 resolution).
-    pub icons: &'a IconSet,
-    /// One slot per buffer line, written only by a Rendered block's decor
-    /// producer (heading icon, list bullet/number, quote bar, hr rule);
-    /// zipped into `SyntaxLine::decor` at assembly. Table lines are never
-    /// decorated (`table` already describes their geometry).
-    pub decors: &'a mut [Option<LineDecor>],
-}
-
-/// A claim on `line`'s unclaimed sub-ranges of a requested byte range,
-/// returned by `EmitOut::claim_free` and spent by `push_visible` or
-/// `record_hidden` — spending is what records the claim into `accounted`, so
-/// a `Granted` dropped without being spent leaves no trace and its bytes
-/// still reach `fill_gaps`. Neither `Copy` nor `Clone` and its fields are
-/// private to this module (and its descendants — `walk`, `walk_inline`,
-/// `table`, `decor`), so a producer outside the emit tree cannot fabricate
-/// one and a producer inside it cannot hold two at once for the same call.
-pub(crate) struct Granted {
-    line: usize,
-    pieces: Vec<(usize, usize)>,
-}
-
-impl EmitOut<'_> {
-    /// Grants whatever sub-ranges of `[start, end)` on `line` are not
-    /// already in `accounted` (visible span or hidden range, either
-    /// counts). `push_visible`/`record_hidden` are the only ways to spend
-    /// what this returns.
-    pub(crate) fn claim_free(&mut self, line: usize, start: usize, end: usize) -> Granted {
-        let existing = self.accounted.get(line).cloned().unwrap_or_default();
-        let pieces = unclaimed_subranges(start, end, &existing);
-
-        let requested_len = end.saturating_sub(start);
-        let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
-        assert_invariant!(kept_len == requested_len, || {
-            format!(
-                "line {line}: visible claim [{start},{end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
-                requested_len - kept_len
-            )
-        });
-
-        Granted { line, pieces }
-    }
-
-    /// Spends `granted` by pushing `spans` as that line's visible content
-    /// and recording its pieces into `accounted`.
-    pub(crate) fn push_visible(&mut self, granted: Granted, spans: Vec<SyntaxSpan>) {
-        if let Some(bucket) = self.spans.get_mut(granted.line) {
-            bucket.extend(spans);
-        }
-        if let Some(bucket) = self.accounted.get_mut(granted.line) {
-            bucket.extend(granted.pieces.iter().copied());
-        }
-    }
-
-    /// Spends `granted` by recording its pieces as hidden (delimiter bytes
-    /// dropped from the emitted text) and into `accounted`.
-    pub(crate) fn record_hidden(&mut self, granted: Granted) {
-        if let Some(bucket) = self.hidden.get_mut(granted.line) {
-            bucket.extend(granted.pieces.iter().copied());
-        }
-        if let Some(bucket) = self.accounted.get_mut(granted.line) {
-            bucket.extend(granted.pieces.iter().copied());
-        }
-    }
-}
-
-/// The sub-ranges of `[start, end)` NOT already covered by `existing` (a
-/// possibly unsorted, possibly-overlapping already-claimed set on the same
-/// line) — the visible-side counterpart of `rune_syntax`'s
-/// `merge_overlapping`'s hidden-side collapse. Reuses that same merge so
-/// both sides agree on what "already claimed" means.
-fn unclaimed_subranges(
-    start: usize,
-    end: usize,
-    existing: &[(usize, usize)],
-) -> Vec<(usize, usize)> {
-    if end <= start {
-        return Vec::new();
-    }
-    let unsorted: Vec<(usize, usize)> = existing.iter().copied().filter(|&(s, e)| e > s).collect();
-    let merged = merge_overlapping(unsorted);
-
-    let mut result = Vec::new();
-    let mut cursor = start;
-    for (s, e) in merged {
-        if e <= start || s >= end {
-            continue; // doesn't intersect [start, end) at all
-        }
-        let clipped_start = s.max(start);
-        let clipped_end = e.min(end);
-        if clipped_start > cursor {
-            result.push((cursor, clipped_start));
-        }
-        cursor = cursor.max(clipped_end);
-    }
-    if cursor < end {
-        result.push((cursor, end));
-    }
-    result
-}
-
 /// One entry per visual char, the absolute buffer offset it maps back to.
 fn build_cell_map(content_start: usize, text: &str) -> CellMap {
     let mut cm = Vec::with_capacity(text.chars().count());
@@ -256,7 +125,7 @@ pub(crate) fn push_span_split_by_line(
     for_each_line_slice(content, starts, range, |line, seg_start, seg_end| {
         let granted = out.claim_free(line, seg_start, seg_end);
         let spans: Vec<SyntaxSpan> = granted
-            .pieces
+            .pieces()
             .iter()
             .filter_map(|&(s, e)| build_line_span(content, line, s, e, scope, state))
             .collect();
@@ -431,15 +300,15 @@ pub fn emit_with(
     let mut tables: Vec<Option<TableRowInfo>> = (0..starts.len()).map(|_| None).collect();
     let mut decors: Vec<Option<LineDecor>> = (0..starts.len()).map(|_| None).collect();
 
-    let mut out = EmitOut {
-        spans: &mut spans,
-        hidden: &mut hidden,
-        accounted: &mut accounted,
-        tables: &mut tables,
+    let mut out = EmitOut::new(
+        &mut spans,
+        &mut hidden,
+        &mut accounted,
+        &mut tables,
         width,
         icons,
-        decors: &mut decors,
-    };
+        &mut decors,
+    );
     for b in blocks {
         walk::emit_block(content, &starts, b, 0, &mut out);
     }

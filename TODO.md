@@ -112,7 +112,6 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/materialize_ack/reactions.rs` — 517 (split candidate: the module already has a sibling `reactions_tests.rs` — move `close_if_pending`/`quit_if_pending`/`retire_quit_wait`, which don't depend on `handle_materialize_ack`'s own locals, to a sibling `quit.rs`)
   - `crates/rune-tui/src/guard.rs` — 754 (split candidate unchanged: its `#[cfg(test)] mod tests` block is well over a third of the file — move it to a `#[path]`-included sibling `guard_tests.rs` so it keeps access to the private `set_guard`/`handle_disk_conflict_key` it exercises)
   - `crates/rune-tui/src/messages/mod.rs` — 557
-  - `crates/rune-md/src/emit/mod.rs` — 515
   - `crates/rune-tui/src/render/filesearch.rs` — 546
   - `crates/rune-tui/src/rename.rs` — 555
   - `crates/rune-vfs/src/mem.rs` — 706 (`fail_resolve` and its tests pushed this further over)

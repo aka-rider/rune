@@ -1,6 +1,7 @@
-//! Tests for `emit::mod`'s core machinery (`unclaimed_subranges`,
-//! `push_span_split_by_line`, `emit` itself) — split out from `mod.rs` to
-//! keep it under the 500-line budget.
+//! Tests for `emit::mod`'s core machinery (`push_span_split_by_line`,
+//! `emit` itself) — split out from `mod.rs` to keep it under the 500-line
+//! budget. The claim primitive's own tests live with `EmitOut` in
+//! `emit::claim`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
@@ -8,59 +9,6 @@ use crate::element::doc::DocMachine;
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::CursorSet;
-
-/// The visible-side dedup computation, tested in isolation (no assert
-/// involved — `unclaimed_subranges` itself never panics, it just
-/// computes what's left). Mirrors "- \n  > q"'s shape: a claim
-/// ([0,8)) that overlaps a bit already claimed in the middle ([2,6)),
-/// leaving two disjoint unclaimed pieces.
-#[test]
-fn unclaimed_subranges_skips_already_claimed_bytes() {
-    let pieces = unclaimed_subranges(0, 8, &[(2, 6)]);
-    assert_eq!(pieces, vec![(0, 2), (6, 8)]);
-
-    // Fully covered: nothing left.
-    assert_eq!(
-        unclaimed_subranges(2, 6, &[(0, 8)]),
-        Vec::<(usize, usize)>::new()
-    );
-
-    // Disjoint existing claim: the whole requested range survives.
-    assert_eq!(unclaimed_subranges(0, 4, &[(10, 12)]), vec![(0, 4)]);
-
-    // Overlapping, unsorted, and touching existing entries are all
-    // handled via the same `merge_overlapping` the hidden side uses.
-    assert_eq!(
-        unclaimed_subranges(0, 10, &[(6, 8), (1, 3), (3, 4)]),
-        vec![(0, 1), (4, 6), (8, 10)]
-    );
-}
-
-/// A `Granted` dropped without being spent through `push_visible` or
-/// `record_hidden` leaves `accounted` untouched — the bytes it would have
-/// claimed still reach `fill_gaps` instead of vanishing.
-#[test]
-fn dropped_claim_leaves_accounted_unchanged() {
-    let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-    let mut hidden: Accounted = vec![Vec::new()];
-    let mut accounted: Accounted = vec![Vec::new()];
-    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-    let mut decors: Vec<Option<LineDecor>> = vec![None];
-    let icons = IconSet::unicode();
-    let mut out = test_out(
-        &mut spans,
-        &mut hidden,
-        &mut accounted,
-        &mut tables,
-        &mut decors,
-        &icons,
-    );
-
-    let granted = out.claim_free(0, 0, 4);
-    drop(granted);
-
-    assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
-}
 
 /// Proves `push_span_split_by_line`'s strict-invariants-gated assert
 /// actually fires when a second visible claim overlaps a byte an
@@ -78,15 +26,7 @@ fn test_out<'a>(
     decors: &'a mut [Option<LineDecor>],
     icons: &'a IconSet,
 ) -> EmitOut<'a> {
-    EmitOut {
-        spans,
-        hidden,
-        accounted,
-        tables,
-        width: 80,
-        icons,
-        decors,
-    }
+    EmitOut::new(spans, hidden, accounted, tables, 80, icons, decors)
 }
 
 #[test]

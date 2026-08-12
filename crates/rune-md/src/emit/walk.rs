@@ -241,7 +241,7 @@ fn push_task_checkbox(content: &str, starts: &[usize], task: ByteRange, out: &mu
     let line = line_at(starts, task.start);
 
     let granted = out.claim_free(line, task.start, task.end);
-    if granted.pieces != [(task.start, task.end)] {
+    if granted.pieces() != [(task.start, task.end)] {
         // The whole range was not cleanly unclaimed (an overlap
         // `claim_free`'s own assert already flagged) — there is no
         // half-glyph substitution, so drop the claim rather than desync
