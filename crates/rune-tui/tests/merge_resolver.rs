@@ -70,14 +70,10 @@ fn enter_two_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
-    let MergeState::Active { blocks, cur, .. } = &app.merge else {
+    let MergeState::Active { pairs, cur, .. } = &app.merge else {
         panic!("expected an active resolver, got {:?}", app.merge);
     };
-    assert_eq!(
-        blocks.len(),
-        2,
-        "fixture must produce exactly two conflicts"
-    );
+    assert_eq!(pairs.len(), 2, "fixture must produce exactly two conflicts");
     assert_eq!(*cur, 0);
     (app, bridge, doc_id)
 }
@@ -170,11 +166,11 @@ fn both_strips_markers_and_keeps_both_sides_as_one_edit() {
         "B keeps ours then theirs with no marker lines: {:?}",
         doc.buffer.content()
     );
-    let MergeState::Active { blocks, .. } = &app.merge else {
+    let MergeState::Active { pairs, .. } = &app.merge else {
         panic!("resolver still active after resolving 1 of 2");
     };
-    assert!(blocks[0].resolved);
-    assert!(!blocks[1].resolved);
+    assert!(pairs[0].block.resolved);
+    assert!(!pairs[1].block.resolved);
     assert_eq!(
         doc.buffer.content().matches("<<<<<<<").count(),
         1,

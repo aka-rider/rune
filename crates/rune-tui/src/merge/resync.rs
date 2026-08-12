@@ -20,7 +20,7 @@
 //! block's resolved-ness from the scan could therefore reopen a resolved
 //! block on an undo/redo anywhere else in the document. `affected` (the byte
 //! range the journal jump itself touched, in the same PRE-jump coordinate
-//! space `old_blocks`' spans already live in) scopes the reclassification:
+//! space the stored spans already live in) scopes the reclassification:
 //! a block whose OLD state was `resolved: true` and whose OLD span does not
 //! intersect `affected` keeps that `resolved: true` verbatim — only its
 //! span is re-derived by the scan below (still needed, since earlier
@@ -31,7 +31,7 @@ use crate::app::App;
 use crate::document::DocumentId;
 
 use super::frame::frame_block;
-use super::state::{Block, MergeState};
+use super::state::{Block, ConflictBlock, MergeState};
 
 /// Whether `[a_start, a_end)` and `[b_start, b_end)` share at least one
 /// byte — a zero-width span (an already-collapsed `B` block with nothing
@@ -60,8 +60,9 @@ fn first_unresolved_from(blocks: &[Block], from: usize) -> Option<usize> {
         .find(|&i| blocks.get(i).is_some_and(|b| !b.resolved))
 }
 
-/// Plan WP6.S1: re-derives `blocks`/`cur` from the LIVE buffer against the
-/// immutable `conflicts` list an `Active` merge already carries. A no-op
+/// Plan WP6.S1: re-derives each pair's `block`/`cur` from the LIVE buffer
+/// against the immutable `conflict` half an `Active` merge already
+/// carries. A no-op
 /// unless merge is `Active` ON `doc` specifically. Ends the merge (via
 /// `exit_in_place`, decision 13) when zero blocks come back unresolved —
 /// including the case where undo unwound past the working-form install
@@ -79,8 +80,7 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
     }
     let MergeState::Active {
         doc,
-        conflicts,
-        blocks: old_blocks,
+        pairs: old_pairs,
         cur,
         saved_display_name,
         theirs_obs,
@@ -95,14 +95,14 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
         .unwrap_or_default();
     let buffer_len = content.len();
 
-    let mut new_blocks = Vec::with_capacity(conflicts.len());
+    let mut new_blocks = Vec::with_capacity(old_pairs.len());
     let mut search_from = 0usize;
-    for c in &conflicts {
+    for pair in &old_pairs {
+        let c = &pair.conflict;
         let framed = frame_block(&c.ours, &c.theirs);
         if let Some(idx) = index_from(&content, &framed, search_from) {
             new_blocks.push(Block {
-                start: idx,
-                end: idx + framed.len(),
+                range: idx..idx + framed.len(),
                 resolved: false,
             });
             search_from = idx + framed.len();
@@ -118,15 +118,13 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
         };
         if ours_first && let Some(o) = ours_idx {
             new_blocks.push(Block {
-                start: o,
-                end: o + c.ours.len(),
+                range: o..o + c.ours.len(),
                 resolved: true,
             });
             search_from = o + c.ours.len();
         } else if let Some(t) = theirs_idx {
             new_blocks.push(Block {
-                start: t,
-                end: t + c.theirs.len(),
+                range: t..t + c.theirs.len(),
                 resolved: true,
             });
             search_from = t + c.theirs.len();
@@ -139,8 +137,7 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
             // misclassify as an open, un-navigable conflict.
             let at = search_from.min(buffer_len);
             new_blocks.push(Block {
-                start: at,
-                end: at,
+                range: at..at,
                 resolved: true,
             });
         }
@@ -152,8 +149,15 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
     // affected range (or an absent one, meaning "trust the scan
     // everywhere") may downgrade a previously-resolved block back to open.
     if let Some(range) = &affected {
-        for (new, old) in new_blocks.iter_mut().zip(old_blocks.iter()) {
-            if old.resolved && !intersects(old.start, old.end, range.start, range.end) {
+        for (new, old) in new_blocks.iter_mut().zip(old_pairs.iter()) {
+            if old.block.resolved
+                && !intersects(
+                    old.block.range.start,
+                    old.block.range.end,
+                    range.start,
+                    range.end,
+                )
+            {
                 new.resolved = true;
             }
         }
@@ -166,10 +170,10 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
     // when nothing reopened (redo re-resolving something, or a jump that
     // landed clean of any transition at all) does `cur` fall back to "stay
     // put if still valid, else nearest unresolved".
-    let reopened = old_blocks
+    let reopened = old_pairs
         .iter()
         .zip(new_blocks.iter())
-        .position(|(old, new)| old.resolved && !new.resolved);
+        .position(|(old, new)| old.block.resolved && !new.resolved);
     let new_cur = reopened.or_else(|| {
         if new_blocks.get(cur).is_some_and(|b| !b.resolved) {
             Some(cur)
@@ -178,10 +182,18 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
         }
     });
 
+    let new_pairs: Vec<ConflictBlock> = old_pairs
+        .into_iter()
+        .zip(new_blocks)
+        .map(|(old, block)| ConflictBlock {
+            conflict: old.conflict,
+            block,
+        })
+        .collect();
+
     app.merge = MergeState::Active {
         doc,
-        conflicts,
-        blocks: new_blocks,
+        pairs: new_pairs,
         cur: new_cur.unwrap_or(0),
         saved_display_name,
         theirs_obs,
@@ -215,18 +227,15 @@ mod tests {
     fn first_unresolved_from_wraps() {
         let blocks = vec![
             Block {
-                start: 0,
-                end: 0,
+                range: 0..0,
                 resolved: true,
             },
             Block {
-                start: 0,
-                end: 0,
+                range: 0..0,
                 resolved: false,
             },
             Block {
-                start: 0,
-                end: 0,
+                range: 0..0,
                 resolved: true,
             },
         ];

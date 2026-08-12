@@ -3,6 +3,8 @@
 //! Nothing here runs I/O or touches the buffer — [`super::begin`]/
 //! [`super::exit_in_place`] are the writers.
 
+use std::ops::Range;
+
 use rune_db::ObsId;
 
 use crate::document::DocumentId;
@@ -18,26 +20,30 @@ pub enum MergeIntent {
     Discard,
 }
 
-/// One still-unresolved conflict's ORIGINAL ours/theirs text, aligned
-/// index-for-index with `blocks` below — immutable for the lifetime of the
-/// merge attempt, unlike `Block`'s byte range (which shifts as earlier
-/// blocks in the buffer get resolved to a different length).
+/// One still-unresolved conflict's ORIGINAL ours/theirs text — immutable
+/// for the lifetime of the merge attempt, unlike `Block`'s byte range
+/// (which shifts as earlier blocks in the buffer get resolved to a
+/// different length).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Conflict {
     pub ours: String,
     pub theirs: String,
 }
 
-/// One conflict's current byte range in the LIVE working-form buffer —
-/// `[start, end)`, a half-open span covering the whole framed block
-/// (`<<<<<<< editor` through `>>>>>>> disk\n` inclusive) while `resolved`
-/// is `false`, or the collapsed replacement span once a future resolver
-/// (plan WP4) accepts it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One conflict's current byte range in the LIVE working-form buffer — a
+/// half-open span covering the whole framed block (`<<<<<<< editor` through
+/// `>>>>>>> disk\n` inclusive) while `resolved` is `false`, or the collapsed
+/// replacement span once a future resolver (plan WP4) accepts it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
-    pub start: usize,
-    pub end: usize,
+    pub range: Range<usize>,
     pub resolved: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConflictBlock {
+    pub conflict: Conflict,
+    pub block: Block,
 }
 
 /// Merge mode's state machine (plan WP3.S3). `Default` is `Inactive` — no
@@ -61,8 +67,7 @@ pub enum MergeState {
     /// verbatim by `exit_in_place`.
     Active {
         doc: DocumentId,
-        conflicts: Vec<Conflict>,
-        blocks: Vec<Block>,
+        pairs: Vec<ConflictBlock>,
         cur: usize,
         saved_display_name: Option<String>,
         /// The disk observation the working form was built against — the
@@ -87,11 +92,10 @@ impl MergeState {
     }
 
     /// How many blocks in an `Active` state are still unresolved — `0` for
-    /// every other state, matching `blocks.iter().filter(...)`'s own empty
-    /// sum for a merge that was never entered.
+    /// every other state.
     pub fn unresolved_count(&self) -> usize {
         match self {
-            MergeState::Active { blocks, .. } => blocks.iter().filter(|b| !b.resolved).count(),
+            MergeState::Active { pairs, .. } => pairs.iter().filter(|p| !p.block.resolved).count(),
             _ => 0,
         }
     }

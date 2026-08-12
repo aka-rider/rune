@@ -162,7 +162,7 @@ pub struct Snapshot {
     pub saved_version_by_doc: BTreeMap<DocumentId, u64>,
     /// Whether `app.merge` is `Active`/`Pending` right now (plan WP7.S1) —
     /// a lean projection of `MergeState`, not the enum itself: no checker
-    /// here needs the working-form `conflicts`/`blocks` bodies, only
+    /// here needs the working-form `pairs` bodies, only
     /// whether an attempt is live, which document it names, and how many
     /// blocks remain unresolved.
     pub merge_active: bool,

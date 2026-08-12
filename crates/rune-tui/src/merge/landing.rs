@@ -145,13 +145,13 @@ pub(crate) fn handle_merge_prep_ack(
             rune_merge::merge_hunks_no_ancestor(ours_text.as_bytes(), theirs_text.as_bytes())
         }
     };
-    let Ok((buffer_text, blocks, conflicts)) = build_marker_buffer(&hunks) else {
+    let Ok((buffer_text, pairs)) = build_marker_buffer(&hunks) else {
         app.merge = MergeState::Inactive;
         messages::error(app, UTF8_REFUSAL);
         return;
     };
 
-    let first_start = blocks.first().map(|b| b.start).unwrap_or(0);
+    let first_start = pairs.first().map(|p| p.block.range.start).unwrap_or(0);
     if !install_whole_range(app, doc, &buffer_text, first_start) {
         app.merge = MergeState::Inactive;
         messages::error(app, "merge failed — the document could not be updated");
@@ -159,7 +159,7 @@ pub(crate) fn handle_merge_prep_ack(
     }
     let adopted = enqueue_resolve_adopt(app, doc, theirs_obs);
 
-    if blocks.is_empty() {
+    if pairs.is_empty() {
         if adopted {
             // Terminal success: a merge with zero conflicts completed the
             // moment it was installed.
@@ -187,20 +187,18 @@ pub(crate) fn handle_merge_prep_ack(
 
     let saved_display_name = super::install_resolver_display_name(app, doc);
 
-    let unresolved = blocks.len();
+    let unresolved = pairs.len();
     super::persist::enqueue_merge_open(
         app,
         doc,
         prep.sync.ancestor.as_ref().and_then(|v| v.obs),
         theirs_obs,
         &buffer_text,
-        &blocks,
-        &conflicts,
+        &pairs,
     );
     app.merge = MergeState::Active {
         doc,
-        conflicts,
-        blocks,
+        pairs,
         cur: 0,
         saved_display_name,
         theirs_obs,
@@ -451,11 +449,11 @@ mod tests {
             "expected the absent-ancestor notice, got {:?}",
             messages::log_text(&app)
         );
-        let MergeState::Active { blocks, .. } = &app.merge else {
+        let MergeState::Active { pairs, .. } = &app.merge else {
             panic!("expected an Active merge, got {:?}", app.merge);
         };
         assert_eq!(
-            blocks.len(),
+            pairs.len(),
             1,
             "expected exactly one localized conflict, not a whole-file collapse"
         );

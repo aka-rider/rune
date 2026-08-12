@@ -105,11 +105,17 @@ fn is_theirs_marker(line: &[u8]) -> bool {
     line.starts_with(b">>>>>>>")
 }
 
-/// Splits diffy's diff3 output into alternating clean segments and conflict
-/// blocks. `cleans[i]` precedes `conflicts[i]`; `cleans.len() ==
-/// conflicts.len() + 1`.
-fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
-    let mut cleans = Vec::new();
+/// The result of splitting diffy's diff3 output into alternating clean
+/// segments and conflict blocks: each conflict is paired directly with the
+/// clean segment immediately before it, so the two can never drift out of
+/// step the way two index-aligned `Vec`s could.
+#[derive(Default)]
+struct Diff3Parse {
+    conflicts: Vec<(Vec<u8>, Diff3Block)>,
+    trailing_clean: Vec<u8>,
+}
+
+fn parse_diff3(output: &[u8]) -> Diff3Parse {
     let mut conflicts = Vec::new();
     let mut current_clean = Vec::new();
     let mut remaining = output;
@@ -123,7 +129,7 @@ fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
             continue;
         }
 
-        cleans.push(std::mem::take(&mut current_clean));
+        let clean_before = std::mem::take(&mut current_clean);
 
         let mut block = Diff3Block::default();
         let mut section = Section::Ours;
@@ -147,11 +153,13 @@ fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
                 Section::Theirs => block.theirs.extend_from_slice(cline),
             }
         }
-        conflicts.push(block);
+        conflicts.push((clean_before, block));
     }
 
-    cleans.push(current_clean);
-    (cleans, conflicts)
+    Diff3Parse {
+        conflicts,
+        trailing_clean: current_clean,
+    }
 }
 
 /// Finds `needle` verbatim in `haystack`, returning its byte offset.
@@ -190,18 +198,24 @@ fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<Ra
     (end == input.len()).then_some(start..end)
 }
 
+/// `ours` and `theirs` are two different documents' byte streams — a
+/// `Range<usize>` meant for one silently anchors into the other if the two
+/// arguments are ever transposed, so each gets its own file-local type.
+struct OursRange(Range<usize>);
+struct TheirsRange(Range<usize>);
+
 /// Pushes the clean region between the last resolved position and the
 /// upcoming conflict, unless both sides are empty there.
 fn push_clean_region(
     hunks: &mut Vec<Hunk>,
     ours: &[u8],
     theirs: &[u8],
-    ours_range: Range<usize>,
-    theirs_range: Range<usize>,
+    ours_range: OursRange,
+    theirs_range: TheirsRange,
     merged_clean: &[u8],
 ) {
-    let ours_clean = ours.get(ours_range).unwrap_or(&[]);
-    let theirs_clean = theirs.get(theirs_range).unwrap_or(&[]);
+    let ours_clean = ours.get(ours_range.0).unwrap_or(&[]);
+    let theirs_clean = theirs.get(theirs_range.0).unwrap_or(&[]);
     if !ours_clean.is_empty() || !theirs_clean.is_empty() {
         hunks.push(classify_clean_region(
             ours_clean,
@@ -226,9 +240,9 @@ fn push_clean_region(
 /// leaving every other boundary in the file untouched. If nothing further
 /// ever anchors, the widened conflict runs to the end of both inputs.
 fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
-    let (cleans, conflicts) = parse_diff3(diff3_output);
+    let parsed = parse_diff3(diff3_output);
 
-    if conflicts.is_empty() {
+    if parsed.conflicts.is_empty() {
         return vec![Hunk::Conflict {
             ours: ours.to_vec(),
             theirs: theirs.to_vec(),
@@ -240,8 +254,10 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     let mut theirs_pos = 0usize;
     let mut i = 0usize;
 
-    while i < conflicts.len() {
-        let Some(block) = conflicts.get(i) else { break };
+    while i < parsed.conflicts.len() {
+        let Some((clean_before, block)) = parsed.conflicts.get(i) else {
+            break;
+        };
         let ours_range = anchor_section(ours, ours_pos, &block.ours);
         let theirs_range = anchor_section(theirs, theirs_pos, &block.theirs);
 
@@ -250,9 +266,9 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
                 &mut hunks,
                 ours,
                 theirs,
-                ours_pos..o.start,
-                theirs_pos..t.start,
-                cleans.get(i).map_or(&[][..], Vec::as_slice),
+                OursRange(ours_pos..o.start),
+                TheirsRange(theirs_pos..t.start),
+                clean_before,
             );
             hunks.push(Hunk::Conflict {
                 ours: ours.get(o.clone()).unwrap_or(&[]).to_vec(),
@@ -264,8 +280,8 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
             continue;
         }
 
-        let resync = ((i + 1)..conflicts.len()).find_map(|j| {
-            let next = conflicts.get(j)?;
+        let resync = ((i + 1)..parsed.conflicts.len()).find_map(|j| {
+            let (_, next) = parsed.conflicts.get(j)?;
             let o = anchor_section(ours, ours_pos, &next.ours)?;
             let t = anchor_section(theirs, theirs_pos, &next.theirs)?;
             Some((j, o, t))
@@ -292,7 +308,7 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
                 });
                 ours_pos = ours.len();
                 theirs_pos = theirs.len();
-                i = conflicts.len();
+                i = parsed.conflicts.len();
             }
         }
     }
@@ -301,9 +317,9 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
         &mut hunks,
         ours,
         theirs,
-        ours_pos..ours.len(),
-        theirs_pos..theirs.len(),
-        cleans.last().map_or(&[][..], Vec::as_slice),
+        OursRange(ours_pos..ours.len()),
+        TheirsRange(theirs_pos..theirs.len()),
+        &parsed.trailing_clean,
     );
 
     if hunks.is_empty() {
@@ -598,30 +614,32 @@ mod tests {
     #[test]
     fn parse_diff3_no_conflict_markers() {
         let output = b"line1\nline2\n";
-        let (cleans, conflicts) = parse_diff3(output);
-        assert_eq!(conflicts.len(), 0);
-        assert_eq!(cleans.len(), 1);
-        assert_eq!(cleans[0], output);
+        let parsed = parse_diff3(output);
+        assert_eq!(parsed.conflicts.len(), 0);
+        assert_eq!(parsed.trailing_clean, output);
     }
 
     #[test]
-    fn parse_diff3_cleans_len_is_conflicts_plus_one() {
+    fn parse_diff3_interleaves_clean_before_each_conflict_and_trailing_clean() {
         let output = b"before\n<<<<<<< ours\nours-line\n||||||| ancestor\nanc-line\n=======\ntheirs-line\n>>>>>>> theirs\nafter\n";
-        let (cleans, conflicts) = parse_diff3(output);
-        assert_eq!(cleans.len(), conflicts.len() + 1);
+        let parsed = parse_diff3(output);
+        assert_eq!(parsed.conflicts.len(), 1);
+        assert_eq!(parsed.conflicts[0].0, b"before\n");
+        assert_eq!(parsed.trailing_clean, b"after\n");
     }
 
     #[test]
     fn parse_diff3_conflict_sections() {
         let output =
             b"<<<<<<< ours\nours-line\n||||||| ancestor\nanc-line\n=======\ntheirs-line\n>>>>>>> theirs\n";
-        let (cleans, conflicts) = parse_diff3(output);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].ours, b"ours-line\n");
-        assert_eq!(conflicts[0].ancestor, b"anc-line\n");
-        assert_eq!(conflicts[0].theirs, b"theirs-line\n");
-        assert!(cleans[0].is_empty());
-        assert!(cleans[1].is_empty());
+        let parsed = parse_diff3(output);
+        assert_eq!(parsed.conflicts.len(), 1);
+        let (clean_before, block) = &parsed.conflicts[0];
+        assert_eq!(block.ours, b"ours-line\n");
+        assert_eq!(block.ancestor, b"anc-line\n");
+        assert_eq!(block.theirs, b"theirs-line\n");
+        assert!(clean_before.is_empty());
+        assert!(parsed.trailing_clean.is_empty());
     }
 
     // A hand-built diff3 payload whose first conflict section names text

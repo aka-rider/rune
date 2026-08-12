@@ -2,25 +2,55 @@ use rune_db::{MergeRowState, ObsId};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
-use crate::commands::nav_scroll;
 use crate::db::PendingOp;
 use crate::document::DocumentId;
 use crate::messages;
 
-use super::state::{Block, Conflict, MergeState};
+use super::resolve::{block_start, scroll_doc};
+use super::state::{Block, Conflict, ConflictBlock, MergeState};
+
+/// The on-disk `Block` shape, held fixed independently of the in-memory
+/// `Block` — an old recovery-store row must keep decoding even after the
+/// in-memory type changes shape.
+#[derive(Clone, Serialize, Deserialize)]
+struct PersistedBlock {
+    start: usize,
+    end: usize,
+    resolved: bool,
+}
 
 #[derive(Serialize, Deserialize)]
 struct BlocksPayload {
-    blocks: Vec<Block>,
+    blocks: Vec<PersistedBlock>,
     conflicts: Vec<Conflict>,
 }
 
-fn blocks_json(blocks: &[Block], conflicts: &[Conflict]) -> Option<String> {
-    serde_json::to_string(&BlocksPayload {
-        blocks: blocks.to_vec(),
-        conflicts: conflicts.to_vec(),
-    })
-    .ok()
+fn blocks_json(pairs: &[ConflictBlock]) -> Option<String> {
+    let blocks = pairs
+        .iter()
+        .map(|p| PersistedBlock {
+            start: p.block.range.start,
+            end: p.block.range.end,
+            resolved: p.block.resolved,
+        })
+        .collect();
+    let conflicts = pairs.iter().map(|p| p.conflict.clone()).collect();
+    serde_json::to_string(&BlocksPayload { blocks, conflicts }).ok()
+}
+
+fn pairs_from_payload(payload: BlocksPayload) -> Vec<ConflictBlock> {
+    payload
+        .blocks
+        .into_iter()
+        .zip(payload.conflicts)
+        .map(|(b, conflict)| ConflictBlock {
+            conflict,
+            block: Block {
+                range: b.start..b.end,
+                resolved: b.resolved,
+            },
+        })
+        .collect()
 }
 
 pub(super) fn enqueue_merge_open(
@@ -29,10 +59,9 @@ pub(super) fn enqueue_merge_open(
     base_obs: Option<ObsId>,
     theirs_obs: ObsId,
     marker_content: &str,
-    blocks: &[Block],
-    conflicts: &[Conflict],
+    pairs: &[ConflictBlock],
 ) {
-    let Some(json) = blocks_json(blocks, conflicts) else {
+    let Some(json) = blocks_json(pairs) else {
         messages::error(app, "merge state not persisted — could not be encoded");
         return;
     };
@@ -51,10 +80,9 @@ pub(super) fn enqueue_merge_progress(
     app: &mut App,
     doc: DocumentId,
     marker_content: &str,
-    blocks: &[Block],
-    conflicts: &[Conflict],
+    pairs: &[ConflictBlock],
 ) {
-    let Some(json) = blocks_json(blocks, conflicts) else {
+    let Some(json) = blocks_json(pairs) else {
         messages::error(app, "merge state not persisted — could not be encoded");
         return;
     };
@@ -111,35 +139,92 @@ pub(crate) fn resume_from_store(
         messages::error(app, UNREADABLE);
         return;
     }
-    let unresolved = payload.blocks.iter().filter(|b| !b.resolved).count();
+    let pairs = pairs_from_payload(payload);
+
+    let unresolved = pairs.iter().filter(|p| !p.block.resolved).count();
     if unresolved == 0 {
         enqueue_merge_close(app, doc, MergeRowState::Completed);
         return;
     }
 
     let marker_content = document.buffer.content().to_string();
-    enqueue_merge_progress(
-        app,
-        doc,
-        &marker_content,
-        &payload.blocks,
-        &payload.conflicts,
-    );
+    enqueue_merge_progress(app, doc, &marker_content, &pairs);
 
     let saved_display_name = super::install_resolver_display_name(app, doc);
 
-    let cur = payload.blocks.iter().position(|b| !b.resolved).unwrap_or(0);
-    let target = payload.blocks.get(cur).map(|b| b.start).unwrap_or(0);
+    let blocks: Vec<Block> = pairs.iter().map(|p| p.block.clone()).collect();
+    let cur = blocks.iter().position(|b| !b.resolved).unwrap_or(0);
+    let target = block_start(&blocks, cur);
     app.merge = MergeState::Active {
         doc,
-        conflicts: payload.conflicts,
-        blocks: payload.blocks,
+        pairs,
         cur,
         saved_display_name,
         theirs_obs,
     };
-    if let Some(d) = app.doc_mut(doc) {
-        nav_scroll::scroll_to_byte_offset(d, target);
-    }
+    scroll_doc(app, doc, target);
     messages::info(app, format!("merge resumed — {unresolved} conflict(s)"));
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app_with(content: &str) -> App {
+        App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    /// Captured by serializing two blocks/conflicts with the CURRENT code
+    /// BEFORE `Block` grew a `Range<usize>` field — the parallel-array,
+    /// start/end-field shape recovery-store rows already hold on disk. A
+    /// stored merge decoding to anything other than this exact pairing
+    /// would mean an upgrade silently discarded a user's in-flight merge.
+    const PRE_CHANGE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false},{"start":30,"end":40,"resolved":true}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
+
+    #[test]
+    fn resume_decodes_the_pre_change_on_disk_shape_into_the_expected_pairing() {
+        let mut app = app_with(&"x".repeat(40));
+        let doc = app.active;
+
+        resume_from_store(
+            &mut app,
+            doc,
+            PRE_CHANGE_BLOCKS_JSON,
+            ObsId::new(1).expect("nonzero"),
+        );
+
+        let MergeState::Active { pairs, cur, .. } = &app.merge else {
+            panic!("expected an Active merge, got {:?}", app.merge);
+        };
+        assert_eq!(*cur, 0);
+        assert_eq!(
+            pairs,
+            &vec![
+                ConflictBlock {
+                    conflict: Conflict {
+                        ours: "mine".to_string(),
+                        theirs: "yours".to_string(),
+                    },
+                    block: Block {
+                        range: 5..20,
+                        resolved: false,
+                    },
+                },
+                ConflictBlock {
+                    conflict: Conflict {
+                        ours: "a".to_string(),
+                        theirs: "b".to_string(),
+                    },
+                    block: Block {
+                        range: 30..40,
+                        resolved: true,
+                    },
+                },
+            ]
+        );
+    }
 }

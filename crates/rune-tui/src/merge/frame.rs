@@ -4,7 +4,7 @@
 
 use rune_merge::Hunk;
 
-use super::state::{Block, Conflict};
+use super::state::{Block, Conflict, ConflictBlock};
 
 /// The `[B4]` UTF-8 refusal: at least one hunk's bytes are not valid UTF-8.
 /// A unit-shaped error — the caller has exactly one thing to do with
@@ -23,17 +23,14 @@ pub fn frame_block(ours: &str, theirs: &str) -> String {
 /// Lays `hunks` out into one buffer: a `Hunk::Clean` region is copied
 /// verbatim; a `Hunk::Conflict` is framed via [`frame_block`] and recorded
 /// as one `Block` (its byte range in the OUTPUT buffer) paired with one
-/// `Conflict` (its original ours/theirs text) at the same index. `Err` is
-/// the `[B4]` UTF-8 refusal: `rune-merge` stays byte-typed so BOM/CRLF
-/// round-trip on bytes, but the buffer this feeds is a `String` — any hunk
-/// byte sequence that isn't valid UTF-8 refuses the WHOLE build rather than
-/// silently losing or replacing bytes.
-pub fn build_marker_buffer(
-    hunks: &[Hunk],
-) -> Result<(String, Vec<Block>, Vec<Conflict>), MergeUtf8Error> {
+/// `Conflict` (its original ours/theirs text). `Err` is the `[B4]` UTF-8
+/// refusal: `rune-merge` stays byte-typed so BOM/CRLF round-trip on bytes,
+/// but the buffer this feeds is a `String` — any hunk byte sequence that
+/// isn't valid UTF-8 refuses the WHOLE build rather than silently losing or
+/// replacing bytes.
+pub fn build_marker_buffer(hunks: &[Hunk]) -> Result<(String, Vec<ConflictBlock>), MergeUtf8Error> {
     let mut buffer = String::new();
-    let mut blocks = Vec::new();
-    let mut conflicts = Vec::new();
+    let mut pairs = Vec::new();
 
     for hunk in hunks {
         match hunk {
@@ -47,17 +44,18 @@ pub fn build_marker_buffer(
                 let start = buffer.len();
                 buffer.push_str(&frame_block(&ours, &theirs));
                 let end = buffer.len();
-                blocks.push(Block {
-                    start,
-                    end,
-                    resolved: false,
+                pairs.push(ConflictBlock {
+                    block: Block {
+                        range: start..end,
+                        resolved: false,
+                    },
+                    conflict: Conflict { ours, theirs },
                 });
-                conflicts.push(Conflict { ours, theirs });
             }
         }
     }
 
-    Ok((buffer, blocks, conflicts))
+    Ok((buffer, pairs))
 }
 
 #[cfg(test)]
@@ -84,19 +82,18 @@ mod tests {
             },
             Hunk::Clean(b"after\n".to_vec()),
         ];
-        let (buffer, blocks, conflicts) = build_marker_buffer(&hunks).expect("valid utf8");
+        let (buffer, pairs) = build_marker_buffer(&hunks).expect("valid utf8");
         assert_eq!(
             buffer,
             "before\n<<<<<<< editor\nmine\n=======\ntheirs\n>>>>>>> disk\nafter\n"
         );
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(conflicts.len(), 1);
+        assert_eq!(pairs.len(), 1);
         assert_eq!(
-            &buffer[blocks[0].start..blocks[0].end],
+            &buffer[pairs[0].block.range.clone()],
             frame_block("mine", "theirs").as_str()
         );
-        assert_eq!(conflicts[0].ours, "mine");
-        assert_eq!(conflicts[0].theirs, "theirs");
+        assert_eq!(pairs[0].conflict.ours, "mine");
+        assert_eq!(pairs[0].conflict.theirs, "theirs");
     }
 
     #[test]

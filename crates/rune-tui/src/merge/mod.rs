@@ -17,7 +17,7 @@ pub use keys::{MERGE_BINDINGS, MergeCommand};
 pub(crate) use landing::handle_merge_prep_ack;
 pub(crate) use persist::resume_from_store;
 pub(crate) use resync::resync;
-pub use state::{Block, Conflict, MergeIntent, MergeState};
+pub use state::{Block, Conflict, ConflictBlock, MergeIntent, MergeState};
 
 use rune_db::SyncKind;
 
@@ -97,7 +97,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
     }
     let MergeState::Active {
         doc,
-        blocks,
+        pairs,
         saved_display_name,
         theirs_obs,
         ..
@@ -105,7 +105,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
     else {
         return;
     };
-    let unresolved = blocks.iter().filter(|b| !b.resolved).count();
+    let unresolved = pairs.iter().filter(|p| !p.block.resolved).count();
     if unresolved == 0 {
         if let Some(d) = app.doc_mut(doc) {
             d.display_name = saved_display_name;
@@ -180,8 +180,8 @@ pub(crate) fn retract_active_on_convergence(
     }
     let nothing_resolved_yet = matches!(
         &app.merge,
-        MergeState::Active { doc: d, blocks, .. }
-            if *d == doc && blocks.iter().all(|b| !b.resolved)
+        MergeState::Active { doc: d, pairs, .. }
+            if *d == doc && pairs.iter().all(|p| !p.block.resolved)
     );
     if !nothing_resolved_yet {
         return;
@@ -338,14 +338,16 @@ mod tests {
     fn active_with_blocks(doc: crate::document::DocumentId, blocks: Vec<Block>) -> MergeState {
         MergeState::Active {
             doc,
-            conflicts: blocks
-                .iter()
-                .map(|_| Conflict {
-                    ours: "ours".to_string(),
-                    theirs: "theirs".to_string(),
+            pairs: blocks
+                .into_iter()
+                .map(|block| ConflictBlock {
+                    conflict: Conflict {
+                        ours: "ours".to_string(),
+                        theirs: "theirs".to_string(),
+                    },
+                    block,
                 })
                 .collect(),
-            blocks,
             cur: 0,
             saved_display_name: Some("saved-name".to_string()),
             theirs_obs: rune_db::ObsId::new(7).expect("nonzero"),
@@ -361,8 +363,7 @@ mod tests {
         app.merge = active_with_blocks(
             doc,
             vec![Block {
-                start: 0,
-                end: 5,
+                range: 0..5,
                 resolved: false,
             }],
         );
@@ -383,13 +384,11 @@ mod tests {
             doc,
             vec![
                 Block {
-                    start: 0,
-                    end: 5,
+                    range: 0..5,
                     resolved: true,
                 },
                 Block {
-                    start: 5,
-                    end: 9,
+                    range: 5..9,
                     resolved: false,
                 },
             ],
@@ -414,8 +413,7 @@ mod tests {
         app.merge = active_with_blocks(
             doc,
             vec![Block {
-                start: 0,
-                end: 5,
+                range: 0..5,
                 resolved: false,
             }],
         );
@@ -442,8 +440,7 @@ mod tests {
         app.merge = active_with_blocks(
             doc,
             vec![Block {
-                start: 0,
-                end: 5,
+                range: 0..5,
                 resolved: false,
             }],
         );

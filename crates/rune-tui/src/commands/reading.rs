@@ -115,8 +115,7 @@ mod tests {
         let doc = app.active;
         app.merge = crate::merge::MergeState::Active {
             doc,
-            conflicts: Vec::new(),
-            blocks: Vec::new(),
+            pairs: Vec::new(),
             cur: 0,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),

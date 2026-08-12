@@ -86,7 +86,7 @@ fn enter_two_conflict_merge_at(
     press_key(&mut app, ctrl('m'));
     drain_all_ops_for(&mut app, &bridge, doc_id);
     assert!(
-        matches!(&app.merge, MergeState::Active { blocks, .. } if blocks.len() == 2),
+        matches!(&app.merge, MergeState::Active { pairs, .. } if pairs.len() == 2),
         "fixture must enter a two-conflict merge, got {:?}",
         app.merge
     );
@@ -128,13 +128,13 @@ fn merge_resumes_after_restart() {
     let doc_b = app_b.active;
     drain_one_op_for(&mut app_b, &bridge_b, doc_b);
 
-    let MergeState::Active { blocks, doc, .. } = &app_b.merge else {
+    let MergeState::Active { pairs, doc, .. } = &app_b.merge else {
         panic!("expected the merge to resume Active, got {:?}", app_b.merge);
     };
     assert_eq!(*doc, doc_b);
-    assert_eq!(blocks.len(), 2, "both blocks travel across the restart");
+    assert_eq!(pairs.len(), 2, "both blocks travel across the restart");
     assert_eq!(
-        blocks.iter().filter(|b| !b.resolved).count(),
+        pairs.iter().filter(|p| !p.block.resolved).count(),
         1,
         "exactly the unresolved block survives as unresolved"
     );
@@ -329,8 +329,8 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
     assert!(
         matches!(
             &app_b.merge,
-            MergeState::Active { blocks, doc, .. }
-                if *doc == doc_b && blocks.iter().filter(|b| !b.resolved).count() == 2
+            MergeState::Active { pairs, doc, .. }
+                if *doc == doc_b && pairs.iter().filter(|p| !p.block.resolved).count() == 2
         ),
         "the full load must re-enter the still-active merge, got {:?}",
         app_b.merge

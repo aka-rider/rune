@@ -57,11 +57,7 @@ fn cell_bg(buf: &RtBuffer, x: u16, y: u16) -> Option<ratatui::style::Color> {
 /// separated by a clean line — built through the real `build_marker_buffer`
 /// so the byte offsets `merge::paint` consumes are the real deterministic
 /// framing, not a hand-typed fixture that could drift from `frame_block`.
-fn two_block_fixture() -> (
-    String,
-    Vec<rune_tui::merge::state::Block>,
-    Vec<rune_tui::merge::state::Conflict>,
-) {
+fn two_block_fixture() -> (String, Vec<rune_tui::merge::state::ConflictBlock>) {
     let hunks = vec![
         Hunk::Conflict {
             ours: b"mine one".to_vec(),
@@ -78,12 +74,11 @@ fn two_block_fixture() -> (
 
 #[test]
 fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
-    let (buffer, blocks, conflicts) = two_block_fixture();
+    let (buffer, pairs) = two_block_fixture();
     let app = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
-            conflicts: conflicts.clone(),
-            blocks: blocks.clone(),
+            pairs: pairs.clone(),
             cur: 0,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
@@ -125,13 +120,12 @@ fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
 
 #[test]
 fn a_resolved_blocks_region_carries_no_merge_background() {
-    let (buffer, mut blocks, conflicts) = two_block_fixture();
-    blocks[0].resolved = true;
+    let (buffer, mut pairs) = two_block_fixture();
+    pairs[0].block.resolved = true;
     let app = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
-            conflicts: conflicts.clone(),
-            blocks: blocks.clone(),
+            pairs: pairs.clone(),
             cur: 1,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
@@ -157,12 +151,11 @@ fn a_resolved_blocks_region_carries_no_merge_background() {
 
 #[test]
 fn the_current_blocks_marker_carries_a_distinct_cue() {
-    let (buffer, blocks, conflicts) = two_block_fixture();
+    let (buffer, pairs) = two_block_fixture();
     let app = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
-            conflicts: conflicts.clone(),
-            blocks: blocks.clone(),
+            pairs: pairs.clone(),
             cur: 0,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),

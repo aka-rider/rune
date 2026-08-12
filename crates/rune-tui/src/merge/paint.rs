@@ -1,7 +1,7 @@
 //! Merge view background painting: every UNRESOLVED
 //! block's marker lines, ours span, and theirs span get their own
 //! background, computed as byte intervals derived purely from `Block::
-//! start` plus [`super::frame::frame_block`]'s own fixed marker-line
+//! range` plus [`super::frame::frame_block`]'s own fixed marker-line
 //! lengths. A resolved block contributes no
 //! interval at all: its span no longer holds markers, just plain accepted
 //! content.
@@ -41,11 +41,7 @@ pub(crate) fn paint(
     theme: &Theme,
 ) {
     let MergeState::Active {
-        doc,
-        conflicts,
-        blocks,
-        cur,
-        ..
+        doc, pairs, cur, ..
     } = state
     else {
         return;
@@ -53,14 +49,11 @@ pub(crate) fn paint(
     if *doc != active_doc {
         return;
     }
-    for (k, block) in blocks.iter().enumerate() {
-        if block.resolved {
+    for (k, pair) in pairs.iter().enumerate() {
+        if pair.block.resolved {
             continue;
         }
-        let Some(conflict) = conflicts.get(k) else {
-            continue;
-        };
-        paint_block(rows, block, conflict, k == *cur, theme);
+        paint_block(rows, &pair.block, &pair.conflict, k == *cur, theme);
     }
 }
 
@@ -75,7 +68,7 @@ fn paint_block(
     is_current: bool,
     theme: &Theme,
 ) {
-    let ours_start = block.start + OURS_MARKER_LINE_LEN;
+    let ours_start = block.range.start + OURS_MARKER_LINE_LEN;
     let ours_end = ours_start + conflict.ours.len();
     let theirs_start = ours_end + 1 + SEP_MARKER_LINE_LEN;
     let theirs_end = theirs_start + conflict.theirs.len();
@@ -86,11 +79,11 @@ fn paint_block(
         theme.chrome.merge_marker_bg
     };
 
-    paint_range(rows, block.start..ours_start, marker_style);
+    paint_range(rows, block.range.start..ours_start, marker_style);
     paint_range(rows, ours_start..ours_end, theme.chrome.merge_ours_bg);
     paint_range(rows, ours_end..theirs_start, marker_style);
     paint_range(rows, theirs_start..theirs_end, theme.chrome.merge_theirs_bg);
-    paint_range(rows, theirs_end..block.end, marker_style);
+    paint_range(rows, theirs_end..block.range.end, marker_style);
 }
 
 #[cfg(test)]
@@ -138,13 +131,12 @@ mod tests {
             ours: b"mine".to_vec(),
             theirs: b"yours".to_vec(),
         }];
-        let (buffer, blocks, conflicts) = build_marker_buffer(&hunks).unwrap();
+        let (buffer, pairs) = build_marker_buffer(&hunks).unwrap();
         let mut rows = rows_for(&buffer);
         let id = doc_id();
         let state = MergeState::Active {
             doc: id,
-            conflicts,
-            blocks,
+            pairs,
             cur: 0,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
@@ -176,14 +168,13 @@ mod tests {
             ours: b"mine".to_vec(),
             theirs: b"yours".to_vec(),
         }];
-        let (buffer, mut blocks, conflicts) = build_marker_buffer(&hunks).unwrap();
-        blocks[0].resolved = true;
+        let (buffer, mut pairs) = build_marker_buffer(&hunks).unwrap();
+        pairs[0].block.resolved = true;
         let mut rows = rows_for(&buffer);
         let id = doc_id();
         let state = MergeState::Active {
             doc: id,
-            conflicts,
-            blocks,
+            pairs,
             cur: 0,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
@@ -213,13 +204,12 @@ mod tests {
                 theirs: b"d".to_vec(),
             },
         ];
-        let (buffer, blocks, conflicts) = build_marker_buffer(&hunks).unwrap();
+        let (buffer, pairs) = build_marker_buffer(&hunks).unwrap();
         let mut rows = rows_for(&buffer);
         let id = doc_id();
         let state = MergeState::Active {
             doc: id,
-            conflicts,
-            blocks: blocks.clone(),
+            pairs: pairs.clone(),
             cur: 0,
             saved_display_name: None,
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
@@ -227,8 +217,8 @@ mod tests {
 
         paint(&mut rows, &state, id, &theme);
 
-        let current_marker = style_at(&rows, blocks[0].start);
-        let other_marker = style_at(&rows, blocks[1].start);
+        let current_marker = style_at(&rows, pairs[0].block.range.start);
+        let other_marker = style_at(&rows, pairs[1].block.range.start);
         assert_eq!(current_marker.bg, other_marker.bg);
         assert_ne!(
             current_marker.add_modifier, other_marker.add_modifier,
