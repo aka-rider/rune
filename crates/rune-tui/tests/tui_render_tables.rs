@@ -174,40 +174,6 @@ fn caret_row_below_a_table_matches_wrap_to_display_of_its_wrap_row() {
 const RAGGED_ROW_TABLE: &str =
     "| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 | a | b |\n\ntail\n";
 
-/// Regression for the `TABLE-ROW-WIDTH` fuzz catch (`crates/rune-fuzz/
-/// proptest-regressions/human_session.txt`, seed `cc 5f23e392...`):
-/// placing the caret inside a ragged row's DROPPED cells (bytes comrak's
-/// table parser never turned into a real column, past every visible cell
-/// the row's own box actually renders) used to fall through
-/// `place_caret`'s "caret sits past the last visible char" branch, which
-/// appended a synthetic one-cell-wide EOL cursor cell — making that ONE
-/// row a cell wider than the rest of its table group. The fix clamps a
-/// BOXED row's caret onto its own last cell instead of ever growing it —
-/// `render::overlay`'s own unit tests
-/// (`place_caret_clamps_onto_a_boxed_rows_last_cell_instead_of_appending`)
-/// now cover that clamp directly, for the reason explained below.
-///
-/// Cursor sits at the very end of the `Bob` row's raw source line (deep in
-/// the dropped `"| a | b |"` tail), the exact position the fuzz seed's
-/// typing landed on. `focused: false` forces the table's Decide-policy
-/// `RevealSm` to `Rendered` regardless of the cursor sitting inside its own
-/// lines (`DocMachine::sync_cursors`'s `RevealGrant::ForceRendered` root
-/// grant) — matching the fuzz seed's own end state, where a dirty-close
-/// guard modal (from the seed's `Ctrl+C`) made `App::sync_view` treat the
-/// editor as unfocused for that step while the cursor still sat inside the
-/// table.
-///
-/// Once the caret is gated on `Document::has_insertion_point` (this ticket:
-/// an unfocused pane must show no caret, matching a modal's own
-/// keystroke-capture), that same unfocused state ALSO means no caret is
-/// ever painted here — `focused` is the one bit both the table's
-/// `ForceRendered` grant and the caret gate key off, so a table can only be
-/// BOXED with the cursor inside it while the caret itself is suppressed.
-/// This test therefore now pins the CURRENT, correct end state — no caret
-/// anywhere, and the row-width invariant holding trivially because nothing
-/// painted onto the rows at all — while the boxed-clamp behaviour itself
-/// (unreachable from here, but still real defensive code) gets its own
-/// direct coverage in `render::overlay`'s unit tests.
 #[test]
 fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
     let cursor = RAGGED_ROW_TABLE
@@ -218,23 +184,44 @@ fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
 
     let view = app.active_doc().view.as_ref().expect("synced view");
     let rows = rune_tui::render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let meta = rune_tui::row_meta::row_meta(view, &app);
 
-    // Display rows 0..7: synthesised top border, header, separator,
-    // Alice, the synthesised inter-row border between Alice and Bob (two
-    // Body rows from different source lines), Bob (the ragged row),
-    // synthesised bottom border — the table sits at the very start of the
-    // document (`RAGGED_ROW_TABLE`), so these are the first 7 rows
-    // `build_rows` returns (`scroll_row` is 0).
     let widths: Vec<usize> = rows
         .iter()
-        .take(7)
         .map(|row| row.iter().map(|c| c.width as usize).sum())
         .collect();
-    let first = widths.first().copied().unwrap_or(0);
+
+    let boxed_widths: Vec<usize> = meta
+        .iter()
+        .zip(&widths)
+        .filter(|(m, _)| m.boxed)
+        .map(|(_, &w)| w)
+        .collect();
     assert!(
-        widths.iter().all(|&w| w == first),
-        "every row in the table's own box must share the same summed cell \
-         width, got {widths:?}"
+        !boxed_widths.is_empty(),
+        "the table's header and body rows must still render inside a box"
+    );
+    let first = boxed_widths[0];
+    assert!(
+        boxed_widths.iter().all(|&w| w == first),
+        "every boxed row in the table's own box must share the same summed \
+         cell width, got {boxed_widths:?}"
+    );
+
+    let ragged_row_meta = rows
+        .iter()
+        .zip(&meta)
+        .find(|(row, _)| {
+            row.iter()
+                .map(|c| c.text.as_str())
+                .collect::<String>()
+                .contains("Bob")
+        })
+        .map(|(_, m)| m)
+        .expect("the ragged row must still render its raw source on screen");
+    assert!(
+        !ragged_row_meta.boxed && ragged_row_meta.table_group.is_none(),
+        "a truncated row must render outside the table's own box, got {ragged_row_meta:?}"
     );
 
     let buf = testgrid::draw(&app, WIDTH, HEIGHT);
