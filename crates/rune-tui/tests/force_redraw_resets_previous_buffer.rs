@@ -1,9 +1,8 @@
-//! Issue #16, gate 2: proves `Terminal::resize` — the replacement
-//! `Guard::force_redraw` now calls instead of `Terminal::clear` — actually
-//! invalidates ratatui's diff so the next flush repaints every cell, not
-//! just the ones that changed. Built directly against `ratatui`'s own
-//! `TestBackend`, no `Guard` involved (`Guard` cannot be constructed
-//! without a live terminal, see `crates/rune-tui/src/term.rs`'s own tests).
+//! Proves `Terminal::resize` — the replacement `Guard::force_redraw` now
+//! calls instead of `Terminal::clear` — actually invalidates ratatui's diff
+//! so the next flush repaints every cell, not just the ones that changed.
+//! Built directly against `ratatui`'s own `TestBackend`, no `Guard` involved
+//! (`Guard` cannot be constructed without a live terminal).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use ratatui::Terminal;

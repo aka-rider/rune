@@ -1,5 +1,5 @@
 //! The ONE geometry chokepoint: a pure function from `(area, &App)` to every rect the frame is
-//! built from. `render::draw`, `App::relayout` (which sizes the active document's viewport from
+//! built from. The frame renderer, `App::relayout` (which sizes the active document's viewport from
 //! it), and `explorer`/`opentabs`'s own `visible_rows` all read from here — before this module
 //! existed, all three independently reverse-engineered their own idea of the editor's rect from
 //! `viewport.height + 1`, and could silently disagree the moment a border was added. `geometry`

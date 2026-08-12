@@ -30,7 +30,7 @@ fn fresh_app() -> App {
     App::new(Buffer::new(""), None, vfs, None)
 }
 
-/// A frame too small to paint the Explorer column (`layout::resolve_mode`)
+/// A frame too small to paint the Explorer column
 /// falls the chrome `Pane` back to `Editor` even while file-search owns the
 /// keyboard (`app.overlay`). A bracketed paste routes through `focus::
 /// target`, not the chrome `Pane`, so it must still land in the query.

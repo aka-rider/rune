@@ -16,7 +16,7 @@ use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
 /// `PASTE-VERBATIM` — dispatches on `prev.focus_target`, the same
-/// `FocusTarget` `commands::clipboard::route_bracketed_paste` itself reads,
+/// `FocusTarget` the bracketed paste router itself reads,
 /// so a `Msg::Paste` step is checked against exactly where production sent
 /// it, never a parallel re-derivation. `Msg::ClipboardRead` carries its own
 /// `target`, captured at request time, so that arm checks against it

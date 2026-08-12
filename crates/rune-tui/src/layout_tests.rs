@@ -40,7 +40,7 @@ fn a_one_row_content_area_gives_the_bar_no_room_and_never_panics() {
 }
 
 /// `explorer_budget` is a public function precisely because `geometry`
-/// and `pane::FocusTabs`'s `ensure_trail` call must both use the exact
+/// and the focus-tabs handler's `ensure_trail` call must both use the exact
 /// same quantity — pin that it agrees with the inner rect `geometry`
 /// itself carves the vertical split from, rather than trusting the two
 /// expressions to stay in sync by inspection.
@@ -135,7 +135,7 @@ fn a_roomy_frame_resolves_to_split_with_both_sections_shown() {
     );
 }
 
-/// The load-bearing acceptance case (plan WP1.S10): opening the finder
+/// The load-bearing acceptance case: opening the finder
 /// on a fresh app whose left column was NEVER shown still forces the
 /// column visible, at `min(max(FILESEARCH_MIN_W, size_hint), frame -
 /// MIN_CENTER_W)` — geometry decides visibility here, `app.splits` is

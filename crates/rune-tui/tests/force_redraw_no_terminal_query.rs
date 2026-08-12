@@ -1,8 +1,7 @@
-//! Issue #16: `Terminal::clear` round-trips a cursor-position query through
+//! `Terminal::clear` round-trips a cursor-position query through
 //! the real terminal, which deadlocks against `spawn_input_reader`'s own
 //! read of that same connection. `Guard::force_redraw` must never reach
-//! `Terminal::clear` again — grep gate in the shape of
-//! `conceal_roundtrip_invariants.rs` (`crates/rune-md/tests/`).
+//! `Terminal::clear` again — this is verified by a dedicated test.
 //!
 //! The replacement, `Terminal::resize`, is query-free only under
 //! `Viewport::Fullscreen` (see `ratatui_core_resize_resets_previous_buffer`
