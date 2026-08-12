@@ -194,12 +194,12 @@ impl Guard {
     }
 
     /// Resets ratatui's own internal diff buffer, forcing every cell to be
-    /// rewritten on the NEXT `draw` (plan WP5.S6, `Effects::force_redraw`)
-    /// — the escape hatch for the one case ratatui's normal "only repaint
-    /// changed cells" diffing gets wrong: a retransmitted image whose
-    /// placeholder cells are byte-identical to the previous frame's (same
-    /// id, same diacritics) even though the PIXELS the terminal shows at
-    /// those cells just changed underneath them.
+    /// rewritten on the NEXT `draw` — the escape hatch for the one case
+    /// ratatui's "only repaint changed cells" diffing gets wrong: a
+    /// retransmitted image whose placeholder cells are byte-identical to
+    /// the previous frame's (same id, same diacritics) even though the
+    /// PIXELS the terminal shows at those cells just changed underneath
+    /// them.
     pub fn force_redraw(&mut self) {
         if let Ok(size) = self.terminal.size() {
             let _ = self.terminal.resize(ratatui::layout::Rect::from(size));
