@@ -16,10 +16,10 @@ use rune_core::cursor::CursorSet;
 
 use crate::app::App;
 use crate::clipboard::pbpaste_cmd;
-use crate::commands::nav_scroll;
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::messages;
 use crate::runtime::{Effects, PasteTarget};
+use crate::viewport::ScrollMode;
 
 use super::{close, is_concealed, next_index, prev_index, recompute};
 
@@ -217,10 +217,9 @@ fn jump(
     };
     let idx = idx?;
     let range = matches.get(idx)?.clone();
-    app.active_doc_mut().cursors = CursorSet::new(range.start);
-    if app.active_doc().is_read_only() {
-        nav_scroll::scroll_to_byte_offset(app.active_doc_mut(), range.start);
-    }
+    let doc = app.active_doc_mut();
+    doc.cursors = CursorSet::new(range.start);
+    doc.viewport.mode = ScrollMode::EnsureVisible;
     Some(idx)
 }
 

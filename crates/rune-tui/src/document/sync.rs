@@ -11,6 +11,7 @@ use rune_core::cursor::Cursor;
 use rune_md::element::doc::ViewSnapshots;
 
 use super::Document;
+use crate::viewport::ScrollMode;
 
 impl Document {
     /// The pure QUERY half of the per-message sync sequence: `sync_content`
@@ -96,18 +97,12 @@ impl Document {
     /// either conversion scrolls every document containing a table wrong by
     /// the number of border rows above the cursor.
     pub fn scroll_to_cursor(&mut self, view: &ViewSnapshots) {
-        // A read-only document has no insertion point (`has_insertion_point`),
-        // so reconciling the viewport toward the cursor is the wrong
-        // direction entirely: `commands::reading_nav` already moves
-        // `scroll_row` directly for every motion key, and snapping the
-        // cursor onto the settled band here would collapse a mouse
-        // selection the instant the user scrolled it out of view. Only the
-        // document's own row count can still invalidate a scrolled-away
-        // viewport (a resize, or a reveal/wrap change) — `clamp_to_document`
-        // guards against exactly that, nothing more.
         if self.is_read_only() {
-            self.viewport.clamp_to_document(view.display.total_rows());
-            return;
+            if self.viewport.mode != ScrollMode::EnsureVisible {
+                self.viewport.clamp_to_document(view.display.total_rows());
+                return;
+            }
+            self.viewport.mode = ScrollMode::FollowCursor;
         }
         let display_row = self.cursor_display_row(view);
         if let Some(target_row) = self
@@ -130,18 +125,6 @@ impl Document {
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
         view.display.wrap_to_display(WrapRow(wrap_point.row))
-    }
-
-    /// Whether the primary cursor's row lies inside the viewport's visible
-    /// window — deliberately the plain window, NOT the scrolloff-padded
-    /// band `Viewport::reconcile` keeps the cursor inside: a cursor within
-    /// the top margin is still perfectly visible to a reader, and treating
-    /// it as off-screen would move a cursor the user can already see.
-    pub fn cursor_on_screen(&mut self) -> bool {
-        let view = self.view();
-        let row = self.cursor_display_row(&view);
-        let top = self.viewport.scroll_row;
-        row >= top && row < top + self.viewport.height as usize
     }
 
     /// The `Viewport::reconcile` `Independent`-mode counterpart: a

@@ -194,6 +194,7 @@ fn read_only_document_scrolls_the_viewport_on_a_jump() {
     let scroll_before = app.active_doc().viewport.scroll_row;
 
     let _ = handle_key(&mut app, enter_key(), &mut effects);
+    app.sync_view();
 
     assert_ne!(
         app.active_doc().viewport.scroll_row,
