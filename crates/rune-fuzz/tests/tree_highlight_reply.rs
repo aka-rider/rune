@@ -66,7 +66,7 @@ fn tree_reply_with_default_linemap_is_invisible() {
 fn tree_reply_with_real_linemap_surfaces_spans() {
     let mut app = new_app(FIXTURE);
     let live_version = app.active_doc().buffer.version();
-    let map = LineMap::new(tree_fixture_line_ranges(FIXTURE, 0));
+    let map = LineMap::new(FIXTURE, tree_fixture_line_ranges(FIXTURE, 0));
     deliver_tree_reply(&mut app, map, parse_fixture(), live_version);
 
     let doc = app.active_doc();
@@ -114,7 +114,7 @@ fn stale_tree_reply_is_dropped() {
         live_version >= 1,
         "the edit above must have bumped the version"
     );
-    let map = LineMap::new(tree_fixture_line_ranges(FIXTURE, 0));
+    let map = LineMap::new(FIXTURE, tree_fixture_line_ranges(FIXTURE, 0));
     deliver_tree_reply(&mut app, map, parse_fixture(), live_version - 1);
 
     let after = visible_spans(app.active_doc(), 0..content.len());

@@ -22,6 +22,8 @@
 
 use std::ops::Range;
 
+use rune_syntax::element::LineLocal;
+
 /// A fence's physical content lines plus the prefix sums that place each
 /// line in the reconstructed text.
 ///
@@ -33,24 +35,49 @@ use std::ops::Range;
 #[derive(Clone, Debug, Default)]
 pub struct LineMap {
     lines: Vec<Range<usize>>,
+    /// The real BUFFER terminator width immediately after each line — `1`
+    /// for a bare `'\n'`, `2` for a trimmed `"\r\n"` — meaningless for the
+    /// last line, which has none. A CRLF line's own range is trimmed of its
+    /// trailing `\r` below, so this is what lets [`LineMap::line_bounds`]
+    /// still land exactly on the real `'\n'` instead of stopping one byte
+    /// short, on the `\r` the trim just excluded.
+    terminator: Vec<usize>,
     prefix: Vec<usize>,
 }
 
 impl LineMap {
     /// Builds the map from one fence's per-physical-line buffer ranges, in
     /// ascending buffer order (the order a document's own block parse
-    /// produces them).
-    pub fn new(lines: Vec<Range<usize>>) -> LineMap {
-        let last = lines.len().saturating_sub(1);
-        let mut prefix = Vec::with_capacity(lines.len() + 1);
+    /// produces them), against the same `content` those ranges index into.
+    ///
+    /// A CRLF line's raw range still carries its trailing `\r` — the buffer's
+    /// own line index splits on `'\n'` alone — so each range is trimmed of
+    /// exactly that byte here, before the prefix sums below are computed
+    /// from it. Trimming the RANGE rather than the reconstructed text keeps
+    /// the text and the offset bridge in agreement: every downstream sum is
+    /// built from the same shortened lengths the text itself will slice to.
+    pub fn new(content: &str, lines: Vec<Range<usize>>) -> LineMap {
+        let mut trimmed = Vec::with_capacity(lines.len());
+        let mut terminator = Vec::with_capacity(lines.len());
+        for line in lines {
+            let (line, had_cr) = trim_trailing_cr(content, line);
+            trimmed.push(line);
+            terminator.push(if had_cr { 2 } else { 1 });
+        }
+        let last = trimmed.len().saturating_sub(1);
+        let mut prefix = Vec::with_capacity(trimmed.len() + 1);
         let mut cursor = 0usize;
         prefix.push(cursor);
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in trimmed.iter().enumerate() {
             let len = line.end.saturating_sub(line.start);
             cursor += if i == last { len } else { len + 1 };
             prefix.push(cursor);
         }
-        LineMap { lines, prefix }
+        LineMap {
+            lines: trimmed,
+            terminator,
+            prefix,
+        }
     }
 
     /// The `'\n'`-joined, container-prefix-free text these lines reconstruct
@@ -72,29 +99,59 @@ impl LineMap {
     }
 
     /// Maps a range of the reconstructed text back to the buffer offsets
-    /// those bytes actually occupy.
+    /// those bytes actually occupy — one [`LineLocal`] per physical line the
+    /// range touches, each clipped to that line's own extent (its content
+    /// plus, for every line but the last, its own real terminator).
     ///
     /// The mapping is piecewise-constant: within one line's own reconstructed
     /// span the shift from reconstructed to buffer offset is fixed, and
-    /// changes only on crossing into the next line. The end is resolved
-    /// through the LAST byte the range covers (`r.end - 1`) and shifted back
-    /// by one afterwards, so an end landing exactly on a line boundary
-    /// resolves to the position right after that line's own newline — never
-    /// into the following line's excluded prefix bytes, which is where a
-    /// naive lookup of `r.end` itself would wander.
+    /// changes only on crossing into the next line. A range spanning several
+    /// lines is split at every such crossing BEFORE resolving offsets, so
+    /// the pieces this returns are never joined into one contiguous span —
+    /// doing that would silently include whatever container prefix sits in
+    /// the buffer gap between two non-contiguous lines.
     ///
-    /// `None` on any inconsistency (an out-of-range offset, no lines, or an
-    /// inverted or empty `r`) means "drop this range".
-    pub fn to_buffer(&self, r: Range<usize>) -> Option<Range<usize>> {
+    /// Empty when `r` is inverted or empty, when either endpoint falls
+    /// outside every line, or when a piece ends up empty — none of which
+    /// should happen given ranges from this map's own reconstructed text,
+    /// but degrading to "contributes nothing" here keeps a caller from ever
+    /// painting a gap byte.
+    pub fn to_buffer(&self, r: Range<usize>) -> Vec<LineLocal> {
         if r.start >= r.end {
-            return None;
+            return Vec::new();
         }
-        let start = self.buffer_offset(r.start, false)?;
-        let end = self.buffer_offset(r.end - 1, true)?;
-        if start >= end {
-            return None;
+        let (Some(first), Some(last)) = (self.line_owning(r.start), self.line_owning(r.end - 1))
+        else {
+            return Vec::new();
+        };
+        let mut pieces = Vec::with_capacity(last.saturating_sub(first) + 1);
+        for i in first..=last {
+            let Some(&line_prefix) = self.prefix.get(i) else {
+                break;
+            };
+            let local_start = if i == first { r.start } else { line_prefix };
+            let local_end = if i == last {
+                r.end
+            } else {
+                self.prefix.get(i + 1).copied().unwrap_or(local_start)
+            };
+            if local_start >= local_end {
+                continue;
+            }
+            let (Some(mapped_start), Some(mapped_end)) = (
+                self.line_offset_to_buffer(i, local_start - line_prefix),
+                self.line_offset_to_buffer(i, local_end - line_prefix),
+            ) else {
+                continue;
+            };
+            let Some(bounds) = self.line_bounds(i) else {
+                continue;
+            };
+            if let Some(piece) = LineLocal::clip(i, bounds, mapped_start..mapped_end) {
+                pieces.push(piece);
+            }
         }
-        Some(start..end)
+        pieces
     }
 
     /// Maps a range of the buffer to the reconstructed text's coordinates —
@@ -161,29 +218,61 @@ impl LineMap {
         if start >= end { None } else { Some(start..end) }
     }
 
-    /// [`LineMap::to_buffer`]'s single-offset chokepoint. `is_end` requests
-    /// the inclusive-byte convention: after locating the line owning
-    /// `offset`, add one back so the result is an exclusive buffer offset
-    /// again.
-    fn buffer_offset(&self, offset: usize, is_end: bool) -> Option<usize> {
-        // `prefix` is non-decreasing and starts at 0, so the count of entries
-        // at or below `offset` is one past the index of the owning line. An
-        // `offset` at or beyond the reconstructed length counts every entry
-        // and indexes past `lines`, where the `get` below reports `None`.
-        let i = self
-            .prefix
-            .partition_point(|&p| p <= offset)
-            .checked_sub(1)?;
-        let line = self.lines.get(i)?;
-        let within = offset - self.prefix.get(i)?;
-        let mapped = line.start + within;
-        Some(if is_end { mapped + 1 } else { mapped })
+    /// The index of the line owning reconstructed `offset` — one past the
+    /// count of prefix entries at or below it, since `prefix` is
+    /// non-decreasing and starts at 0. `None` once `offset` reaches or
+    /// passes the reconstructed length, where the count runs past the last
+    /// line.
+    fn line_owning(&self, offset: usize) -> Option<usize> {
+        self.prefix.partition_point(|&p| p <= offset).checked_sub(1)
     }
 
-    /// [`LineMap::to_reconstructed`]'s single-offset chokepoint, mirroring
-    /// `buffer_offset`'s `is_end` convention. `None` when `offset` falls in a
-    /// gap — a container prefix byte, or anywhere before the first line or at
-    /// or past the last line's end.
+    /// Line `i`'s own extent in BUFFER coordinates: its content, plus —
+    /// for every line but the last — its own real terminator (`self.
+    /// terminator[i]` bytes: the `'\n'` alone, or the `\r` this map trimmed
+    /// out of the line plus the `'\n'` that follows it), which is the
+    /// buffer's true line break and the reconstructed text's joining `'\n'`,
+    /// never a container prefix byte.
+    fn line_bounds(&self, i: usize) -> Option<Range<usize>> {
+        let line = self.lines.get(i)?;
+        let end = if i + 1 == self.lines.len() {
+            line.end
+        } else {
+            line.end + self.terminator.get(i)?
+        };
+        Some(line.start..end)
+    }
+
+    /// The buffer offset line `i`'s own reconstructed within-line offset
+    /// `within` maps to — [`LineMap::to_buffer`]'s single-offset chokepoint.
+    ///
+    /// A straight shift (`line.start + within`) is exactly right up to and
+    /// including the joining `'\n'` itself (`within == len`, `len` this
+    /// line's trimmed content length) and one past it (`within == len + 1`)
+    /// — UNLESS this line's terminator is a trimmed `"\r\n"`: the `\r` sits
+    /// between the content and the real `'\n'`, so a piece reaching past
+    /// the content here would have to straddle a byte with no reconstructed
+    /// counterpart of its own, which no single contiguous [`Range`] can do.
+    /// Capping at the content's own end trades that one lost byte (the
+    /// terminator paints nothing regardless) for never letting the `\r`
+    /// back in — the whole reason it was trimmed in the first place.
+    fn line_offset_to_buffer(&self, i: usize, within: usize) -> Option<usize> {
+        let line = self.lines.get(i)?;
+        let len = line.end.saturating_sub(line.start);
+        let crlf_terminator =
+            i + 1 != self.lines.len() && self.terminator.get(i).copied().unwrap_or(1) == 2;
+        if crlf_terminator && within > len {
+            return Some(line.start + len);
+        }
+        Some(line.start + within)
+    }
+
+    /// [`LineMap::to_reconstructed`]'s single-offset chokepoint. `is_end`
+    /// requests the inclusive-byte convention: after locating the line
+    /// owning `offset`, add one back so the result is an exclusive
+    /// reconstructed offset again. `None` when `offset` falls in a gap — a
+    /// container prefix byte, or anywhere before the first line or at or
+    /// past the last line's end.
     fn reconstructed_offset(&self, offset: usize, is_end: bool) -> Option<usize> {
         // Lines are in ascending buffer order and never overlap, so the count
         // of starts at or below `offset` is one past the index of the only
@@ -194,18 +283,35 @@ impl LineMap {
             .partition_point(|line| line.start <= offset)
             .checked_sub(1)?;
         let line = self.lines.get(i)?;
-        // A non-final line owns one byte past its content: the buffer's real
-        // newline, which the reconstructed text carries as its joining '\n'.
-        let owned_end = if i + 1 == self.lines.len() {
-            line.end
-        } else {
-            line.end + 1
-        };
+        let owned_end = self.line_bounds(i)?.end;
         if offset >= owned_end {
             return None;
         }
         let mapped = self.prefix.get(i)? + (offset - line.start);
         Some(if is_end { mapped + 1 } else { mapped })
+    }
+}
+
+/// A CRLF line's own byte range includes its trailing `\r` — the buffer's
+/// line index splits on `'\n'` alone — so this drops that one byte before
+/// [`LineMap::new`] ever sums a length from the range, and reports whether
+/// it did so the caller can still find the real terminator past it.
+/// `content` is peeked rather than trusted blindly: an out-of-range `line`
+/// (should not happen, but the ranges arrive from a caller's own parse)
+/// leaves the range untouched, and [`LineMap::reconstruct`] already
+/// degrades a range that fails to land on `content` to "skip this fence"
+/// rather than panicking.
+fn trim_trailing_cr(content: &str, line: Range<usize>) -> (Range<usize>, bool) {
+    let ends_in_cr = line.end > line.start
+        && line
+            .end
+            .checked_sub(1)
+            .and_then(|i| content.as_bytes().get(i))
+            == Some(&b'\r');
+    if ends_in_cr {
+        (line.start..line.end - 1, true)
+    } else {
+        (line, false)
     }
 }
 
@@ -219,20 +325,21 @@ mod tests {
     /// byte-identical to the buffer slice.
     fn contiguous() -> (&'static str, LineMap) {
         let content = "let a = 1;\nlet b = 2;";
-        (content, LineMap::new(vec![0..10, 11..21]))
+        (content, LineMap::new(content, vec![0..10, 11..21]))
     }
 
     /// A blockquoted fence: line 1 starts after `"> "`, two bytes the
     /// reconstructed text never sees.
     fn nested() -> (&'static str, LineMap) {
         let content = "let a = 1;\n> let b = 2;";
-        (content, LineMap::new(vec![0..10, 13..23]))
+        (content, LineMap::new(content, vec![0..10, 13..23]))
     }
 
-    /// A one-line fence. Written as a call rather than `vec![0..3]` because
-    /// a single range literal inside a `vec!` is a hard clippy error.
-    fn one_line(line: Range<usize>) -> LineMap {
-        LineMap::new(vec![line])
+    /// A one-line fence against `content`. Written as a call rather than
+    /// `vec![line]` because a single range literal inside a `vec!` is a
+    /// hard clippy error.
+    fn one_line(content: &str, line: Range<usize>) -> LineMap {
+        LineMap::new(content, vec![line])
     }
 
     #[test]
@@ -246,7 +353,7 @@ mod tests {
 
     #[test]
     fn reconstruct_reports_none_for_a_line_off_the_live_buffer() {
-        let map = LineMap::new(vec![0..10, 40..50]);
+        let map = LineMap::new("short", vec![0..10, 40..50]);
         assert!(map.reconstruct("short").is_none());
     }
 
@@ -255,9 +362,11 @@ mod tests {
         let (content, map) = contiguous();
         assert_eq!(&content[11..21], "let b = 2;");
 
-        let mapped = map.to_buffer(11..15).expect("in range");
-        assert_eq!(mapped, 11..15);
-        assert_eq!(&content[mapped], "let ");
+        let mapped = map.to_buffer(11..15);
+        assert_eq!(mapped.len(), 1, "a single-line range must map to one piece");
+        assert_eq!(mapped[0].line(), 1);
+        assert_eq!(mapped[0].range(), 11..15);
+        assert_eq!(&content[mapped[0].range()], "let ");
     }
 
     #[test]
@@ -268,21 +377,79 @@ mod tests {
         // Reconstructed text is "let a = 1;\nlet b = 2;", so offsets 11..14
         // are line 1's own "let" and must land on line 1's real buffer bytes,
         // never inside the "> " gap.
-        let mapped = map.to_buffer(11..14).expect("in range");
-        assert_eq!(&content[mapped], "let");
+        let mapped = map.to_buffer(11..14);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(&content[mapped[0].range()], "let");
     }
 
     #[test]
     fn to_buffer_end_boundary_never_lands_in_the_prefix() {
         let content = "ab\n> cd";
-        let map = LineMap::new(vec![0..2, 5..7]);
+        let map = LineMap::new(content, vec![0..2, 5..7]);
 
         // Reconstructed text is "ab\ncd". A range covering "ab" plus its
         // joining '\n' must map to the real newline's own end in the buffer,
         // never into the "> " gap that follows it.
-        let mapped = map.to_buffer(0..3).expect("in range");
-        assert_eq!(mapped, 0..3);
-        assert_eq!(&content[mapped], "ab\n");
+        let mapped = map.to_buffer(0..3);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].range(), 0..3);
+        assert_eq!(&content[mapped[0].range()], "ab\n");
+    }
+
+    /// The load-bearing regression case: a token starting on one physical
+    /// line and ending on the next must come back as TWO pieces, each
+    /// entirely inside its own line's bounds — never a single contiguous
+    /// range that would swallow the container prefix sitting in the gap
+    /// between them.
+    #[test]
+    fn to_buffer_splits_a_cross_line_range_at_the_line_boundary_instead_of_spanning_the_gap() {
+        let content = "let a = 1;\n> let b = 2;";
+        let map = LineMap::new(content, vec![0..10, 13..23]);
+
+        // Reconstructed text is "let a = 1;\nlet b = 2;". 8..14 covers
+        // "1;\nlet" — the tail of line 0, the joining newline, and the head
+        // of line 1.
+        let mapped = map.to_buffer(8..14);
+        assert_eq!(
+            mapped.len(),
+            2,
+            "a cross-line range must split into two pieces"
+        );
+
+        assert_eq!(mapped[0].line(), 0);
+        assert_eq!(mapped[0].range(), 8..11);
+        assert_eq!(&content[mapped[0].range()], "1;\n");
+
+        assert_eq!(mapped[1].line(), 1);
+        assert_eq!(mapped[1].range(), 13..16);
+        assert_eq!(&content[mapped[1].range()], "let");
+
+        let combined: String = mapped.iter().map(|p| &content[p.range()]).collect();
+        assert_eq!(combined, "1;\nlet");
+        assert!(
+            !combined.contains("> "),
+            "the pieces must never include the blockquote's own gap bytes"
+        );
+    }
+
+    /// The CRLF defect at its own layer: a physical line's raw range still
+    /// carries its trailing `\r`, and no piece `to_buffer` returns may ever
+    /// include it — checked here directly against `LineMap`, one level below the
+    /// end-to-end highlight pipeline the integration gate checks.
+    #[test]
+    fn to_buffer_never_lets_a_trimmed_carriage_return_back_into_a_piece() {
+        let content = "one\r\ntwo\r\n";
+        let map = LineMap::new(content, vec![0..4, 5..9]);
+        assert_eq!(map.reconstruct(content).unwrap(), "one\ntwo");
+
+        let mapped = map.to_buffer(0..7);
+        assert_eq!(mapped.len(), 2);
+        for piece in &mapped {
+            let text = &content[piece.range()];
+            assert!(!text.contains('\r'), "piece text {text:?} carries a \\r");
+        }
+        let combined: String = mapped.iter().map(|p| &content[p.range()]).collect();
+        assert_eq!(combined, "onetwo");
     }
 
     #[test]
@@ -306,7 +473,7 @@ mod tests {
 
     #[test]
     fn to_reconstructed_rejects_offsets_before_the_first_line() {
-        let map = one_line(5..8);
+        let map = one_line("01234567", 5..8);
         assert_eq!(map.to_reconstructed(0..1), None);
         assert_eq!(map.to_reconstructed(4..5), None);
         assert_eq!(map.to_reconstructed(5..6), Some(0..1));
@@ -319,29 +486,31 @@ mod tests {
         // error, and these degenerate inputs are exactly what is under test.
         let empty = Range { start: 3, end: 3 };
         let inverted = Range { start: 5, end: 2 };
-        assert_eq!(map.to_buffer(empty.clone()), None);
-        assert_eq!(map.to_buffer(inverted.clone()), None);
+        assert!(map.to_buffer(empty.clone()).is_empty());
+        assert!(map.to_buffer(inverted.clone()).is_empty());
         assert_eq!(map.to_reconstructed(empty), None);
         assert_eq!(map.to_reconstructed(inverted), None);
     }
 
     #[test]
     fn an_empty_line_map_maps_nothing() {
-        let map = LineMap::new(vec![]);
+        let map = LineMap::new("", vec![]);
         assert_eq!(map.reconstruct("anything").unwrap(), "");
-        assert_eq!(map.to_buffer(0..1), None);
+        assert!(map.to_buffer(0..1).is_empty());
         assert_eq!(map.to_reconstructed(0..1), None);
     }
 
     #[test]
     fn a_single_line_maps_its_own_content_and_nothing_past_it() {
         let content = "abc";
-        let map = one_line(0..3);
+        let map = one_line(content, 0..3);
         assert_eq!(map.reconstruct(content).unwrap(), "abc");
-        assert_eq!(map.to_buffer(0..3), Some(0..3));
+        let mapped = map.to_buffer(0..3);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].range(), 0..3);
         // A single line is also the LAST line, so it has no joining '\n':
         // offset 3 is past the reconstructed text in both directions.
-        assert_eq!(map.to_buffer(3..4), None);
+        assert!(map.to_buffer(3..4).is_empty());
         assert_eq!(map.to_reconstructed(3..4), None);
     }
 
@@ -350,19 +519,23 @@ mod tests {
         // "a\n\nb": line 1 is empty and contributes only the '\n' that joins
         // it to line 2.
         let content = "a\n\nb";
-        let map = LineMap::new(vec![0..1, 2..2, 3..4]);
+        let map = LineMap::new(content, vec![0..1, 2..2, 3..4]);
         assert_eq!(map.reconstruct(content).unwrap(), "a\n\nb");
 
         // The blank line's own newline sits at buffer offset 2 and
         // reconstructed offset 2.
-        assert_eq!(map.to_buffer(2..3), Some(2..3));
+        let mapped = map.to_buffer(2..3);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].range(), 2..3);
         assert_eq!(map.to_reconstructed(2..3), Some(2..3));
     }
 
     /// The property the two directions exist to guarantee: every in-range
     /// reconstructed range survives a round trip through buffer coordinates
-    /// unchanged. Run over both shapes a fence can take — buffer-contiguous
-    /// and container-nested — since only the nested one exercises the gaps.
+    /// unchanged — piece by piece, since a range crossing a line boundary
+    /// now comes back as several. Run over both shapes a fence can take —
+    /// buffer-contiguous and container-nested — since only the nested one
+    /// exercises the gaps.
     #[test]
     fn every_reconstructed_range_round_trips_through_buffer_coordinates() {
         for (content, map) in [contiguous(), nested()] {
@@ -370,10 +543,20 @@ mod tests {
             for start in 0..text.len() {
                 for end in (start + 1)..=text.len() {
                     let r = start..end;
-                    let buffer = map
-                        .to_buffer(r.clone())
-                        .expect("every in-range reconstructed range maps to the buffer");
-                    assert_eq!(map.to_reconstructed(buffer), Some(r));
+                    let pieces = map.to_buffer(r.clone());
+                    assert!(
+                        !pieces.is_empty(),
+                        "every in-range reconstructed range maps to the buffer"
+                    );
+                    let mut cursor = r.start;
+                    for piece in &pieces {
+                        let back = map
+                            .to_reconstructed(piece.range())
+                            .expect("a mapped piece must map back");
+                        assert_eq!(back.start, cursor, "pieces must cover {r:?} contiguously");
+                        cursor = back.end;
+                    }
+                    assert_eq!(cursor, r.end, "pieces must cover the whole of {r:?}");
                 }
             }
         }
@@ -410,12 +593,12 @@ mod tests {
 
     #[test]
     fn reconstructed_window_reports_none_when_no_line_intersects() {
-        let map = one_line(5..8);
+        let map = one_line("01234567", 5..8);
         assert_eq!(map.reconstructed_window(0..5), None);
         assert_eq!(map.reconstructed_window(9..20), None);
         let empty = Range { start: 6, end: 6 };
         assert_eq!(map.reconstructed_window(empty), None);
-        assert_eq!(LineMap::new(vec![]).reconstructed_window(0..10), None);
+        assert_eq!(LineMap::new("", vec![]).reconstructed_window(0..10), None);
     }
 
     /// A window covering only the second line must not drag the first
@@ -431,7 +614,7 @@ mod tests {
     fn an_out_of_range_reconstructed_offset_maps_nowhere() {
         let (content, map) = nested();
         let len = map.reconstruct(content).unwrap().len();
-        assert_eq!(map.to_buffer(len..len + 1), None);
-        assert_eq!(map.to_buffer(len + 100..len + 101), None);
+        assert!(map.to_buffer(len..len + 1).is_empty());
+        assert!(map.to_buffer(len + 100..len + 101).is_empty());
     }
 }

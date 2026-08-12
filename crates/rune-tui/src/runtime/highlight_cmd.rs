@@ -165,7 +165,12 @@ pub(crate) fn run_regions(jobs: Vec<RegionJob>, budget: PassBudget) -> Option<Hi
                     fence
                         .spans
                         .into_iter()
-                        .filter_map(|(range, scope)| job.map.to_buffer(range).map(|r| (r, scope)))
+                        .flat_map(|(range, scope)| {
+                            job.map
+                                .to_buffer(range)
+                                .into_iter()
+                                .map(move |piece| (piece.range(), scope))
+                        })
                         .collect(),
                 ))
             }
@@ -197,7 +202,7 @@ mod tests {
     /// microseconds each.
     fn job(lines: usize) -> RegionJob {
         RegionJob {
-            map: LineMap::new(Vec::new()),
+            map: LineMap::new("", Vec::new()),
             work: Some((RegionLang::Ts("rust"), LINE.repeat(lines))),
         }
     }

@@ -46,12 +46,13 @@ pub fn visible_spans(doc: &Document, visible: Range<usize>) -> Vec<(Range<usize>
             && let Some(window) = region.map.reconstructed_window(visible.clone())
             && let Some(result) = rune_ts::highlight_range(tree, window)
         {
-            collected.extend(
-                result
-                    .spans
+            collected.extend(result.spans.into_iter().flat_map(|(range, scope)| {
+                region
+                    .map
+                    .to_buffer(range)
                     .into_iter()
-                    .filter_map(|(range, scope)| region.map.to_buffer(range).map(|r| (r, scope))),
-            );
+                    .map(move |piece| (piece.range(), scope))
+            }));
         }
         collected.extend(
             region

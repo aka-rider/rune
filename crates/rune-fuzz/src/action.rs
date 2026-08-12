@@ -228,7 +228,7 @@ pub const TREE_PARSE_BUDGET: std::time::Duration = std::time::Duration::from_sec
 /// this one construction so they can never drift apart).
 pub fn highlight_tree_reply(fixture: u8, base: usize) -> rune_tui::highlight::HighlightReply {
     let source = tree_fixture(fixture);
-    let map = rune_tui::linemap::LineMap::new(tree_fixture_line_ranges(source, base));
+    let map = rune_tui::linemap::LineMap::new(source, tree_fixture_line_ranges(source, base));
     let payload = rune_ts::parse("json", source, TREE_PARSE_BUDGET)
         .map(rune_tui::highlight::RegionPayload::Tree);
     rune_tui::highlight::HighlightReply {
@@ -258,7 +258,7 @@ mod tests {
     fn line_ranges_at_base_zero_reconstruct_byte_identically() {
         for &source in TREE_FIXTURES {
             let ranges = tree_fixture_line_ranges(source, 0);
-            let map = LineMap::new(ranges);
+            let map = LineMap::new(source, ranges);
             let reconstructed = map.reconstruct(source);
             assert_eq!(
                 reconstructed.as_deref(),
