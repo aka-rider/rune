@@ -6,97 +6,97 @@
 //! module only owns the definitions.
 
 use crate::binding::{Binding, KeyPattern};
-use crate::keymap::{Command, KeyCode};
+use crate::keymap::{Command, Extend, KeyCode, Motion};
 
 use super::{ALT, CTRL, NONE, SUP};
 
 pub(crate) const CHAR_LEFT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Left, NONE),
-    cmd: Command::CharLeft,
+    cmd: Command::Motion(Motion::CharLeft, Extend::No),
     help: "move left",
     alias: false,
 };
 
 pub(crate) const CHAR_RIGHT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Right, NONE),
-    cmd: Command::CharRight,
+    cmd: Command::Motion(Motion::CharRight, Extend::No),
     help: "move right",
     alias: false,
 };
 
 pub(crate) const WORD_LEFT_ARROW: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Left, ALT),
-    cmd: Command::WordLeft,
+    cmd: Command::Motion(Motion::WordLeft, Extend::No),
     help: "word left",
     alias: false,
 };
 
 pub(crate) const WORD_RIGHT_ARROW: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Right, ALT),
-    cmd: Command::WordRight,
+    cmd: Command::Motion(Motion::WordRight, Extend::No),
     help: "word right",
     alias: false,
 };
 
 pub(crate) const LINE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Up, NONE),
-    cmd: Command::LineUp,
+    cmd: Command::Motion(Motion::LineUp, Extend::No),
     help: "move up",
     alias: false,
 };
 
 pub(crate) const LINE_DOWN: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Down, NONE),
-    cmd: Command::LineDown,
+    cmd: Command::Motion(Motion::LineDown, Extend::No),
     help: "move down",
     alias: false,
 };
 
 pub(crate) const LINE_START: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Home, NONE),
-    cmd: Command::LineStart,
+    cmd: Command::Motion(Motion::LineStart, Extend::No),
     help: "line start",
     alias: false,
 };
 
 pub(crate) const LINE_END: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::End, NONE),
-    cmd: Command::LineEnd,
+    cmd: Command::Motion(Motion::LineEnd, Extend::No),
     help: "line end",
     alias: false,
 };
 
 pub(crate) const PAGE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::PageUp, NONE),
-    cmd: Command::PageUp,
+    cmd: Command::Motion(Motion::PageUp, Extend::No),
     help: "page up",
     alias: false,
 };
 
 pub(crate) const PAGE_DOWN: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::PageDown, NONE),
-    cmd: Command::PageDown,
+    cmd: Command::Motion(Motion::PageDown, Extend::No),
     help: "page down",
     alias: false,
 };
 
 pub(crate) const PAGE_UP_CTRL_U: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('u'), CTRL),
-    cmd: Command::PageUp,
+    cmd: Command::Motion(Motion::PageUp, Extend::No),
     help: "page up",
     alias: false,
 };
 
 pub(crate) const WORD_LEFT_B: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('b'), ALT),
-    cmd: Command::WordLeft,
+    cmd: Command::Motion(Motion::WordLeft, Extend::No),
     help: "word left",
     alias: false,
 };
 
 pub(crate) const WORD_RIGHT_F: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('f'), ALT),
-    cmd: Command::WordRight,
+    cmd: Command::Motion(Motion::WordRight, Extend::No),
     help: "word right",
     alias: false,
 };

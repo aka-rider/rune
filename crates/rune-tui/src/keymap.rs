@@ -38,7 +38,7 @@ pub use vim::{BindingSet, VIM_BINDINGS, VimCommand};
 /// clipboard variants are resolved starting WP5 but only acted on starting
 /// WP6/7/8 — the plan's "movement commands may no-op until WP6".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Command {
+pub enum Motion {
     CharLeft,
     CharRight,
     LineUp,
@@ -49,16 +49,17 @@ pub enum Command {
     LineEnd,
     PageUp,
     PageDown,
-    SelectCharLeft,
-    SelectCharRight,
-    SelectLineUp,
-    SelectLineDown,
-    SelectWordLeft,
-    SelectWordRight,
-    SelectLineStart,
-    SelectLineEnd,
-    SelectPageUp,
-    SelectPageDown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extend {
+    No,
+    Yes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Command {
+    Motion(Motion, Extend),
     SelectAll,
     DeleteLeft,
     DeleteRight,
@@ -171,16 +172,19 @@ mod tests {
     fn plain_arrows_move() {
         assert_eq!(
             resolve(key(KeyCode::Left, Mods::NONE)),
-            Some(Command::CharLeft)
+            Some(Command::Motion(Motion::CharLeft, Extend::No))
         );
         assert_eq!(
             resolve(key(KeyCode::Right, Mods::NONE)),
-            Some(Command::CharRight)
+            Some(Command::Motion(Motion::CharRight, Extend::No))
         );
-        assert_eq!(resolve(key(KeyCode::Up, Mods::NONE)), Some(Command::LineUp));
+        assert_eq!(
+            resolve(key(KeyCode::Up, Mods::NONE)),
+            Some(Command::Motion(Motion::LineUp, Extend::No))
+        );
         assert_eq!(
             resolve(key(KeyCode::Down, Mods::NONE)),
-            Some(Command::LineDown)
+            Some(Command::Motion(Motion::LineDown, Extend::No))
         );
     }
 
@@ -192,11 +196,11 @@ mod tests {
         };
         assert_eq!(
             resolve(key(KeyCode::Left, shift)),
-            Some(Command::SelectCharLeft)
+            Some(Command::Motion(Motion::CharLeft, Extend::Yes))
         );
         assert_eq!(
             resolve(key(KeyCode::Up, shift)),
-            Some(Command::SelectLineUp)
+            Some(Command::Motion(Motion::LineUp, Extend::Yes))
         );
     }
 
@@ -206,15 +210,21 @@ mod tests {
             alt: true,
             ..Mods::NONE
         };
-        assert_eq!(resolve(key(KeyCode::Left, alt)), Some(Command::WordLeft));
-        assert_eq!(resolve(key(KeyCode::Right, alt)), Some(Command::WordRight));
+        assert_eq!(
+            resolve(key(KeyCode::Left, alt)),
+            Some(Command::Motion(Motion::WordLeft, Extend::No))
+        );
+        assert_eq!(
+            resolve(key(KeyCode::Right, alt)),
+            Some(Command::Motion(Motion::WordRight, Extend::No))
+        );
         assert_eq!(
             resolve(key(KeyCode::Char('b'), alt)),
-            Some(Command::WordLeft)
+            Some(Command::Motion(Motion::WordLeft, Extend::No))
         );
         assert_eq!(
             resolve(key(KeyCode::Char('f'), alt)),
-            Some(Command::WordRight)
+            Some(Command::Motion(Motion::WordRight, Extend::No))
         );
     }
 
@@ -276,7 +286,10 @@ mod tests {
                 ..Mods::NONE
             },
         );
-        assert_eq!(resolve(chord), Some(Command::PageUp));
+        assert_eq!(
+            resolve(chord),
+            Some(Command::Motion(Motion::PageUp, Extend::No))
+        );
     }
 
     #[test]
@@ -383,11 +396,11 @@ mod tests {
         };
         assert_eq!(
             resolve(key(KeyCode::Char('b'), shift_alt)),
-            Some(Command::SelectWordLeft)
+            Some(Command::Motion(Motion::WordLeft, Extend::Yes))
         );
         assert_eq!(
             resolve(key(KeyCode::Char('f'), shift_alt)),
-            Some(Command::SelectWordRight)
+            Some(Command::Motion(Motion::WordRight, Extend::Yes))
         );
     }
 

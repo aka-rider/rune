@@ -12,6 +12,7 @@ use rune_md::element::doc::ViewSnapshots;
 
 use crate::commands::nav::{move_cursors, update_horizontal};
 use crate::document::Document;
+use crate::keymap::Extend;
 
 /// The "smart home" offset for the line containing `offset`: toggles
 /// between the line's first non-whitespace column and column 0.
@@ -85,22 +86,22 @@ fn handle_move_to(
     view: &ViewSnapshots,
     buf: &Buffer,
     c: Cursor,
-    select: bool,
+    extend: Extend,
     step: impl Fn(&Buffer, usize) -> usize,
 ) -> Cursor {
     let offset = step(buf, c.position);
-    update_horizontal(view, buf, c, offset, select)
+    update_horizontal(view, buf, c, offset, extend)
 }
 
-pub fn line_start(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_move_to(view, buf, c, select, line_start_offset)
+pub fn line_start(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        handle_move_to(view, buf, c, extend, line_start_offset)
     });
 }
 
-pub fn line_end(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_move_to(view, buf, c, select, line_end_offset)
+pub fn line_end(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        handle_move_to(view, buf, c, extend, line_end_offset)
     });
 }
 

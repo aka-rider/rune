@@ -22,6 +22,7 @@ use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
 use crate::document::Document;
+use crate::keymap::Extend;
 use crate::viewport::ScrollMode;
 
 /// Visual-line up/down via the wrap conversions, preserving `c.desired_col`
@@ -33,7 +34,7 @@ fn move_row(
     buf: &rune_core::buffer::Buffer,
     c: Cursor,
     delta: isize,
-    select: bool,
+    extend: Extend,
 ) -> Cursor {
     let bp = buf.offset_to_line_col(c.position);
     let sp = view.syntax.buffer_to_syntax(bp);
@@ -66,7 +67,11 @@ fn move_row(
 
     Cursor {
         position: offset2,
-        anchor: if select { c.anchor } else { offset2 },
+        anchor: if extend == Extend::Yes {
+            c.anchor
+        } else {
+            offset2
+        },
         desired_col: c.desired_col,
         id: c.id,
     }
@@ -82,33 +87,33 @@ pub(crate) fn page_step(doc: &Document) -> isize {
 }
 
 /// Shared vertical-motion driver (line up/down, page up/down).
-fn move_row_cursors(doc: &mut Document, select: bool, delta: isize) {
+fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
     let view = doc.view();
     let new_cursors: Vec<Cursor> = doc
         .cursors
         .all()
         .iter()
-        .map(|&c| move_row(&view, &doc.buffer, c, delta, select))
+        .map(|&c| move_row(&view, &doc.buffer, c, delta, extend))
         .collect();
     doc.cursors = CursorSet::new_from(&new_cursors);
 }
 
-pub fn line_up(doc: &mut Document, select: bool) {
-    move_row_cursors(doc, select, -1);
+pub fn line_up(doc: &mut Document, extend: Extend) {
+    move_row_cursors(doc, extend, -1);
 }
 
-pub fn line_down(doc: &mut Document, select: bool) {
-    move_row_cursors(doc, select, 1);
+pub fn line_down(doc: &mut Document, extend: Extend) {
+    move_row_cursors(doc, extend, 1);
 }
 
-pub fn page_up(doc: &mut Document, select: bool) {
+pub fn page_up(doc: &mut Document, extend: Extend) {
     let step = page_step(doc);
-    move_row_cursors(doc, select, -step);
+    move_row_cursors(doc, extend, -step);
 }
 
-pub fn page_down(doc: &mut Document, select: bool) {
+pub fn page_down(doc: &mut Document, extend: Extend) {
     let step = page_step(doc);
-    move_row_cursors(doc, select, step);
+    move_row_cursors(doc, extend, step);
 }
 
 /// The row the PRIMARY cursor currently sits on, in wrap space — the input

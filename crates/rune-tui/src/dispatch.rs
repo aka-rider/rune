@@ -13,7 +13,7 @@ use crate::commands::{
 };
 use crate::document::DocumentId;
 use crate::highlight::HighlightReply;
-use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
+use crate::keymap::{self, Command, Extend, KeyCode, KeyInput, Mods, Motion, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg, PasteTarget};
@@ -421,38 +421,41 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     }
 
     match command {
-        Command::CharLeft => nav::char_left(app.active_doc_mut(), false),
-        Command::CharRight => nav::char_right(app.active_doc_mut(), false),
+        Command::Motion(Motion::CharLeft, extend) => nav::char_left(app.active_doc_mut(), extend),
+        Command::Motion(Motion::CharRight, extend) => nav::char_right(app.active_doc_mut(), extend),
         // Up at the very top of the buffer focuses the title instead — a
         // contextual gesture, not a new binding, so the one-key-one-
         // binding rule is untouched. Anywhere else it's an ordinary
         // cursor move. A read-only document never reaches this arm:
         // `reading_nav::intercept` above re-keys the same gesture to the
         // view's own top and consumes the key first.
-        Command::LineUp => {
+        Command::Motion(Motion::LineUp, Extend::No) => {
             if at_buffer_top(app) {
                 app.focus_title();
             } else {
-                nav_scroll::line_up(app.active_doc_mut(), false);
+                nav_scroll::line_up(app.active_doc_mut(), Extend::No);
             }
         }
-        Command::LineDown => nav_scroll::line_down(app.active_doc_mut(), false),
-        Command::WordLeft => nav::word_left(app.active_doc_mut(), false),
-        Command::WordRight => nav::word_right(app.active_doc_mut(), false),
-        Command::LineStart => nav_line::line_start(app.active_doc_mut(), false),
-        Command::LineEnd => nav_line::line_end(app.active_doc_mut(), false),
-        Command::PageUp => nav_scroll::page_up(app.active_doc_mut(), false),
-        Command::PageDown => nav_scroll::page_down(app.active_doc_mut(), false),
-        Command::SelectCharLeft => nav::char_left(app.active_doc_mut(), true),
-        Command::SelectCharRight => nav::char_right(app.active_doc_mut(), true),
-        Command::SelectLineUp => nav_scroll::line_up(app.active_doc_mut(), true),
-        Command::SelectLineDown => nav_scroll::line_down(app.active_doc_mut(), true),
-        Command::SelectWordLeft => nav::word_left(app.active_doc_mut(), true),
-        Command::SelectWordRight => nav::word_right(app.active_doc_mut(), true),
-        Command::SelectLineStart => nav_line::line_start(app.active_doc_mut(), true),
-        Command::SelectLineEnd => nav_line::line_end(app.active_doc_mut(), true),
-        Command::SelectPageUp => nav_scroll::page_up(app.active_doc_mut(), true),
-        Command::SelectPageDown => nav_scroll::page_down(app.active_doc_mut(), true),
+        Command::Motion(Motion::LineUp, Extend::Yes) => {
+            nav_scroll::line_up(app.active_doc_mut(), Extend::Yes);
+        }
+        Command::Motion(Motion::LineDown, extend) => {
+            nav_scroll::line_down(app.active_doc_mut(), extend)
+        }
+        Command::Motion(Motion::WordLeft, extend) => nav::word_left(app.active_doc_mut(), extend),
+        Command::Motion(Motion::WordRight, extend) => nav::word_right(app.active_doc_mut(), extend),
+        Command::Motion(Motion::LineStart, extend) => {
+            nav_line::line_start(app.active_doc_mut(), extend)
+        }
+        Command::Motion(Motion::LineEnd, extend) => {
+            nav_line::line_end(app.active_doc_mut(), extend)
+        }
+        Command::Motion(Motion::PageUp, extend) => {
+            nav_scroll::page_up(app.active_doc_mut(), extend)
+        }
+        Command::Motion(Motion::PageDown, extend) => {
+            nav_scroll::page_down(app.active_doc_mut(), extend)
+        }
         Command::SelectAll => nav::select_all(app.active_doc_mut()),
         Command::ScrollLineUp => nav_scroll::scroll_line_up(app.active_doc_mut()),
         Command::ScrollLineDown => nav_scroll::scroll_line_down(app.active_doc_mut()),

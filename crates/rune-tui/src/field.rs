@@ -22,7 +22,7 @@ use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{self, Journal, Step};
 
 use crate::commands::nav;
-use crate::keymap::{Command, KeyOutcome};
+use crate::keymap::{Command, Extend, KeyOutcome, Motion};
 
 /// A single-line, undoable text editing core. Holds the full text in one
 /// `Buffer` — never two separately-tracked strings — so a caller that
@@ -109,28 +109,24 @@ impl TextField {
     /// caller's own responsibility and are ignored here.
     pub fn apply(&mut self, cmd: Command, window: Range<usize>) -> KeyOutcome {
         match cmd {
-            Command::CharLeft => self.step_left(&window, false, nav::prev_rune_offset),
-            Command::CharRight => self.step_right(&window, false, nav::next_rune_offset),
-            Command::WordLeft => self.step_left(&window, false, nav::word_left_offset),
-            Command::WordRight => self.step_right(&window, false, nav::word_right_offset),
-            Command::SelectCharLeft => self.step_left(&window, true, nav::prev_rune_offset),
-            Command::SelectCharRight => self.step_right(&window, true, nav::next_rune_offset),
-            Command::SelectWordLeft => self.step_left(&window, true, nav::word_left_offset),
-            Command::SelectWordRight => self.step_right(&window, true, nav::word_right_offset),
-            Command::LineStart => {
-                self.move_to(window.start, false);
+            Command::Motion(Motion::CharLeft, extend) => {
+                self.step_left(&window, extend == Extend::Yes, nav::prev_rune_offset)
+            }
+            Command::Motion(Motion::CharRight, extend) => {
+                self.step_right(&window, extend == Extend::Yes, nav::next_rune_offset)
+            }
+            Command::Motion(Motion::WordLeft, extend) => {
+                self.step_left(&window, extend == Extend::Yes, nav::word_left_offset)
+            }
+            Command::Motion(Motion::WordRight, extend) => {
+                self.step_right(&window, extend == Extend::Yes, nav::word_right_offset)
+            }
+            Command::Motion(Motion::LineStart, extend) => {
+                self.move_to(window.start, extend == Extend::Yes);
                 KeyOutcome::Consumed
             }
-            Command::LineEnd => {
-                self.move_to(window.end, false);
-                KeyOutcome::Consumed
-            }
-            Command::SelectLineStart => {
-                self.move_to(window.start, true);
-                KeyOutcome::Consumed
-            }
-            Command::SelectLineEnd => {
-                self.move_to(window.end, true);
+            Command::Motion(Motion::LineEnd, extend) => {
+                self.move_to(window.end, extend == Extend::Yes);
                 KeyOutcome::Consumed
             }
             Command::SelectAll => {
@@ -360,12 +356,18 @@ mod tests {
         field.set_cursor(0, 0);
         let window = 0..field.len();
         for expected in [3, 5, 5] {
-            let outcome = field.apply(Command::WordRight, window.clone());
+            let outcome = field.apply(
+                Command::Motion(Motion::WordRight, Extend::No),
+                window.clone(),
+            );
             assert_eq!(outcome, KeyOutcome::Consumed);
             assert_eq!(field.cursor().position, expected);
         }
         for expected in [4, 0, 0] {
-            let outcome = field.apply(Command::WordLeft, window.clone());
+            let outcome = field.apply(
+                Command::Motion(Motion::WordLeft, Extend::No),
+                window.clone(),
+            );
             assert_eq!(outcome, KeyOutcome::Consumed);
             assert_eq!(field.cursor().position, expected);
         }
@@ -376,14 +378,23 @@ mod tests {
         let mut field = TextField::new("hello");
         field.set_cursor(0, 0);
         let window = 0..field.len();
-        let _ = field.apply(Command::SelectCharRight, window.clone());
-        let _ = field.apply(Command::SelectCharRight, window.clone());
+        let _ = field.apply(
+            Command::Motion(Motion::CharRight, Extend::Yes),
+            window.clone(),
+        );
+        let _ = field.apply(
+            Command::Motion(Motion::CharRight, Extend::Yes),
+            window.clone(),
+        );
         assert_eq!((field.cursor().anchor, field.cursor().position), (0, 2));
         assert_eq!(field.selected_text(), "he");
 
         // Unshifted left with an active selection collapses to the
         // selection's start instead of stepping one rune further left.
-        let outcome = field.apply(Command::CharLeft, window.clone());
+        let outcome = field.apply(
+            Command::Motion(Motion::CharLeft, Extend::No),
+            window.clone(),
+        );
         assert_eq!(outcome, KeyOutcome::Consumed);
         assert_eq!(field.cursor().position, 0);
         assert!(!field.cursor().has_selection());

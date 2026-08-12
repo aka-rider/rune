@@ -41,6 +41,7 @@ use rune_md::element::doc::ViewSnapshots;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
+use crate::keymap::Extend;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CharClass {
@@ -238,7 +239,7 @@ pub(crate) fn update_horizontal(
     buf: &Buffer,
     c: Cursor,
     offset: usize,
-    select: bool,
+    extend: Extend,
 ) -> Cursor {
     let bp = buf.offset_to_line_col(offset);
     let sp = view.syntax.buffer_to_syntax(bp);
@@ -246,7 +247,11 @@ pub(crate) fn update_horizontal(
     let desired_col = view.wrap.visual_col(buf.content(), wp.row, wp.col);
     Cursor {
         position: offset,
-        anchor: if select { c.anchor } else { offset },
+        anchor: if extend == Extend::Yes {
+            c.anchor
+        } else {
+            offset
+        },
         desired_col,
         id: c.id,
     }
@@ -256,68 +261,68 @@ fn handle_left(
     view: &ViewSnapshots,
     buf: &Buffer,
     c: Cursor,
-    select: bool,
+    extend: Extend,
     step: impl Fn(&Buffer, usize) -> usize,
 ) -> Cursor {
     let mut offset = step(buf, c.position);
-    if !select && c.has_selection() {
+    if extend == Extend::No && c.has_selection() {
         offset = c.selection_start();
     }
-    update_horizontal(view, buf, c, offset, select)
+    update_horizontal(view, buf, c, offset, extend)
 }
 
 fn handle_right(
     view: &ViewSnapshots,
     buf: &Buffer,
     c: Cursor,
-    select: bool,
+    extend: Extend,
     step: impl Fn(&Buffer, usize) -> usize,
 ) -> Cursor {
     let mut offset = step(buf, c.position);
-    if !select && c.has_selection() {
+    if extend == Extend::No && c.has_selection() {
         offset = c.selection_end();
     }
-    update_horizontal(view, buf, c, offset, select)
+    update_horizontal(view, buf, c, offset, extend)
 }
 
 /// Shared horizontal/line-start-end driver, applied to every cursor in the
 /// set.
 pub(crate) fn move_cursors(
     doc: &mut Document,
-    select: bool,
-    step: impl Fn(&ViewSnapshots, &Buffer, Cursor, bool) -> Cursor,
+    extend: Extend,
+    step: impl Fn(&ViewSnapshots, &Buffer, Cursor, Extend) -> Cursor,
 ) {
     let view = doc.view();
     let new_cursors: Vec<Cursor> = doc
         .cursors
         .all()
         .iter()
-        .map(|&c| step(&view, &doc.buffer, c, select))
+        .map(|&c| step(&view, &doc.buffer, c, extend))
         .collect();
     doc.cursors = CursorSet::new_from(&new_cursors);
 }
 
-pub fn char_left(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_left(view, buf, c, select, prev_rune_offset)
+pub fn char_left(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        handle_left(view, buf, c, extend, prev_rune_offset)
     });
 }
 
-pub fn char_right(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_right(view, buf, c, select, next_rune_offset)
+pub fn char_right(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        handle_right(view, buf, c, extend, next_rune_offset)
     });
 }
 
-pub fn word_left(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_left(view, buf, c, select, word_left_offset)
+pub fn word_left(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        handle_left(view, buf, c, extend, word_left_offset)
     });
 }
 
-pub fn word_right(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_right(view, buf, c, select, word_right_offset)
+pub fn word_right(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        handle_right(view, buf, c, extend, word_right_offset)
     });
 }
 

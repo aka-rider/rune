@@ -21,7 +21,7 @@
 
 use crate::app::App;
 use crate::commands::nav_scroll;
-use crate::keymap::Command;
+use crate::keymap::{Command, Motion};
 
 /// Returns true when `command` was handled as a viewport command on the
 /// active document — the caller must treat that as fully consumed and stop,
@@ -36,7 +36,7 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
     }
 
     match command {
-        Command::LineDown | Command::SelectLineDown => {
+        Command::Motion(Motion::LineDown, _) => {
             nav_scroll::scroll_lines(app.active_doc_mut(), 1);
         }
         // Up at the very top of the viewport re-keys the existing
@@ -44,35 +44,29 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
         // read-only document's own "top" — the first visible row, since a
         // read-only document's cursor position carries no visible meaning
         // to test against.
-        Command::LineUp | Command::SelectLineUp => {
+        Command::Motion(Motion::LineUp, _) => {
             if app.active_doc().viewport.scroll_row == 0 {
                 app.focus_title();
             } else {
                 nav_scroll::scroll_lines(app.active_doc_mut(), -1);
             }
         }
-        Command::CharLeft
-        | Command::WordLeft
-        | Command::SelectCharLeft
-        | Command::SelectWordLeft
-        | Command::PageUp
-        | Command::SelectPageUp => {
+        Command::Motion(Motion::CharLeft, _)
+        | Command::Motion(Motion::WordLeft, _)
+        | Command::Motion(Motion::PageUp, _) => {
             let step = nav_scroll::page_step(app.active_doc());
             nav_scroll::scroll_lines(app.active_doc_mut(), -step);
         }
-        Command::CharRight
-        | Command::WordRight
-        | Command::SelectCharRight
-        | Command::SelectWordRight
-        | Command::PageDown
-        | Command::SelectPageDown => {
+        Command::Motion(Motion::CharRight, _)
+        | Command::Motion(Motion::WordRight, _)
+        | Command::Motion(Motion::PageDown, _) => {
             let step = nav_scroll::page_step(app.active_doc());
             nav_scroll::scroll_lines(app.active_doc_mut(), step);
         }
-        Command::LineStart | Command::SelectLineStart => {
+        Command::Motion(Motion::LineStart, _) => {
             nav_scroll::scroll_to_document_top(app.active_doc_mut());
         }
-        Command::LineEnd | Command::SelectLineEnd => {
+        Command::Motion(Motion::LineEnd, _) => {
             nav_scroll::scroll_to_document_bottom(app.active_doc_mut());
         }
         _ => return false,
