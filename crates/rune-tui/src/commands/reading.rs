@@ -45,6 +45,7 @@ pub fn toggle(app: &mut App) {
         ReadOnly::No => doc.read_only = ReadOnly::Reading,
         ReadOnly::Reading => {
             doc.read_only = ReadOnly::No;
+            doc.reading_link_focus = None;
         }
         ReadOnly::Always | ReadOnly::Preview => {
             if let Some(message) = doc.read_only.refusal_message() {

@@ -151,7 +151,24 @@ pub fn build_rows(
         &app.theme,
     );
 
+    if let Some(focus) = doc.reading_link_focus {
+        apply_reading_link_focus(&mut rows, focus);
+    }
+
     rows
+}
+
+fn apply_reading_link_focus(rows: &mut [Vec<Cell>], focus: rune_syntax::element::ByteRange) {
+    for row in rows.iter_mut() {
+        for cell in row.iter_mut() {
+            if cell.buf_offset < 0 {
+                continue;
+            }
+            if focus.contains(cell.buf_offset as usize) {
+                cell.style = cell.style.add_modifier(ratatui::style::Modifier::REVERSED);
+            }
+        }
+    }
 }
 
 // `apply_cursor_overlays`, `highlight_selection`, `place_caret` and

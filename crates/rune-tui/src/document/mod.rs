@@ -39,6 +39,7 @@ use rune_core::undo::{EditKind, Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_md::icons::IconSet;
 use rune_syntax::DocumentKind;
+use rune_syntax::element::ByteRange;
 
 use crate::db::DocDb;
 pub use crate::document_support::Hydration;
@@ -173,6 +174,7 @@ pub struct Document {
     /// follow` reads this to find what the cursor is sitting on and where a
     /// same-document or cross-document anchor lands.
     pub catalogue: Vec<rune_nav::Ref>,
+    pub reading_link_focus: Option<ByteRange>,
     /// Which producer this document's content goes through —
     /// mirrored onto `doc` via `DocMachine::set_kind` every time it changes.
     /// Recomputed from `file_path` and the buffer's current content only
@@ -403,6 +405,7 @@ impl Document {
             replica: Replica::Detached,
             display_name: None,
             catalogue: Vec::new(),
+            reading_link_focus: None,
             kind: DocumentKind::Markdown,
             icons: IconSet::unicode(),
             highlight: HighlightState::default(),
