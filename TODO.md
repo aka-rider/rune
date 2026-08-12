@@ -146,7 +146,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/pane.rs` — 862
   - `crates/rune-tui/src/layout.rs` — 736
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
-  - `crates/rune-tui/src/runtime/mod.rs` — 608
+  - `crates/rune-tui/src/runtime/mod.rs` — 621 (grew from 608: `Msg::BootstrapViewReady`, issue #11's deferred-compute reply)
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
   - `crates/rune-tui/src/app.rs` — 591
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
@@ -160,7 +160,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 559
   - `crates/rune-vfs/src/mem.rs` — 705 (`fail_resolve` and its tests pushed this further over)
   - `crates/rune-vfs/src/publish.rs` — 552 (already over before the narrow `put_force`/`put_if_absent` outcome types, which moved to a sibling `put_result.rs` rather than growing this further; split candidate: move the `#[cfg(test)] mod tests` block, well over half the file, to a `#[path]`-included sibling `publish_tests.rs` so it keeps access to the private `put_if_match`/`put_if_absent`/`finish_over_existing` it exercises)
-  - `crates/rune-tui/src/dispatch.rs` — 507
+  - `crates/rune-tui/src/dispatch.rs` — 536 (grew from 507: `handle_bootstrap_view_ready`, issue #11's deferred-compute reply handler)
   - `crates/rune-tui/src/document/mod.rs` — 671 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 537 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 531 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
