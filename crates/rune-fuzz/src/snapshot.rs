@@ -9,12 +9,14 @@
 //! `crate::step::StepCtx` instead (plan Context, decision 7 `[fixes B3]`).
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use ratatui::layout::Rect;
 use rune_core::coords::DisplayRow;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
 use rune_tui::document::{DocumentId, ReadOnly};
+use rune_tui::focus::{self, FocusTarget};
 use rune_tui::footer;
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::QuitKey;
@@ -50,6 +52,7 @@ pub struct Snapshot {
     /// end-of-session undo/redo drive (`driver.rs`), both of which must
     /// tell an editor-focused step apart from a chrome-focused one.
     pub focus: Pane,
+    pub focus_target: FocusTarget,
     /// `app.guard.is_some()` — a Guard captures every key at stage 1 of the
     /// pipeline regardless of `focus` (an error, unlike a Guard, is a
     /// non-modal log entry and captures nothing), so `PANE-NO-BLEED` and the
@@ -67,6 +70,10 @@ pub struct Snapshot {
     /// report couldn't even show what the field held when a title-path
     /// invariant tripped.
     pub title_text: String,
+    pub title_cursor: Cursor,
+    pub title_window: Range<usize>,
+    pub filesearch_query: Option<String>,
+    pub search_draft: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`, reachable now that `F1` is in `arb_any_keycode`,
     /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃P`,
@@ -311,9 +318,14 @@ impl Snapshot {
             should_quit: app.should_quit,
             status: fuzz_status(app),
             focus: app.focus(),
+            focus_target: focus::target(app),
             modal_open: app.guard.is_some(),
             active: app.active,
             title_text: app.title.text().to_string(),
+            title_cursor: app.title.field().cursor(),
+            title_window: app.title.window(),
+            filesearch_query: app.filesearch().map(|state| state.query.clone()),
+            search_draft: app.search_draft().map(str::to_string),
             read_only: doc.read_only,
             caret_visible: doc.has_insertion_point(),
             cells,

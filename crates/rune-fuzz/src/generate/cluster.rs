@@ -271,6 +271,7 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(TRASH_KEY)]),
         Just(vec![Action::Key(FILESEARCH_KEY_CTRL)]),
         Just(vec![Action::Key(FILESEARCH_KEY_SUP)]),
+        Just(vec![Action::OpenFileSearch]),
         Just(vec![Action::ConfirmTimeout]),
         select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
         proptest::collection::vec(select(EXPLORER_SEARCH_KEYS), 1..=3).prop_map(|keys| {

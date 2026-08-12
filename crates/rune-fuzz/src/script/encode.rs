@@ -52,6 +52,7 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push_str(&escape(s));
             out.push('\n');
         }
+        Action::OpenFileSearch => out.push('\n'),
         Action::Resize(w, h) => {
             let _ = writeln!(out, " {w} {h}");
         }

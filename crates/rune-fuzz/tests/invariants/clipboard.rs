@@ -2,6 +2,7 @@
 
 use rune_fuzz::invariant::{clip_osc52, paste_verbatim};
 use rune_fuzz::step::MsgTag;
+use rune_tui::focus::FocusTarget;
 use rune_tui::keymap::{Command, KeyCode};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::PasteTarget;
@@ -81,16 +82,36 @@ fn paste_verbatim_ignores_a_clipboard_read_targeted_at_a_different_document() {
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
 }
 
-/// A `MsgTag::Paste` step with focus off the Editor (the title consumed it
-/// instead) must not be checked against the document either.
+/// A `MsgTag::Paste` step with focus on the title is checked against the
+/// title field, never the document — the document must stay untouched
+/// while the sanitized text lands in the title.
 #[test]
-fn paste_verbatim_ignores_a_paste_while_the_title_is_focused() {
+fn paste_verbatim_checks_a_paste_landing_in_the_title_field() {
     let mut prev = base_snapshot("ac");
     prev.focus = Pane::Title;
-    let next = base_snapshot("ac");
+    prev.focus_target = FocusTarget::Title;
+    let mut next = base_snapshot("ac"); // document stays untouched
+    next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title;
+    next.title_text = "b".to_string();
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Paste("b".to_string());
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_detects_a_title_paste_that_never_lands() {
+    let mut prev = base_snapshot("ac");
+    prev.focus = Pane::Title;
+    prev.focus_target = FocusTarget::Title;
+    let mut next = base_snapshot("ac");
+    next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title; // title_text left at "" -- wrong
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    let v = paste_verbatim(&prev, &next, &ctx)
+        .expect("a title paste that never updates the title field must trip PASTE-VERBATIM");
+    assert_eq!(v.id, "PASTE-VERBATIM");
 }
 
 #[test]
@@ -131,6 +152,94 @@ fn paste_verbatim_detects_a_mismatched_selection_replace() {
     let v = paste_verbatim(&prev, &next, &ctx)
         .expect("a paste that fails to replace the selection must trip PASTE-VERBATIM");
     assert_eq!(v.id, "PASTE-VERBATIM");
+}
+
+#[test]
+fn paste_verbatim_checks_a_paste_landing_in_the_search_field() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::SearchField;
+    prev.search_draft = Some("q".to_string());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::SearchField;
+    next.search_draft = Some("qb".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_detects_a_swallowed_search_field_paste() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::SearchField;
+    prev.search_draft = Some("q".to_string());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::SearchField;
+    next.search_draft = Some("q".to_string()); // wrong: never appended
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    let v = paste_verbatim(&prev, &next, &ctx)
+        .expect("a search-field paste that never appends must trip PASTE-VERBATIM");
+    assert_eq!(v.id, "PASTE-VERBATIM");
+}
+
+/// `filesearch::keys::paste` takes only the first line and strips control
+/// characters before appending — a multi-line paste that sanitizes down to
+/// an empty first line is a legitimate no-op, not a swallow.
+#[test]
+fn paste_verbatim_accepts_a_filesearch_paste_that_sanitizes_to_nothing() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::FileSearch;
+    prev.filesearch_query = Some(String::new());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::FileSearch;
+    next.filesearch_query = Some(String::new());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("\n\n\n".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_checks_a_paste_landing_in_the_filesearch_query() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::FileSearch;
+    prev.filesearch_query = Some("re".to_string());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::FileSearch;
+    next.filesearch_query = Some("readme".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("adme\nignored second line".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_detects_a_swallowed_filesearch_paste() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::FileSearch;
+    prev.filesearch_query = Some("re".to_string());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::FileSearch;
+    next.filesearch_query = Some("re".to_string()); // wrong: never appended
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("adme".to_string());
+    let v = paste_verbatim(&prev, &next, &ctx)
+        .expect("a file-search paste that never appends must trip PASTE-VERBATIM");
+    assert_eq!(v.id, "PASTE-VERBATIM");
+}
+
+/// `route_bracketed_paste` sends a bracketed paste into the document even
+/// when the Explorer or Tabs pane holds focus — neither owns an editable
+/// field of its own.
+#[test]
+fn paste_verbatim_checks_a_paste_landing_in_the_document_from_the_explorer_pane() {
+    let mut prev = base_snapshot("ac"); // cursor at 0
+    prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
+    let mut next = base_snapshot("bac");
+    next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
 }
 
 #[test]

@@ -355,6 +355,9 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     if is_token(raw, Keyword::DeliverDb.as_str()) {
         return Ok(Action::DeliverDb);
     }
+    if is_token(raw, Keyword::OpenFileSearch.as_str()) {
+        return Ok(Action::OpenFileSearch);
+    }
     if let Some(rest) = strip_token(raw, Keyword::Type.as_str()) {
         let text = unescape(rest, line)?;
         // Reject any control char other than `\n` (CODE-REVIEW.md rune-fuzz
