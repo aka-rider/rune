@@ -133,6 +133,10 @@ fn inline_code_close_delimiter_is_located_not_computed_arithmetically() {
     // lazy-continuation line, closed on a line with a bare ">" (no
     // trailing space).
     assert_no_duplicate_content("> a\n`b\n>`c");
+    // The narrowest shape of bug (1): a lazy-continuation line carrying
+    // NOTHING but a single unmatched backtick, followed by an empty bare
+    // quote line.
+    assert_no_duplicate_content(">c\n`\n>");
 }
 
 #[test]

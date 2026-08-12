@@ -17,6 +17,11 @@
 //! buffer's `\n`-only line count collapsed the whole fence onto one
 //! physical line, silently dropping everything past the fence's own start.
 //! Fixed by deriving all of this per-line arithmetic from `idx.comrak`.
+//!
+//! Also carries a case where two sibling text runs straddling a lone `\r`
+//! inside an unclosed backtick sequence, nested under a list item and a
+//! blockquote, derived overlapping per-line ranges for the same buffer
+//! line.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod conceal_common;
@@ -115,6 +120,11 @@ fn lone_cr_fence_controls_stay_clean() {
     assert_no_duplicate_content("# T\r- a");
     assert_no_duplicate_content("a\r> q");
     assert_no_duplicate_content("# T\rp\r\r- one\r- two");
+}
+
+#[test]
+fn lone_cr_backtick_runs_inside_nested_quote_do_not_double_claim() {
+    assert_no_duplicate_content("-\n  > nested\n  > more\na\r```\na\r```\nplain text");
 }
 
 #[test]
