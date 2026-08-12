@@ -46,13 +46,22 @@ fn full_pipeline_5k_under_100ms() {
 /// is exactly 5x this, so a perfectly linear pipeline gives a cost ratio of
 /// 5, and a quadratic one (issue #11's own shape: `line_of`'s per-call
 /// rescan from byte 0 of the whole document) gives roughly 25 (5 squared).
-const SMALL_LINES: usize = 1_000;
-const LARGE_LINES: usize = 5_000;
+const SMALL_LINES: usize = 25_000;
+const LARGE_LINES: usize = 125_000;
 
-/// How many consecutive full-pipeline runs each size is averaged over —
-/// matching the AVERAGING style `crates/rune-tui/tests/perf_guard.rs` uses
-/// (100-200 iterations), never a single cold sample.
-const SCALING_ITERATIONS: usize = 150;
+/// How many consecutive full-pipeline runs each size is averaged over — the
+/// same AVERAGING discipline `crates/rune-tui/tests/perf_guard.rs` uses
+/// (never a single cold sample), scaled down from that file's 100-200 from
+/// a single-keystroke-sized cost to this gate's whole-document one:
+/// `LARGE_LINES` needs to be large enough that a quadratic regression's cost
+/// is unmistakable against noise (issue #11 itself was invisible at a few
+/// thousand lines and severe by a few hundred thousand), and at that size
+/// even a linear pipeline's own per-run cost is measured in the tens to low
+/// hundreds of milliseconds — 100-200 reps of that would make this gate
+/// itself minutes long. 30 still averages away scheduling noise while
+/// keeping the GREEN case (what every ordinary `make perf-guard` run pays)
+/// in the tens of seconds.
+const SCALING_ITERATIONS: usize = 30;
 
 /// The growth-ratio bound: `SIZE_RATIO` (5.0, exact) times this much slack.
 /// Comfortably above what a linear pipeline measures (~5, some slack for
