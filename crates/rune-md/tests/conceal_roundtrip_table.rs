@@ -15,9 +15,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod conceal_common;
+mod table_render_common;
 
-use conceal_common::{assert_no_duplicate_content, joined_line, synced};
+use conceal_common::{
+    assert_no_duplicate_content, assert_no_duplicate_content_at, joined_line, synced,
+};
+use rune_core::coords::BufferPoint;
 use rune_md::emit::emit;
+use table_render_common::wrap_pivot_url;
 
 #[test]
 fn table_in_blockquote_does_not_double_claim() {
@@ -84,4 +89,32 @@ fn table_and_html_block_in_container_cr_variants_stay_clean() {
     assert_no_duplicate_content("> t\r> ---|");
     assert_no_duplicate_content("- t\r  ---|");
     assert_no_duplicate_content("> <div\r> foo>text");
+}
+
+#[test]
+fn pivoted_table_accounts_every_byte_of_its_suppressed_rows() {
+    assert_no_duplicate_content_at(&wrap_pivot_url(), &[0], 20);
+}
+
+#[test]
+fn pivoted_table_suppressed_header_line_hides_fully_and_clamps_stably() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let width = 20u16;
+    let (_lines, snap) = emit(buf.content(), doc.blocks(), width);
+
+    let line = 0;
+    let line_len = buf.line(line).len();
+    assert_eq!(snap.hidden_byte_count(line), line_len);
+
+    for col in 0..=line_len {
+        let bp = BufferPoint { line, col };
+        let sp = snap.buffer_to_syntax(bp);
+        let bp2 = snap.syntax_to_buffer(sp);
+        let sp2 = snap.buffer_to_syntax(bp2);
+        assert_eq!(
+            sp, sp2,
+            "clamped position must be stable under a second round-trip, col {col}"
+        );
+    }
 }
