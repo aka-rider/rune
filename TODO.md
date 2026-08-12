@@ -28,6 +28,12 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: every publish site branches on `published_not_durable` before deciding what to do with the temp, same as `materialize.rs`.
 - **Done when**: all four sites branch on the predicate identically.
 
+### A table row is drawn even when another producer already claimed its bytes
+- **Where**: `emit_table` in `crates/rune-md/src/emit/table.rs`; the guard it calls, `claim_visible`, in `crates/rune-md/src/emit/mod.rs`
+- **Wrong**: `claim_visible` answers which bytes on a line no other producer has claimed yet. Three of its four callers act on that answer. `emit_table` throws it away with `let _` and pushes the whole rendered row regardless. So when a claim is refused, the row is drawn over bytes another producer also draws — content invented on the visible side, and the display stops matching the user's bytes. The refusal is reported only by the assertion inside `claim_visible`, which is armed under `cfg(test)` and the `strict-invariants` feature; a shipped build clips the bytes and says nothing. No fuzz catch has reached this path yet, so the defect is latent rather than observed. Found during the survey for the emitter's duplicate visible-byte claims (issue #94).
+- **Instead**: make the span buffer unreachable without a granted claim. `claim_visible` returns an opaque token, `EmitOut`'s span and hidden buffers become private, and the only write path consumes that token. `emit_table` then cannot compile until it states what it does when a claim is refused. Choosing that policy changes behaviour, so first capture a document where a table row's claim is actually refused.
+- **Done when**: no producer can push a `SyntaxSpan` without a claim granted by `claim_visible`, and `emit_table` states a refusal policy in code instead of discarding the answer.
+
 ## Architecture
 
 ### Shadow state
@@ -60,6 +66,12 @@ entry is deleted in the same commit that fixes it.
 - **Wrong**: `result: None` means "carry forward"; within a reply, per-region `payload: None` means "keep channels" while `Some(empty)` means "clear" — decoded by convention and comments, not the type.
 - **Instead**: an explicit `CarryForward`/`Replace` enum.
 - **Done when**: the reply protocol has no dual-meaning `None`.
+
+### A tab eaten by container indentation shifts every column on its line
+- **Where**: `sourcepos_to_range`, `offset_of_column` and `indent_bears_tab` in `crates/rune-md/src/parse/mod.rs`; the shift is pinned by `partially_consumed_tab_on_a_lazy_line_shifts_columns` and `partially_consumed_tab_shift_survives_as_a_shorter_range` in `crates/rune-md/tests/spike_sourcepos.rs`
+- **Wrong**: comrak gives each node a line and a column, and those columns count bytes — except on one kind of line. A container such as a list item eats part of the line's leading tab. The line then continues an already-open block without repeating that block's own prefix. comrak fills the tab's uneaten remainder with spaces inside the block's content, while the byte offset has already stepped over the whole tab. Every column reported on that line therefore comes back shifted right. The shift equals the container's indentation, which the reported position does not carry, so a column on its own cannot be corrected — only bounded by the tab's width. `sourcepos_to_range` resolves each column against its own line's bytes and clamps inside that line, which keeps every offset on the right line and on a character boundary. Within the line an offset can still be a few columns off, so a style boundary can land in the wrong place. Byte accounting is intact: ten shifted shapes pass the per-line coverage and duplicate-content checks, so no byte is dropped or drawn twice. Surfaced by a fuzz catch where the shift pushed an offset into the middle of a multi-byte character (issue #94).
+- **Instead**: rebuild the indentation the shift is made of by walking the enclosing block's own prefix on that line, instead of trusting the column. Or take an upstream comrak change that reports byte columns on these lines.
+- **Done when**: a node on a tab-indented lazy continuation line converts to its exact byte range, and the two tests named above assert exactness instead of recording the shift as bounded.
 
 ## Mechanical
 
