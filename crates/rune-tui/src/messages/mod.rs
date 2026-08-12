@@ -306,8 +306,7 @@ fn content_rows(app: &App, frame_height: u16) -> u16 {
         .doc
         .view
         .as_ref()
-        .map(|v| v.display.total_rows())
-        .unwrap_or(0);
+        .map_or(0, |v| v.display.total_rows());
     let cap = ((frame_height as usize) * 2 / 5).max(1);
     total.min(cap).max(1) as u16
 }
@@ -349,8 +348,7 @@ pub fn sync(app: &mut App, width: u16, frame_height: u16) {
             .doc
             .view
             .as_ref()
-            .map(|v| v.display.total_rows())
-            .unwrap_or(0);
+            .map_or(0, |v| v.display.total_rows());
         app.messages.doc.viewport.scroll_row =
             DisplayRow(total_rows.saturating_sub(height as usize));
     }
@@ -369,8 +367,9 @@ fn scroll(app: &mut App, delta: isize) {
         .doc
         .view
         .as_ref()
-        .map(|v| DisplayRow(v.display.total_rows().saturating_sub(1)))
-        .unwrap_or(DisplayRow(usize::MAX));
+        .map_or(DisplayRow(usize::MAX), |v| {
+            DisplayRow(v.display.total_rows().saturating_sub(1))
+        });
     let scroll_row = app.messages.doc.viewport.scroll_row;
     app.messages.doc.viewport.scroll_row = if delta >= 0 {
         (scroll_row + delta as usize).min(max_row)

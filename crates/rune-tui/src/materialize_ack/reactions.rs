@@ -222,10 +222,10 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
         // refusal only, matching the no-store draft-create route's own
         // `draft_collision_refusal` — never a Guard, since there is no
         // CAS baseline for a target this document has never claimed.
-        let name = target
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| target.display().to_string());
+        let name = target.file_name().map_or_else(
+            || target.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         messages::error(app, format!("{name} already exists"));
         // Mirrors `draft_collision_refusal`'s own pairing with
         // `return_to_title`: without it the Editor keeps focus while

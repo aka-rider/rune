@@ -56,18 +56,15 @@ pub fn assert_full_line_coverage(
 ) {
     for line in 0..buf.line_count() {
         let expected_len = buf.line(line).len();
-        let visible: usize = lines
-            .get(line)
-            .map(|l| {
-                l.spans
-                    .iter()
-                    .map(|s| {
-                        let r = s.range();
-                        r.end.saturating_sub(r.start)
-                    })
-                    .sum()
-            })
-            .unwrap_or(0);
+        let visible: usize = lines.get(line).map_or(0, |l| {
+            l.spans
+                .iter()
+                .map(|s| {
+                    let r = s.range();
+                    r.end.saturating_sub(r.start)
+                })
+                .sum()
+        });
         let hidden = snap.hidden_byte_count(line);
         assert_eq!(
             visible + hidden,

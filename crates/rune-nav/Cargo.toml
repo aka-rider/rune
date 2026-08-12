@@ -8,7 +8,7 @@ rune-syntax = { path = "../rune-syntax" }
 rune-vfs = { path = "../rune-vfs" }
 
 [dev-dependencies]
-serde_json = "1.0.151"
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

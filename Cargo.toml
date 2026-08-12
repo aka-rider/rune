@@ -35,7 +35,9 @@ libc = "0.2"
 base64 = "0.22"
 proptest = "1"
 criterion = "0.5"
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 trash = "5.2"
 nucleo-matcher = "0.3.1"
 ignore = "0.4"
@@ -45,6 +47,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 indexing_slicing = "warn"
+map_unwrap_or = "deny"
 
 # The profile that 'dist' will build with
 [profile.dist]

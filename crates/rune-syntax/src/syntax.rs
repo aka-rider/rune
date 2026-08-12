@@ -277,15 +277,12 @@ impl SyntaxSnapshot {
     /// future caller that wants to know how many raw markup bytes a line is
     /// currently concealing.
     pub fn hidden_byte_count(&self, line: usize) -> usize {
-        self.line_convs
-            .get(line)
-            .map(|lc| {
-                lc.hidden
-                    .iter()
-                    .map(|h| h.end.saturating_sub(h.start))
-                    .sum()
-            })
-            .unwrap_or(0)
+        self.line_convs.get(line).map_or(0, |lc| {
+            lc.hidden
+                .iter()
+                .map(|h| h.end.saturating_sub(h.start))
+                .sum()
+        })
     }
 
     pub fn buffer_to_syntax(&self, bp: BufferPoint) -> SyntaxPoint {

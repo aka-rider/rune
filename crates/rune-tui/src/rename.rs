@@ -178,9 +178,10 @@ pub fn collision_target(app: &App) -> Option<String> {
 }
 
 fn display_name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 /// Starts a rename of `app.active` to the title field's typed name.

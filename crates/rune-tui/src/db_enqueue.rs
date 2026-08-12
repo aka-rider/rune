@@ -254,7 +254,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
     {
         return;
     }
-    let save_epoch = app.file_binding(db_id).map(|b| b.save_epoch).unwrap_or(0);
+    let save_epoch = app.file_binding(db_id).map_or(0, |b| b.save_epoch);
     let Some(db) = app.db.as_ref() else { return };
     match db.store.probe(rune_db::DocId(db_id)) {
         Ok(op_id) => {

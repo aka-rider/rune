@@ -60,8 +60,7 @@ pub fn pivot_rows(
             .get(i)
             .map(|c| c.text.as_str())
             .filter(|t| !t.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("Col{}", i + 1));
+            .map_or_else(|| format!("Col{}", i + 1), str::to_string);
 
         let mut flat: Vec<FlatChar> = Vec::new();
         for ch in "  ".chars() {

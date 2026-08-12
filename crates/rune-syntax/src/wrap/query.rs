@@ -241,7 +241,7 @@ impl WrapSnapshot {
     }
 
     pub fn segment_len_at(&self, row: usize) -> usize {
-        self.segment_at(row).map(Self::segment_len).unwrap_or(0)
+        self.segment_at(row).map_or(0, Self::segment_len)
     }
 
     pub fn visual_col(&self, content: &str, row: usize, byte_col: usize) -> usize {
@@ -263,7 +263,7 @@ impl WrapSnapshot {
     }
 
     pub fn row_to_model_line(&self, row: usize) -> usize {
-        self.segment_at(row).map(|s| s.model_line).unwrap_or(0)
+        self.segment_at(row).map_or(0, |s| s.model_line)
     }
 
     pub fn total_rows(&self) -> usize {

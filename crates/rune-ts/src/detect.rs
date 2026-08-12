@@ -127,7 +127,7 @@ fn try_vim_form(line: &str) -> Option<Detected> {
                     .split([':', ' ', '\t'])
                     .find(|tok| tok.starts_with("ft=") || tok.starts_with("filetype="));
                 if let Some(tok) = token {
-                    let value = tok.split_once('=').map(|(_, v)| v).unwrap_or("");
+                    let value = tok.split_once('=').map_or("", |(_, v)| v);
                     if let Some(detected) = map_modeline_value(value) {
                         return Some(detected);
                     }
@@ -252,8 +252,7 @@ fn from_shebang(content: &str) -> Option<Detected> {
     let canonical = INTERPRETERS
         .iter()
         .find(|(key, _)| *key == name)
-        .map(|(_, value)| *value)
-        .unwrap_or(&name);
+        .map_or(name.as_str(), |(_, value)| *value);
     lang::resolve(canonical).map(Detected::Lang)
 }
 

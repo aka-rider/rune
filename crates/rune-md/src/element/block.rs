@@ -373,8 +373,8 @@ impl Block {
                 let last = m.items.last();
                 match (first, last) {
                     (Some(f), Some(l)) => {
-                        let f_range = f.children.first().map(|c| c.range()).unwrap_or(f.marker);
-                        let l_range = l.children.last().map(|c| c.range()).unwrap_or(l.marker);
+                        let f_range = f.children.first().map_or(f.marker, |c| c.range());
+                        let l_range = l.children.last().map_or(l.marker, |c| c.range());
                         ByteRange::new(
                             f.marker.start.min(f_range.start),
                             l_range.end.max(l.marker.end),

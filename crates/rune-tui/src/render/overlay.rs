@@ -229,8 +229,7 @@ pub(crate) fn apply_cursor_overlays(
                 .display
                 .rows()
                 .get(display_row.0)
-                .map(super::decor::decor_cell_width)
-                .unwrap_or(0) as usize;
+                .map_or(0, super::decor::decor_cell_width) as usize;
         // A boxed (Grid/Wrapped) table row's rendered width is a hard
         // invariant (`TABLE-ROW-WIDTH`): every content/border row in the
         // same group carries the SAME summed cell width, always — never

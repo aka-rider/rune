@@ -113,8 +113,7 @@ fn offset_at_ordinary(
         .display
         .rows()
         .get(display_row.0)
-        .map(crate::render::decor::decor_cell_width)
-        .unwrap_or(0) as usize;
+        .map_or(0, crate::render::decor::decor_cell_width) as usize;
     let col = (col as usize).saturating_sub(decor_width) as u16;
 
     let mut acc = 0usize;

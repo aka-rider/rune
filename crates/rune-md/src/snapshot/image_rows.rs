@@ -104,8 +104,7 @@ impl DisplaySnapshot {
                 let target_text = target.target_text.as_str();
                 let (width, image_rows) = dims
                     .get(target_text)
-                    .map(|(cols, rows)| (cols, rows.max(1)))
-                    .unwrap_or((1, 1));
+                    .map_or((1, 1), |(cols, rows)| (cols, rows.max(1)));
                 row.image = Some(ImageRowRef {
                     row: 0,
                     width,

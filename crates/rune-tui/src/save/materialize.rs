@@ -162,8 +162,7 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     let seq = app
         .doc(id)
         .and_then(|d| d.doc_db())
-        .map(|d| d.last_known_seq.0)
-        .unwrap_or(0);
+        .map_or(0, |d| d.last_known_seq.0);
     let result = db
         .store
         .materialize_prepare(rune_db::DocId(db_id), rune_db::MaterializeTarget::BindNew);

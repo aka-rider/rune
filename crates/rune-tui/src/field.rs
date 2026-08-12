@@ -261,7 +261,7 @@ impl TextField {
         let Ok((new_buf, applied)) = self.buffer.apply_edits(&edits) else {
             return KeyOutcome::Ignored; // refuse an out-of-range edit rather than corrupt the buffer
         };
-        let landed = applied.last().map(|a| a.end).unwrap_or(start);
+        let landed = applied.last().map_or(start, |a| a.end);
         self.buffer = new_buf;
         self.cursor = Cursor {
             position: landed,

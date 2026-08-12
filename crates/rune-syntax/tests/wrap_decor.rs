@@ -95,7 +95,7 @@ fn every_segment_of_a_decorated_long_line_fits_width_including_decor_cells() {
     );
     for seg in wrap.segments() {
         let content_cells = row_content_cells(content, seg);
-        let decor_cells = seg.decor.as_ref().map(|d| d.cells).unwrap_or(0);
+        let decor_cells = seg.decor.as_ref().map_or(0, |d| d.cells);
         assert!(
             content_cells + decor_cells <= width as usize,
             "segment content ({content_cells} cells) + decor ({decor_cells} cells) exceeds width {width}"

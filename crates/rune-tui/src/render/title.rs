@@ -137,8 +137,7 @@ fn next_grapheme_end(name: &str, at: usize) -> usize {
     let at = at.min(name.len());
     name.get(at..)
         .and_then(|rest| rest.graphemes(true).next())
-        .map(|g| at + g.len())
-        .unwrap_or(name.len())
+        .map_or(name.len(), |g| at + g.len())
 }
 
 #[cfg(test)]

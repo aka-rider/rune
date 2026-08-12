@@ -108,8 +108,7 @@ pub fn next_rune_offset(buf: &Buffer, offset: usize) -> usize {
 
 fn class_at(buf: &Buffer, offset: usize) -> CharClass {
     buf.rune_at(offset)
-        .map(|(r, _)| char_class(r))
-        .unwrap_or(CharClass::Other)
+        .map_or(CharClass::Other, |(r, _)| char_class(r))
 }
 
 pub fn word_left_offset(buf: &Buffer, offset: usize) -> usize {

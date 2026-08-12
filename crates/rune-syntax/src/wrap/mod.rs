@@ -167,9 +167,7 @@ impl WrapMap {
             }
 
             if byte_len == 0 && !remain.is_empty() {
-                byte_len = next_grapheme(&text, &bounds, start_col)
-                    .map(str::len)
-                    .unwrap_or(1);
+                byte_len = next_grapheme(&text, &bounds, start_col).map_or(1, str::len);
             } else if byte_len < remain.len()
                 && let Some(sp) = last_space_bytes
                 && sp > 0
@@ -249,8 +247,7 @@ fn slice_spans(
             } => {
                 let start_runes = full_text
                     .get(..local_start)
-                    .map(|p| p.chars().count())
-                    .unwrap_or(0);
+                    .map_or(0, |p| p.chars().count());
                 let end_runes = start_runes + sliced.chars().count();
                 // Clamp rather than discard the whole map on a length
                 // mismatch: a one-entry-short `cell_map`

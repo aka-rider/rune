@@ -157,7 +157,7 @@ fn position_status(blocks: &[Block], cur: usize) -> String {
 }
 
 pub(super) fn block_start(blocks: &[Block], idx: usize) -> usize {
-    blocks.get(idx).map(|b| b.range.start).unwrap_or(0)
+    blocks.get(idx).map_or(0, |b| b.range.start)
 }
 
 pub(super) fn scroll_doc(app: &mut App, doc: DocumentId, byte: usize) {

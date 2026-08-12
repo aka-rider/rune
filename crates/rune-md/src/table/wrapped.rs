@@ -154,8 +154,7 @@ pub fn wrapped_row(
         let cell_text = wrapped_cells
             .get(i)
             .and_then(|lines| lines.get(visual_row))
-            .map(String::as_str)
-            .unwrap_or("");
+            .map_or("", String::as_str);
         flat.push(FlatChar {
             ch: ' ',
             buf: None,

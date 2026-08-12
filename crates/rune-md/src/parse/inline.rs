@@ -414,8 +414,7 @@ fn build_inline<'a>(
 fn link_url_range(range: ByteRange, text: &[Inline], url: &str, content_len: usize) -> ByteRange {
     let text_close = text
         .last()
-        .map(|c| c.range().end)
-        .unwrap_or(range.start.saturating_add(1));
+        .map_or(range.start.saturating_add(1), |c| c.range().end);
     let url_start = text_close.saturating_add(2).min(range.end).min(content_len);
     let url_end = url_start
         .saturating_add(url.len())

@@ -281,7 +281,7 @@ proptest! {
             let expected_len = buf.line(line).len();
             let visible: usize = lines
                 .get(line)
-                .map(|l| {
+                .map_or(0, |l| {
                     l.spans
                         .iter()
                         .map(|s| {
@@ -289,8 +289,7 @@ proptest! {
                             r.end.saturating_sub(r.start)
                         })
                         .sum()
-                })
-                .unwrap_or(0);
+                });
             let hidden = snap.hidden_byte_count(line);
             prop_assert_eq!(visible + hidden, expected_len, "line {} coverage gap: visible {} + hidden {} != length {}", line, visible, hidden, expected_len);
 

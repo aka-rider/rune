@@ -79,7 +79,7 @@ fn doc_image_row_cells(
         return live_row_cells(image.id, image_ref.row, image_ref.width, width as usize, 0);
     }
     let lines = info_card_lines(app, doc);
-    let text = lines.get(image_ref.row).map(String::as_str).unwrap_or("");
+    let text = lines.get(image_ref.row).map_or("", String::as_str);
     centered_cells(text, width as usize)
 }
 
@@ -181,13 +181,11 @@ fn info_card_lines(app: &App, doc: &Document) -> Vec<String> {
         .as_deref()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
-        .map(str::to_uppercase)
-        .unwrap_or_else(|| "?".to_string());
-    let dims = doc
-        .image()
-        .and_then(|i| i.dims)
-        .map(|d| format!("{}x{}", d.w, d.h))
-        .unwrap_or_else(|| "dimensions unknown".to_string());
+        .map_or_else(|| "?".to_string(), str::to_uppercase);
+    let dims = doc.image().and_then(|i| i.dims).map_or_else(
+        || "dimensions unknown".to_string(),
+        |d| format!("{}x{}", d.w, d.h),
+    );
     let size = doc
         .image()
         .map(|i| human_size(i.bytes_len))

@@ -352,8 +352,7 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 /// least one more component.
 fn sits_strictly_below(key: &Path, path: &Path) -> bool {
     key.strip_prefix(path)
-        .map(|rest| rest.components().next().is_some())
-        .unwrap_or(false)
+        .is_ok_and(|rest| rest.components().next().is_some())
 }
 
 fn not_found(path: &Path, op: &str) -> io::Error {

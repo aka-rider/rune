@@ -106,8 +106,7 @@ fn build_block<'a>(
         BlockKind::Heading { level, setext } => {
             let marker_end = node
                 .first_child()
-                .map(|c| node_range(content, starts, c).start)
-                .unwrap_or(range.end)
+                .map_or(range.end, |c| node_range(content, starts, c).start)
                 .max(range.start)
                 .min(range.end);
             let marker = ByteRange::new(range.start, marker_end);
@@ -351,8 +350,7 @@ fn build_list_items<'a>(
         let comrak_line = super::line_at(starts, range.start);
         let marker_end = item_node
             .first_child()
-            .map(|c| node_range(content, starts, c).start)
-            .unwrap_or(range.end)
+            .map_or(range.end, |c| node_range(content, starts, c).start)
             .max(range.start)
             .min(range.end)
             .min(line_end_at(content.len(), starts, comrak_line));

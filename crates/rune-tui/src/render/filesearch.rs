@@ -138,7 +138,7 @@ fn display_spans(
     avail_w: usize,
     row_bg: Option<Color>,
 ) -> Vec<Span<'static>> {
-    let dir_end = display.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let dir_end = display.rfind('/').map_or(0, |i| i + 1);
     let graphemes: Vec<(usize, &str)> = display.grapheme_indices(true).collect();
     let matched_graphemes = grapheme_match_mask(display, &graphemes, indices);
     let total_w = display_width(display);

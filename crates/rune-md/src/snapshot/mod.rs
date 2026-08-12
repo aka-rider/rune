@@ -142,7 +142,7 @@ impl DisplaySnapshot {
             // the top, inter-row and bottom borders are three separate
             // decisions that must not be allowed to disagree about it.
             let info = seg.and_then(|s| s.table.as_ref()).filter(|i| i.boxed);
-            let model_line = seg.map(|s| s.model_line).unwrap_or(0);
+            let model_line = seg.map_or(0, |s| s.model_line);
             let line_start = line_start_of(&row);
 
             if let Some(info) = info {
@@ -251,7 +251,7 @@ impl DisplaySnapshot {
             return WrapRow(0);
         }
         let row = row.0.min(self.rows.len() - 1);
-        WrapRow(self.rows.get(row).map(|r| r.wrap_row).unwrap_or(0))
+        WrapRow(self.rows.get(row).map_or(0, |r| r.wrap_row))
     }
 
     /// The display row a wrap row's OWN content lives at — the inverse of
@@ -272,7 +272,7 @@ impl DisplaySnapshot {
 /// so its first span's range start IS the line's start — the anchor a
 /// synthetic border borrows for its own (empty) range.
 fn line_start_of(row: &SnapshotRow) -> usize {
-    row.spans.first().map(|s| s.range().start).unwrap_or(0)
+    row.spans.first().map_or(0, |s| s.range().start)
 }
 
 fn synthetic_border(

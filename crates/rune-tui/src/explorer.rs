@@ -121,14 +121,16 @@ pub fn initial_root(app: &App) -> PathBuf {
         .file_path
         .as_deref()
         .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| {
-            if app.root.as_os_str().is_empty() {
-                PathBuf::from(".")
-            } else {
-                app.root.clone()
-            }
-        });
+        .map_or_else(
+            || {
+                if app.root.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    app.root.clone()
+                }
+            },
+            Path::to_path_buf,
+        );
     app.vfs.resolve(&base).unwrap_or(base)
 }
 

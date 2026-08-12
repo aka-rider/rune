@@ -114,8 +114,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         .iter()
         .zip(rendered_rows.iter())
         .find(|(r, _)| r.is_header)
-        .map(|(_, cells)| cells.as_slice())
-        .unwrap_or(&[]);
+        .map_or(&[], |(_, cells)| cells.as_slice());
     let first_body_line = t.rows.iter().find(|r| !r.is_header).map(|r| r.line);
 
     let total_lines = t.content_lines.len();
@@ -197,7 +196,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                     };
                     let wrapped_cells: Vec<Vec<String>> = (0..n_cols)
                         .map(|col| {
-                            let text = cells.get(col).map(|c| c.text.as_str()).unwrap_or("");
+                            let text = cells.get(col).map_or("", |c| c.text.as_str());
                             let w = layout_widths.get(col).copied().unwrap_or(0);
                             wrapped::wrap_cell(text, w)
                         })

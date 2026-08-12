@@ -79,6 +79,51 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: rebuild the indentation the shift is made of by walking the enclosing block's own prefix on that line, instead of trusting the column. Or take an upstream comrak change that reports byte columns on these lines.
 - **Done when**: a node on a tab-indented lazy continuation line converts to its exact byte range, and the two tests named above assert exactness instead of recording the shift as bounded.
 
+### A generation counter's type doesn't say which feature it belongs to
+- **Where**: `crates/rune-tui/src/app.rs`'s `next_rename_gen: u32`, `next_merge_gen: u32`, `next_save_confirm_gen: u32`, `next_quit_gen: u32`, `trash_gen: u32`, `next_filesearch_gen: u64`, `next_search_history_gen: u64`; each is compared against a bare `generation: u32`/`generation: u64` field carried by its own `Msg` reply, for example in `crates/rune-tui/src/rename.rs`, `crates/rune-tui/src/merge/state.rs`, `crates/rune-tui/src/trash.rs`, and `crates/rune-tui/src/filesearch/mod.rs`.
+- **Wrong**: every counter and every `Msg` field that answers it share the same primitive type. Nothing stops a future edit from comparing one feature's counter against another feature's reply — reading `next_quit_gen` where `next_rename_gen` belongs, say — and the mistake still compiles. The "Nine hand-rolled generation counters" entry above already proposes consolidating these into one `Gen<T>` newtype; this entry names the specific hazard that consolidation must close, or it survives the merge: `T` has to be a type parameter distinct per feature (`Gen<Rename>`, `Gen<Merge>`, and so on), not just one shared `Gen` wrapping a plain integer.
+- **Instead**: give the consolidated `Gen<T>` a phantom type parameter naming the feature it belongs to, so passing a rename generation where a merge generation is expected fails to compile instead of comparing two unrelated counters at runtime.
+- **Done when**: each feature's reply carries a `Gen<T>` typed to that feature, and swapping two features' generation values is a compile error rather than a stale-reply check that only catches it at runtime.
+- **Update**: wide churn — every counter and every `Msg` reply site would need the change — and the failure mode a mismatch causes today (a stale reply gets discarded as "not the generation we're waiting for") already fails safe, so this is recorded rather than fixed now.
+
+### `LineMap` conversions share `usize`/`Range<usize>` across two coordinate spaces
+- **Where**: `crates/rune-tui/src/linemap.rs`'s `LineMap::to_buffer` (`Range<usize> -> Option<Range<usize>>`) and its single-offset chokepoint `buffer_offset(offset: usize, is_end: bool) -> Option<usize>`.
+- **Wrong**: `to_buffer` takes a range in the module's "reconstructed" text (the concealed/wrapped view a buffer's raw bytes get folded into) and returns a range in the buffer itself, but both sides use the plain type `Range<usize>`. Nothing stops a buffer-space range from being passed where reconstructed-space is expected, or the reverse. `buffer_offset` also encodes the inclusive-end convention — whether the caller wants the end resolved through the last byte a range covers — as a bare `bool` named `is_end`, so a start-conversion call and an end-conversion call look identical at the call site unless the reader checks the argument name. This is the same class of defect the viewport's `DisplayRow`/`WrapRow` typed-offset adoption already fixed for wrap-space and syntax-space coordinates elsewhere in the crate.
+- **Instead**: wrap each coordinate space in its own newtype (for example `ReconstructedOffset(usize)` and `BufferOffset(usize)`), and replace the `is_end` bool with a named two-way choice (an enum, or two separately named methods) instead of a bare flag. Do this together with the next change that touches `linemap.rs`, since the module is small and self-contained enough that typing it standalone isn't worth a dedicated pass yet.
+- **Done when**: `to_buffer`/`to_reconstructed` take and return offsets typed to their own coordinate space, and `buffer_offset` no longer takes an untyped `bool`.
+
+### Image ids are a bare `u32` with a runtime non-zero clamp
+- **Where**: `crates/rune-image/src/ids.rs`'s `alloc_id` (the `if id == 0 { 1 } else { id }` clamp); `crates/rune-tui/src/graphics/embed/alloc.rs`'s `probe_next`, which walks the same non-zero, wrapping allocation scheme for its own id space.
+- **Wrong**: both allocators hand out a plain `u32` with a runtime check bolted on to keep it away from zero (the Kitty terminal graphics protocol reserves id 0 as "no id"). Nothing in the type of the value a caller receives says the check already ran; every consumer that stores or compares an image id has to trust the allocator did its job, and a future call site that mints an id some other way — a test fixture, a value read back from storage — can reintroduce zero without anything catching it.
+- **Instead**: wrap the allocated value in an `ImageId(NonZeroU32)` newtype with a sealed constructor, so only `alloc_id`/`probe_next` (or a shared helper both call through) can build one. Every consumer then receives a value the type itself already guarantees is non-zero.
+- **Done when**: no image id in the codebase is a bare `u32`; `ImageId` carries "non-zero, wrapping alloc" as part of its type instead of as a convention two separate allocators each re-implement.
+
+### Frame size `0` doubles as "not yet measured"
+- **Where**: `crates/rune-tui/src/app.rs`'s `App::frame_width`/`frame_height`, both `u16`; guarded by an early return in `crates/rune-tui/src/focus.rs` (`if app.frame_width == 0 || app.frame_height == 0`) and read again at other layout call sites.
+- **Wrong**: `0` means both "the first resize hasn't landed yet" and, in principle, a real if degenerate frame size. The two fields are read independently at some call sites, so a caller can observe one field measured and the other still `0` with nothing in the type system marking that in-between state.
+- **Instead**: replace the pair with a single `Option<(u16, u16)>` (or a small named struct) that is `None` until the first resize lands, so "not measured yet" is a state the type carries instead of a value borrowed from the field's own valid range.
+- **Done when**: `frame_width`/`frame_height` no longer use `0` as a sentinel.
+- **Update**: today's guard is one check in `focus.rs` plus the layout paths that read both fields together — low value for the size of the change, so this is recorded rather than fixed now.
+
+### `Buffer::apply_edits` re-validates an invariant its own sorter already proves
+- **Where**: `crates/rune-core/src/buffer/mod.rs`'s `apply_edits`, which calls `is_sorted_descending_non_overlapping(edits)` on every call; the crate's own producer, `clone_and_sort_edits_descending`, already returns edits in exactly that order.
+- **Wrong**: every in-process caller that builds its edit batch through `clone_and_sort_edits_descending` still pays for a check that can't fail for it, because the value it hands to `apply_edits` is a plain `&[Edit]` that carries no proof it was already sorted.
+- **Instead**: introduce a `SortedEdits` newtype that only `clone_and_sort_edits_descending` (or an equivalent constructor) can produce, and have `apply_edits` take that type from in-process callers instead of `&[Edit]`. The runtime check must stay at the journal-replay decode boundary: rows read back from the recovery store are persisted, adversarial input, not a value this crate itself just proved sorted, and the sorted-and-non-overlapping check catches a corrupted or hand-edited journal there.
+- **Done when**: `apply_edits`'s in-process callers pass a `SortedEdits` value and no longer pay for a check `clone_and_sort_edits_descending` already guarantees, while the journal-replay decode path keeps validating rows it reads from disk.
+
+### `Cursor::desired_col` mixes a Syntax-Space column with Buffer-Space byte offsets
+- **Where**: `crates/rune-core/src/cursor.rs`'s `Cursor` struct — `position` and `anchor` are byte offsets in Buffer Space, and `desired_col`, declared right next to them, is a column in Syntax Space (the column layout produces after wrapping and concealment); mirrored in the persisted schema at `crates/rune-db/src/payload.rs`'s `CursorPayload`, which stores all three as bare `usize` fields.
+- **Wrong**: no `ByteOffset` or `SyntaxCol` newtype exists anywhere in the crate, so `position`, `anchor`, and `desired_col` are all just `usize`. A future edit that threads a byte offset through code expecting a Syntax-Space column, or the reverse, compiles without complaint.
+- **Instead**: introduce typed wrappers for the two coordinate spaces — a `ByteOffset` for `position`/`anchor`, a `SyntaxCol` or similar for `desired_col` — so mixing them becomes a compile error. Do this together with the next change to `crates/rune-db/src/payload.rs`'s cursor schema, since typing `desired_col` crosses the on-disk cursor payload and any schema change already forces a review of that boundary.
+- **Done when**: `Cursor`'s three fields have distinct types for their two coordinate spaces, and `CursorPayload`'s fields mirror that typing (or the entry records why the persisted form deliberately stays untyped).
+
+### `bind_new: bool` stands in for a two-way publish-mode choice
+- **Where**: `crates/rune-tui/src/db.rs`'s `DocDb::bind_new` field; read in `crates/rune-tui/src/save/materialize.rs` (`materialize_now`/`bind_new_now`) to choose between `PutCondition::IfAbsent` and `PutCondition::Force`; checked again in `crates/rune-tui/src/materialize_ack/reactions.rs`'s `lost_create_race` and `naming_collision`; flipped back to `false` on a successful publish in `crates/rune-tui/src/materialize_ack/committed.rs`'s `handle_committed_ack`.
+- **Wrong**: a `bool` reads as an on/off switch, but `bind_new` actually selects between two distinct publish modes — create-only versus overwrite-an-established-target — that ripple through several unrelated call sites. Each reader has to already know that `true` means "no CAS baseline exists yet, publish must not clobber a concurrent creator" and `false` means "an established baseline exists, publish as an ordinary overwrite"; that meaning lives in comments and call-site knowledge, not in the type.
+- **Instead**: replace the field with a two-variant publish-mode enum naming the create-only and overwrite-existing cases, so every branch that reads it states the mode explicitly instead of decoding a bare `true`/`false`.
+- **Done when**: `DocDb` no longer carries a bare `bind_new: bool`; every site listed above matches on a named publish-mode enum instead.
+- **Update**: `rune-db`'s own equivalent flag was already promoted to the `MaterializeTarget` enum (`crates/rune-db/src/materialize_types.rs`); `rune-tui`'s `bind_new` was deliberately left as a `bool` when that landed, and this entry is the deferred follow-up on the `rune-tui` side.
+
 ## Mechanical
 
 ### Typed errors flattened to String
@@ -101,45 +146,42 @@ entry is deleted in the same commit that fixes it.
 
 ### Files over 500 lines
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
-  - `crates/rune-db/src/sync.rs` — 778 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
-  - `crates/rune-tui/src/explorer_preview/tests.rs` — 1060 (test file)
+  - `crates/rune-db/src/sync.rs` — 801 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
+  - `crates/rune-tui/src/explorer_preview/tests.rs` — 1064 (test file)
   - `crates/rune-tui/src/global.rs` — 767
-  - `crates/rune-tui/src/pane.rs` — 858
+  - `crates/rune-tui/src/pane.rs` — 862
   - `crates/rune-tui/src/layout.rs` — 736
-  - `crates/rune-merge/src/hunks.rs` — 684 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
-  - `crates/rune-tui/src/runtime/mod.rs` — 691
+  - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
+  - `crates/rune-tui/src/runtime/mod.rs` — 611
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
-  - `crates/rune-tui/src/app.rs` — 609
+  - `crates/rune-tui/src/app.rs` — 591
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
-  - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
-  - `crates/rune-tui/src/merge/landing.rs` — 600 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
-  - `crates/rune-tui/src/db.rs` — 579 (split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
-  - `crates/rune-tui/src/db_ack.rs` — 689 (the binding/replica-seam work — `Replica::take_pending`'s call sites, the hardlink-fork load warning and its tests — has pushed this further over collectively, no single change owning it; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to a sibling `db_ack_tests.rs`, matching the crate's own `merge/landing.rs`-style split elsewhere)
-  - `crates/rune-tui/src/materialize_ack/reactions.rs` — 517 (split candidate: the module already has a sibling `reactions_tests.rs` — move `close_if_pending`/`quit_if_pending`/`retire_quit_wait`, which don't depend on `handle_materialize_ack`'s own locals, to a sibling `quit.rs`)
+  - `crates/rune-tui/src/filesearch/tests.rs` — 586 (test file)
+  - `crates/rune-tui/src/merge/landing.rs` — 608 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
+  - `crates/rune-tui/src/db.rs` — 552 (split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
+  - `crates/rune-tui/src/db_ack.rs` — 697 (the binding/replica-seam work — `Replica::take_pending`'s call sites, the hardlink-fork load warning and its tests — has pushed this further over collectively, no single change owning it; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to a sibling `db_ack_tests.rs`, matching the crate's own `merge/landing.rs`-style split elsewhere)
   - `crates/rune-tui/src/guard.rs` — 754 (split candidate unchanged: its `#[cfg(test)] mod tests` block is well over a third of the file — move it to a `#[path]`-included sibling `guard_tests.rs` so it keeps access to the private `set_guard`/`handle_disk_conflict_key` it exercises)
-  - `crates/rune-tui/src/messages/mod.rs` — 557
-  - `crates/rune-md/src/emit/mod.rs` — 515
+  - `crates/rune-tui/src/messages/mod.rs` — 561
   - `crates/rune-tui/src/render/filesearch.rs` — 546
-  - `crates/rune-tui/src/rename.rs` — 555
-  - `crates/rune-vfs/src/mem.rs` — 706 (`fail_resolve` and its tests pushed this further over)
-  - `crates/rune-vfs/src/publish.rs` — 548 (already over before the narrow `put_force`/`put_if_absent` outcome types, which moved to a sibling `put_result.rs` rather than growing this further; split candidate: move the `#[cfg(test)] mod tests` block, well over half the file, to a `#[path]`-included sibling `publish_tests.rs` so it keeps access to the private `put_if_match`/`put_if_absent`/`finish_over_existing` it exercises)
-  - `crates/rune-tui/src/dispatch.rs` — 539
-  - `crates/rune-tui/src/document/mod.rs` — 676 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
-  - `crates/rune-db/src/observation.rs` — 545 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
-  - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
-  - `crates/rune-db/src/writer.rs` — 552 (split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
-  - `crates/rune-cli/src/db_bootstrap.rs` — 509 (split candidate unchanged: move `bootstrap_untitled_db`/`ScratchDoc`/`DbBootstrapUntitled`/`degrade_untitled` to a sibling `db_bootstrap_untitled.rs`, matching the crate's own `bootstrap_tests.rs` split-out-of-`main.rs` pattern)
+  - `crates/rune-tui/src/rename.rs` — 559
+  - `crates/rune-vfs/src/mem.rs` — 705 (`fail_resolve` and its tests pushed this further over)
+  - `crates/rune-vfs/src/publish.rs` — 552 (already over before the narrow `put_force`/`put_if_absent` outcome types, which moved to a sibling `put_result.rs` rather than growing this further; split candidate: move the `#[cfg(test)] mod tests` block, well over half the file, to a `#[path]`-included sibling `publish_tests.rs` so it keeps access to the private `put_if_match`/`put_if_absent`/`finish_over_existing` it exercises)
+  - `crates/rune-tui/src/dispatch.rs` — 507
+  - `crates/rune-tui/src/document/mod.rs` — 671 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-db/src/observation.rs` — 537 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
+  - `crates/rune-db/src/probe.rs` — 531 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
+  - `crates/rune-db/src/writer.rs` — 560 (split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
+  - `crates/rune-cli/src/db_bootstrap.rs` — 507 (split candidate unchanged: move `bootstrap_untitled_db`/`ScratchDoc`/`DbBootstrapUntitled`/`degrade_untitled` to a sibling `db_bootstrap_untitled.rs`, matching the crate's own `bootstrap_tests.rs` split-out-of-`main.rs` pattern)
   - `crates/rune-cli/src/bootstrap_tests.rs` — 688 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
-  - `crates/rune-syntax/src/wrap/mod.rs` — 509
-  - `crates/rune-tui/src/footer.rs` — 512
+  - `crates/rune-tui/src/footer.rs` — 511
   - `crates/rune-md/src/catalogue.rs` — 512
-  - `crates/rune-fuzz/src/driver/mod.rs` — 548 (pushed further over by the session-setup panic guard; split candidate: move the `'session` per-`Action` dispatch loop out of `run` into a sibling `action_loop.rs`, leaving `run` with setup, the end-of-session rules, and the `RunResult` assembly)
-  - `crates/rune-tui/src/focus.rs` — 506
-  - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-tui/src/materialize_ack.rs` — 577 (split candidate unchanged: move `record_outcome`/`record_orphan_outcome`/`RecordTarget` to a sibling `record.rs`)
-  - `crates/rune-tui/src/workspace/mod.rs` — 563 (pushed over by the `resolve_or_report` chokepoint added alongside the `resolve` signature change; split candidate: move the `#[cfg(test)] mod tests` block to a sibling test module)
-  - `crates/rune-db/tests/multiprocess/scenarios.rs` — 507 (test file)
-- **Wrong**: source files exceed the 500-line house rule, none ledgered. (`crates/rune-syntax/src/syntax.rs` dropped to 467 lines and is no longer over — removed from this list. `crates/rune-tui/src/save/materialize.rs` at 320 lines is also not over.)
+  - `crates/rune-fuzz/src/driver/mod.rs` — 549 (pushed further over by the session-setup panic guard; split candidate: move the `'session` per-`Action` dispatch loop out of `run` into a sibling `action_loop.rs`, leaving `run` with setup, the end-of-session rules, and the `RunResult` assembly)
+  - `crates/rune-tui/src/focus.rs` — 503
+  - `crates/rune-tui/src/workspace/mod.rs` — 561 (pushed over by the `resolve_or_report` chokepoint added alongside the `resolve` signature change; split candidate: move the `#[cfg(test)] mod tests` block to a sibling test module)
+  - `crates/rune-db/tests/multiprocess/scenarios.rs` — 509 (test file)
+  - `crates/rune-tui/src/save/materialize_tests.rs` — 531 (test file; newly over — split candidate: move `snapshot_due_with_the_current_generation_enqueues_a_snapshot`/`snapshot_due_with_a_stale_generation_is_ignored`, which exercise `handle_snapshot_due` from `materialize_ack.rs` rather than this file's own CAS/publish path, to a sibling test module)
+  - `crates/rune-tui/src/footer_hints.rs` — 517 (newly over — split candidate: move its `#[cfg(test)] mod tests` block, over half the file, to a sibling `footer_hints_tests.rs`)
+- **Wrong**: source files exceed the 500-line house rule, none ledgered. Four files dropped below 500 and are removed from this list: `crates/rune-tui/src/materialize_ack.rs` (305), `crates/rune-tui/src/materialize_ack/reactions.rs` (378), `crates/rune-fuzz/src/script/decode.rs` (413), `crates/rune-md/src/emit/mod.rs` (497), `crates/rune-syntax/src/wrap/mod.rs` (494). `crates/rune-syntax/src/syntax.rs` (471) and `crates/rune-tui/src/save/materialize.rs` (329) remain under the threshold from an earlier drop.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 

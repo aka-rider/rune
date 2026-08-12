@@ -56,7 +56,7 @@ pub fn decor_row_cells(theme: &Theme, row: &SnapshotRow) -> Vec<Cell> {
 /// background fill (starting at the first content column) all read, so none
 /// of them can disagree about how wide a given row's decoration rendered.
 pub fn decor_cell_width(row: &SnapshotRow) -> u16 {
-    row.decor.as_ref().map(|d| d.cells as u16).unwrap_or(0)
+    row.decor.as_ref().map_or(0, |d| d.cells as u16)
 }
 
 #[cfg(test)]

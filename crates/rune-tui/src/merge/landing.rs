@@ -151,7 +151,7 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     };
 
-    let first_start = pairs.first().map(|p| p.block.range.start).unwrap_or(0);
+    let first_start = pairs.first().map_or(0, |p| p.block.range.start);
     if !install_whole_range(app, doc, &buffer_text, first_start) {
         app.merge = MergeState::Inactive;
         messages::error(app, "merge failed — the document could not be updated");

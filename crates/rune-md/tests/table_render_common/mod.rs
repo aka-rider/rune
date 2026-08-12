@@ -56,10 +56,9 @@ pub fn per_span_display_width(
     line: usize,
     content: &str,
 ) -> usize {
-    lines
-        .get(line)
-        .map(|l| l.spans.iter().map(|s| display_width(s.text(content))).sum())
-        .unwrap_or(0)
+    lines.get(line).map_or(0, |l| {
+        l.spans.iter().map(|s| display_width(s.text(content))).sum()
+    })
 }
 
 /// A 65-char URL, a wide-but-word-short "Description" column, and a short

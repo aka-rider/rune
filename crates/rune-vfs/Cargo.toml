@@ -10,7 +10,7 @@ strict-invariants = []
 libc = { workspace = true }
 trash = { workspace = true }
 rune-core = { path = "../rune-core" }
-sha2 = "0.11.0"
+sha2 = "0.10"
 
 [dev-dependencies]
 rune-vfs = { path = ".", features = ["strict-invariants"] }

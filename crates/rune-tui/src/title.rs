@@ -214,8 +214,10 @@ pub fn name_for(doc: &Document) -> String {
     doc.file_path
         .as_ref()
         .and_then(|p| p.file_name())
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| format!(".{MARKDOWN_EXT}"))
+        .map_or_else(
+            || format!(".{MARKDOWN_EXT}"),
+            |s| s.to_string_lossy().into_owned(),
+        )
 }
 
 /// Whether `name` is usable as a file name. Rejects the empty string,

@@ -23,7 +23,7 @@ rune-vfs = { path = "../rune-vfs" }
 # launch` needs to stamp the `sessions` row through a raw connection —
 # `rune-db` deliberately exposes no such escape hatch from its own public
 # API (decision 11: "no table-level CRUD escapes the crate").
-rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
+rusqlite = { workspace = true }
 
 [lints]
 workspace = true

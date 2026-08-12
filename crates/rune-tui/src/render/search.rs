@@ -60,7 +60,7 @@ pub(crate) fn build_spans(
 ) -> Vec<Span<'static>> {
     let prompt_w = display_width(PROMPT).min(area_w);
     let prompt_shown = truncate_to_width(PROMPT, prompt_w);
-    let readout_w = readout.map(display_width).unwrap_or(0);
+    let readout_w = readout.map_or(0, display_width);
     let caret_w = usize::from(focused);
     let gap = usize::from(readout_w > 0 && area_w > prompt_w + readout_w);
     let draft_budget = area_w
