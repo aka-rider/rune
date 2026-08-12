@@ -40,20 +40,10 @@ pub(super) fn blockquote_markers(
         let Some(line_text) = content.get(scan_start..line_end.max(scan_start)) else {
             continue;
         };
-        // RESIDUAL PRODUCER fix (verification round 3, ">]\n\t>"): only
-        // SPACES (never a tab), capped at 3, count as marker-prefix
-        // indentation — CommonMark's own indentation rule for a repeated
-        // block-container marker. `str::trim_start()` strips ANY
-        // whitespace including tabs, so it used to also recognize a
-        // tab-indented line ("\t>") as a repeated ">" marker; comrak
-        // itself does NOT (a leading tab represents 4 columns, past the
-        // 3-space budget, so it treats the line as lazy-continuation
-        // paragraph TEXT instead). That mismatch meant this scan and the
-        // paragraph's own Text node both claimed the same "> " bytes — a
-        // producer-bug double-claim `push_span_split_by_line` now catches
-        // via `assert_invariant`. Capping at 3 spaces (not just excluding
-        // tabs outright) keeps a legitimately 1-3-space-indented
-        // continuation ("   > cont") recognized, matching comrak exactly.
+        // A tab at column 0, 1, 2 or 3 always advances to column 4. A leading
+        // run of whitespace therefore reaches an indentation of 3 or less only
+        // if it is all spaces. Counting spaces and capping at 3 is CommonMark's
+        // own "indented by at most 3" test for a repeated block-container marker.
         let ws_len = line_text.bytes().take_while(|&b| b == b' ').count().min(3);
         let Some(trimmed) = line_text.get(ws_len..) else {
             continue;

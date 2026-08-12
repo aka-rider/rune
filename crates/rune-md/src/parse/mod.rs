@@ -11,90 +11,53 @@ mod delimited;
 mod embed;
 pub(crate) mod frontmatter;
 mod inline;
+mod shadow;
 mod table;
 
 use crate::element::block::Block;
 use comrak::nodes::{AstNode, Sourcepos};
 use comrak::{Arena, Options, parse_document};
 use rune_syntax::element::ByteRange;
-use std::borrow::Cow;
+use shadow::Round;
+
+pub use shadow::parse_shadow;
 
 /// Byte offset of the start of each BUFFER line: a line ends at `\n`,
 /// nothing else. This is the ONLY line model this
-/// crate ever needs: `cr_shadow` makes comrak's own CommonMark line count
-/// agree with it by construction (see that function's docs), so `starts`
-/// derived here serves the buffer, the emitter, `ScanHint`'s container-
-/// prefix scanning, per-line marker/content clamping, AND every
+/// crate ever needs: `parse_shadow` makes comrak's own CommonMark line
+/// count agree with it by construction (see that function's docs), so
+/// `starts` derived here serves the buffer, the emitter, `ScanHint`'s
+/// container-prefix scanning, per-line marker/content clamping, AND every
 /// sourcepos-to-byte-range conversion alike — there is no second, comrak-
 /// only line model to keep in sync with this one.
 pub fn line_starts(src: &str) -> Vec<usize> {
     rune_core::buffer::line_starts(src)
 }
 
-/// A length-preserving PARSE-TIME view of `content`, fed to comrak
-/// instead of the real buffer: every LONE `\r` (a CR NOT immediately
-/// followed by `\n`) becomes a single space. CRLF is left alone — both
-/// this crate's `\n`-only line model and CommonMark's own CR/LF/CRLF rule
-/// already agree that a `"\r\n"` pair ends exactly one line, so nothing
-/// there needs changing. A lone `\r` is where they used to disagree:
-/// CommonMark (and so comrak's own `Sourcepos`) treats it as a line
-/// terminator, but this crate's buffer model does not (a bare `\r` is
-/// ordinary mid-line content, matching `rune_core::buffer::Buffer`).
-/// Blanking it out here
-/// makes that disagreement unrepresentable: comrak can no longer end a
-/// line anywhere `line_starts` wouldn't, so every `Sourcepos` it hands
-/// back converts through `line_starts` alone, correctly, always.
+/// comrak `Sourcepos` (1-based, end-inclusive, UTF-8 byte columns) -> an
+/// absolute half-open `ByteRange` into `content`, always in bounds and
+/// always on char boundaries. `sp` must come from a parse of
+/// `parse_shadow(content)`: columns are offsets into THAT copy, and only
+/// its coordinates are byte-exact. A column still never leaves the line
+/// it names: comrak reports a multi-line code span's end against the
+/// indentation of an earlier line, which can point past the end of the
+/// last one.
 ///
-/// One byte replaced by one byte, so every offset comrak reports against
-/// THIS view is already a valid offset into the REAL `content` — nothing
-/// downstream needs to translate between two coordinate spaces. This is
-/// strictly a view comrak parses: `parse()` is the only caller, the
-/// replaced bytes are never written back to `content`, the buffer, or the
-/// user's file (this changes what comrak SEES, never what the user WROTE).
-/// `Cow::Borrowed` when no lone `\r` is
-/// present — the overwhelming common case — so this costs nothing for an
-/// ordinary document.
-pub(crate) fn cr_shadow(content: &str) -> Cow<'_, str> {
-    let bytes = content.as_bytes();
-    let is_lone_cr = |i: usize, b: u8| b == b'\r' && bytes.get(i + 1) != Some(&b'\n');
-    if !bytes.iter().enumerate().any(|(i, &b)| is_lone_cr(i, b)) {
-        return Cow::Borrowed(content);
-    }
-    let mut shadow = bytes.to_vec();
-    for (i, b) in shadow.iter_mut().enumerate() {
-        if is_lone_cr(i, *b) {
-            *b = b' ';
-        }
-    }
-    // Every replaced byte is ASCII (`\r` -> `' '`), so this can never
-    // turn valid UTF-8 into invalid UTF-8; the fallback is unreachable in
-    // practice but keeps this function panic-free rather than relying on
-    // that invariant unchecked.
-    Cow::Owned(String::from_utf8(shadow).unwrap_or_else(|_| content.to_owned()))
-}
-
-/// The WP0-proven conversion: comrak `Sourcepos` (1-based, end-inclusive,
-/// UTF-8 byte columns) -> an absolute half-open `ByteRange` into `content`,
-/// always in bounds and always on char boundaries.
-///
-/// Comrak's columns are byte columns EXCEPT on a line whose leading tab is
-/// only partly consumed as container indentation and that is then taken as
-/// a lazy continuation of an already-open block: comrak substitutes the
-/// tab's unconsumed remainder with spaces in that block's content, so every
-/// column reported on that line is shifted right by that many spaces.
-/// The shift depends on the enclosing container's indentation, which a
-/// sourcepos does not carry, so it cannot be undone from a column alone —
-/// but it is bounded by that tab's width, so the column stays on its own
-/// line once clamped there, and snapping to char boundaries keeps the
-/// range a valid slice. `tests/spike_sourcepos.rs` pins both regimes.
+/// One shape stays outside this: comrak can still consume part of a tab
+/// that pads a LIST MARKER, which is not container prefix and cannot be
+/// expanded without changing the padding comrak matches list items on.
+/// That line becomes an indented code block, which has no inline children
+/// and whose own bounds comrak takes from byte counters rather than from
+/// the shifted content. `tests/spike_sourcepos.rs` pins it.
 pub fn sourcepos_to_range(content: &str, starts: &[usize], sp: Sourcepos) -> ByteRange {
     let start = offset_of_column(
         content,
         starts,
         sp.start.line,
         sp.start.column.saturating_sub(1),
+        Round::Down,
     );
-    let end = offset_of_column(content, starts, sp.end.line, sp.end.column);
+    let end = offset_of_column(content, starts, sp.end.line, sp.end.column, Round::Up);
     let start = content.floor_char_boundary(start.min(content.len()));
     let end = content
         .ceil_char_boundary(end.min(content.len()))
@@ -102,25 +65,22 @@ pub fn sourcepos_to_range(content: &str, starts: &[usize], sp: Sourcepos) -> Byt
     ByteRange::new(start, end)
 }
 
-fn indent_bears_tab(line: &[u8]) -> bool {
-    line.iter()
-        .take_while(|b| matches!(b, b' ' | b'\t'))
-        .any(|&b| b == b'\t')
-}
-
-fn offset_of_column(content: &str, starts: &[usize], line: usize, columns: usize) -> usize {
-    let line_start = starts.get(line.saturating_sub(1)).copied().unwrap_or(0);
+fn offset_of_column(
+    content: &str,
+    starts: &[usize],
+    line: usize,
+    columns: usize,
+    round: Round,
+) -> usize {
+    let index = line.saturating_sub(1);
+    let line_start = starts.get(index).copied().unwrap_or(0);
     let line_limit = starts.get(line).copied().unwrap_or(content.len());
-    let offset = line_start + columns;
     let line_bytes = content
         .as_bytes()
         .get(line_start..line_limit)
         .unwrap_or_default();
-    if indent_bears_tab(line_bytes) {
-        offset.min(line_limit)
-    } else {
-        offset
-    }
+    let offset = line_start + shadow::real_offset_in_line(line_bytes, index == 0, columns, round);
+    offset.min(line_limit)
 }
 
 /// The one comrak `Options` value the whole crate parses with — extension
@@ -185,7 +145,7 @@ pub(crate) fn last_line_of(starts: &[usize], range: ByteRange) -> usize {
 /// The ONLY place a raw comrak `Sourcepos` becomes an absolute byte
 /// range — through `starts` (`line_starts(content)`, the SAME index the
 /// buffer, the emitter, and `ScanHint` all use). Safe by construction:
-/// `parse()` never hands comrak anything but its `cr_shadow` view, so
+/// `parse()` never hands comrak anything but its `parse_shadow` copy, so
 /// comrak's own line count and `starts` can never disagree.
 pub(crate) fn node_range(content: &str, starts: &[usize], node: &AstNode) -> ByteRange {
     let sp = node.data.borrow().sourcepos;
@@ -313,11 +273,11 @@ fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) 
 /// Parse `content` into the top-level `Block` tree. This is the ONLY entry
 /// point `DocMachine::sync_content` calls — every downstream module reaches
 /// comrak through here. Comrak itself only ever sees `shadow`
-/// (`cr_shadow(content)`, a lone-`\r`-blanked view — see that function's
-/// docs); every downstream `Block`/`Inline` still carries byte ranges into
-/// the REAL `content`, since the view is length-preserving.
+/// (`parse_shadow(content)` — see that function's docs); every downstream
+/// `Block`/`Inline` still carries byte ranges into the REAL `content`,
+/// which `sourcepos_to_range` translates back to.
 pub fn parse(content: &str) -> Vec<Block> {
-    let shadow = cr_shadow(content);
+    let shadow = parse_shadow(content);
     let starts = line_starts(content);
     let opts = if frontmatter_extension_is_safe(content, &shadow, &starts) {
         options()

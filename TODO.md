@@ -67,12 +67,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: an explicit `CarryForward`/`Replace` enum.
 - **Done when**: the reply protocol has no dual-meaning `None`.
 
-### A tab eaten by container indentation shifts every column on its line
-- **Where**: `sourcepos_to_range`, `offset_of_column` and `indent_bears_tab` in `crates/rune-md/src/parse/mod.rs`; the shift is pinned by `partially_consumed_tab_on_a_lazy_line_shifts_columns` and `partially_consumed_tab_shift_survives_as_a_shorter_range` in `crates/rune-md/tests/spike_sourcepos.rs`
-- **Wrong**: comrak gives each node a line and a column, and those columns count bytes — except on one kind of line. A container such as a list item eats part of the line's leading tab. The line then continues an already-open block without repeating that block's own prefix. comrak fills the tab's uneaten remainder with spaces inside the block's content, while the byte offset has already stepped over the whole tab. Every column reported on that line therefore comes back shifted right. The shift equals the container's indentation, which the reported position does not carry, so a column on its own cannot be corrected — only bounded by the tab's width. `sourcepos_to_range` resolves each column against its own line's bytes and clamps inside that line, which keeps every offset on the right line and on a character boundary. Within the line an offset can still be a few columns off, so a style boundary can land in the wrong place. Byte accounting is intact: ten shifted shapes pass the per-line coverage and duplicate-content checks, so no byte is dropped or drawn twice. Surfaced by a fuzz catch where the shift pushed an offset into the middle of a multi-byte character (issue #94).
-- **Instead**: rebuild the indentation the shift is made of by walking the enclosing block's own prefix on that line, instead of trusting the column. Or take an upstream comrak change that reports byte columns on these lines.
-- **Done when**: a node on a tab-indented lazy continuation line converts to its exact byte range, and the two tests named above assert exactness instead of recording the shift as bounded.
-
 ## Mechanical
 
 ### Typed errors flattened to String

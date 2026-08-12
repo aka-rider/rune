@@ -8,8 +8,8 @@
 //! row off a BUFFER line via `line_at`) rendered one display row carrying
 //! BOTH the paragraph's text and a header row's box, wider than the
 //! border synthesised from that row's own `col_widths` — the exact
-//! `TABLE-ROW-WIDTH` violation. `parse::cr_shadow` fixes this at the
-//! root: comrak now parses a length-preserving view with every lone `\r`
+//! `TABLE-ROW-WIDTH` violation. `parse::parse_shadow` fixes this at the
+//! root: comrak now parses a copy with every lone `\r`
 //! blanked to a space, so its own line count can never again disagree
 //! with `starts` (`parse::line_starts`) — the two indexes this crate used
 //! to carry (`LineIndex::{buffer,comrak}`) collapse into one by

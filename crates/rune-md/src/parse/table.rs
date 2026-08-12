@@ -108,7 +108,7 @@ pub(super) fn build_table<'a>(
     // upstream instead — CommonMark's own block parser assigns each
     // physical line to exactly one block, and that invariant only holds
     // for comrak's purposes when its line count agrees with `starts`
-    // (see `parse::cr_shadow`'s docs for the one case where it wouldn't).
+    // (see `parse_shadow`'s docs for the one case where it wouldn't).
 
     // The table's range must begin exactly where its first line's content
     // begins — at the line start, or after whatever container prefix the

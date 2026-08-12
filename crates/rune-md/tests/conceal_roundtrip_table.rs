@@ -85,3 +85,9 @@ fn table_and_html_block_in_container_cr_variants_stay_clean() {
     assert_no_duplicate_content("- t\r  ---|");
     assert_no_duplicate_content("> <div\r> foo>text");
 }
+
+#[test]
+fn tab_indented_table_row_in_a_blockquote_round_trips() {
+    let content = "> a\n>\t| b |\n>\t|---|";
+    assert_no_duplicate_content(content);
+}
