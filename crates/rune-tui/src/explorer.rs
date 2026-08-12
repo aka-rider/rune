@@ -162,7 +162,6 @@ pub(crate) fn entry_rows(rect: Rect) -> usize {
     (rect.height as usize).saturating_sub(1)
 }
 
-#[expect(dead_code)]
 pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
     if row == 0 || row >= rect.height {
         return None;

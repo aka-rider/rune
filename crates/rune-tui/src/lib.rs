@@ -20,6 +20,7 @@ pub mod document_support;
 pub mod explorer;
 pub mod explorer_dirload;
 pub mod explorer_keys;
+mod explorer_mouse;
 pub mod explorer_preview;
 pub mod explorer_reveal;
 pub mod explorer_search;

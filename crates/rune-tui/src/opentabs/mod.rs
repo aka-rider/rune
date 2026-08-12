@@ -10,6 +10,7 @@ use crate::runtime::Effects;
 use crate::workspace;
 
 pub mod limit;
+pub(crate) mod mouse;
 pub mod render;
 
 pub use render::{draw, draw_divider};
@@ -133,7 +134,6 @@ pub(crate) fn entry_rows(rect: Rect) -> usize {
     rect.height as usize
 }
 
-#[expect(dead_code)]
 pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
     if row >= rect.height {
         return None;
