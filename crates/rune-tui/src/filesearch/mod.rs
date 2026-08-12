@@ -13,9 +13,11 @@ use std::sync::Arc;
 use nucleo_matcher::{Config, Matcher};
 
 use crate::app::App;
+use crate::commands::mouse::WHEEL_ROWS;
 use crate::document::DocumentId;
 use crate::listnav;
 use crate::pane::Pane;
+use crate::pointer::{MouseInput, MouseKind};
 use crate::runtime::Effects;
 use crate::workspace;
 
@@ -178,6 +180,17 @@ pub(crate) fn cancel(app: &mut App, effects: &mut Effects) {
         workspace::switch_to(app, return_to);
     }
     app.set_focus_pane(Pane::Editor, effects);
+}
+
+/// The wheel over the finder's own rect moves the SELECTION, through the
+/// same nav the Up/Down keys drive — the result list has no scroll of its
+/// own to move independently of its cursor.
+pub(crate) fn mouse(app: &mut App, input: MouseInput, effects: &mut Effects) {
+    match input.kind {
+        MouseKind::ScrollUp => keys::nav_move(app, -WHEEL_ROWS, effects),
+        MouseKind::ScrollDown => keys::nav_move(app, WHEEL_ROWS, effects),
+        _ => {}
+    }
 }
 
 /// Resolves a `ResultRow::candidate_idx` into the `Candidate` it names:

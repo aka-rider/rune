@@ -298,8 +298,6 @@ fn corners(rect: Rect) -> [(u16, u16); 2] {
     ]
 }
 
-/// Every pane the mouse can land in owns its own rect end to end, and the
-/// chrome between them belongs to nobody.
 #[test]
 fn pane_at_maps_each_rect_to_its_own_pane() {
     let mut app = app_with_left_shown();
@@ -346,8 +344,6 @@ fn pane_at_leaves_the_chrome_unowned() {
     assert_eq!(geo.pane_at(divider.x, divider.y), None, "the Open divider");
 }
 
-/// The unpainted left column reports the zero rect for both sections, and a
-/// zero rect must never claim the point (0, 0).
 #[test]
 fn pane_at_never_claims_a_zero_sized_section() {
     let app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);

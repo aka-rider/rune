@@ -65,19 +65,13 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         return;
     }
     let mut lines = Vec::with_capacity(area.height as usize);
-    let order = app.documents.order();
-    let window = app.tabs.nav.window(order.len(), super::entry_rows(area));
-    let start = window.start;
-    let visible = order.get(window).unwrap_or(&[]);
     let show_cursor = app.focus() == Pane::Tabs;
     let mut cursor_row: Option<u16> = None;
     let mut active_row: Option<u16> = None;
 
-    for (i, &id) in visible.iter().enumerate() {
-        let idx = start + i;
-        let Some(doc) = app.doc(id) else { continue };
+    for (row_y, &(idx, id, doc)) in super::painted_tabs(app, area).iter().enumerate() {
         let selected = idx == app.tabs.nav.cursor;
-        let row_y = lines.len() as u16;
+        let row_y = row_y as u16;
         if selected {
             cursor_row = Some(row_y);
         }

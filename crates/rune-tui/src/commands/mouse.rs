@@ -4,13 +4,6 @@
 //! every wrapped row), plain click-drag extends a selection, and the wheel
 //! scrolls 3 rows. `app::update` routes `Msg::Mouse` here directly, exactly
 //! like `app::handle_key` routes a resolved `Command` to `commands::nav`.
-//!
-//! Hit-testing (`mouse_hit::offset_at`, split out for the 500-line
-//! budget) reuses
-//! `render::segment_cells` — the SAME per-cell `buf_offset` the renderer
-//! just blitted — rather than re-deriving a wrap-row/visual-column ->
-//! buffer conversion independently: whatever glyph is on screen at a
-//! clicked cell is, by construction, what the click resolves to.
 
 use rune_core::cursor::{Cursor, CursorSet, CursorSpec};
 
@@ -35,11 +28,8 @@ use crate::runtime::Effects;
 /// converge on this number).
 pub(crate) const WHEEL_ROWS: isize = 3;
 
-/// Routes one `Msg::Mouse`. Mouse support is no longer editor-only: the
-/// two splitter bands (the left column's grab band, the `Open` divider
-/// row) are live everywhere in the frame; the rest of the chrome still
-/// drops its events, same as before. Takes `effects` because a ctrl-click
-/// may follow an external link, which needs an `OpenExternal` `Cmd`.
+/// Routes one `Msg::Mouse`. Takes `effects` because a ctrl-click may follow
+/// an external link, which needs an `OpenExternal` `Cmd`.
 pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     // A splitter drag owns the pointer until the button comes up: it
     // routinely leaves every rect mid-gesture, so this is decided before
@@ -100,12 +90,12 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         }
     }
 
-    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
-        filesearch::close(app);
+    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && splitter::begin(app, input) {
         return;
     }
 
-    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && splitter::begin(app, input) {
+    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
+        filesearch::cancel(app, effects);
         return;
     }
 
@@ -114,6 +104,11 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
 
     match geo.pane_at(input.column, input.row) {
         Some(Pane::Messages) => messages::mouse(app, input, effects),
+        // The finder paints over the Explorer's own rect while it is open,
+        // so a wheel tick there must move what the user can actually see.
+        Some(Pane::Explorer) if app.filesearch().is_some() => {
+            filesearch::mouse(app, input, effects)
+        }
         Some(Pane::Explorer) => explorer_mouse::mouse(app, input, effects),
         Some(Pane::Tabs) => opentabs::mouse::mouse(app, input, effects),
         Some(Pane::Editor) => {
@@ -136,6 +131,9 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
 
 fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {
     app.set_focus_pane(Pane::Editor, effects);
+    if app.focus() != Pane::Editor {
+        return;
+    }
 
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;

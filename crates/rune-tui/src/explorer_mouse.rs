@@ -31,18 +31,27 @@ fn scroll(app: &mut App, delta: isize) {
 }
 
 fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
-    app.set_focus_pane(Pane::Explorer, effects);
-
     let rect = pane_rect(app);
-    let Some(row) = input.row.checked_sub(rect.y) else {
-        return;
-    };
-    let Some(index) = explorer::entry_at(app, rect, row) else {
+    let index = input
+        .row
+        .checked_sub(rect.y)
+        .and_then(|row| explorer::entry_at(app, rect, row));
+
+    let Some(index) = index else {
+        app.pointer.end_click_run();
+        app.set_focus_pane(Pane::Explorer, effects);
         return;
     };
 
     let now = app.pointer_clock.now();
-    let count = app.pointer.register_click(now, input.column, input.row);
+    let count = app
+        .pointer
+        .register_row_click(now, input.column, input.row, index);
+
+    app.set_focus_pane(Pane::Explorer, effects);
+    if app.focus() != Pane::Explorer {
+        return;
+    }
     explorer_keys::select_index(app, index, effects);
     if count >= 2 {
         explorer_keys::open_selected(app, effects);

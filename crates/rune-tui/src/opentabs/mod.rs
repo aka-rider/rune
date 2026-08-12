@@ -3,6 +3,7 @@
 use ratatui::layout::Rect;
 
 use crate::app::App;
+use crate::document::{Document, DocumentId};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::pane::Pane;
@@ -106,10 +107,16 @@ pub(crate) fn activate(app: &mut App, effects: &mut Effects) {
     app.set_focus_pane(Pane::Editor, effects);
 }
 
+pub(crate) fn select_index(app: &mut App, index: usize) {
+    let len = app.documents.order().len();
+    app.tabs.nav.cursor = index.min(len.saturating_sub(1));
+    ensure_visible(app);
+}
+
 fn move_selection(app: &mut App, delta: isize) {
     let len = app.documents.order().len();
     app.tabs.nav.move_by(delta, len);
-    ensure_visible(app);
+    select_index(app, app.tabs.nav.cursor);
 }
 
 /// Scrolls the Tabs pane's window to keep the cursor visible — same
@@ -134,16 +141,28 @@ pub(crate) fn entry_rows(rect: Rect) -> usize {
     rect.height as usize
 }
 
+/// The rows the Tabs pane actually paints into `rect`, in paint order: the
+/// window's slice of `order`, minus any id with no document behind it. The
+/// one source both `render::draw` and [`entry_at`] read, so a skipped row
+/// can never leave the click mapping naming a different tab than the one
+/// under the pointer.
+pub(crate) fn painted_tabs(app: &App, rect: Rect) -> Vec<(usize, DocumentId, &Document)> {
+    let order = app.documents.order();
+    let window = app.tabs.nav.window(order.len(), entry_rows(rect));
+    let start = window.start;
+    order
+        .get(window)
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, &id)| app.doc(id).map(|doc| (start + offset, id, doc)))
+        .collect()
+}
+
 pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
-    if row >= rect.height {
-        return None;
-    }
-    let window = app
-        .tabs
-        .nav
-        .window(app.documents.order().len(), entry_rows(rect));
-    let index = window.start.saturating_add(row as usize);
-    (index < window.end).then_some(index)
+    painted_tabs(app, rect)
+        .get(row as usize)
+        .map(|&(index, _, _)| index)
 }
 
 #[cfg(test)]
