@@ -142,7 +142,8 @@ fn live_row_cells(
     }
     let cols = image_cols.min(width.saturating_sub(cells.len()));
     for col in 0..cols {
-        let mut text = String::with_capacity(rune_image::PLACEHOLDER.len_utf8() * 3);
+        let mut text =
+            compact_str::CompactString::with_capacity(rune_image::PLACEHOLDER.len_utf8() * 3);
         text.push(rune_image::PLACEHOLDER);
         text.push(rune_image::diacritic(row));
         text.push(rune_image::diacritic(col));
@@ -311,7 +312,7 @@ fn grapheme_cells(text: &str, start_col: usize) -> Vec<Cell> {
 
 fn blank_cell() -> Cell {
     Cell {
-        text: " ".to_string(),
+        text: " ".into(),
         width: 1,
         style: Style::default(),
         buf_offset: -1,

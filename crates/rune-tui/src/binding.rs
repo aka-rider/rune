@@ -3,6 +3,8 @@
 //! under the 500-line budget; `keymap` re-exports every item here so no
 //! import path downstream changed.
 
+use std::fmt::Write as _;
+
 use crate::keymap::{KeyCode, KeyInput, Mods};
 
 /// What a table row matches: one exact `KeyCode`, or any printable
@@ -58,27 +60,37 @@ impl KeyPattern {
     /// doc — one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup,
     /// then the key, `Char` uppercased ("^X" for Ctrl+x). `Printable` has no
     /// single character to show, so it renders as the class it matches.
-    pub fn label(&self) -> String {
-        let mut s = String::new();
+    /// Appends to `out` rather than allocating its own `String`, so a caller
+    /// building many labels in a row (`footer_hints`'s per-frame hint list)
+    /// can reuse one growing buffer instead of paying a fresh allocation per
+    /// label.
+    pub fn write_label(&self, out: &mut String) {
         if self.mods.ctrl {
-            s.push('^');
+            out.push('^');
         }
         if self.mods.alt {
-            s.push('\u{2325}'); // ⌥
+            out.push('\u{2325}'); // ⌥
         }
         if self.mods.shift {
-            s.push('\u{21e7}'); // ⇧
+            out.push('\u{21e7}'); // ⇧
         }
         if self.mods.sup {
-            s.push('\u{2318}'); // ⌘
+            out.push('\u{2318}'); // ⌘
         }
         match self.key {
-            KeyMatch::Code(KeyCode::Char(c)) => s.push(c.to_ascii_uppercase()),
-            KeyMatch::Code(KeyCode::F1) => s.push_str("F1"),
-            KeyMatch::Code(KeyCode::Backspace) => s.push('\u{232b}'), // ⌫
-            KeyMatch::Code(other) => s.push_str(&format!("{other:?}")),
-            KeyMatch::Printable => s.push_str("A-Z"),
+            KeyMatch::Code(KeyCode::Char(c)) => out.push(c.to_ascii_uppercase()),
+            KeyMatch::Code(KeyCode::F1) => out.push_str("F1"),
+            KeyMatch::Code(KeyCode::Backspace) => out.push('\u{232b}'), // ⌫
+            KeyMatch::Code(other) => {
+                let _ = write!(out, "{other:?}");
+            }
+            KeyMatch::Printable => out.push_str("A-Z"),
         }
+    }
+
+    pub fn label(&self) -> String {
+        let mut s = String::new();
+        self.write_label(&mut s);
         s
     }
 }
@@ -98,6 +110,10 @@ pub struct Binding<C: Copy + 'static> {
 }
 
 impl<C: Copy + 'static> Binding<C> {
+    pub fn write_label(&self, out: &mut String) {
+        self.key.write_label(out);
+    }
+
     pub fn label(&self) -> String {
         self.key.label()
     }

@@ -99,7 +99,7 @@ mod tests {
 
     fn cell(text: &str, buf_offset: i64) -> Cell {
         Cell {
-            text: text.to_string(),
+            text: text.into(),
             width: 1,
             style: Style::default(),
             buf_offset,

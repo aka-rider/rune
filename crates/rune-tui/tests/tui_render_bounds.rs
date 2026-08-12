@@ -47,13 +47,13 @@ fn blit_does_not_overpaint_past_the_right_edge_with_a_wide_glyph() {
 
     let area = Rect::new(0, 0, 3, 1); // columns 0,1,2 owned by blit
     let narrow = |text: &str| render::Cell {
-        text: text.to_string(),
+        text: text.into(),
         width: 1,
         style: ratatui::style::Style::default(),
         buf_offset: 0,
     };
     let wide = render::Cell {
-        text: "\u{1F600}".to_string(), // U+1F600, width 2
+        text: "\u{1F600}".into(), // U+1F600, width 2
         width: 2,
         style: ratatui::style::Style::default(),
         buf_offset: 0,

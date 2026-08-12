@@ -306,7 +306,7 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed:
         return;
     }
     row.push(Cell {
-        text: " ".to_string(),
+        text: " ".into(),
         width: 1,
         style: Style::default().add_modifier(RtModifier::REVERSED),
         buf_offset: buf_offset as i64,
@@ -332,7 +332,7 @@ mod tests {
 
     fn cell(offset: i64) -> Cell {
         Cell {
-            text: "x".to_string(),
+            text: "x".into(),
             width: 1,
             style: Style::default(),
             buf_offset: offset,

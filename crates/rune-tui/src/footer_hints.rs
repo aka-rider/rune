@@ -8,6 +8,7 @@
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::binding::Binding;
 use crate::document::ReadOnly;
 use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::filesearch::keys::FILESEARCH_BINDINGS;
@@ -16,6 +17,16 @@ use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
 use crate::pane::Pane;
 use crate::width::display_width;
+
+/// `binding`'s label, built into the shared `buf` (cleared first) and cloned
+/// out — reusing `buf` across the whole hint list lets its capacity settle
+/// at the longest label seen instead of every call growing its own `String`
+/// from empty.
+fn labeled<C: Copy + 'static>(binding: &Binding<C>, buf: &mut String) -> String {
+    buf.clear();
+    binding.write_label(buf);
+    buf.clone()
+}
 
 /// Default-mode hints, CONTEXTUAL per focused pane (plan WP6.S2,
 /// superseding WP2.S6/S7's blind `GLOBAL_BINDINGS` iteration): a
@@ -45,6 +56,7 @@ use crate::width::display_width;
 /// two can never disagree about WHAT the hints are, only how many fit.
 pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
     let mut entries: Vec<(String, &'static str, bool)> = Vec::new();
+    let mut label_buf = String::new();
 
     // Plan WP6: keyed on the `ReadOnly` VARIANT, not on `is_read_only()`
     // and not on dirtiness. `Document::is_dirty()` returns the render-only
@@ -69,7 +81,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
     {
-        entries.push((save.label(), save.help, app.is_dirty()));
+        entries.push((labeled(save, &mut label_buf), save.help, app.is_dirty()));
     }
 
     entries.extend(
@@ -77,7 +89,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             .iter()
             .filter(|b| !b.alias && !matches!(b.cmd, GlobalCommand::Save))
             .filter(|b| !hint_suppressed(app, b.cmd))
-            .map(|b| (b.label(), b.help, true)),
+            .map(|b| (labeled(b, &mut label_buf), b.help, true)),
     );
 
     // The finder is never a `Pane` (chrome stays `Explorer` throughout), so
@@ -91,16 +103,22 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             FILESEARCH_BINDINGS
                 .iter()
                 .filter(|b| !b.alias)
-                .map(|b| (b.label(), b.help, true)),
+                .map(|b| (labeled(b, &mut label_buf), b.help, true)),
         );
         return entries;
     }
 
     match app.focus() {
-        Pane::Explorer => {
-            entries.extend(EXPLORER_BINDINGS.iter().map(|b| (b.label(), b.help, true)))
-        }
-        Pane::Tabs => entries.extend(TABS_BINDINGS.iter().map(|b| (b.label(), b.help, true))),
+        Pane::Explorer => entries.extend(
+            EXPLORER_BINDINGS
+                .iter()
+                .map(|b| (labeled(b, &mut label_buf), b.help, true)),
+        ),
+        Pane::Tabs => entries.extend(
+            TABS_BINDINGS
+                .iter()
+                .map(|b| (labeled(b, &mut label_buf), b.help, true)),
+        ),
         // The title field has no binding TABLE of its own — `title::keys::
         // handle_key` matches Enter/Esc/editing keys directly (they are a
         // text field's own behaviour, not chords worth enumerating in the

@@ -46,10 +46,10 @@ pub fn resolve(
         // filesystem.
         Target::SameDoc(_) => Destination::Unresolved,
         Target::Path { path, anchor } => {
-            resolve_candidate(vfs, path, doc_dir, root, anchor, name_extension)
+            resolve_candidate(vfs, path, doc_dir, root, anchor.as_ref(), name_extension)
         }
         Target::Name { name, anchor } => {
-            resolve_candidate(vfs, name, doc_dir, root, anchor, name_extension)
+            resolve_candidate(vfs, name, doc_dir, root, anchor.as_ref(), name_extension)
         }
     }
 }
@@ -75,17 +75,17 @@ fn resolve_candidate(
     raw: &str,
     doc_dir: Option<&Path>,
     root: &Path,
-    anchor: &Option<Anchor>,
+    anchor: Option<&Anchor>,
     name_extension: &str,
 ) -> Destination {
     let decoded = percent::decode(raw);
     let trimmed = decoded.trim();
-    let stripped = trimmed.strip_prefix("./").unwrap_or(trimmed).to_string();
+    let stripped = trimmed.strip_prefix("./").unwrap_or(trimmed);
 
-    if let Some(dest) = try_candidate(vfs, &stripped, doc_dir, root, anchor) {
+    if let Some(dest) = try_candidate(vfs, stripped, doc_dir, root, anchor) {
         return dest;
     }
-    if Path::new(&stripped).extension().is_none() {
+    if Path::new(stripped).extension().is_none() {
         let with_extension = format!("{stripped}.{name_extension}");
         if let Some(dest) = try_candidate(vfs, &with_extension, doc_dir, root, anchor) {
             return dest;
@@ -102,13 +102,13 @@ fn try_candidate(
     candidate: &str,
     doc_dir: Option<&Path>,
     root: &Path,
-    anchor: &Option<Anchor>,
+    anchor: Option<&Anchor>,
 ) -> Option<Destination> {
     let path = Path::new(candidate);
     if path.is_absolute() {
         return is_regular(vfs, path).then(|| Destination::Location {
             path: path.to_path_buf(),
-            anchor: anchor.clone(),
+            anchor: anchor.cloned(),
         });
     }
 
@@ -123,7 +123,7 @@ fn try_candidate(
         if is_regular(vfs, &joined) {
             return Some(Destination::Location {
                 path: joined,
-                anchor: anchor.clone(),
+                anchor: anchor.cloned(),
             });
         }
     }

@@ -117,7 +117,7 @@ fn fill_row(cells: &mut Vec<Cell>, start_col: usize, width: usize, bg: Color) {
     }
     while col < width {
         cells.push(Cell {
-            text: " ".to_string(),
+            text: " ".into(),
             width: 1,
             style: Style::default().bg(bg),
             buf_offset: -1,
@@ -133,7 +133,7 @@ mod tests {
 
     fn cell(text: &str, width: u8, buf_offset: i64) -> Cell {
         Cell {
-            text: text.to_string(),
+            text: text.into(),
             width,
             style: Style::default(),
             buf_offset,

@@ -2,6 +2,8 @@
 //! `Action`/`KeyCode`/`Mods` are already well-formed Rust values, so there is
 //! nothing here that can fail the way `decode` can.
 
+use std::fmt::Write as _;
+
 use crate::action::{Action, HighlightVersion};
 use crate::driver::DOC_PATH;
 use rune_tui::keymap::{KeyCode, Mods};
@@ -48,7 +50,9 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push_str(&escape(s));
             out.push('\n');
         }
-        Action::Resize(w, h) => out.push_str(&format!("resize {w} {h}\n")),
+        Action::Resize(w, h) => {
+            let _ = writeln!(out, "resize {w} {h}");
+        }
         Action::ClipboardReply(s) => {
             out.push_str("clip ");
             out.push_str(&escape(s));
@@ -91,7 +95,7 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push_str(&spans.len().to_string());
             out.push('\n');
             for (start, end, scope) in spans {
-                out.push_str(&format!("highlight-span {start} {end} {scope}\n"));
+                let _ = writeln!(out, "highlight-span {start} {end} {scope}");
             }
         }
         Action::DivergeDisk => out.push_str("diverge-disk\n"),

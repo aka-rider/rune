@@ -39,7 +39,7 @@ pub fn decor_row_cells(theme: &Theme, row: &SnapshotRow) -> Vec<Cell> {
         for grapheme in piece.text.graphemes(true) {
             let width = grapheme_width(grapheme);
             cells.push(Cell {
-                text: grapheme.to_string(),
+                text: grapheme.into(),
                 width: width as u8,
                 style,
                 buf_offset: -1,

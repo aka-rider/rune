@@ -6,6 +6,7 @@
 
 use std::ops::Range;
 
+use compact_str::{CompactString, ToCompactString};
 use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -32,7 +33,7 @@ use crate::theme::Theme;
 /// resolving it to a byte.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
-    pub text: String,
+    pub text: CompactString,
     pub width: u8,
     pub style: Style,
     pub buf_offset: i64,
@@ -143,7 +144,7 @@ pub(crate) fn push_grapheme_cells(
                 let width = rune_width_with_tab(first, *visual_col);
                 for _ in 0..width {
                     cells.push(Cell {
-                        text: " ".to_string(),
+                        text: " ".into(),
                         width: 1,
                         style,
                         buf_offset,
@@ -155,7 +156,7 @@ pub(crate) fn push_grapheme_cells(
             _ if first.is_control() => {
                 let width = control_aware_width(first);
                 cells.push(Cell {
-                    text: control_placeholder(first).to_string(),
+                    text: control_placeholder(first).to_compact_string(),
                     width: width as u8,
                     style,
                     buf_offset,
@@ -169,7 +170,7 @@ pub(crate) fn push_grapheme_cells(
 
     let width = grapheme_width(grapheme);
     cells.push(Cell {
-        text: grapheme.to_string(),
+        text: grapheme.into(),
         width: width as u8,
         style,
         buf_offset,
@@ -211,7 +212,14 @@ fn segment_cells_with(
     spans: &[SyntaxSpan],
     style_of: impl Fn(ScopeId) -> Style,
 ) -> Vec<Cell> {
-    let mut cells = Vec::new();
+    let capacity: usize = spans
+        .iter()
+        .map(|sp| match sp {
+            SyntaxSpan::Substituted { text, .. } => text.len(),
+            SyntaxSpan::Identical { .. } => sp.range().len(),
+        })
+        .sum();
+    let mut cells = Vec::with_capacity(capacity);
     let mut visual_col = 0usize;
     for sp in spans {
         let style = style_of(sp.scope());

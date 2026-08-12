@@ -13,16 +13,14 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use super::{Candidate, FileSearchState, RESULT_CAP, ResultRow, candidate_by};
 
 /// One scored candidate, kept only long enough to sort and cap — the
-/// display string is cloned here (not re-borrowed) so the sort comparator
-/// doesn't have to juggle a second borrow of `state.recents`/`state.walk`
-/// alongside the `&mut Matcher`/`&mut Vec<char>` scoring already needs.
+/// display string is resolved back through `candidate_by` when the sort
+/// comparator needs it, rather than cloned into this struct up front.
 struct Scored {
     candidate_idx: usize,
     score: u32,
     in_tree: bool,
     mru_rank: Option<usize>,
     width: usize,
-    display: String,
 }
 
 /// Replaces `state.results` with the live query's fuzzy-ranked matches.
@@ -45,7 +43,13 @@ pub(super) fn rank(state: &mut FileSearchState) {
             .then_with(|| b.score.cmp(&a.score))
             .then_with(|| mru_key(a.mru_rank).cmp(&mru_key(b.mru_rank)))
             .then_with(|| a.width.cmp(&b.width))
-            .then_with(|| a.display.cmp(&b.display))
+            .then_with(|| {
+                display_of(recents, walk, a.candidate_idx).cmp(display_of(
+                    recents,
+                    walk,
+                    b.candidate_idx,
+                ))
+            })
     });
     scored.truncate(RESULT_CAP);
 
@@ -76,7 +80,6 @@ fn score_all(
                 in_tree: c.in_tree,
                 mru_rank: c.mru_rank,
                 width: crate::width::display_width(&c.display),
-                display: c.display.clone(),
             })
         })
         .collect()
@@ -84,9 +87,9 @@ fn score_all(
 
 /// The matched-grapheme indices `render::filesearch` bolds, for the one
 /// candidate `idx` names. `Pattern::indices` never clears its own output
-/// vec, so this always clears first, then sorts and dedups the raw
-/// per-atom indices it appends — `Pattern::indices`'s own doc: multi-atom
-/// output is appended per atom, not pre-sorted or deduped.
+/// vec, so the raw per-atom indices it appends are sorted and deduped here
+/// — `Pattern::indices`'s own doc: multi-atom output is appended per atom,
+/// not pre-sorted or deduped.
 fn indices_for(
     idx: usize,
     recents: &[Candidate],
@@ -97,12 +100,18 @@ fn indices_for(
 ) -> Vec<u32> {
     let mut indices = Vec::new();
     if let Some(c) = candidate_by(recents, walk, idx) {
-        indices.clear();
         let _ = pattern.indices(Utf32Str::new(&c.display, charbuf), matcher, &mut indices);
         indices.sort_unstable();
         indices.dedup();
     }
     indices
+}
+
+/// `idx`'s own display string, resolved back through `candidate_by` — an
+/// out-of-range `idx` (never expected: every `Scored` comes from a real
+/// candidate) sorts as the empty string rather than panicking.
+fn display_of<'a>(recents: &'a [Candidate], walk: &'a [Candidate], idx: usize) -> &'a str {
+    candidate_by(recents, walk, idx).map_or("", |c| c.display.as_str())
 }
 
 /// `Some` ranks before `None`, ascending within `Some` — `Option<usize>`'s

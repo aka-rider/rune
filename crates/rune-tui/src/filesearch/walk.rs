@@ -180,6 +180,7 @@ fn build_matcher(vfs: &dyn Vfs, dir: &Path, entries: &[DirEntry]) -> Gitignore {
 mod tests {
     use super::*;
     use rune_vfs::Mem;
+    use std::fmt::Write as _;
 
     fn put(vfs: &Mem, path: &str, content: &str) {
         vfs.save_atomic(Path::new(path), content.as_bytes())
@@ -305,7 +306,7 @@ mod tests {
         let vfs = Mem::new();
         let mut deep = String::from("/root");
         for level in 0..(MAX_SCAN_DEPTH + 3) {
-            deep.push_str(&format!("/d{level}"));
+            let _ = write!(deep, "/d{level}");
         }
         put(&vfs, &format!("{deep}/past-cap.txt"), "too deep");
         put(&vfs, "/root/shallow.txt", "within cap");

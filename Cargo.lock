@@ -2372,6 +2372,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "catppuccin",
+ "compact_str",
  "ignore",
  "nucleo-matcher",
  "ratatui",
