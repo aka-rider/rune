@@ -117,8 +117,9 @@ fn every_fence_in_a_many_fence_document_highlights() {
             region
                 .map
                 .to_buffer(0..1)
+                .first()
                 .expect("every region covers at least one byte")
-                .start
+                .start()
         })
         .collect();
     let end_of_document = doc.buffer.content().len();

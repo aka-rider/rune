@@ -198,7 +198,7 @@ fn region_sources(content: &str, regions: &[CodeRegion]) -> Vec<RegionSource> {
         .iter()
         .filter_map(|region| {
             let lang = region_language(&region.info)?;
-            let map = LineMap::new(region.content.clone());
+            let map = LineMap::new(content, region.content.clone());
             let text = map.reconstruct(content)?;
             Some(RegionSource { lang, map, text })
         })
