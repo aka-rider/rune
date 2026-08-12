@@ -37,18 +37,20 @@ use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 ///   keep their real offsets.
 ///
 /// Every layout still tiles row 1 onto the source line's own byte range
-/// exactly (`table::row_spans`, claimed through `EmitOut::claim_free` — the
-/// SAME duplicate-claim guard `push_span_split_by_line` uses). Deliberately
-/// NOT routed through `push_span_split_by_line` itself (it only ever copies
-/// `content[range]` verbatim) — this substitutes a wholly different string
-/// for the claimed bytes, `push_task_checkbox`'s "substitutes visible
-/// content" shape, one call per source line rather than one call per
-/// delimiter/content sub-range. A Wrapped/Pivoted line's visual rows 2..N
-/// carry NO byte claim at all (Gotcha 2): they become
-/// `TableRowInfo::extra_rows` via `table::extra_row_spans`, never touching
-/// the emitted spans or accounting, so a table line's visible-plus-hidden
-/// byte accounting stays whole regardless of how many visual rows it
-/// expands to.
+/// exactly (`table::row_spans`, claimed whole through `EmitOut::claim_whole`
+/// — a rendered row has no byte-for-byte relationship to its source, so a
+/// refused claim is skipped rather than drawn over whatever already
+/// occupies part of the line; the row's raw markdown then reaches the
+/// display through `fill_gaps` instead). Deliberately NOT routed through
+/// `push_span_split_by_line` itself (it only ever copies `content[range]`
+/// verbatim) — this substitutes a wholly different string for the claimed
+/// bytes, `push_task_checkbox`'s "substitutes visible content" shape, one
+/// call per source line rather than one call per delimiter/content
+/// sub-range. A Wrapped/Pivoted line's visual rows 2..N carry NO byte claim
+/// at all (Gotcha 2): they become `TableRowInfo::extra_rows` via
+/// `table::extra_row_spans`, never touching the emitted spans or
+/// accounting, so a table line's visible-plus-hidden byte accounting stays
+/// whole regardless of how many visual rows it expands to.
 pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut EmitOut) {
     if t.sm.state() == RevealState::Revealed {
         for &line in &t.content_lines {
@@ -236,8 +238,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         let spans = row_spans(line_start, line_len, &row1_runs);
         if spans.is_empty() {
             hide_range(content, starts, content_line, out);
-        } else {
-            let granted = out.claim_free(line, line_start, line_start + line_len);
+        } else if let Ok(granted) = out.claim_whole(line, line_start, line_start + line_len) {
             out.push_visible(granted, spans);
         }
 

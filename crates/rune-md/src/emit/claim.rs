@@ -43,12 +43,12 @@ pub(crate) struct EmitOut<'a> {
 }
 
 /// A claim on `line`'s unclaimed sub-ranges of a requested byte range,
-/// returned by `EmitOut::claim_free` and spent by `push_visible` or
-/// `record_hidden` — spending is what records the claim into `accounted`,
-/// so a `Granted` dropped without being spent leaves no trace and its
-/// bytes still reach `fill_gaps`. Neither `Copy` nor `Clone`, and its
-/// fields are private to this module, so a producer cannot fabricate one
-/// and cannot hold two at once for the same call.
+/// returned by `EmitOut::claim_free`/`claim_whole` and spent by
+/// `push_visible` or `record_hidden` — spending is what records the claim
+/// into `accounted`, so a `Granted` dropped without being spent leaves no
+/// trace and its bytes still reach `fill_gaps`. Neither `Copy` nor `Clone`,
+/// and its fields are private to this module, so a producer cannot
+/// fabricate one and cannot hold two at once for the same call.
 pub(crate) struct Granted {
     line: usize,
     pieces: Vec<(usize, usize)>,
@@ -63,6 +63,12 @@ impl Granted {
         &self.pieces
     }
 }
+
+/// `claim_whole`'s error case: the requested range was not entirely free,
+/// so no `Granted` was produced. Carries nothing — the caller's only
+/// legitimate move is to skip its substitution, never to guess at a partial
+/// one (`claim_whole`'s own docs).
+pub(crate) struct Refused;
 
 impl<'a> EmitOut<'a> {
     pub(crate) fn new(
@@ -88,7 +94,9 @@ impl<'a> EmitOut<'a> {
     /// Grants whatever sub-ranges of `[start, end)` on `line` are not
     /// already in `accounted` (visible span or hidden range, either
     /// counts). `push_visible`/`record_hidden` are the only ways to spend
-    /// what this returns.
+    /// what this returns. A producer whose own range arithmetic overlaps
+    /// another producer's claim is a bug, not a legitimate outcome — unlike
+    /// `claim_whole`, this asserts on that instead of returning a refusal.
     pub(crate) fn claim_free(&mut self, line: usize, start: usize, end: usize) -> Granted {
         let existing = self.accounted.get(line).cloned().unwrap_or_default();
         let pieces = unclaimed_subranges(start, end, &existing);
@@ -103,6 +111,28 @@ impl<'a> EmitOut<'a> {
         });
 
         Granted { line, pieces }
+    }
+
+    /// Grants `[start, end)` on `line` whole, or refuses it outright —
+    /// never a partial piece. A substituting producer (a table row, a task
+    /// checkbox glyph) draws one replacement string for the whole range it
+    /// claims; there is no way to draw part of that replacement into
+    /// whatever sub-ranges happen to survive an overlap, so unlike
+    /// `claim_free` a refusal here is an ordinary outcome, not a producer
+    /// bug — it never asserts.
+    pub(crate) fn claim_whole(
+        &mut self,
+        line: usize,
+        start: usize,
+        end: usize,
+    ) -> Result<Granted, Refused> {
+        let existing = self.accounted.get(line).cloned().unwrap_or_default();
+        let pieces = unclaimed_subranges(start, end, &existing);
+        if pieces == [(start, end)] {
+            Ok(Granted { line, pieces })
+        } else {
+            Err(Refused)
+        }
     }
 
     /// Spends `granted` by pushing `spans` as that line's visible content
@@ -216,5 +246,33 @@ mod tests {
         drop(granted);
 
         assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
+    }
+
+    /// A `claim_whole` refusal — the requested range partially overlaps an
+    /// already-accounted piece — produces no `Granted` (the `Result`'s
+    /// `Err` arm carries none by construction) and leaves `accounted`
+    /// exactly as it was, so the bytes still reach `fill_gaps`.
+    #[test]
+    fn refused_whole_claim_yields_no_granted_and_leaves_accounted_untouched() {
+        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+        let mut hidden: Accounted = vec![Vec::new()];
+        let mut accounted: Accounted = vec![vec![(2, 4)]];
+        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+        let mut decors: Vec<Option<LineDecor>> = vec![None];
+        let icons = IconSet::unicode();
+        let mut out = EmitOut::new(
+            &mut spans,
+            &mut hidden,
+            &mut accounted,
+            &mut tables,
+            80,
+            &icons,
+            &mut decors,
+        );
+
+        let result = out.claim_whole(0, 0, 8);
+
+        assert!(result.is_err());
+        assert_eq!(accounted[0], vec![(2, 4)]);
     }
 }

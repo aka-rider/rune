@@ -194,11 +194,9 @@ fn emit_list_item(
 /// content, it doesn't hide it — and deliberately NOT built via
 /// `push_span_split_by_line` (which only ever copies `content[range]`
 /// itself into `Substituted::text`, never a genuinely different string).
-/// Routes the claim itself through `EmitOut::claim_free` — the same
-/// unclaimed-subranges-plus-assert chokepoint every other own-text
-/// producer in this crate uses — instead of writing the sinks directly, so
-/// an overlapping claim here is clipped and reported instead of silently
-/// invented.
+/// Routes the claim itself through `EmitOut::claim_whole` — there is no
+/// half-glyph substitution, so an overlap refuses the whole claim instead
+/// of drawing over bytes another producer already owns.
 ///
 /// Byte-length-preserving BY CONSTRUCTION, which is why this needs no
 /// extra hidden-range bookkeeping: `☐`/`☑` are each exactly 3 bytes in
@@ -240,14 +238,9 @@ fn push_task_checkbox(content: &str, starts: &[usize], task: ByteRange, out: &mu
     let glyph = if checked { "\u{2611}" } else { "\u{2610}" };
     let line = line_at(starts, task.start);
 
-    let granted = out.claim_free(line, task.start, task.end);
-    if granted.pieces() != [(task.start, task.end)] {
-        // The whole range was not cleanly unclaimed (an overlap
-        // `claim_free`'s own assert already flagged) — there is no
-        // half-glyph substitution, so drop the claim rather than desync
-        // the byte-length-neutral invariant this function exists for.
+    let Ok(granted) = out.claim_whole(line, task.start, task.end) else {
         return;
-    }
+    };
 
     let span = SyntaxSpan::Substituted {
         // Pre-WP4 this was `StyleId::TaskMarker`; WP4 folded that variant
