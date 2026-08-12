@@ -7,7 +7,7 @@
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{Command, KeyCode};
 
-use super::{CTRL_SHIFT, SUP};
+use super::{CTRL, CTRL_SHIFT, SUP};
 
 pub(crate) const COPY_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('c'), SUP),
@@ -21,6 +21,13 @@ pub(crate) const COPY_CTRL_SHIFT: Binding<Command> = Binding {
     cmd: Command::Copy,
     help: "copy",
     alias: false,
+};
+
+pub(crate) const COPY_CTRL_SHIFT_ALT: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('C'), CTRL),
+    cmd: Command::Copy,
+    help: "copy",
+    alias: true,
 };
 
 pub(crate) const CUT: Binding<Command> = Binding {

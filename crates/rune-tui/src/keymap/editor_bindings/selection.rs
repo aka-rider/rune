@@ -7,7 +7,7 @@
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{Command, Extend, KeyCode, Motion};
 
-use super::{CTRL, SHIFT, SHIFT_ALT, SUP};
+use super::{ALT, CTRL, SHIFT, SHIFT_ALT, SUP};
 
 pub(crate) const SELECT_CHAR_LEFT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Left, SHIFT),
@@ -50,11 +50,25 @@ pub(crate) const SELECT_WORD_LEFT_B: Binding<Command> = Binding {
     alias: false,
 };
 
+pub(crate) const SELECT_WORD_LEFT_B_ALT: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('B'), ALT),
+    cmd: Command::Motion(Motion::WordLeft, Extend::Yes),
+    help: "select word left",
+    alias: true,
+};
+
 pub(crate) const SELECT_WORD_RIGHT_F: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('f'), SHIFT_ALT),
     cmd: Command::Motion(Motion::WordRight, Extend::Yes),
     help: "select word right",
     alias: false,
+};
+
+pub(crate) const SELECT_WORD_RIGHT_F_ALT: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('F'), ALT),
+    cmd: Command::Motion(Motion::WordRight, Extend::Yes),
+    help: "select word right",
+    alias: true,
 };
 
 pub(crate) const SELECT_LINE_UP: Binding<Command> = Binding {
