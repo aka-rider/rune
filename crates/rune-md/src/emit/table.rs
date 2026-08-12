@@ -72,26 +72,32 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
     let body_scope = table_scope();
 
     // Every row's cells are rendered up front: `col_widths` is the max over
-    // ALL table rows (including Truncated ones), so no row can be laid out
-    // until every row's own cells are known. Truncated rows still contribute
-    // their cells to the width calculation so the table box stays consistent.
-    let rendered_rows: Vec<Vec<render::RenderedCell>> = t
+    // ALL boxed rows, so no row can be laid out until every row's own cells
+    // are known. A `Truncated` row never joins that box (its shape's own
+    // docs) and renders as raw source instead, so it contributes nothing
+    // here — `None` rather than rendered cells nobody will read.
+    let rendered_rows: Vec<Option<Vec<render::RenderedCell>>> = t
         .rows
         .iter()
-        .map(|row| {
-            let base = if row.is_header {
-                header_scope
-            } else {
-                body_scope
-            };
-            row.cells
-                .iter()
-                .map(|c| render::render_cell(content, c, base))
-                .collect()
+        .map(|row| match row.shape {
+            TableRowShape::Truncated => None,
+            TableRowShape::Exact | TableRowShape::Padded => {
+                let base = if row.is_header {
+                    header_scope
+                } else {
+                    body_scope
+                };
+                Some(
+                    row.cells
+                        .iter()
+                        .map(|c| render::render_cell(content, c, base))
+                        .collect(),
+                )
+            }
         })
         .collect();
     let (natural_widths, min_widths) =
-        layout::col_widths(rendered_rows.iter().map(|r| r.as_slice()), n_cols);
+        layout::col_widths(rendered_rows.iter().filter_map(|c| c.as_deref()), n_cols);
 
     let avail = out.width as usize;
     let table_layout = layout::choose(&natural_widths, &min_widths, avail);
@@ -119,7 +125,8 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         .iter()
         .zip(rendered_rows.iter())
         .find(|(r, _)| r.is_header)
-        .map_or(&[], |(_, cells)| cells.as_slice());
+        .and_then(|(_, cells)| cells.as_deref())
+        .unwrap_or(&[]);
     let first_body_line = t.rows.iter().find(|r| !r.is_header).map(|r| r.line);
 
     let total_lines = t.content_lines.len();
@@ -128,7 +135,24 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
 
         if let Some(row) = t.rows.iter().find(|r| r.line == line) {
             match row.shape {
-                TableRowShape::Exact | TableRowShape::Padded | TableRowShape::Truncated => {}
+                TableRowShape::Exact | TableRowShape::Padded => {}
+                TableRowShape::Truncated => {
+                    // comrak's own row scanner drops this row's extra
+                    // cell(s) before they ever reach the AST, so the box
+                    // can't show columns it never modeled — raw source
+                    // instead of `claim_whole`'s substitution.
+                    // `out.tables[line]` stays `None`, which is what keeps
+                    // this row out of the table's own width group.
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        content_line,
+                        verbatim_style(),
+                        RevealState::Revealed,
+                        out,
+                    );
+                    continue;
+                }
             }
         }
 
@@ -154,7 +178,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 } else {
                     TableRole::Body
                 };
-                Some((role, cells.as_slice()))
+                Some((role, cells.as_deref().unwrap_or(&[])))
             } else if line == t.sep_line {
                 Some((TableRole::Separator, &[]))
             } else {
