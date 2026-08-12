@@ -253,7 +253,7 @@ fn resolve(area: Rect, app: &App) -> Resolved {
     let split_fits = main_area.width >= MIN_LEFT_PANE_W.saturating_add(MIN_CENTER_W);
 
     let (left_block, explorer_inner, tabs_divider, tabs_inner, center, mode) =
-        if app.filesearch.is_some() && split_fits {
+        if app.filesearch().is_some() && split_fits {
             // The finder forces the left column visible at its own width,
             // regardless of `app.splits.left.is_shown()` — visibility and
             // size are decided here, once, exactly like every other case
@@ -295,7 +295,7 @@ fn resolve(area: Rect, app: &App) -> Resolved {
             } else {
                 (None, zero, None, zero, main_area, LayoutMode::EditorOnly)
             }
-        } else if (app.splits.left.is_shown() || app.filesearch.is_some()) && !split_fits {
+        } else if (app.splits.left.is_shown() || app.filesearch().is_some()) && !split_fits {
             // The finder falls through to this same narrow-frame branch as
             // an already-shown column: below `split_fits` there is no room
             // to paint the column beside a center pane, so — same as the
@@ -446,7 +446,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     // one-row-tall content area keeps that single row for the title
     // instead, same "drop the chrome before the essential row" shape the
     // center border itself already uses.
-    let search_bar = (app.search.is_some() && content.height >= 2)
+    let search_bar = (app.search().is_some() && content.height >= 2)
         .then(|| Rect::new(content.x, content.y.saturating_add(1), content.width, 1));
     let editor_y = 1u16.saturating_add(u16::from(search_bar.is_some()));
     let editor = Rect::new(

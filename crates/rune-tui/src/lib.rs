@@ -43,6 +43,7 @@ pub mod merge;
 pub mod messages;
 pub mod navigate;
 pub mod opentabs;
+mod overlay;
 pub mod pane;
 pub mod pointer;
 pub mod read_only;

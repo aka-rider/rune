@@ -73,7 +73,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) ->
 /// first line only — the draft is rendered as a single row, so an embedded
 /// newline would only ever show as a control glyph nobody typed.
 pub(crate) fn paste(app: &mut App, text: &str) {
-    if app.search.as_ref().is_none_or(|s| !s.focused) {
+    if app.search().is_none_or(|s| !s.focused) {
         return;
     }
     let sanitized: String = text
@@ -86,7 +86,7 @@ pub(crate) fn paste(app: &mut App, text: &str) {
     if sanitized.is_empty() {
         return;
     }
-    if let Some(state) = app.search.as_mut() {
+    if let Some(state) = app.search_mut() {
         state.draft.push_str(&sanitized);
         state.history_pos = None;
         state.history_draft = None;
@@ -114,13 +114,13 @@ pub(crate) fn paste(app: &mut App, text: &str) {
 /// (`GlobalCommand::SearchNext`/`SearchPrev`, `pane::handle_global_command`)
 /// — identical behavior to Enter/Shift+Enter in that state.
 pub(crate) fn advance(app: &mut App, forward: bool) {
-    let Some(state) = app.search.as_ref() else {
+    let Some(state) = app.search() else {
         return;
     };
     if state.doc != app.active || state.buffer_version != app.active_doc().buffer.version() {
         recompute(app);
     }
-    let Some(state) = app.search.as_ref() else {
+    let Some(state) = app.search() else {
         return;
     };
     let matches = state.matches.clone();
@@ -128,7 +128,7 @@ pub(crate) fn advance(app: &mut App, forward: bool) {
     let concealed = current_concealed(app);
     match jump(app, &matches, &concealed, forward) {
         Some(idx) => {
-            if let Some(s) = app.search.as_mut() {
+            if let Some(s) = app.search_mut() {
                 s.current = Some(idx);
             }
             persist_query(app, &query);
@@ -261,7 +261,7 @@ fn persist_query(app: &mut App, query: &str) {
 }
 
 fn type_char(app: &mut App, c: char) {
-    if let Some(state) = app.search.as_mut() {
+    if let Some(state) = app.search_mut() {
         state.draft.push(c);
         state.history_pos = None;
         state.history_draft = None;
@@ -275,7 +275,7 @@ fn type_char(app: &mut App, c: char) {
 /// applies). An already-empty draft has nothing to erase; the bar stays
 /// open regardless (decision: only Esc closes it).
 fn erase(app: &mut App) {
-    if let Some(state) = app.search.as_mut() {
+    if let Some(state) = app.search_mut() {
         state.history_pos = None;
         state.history_draft = None;
         if let Some((byte_idx, _)) = state.draft.grapheme_indices(true).next_back() {
@@ -319,7 +319,7 @@ enum BrowseDir {
 /// in it matches the needle; for `Next`, also a no-op while no browse
 /// session is active (`history_pos` is `None`).
 fn history_step(app: &mut App, dir: BrowseDir) {
-    let Some(state) = app.search.as_ref() else {
+    let Some(state) = app.search() else {
         return;
     };
     if let BrowseDir::Next = dir {
@@ -328,7 +328,7 @@ fn history_step(app: &mut App, dir: BrowseDir) {
         };
         if pos == 0 {
             let restored = state.history_draft.clone().unwrap_or_default();
-            let Some(state) = app.search.as_mut() else {
+            let Some(state) = app.search_mut() else {
                 return;
             };
             state.draft = restored;
@@ -354,7 +354,7 @@ fn history_step(app: &mut App, dir: BrowseDir) {
         return;
     };
 
-    let Some(state) = app.search.as_mut() else {
+    let Some(state) = app.search_mut() else {
         return;
     };
     if let BrowseDir::Prev = dir {

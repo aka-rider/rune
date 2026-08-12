@@ -29,7 +29,7 @@ use crate::runtime::Effects;
 /// nav/open command) funnels through this one setter rather than each
 /// writing `search = None` itself.
 pub(crate) fn clear_search(app: &mut App) {
-    app.explorer.search = None;
+    app.close_explorer_find();
 }
 
 /// Re-runs the live query against `entries` and moves the cursor to the
@@ -43,7 +43,7 @@ pub(crate) fn clear_search(app: &mut App) {
 /// query that overshot ("read" typed past "readme.md") lets Backspace
 /// recover it rather than losing the user's place in the list.
 pub(crate) fn apply_search(app: &mut App) {
-    let Some(query) = app.explorer.search.as_deref() else {
+    let Some(query) = app.explorer_find() else {
         return;
     };
     let needle = query.to_lowercase();
@@ -133,12 +133,12 @@ pub(crate) fn handle_search(
             // pattern (a non-control `Char`) — any other shape is
             // unreachable here, so there is nothing to push on a mismatch.
             if let KeyCode::Char(c) = key.code {
-                app.explorer.search.get_or_insert_with(String::new).push(c);
+                app.explorer_find_or_start().push(c);
                 apply_search(app);
             }
         }
         ExplorerSearchCommand::Erase => {
-            let emptied = match app.explorer.search.as_mut() {
+            let emptied = match app.explorer_find_mut() {
                 Some(query) => {
                     // Pop one GRAPHEME CLUSTER, not one `char`: a combining
                     // mark popped alone would desync what's on screen from
@@ -233,7 +233,7 @@ mod tests {
 
         type_str(&mut app, &mut effects, "r");
 
-        assert_eq!(app.explorer.search.as_deref(), Some("r"));
+        assert_eq!(app.explorer_find(), Some("r"));
         assert_eq!(
             app.explorer.entries[app.explorer.nav.cursor].name,
             "README.md"
@@ -248,7 +248,7 @@ mod tests {
 
         type_str(&mut app, &mut effects, "re");
 
-        assert_eq!(app.explorer.search.as_deref(), Some("re"));
+        assert_eq!(app.explorer_find(), Some("re"));
         assert_eq!(
             app.explorer.entries[app.explorer.nav.cursor].name,
             "README.md"
@@ -269,7 +269,7 @@ mod tests {
         // non-matching character was even typed).
         type_str(&mut app, &mut effects, "xx");
 
-        assert_eq!(app.explorer.search.as_deref(), Some("xx"));
+        assert_eq!(app.explorer_find(), Some("xx"));
         assert_eq!(
             app.explorer.nav.cursor, 1,
             "no match must not move the cursor"
@@ -296,14 +296,15 @@ mod tests {
             handle_key(&mut app, backspace, &mut effects),
             KeyOutcome::Consumed
         );
-        assert_eq!(app.explorer.search.as_deref(), Some("r"));
+        assert_eq!(app.explorer_find(), Some("r"));
 
         assert_eq!(
             handle_key(&mut app, backspace, &mut effects),
             KeyOutcome::Consumed
         );
         assert_eq!(
-            app.explorer.search, None,
+            app.explorer_find(),
+            None,
             "erasing the last char exits search"
         );
     }
@@ -313,7 +314,7 @@ mod tests {
         let mut app = app();
         loaded(&mut app, &["Alpha"]);
         let mut effects = Effects::default();
-        assert_eq!(app.explorer.search, None);
+        assert_eq!(app.explorer_find(), None);
 
         let backspace = KeyInput {
             code: KeyCode::Backspace,
@@ -331,7 +332,7 @@ mod tests {
     }
 
     /// A live search's first Escape ends the search only (`ExplorerSearch
-    /// Command::Cancel`, gated on `app.explorer.search.is_some()`); the
+    /// Command::Cancel`, gated on `app.explorer_find().is_some()`); the
     /// query is already clear by the time a second Escape arrives, so it
     /// falls through to `EXPLORER_BINDINGS`'s own `Leave` row instead —
     /// still consumed, this time landing focus on the Editor.
@@ -350,7 +351,7 @@ mod tests {
             handle_key(&mut app, esc, &mut effects),
             KeyOutcome::Consumed
         );
-        assert_eq!(app.explorer.search, None);
+        assert_eq!(app.explorer_find(), None);
 
         assert_eq!(
             handle_key(&mut app, esc, &mut effects),
@@ -365,7 +366,7 @@ mod tests {
         loaded(&mut app, &["Alpha", "README.md", "zeta"]);
         let mut effects = Effects::default();
         type_str(&mut app, &mut effects, "r");
-        assert!(app.explorer.search.is_some());
+        assert!(app.explorer_find().is_some());
 
         for (cmd, key) in [
             (
@@ -398,13 +399,13 @@ mod tests {
             ),
         ] {
             type_str(&mut app, &mut effects, "r");
-            assert!(app.explorer.search.is_some(), "setup for {cmd}");
+            assert!(app.explorer_find().is_some(), "setup for {cmd}");
             assert_eq!(
                 handle_key(&mut app, key, &mut effects),
                 KeyOutcome::Consumed,
                 "{cmd} must be consumed"
             );
-            assert_eq!(app.explorer.search, None, "{cmd} must clear the search");
+            assert_eq!(app.explorer_find(), None, "{cmd} must clear the search");
         }
     }
 
@@ -427,6 +428,6 @@ mod tests {
             handle_key(&mut app, ctrl_r, &mut effects),
             KeyOutcome::Ignored
         );
-        assert_eq!(app.explorer.search, None);
+        assert_eq!(app.explorer_find(), None);
     }
 }

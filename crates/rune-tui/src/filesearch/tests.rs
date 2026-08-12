@@ -23,7 +23,7 @@ fn open_on_a_never_shown_left_column_still_opens_and_focuses_explorer() {
 
     open(&mut app, &mut effects);
 
-    assert!(app.filesearch.is_some());
+    assert!(app.filesearch().is_some());
     assert_eq!(app.focus(), Pane::Explorer);
 }
 
@@ -32,14 +32,11 @@ fn open_is_a_no_op_when_already_open() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation_before = app.filesearch.as_ref().map(|s| s.generation);
+    let generation_before = app.filesearch().map(|s| s.generation);
 
     open(&mut app, &mut effects);
 
-    assert_eq!(
-        app.filesearch.as_ref().map(|s| s.generation),
-        generation_before
-    );
+    assert_eq!(app.filesearch().map(|s| s.generation), generation_before);
 }
 
 #[test]
@@ -52,7 +49,7 @@ fn cancel_restores_the_document_that_was_active_before_open() {
     open(&mut app, &mut effects);
     cancel(&mut app, &mut effects);
 
-    assert!(app.filesearch.is_none());
+    assert!(app.filesearch().is_none());
     assert_eq!(
         app.active, second,
         "return_to is the doc active at open time"
@@ -68,7 +65,7 @@ fn cancel_falls_back_to_the_editor_when_return_to_no_longer_exists() {
     let mut effects = Effects::default();
 
     open(&mut app, &mut effects);
-    let return_to = app.filesearch.as_ref().map(|s| s.return_to).expect("open");
+    let return_to = app.filesearch().map(|s| s.return_to).expect("open");
     assert_eq!(return_to, second, "test setup: return_to names `second`");
 
     crate::workspace::request_close(&mut app, second, &mut effects);
@@ -76,7 +73,7 @@ fn cancel_falls_back_to_the_editor_when_return_to_no_longer_exists() {
 
     cancel(&mut app, &mut effects);
 
-    assert!(app.filesearch.is_none());
+    assert!(app.filesearch().is_none());
     assert_eq!(app.focus(), Pane::Editor);
 }
 
@@ -97,7 +94,7 @@ fn recents_loaded_orders_in_tree_before_out_of_tree_preserving_mru() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
 
     let recents = vec![
         candidate("/outside/z.md", false),
@@ -107,7 +104,7 @@ fn recents_loaded_orders_in_tree_before_out_of_tree_preserving_mru() {
 
     handle_recents_loaded(&mut app, generation, Ok(recents), &mut effects);
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     let ordered: Vec<&std::path::Path> = state
         .results
         .iter()
@@ -136,10 +133,10 @@ fn recents_loaded_reply_is_dropped_after_a_close_then_reopen_mints_a_new_generat
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let stale_generation = app.filesearch.as_ref().expect("open").generation;
+    let stale_generation = app.filesearch().expect("open").generation;
     close(&mut app);
     open(&mut app, &mut effects);
-    let fresh_generation = app.filesearch.as_ref().expect("reopen").generation;
+    let fresh_generation = app.filesearch().expect("reopen").generation;
     assert_ne!(
         stale_generation, fresh_generation,
         "test setup: reopen must mint a new generation"
@@ -153,11 +150,7 @@ fn recents_loaded_reply_is_dropped_after_a_close_then_reopen_mints_a_new_generat
     );
 
     assert!(
-        app.filesearch
-            .as_ref()
-            .expect("still open")
-            .recents
-            .is_empty(),
+        app.filesearch().expect("still open").recents.is_empty(),
         "a stale reply must never populate the fresh session's recents"
     );
 }
@@ -167,17 +160,11 @@ fn recents_loaded_err_reply_posts_a_message_and_leaves_recents_empty() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
 
     handle_recents_loaded(&mut app, generation, Err("boom".to_string()), &mut effects);
 
-    assert!(
-        app.filesearch
-            .as_ref()
-            .expect("still open")
-            .recents
-            .is_empty()
-    );
+    assert!(app.filesearch().expect("still open").recents.is_empty());
     assert_eq!(
         crate::messages::newest_text(&app),
         Some("recent files not loaded: boom")
@@ -193,7 +180,7 @@ fn open_pushes_the_walk_cmd_and_marks_it_pending() {
     open(&mut app, &mut effects);
 
     assert!(
-        app.filesearch.as_ref().is_some_and(|s| s.walk_pending),
+        app.filesearch().is_some_and(|s| s.walk_pending),
         "walk_pending is set the moment the Cmd is issued"
     );
     assert!(
@@ -211,7 +198,7 @@ fn handle_scanned_drops_a_reply_whose_generation_no_longer_matches() {
     app.root = PathBuf::from("/root");
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let stale_generation = app.filesearch.as_ref().expect("open").generation;
+    let stale_generation = app.filesearch().expect("open").generation;
     cancel(&mut app, &mut effects);
     open(&mut app, &mut effects); // mints a fresh generation
 
@@ -226,11 +213,11 @@ fn handle_scanned_drops_a_reply_whose_generation_no_longer_matches() {
     );
 
     assert!(
-        app.filesearch.as_ref().is_some_and(|s| s.walk.is_empty()),
+        app.filesearch().is_some_and(|s| s.walk.is_empty()),
         "a stale reply must never populate the live session's walk results"
     );
     assert!(
-        app.filesearch.as_ref().is_some_and(|s| s.walk_pending),
+        app.filesearch().is_some_and(|s| s.walk_pending),
         "the live session's own still-in-flight scan is untouched"
     );
 }
@@ -241,8 +228,8 @@ fn handle_scanned_dedups_walk_against_recents_keeping_the_recents_mru_rank() {
     app.root = PathBuf::from("/root");
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
-    if let Some(state) = app.filesearch.as_mut() {
+    let generation = app.filesearch().expect("open").generation;
+    if let Some(state) = app.filesearch_mut() {
         state.recents.push(Candidate {
             path: PathBuf::from("/root/a.md"),
             display: "a.md".to_string(),
@@ -261,7 +248,7 @@ fn handle_scanned_dedups_walk_against_recents_keeping_the_recents_mru_rank() {
         &mut effects,
     );
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     assert_eq!(
         state
             .walk
@@ -297,7 +284,7 @@ fn handle_scanned_error_clears_pending_and_posts_a_message() {
     app.root = PathBuf::from("/root");
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
 
     handle_scanned(
         &mut app,
@@ -306,8 +293,8 @@ fn handle_scanned_error_clears_pending_and_posts_a_message() {
         &mut effects,
     );
 
-    assert!(app.filesearch.as_ref().is_some_and(|s| !s.walk_pending));
-    assert!(app.filesearch.as_ref().is_some_and(|s| s.walk.is_empty()));
+    assert!(app.filesearch().is_some_and(|s| !s.walk_pending));
+    assert!(app.filesearch().is_some_and(|s| s.walk.is_empty()));
     assert!(
         crate::messages::newest_text(&app).is_some(),
         "a message was posted"
@@ -327,7 +314,7 @@ fn a_basename_match_outranks_a_buried_mid_word_match() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -347,13 +334,13 @@ fn a_basename_match_outranks_a_buried_mid_word_match() {
         ]),
         &mut effects,
     );
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.query = "note".to_string();
     }
 
     recompute(&mut app, &mut effects);
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     let top = state
         .results
         .first()
@@ -380,7 +367,7 @@ fn in_tree_beats_out_of_tree_at_equal_score() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -390,13 +377,13 @@ fn in_tree_beats_out_of_tree_at_equal_score() {
         ]),
         &mut effects,
     );
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.query = "app".to_string();
     }
 
     recompute(&mut app, &mut effects);
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     let ordered: Vec<bool> = state
         .results
         .iter()
@@ -419,7 +406,7 @@ fn mru_rank_breaks_a_score_tie() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -431,7 +418,7 @@ fn mru_rank_breaks_a_score_tie() {
     );
     // `handle_recents_loaded` assigns `mru_rank` by ARRIVAL order — the
     // first candidate above (`b/note.md`) is rank 0, the more-recent one.
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         for c in &mut state.recents {
             c.display = "note.md".to_string();
         }
@@ -440,7 +427,7 @@ fn mru_rank_breaks_a_score_tie() {
 
     recompute(&mut app, &mut effects);
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     let top = state
         .results
         .first()
@@ -463,7 +450,7 @@ fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_sa
     app.root = PathBuf::from("/root");
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -474,7 +461,7 @@ fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_sa
         ]),
         &mut effects,
     );
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.nav.cursor = 2;
     }
     let selected_before = selected_candidate(&app).map(|c| c.path.clone());
@@ -494,7 +481,7 @@ fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_sa
         &mut effects,
     );
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     let selected_after = state
         .results
         .get(state.nav.cursor)
@@ -515,7 +502,7 @@ fn a_query_edit_recompute_resets_the_cursor_to_the_top() {
     let mut app = app();
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -525,14 +512,14 @@ fn a_query_edit_recompute_resets_the_cursor_to_the_top() {
         ]),
         &mut effects,
     );
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.nav.cursor = 1;
         state.query = "b".to_string();
     }
 
     reset_and_recompute(&mut app, &mut effects);
 
-    let state = app.filesearch.as_ref().expect("still open");
+    let state = app.filesearch().expect("still open");
     assert_eq!(
         state.nav.cursor, 0,
         "a query edit always resets the cursor to the top of the freshly filtered list"
@@ -553,7 +540,7 @@ fn two_query_edits_with_the_same_top_hit_push_exactly_one_preview_cmd_total() {
     app.root = PathBuf::from("/root");
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -565,7 +552,7 @@ fn two_query_edits_with_the_same_top_hit_push_exactly_one_preview_cmd_total() {
     );
     effects.cmds.clear();
 
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.query = "n".to_string();
     }
     reset_and_recompute(&mut app, &mut effects);
@@ -583,7 +570,7 @@ fn two_query_edits_with_the_same_top_hit_push_exactly_one_preview_cmd_total() {
         .preview_awaiting
         .remove(std::path::Path::new("/root/notebook.md"));
 
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.query = "no".to_string();
     }
     reset_and_recompute(&mut app, &mut effects);

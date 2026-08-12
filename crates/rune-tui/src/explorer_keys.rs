@@ -107,7 +107,7 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 /// `explorer::handle_dir_loaded`).
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     if let Some(cmd) = resolve_in(EXPLORER_SEARCH_BINDINGS, key)
-        && (app.explorer.search.is_some() || cmd == explorer_search::ExplorerSearchCommand::Type)
+        && (app.explorer_find().is_some() || cmd == explorer_search::ExplorerSearchCommand::Type)
     {
         explorer_search::handle_search(app, cmd, key, effects);
         return KeyOutcome::Consumed;

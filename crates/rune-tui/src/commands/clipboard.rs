@@ -435,7 +435,7 @@ mod tests {
             before,
             "the document buffer must be untouched while the bar is focused"
         );
-        assert_eq!(app.search.as_ref().unwrap().draft, "b");
+        assert_eq!(app.search().unwrap().draft, "b");
     }
 
     #[test]

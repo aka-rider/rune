@@ -52,17 +52,17 @@ fn enter_wraps_from_the_last_match_to_the_first() {
     for c in "hi".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
     }
-    assert_eq!(app.search.as_ref().unwrap().matches, vec![0..2, 3..5, 6..8]);
+    assert_eq!(app.search().unwrap().matches, vec![0..2, 3..5, 6..8]);
 
     // The cursor starts at 0, inside the first match, so Enter three
     // times over must visit 1, 2, then wrap back to 0.
     let _ = handle_key(&mut app, enter_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().current, Some(1));
+    assert_eq!(app.search().unwrap().current, Some(1));
     let _ = handle_key(&mut app, enter_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().current, Some(2));
+    assert_eq!(app.search().unwrap().current, Some(2));
     assert_eq!(app.active_doc().cursors.primary().position, 6);
     let _ = handle_key(&mut app, enter_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().current, Some(0));
+    assert_eq!(app.search().unwrap().current, Some(0));
     assert_eq!(app.active_doc().cursors.primary().position, 0);
 }
 
@@ -76,7 +76,7 @@ fn shift_enter_wraps_from_the_first_match_to_the_last() {
     }
 
     let _ = handle_key(&mut app, shift_enter_key(), &mut effects);
-    let state = app.search.as_ref().unwrap();
+    let state = app.search().unwrap();
     assert_eq!(state.current, Some(2));
     assert_eq!(app.active_doc().cursors.primary().position, 6);
 }
@@ -89,14 +89,14 @@ fn enter_with_zero_matches_is_a_consumed_no_op() {
     for c in "zzz".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
     }
-    assert!(app.search.as_ref().unwrap().matches.is_empty());
+    assert!(app.search().unwrap().matches.is_empty());
     let cursor_before = app.active_doc().cursors.primary().position;
 
     assert_eq!(
         handle_key(&mut app, enter_key(), &mut effects),
         KeyOutcome::Consumed
     );
-    assert_eq!(app.search.as_ref().unwrap().current, None);
+    assert_eq!(app.search().unwrap().current, None);
     assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
     assert_eq!(
         messages::newest_text(&app),
@@ -116,7 +116,7 @@ fn enter_skips_matches_fully_inside_a_concealed_table_separator_but_still_counts
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('-'), &mut effects);
 
-    let state = app.search.as_ref().unwrap();
+    let state = app.search().unwrap();
     assert!(!state.matches.is_empty(), "N still counts every '-'");
     let matches = state.matches.clone();
     let concealed = current_concealed(&app);
@@ -128,7 +128,7 @@ fn enter_skips_matches_fully_inside_a_concealed_table_separator_but_still_counts
     let cursor_before = app.active_doc().cursors.primary().position;
     let _ = handle_key(&mut app, enter_key(), &mut effects);
     assert_eq!(
-        app.search.as_ref().unwrap().current,
+        app.search().unwrap().current,
         None,
         "every match is concealed, so navigation finds nothing to land on"
     );
@@ -155,7 +155,7 @@ fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
     let version_before = app.active_doc().buffer.version();
     let _ = handle_key(&mut app, enter_key(), &mut effects);
     assert_eq!(
-        app.search.as_ref().unwrap().current,
+        app.search().unwrap().current,
         None,
         "still concealed before the cursor ever enters the table"
     );
@@ -173,7 +173,7 @@ fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
 
     let _ = handle_key(&mut app, enter_key(), &mut effects);
     assert!(
-        app.search.as_ref().unwrap().current.is_some(),
+        app.search().unwrap().current.is_some(),
         "the revealed row's matches must be navigable on the very next Enter"
     );
 }
@@ -190,7 +190,7 @@ fn read_only_document_scrolls_the_viewport_on_a_jump() {
     for c in "line 150".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
     }
-    assert!(!app.search.as_ref().unwrap().matches.is_empty());
+    assert!(!app.search().unwrap().matches.is_empty());
     let scroll_before = app.active_doc().viewport.scroll_row;
 
     let _ = handle_key(&mut app, enter_key(), &mut effects);
@@ -224,7 +224,7 @@ fn a_degraded_db_attempts_no_write_but_still_navigates() {
         handle_key(&mut app, enter_key(), &mut effects),
         KeyOutcome::Consumed
     );
-    assert_eq!(app.search.as_ref().unwrap().current, Some(1));
+    assert_eq!(app.search().unwrap().current, Some(1));
     assert_eq!(app.last_search_query.as_deref(), Some("hi"));
     assert_eq!(
         messages::newest_text(&app),
@@ -247,15 +247,15 @@ fn enter_after_a_coalesced_doc_switch_recomputes_instead_of_jumping_into_the_old
     for c in "needle".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
     }
-    assert_eq!(app.search.as_ref().unwrap().matches, vec![0..6, 7..13]);
-    let stale_doc = app.search.as_ref().unwrap().doc;
+    assert_eq!(app.search().unwrap().matches, vec![0..6, 7..13]);
+    let stale_doc = app.search().unwrap().doc;
 
     let other = app.open_document(Buffer::new("no matches in here"));
     app.active = other;
 
     let _ = handle_key(&mut app, enter_key(), &mut effects);
 
-    let state = app.search.as_ref().unwrap();
+    let state = app.search().unwrap();
     assert_ne!(
         state.doc, stale_doc,
         "the recompute must retarget the new active doc"
@@ -321,7 +321,7 @@ fn closed_bar_next_steps_and_wraps_using_the_last_query() {
         mods: Mods::NONE,
     };
     let _ = handle_key(&mut app, esc, &mut effects);
-    assert!(app.search.is_none(), "the bar is closed for this test");
+    assert!(app.search().is_none(), "the bar is closed for this test");
     assert_eq!(app.last_search_query.as_deref(), Some("hi"));
 
     crate::pane::handle_global_command(
@@ -347,7 +347,7 @@ fn closed_bar_next_steps_and_wraps_using_the_last_query() {
         "next wraps from the last match back to the first"
     );
     assert!(
-        app.search.is_none(),
+        app.search().is_none(),
         "closed-bar navigation never reopens the bar"
     );
 }

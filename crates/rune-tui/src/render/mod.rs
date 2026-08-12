@@ -130,7 +130,7 @@ pub fn build_rows(
     // `Document`, `doc_id: None`, through this same function), but
     // `App::search`'s matches are computed against the active document's
     // bytes only.
-    if let Some(state) = &app.search
+    if let Some(state) = app.search()
         && doc_id == Some(app.active)
     {
         for m in &state.matches {
@@ -246,14 +246,14 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     // The finder replaces only the Explorer's own content — the Tabs
     // section below it stays exactly as it always renders — so this is
     // checked first, ahead of every other title/content decision below.
-    let filesearch_active = app.filesearch.is_some();
+    let filesearch_active = app.filesearch().is_some();
 
     // The Explorer can now be collapsed independently of the column
     // itself (its own vertical splitter dragged to the top): when it has
     // no rows to draw into, titling the block " Files " would claim a
     // pane that isn't there, so the block's title follows what's actually
     // showing instead of assuming the Explorer always is. A live type-to-
-    // search (`Explorer::search`) takes the next priority: the query is
+    // search (`App::explorer_find`) takes the next priority: the query is
     // the whole visible-feedback story the design calls for (no chord, no
     // mode indicator elsewhere on screen), so the block's own title is the
     // one place it can show without stealing an entry row.
@@ -261,7 +261,7 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
         " Open File ".to_string()
     } else if geo.explorer_inner.height == 0 {
         " Open ".to_string()
-    } else if let Some(query) = &app.explorer.search {
+    } else if let Some(query) = app.explorer_find() {
         // Truncated to the block's own inner width (minus the two corner
         // cells) in terminal CELLS, not chars — a long query on a
         // narrow column must not overrun the border.

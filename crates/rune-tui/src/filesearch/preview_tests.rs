@@ -90,7 +90,7 @@ fn cursor_move_onto_an_unopened_candidate_queues_a_read_file_cmd() {
     let mut app = seeded_app(&[("/root/a.md", "a"), ("/root/b.md", "b")]);
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -117,7 +117,7 @@ fn hand_delivered_preview_reply_lands_as_a_readonly_preview_document() {
     let mut app = seeded_app(&[("/root/a.md", "content")]);
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
 
     handle_recents_loaded(
         &mut app,
@@ -144,7 +144,7 @@ fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
     let mut app = seeded_app(&[("/root/a.md", "a"), ("/root/b.md", "b")]);
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -202,7 +202,7 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -215,7 +215,7 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
 
     let _ = keys::handle_key(&mut app, enter_key(), &mut effects);
 
-    assert!(app.filesearch.is_none());
+    assert!(app.filesearch().is_none());
     assert_eq!(app.doc(id).expect("doc").read_only, ReadOnly::No);
     assert!(app.explorer.preview.is_none());
     assert_eq!(app.tabs.order.len(), tabs_before, "promotion mints no tab");
@@ -244,7 +244,7 @@ fn esc_after_arrowing_onto_an_already_open_document_restores_return_to() {
     let mut effects = Effects::default();
 
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -260,7 +260,7 @@ fn esc_after_arrowing_onto_an_already_open_document_restores_return_to() {
 
     let _ = keys::handle_key(&mut app, escape_key(), &mut effects);
 
-    assert!(app.filesearch.is_none());
+    assert!(app.filesearch().is_none());
     assert_eq!(app.active, return_to);
     assert_eq!(app.focus(), Pane::Editor);
 }
@@ -276,7 +276,7 @@ fn esc_after_previewing_a_not_open_file_restores_return_to_and_discards_the_prev
     let mut effects = Effects::default();
 
     open(&mut app, &mut effects);
-    let generation = app.filesearch.as_ref().expect("open").generation;
+    let generation = app.filesearch().expect("open").generation;
     handle_recents_loaded(
         &mut app,
         generation,
@@ -292,7 +292,7 @@ fn esc_after_previewing_a_not_open_file_restores_return_to_and_discards_the_prev
 
     let _ = keys::handle_key(&mut app, escape_key(), &mut effects);
 
-    assert!(app.filesearch.is_none());
+    assert!(app.filesearch().is_none());
     assert_eq!(app.active, return_to);
     assert_eq!(app.focus(), Pane::Editor);
     assert!(

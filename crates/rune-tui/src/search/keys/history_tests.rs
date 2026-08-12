@@ -45,7 +45,7 @@ fn down_key() -> KeyInput {
 fn up_filters_history_against_the_currently_typed_draft() {
     let mut app = app_with("hello");
     crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec![
+    app.search_mut().unwrap().history = vec![
         "needle".to_string(),
         "hay".to_string(),
         "haystack".to_string(),
@@ -59,68 +59,68 @@ fn up_filters_history_against_the_currently_typed_draft() {
     // "needle" has no "h" at all, so it's filtered out; "hay" is the
     // MRU-most surviving entry, so the first ↑ lands there rather than
     // "haystack".
-    assert_eq!(app.search.as_ref().unwrap().draft, "hay");
+    assert_eq!(app.search().unwrap().draft, "hay");
 }
 
 #[test]
 fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
     let mut app = app_with("hello");
     crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["one".to_string(), "two".to_string()];
+    app.search_mut().unwrap().history = vec!["one".to_string(), "two".to_string()];
     let mut effects = Effects::default();
 
     let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "one");
+    assert_eq!(app.search().unwrap().draft, "one");
     let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "two");
+    assert_eq!(app.search().unwrap().draft, "two");
     // Already at the oldest entry — a further ↑ clamps rather than
     // wrapping back around to "one".
     let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "two");
+    assert_eq!(app.search().unwrap().draft, "two");
 }
 
 #[test]
 fn down_past_the_newest_entry_restores_the_in_progress_draft() {
     let mut app = app_with("hello");
     crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["hello world".to_string(), "help".to_string()];
+    app.search_mut().unwrap().history = vec!["hello world".to_string(), "help".to_string()];
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('h'), &mut effects);
 
     let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "hello world");
+    assert_eq!(app.search().unwrap().draft, "hello world");
 
     let _ = handle_key(&mut app, down_key(), &mut effects);
     assert_eq!(
-        app.search.as_ref().unwrap().draft,
+        app.search().unwrap().draft,
         "h",
         "walking down past the newest entry restores the pre-browse draft"
     );
-    assert!(app.search.as_ref().unwrap().history_pos.is_none());
+    assert!(app.search().unwrap().history_pos.is_none());
 }
 
 #[test]
 fn down_with_no_browse_session_active_is_a_no_op() {
     let mut app = app_with("hello");
     crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["one".to_string()];
+    app.search_mut().unwrap().history = vec!["one".to_string()];
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('x'), &mut effects);
 
     let _ = handle_key(&mut app, down_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "x");
+    assert_eq!(app.search().unwrap().draft, "x");
 }
 
 #[test]
 fn typing_after_browsing_history_resets_the_browse_session() {
     let mut app = app_with("hello");
     crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["one".to_string()];
+    app.search_mut().unwrap().history = vec!["one".to_string()];
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "one");
+    assert_eq!(app.search().unwrap().draft, "one");
 
     let _ = handle_key(&mut app, char_key('!'), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "one!");
-    assert!(app.search.as_ref().unwrap().history_pos.is_none());
+    assert_eq!(app.search().unwrap().draft, "one!");
+    assert!(app.search().unwrap().history_pos.is_none());
 }

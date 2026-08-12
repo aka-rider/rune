@@ -19,18 +19,17 @@ pub enum FocusTarget {
     /// The editable title field (`title.rs`, `Pane::Title`) — reachable
     /// today via `^r` or the Up-at-editor-top gesture.
     Title,
-    /// The search bar's own field, focused whenever `App::search` is
-    /// `Some` — reached through [`target`] below, never through
+    /// The search bar's own field, focused whenever `App::search()` is
+    /// `Some` and focused — reached through [`target`] below, never through
     /// [`from_pane`] (the bar is not a `Pane`).
     SearchField,
     /// Not yet reachable — see `SearchField`'s doc; the replace field.
     ReplaceField,
-    /// The fuzzy file finder overlay, focused whenever `App::filesearch` is
-    /// `Some` — reached through [`target`] below, never through
+    /// The fuzzy file finder overlay, focused whenever `App::filesearch()`
+    /// is `Some` — reached through [`target`] below, never through
     /// [`from_pane`] (the finder is not a `Pane`; the underlying chrome
     /// `Pane` stays `Explorer` while it's open). Mutually exclusive with
-    /// `SearchField` by construction (`filesearch::open` closes the search
-    /// bar first).
+    /// `SearchField` by construction (both live in the same `Overlay`).
     FileSearch,
     /// The message-log pane above the footer (`Pane::Messages`).
     Messages,
@@ -58,12 +57,10 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
 /// first" shape `from_pane`'s own doc promises, since the bar is its own
 /// state rather than a `Pane` variant.
 pub fn target(app: &App) -> FocusTarget {
-    if app.search.as_ref().is_some_and(|s| s.focused) {
-        FocusTarget::SearchField
-    } else if app.filesearch.is_some() {
-        FocusTarget::FileSearch
-    } else {
-        from_pane(app.focus())
+    match &app.overlay {
+        crate::overlay::Overlay::Search(state) if state.focused => FocusTarget::SearchField,
+        crate::overlay::Overlay::FileSearch(_) => FocusTarget::FileSearch,
+        _ => from_pane(app.focus()),
     }
 }
 

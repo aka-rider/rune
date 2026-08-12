@@ -215,14 +215,14 @@ fn search_live_suppresses_preview_and_clearing_it_produces_one() {
         .unwrap();
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md"]);
-    app.explorer.search = Some("a".to_string());
+    app.explorer_find_or_start().push('a');
     let mut effects = Effects::default();
 
     app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     assert!(effects.cmds.is_empty(), "no preview while search is live");
 
-    app.explorer.search = None;
+    app.close_explorer_find();
     after_cursor_move(&mut app, &mut effects);
     assert_eq!(effects.cmds.len(), 1, "clearing the search previews once");
 }

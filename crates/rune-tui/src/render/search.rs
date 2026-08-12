@@ -27,7 +27,7 @@ const PROMPT: &str = "/ ";
 /// being `Some`, which itself requires `App::search` to be `Some`, but the
 /// guard stays here too rather than trusting that chain silently.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
-    let Some(state) = app.search.as_ref() else {
+    let Some(state) = app.search() else {
         return;
     };
     let readout = readout_text(

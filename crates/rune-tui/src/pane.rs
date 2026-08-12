@@ -169,7 +169,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // active document may just be a file the user arrowed past, never
         // opened for real (decision: Trash behaves like Esc there instead).
         GlobalCommand::Trash => {
-            if app.filesearch.is_some() {
+            if app.filesearch().is_some() {
                 crate::filesearch::cancel(app, effects);
                 messages::info(
                     app,
@@ -190,7 +190,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // opening on top of it would steal keys the resolver never gets a
         // chance to see.
         GlobalCommand::ToggleSearch => {
-            if app.search.is_some() {
+            if app.search().is_some() {
                 crate::search::close(app);
             } else if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active)
             {
@@ -203,10 +203,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 // their own connection, unaffected by it). No store at all
                 // (the extreme construction-failure fallback) just leaves
                 // history empty, same as an ordinary reader failure.
-                if let (Some(db), Some(generation)) = (
-                    app.db.as_ref(),
-                    app.search.as_ref().map(|s| s.history_generation),
-                ) {
+                if let (Some(db), Some(generation)) =
+                    (app.db.as_ref(), app.search().map(|s| s.history_generation))
+                {
                     effects.cmds.push(crate::runtime::load_search_history_cmd(
                         db.store.reader_query(),
                         generation,
@@ -225,7 +224,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Active -> `cancel` (closes it, restores the document that was
         // active before it opened, focuses the Editor); inactive -> `open`.
         GlobalCommand::ToggleFileSearch => {
-            if app.filesearch.is_some() {
+            if app.filesearch().is_some() {
                 crate::filesearch::cancel(app, effects);
             } else {
                 crate::filesearch::open(app, effects);
@@ -281,14 +280,14 @@ fn close_modal_bars(app: &mut App, effects: &mut Effects) {
 /// would make its own open/close branch always see it closed and reopen
 /// instead of ever closing.
 fn close_filesearch(app: &mut App, effects: &mut Effects) {
-    if app.filesearch.is_some() {
+    if app.filesearch().is_some() {
         crate::filesearch::cancel(app, effects);
     }
 }
 
 /// The shared body of the `SearchNext`/`SearchPrev` arms above.
 fn search_step(app: &mut App, forward: bool) {
-    if app.search.is_some() {
+    if app.search().is_some() {
         crate::search::keys::advance(app, forward);
     } else if !crate::search::keys::advance_closed(app, forward) {
         messages::info(app, "no previous search");
@@ -661,12 +660,12 @@ mod tests {
         ] {
             let mut app = app();
             crate::search::open(&mut app);
-            assert!(app.search.is_some(), "test setup: bar is open");
+            assert!(app.search().is_some(), "test setup: bar is open");
 
             let mut effects = Effects::default();
             handle_global_command(&mut app, cmd, &mut effects);
 
-            assert!(app.search.is_none(), "{cmd:?} must close the search bar");
+            assert!(app.search().is_none(), "{cmd:?} must close the search bar");
         }
     }
 
@@ -697,7 +696,7 @@ mod tests {
             &mut effects,
         );
 
-        assert!(app.filesearch.is_some());
+        assert!(app.filesearch().is_some());
         assert_eq!(app.focus(), Pane::Explorer);
     }
 
@@ -722,11 +721,11 @@ mod tests {
         };
 
         crate::app::update(&mut app, Msg::Key(chord), &mut effects);
-        assert!(app.filesearch.is_some(), "test setup: finder open");
+        assert!(app.filesearch().is_some(), "test setup: finder open");
 
         crate::app::update(&mut app, Msg::Key(chord), &mut effects);
 
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         assert_eq!(app.active, second);
         assert_eq!(app.focus(), Pane::Editor);
     }
@@ -755,12 +754,16 @@ mod tests {
             app.active_doc_mut().saved_content = Arc::from("");
             let mut effects = Effects::default();
             crate::filesearch::open(&mut app, &mut effects);
-            assert!(app.filesearch.is_some(), "test setup for {:?}", binding.cmd);
+            assert!(
+                app.filesearch().is_some(),
+                "test setup for {:?}",
+                binding.cmd
+            );
 
             handle_global_command(&mut app, binding.cmd, &mut effects);
 
             assert!(
-                app.filesearch.is_none() || app.focus() == Pane::Explorer,
+                app.filesearch().is_none() || app.focus() == Pane::Explorer,
                 "{:?} left the finder open with focus on {:?}",
                 binding.cmd,
                 app.focus()
@@ -782,7 +785,7 @@ mod tests {
 
         handle_global_command(&mut app, GlobalCommand::Trash, &mut effects);
 
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         assert_eq!(app.active, second);
         assert_eq!(app.focus(), Pane::Editor);
         assert!(
@@ -815,7 +818,7 @@ mod tests {
         );
         let mut effects = Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        assert!(app.filesearch.is_some(), "test setup: finder open");
+        assert!(app.filesearch().is_some(), "test setup: finder open");
         assert_eq!(
             app.focus(),
             Pane::Explorer,
@@ -824,7 +827,7 @@ mod tests {
 
         handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
 
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         assert_eq!(app.focus(), Pane::Editor);
         assert!(
             !app.splits.left.is_shown(),
@@ -850,7 +853,7 @@ mod tests {
 
         handle_global_command(&mut app, GlobalCommand::ToggleSearch, &mut effects);
 
-        assert!(app.search.is_none(), "the bar must not open mid-merge");
+        assert!(app.search().is_none(), "the bar must not open mid-merge");
         assert_eq!(
             messages::newest_text(&app),
             Some("finish the merge first (^M)")

@@ -91,7 +91,7 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     // what the column snaps back to once the finder closes. The
     // `ExplorerTabs` divider is unaffected: the finder only replaces the
     // Explorer's own content, not the Tabs pane beneath it.
-    if matches!(which, Splitter::LeftColumn) && app.filesearch.is_some() {
+    if matches!(which, Splitter::LeftColumn) && app.filesearch().is_some() {
         return;
     }
     let area = Rect::new(0, 0, app.frame_width, app.frame_height);

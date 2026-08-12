@@ -51,7 +51,7 @@ use crate::workspace;
 /// own job, shared with the fuzzy file finder's identical nav-driven
 /// preview (`filesearch::after_cursor_move`).
 pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
-    if app.explorer.search.is_some() {
+    if app.explorer_find().is_some() {
         return;
     }
     let Some(entry) = app.explorer.entries.get(app.explorer.nav.cursor) else {
@@ -146,10 +146,10 @@ pub(crate) fn maybe_consume_reply(
 /// there); the Explorer's own `search` gate keeps applying only to the
 /// Explorer branch below.
 fn is_current_target(app: &App, path: &Path) -> bool {
-    if app.filesearch.is_some() {
+    if app.filesearch().is_some() {
         return crate::filesearch::selected_candidate(app).is_some_and(|c| c.path == path);
     }
-    if app.explorer.search.is_some() {
+    if app.explorer_find().is_some() {
         return false;
     }
     app.explorer

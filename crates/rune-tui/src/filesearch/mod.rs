@@ -99,7 +99,7 @@ pub struct FileSearchState {
 /// visible once the state it is about to focus already exists. A no-op if
 /// already open.
 pub(crate) fn open(app: &mut App, effects: &mut Effects) {
-    if app.filesearch.is_some() {
+    if app.filesearch().is_some() {
         return;
     }
     crate::search::close(app);
@@ -108,7 +108,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     app.next_filesearch_gen = app.next_filesearch_gen.wrapping_add(1);
     let generation = app.next_filesearch_gen;
     let root = resolve_root(app);
-    app.filesearch = Some(FileSearchState {
+    app.open_filesearch(FileSearchState {
         query: String::new(),
         nav: listnav::List { cursor: 0, top: 0 },
         generation,
@@ -162,7 +162,7 @@ fn resolve_root(app: &App) -> PathBuf {
 /// funnels through; [`cancel`] below is the Esc/toggle-close/Trash-refusal
 /// path that also restores what was showing before the finder opened.
 pub(crate) fn close(app: &mut App) {
-    app.filesearch = None;
+    app.close_filesearch();
 }
 
 /// Closes the finder and restores `return_to` if it still exists, landing
@@ -170,7 +170,7 @@ pub(crate) fn close(app: &mut App) {
 /// must undo the finder's own document switch (Esc, a second toggle press,
 /// a refused Trash) funnels through.
 pub(crate) fn cancel(app: &mut App, effects: &mut Effects) {
-    let Some(return_to) = app.filesearch.as_ref().map(|s| s.return_to) else {
+    let Some(return_to) = app.filesearch().map(|s| s.return_to) else {
         return;
     };
     close(app);
@@ -207,7 +207,7 @@ pub(crate) fn candidate_at(state: &FileSearchState, idx: usize) -> Option<&Candi
 /// [`after_cursor_move`] resolve "what's selected right now" from, so the
 /// two can never disagree about it.
 pub(crate) fn selected_candidate(app: &App) -> Option<&Candidate> {
-    let state = app.filesearch.as_ref()?;
+    let state = app.filesearch()?;
     let row = state.results.get(state.nav.cursor)?;
     candidate_at(state, row.candidate_idx)
 }
@@ -241,7 +241,7 @@ pub(crate) fn handle_recents_loaded(
     result: Result<Vec<Candidate>, String>,
     effects: &mut Effects,
 ) {
-    let current = app.filesearch.as_ref().map(|s| s.generation);
+    let current = app.filesearch().map(|s| s.generation);
     if current != Some(generation) {
         return;
     }
@@ -250,7 +250,7 @@ pub(crate) fn handle_recents_loaded(
             for (index, candidate) in recents.iter_mut().enumerate() {
                 candidate.mru_rank = Some(index);
             }
-            if let Some(state) = app.filesearch.as_mut() {
+            if let Some(state) = app.filesearch_mut() {
                 state.recents = recents;
             }
         }
@@ -295,7 +295,7 @@ pub(crate) fn recompute(app: &mut App, effects: &mut Effects) {
 /// and what lets a data reply that reshuffles indices still recognize the
 /// user's own selection survived.
 fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool) {
-    if app.filesearch.is_none() {
+    if app.filesearch().is_none() {
         return;
     }
     let previous_path = selected_candidate(app).map(|c| c.path.clone());
@@ -307,7 +307,7 @@ fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool
     let height = keys::page_amount(app).max(1) as usize;
     let margin = (height / 4).min(4);
 
-    let Some(state) = app.filesearch.as_mut() else {
+    let Some(state) = app.filesearch_mut() else {
         return;
     };
     if state.query.trim().is_empty() {
@@ -388,13 +388,13 @@ pub(crate) fn handle_scanned(
     result: Result<walk::ScanResult, String>,
     effects: &mut Effects,
 ) {
-    let current = app.filesearch.as_ref().map(|s| s.generation);
+    let current = app.filesearch().map(|s| s.generation);
     if current != Some(generation) {
         return;
     }
     match result {
         Ok(scan) => {
-            if let Some(state) = app.filesearch.as_mut() {
+            if let Some(state) = app.filesearch_mut() {
                 let root = state.root.clone();
                 let seen: std::collections::HashSet<PathBuf> =
                     state.recents.iter().map(|c| c.path.clone()).collect();
@@ -417,7 +417,7 @@ pub(crate) fn handle_scanned(
             }
         }
         Err(e) => {
-            if let Some(state) = app.filesearch.as_mut() {
+            if let Some(state) = app.filesearch_mut() {
                 state.walk_pending = false;
             }
             crate::messages::warn(app, format!("workspace scan failed: {e}"));

@@ -124,7 +124,7 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
     match cmd {
         FileSearchCommand::Type => {
             if let KeyCode::Char(c) = key.code {
-                if let Some(state) = app.filesearch.as_mut() {
+                if let Some(state) = app.filesearch_mut() {
                     state.query.push(c);
                 }
                 reset_and_recompute(app, effects);
@@ -139,13 +139,13 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
         FileSearchCommand::PageUp => nav_move(app, -page_amount(app), effects),
         FileSearchCommand::PageDown => nav_move(app, page_amount(app), effects),
         FileSearchCommand::Top => {
-            if let Some(state) = app.filesearch.as_mut() {
+            if let Some(state) = app.filesearch_mut() {
                 state.nav.first();
             }
             after_cursor_move(app, effects);
         }
         FileSearchCommand::Bottom => {
-            if let Some(state) = app.filesearch.as_mut() {
+            if let Some(state) = app.filesearch_mut() {
                 let len = state.results.len();
                 state.nav.last(len);
             }
@@ -200,7 +200,7 @@ fn selected_path(app: &App) -> Option<PathBuf> {
 /// apply, so a combining mark popped alone never desyncs what's on screen
 /// from what the query actually holds.
 fn erase(app: &mut App) {
-    let Some(state) = app.filesearch.as_mut() else {
+    let Some(state) = app.filesearch_mut() else {
         return;
     };
     if let Some((byte_idx, _)) = state.query.grapheme_indices(true).next_back() {
@@ -211,7 +211,7 @@ fn erase(app: &mut App) {
 fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
     let height = page_amount(app).max(1) as usize;
     let margin = (height / 4).min(4);
-    let Some(state) = app.filesearch.as_mut() else {
+    let Some(state) = app.filesearch_mut() else {
         return;
     };
     let len = state.results.len();
@@ -238,7 +238,7 @@ pub(super) fn page_amount(app: &App) -> isize {
 /// Sanitized the same way ordinary typing is, first line only — the query
 /// is rendered as a single row.
 pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
-    if app.filesearch.is_none() {
+    if app.filesearch().is_none() {
         return;
     }
     let sanitized: String = text
@@ -251,7 +251,7 @@ pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
     if sanitized.is_empty() {
         return;
     }
-    if let Some(state) = app.filesearch.as_mut() {
+    if let Some(state) = app.filesearch_mut() {
         state.query.push_str(&sanitized);
     }
     reset_and_recompute(app, effects);
@@ -304,10 +304,7 @@ mod tests {
             KeyOutcome::Consumed
         );
 
-        assert_eq!(
-            app.filesearch.as_ref().map(|s| s.query.as_str()),
-            Some("ab")
-        );
+        assert_eq!(app.filesearch().map(|s| s.query.as_str()), Some("ab"));
     }
 
     #[test]
@@ -325,7 +322,7 @@ mod tests {
             KeyOutcome::Consumed
         );
 
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         assert_eq!(focus::target(&app), FocusTarget::Editor);
     }
 
@@ -349,7 +346,7 @@ mod tests {
             &mut effects,
         );
 
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         assert_eq!(app.active, second);
         assert_eq!(app.focus(), crate::pane::Pane::Editor);
     }
@@ -365,7 +362,7 @@ mod tests {
         app.frame_height = 34;
         let mut effects = Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
+        let generation = app.filesearch().expect("open").generation;
         crate::filesearch::handle_recents_loaded(
             &mut app,
             generation,
@@ -383,7 +380,7 @@ mod tests {
             KeyOutcome::Consumed
         );
 
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         assert_eq!(app.focus(), crate::pane::Pane::Editor);
         assert_eq!(
             app.active_doc().file_path.as_deref(),
@@ -403,7 +400,7 @@ mod tests {
         );
 
         assert!(
-            app.filesearch.is_some(),
+            app.filesearch().is_some(),
             "nothing selected must never close the finder"
         );
         assert_eq!(crate::messages::newest_text(&app), Some("no file selected"));
@@ -419,7 +416,7 @@ mod tests {
         let mut app = app();
         let mut effects = Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
+        let generation = app.filesearch().expect("open").generation;
         crate::filesearch::handle_recents_loaded(
             &mut app,
             generation,
@@ -438,7 +435,7 @@ mod tests {
         );
 
         assert!(
-            app.filesearch.is_some(),
+            app.filesearch().is_some(),
             "a failed open must leave the finder open rather than stranding the user"
         );
         assert_eq!(app.focus(), crate::pane::Pane::Explorer);

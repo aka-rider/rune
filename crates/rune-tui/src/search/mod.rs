@@ -65,11 +65,11 @@ pub(crate) struct SearchState {
 /// only (a later change), so re-opening the bar always starts blank. A
 /// no-op if the bar is already open.
 pub(crate) fn open(app: &mut App) {
-    if app.search.is_some() {
+    if app.search().is_some() {
         return;
     }
     app.next_search_history_gen = app.next_search_history_gen.wrapping_add(1);
-    app.search = Some(SearchState {
+    app.open_search(SearchState {
         focused: true,
         draft: String::new(),
         matches: Vec::new(),
@@ -98,18 +98,18 @@ pub(crate) fn handle_history_loaded(
     generation: u64,
     result: Result<Vec<String>, String>,
 ) {
-    let current = app.search.as_ref().map(|s| s.history_generation);
+    let current = app.search().map(|s| s.history_generation);
     if current != Some(generation) {
         return;
     }
     match result {
         Ok(entries) => {
-            if let Some(state) = app.search.as_mut() {
+            if let Some(state) = app.search_mut() {
                 state.history = entries;
             }
         }
         Err(e) => {
-            if let Some(state) = app.search.as_mut() {
+            if let Some(state) = app.search_mut() {
                 state.history = Vec::new();
             }
             crate::messages::error(app, format!("search history not loaded: {e}"));
@@ -126,7 +126,7 @@ pub(crate) fn handle_history_loaded(
 /// with, so closing it can never "leave" a chrome region the way blurring
 /// the title does.
 pub(crate) fn close(app: &mut App) {
-    let Some(state) = app.search.take() else {
+    let Some(state) = app.take_search() else {
         return;
     };
     if !state.draft.trim().is_empty() {
@@ -147,19 +147,15 @@ pub(crate) fn close(app: &mut App) {
 /// recomputed fresh at the point of use (`keys::jump`) from whatever `doc`
 /// is active THEN, not whatever it was at this recompute.
 pub(crate) fn recompute(app: &mut App) {
-    if app.search.is_none() {
+    if app.search().is_none() {
         return;
     }
-    let draft = app
-        .search
-        .as_ref()
-        .map(|s| s.draft.clone())
-        .unwrap_or_default();
+    let draft = app.search().map(|s| s.draft.clone()).unwrap_or_default();
     let doc = app.active_doc();
     let matches = compute_matches(doc.buffer.content(), &draft);
     let version = doc.buffer.version();
     let doc_id = app.active;
-    if let Some(state) = app.search.as_mut() {
+    if let Some(state) = app.search_mut() {
         state.matches = matches;
         state.doc = doc_id;
         state.buffer_version = version;
@@ -174,7 +170,7 @@ pub(crate) fn recompute(app: &mut App) {
 /// reactive half of the same chokepoint, catching a change that happens
 /// underneath an already-open bar rather than through it.
 pub(crate) fn sync(app: &mut App) {
-    let Some(state) = app.search.as_ref() else {
+    let Some(state) = app.search() else {
         return;
     };
     let stale =

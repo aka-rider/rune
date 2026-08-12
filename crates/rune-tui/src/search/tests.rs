@@ -225,40 +225,40 @@ fn app_with(content: &str) -> crate::app::App {
 fn open_creates_a_focused_empty_draft_and_close_is_a_no_op_when_already_closed() {
     let mut app = app_with("hello");
     open(&mut app);
-    let state = app.search.as_ref().expect("bar is open");
+    let state = app.search().expect("bar is open");
     assert!(state.focused);
     assert_eq!(state.draft, "");
     assert!(state.matches.is_empty());
 
     close(&mut app);
-    assert!(app.search.is_none());
+    assert!(app.search().is_none());
     // An empty query never overwrites `last_search_query` (there is
     // nothing to navigate back to).
     assert_eq!(app.last_search_query, None);
 
     // Closing an already-closed bar is a harmless no-op.
     close(&mut app);
-    assert!(app.search.is_none());
+    assert!(app.search().is_none());
 }
 
 #[test]
 fn opening_twice_never_clobbers_an_in_progress_draft() {
     let mut app = app_with("hello");
     open(&mut app);
-    app.search.as_mut().unwrap().draft.push('h');
+    app.search_mut().unwrap().draft.push('h');
     recompute(&mut app);
 
     open(&mut app);
-    assert_eq!(app.search.as_ref().unwrap().draft, "h");
+    assert_eq!(app.search().unwrap().draft, "h");
 }
 
 #[test]
 fn switching_the_active_document_resets_the_match_set() {
     let mut app = app_with("hello hello");
     open(&mut app);
-    app.search.as_mut().unwrap().draft = "hello".to_string();
+    app.search_mut().unwrap().draft = "hello".to_string();
     recompute(&mut app);
-    assert_eq!(app.search.as_ref().unwrap().matches.len(), 2);
+    assert_eq!(app.search().unwrap().matches.len(), 2);
 
     let other = app.open_document(Buffer::new("no match in this one"));
     app.active = other;
@@ -267,7 +267,7 @@ fn switching_the_active_document_resets_the_match_set() {
     // calls `recompute` directly, unlike a draft edit.
     sync(&mut app);
 
-    assert!(app.search.as_ref().unwrap().matches.is_empty());
+    assert!(app.search().unwrap().matches.is_empty());
 }
 
 /// A `Msg::SearchHistory` reply whose generation no longer
@@ -279,10 +279,10 @@ fn switching_the_active_document_resets_the_match_set() {
 fn a_stale_generation_history_reply_is_discarded() {
     let mut app = app_with("hello");
     open(&mut app);
-    let stale_generation = app.search.as_ref().unwrap().history_generation;
+    let stale_generation = app.search().unwrap().history_generation;
     close(&mut app);
     open(&mut app);
-    let live_generation = app.search.as_ref().unwrap().history_generation;
+    let live_generation = app.search().unwrap().history_generation;
     assert_ne!(
         stale_generation, live_generation,
         "each open mints a fresh generation"
@@ -294,7 +294,7 @@ fn a_stale_generation_history_reply_is_discarded() {
         Ok(vec!["should not land".into()]),
     );
 
-    assert!(app.search.as_ref().unwrap().history.is_empty());
+    assert!(app.search().unwrap().history.is_empty());
 }
 
 /// The matching positive case: a reply whose generation DOES match the
@@ -303,12 +303,12 @@ fn a_stale_generation_history_reply_is_discarded() {
 fn a_matching_generation_history_reply_populates_history() {
     let mut app = app_with("hello");
     open(&mut app);
-    let generation = app.search.as_ref().unwrap().history_generation;
+    let generation = app.search().unwrap().history_generation;
 
     handle_history_loaded(&mut app, generation, Ok(vec!["one".into(), "two".into()]));
 
     assert_eq!(
-        app.search.as_ref().unwrap().history,
+        app.search().unwrap().history,
         vec!["one".to_string(), "two".to_string()]
     );
 }
@@ -320,12 +320,12 @@ fn a_matching_generation_history_reply_populates_history() {
 fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
     let mut app = app_with("hello");
     open(&mut app);
-    let generation = app.search.as_ref().unwrap().history_generation;
-    app.search.as_mut().unwrap().history = vec!["stale".to_string()];
+    let generation = app.search().unwrap().history_generation;
+    app.search_mut().unwrap().history = vec!["stale".to_string()];
 
     handle_history_loaded(&mut app, generation, Err("reader gone".to_string()));
 
-    assert!(app.search.as_ref().unwrap().history.is_empty());
-    assert!(app.search.is_some(), "the bar itself keeps working");
+    assert!(app.search().unwrap().history.is_empty());
+    assert!(app.search().is_some(), "the bar itself keeps working");
     assert!(crate::messages::newest_text(&app).is_some());
 }

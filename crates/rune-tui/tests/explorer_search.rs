@@ -28,7 +28,7 @@ fn ctrl_b_type_then_enter_opens_the_searched_file_and_focuses_the_editor() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(key(KeyCode::Char('a'))), &mut effects);
 
-    assert_eq!(app.explorer.search.as_deref(), Some("a"));
+    assert_eq!(app.explorer_find(), Some("a"));
     let cursor_name = app.explorer.entries[app.explorer.nav.cursor].name.clone();
     assert_eq!(cursor_name, "a.md", "typing 'a' must jump to a.md");
 
@@ -41,7 +41,8 @@ fn ctrl_b_type_then_enter_opens_the_searched_file_and_focuses_the_editor() {
         "Enter must open the file and focus the editor"
     );
     assert_eq!(
-        app.explorer.search, None,
+        app.explorer_find(),
+        None,
         "opening a file must clear the search"
     );
 }
@@ -57,7 +58,7 @@ fn navigating_into_a_directory_clears_the_search() {
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(key(KeyCode::Char('s'))), &mut effects);
-    assert_eq!(app.explorer.search.as_deref(), Some("s"));
+    assert_eq!(app.explorer_find(), Some("s"));
     let cursor_name = app.explorer.entries[app.explorer.nav.cursor].name.clone();
     assert_eq!(
         cursor_name, "sub",
@@ -85,7 +86,8 @@ fn navigating_into_a_directory_clears_the_search() {
         "must have navigated into sub"
     );
     assert_eq!(
-        app.explorer.search, None,
+        app.explorer_find(),
+        None,
         "a directory reload must clear the search that led into it"
     );
 }
@@ -102,7 +104,7 @@ fn focusing_away_from_the_explorer_clears_the_search() {
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(key(KeyCode::Char('a'))), &mut effects);
-    assert!(app.explorer.search.is_some());
+    assert!(app.explorer_find().is_some());
 
     let ctrl_b = rune_tui::keymap::KeyInput {
         code: KeyCode::Char('b'),
@@ -116,7 +118,8 @@ fn focusing_away_from_the_explorer_clears_the_search() {
 
     assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(
-        app.explorer.search, None,
+        app.explorer_find(),
+        None,
         "leaving the Explorer must clear a live search"
     );
 }

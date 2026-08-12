@@ -50,7 +50,6 @@ pub struct Explorer {
     /// `DocDb::snapshot_generation`'s debounce-token pattern (`db.rs`) —
     /// bump in place, compare on receipt, ignore a stale one.
     pub request_generation: u32,
-    pub search: Option<String>, // type-to-search query (`explorer_search`); None = inactive
     /// The file `explorer_reveal::reveal` wants the cursor on, set when it
     /// issues a re-rooting `ReadDir`, consumed by `explorer_dirload::
     /// handle_dir_loaded`. Guarded by `request_generation` exactly like
@@ -97,7 +96,6 @@ impl Default for Explorer {
             nav: listnav::List { cursor: 0, top: 0 },
             loading: false,
             request_generation: 0,
-            search: None,
             pending_reveal: None,
             preview: None,
             preview_return_to: None,

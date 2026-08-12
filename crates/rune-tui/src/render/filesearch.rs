@@ -25,7 +25,7 @@ use crate::width::display_width;
 /// would otherwise fill (`render::draw_left_pane`'s own branch). A no-op if
 /// the finder isn't open or the rect has no rows at all.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
-    let Some(state) = app.filesearch.as_ref() else {
+    let Some(state) = app.filesearch() else {
         return;
     };
     if area.height == 0 {
@@ -278,7 +278,7 @@ mod tests {
         crate::filesearch::open(&mut app, &mut effects);
 
         assert_eq!(
-            readout_text(app.filesearch.as_ref().expect("open")),
+            readout_text(app.filesearch().expect("open")),
             Some("scanning\u{2026}".to_string())
         );
     }
@@ -289,7 +289,7 @@ mod tests {
         app.root = PathBuf::from("/root");
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
+        let generation = app.filesearch().expect("open").generation;
 
         crate::filesearch::handle_scanned(
             &mut app,
@@ -302,7 +302,7 @@ mod tests {
         );
 
         assert_eq!(
-            readout_text(app.filesearch.as_ref().expect("open")),
+            readout_text(app.filesearch().expect("open")),
             Some("0/0".to_string())
         );
     }
@@ -331,12 +331,12 @@ mod tests {
             "open pushes the scan Cmd rather than running it inline"
         );
         assert_eq!(
-            readout_text(app.filesearch.as_ref().expect("open")),
+            readout_text(app.filesearch().expect("open")),
             Some("scanning\u{2026}".to_string())
         );
 
-        let generation = app.filesearch.as_ref().expect("open").generation;
-        if let Some(state) = app.filesearch.as_mut() {
+        let generation = app.filesearch().expect("open").generation;
+        if let Some(state) = app.filesearch_mut() {
             state.recents.push(Candidate {
                 path: PathBuf::from("/root/a.md"),
                 display: "a.md".to_string(),
@@ -355,7 +355,7 @@ mod tests {
             &mut effects,
         );
 
-        let state = app.filesearch.as_ref().expect("still open");
+        let state = app.filesearch().expect("still open");
         assert_eq!(
             state
                 .walk
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn draw_is_a_no_op_when_the_finder_is_closed() {
         let app = app();
-        assert!(app.filesearch.is_none());
+        assert!(app.filesearch().is_none());
         let buf = crate::testgrid::draw_with(20, 5, |frame| {
             draw(&app, Rect::new(0, 0, 20, 5), frame);
         });
@@ -430,18 +430,18 @@ mod tests {
         let mut app = seeded_app(&[("/root/a.md", "a")]);
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
+        let generation = app.filesearch().expect("open").generation;
         crate::filesearch::handle_recents_loaded(
             &mut app,
             generation,
             Ok(vec![candidate("/root/a.md", "a.md")]),
             &mut effects,
         );
-        if let Some(state) = app.filesearch.as_mut() {
+        if let Some(state) = app.filesearch_mut() {
             state.query = "zzzzzznomatch".to_string();
         }
         crate::filesearch::recompute(&mut app, &mut effects);
-        let state = app.filesearch.as_ref().expect("still open");
+        let state = app.filesearch().expect("still open");
         assert!(state.results.is_empty(), "test setup: nothing matches");
 
         let lines = result_lines(&app, state, 5, 40);
@@ -461,7 +461,7 @@ mod tests {
         let mut app = seeded_app(&[("/root/note-a.md", "a"), ("/root/note-b.md", "b")]);
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
+        let generation = app.filesearch().expect("open").generation;
         crate::filesearch::handle_recents_loaded(
             &mut app,
             generation,
@@ -471,11 +471,11 @@ mod tests {
             ]),
             &mut effects,
         );
-        if let Some(state) = app.filesearch.as_mut() {
+        if let Some(state) = app.filesearch_mut() {
             state.query = "note".to_string();
         }
         crate::filesearch::recompute(&mut app, &mut effects);
-        let state = app.filesearch.as_ref().expect("still open");
+        let state = app.filesearch().expect("still open");
         assert_eq!(state.results.len(), 2, "both candidates match \"note\"");
 
         for row in &state.results {
@@ -501,18 +501,18 @@ mod tests {
         let mut app = seeded_app(&[]);
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
-        let generation = app.filesearch.as_ref().expect("open").generation;
+        let generation = app.filesearch().expect("open").generation;
         crate::filesearch::handle_recents_loaded(
             &mut app,
             generation,
             Ok(vec![candidate("/root/cafe.md", nfd_name)]),
             &mut effects,
         );
-        if let Some(state) = app.filesearch.as_mut() {
+        if let Some(state) = app.filesearch_mut() {
             state.query = "md".to_string();
         }
         crate::filesearch::recompute(&mut app, &mut effects);
-        let state = app.filesearch.as_ref().expect("still open");
+        let state = app.filesearch().expect("still open");
         let row = state
             .results
             .first()
