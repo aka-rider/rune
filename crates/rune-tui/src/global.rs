@@ -115,6 +115,8 @@ pub enum GlobalCommand {
     /// bit set — the shape `REPORT_ALTERNATE_KEYS` actually delivers a
     /// shifted chord in (see `SearchPrev`'s own doc for the same reasoning).
     ToggleFileSearch,
+    NavBack,
+    NavForward,
 }
 
 const CTRL: Mods = Mods {
@@ -422,6 +424,30 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         cmd: GlobalCommand::TogglePin,
         help: "pin",
         alias: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('['), CTRL),
+        cmd: GlobalCommand::NavBack,
+        help: "back",
+        alias: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('['), SUP),
+        cmd: GlobalCommand::NavBack,
+        help: "back",
+        alias: true,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char(']'), CTRL),
+        cmd: GlobalCommand::NavForward,
+        help: "forward",
+        alias: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char(']'), SUP),
+        cmd: GlobalCommand::NavForward,
+        help: "forward",
+        alias: true,
     },
 ];
 

@@ -112,6 +112,14 @@ entry is deleted in the same commit that fixes it.
 - **Done when**: `DocDb` no longer carries a bare `bind_new: bool`; every site listed above matches on a named publish-mode enum instead.
 - **Update**: `rune-db`'s own equivalent flag was already promoted to the `MaterializeTarget` enum (`crates/rune-db/src/materialize_types.rs`); `rune-tui`'s `bind_new` was deliberately left as a `bool` when that landed, and this entry is the deferred follow-up on the `rune-tui` side.
 
+## Rendering
+
+### A ragged table row's dropped cells desync the box's row-width invariant
+- **Where**: `crates/rune-tui/tests/tui_render_tables.rs`'s `caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused` (fails on main independent of the navhistory work: `every row in the table's own box must share the same summed cell width, got [15, 15, 15, 15, 20, 0, 4]`)
+- **Wrong**: a table row with a ragged (short) source line drops cells during rendering, and the row's own painted width no longer matches its sibling rows in the same box — the table box's row-width invariant this test pins no longer holds.
+- **Instead**: root-cause the ragged-row cell-drop path (`render::build_rows`/the table box painter) and restore the shared row width, or confirm the width-drop is now intentional and adjust the test's own invariant claim to match.
+- **Done when**: the test passes again (or is deliberately rewritten with a reviewed rationale) on a tree with no other unrelated changes.
+
 ## Mechanical
 
 ### Typed errors flattened to String
@@ -136,12 +144,12 @@ entry is deleted in the same commit that fixes it.
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
   - `crates/rune-db/src/sync.rs` — 801 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1064 (test file)
-  - `crates/rune-tui/src/global.rs` — 767
-  - `crates/rune-tui/src/pane.rs` — 862
+  - `crates/rune-tui/src/global.rs` — 793 (grew from 767: `GlobalCommand::NavBack`/`NavForward` and their four bindings)
+  - `crates/rune-tui/src/pane.rs` — 866 (grew from 862: the `NavBack`/`NavForward` dispatch arms)
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
   - `crates/rune-tui/src/runtime/mod.rs` — 621 (grew from 608: `Msg::BootstrapViewReady`, issue #11's deferred-compute reply)
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
-  - `crates/rune-tui/src/app.rs` — 591
+  - `crates/rune-tui/src/app.rs` — 602 (grew from 591: the `nav_history` field and its `update` seam wiring)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 586 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 608 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)

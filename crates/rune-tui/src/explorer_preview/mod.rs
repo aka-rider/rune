@@ -188,6 +188,7 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
         Some(id) => {
             let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
             let buffer = buffer.advance_past(floor);
+            app.nav_history.drop_doc(id);
             if let Some(doc) = app.doc_mut(id) {
                 *doc = Document::new(buffer);
                 doc.bind_path(path.to_path_buf());
@@ -242,6 +243,7 @@ fn apply_failed(app: &mut App, path: &Path, reason: &str) {
         Some(id) => {
             let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
             let buffer = Buffer::new(text).advance_past(floor);
+            app.nav_history.drop_doc(id);
             if let Some(doc) = app.doc_mut(id) {
                 *doc = Document::new(buffer);
                 doc.read_only = ReadOnly::Preview;

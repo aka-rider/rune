@@ -230,6 +230,8 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 crate::filesearch::open(app, effects);
             }
         }
+        GlobalCommand::NavBack => crate::navhistory::back(app, effects),
+        GlobalCommand::NavForward => crate::navhistory::forward(app, effects),
     }
 }
 
@@ -251,6 +253,8 @@ fn bar_policy(cmd: GlobalCommand) -> BarPolicy {
         | GlobalCommand::NewDocument
         | GlobalCommand::TabSwitch(_)
         | GlobalCommand::CloseFile
+        | GlobalCommand::NavBack
+        | GlobalCommand::NavForward
         | GlobalCommand::Save => BarPolicy::CloseBars,
         GlobalCommand::ToggleSearch => BarPolicy::ToggleSearch,
         GlobalCommand::QuitChord(_)

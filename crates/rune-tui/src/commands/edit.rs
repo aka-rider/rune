@@ -251,6 +251,10 @@ pub fn undo(app: &mut App, id: DocumentId) {
             doc.journal.commit(new_pos);
             db::move_undo_pos(app, id, target);
             materialize_ack::recompute_dirty(app, id);
+            for ae in &edits {
+                app.nav_history
+                    .shift(id, ae.start, ae.insert.len(), ae.deleted.len());
+            }
             resync_after_journal_jump(app, id, affected);
         }
         Err(e) => {
@@ -300,6 +304,10 @@ pub fn redo(app: &mut App, id: DocumentId) {
             doc.journal.commit(new_pos);
             db::move_undo_pos(app, id, target);
             materialize_ack::recompute_dirty(app, id);
+            for ae in &edits {
+                app.nav_history
+                    .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
+            }
             resync_after_journal_jump(app, id, affected);
         }
         Err(e) => {
