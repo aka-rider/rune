@@ -56,7 +56,7 @@ use rune_syntax::element::{ByteRange, RevealState};
 use rune_syntax::syntax::TableRowInfo;
 use rune_syntax::{CellMap, LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
 
-pub(crate) use claim::{Accounted, EmitOut};
+pub(crate) use claim::{Accounted, EmitOut, Sinks};
 
 /// The chokepoint every range->line-bucket routine in this crate is built
 /// on: splits `range` across every source line it touches and calls `f`
@@ -129,7 +129,7 @@ pub(crate) fn push_span_split_by_line(
             .iter()
             .filter_map(|&(s, e)| build_line_span(content, line, s, e, scope, state))
             .collect();
-        out.push_visible(granted, spans);
+        granted.push_visible(spans);
     });
 }
 
@@ -187,8 +187,7 @@ fn build_line_span(
 /// asserted on instead of double-counted.
 pub(crate) fn hide_range(content: &str, starts: &[usize], range: ByteRange, out: &mut EmitOut) {
     for_each_line_slice(content, starts, range, |line, s, e| {
-        let granted = out.claim_free(line, s, e);
-        out.record_hidden(granted);
+        out.claim_free(line, s, e).record_hidden();
     });
 }
 
@@ -301,9 +300,11 @@ pub fn emit_with(
     let mut decors: Vec<Option<LineDecor>> = (0..starts.len()).map(|_| None).collect();
 
     let mut out = EmitOut::new(
-        &mut spans,
-        &mut hidden,
-        &mut accounted,
+        Sinks {
+            spans: &mut spans,
+            hidden: &mut hidden,
+            accounted: &mut accounted,
+        },
         &mut tables,
         width,
         icons,

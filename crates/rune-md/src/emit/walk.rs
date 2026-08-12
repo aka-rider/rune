@@ -1,12 +1,11 @@
 //! The recursive tree walk: `Block`/`Inline` -> `SyntaxSpan`s, via the
 //! shared `push_span_split_by_line`/`hide_range`/`EmitOut::claim_free`
 //! chokepoints in `emit::mod`. Concealment is physical here, uniformly for
-//! block markers
-//! AND inline delimiters: a `Rendered` element's marker/delimiter bytes are
-//! dropped from the emitted text (recorded as a hidden range for
-//! coordinate conversion) rather than kept-but-restyled — see the crate
-//! root emit module docs for why this unifies block and inline
-//! concealment under one policy.
+//! block markers AND inline delimiters: a `Rendered` element's
+//! marker/delimiter bytes are dropped from the emitted text (recorded as a
+//! hidden range for coordinate conversion) rather than kept-but-restyled —
+//! see the crate root emit module docs for why this unifies block and
+//! inline concealment under one policy.
 //!
 //! Every `emit_block`/`emit_inline` call threads one `&mut EmitOut` (WP2.S3)
 //! instead of three loose out-params (`spans`, `hidden`, `accounted`) plus a
@@ -243,14 +242,12 @@ fn push_task_checkbox(content: &str, starts: &[usize], task: ByteRange, out: &mu
     };
 
     let span = SyntaxSpan::Substituted {
-        // Pre-WP4 this was `StyleId::TaskMarker`; WP4 folded that variant
-        // into `list_marker_style`'s task arm ("markup.list.checked").
         scope: list_marker_style(true),
         text: glyph.to_string(),
         range: task.start..task.end,
         cell_map: vec![task.start as i64],
     };
-    out.push_visible(granted, vec![span]);
+    granted.push_visible(vec![span]);
 }
 
 pub(crate) fn emit_block(

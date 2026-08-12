@@ -47,7 +47,7 @@ use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 /// bytes, `push_task_checkbox`'s "substitutes visible content" shape, one
 /// call per source line rather than one call per delimiter/content
 /// sub-range. A Wrapped/Pivoted line's visual rows 2..N carry NO byte claim
-/// at all (Gotcha 2): they become `TableRowInfo::extra_rows` via
+/// at all: they become `TableRowInfo::extra_rows` via
 /// `table::extra_row_spans`, never touching the emitted spans or
 /// accounting, so a table line's visible-plus-hidden byte accounting stays
 /// whole regardless of how many visual rows it expands to.
@@ -239,7 +239,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         if spans.is_empty() {
             hide_range(content, starts, content_line, out);
         } else if let Ok(granted) = out.claim_whole(line, line_start, line_start + line_len) {
-            out.push_visible(granted, spans);
+            granted.push_visible(spans);
         }
 
         let extra_rows: Vec<Vec<SyntaxSpan>> = extra_row_runs

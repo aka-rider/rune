@@ -1,8 +1,8 @@
-//! The claim primitive itself, split out from `emit::mod` (WP5) as a
-//! SIBLING of `walk`/`walk_inline`/`table`/`decor` rather than staying their
-//! parent: Rust privacy makes a private field reachable from the defining
-//! module and every descendant, so as long as `EmitOut` lived in `emit::mod`
-//! its private `spans`/`hidden`/`accounted` stayed reachable from those four
+//! The claim primitive itself, split out from `emit::mod` as a SIBLING of
+//! `walk`/`walk_inline`/`table`/`decor` rather than staying their parent:
+//! Rust privacy makes a private field reachable from the defining module
+//! and every descendant, so as long as `EmitOut` lived in `emit::mod` its
+//! private `spans`/`hidden`/`accounted` stayed reachable from those four
 //! child modules regardless of what the public methods below claimed to
 //! enforce. Defining `EmitOut` here instead makes that reach a compile
 //! error: `walk`/`walk_inline`/`table`/`decor` are this module's siblings,
@@ -19,14 +19,24 @@ use rune_syntax::syntax::TableRowInfo;
 use rune_syntax::{LineDecor, SyntaxSpan, merge_overlapping};
 
 /// Every byte of every line is accounted for exactly once: either as part
-/// of a VISIBLE span (pushed by `push_visible`) or as a hidden delimiter
-/// range (`record_hidden`). `accounted[line]` is the union of both,
-/// recorded so `fill_gaps` can find and surface whatever neither one
-/// covered — trailing/leading whitespace, tabs, a bare `\r` before `\n`,
-/// anything a comrak node's sourcepos doesn't happen to span — as ordinary
-/// visible text rather than silently dropping it (a dropped byte is a data
-/// hazard: the caret could no longer reach it).
+/// of a VISIBLE span (pushed by `Granted::push_visible`) or as a hidden
+/// delimiter range (`Granted::record_hidden`). `accounted[line]` is the
+/// union of both, recorded so `fill_gaps` can find and surface whatever
+/// neither one covered — trailing/leading whitespace, tabs, a bare `\r`
+/// before `\n`, anything a comrak node's sourcepos doesn't happen to span
+/// — as ordinary visible text rather than silently dropping it (a dropped
+/// byte is a data hazard: the caret could no longer reach it).
 pub(crate) type Accounted = Vec<Vec<(usize, usize)>>;
+
+/// The three sinks a claim guards, named so a caller building `EmitOut`
+/// binds each by name (field-init shorthand) instead of by position —
+/// `hidden` and `accounted` are adjacent and identically typed, so a
+/// positional constructor let them transpose silently.
+pub(crate) struct Sinks<'a> {
+    pub(crate) spans: &'a mut [Vec<SyntaxSpan>],
+    pub(crate) hidden: &'a mut Accounted,
+    pub(crate) accounted: &'a mut Accounted,
+}
 
 /// The out-params every `emit_block`/`emit_inline` call threads (`emit::mod`
 /// docs explain why they are bundled rather than passed loose). `spans`,
@@ -46,21 +56,62 @@ pub(crate) struct EmitOut<'a> {
 /// returned by `EmitOut::claim_free`/`claim_whole` and spent by
 /// `push_visible` or `record_hidden` — spending is what records the claim
 /// into `accounted`, so a `Granted` dropped without being spent leaves no
-/// trace and its bytes still reach `fill_gaps`. Neither `Copy` nor `Clone`,
-/// and its fields are private to this module, so a producer cannot
-/// fabricate one and cannot hold two at once for the same call.
-pub(crate) struct Granted {
+/// trace and its bytes still reach `fill_gaps`. It borrows the `EmitOut`
+/// that granted it for as long as it stays unspent, so the borrow checker
+/// refuses a second claim on the same `EmitOut` before this one is spent:
+/// `push_visible`/`record_hidden` consume `self`, releasing that borrow
+/// only once the claim has actually been recorded.
+pub(crate) struct Granted<'out, 'a> {
+    out: &'out mut EmitOut<'a>,
     line: usize,
     pieces: Vec<(usize, usize)>,
 }
 
-impl Granted {
+impl Granted<'_, '_> {
     /// The sub-ranges this claim actually covers — read-only, so a caller
     /// can build the visible spans it is about to hand to `push_visible`
     /// without being able to spend the claim twice or fabricate a second
     /// one.
     pub(crate) fn pieces(&self) -> &[(usize, usize)] {
         &self.pieces
+    }
+
+    /// Spends this claim by pushing `spans` as `line`'s visible content and
+    /// recording its pieces into `accounted`. Every pushed span's range
+    /// must fall inside one of the granted pieces — a producer that claims
+    /// range A and pushes spans for range B would desync `accounted` from
+    /// what is actually drawn, silently reopening the dropped-byte hazard
+    /// `accounted` exists to close.
+    pub(crate) fn push_visible(self, spans: Vec<SyntaxSpan>) {
+        let within_grant = spans.iter().all(|span| {
+            let range = span.range();
+            self.pieces
+                .iter()
+                .any(|&(s, e)| s <= range.start && range.end <= e)
+        });
+        rune_core::assert_invariant!(within_grant, || {
+            format!(
+                "line {}: pushed span(s) fall outside the granted claim — producer bug (accounted would desync from what is drawn)",
+                self.line
+            )
+        });
+        if let Some(bucket) = self.out.spans.get_mut(self.line) {
+            bucket.extend(spans);
+        }
+        if let Some(bucket) = self.out.accounted.get_mut(self.line) {
+            bucket.extend(self.pieces.iter().copied());
+        }
+    }
+
+    /// Spends this claim by recording its pieces as hidden (delimiter bytes
+    /// dropped from the emitted text) and into `accounted`.
+    pub(crate) fn record_hidden(self) {
+        if let Some(bucket) = self.out.hidden.get_mut(self.line) {
+            bucket.extend(self.pieces.iter().copied());
+        }
+        if let Some(bucket) = self.out.accounted.get_mut(self.line) {
+            bucket.extend(self.pieces.iter().copied());
+        }
     }
 }
 
@@ -72,23 +123,29 @@ pub(crate) struct Refused;
 
 impl<'a> EmitOut<'a> {
     pub(crate) fn new(
-        spans: &'a mut [Vec<SyntaxSpan>],
-        hidden: &'a mut Accounted,
-        accounted: &'a mut Accounted,
+        sinks: Sinks<'a>,
         tables: &'a mut [Option<TableRowInfo>],
         width: u16,
         icons: &'a IconSet,
         decors: &'a mut [Option<LineDecor>],
     ) -> Self {
         Self {
-            spans,
-            hidden,
-            accounted,
+            spans: sinks.spans,
+            hidden: sinks.hidden,
+            accounted: sinks.accounted,
             tables,
             width,
             icons,
             decors,
         }
+    }
+
+    /// The sub-ranges of `[start, end)` on `line` not already in
+    /// `accounted` — the lookup both `claim_free` and `claim_whole` need
+    /// before applying their own (different) refusal policy.
+    fn unclaimed(&self, line: usize, start: usize, end: usize) -> Vec<(usize, usize)> {
+        let existing = self.accounted.get(line).cloned().unwrap_or_default();
+        unclaimed_subranges(start, end, &existing)
     }
 
     /// Grants whatever sub-ranges of `[start, end)` on `line` are not
@@ -97,9 +154,8 @@ impl<'a> EmitOut<'a> {
     /// what this returns. A producer whose own range arithmetic overlaps
     /// another producer's claim is a bug, not a legitimate outcome — unlike
     /// `claim_whole`, this asserts on that instead of returning a refusal.
-    pub(crate) fn claim_free(&mut self, line: usize, start: usize, end: usize) -> Granted {
-        let existing = self.accounted.get(line).cloned().unwrap_or_default();
-        let pieces = unclaimed_subranges(start, end, &existing);
+    pub(crate) fn claim_free(&mut self, line: usize, start: usize, end: usize) -> Granted<'_, 'a> {
+        let pieces = self.unclaimed(line, start, end);
 
         let requested_len = end.saturating_sub(start);
         let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
@@ -110,50 +166,50 @@ impl<'a> EmitOut<'a> {
             )
         });
 
-        Granted { line, pieces }
+        Granted {
+            out: self,
+            line,
+            pieces,
+        }
     }
 
     /// Grants `[start, end)` on `line` whole, or refuses it outright —
     /// never a partial piece. A substituting producer (a table row, a task
     /// checkbox glyph) draws one replacement string for the whole range it
     /// claims; there is no way to draw part of that replacement into
-    /// whatever sub-ranges happen to survive an overlap, so unlike
-    /// `claim_free` a refusal here is an ordinary outcome, not a producer
-    /// bug — it never asserts.
+    /// whatever sub-ranges happen to survive an overlap, so a refusal here
+    /// is an ordinary outcome for the CALLER, which is expected to skip its
+    /// substitution rather than treat it as fatal. An empty range conflicts
+    /// with nothing and is always granted. A non-empty range that is not
+    /// entirely free is still a PRODUCER bug — the caller degrades
+    /// gracefully, but the mismatch is asserted exactly like `claim_free`'s.
     pub(crate) fn claim_whole(
         &mut self,
         line: usize,
         start: usize,
         end: usize,
-    ) -> Result<Granted, Refused> {
-        let existing = self.accounted.get(line).cloned().unwrap_or_default();
-        let pieces = unclaimed_subranges(start, end, &existing);
+    ) -> Result<Granted<'_, 'a>, Refused> {
+        if end <= start {
+            return Ok(Granted {
+                out: self,
+                line,
+                pieces: Vec::new(),
+            });
+        }
+        let pieces = self.unclaimed(line, start, end);
         if pieces == [(start, end)] {
-            Ok(Granted { line, pieces })
+            Ok(Granted {
+                out: self,
+                line,
+                pieces,
+            })
         } else {
+            rune_core::assert_invariant!(false, || {
+                format!(
+                    "line {line}: whole claim [{start},{end}) is not entirely free — producer bug (overlaps a table row or task checkbox another producer already claimed)"
+                )
+            });
             Err(Refused)
-        }
-    }
-
-    /// Spends `granted` by pushing `spans` as that line's visible content
-    /// and recording its pieces into `accounted`.
-    pub(crate) fn push_visible(&mut self, granted: Granted, spans: Vec<SyntaxSpan>) {
-        if let Some(bucket) = self.spans.get_mut(granted.line) {
-            bucket.extend(spans);
-        }
-        if let Some(bucket) = self.accounted.get_mut(granted.line) {
-            bucket.extend(granted.pieces.iter().copied());
-        }
-    }
-
-    /// Spends `granted` by recording its pieces as hidden (delimiter bytes
-    /// dropped from the emitted text) and into `accounted`.
-    pub(crate) fn record_hidden(&mut self, granted: Granted) {
-        if let Some(bucket) = self.hidden.get_mut(granted.line) {
-            bucket.extend(granted.pieces.iter().copied());
-        }
-        if let Some(bucket) = self.accounted.get_mut(granted.line) {
-            bucket.extend(granted.pieces.iter().copied());
         }
     }
 }
@@ -233,9 +289,11 @@ mod tests {
         let mut decors: Vec<Option<LineDecor>> = vec![None];
         let icons = IconSet::unicode();
         let mut out = EmitOut::new(
-            &mut spans,
-            &mut hidden,
-            &mut accounted,
+            Sinks {
+                spans: &mut spans,
+                hidden: &mut hidden,
+                accounted: &mut accounted,
+            },
             &mut tables,
             80,
             &icons,
@@ -248,12 +306,40 @@ mod tests {
         assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
     }
 
-    /// A `claim_whole` refusal — the requested range partially overlaps an
-    /// already-accounted piece — produces no `Granted` (the `Result`'s
-    /// `Err` arm carries none by construction) and leaves `accounted`
-    /// exactly as it was, so the bytes still reach `fill_gaps`.
+    /// An empty range conflicts with nothing, so `claim_whole` grants it —
+    /// never refuses it — regardless of what else the line already has
+    /// accounted for.
     #[test]
-    fn refused_whole_claim_yields_no_granted_and_leaves_accounted_untouched() {
+    fn claim_whole_grants_an_empty_range_even_when_the_line_is_fully_claimed() {
+        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+        let mut hidden: Accounted = vec![Vec::new()];
+        let mut accounted: Accounted = vec![vec![(0, 8)]];
+        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+        let mut decors: Vec<Option<LineDecor>> = vec![None];
+        let icons = IconSet::unicode();
+        let mut out = EmitOut::new(
+            Sinks {
+                spans: &mut spans,
+                hidden: &mut hidden,
+                accounted: &mut accounted,
+            },
+            &mut tables,
+            80,
+            &icons,
+            &mut decors,
+        );
+
+        let result = out.claim_whole(0, 4, 4);
+
+        assert!(result.is_ok());
+    }
+
+    /// A `claim_whole` refusal — the requested range partially overlaps an
+    /// already-accounted piece — is a producer bug, so it asserts under
+    /// `strict-invariants`/test builds instead of returning silently.
+    #[test]
+    #[should_panic(expected = "is not entirely free")]
+    fn claim_whole_asserts_on_a_refused_overlap() {
         let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
         let mut hidden: Accounted = vec![Vec::new()];
         let mut accounted: Accounted = vec![vec![(2, 4)]];
@@ -261,18 +347,50 @@ mod tests {
         let mut decors: Vec<Option<LineDecor>> = vec![None];
         let icons = IconSet::unicode();
         let mut out = EmitOut::new(
-            &mut spans,
-            &mut hidden,
-            &mut accounted,
+            Sinks {
+                spans: &mut spans,
+                hidden: &mut hidden,
+                accounted: &mut accounted,
+            },
             &mut tables,
             80,
             &icons,
             &mut decors,
         );
 
-        let result = out.claim_whole(0, 0, 8);
+        let _ = out.claim_whole(0, 0, 8);
+    }
+
+    /// The producer-bug path above only proves the assert fires; this
+    /// checks the state a refusal leaves behind — `accounted` untouched, so
+    /// the bytes still reach `fill_gaps` — using `catch_unwind` to look past
+    /// the panic this test binary's own armed assert raises.
+    #[test]
+    fn refused_whole_claim_leaves_accounted_untouched() {
+        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+        let mut hidden: Accounted = vec![Vec::new()];
+        let mut accounted: Accounted = vec![vec![(2, 4)]];
+        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+        let mut decors: Vec<Option<LineDecor>> = vec![None];
+        let icons = IconSet::unicode();
+        let mut out = EmitOut::new(
+            Sinks {
+                spans: &mut spans,
+                hidden: &mut hidden,
+                accounted: &mut accounted,
+            },
+            &mut tables,
+            80,
+            &icons,
+            &mut decors,
+        );
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            out.claim_whole(0, 0, 8).is_err()
+        }));
 
         assert!(result.is_err());
+        let _ = out;
         assert_eq!(accounted[0], vec![(2, 4)]);
     }
 }

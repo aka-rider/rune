@@ -26,7 +26,17 @@ fn test_out<'a>(
     decors: &'a mut [Option<LineDecor>],
     icons: &'a IconSet,
 ) -> EmitOut<'a> {
-    EmitOut::new(spans, hidden, accounted, tables, 80, icons, decors)
+    EmitOut::new(
+        Sinks {
+            spans,
+            hidden,
+            accounted,
+        },
+        tables,
+        80,
+        icons,
+        decors,
+    )
 }
 
 #[test]
