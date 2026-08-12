@@ -5,7 +5,7 @@
 //! tree walk.
 
 use super::style::{table_header_scope, table_scope, verbatim_style};
-use super::{EmitOut, claim_visible, hide_range, push_span_split_by_line};
+use super::{EmitOut, hide_range, push_span_split_by_line};
 use crate::element::table::TableM;
 use crate::parse::line_at;
 use crate::table::{CellSrc, extra_row_spans, layout, pivot, render, row_spans, wrapped};
@@ -37,17 +37,18 @@ use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 ///   keep their real offsets.
 ///
 /// Every layout still tiles row 1 onto the source line's own byte range
-/// exactly (`table::row_spans`, claimed through `claim_visible` — the SAME
-/// duplicate-claim guard `push_span_split_by_line` uses). Deliberately NOT
-/// routed through `push_span_split_by_line` itself (it only ever copies
+/// exactly (`table::row_spans`, claimed through `EmitOut::claim_free` — the
+/// SAME duplicate-claim guard `push_span_split_by_line` uses). Deliberately
+/// NOT routed through `push_span_split_by_line` itself (it only ever copies
 /// `content[range]` verbatim) — this substitutes a wholly different string
 /// for the claimed bytes, `push_task_checkbox`'s "substitutes visible
 /// content" shape, one call per source line rather than one call per
 /// delimiter/content sub-range. A Wrapped/Pivoted line's visual rows 2..N
 /// carry NO byte claim at all (Gotcha 2): they become
 /// `TableRowInfo::extra_rows` via `table::extra_row_spans`, never touching
-/// `out.spans`/`accounted`, so a table line's visible-plus-hidden byte
-/// accounting stays whole regardless of how many visual rows it expands to.
+/// the emitted spans or accounting, so a table line's visible-plus-hidden
+/// byte accounting stays whole regardless of how many visual rows it
+/// expands to.
 pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut EmitOut) {
     if t.sm.state() == RevealState::Revealed {
         for &line in &t.content_lines {
@@ -57,8 +58,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 line,
                 verbatim_style(),
                 RevealState::Revealed,
-                out.spans,
-                out.accounted,
+                out,
             );
         }
         return;
@@ -161,8 +161,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 content_line,
                 verbatim_style(),
                 RevealState::Revealed,
-                out.spans,
-                out.accounted,
+                out,
             );
             continue;
         };
@@ -236,12 +235,10 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         let line_len = content_line.len();
         let spans = row_spans(line_start, line_len, &row1_runs);
         if spans.is_empty() {
-            hide_range(out.hidden, out.accounted, content, starts, content_line);
+            hide_range(content, starts, content_line, out);
         } else {
-            let _ = claim_visible(out.accounted, line, line_start, line_start + line_len);
-            if let Some(bucket) = out.spans.get_mut(line) {
-                bucket.extend(spans);
-            }
+            let granted = out.claim_free(line, line_start, line_start + line_len);
+            out.push_visible(granted, spans);
         }
 
         let extra_rows: Vec<Vec<SyntaxSpan>> = extra_row_runs

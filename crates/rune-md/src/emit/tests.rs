@@ -44,13 +44,44 @@ fn unclaimed_subranges_skips_already_claimed_bytes() {
 /// This crate's own test binary always has the gate armed (tied to
 /// `cfg(test)`, not `cfg(debug_assertions)` — see the `emit` module
 /// docs), so this fires in `cargo test --release` too.
+fn test_out<'a>(
+    spans: &'a mut [Vec<SyntaxSpan>],
+    hidden: &'a mut Accounted,
+    accounted: &'a mut Accounted,
+    tables: &'a mut [Option<TableRowInfo>],
+    decors: &'a mut [Option<LineDecor>],
+    icons: &'a IconSet,
+) -> EmitOut<'a> {
+    EmitOut {
+        spans,
+        hidden,
+        accounted,
+        tables,
+        width: 80,
+        icons,
+        decors,
+    }
+}
+
 #[test]
 #[should_panic(expected = "already-claimed byte")]
 fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
     let content = "abcdefgh\n";
     let starts = vec![0usize, 9];
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
     let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let icons = IconSet::unicode();
+    let mut out = test_out(
+        &mut spans,
+        &mut hidden,
+        &mut accounted,
+        &mut tables,
+        &mut decors,
+        &icons,
+    );
 
     push_span_split_by_line(
         content,
@@ -58,8 +89,7 @@ fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
         ByteRange::new(2, 6),
         style::text_scope(),
         RevealState::Revealed,
-        &mut spans,
-        &mut accounted,
+        &mut out,
     );
     // Overlaps the [2,6) already claimed above.
     push_span_split_by_line(
@@ -68,8 +98,7 @@ fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
         ByteRange::new(0, 8),
         style::text_scope(),
         RevealState::Revealed,
-        &mut spans,
-        &mut accounted,
+        &mut out,
     );
 }
 
@@ -87,7 +116,19 @@ fn push_span_split_by_line_asserts_on_non_char_boundary_span() {
     let content = "a日\n";
     let starts = vec![0usize, content.len()];
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
     let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let icons = IconSet::unicode();
+    let mut out = test_out(
+        &mut spans,
+        &mut hidden,
+        &mut accounted,
+        &mut tables,
+        &mut decors,
+        &icons,
+    );
 
     push_span_split_by_line(
         content,
@@ -95,8 +136,7 @@ fn push_span_split_by_line_asserts_on_non_char_boundary_span() {
         ByteRange::new(0, 2), // byte 2 sits inside '日' — not a char boundary
         style::text_scope(),
         RevealState::Revealed,
-        &mut spans,
-        &mut accounted,
+        &mut out,
     );
 }
 

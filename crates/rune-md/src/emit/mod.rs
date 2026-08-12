@@ -118,9 +118,9 @@ fn for_each_line_slice(
 /// rest of the way to the one arm that reads it, `Block::Table`'s layout
 /// selector) — every other producer ignores this field entirely.
 pub(crate) struct EmitOut<'a> {
-    pub spans: &'a mut [Vec<SyntaxSpan>],
-    pub hidden: &'a mut Accounted,
-    pub accounted: &'a mut Accounted,
+    spans: &'a mut [Vec<SyntaxSpan>],
+    hidden: &'a mut Accounted,
+    accounted: &'a mut Accounted,
     pub tables: &'a mut [Option<TableRowInfo>],
     pub width: u16,
     /// The glyph tier decor producers (`emit::decor`) draw from — threaded
@@ -134,47 +134,58 @@ pub(crate) struct EmitOut<'a> {
     pub decors: &'a mut [Option<LineDecor>],
 }
 
-/// Claims `[start, end)` on `line` as visible: runs the SAME
-/// `unclaimed_subranges` + `assert_invariant` pair `push_span_split_by_line`
-/// uses (that function is refactored below to call this, so both agree on
-/// what "already claimed" means), then records whatever was actually
-/// unclaimed into `accounted`. The chokepoint a producer that builds its
-/// OWN span text — rather than slicing `content[range]` directly, the way
-/// every other `SyntaxSpan` producer in this crate does — uses instead of
-/// re-deriving the duplicate-claim guard itself: the table Grid renderer
-/// substitutes a whole rendered row's text in one call per source line
-/// (mirroring `push_task_checkbox`'s "substitutes visible content" shape),
-/// rather than one call per delimiter/content sub-range the way
-/// `push_span_split_by_line` itself is built around.
-///
-/// Returns the pieces of `[start, end)` that were actually unclaimed (equal
-/// to `[(start, end)]` whenever nothing already overlapped it) — the caller
-/// decides what to do with a partial claim; this function only ever
-/// guards/records, it never builds a `SyntaxSpan` itself.
-pub(crate) fn claim_visible(
-    accounted: &mut Accounted,
+/// A claim on `line`'s unclaimed sub-ranges of a requested byte range,
+/// returned by `EmitOut::claim_free` and spent by `push_visible` or
+/// `record_hidden`. Neither `Copy` nor `Clone` and its fields are private to
+/// this module (and its descendants — `walk`, `walk_inline`, `table`,
+/// `decor`), so a producer outside the emit tree cannot fabricate one and a
+/// producer inside it cannot hold two at once for the same call.
+pub(crate) struct Granted {
     line: usize,
-    start: usize,
-    end: usize,
-) -> Vec<(usize, usize)> {
-    let existing = accounted.get(line).cloned().unwrap_or_default();
-    let pieces = unclaimed_subranges(start, end, &existing);
+    pieces: Vec<(usize, usize)>,
+}
 
-    let requested_len = end.saturating_sub(start);
-    let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
-    assert_invariant!(kept_len == requested_len, || {
-        format!(
-            "line {line}: visible claim [{start},{end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
-            requested_len - kept_len
-        )
-    });
+impl EmitOut<'_> {
+    /// Grants whatever sub-ranges of `[start, end)` on `line` are not
+    /// already in `accounted` (visible span or hidden range, either
+    /// counts). `push_visible`/`record_hidden` are the only ways to spend
+    /// what this returns.
+    pub(crate) fn claim_free(&mut self, line: usize, start: usize, end: usize) -> Granted {
+        let existing = self.accounted.get(line).cloned().unwrap_or_default();
+        let pieces = unclaimed_subranges(start, end, &existing);
 
-    for &(s, e) in &pieces {
-        if let Some(bucket) = accounted.get_mut(line) {
-            bucket.push((s, e));
+        let requested_len = end.saturating_sub(start);
+        let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
+        assert_invariant!(kept_len == requested_len, || {
+            format!(
+                "line {line}: visible claim [{start},{end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
+                requested_len - kept_len
+            )
+        });
+
+        for &(s, e) in &pieces {
+            if let Some(bucket) = self.accounted.get_mut(line) {
+                bucket.push((s, e));
+            }
+        }
+
+        Granted { line, pieces }
+    }
+
+    /// Spends `granted` by pushing `spans` as that line's visible content.
+    pub(crate) fn push_visible(&mut self, granted: Granted, spans: Vec<SyntaxSpan>) {
+        if let Some(bucket) = self.spans.get_mut(granted.line) {
+            bucket.extend(spans);
         }
     }
-    pieces
+
+    /// Spends `granted` by recording its pieces as hidden (delimiter bytes
+    /// dropped from the emitted text).
+    pub(crate) fn record_hidden(&mut self, granted: Granted) {
+        if let Some(bucket) = self.hidden.get_mut(granted.line) {
+            bucket.extend(granted.pieces.iter().copied());
+        }
+    }
 }
 
 /// The sub-ranges of `[start, end)` NOT already covered by `existing` (a
@@ -227,125 +238,85 @@ fn build_cell_map(content_start: usize, text: &str) -> CellMap {
 /// covers and push one `SyntaxSpan` per line-slice. Builds a `cell_map` only
 /// for `Rendered` spans (their text is always a direct, contiguous slice of
 /// the buffer at this call site — concealed content minus its delimiters).
-/// Every emitted slice is also recorded into `accounted` (see its docs).
-///
-/// HARDENING: before pushing, clips each line-slice against whatever
-/// `accounted[line]` already claims (from an earlier visible span OR a
-/// hidden range) via `unclaimed_subranges`, so a byte already emitted (or
-/// hidden) is never emitted a second time — the visible-side counterpart
-/// of `rune_syntax::syntax::build_line_conversions`'s hidden-side merge. A
-/// hidden range can be merged AFTER the fact because that runs once
-/// over the whole set; a visible span becomes a real `SyntaxSpan` the
-/// instant it's pushed, so this has to happen HERE, at the point of claim
-/// (the class of bug this guards: an empty list item's marker running
-/// onto its continuation line and re-showing bytes a nested blockquote's
-/// own marker scan already claimed — content invented on the visible
-/// side, content_range's mirror image of dropping a byte: both corrupt
-/// the user's own bytes).
+/// Claims through `EmitOut::claim_free`, so a byte already emitted or hidden
+/// is never emitted a second time (the class of bug this guards: an empty
+/// list item's marker running onto its continuation line and re-showing
+/// bytes a nested blockquote's own marker scan already claimed).
 pub(crate) fn push_span_split_by_line(
     content: &str,
     starts: &[usize],
     range: ByteRange,
     scope: ScopeId,
     state: RevealState,
-    out: &mut [Vec<SyntaxSpan>],
-    accounted: &mut Accounted,
+    out: &mut EmitOut,
 ) {
     for_each_line_slice(content, starts, range, |line, seg_start, seg_end| {
-        let pieces = claim_visible(accounted, line, seg_start, seg_end);
-
-        for (s, e) in pieces {
-            let span = if state == RevealState::Rendered {
-                // A producer's range arithmetic (e.g. a delimiter derived by
-                // subtracting a fixed byte count from a multibyte-char-
-                // adjacent position) can land inside a char instead of on
-                // its boundary — `content.get` then returns `None`. These
-                // are the user's own bytes: snapping the range
-                // OUTWARD to the nearest valid boundaries and emitting
-                // verbatim is always safe (worst case: a little more
-                // context shown than the producer intended), whereas
-                // silently dropping the span would vanish real content from
-                // the display. The producer bug itself still needs fixing
-                // — `assert_invariant` surfaces it. `Substituted` owns its
-                // text, so it still needs an actual `&str` extracted here;
-                // `Identical` (the `else` arm below) instead delegates its
-                // own equivalent clamping to `SyntaxSpan::identical`'s
-                // checked constructor, which needs no local guard.
-                let (s, e, text) = match content.get(s..e) {
-                    Some(text) => (s, e, text),
-                    None => {
-                        let snapped_s = content.floor_char_boundary(s);
-                        let snapped_e = content.ceil_char_boundary(e);
-                        let snapped_ok = snapped_s == s && snapped_e == e;
-                        assert_invariant!(snapped_ok, || {
-                            format!(
-                                "line {line}: span [{s},{e}) is not on a char boundary — producer bug; snapped outward to [{snapped_s},{snapped_e})"
-                            )
-                        });
-                        let Some(text) = content.get(snapped_s..snapped_e) else {
-                            continue; // unreachable in practice: floor/ceil always land in-bounds on a valid &str
-                        };
-                        (snapped_s, snapped_e, text)
-                    }
-                };
-                SyntaxSpan::Substituted {
-                    scope,
-                    text: text.to_string(),
-                    range: s..e,
-                    cell_map: build_cell_map(s, text),
-                }
-            } else {
-                SyntaxSpan::identical(content, scope, s..e)
-            };
-            if let Some(bucket) = out.get_mut(line) {
-                bucket.push(span);
-            }
-            // `claim_visible` above already recorded this piece into
-            // `accounted` — no second push here (that used to be this
-            // function's own duplicate of the same bookkeeping `claim_visible`
-            // now owns).
-        }
+        let granted = out.claim_free(line, seg_start, seg_end);
+        let spans: Vec<SyntaxSpan> = granted
+            .pieces
+            .iter()
+            .filter_map(|&(s, e)| build_line_span(content, line, s, e, scope, state))
+            .collect();
+        out.push_visible(granted, spans);
     });
+}
+
+/// A producer's range arithmetic (e.g. a delimiter derived by subtracting a
+/// fixed byte count from a multibyte-char-adjacent position) can land inside
+/// a char instead of on its boundary — `content.get` then returns `None`.
+/// These are the user's own bytes: snapping the range outward to the
+/// nearest valid boundaries and emitting verbatim is always safe, whereas
+/// dropping the span would vanish real content from the display.
+fn build_line_span(
+    content: &str,
+    line: usize,
+    s: usize,
+    e: usize,
+    scope: ScopeId,
+    state: RevealState,
+) -> Option<SyntaxSpan> {
+    if state != RevealState::Rendered {
+        return Some(SyntaxSpan::identical(content, scope, s..e));
+    }
+    let (s, e, text) = match content.get(s..e) {
+        Some(text) => (s, e, text),
+        None => {
+            let snapped_s = content.floor_char_boundary(s);
+            let snapped_e = content.ceil_char_boundary(e);
+            let snapped_ok = snapped_s == s && snapped_e == e;
+            assert_invariant!(snapped_ok, || {
+                format!(
+                    "line {line}: span [{s},{e}) is not on a char boundary — producer bug; snapped outward to [{snapped_s},{snapped_e})"
+                )
+            });
+            let text = content.get(snapped_s..snapped_e)?;
+            (snapped_s, snapped_e, text)
+        }
+    };
+    Some(SyntaxSpan::Substituted {
+        scope,
+        text: text.to_string(),
+        range: s..e,
+        cell_map: build_cell_map(s, text),
+    })
 }
 
 /// Records an absolute buffer range as hidden (delimiter bytes dropped from
 /// the emitted text) AND accounted for, in one call — the chokepoint every
 /// concealed marker/delimiter in `walk.rs` routes through, so a hidden
-/// range can never be pushed without also being accounted for (that
-/// mismatch was BLOCKER 1: a per-LINE `touched` bool couldn't tell a
-/// partially-covered line from a fully-covered one). Splits per line via
-/// `for_each_line_slice` exactly like `push_span_split_by_line` — a
-/// "delimiter" is not guaranteed single-line just because Phase-1 tokens
+/// range can never be recorded without also being accounted for. Splits per
+/// line via `for_each_line_slice` exactly like `push_span_split_by_line` —
+/// a "delimiter" is not guaranteed single-line just because Phase-1 tokens
 /// usually are (see `for_each_line_slice`'s docs for the counterexample
-/// that proved this).
-///
-/// Routes through the SAME `claim_visible` (and therefore the same
-/// `unclaimed_subranges` + `assert_invariant` pair) the visible side uses,
-/// rather than pushing `(s, e)` into `hidden` unconditionally: before this,
-/// "every byte accounted exactly once" was only checked/clipped on the
-/// visible side — a visible-then-hidden overlap (the walk order
+/// that proved this). Claims through the SAME `EmitOut::claim_free` the
+/// visible side uses, so a visible-then-hidden overlap (the walk order
 /// `hide(open) -> emit children -> hide(close)` makes a later hidden claim
-/// landing on an already-emitted visible byte reachable) was recorded into
-/// `hidden` UNCONDITIONALLY, so the same byte ended up both still present
-/// in an emitted span AND subtracted by the hidden-range collapse — an
-/// unaccounted double-claim skewing every later buffer<->syntax offset on
-/// the line, with nothing to catch it. `claim_visible` already clips
-/// against, and asserts on, whatever `accounted` holds regardless of
-/// whether it got there via a visible span or an earlier hidden range, so
-/// reusing it here closes that gap by construction instead of adding a
-/// second, parallel guard.
-pub(crate) fn hide_range(
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
-    content: &str,
-    starts: &[usize],
-    range: ByteRange,
-) {
+/// landing on an already-emitted visible byte reachable) is clipped and
+/// asserted on instead of double-counted.
+pub(crate) fn hide_range(content: &str, starts: &[usize], range: ByteRange, out: &mut EmitOut) {
     for_each_line_slice(content, starts, range, |line, s, e| {
-        let pieces = claim_visible(accounted, line, s, e);
-        if let Some(bucket) = hidden.get_mut(line) {
-            bucket.extend(pieces);
-        }
+        let granted = out.claim_free(line, s, e);
+        out.record_hidden(granted);
     });
 }
 

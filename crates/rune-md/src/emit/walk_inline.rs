@@ -68,8 +68,7 @@ fn emit_inline(
                     line,
                     style_ctx.resolve(),
                     RevealState::Revealed,
-                    out.spans,
-                    out.accounted,
+                    out,
                 );
             }
         }
@@ -91,14 +90,13 @@ fn emit_inline(
                         line,
                         child_ctx.resolve(),
                         RevealState::Revealed,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 }
             } else {
-                hide_range(out.hidden, out.accounted, content, starts, m.open);
+                hide_range(content, starts, m.open, out);
                 emit_inlines(content, starts, &m.children, child_ctx, out);
-                hide_range(out.hidden, out.accounted, content, starts, m.close);
+                hide_range(content, starts, m.close, out);
             }
         }
         Inline::Code(m) => {
@@ -110,12 +108,11 @@ fn emit_inline(
                         line,
                         code_scope(),
                         RevealState::Revealed,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 }
             } else {
-                hide_range(out.hidden, out.accounted, content, starts, m.open());
+                hide_range(content, starts, m.open(), out);
                 for &line in m.inner_lines() {
                     push_span_split_by_line(
                         content,
@@ -123,11 +120,10 @@ fn emit_inline(
                         line,
                         code_scope(),
                         RevealState::Rendered,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 }
-                hide_range(out.hidden, out.accounted, content, starts, m.close());
+                hide_range(content, starts, m.close(), out);
             }
         }
         Inline::Link(m) => {
@@ -141,13 +137,12 @@ fn emit_inline(
                         line,
                         link_scope(),
                         RevealState::Revealed,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 }
             } else {
                 let (open, close) = link_delims(m.range, &m.text);
-                hide_range(out.hidden, out.accounted, content, starts, open);
+                hide_range(content, starts, open, out);
                 emit_inlines(
                     content,
                     starts,
@@ -155,7 +150,7 @@ fn emit_inline(
                     StyleCtx::Override(link_scope()),
                     out,
                 );
-                hide_range(out.hidden, out.accounted, content, starts, close);
+                hide_range(content, starts, close, out);
             }
         }
         Inline::WikiLink(m) => {
@@ -166,8 +161,7 @@ fn emit_inline(
                     m.range,
                     link_scope(),
                     RevealState::Revealed,
-                    out.spans,
-                    out.accounted,
+                    out,
                 );
             } else {
                 let open = ByteRange::new(
@@ -176,17 +170,16 @@ fn emit_inline(
                 );
                 let close =
                     ByteRange::new(m.label.end.max(m.range.start).min(m.range.end), m.range.end);
-                hide_range(out.hidden, out.accounted, content, starts, open);
+                hide_range(content, starts, open, out);
                 push_span_split_by_line(
                     content,
                     starts,
                     m.label,
                     link_scope(),
                     RevealState::Rendered,
-                    out.spans,
-                    out.accounted,
+                    out,
                 );
-                hide_range(out.hidden, out.accounted, content, starts, close);
+                hide_range(content, starts, close, out);
             }
         }
         Inline::Image(m) => {
@@ -198,8 +191,7 @@ fn emit_inline(
                         line,
                         image_scope(),
                         RevealState::Revealed,
-                        out.spans,
-                        out.accounted,
+                        out,
                     );
                 }
             } else {
@@ -216,17 +208,16 @@ fn emit_inline(
                 );
                 let close =
                     ByteRange::new(label.end.max(m.range.start).min(m.range.end), m.range.end);
-                hide_range(out.hidden, out.accounted, content, starts, open);
+                hide_range(content, starts, open, out);
                 push_span_split_by_line(
                     content,
                     starts,
                     label,
                     image_scope(),
                     RevealState::Rendered,
-                    out.spans,
-                    out.accounted,
+                    out,
                 );
-                hide_range(out.hidden, out.accounted, content, starts, close);
+                hide_range(content, starts, close, out);
             }
         }
     }
