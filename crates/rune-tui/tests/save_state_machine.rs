@@ -215,11 +215,9 @@ fn close_mid_save_leaves_no_state() {
             &mut app,
             Msg::Db(DbEvent::Ok {
                 id: prep_op,
-                result: rune_db::OpOutcome::MaterializePrep(Box::new(rune_db::MaterializePrep {
-                    expect_hash: String::new(),
-                    bound_path: None,
-                    sync: None,
-                })),
+                result: rune_db::OpOutcome::MaterializePrep(Box::new(
+                    rune_db::MaterializePrep::Create,
+                )),
             }),
         );
         if let Some(cmd) = cmd {
@@ -231,10 +229,9 @@ fn close_mid_save_leaves_no_state() {
                 &mut app,
                 Msg::Db(DbEvent::Ok {
                     id: record_op,
-                    result: rune_db::OpOutcome::Materialize(Box::new(rune_db::MatResult {
-                        committed: true,
-                        ..Default::default()
-                    })),
+                    result: rune_db::OpOutcome::Materialize(Box::new(
+                        rune_db::MatResult::Committed { saved: None },
+                    )),
                 }),
             );
         }

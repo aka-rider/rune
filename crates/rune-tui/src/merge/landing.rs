@@ -5,7 +5,7 @@
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::{CursorId, CursorSet};
-use rune_db::{AncestorRung, MergePrepResult, ObsId, SyncKind};
+use rune_db::{MergePrepOutcome, MergePrepResult, ObsId, SyncKind};
 
 use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
@@ -69,17 +69,17 @@ pub(crate) fn handle_merge_prep_ack(
     // bounded re-probe — never serve an unstable/unconfirmed Theirs. Distinct
     // from the F4 refusal below: this is disk actively changing, not a
     // `classify_sync` inconsistency.
-    if prep.unstable {
+    let MergePrepOutcome::Ready { ancestor, theirs } = prep.outcome else {
         app.merge = MergeState::Inactive;
         messages::error(app, "disk is changing — try again");
         return;
-    }
+    };
 
     // Review fix F4: `sync.kind` claiming `DiskAhead`/`Diverged` with no
     // `theirs` version at all is an inconsistency `classify_sync` should
     // never produce — surfaced as a clean refusal, no `0`/empty-`Vec`
     // sentinel standing in for "absent" to unwrap past.
-    let (Some(theirs_bytes), Some(theirs_obs)) = (prep.theirs.clone(), prep.theirs_obs) else {
+    let Some((theirs_obs, theirs_bytes)) = theirs else {
         app.merge = MergeState::Inactive;
         messages::error(app, "merge unavailable — no disk version to merge against");
         return;
@@ -100,23 +100,15 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     }
 
-    // `ancestor_rung` is the single source of truth for whether there IS an
-    // ancestor to read at all — `Absent` always takes the honest 2-way path
-    // below regardless of what `prep.ancestor` happens to hold; `ancestor`
-    // itself stays only the bytes carrier for the `Lineage`/`SessionScoped`
-    // rungs, decoded here.
-    let ancestor_text = match prep.ancestor_rung {
-        AncestorRung::Absent => None,
-        AncestorRung::Lineage | AncestorRung::SessionScoped => match &prep.ancestor {
-            Some(bytes) => match String::from_utf8(bytes.clone()) {
-                Ok(text) => Some(text),
-                Err(_) => {
-                    app.merge = MergeState::Inactive;
-                    messages::error(app, UTF8_REFUSAL);
-                    return;
-                }
-            },
-            None => None,
+    let ancestor_text = match ancestor {
+        None => None,
+        Some((_rung, bytes)) => match String::from_utf8(bytes) {
+            Ok(text) => Some(text),
+            Err(_) => {
+                app.merge = MergeState::Inactive;
+                messages::error(app, UTF8_REFUSAL);
+                return;
+            }
         },
     };
 
@@ -380,11 +372,10 @@ mod tests {
                 },
                 theirs: None,
             },
-            ancestor: None,
-            ancestor_rung: rune_db::AncestorRung::Absent,
-            theirs: None,
-            theirs_obs: None,
-            unstable: false,
+            outcome: MergePrepOutcome::Ready {
+                ancestor: None,
+                theirs: None,
+            },
         };
 
         let mut effects = Effects::default();
@@ -411,11 +402,10 @@ mod tests {
                 },
                 theirs: None,
             },
-            ancestor: None,
-            ancestor_rung: rune_db::AncestorRung::Absent,
-            theirs: Some(theirs.to_vec()),
-            theirs_obs: Some(theirs_obs),
-            unstable: false,
+            outcome: MergePrepOutcome::Ready {
+                ancestor: None,
+                theirs: Some((theirs_obs, theirs.to_vec())),
+            },
         }
     }
 
@@ -489,11 +479,10 @@ mod tests {
                 },
                 theirs: None,
             },
-            ancestor: None,
-            ancestor_rung: rune_db::AncestorRung::Absent,
-            theirs: None,
-            theirs_obs: None,
-            unstable: false,
+            outcome: MergePrepOutcome::Ready {
+                ancestor: None,
+                theirs: None,
+            },
         };
 
         let mut effects = Effects::default();

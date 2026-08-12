@@ -32,9 +32,10 @@ use crate::sync::SyncState;
 const MERGE_PREP_MAX_ATTEMPTS: u32 = 3;
 
 /// Which rung of the ancestor ladder (module doc) produced
-/// [`MergePrepResult::ancestor`] — so the caller can present the truth
-/// honestly instead of treating every `None` the same way `landing.rs`'s
-/// `unwrap_or("")` used to (silently substituting an empty ancestor).
+/// [`MergePrepOutcome::Ready`]'s `ancestor` — so the caller can present the
+/// truth honestly instead of treating every `None` the same way
+/// `landing.rs`'s `unwrap_or("")` used to (silently substituting an empty
+/// ancestor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AncestorRung {
     /// Walking the observations' own parent-edge lineage found a common
@@ -47,33 +48,23 @@ pub enum AncestorRung {
     /// or no intersecting edge) — today's fallback: `sync_with_theirs`'s
     /// own session-scoped, seq-correlated `ancestor_at` derivation.
     SessionScoped,
-    /// Neither rung produced anything: there is no ancestor to show.
-    Absent,
 }
 
 /// `MergePrep`'s result: the freshly classified [`SyncState`] plus the
-/// actual ancestor/theirs bytes it was classified from. `theirs`/
-/// `theirs_obs` are `Some` exactly when `sync.theirs` is `Some` — which
-/// `classify_sync` only ever produces for `DiskAhead`/`Diverged` — so
-/// `None` here while `sync.kind` claims one of those two is an
-/// inconsistency the caller must treat as a hard refusal (no `0`/
-/// empty-`Vec` sentinel standing in for "absent"), never silently unwrap
-/// past.
+/// outcome the fresh read reached.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergePrepResult {
     pub sync: SyncState,
-    pub ancestor: Option<Vec<u8>>,
-    /// Which rung of the ladder [`Self::ancestor`] came from — `Absent`
-    /// exactly when `ancestor` is `None`.
-    pub ancestor_rung: AncestorRung,
-    pub theirs: Option<Vec<u8>>,
-    pub theirs_obs: Option<ObsId>,
-    /// `true` when disk kept disagreeing with itself across every re-probe
-    /// attempt — `theirs`/`theirs_obs` are `None` even though `sync.kind`
-    /// may still claim a divergence, since an unconfirmed observation is
-    /// never served as Theirs. The caller must surface a distinct "disk is
-    /// changing" refusal, never an empty/unstable Theirs.
-    pub unstable: bool,
+    pub outcome: MergePrepOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MergePrepOutcome {
+    Unstable,
+    Ready {
+        ancestor: Option<(AncestorRung, Vec<u8>)>,
+        theirs: Option<(ObsId, Vec<u8>)>,
+    },
 }
 
 /// Whether `sync`'s theirs fact, if it names an observation at all, is
@@ -111,33 +102,28 @@ pub fn merge_prep(
     if !confirmed {
         return Ok(MergePrepResult {
             sync,
-            ancestor: None,
-            ancestor_rung: AncestorRung::Absent,
-            theirs: None,
-            theirs_obs: None,
-            unstable: true,
+            outcome: MergePrepOutcome::Unstable,
         });
     }
 
-    // `theirs`/`theirs_obs` stay `None` whenever `sync.theirs` is `None` —
-    // unreachable in practice with `kind` in `DiskAhead`/`Diverged`
-    // (`classify_sync`'s `None` branch only ever yields `Clean`/
-    // `BufferAhead`), which is exactly what the caller's authoritative gate
-    // checks before trusting either field.
+    // `theirs` stays `None` whenever `sync.theirs` is `None` — unreachable
+    // in practice with `kind` in `DiskAhead`/`Diverged` (`classify_sync`'s
+    // `None` branch only ever yields `Clean`/`BufferAhead`), which is
+    // exactly what the caller's authoritative gate checks before trusting
+    // it.
     let theirs_obs = sync.theirs.as_ref().and_then(|v| v.obs);
     let theirs = match &sync.theirs {
-        Some(version) => Some(blob::get_blob(conn, &version.hash)?),
+        Some(version) => {
+            let bytes = blob::get_blob(conn, &version.hash)?;
+            theirs_obs.map(|obs| (obs, bytes))
+        }
         None => None,
     };
-    let (ancestor, ancestor_rung) = resolve_ancestor(conn, session_id, doc_id, &sync, theirs_obs)?;
+    let ancestor = resolve_ancestor(conn, session_id, doc_id, &sync, theirs_obs)?;
 
     Ok(MergePrepResult {
         sync,
-        ancestor,
-        ancestor_rung,
-        theirs,
-        theirs_obs,
-        unstable: false,
+        outcome: MergePrepOutcome::Ready { ancestor, theirs },
     })
 }
 
@@ -154,7 +140,7 @@ fn resolve_ancestor(
     doc_id: i64,
     sync: &SyncState,
     theirs_obs: Option<ObsId>,
-) -> Result<(Option<Vec<u8>>, AncestorRung), Error> {
+) -> Result<Option<(AncestorRung, Vec<u8>)>, Error> {
     let baseline = retry::with_retry(conn, |tx| {
         observation::saved_obs_for(tx, session_id, doc_id)
     })?;
@@ -163,18 +149,16 @@ fn resolve_ancestor(
             crate::lineage::common_ancestor(tx, baseline.id, theirs_id)
         })?;
         if let Some(node) = lca {
-            return Ok((
-                Some(blob::get_blob(conn, &node.blob_hash)?),
-                AncestorRung::Lineage,
-            ));
+            let bytes = blob::get_blob(conn, &node.blob_hash)?;
+            return Ok(Some((AncestorRung::Lineage, bytes)));
         }
     }
     match &sync.ancestor {
-        Some(version) => Ok((
-            Some(blob::get_blob(conn, &version.hash)?),
-            AncestorRung::SessionScoped,
-        )),
-        None => Ok((None, AncestorRung::Absent)),
+        Some(version) => {
+            let bytes = blob::get_blob(conn, &version.hash)?;
+            Ok(Some((AncestorRung::SessionScoped, bytes)))
+        }
+        None => Ok(None),
     }
 }
 
@@ -260,8 +244,13 @@ mod tests {
             result.sync.ancestor, None,
             "the session-scoped rung must find nothing"
         );
-        assert_eq!(result.ancestor, Some(b"baseline content".to_vec()));
-        assert_eq!(result.ancestor_rung, AncestorRung::Lineage);
+        let MergePrepOutcome::Ready { ancestor, .. } = result.outcome else {
+            unreachable!("expected Ready");
+        };
+        assert_eq!(
+            ancestor,
+            Some((AncestorRung::Lineage, b"baseline content".to_vec()))
+        );
     }
 
     /// Plan WP3 "Done when" (a): a diverged fixture's `MergePrep` reports
@@ -305,9 +294,13 @@ mod tests {
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
         assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
-        assert_eq!(result.theirs, Some(b"theirs content".to_vec()));
-        assert!(result.theirs_obs.is_some_and(|obs| obs > 0));
-        assert_eq!(result.ancestor, None, "no prior ancestor-eligible sighting");
+        let MergePrepOutcome::Ready { ancestor, theirs } = result.outcome else {
+            unreachable!("expected Ready");
+        };
+        let (theirs_obs, theirs_bytes) = theirs.expect("theirs must be present");
+        assert_eq!(theirs_bytes, b"theirs content".to_vec());
+        assert!(theirs_obs > 0);
+        assert_eq!(ancestor, None, "no prior ancestor-eligible sighting");
     }
 
     /// Plan WP3 "Done when" (b): a `DiskAhead` document (clean buffer, disk
@@ -360,15 +353,19 @@ mod tests {
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
         assert_eq!(result.sync.kind, crate::sync::SyncKind::DiskAhead);
-        assert_eq!(result.theirs, Some(b"disk moved on".to_vec()));
+        let MergePrepOutcome::Ready { theirs, .. } = result.outcome else {
+            unreachable!("expected Ready");
+        };
+        let (_, theirs_bytes) = theirs.expect("theirs must be present");
+        assert_eq!(theirs_bytes, b"disk moved on".to_vec());
     }
 
     /// Task WP-A(2ii): a persistently unconfirmed disk state (the file
     /// keeps changing across every re-probe attempt) must never be served as
-    /// Theirs — `merge_prep` reports `unstable: true` with `theirs`/
-    /// `theirs_obs` both `None`, never an empty/unstable Theirs. Driven
-    /// through `Mem::mutate_after_next_stat`, re-armed after each of the
-    /// bounded retry attempts so the bracket never settles.
+    /// Theirs — `merge_prep` reports `MergePrepOutcome::Unstable`, never an
+    /// empty/unstable Theirs. Driven through `Mem::mutate_after_next_stat`,
+    /// re-armed after each of the bounded retry attempts so the bracket
+    /// never settles.
     #[test]
     fn merge_prep_reports_unstable_when_disk_keeps_disagreeing_with_itself() {
         let mut conn = open();
@@ -411,20 +408,18 @@ mod tests {
 
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
-        assert!(
-            result.unstable,
+        assert_eq!(
+            result.outcome,
+            MergePrepOutcome::Unstable,
             "a persistently unconfirmed disk must report unstable"
         );
-        assert_eq!(result.theirs, None);
-        assert_eq!(result.theirs_obs, None);
     }
 
     /// Review fix F4: an untitled document (`path` is empty — `probe::probe`
     /// degrades to a pure `sync::sync` with nothing to read from disk at
     /// all) with no recorded observation has no `theirs` version — `Clean`
-    /// via `classify_sync`'s `theirs: None` branch. `theirs`/`theirs_obs`
-    /// come back `None` too, not an empty `Vec`/`0` sentinel standing in
-    /// for "absent".
+    /// via `classify_sync`'s `theirs: None` branch. `theirs` comes back
+    /// `None` too, not an empty `Vec`/`0` sentinel standing in for "absent".
     #[test]
     fn merge_prep_on_an_untitled_document_returns_no_theirs() {
         let mut conn = open();
@@ -442,8 +437,10 @@ mod tests {
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
         assert_eq!(result.sync.kind, crate::sync::SyncKind::Clean);
-        assert_eq!(result.theirs, None);
-        assert_eq!(result.theirs_obs, None);
+        let MergePrepOutcome::Ready { theirs, .. } = result.outcome else {
+            unreachable!("expected Ready");
+        };
+        assert_eq!(theirs, None);
     }
 
     /// A legitimate external tool condensing a large file to a fraction of
@@ -479,11 +476,16 @@ mod tests {
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
 
-        assert!(
-            !result.unstable,
+        assert_ne!(
+            result.outcome,
+            MergePrepOutcome::Unstable,
             "a stable, legitimate shrink must resolve, not stay unstable forever"
         );
         assert_eq!(result.sync.kind, crate::sync::SyncKind::DiskAhead);
-        assert_eq!(result.theirs, Some(b"short".to_vec()));
+        let MergePrepOutcome::Ready { theirs, .. } = result.outcome else {
+            unreachable!("expected Ready");
+        };
+        let (_, theirs_bytes) = theirs.expect("theirs must be present");
+        assert_eq!(theirs_bytes, b"short".to_vec());
     }
 }

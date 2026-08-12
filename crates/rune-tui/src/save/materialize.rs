@@ -68,7 +68,12 @@ pub(super) fn materialize_now(
     };
     let expect_obs = binding.expect_obs;
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.materialize_prepare(db_id, expect_obs, bind_new);
+    let target = if bind_new {
+        rune_db::MaterializeTarget::BindNew
+    } else {
+        rune_db::MaterializeTarget::Existing { expect: expect_obs }
+    };
+    let result = db.store.materialize_prepare(db_id, target);
 
     match result {
         Ok(op_id) => {
@@ -145,14 +150,16 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     let content: Arc<str> = Arc::from(doc.buffer.content());
     let Some(db) = app.db.as_ref() else { return };
     // `expect`/CAS never applies on the create path — `prepare_materialize`
-    // returns an empty `MaterializePrep` for `bind_new` and the caller-side
+    // returns `MaterializePrep::Create` for `BindNew` and the caller-side
     // `vfs` work skips the read/hash-compare accordingly.
     let seq = app
         .doc(id)
         .and_then(|d| d.doc_db())
         .map(|d| d.last_known_seq)
         .unwrap_or(0);
-    let result = db.store.materialize_prepare(db_id, 0, true);
+    let result = db
+        .store
+        .materialize_prepare(db_id, rune_db::MaterializeTarget::BindNew);
 
     match result {
         Ok(op_id) => {

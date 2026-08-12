@@ -8,6 +8,7 @@ use std::path::Path;
 use rune_vfs::Stat;
 
 use crate::Error;
+use crate::materialize::MaterializeTarget;
 use crate::observation::ObsId;
 use crate::store::Store;
 use crate::writer::OpKind;
@@ -193,14 +194,12 @@ impl Store {
     pub fn materialize_prepare(
         &self,
         doc_id: i64,
-        expect: ObsId,
-        bind_new: bool,
+        target: MaterializeTarget,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MaterializePrepare {
             session_id: self.session_id,
             doc_id,
-            expect,
-            bind_new,
+            target,
         })
     }
 

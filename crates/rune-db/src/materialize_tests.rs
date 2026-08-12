@@ -57,19 +57,31 @@ fn prepare_materialize_is_vfs_free_and_returns_the_bound_path_and_expect_hash() 
     let doc_id = seed_doc_with_path(&conn, "/doc.md");
     let expect = record_obs(&conn, doc_id, session_id, "original");
 
-    let prep = prepare_materialize(&mut conn, DocSession { doc_id, session_id }, expect, false)
-        .expect("prepare");
-    assert_eq!(prep.bound_path.as_deref(), Some("/doc.md"));
-    assert_eq!(prep.expect_hash, observation::hash_bytes(b"original"));
+    let prep = prepare_materialize(
+        &mut conn,
+        DocSession { doc_id, session_id },
+        MaterializeTarget::Existing { expect },
+    )
+    .expect("prepare");
+    let (bound_path, expect_hash) = match prep {
+        MaterializePrep::Overwrite {
+            bound_path,
+            expect_hash,
+            ..
+        } => (bound_path, expect_hash),
+        MaterializePrep::Create => unreachable!("expected Overwrite, got Create"),
+    };
+    assert_eq!(bound_path, "/doc.md");
+    assert_eq!(expect_hash, observation::hash_bytes(b"original"));
 }
 
-/// `bind_new=true` skips the bound-path/CAS-baseline lookup entirely —
+/// `BindNew` skips the bound-path/CAS-baseline lookup entirely —
 /// `materialize_create`'s original shape never consulted `expect`.
 #[test]
-fn prepare_materialize_bind_new_is_a_pure_default_no_query() {
+fn prepare_materialize_create_target_is_a_pure_no_query() {
     let mut conn = open();
     // No document row at all — if `prepare_materialize` tried to read
-    // one for `bind_new`, this would error instead of returning
+    // one for `BindNew`, this would error instead of returning
     // cleanly.
     let prep = prepare_materialize(
         &mut conn,
@@ -77,11 +89,10 @@ fn prepare_materialize_bind_new_is_a_pure_default_no_query() {
             doc_id: 999,
             session_id: 999,
         },
-        0,
-        true,
+        MaterializeTarget::BindNew,
     )
-    .expect("prepare bind_new");
-    assert_eq!(prep, MaterializePrep::default());
+    .expect("prepare BindNew");
+    assert_eq!(prep, MaterializePrep::Create);
 }
 
 /// An untitled document (empty bound path) must refuse rather than
@@ -94,8 +105,12 @@ fn prepare_materialize_refuses_an_untitled_document() {
     let doc_id = seed_doc_with_path(&conn, "");
     let expect = record_obs(&conn, doc_id, session_id, "irrelevant");
 
-    let err = prepare_materialize(&mut conn, DocSession { doc_id, session_id }, expect, false)
-        .expect_err("untitled document must refuse");
+    let err = prepare_materialize(
+        &mut conn,
+        DocSession { doc_id, session_id },
+        MaterializeTarget::Existing { expect },
+    )
+    .expect_err("untitled document must refuse");
     assert!(matches!(err, Error::Invalid(_)));
 }
 
@@ -128,8 +143,9 @@ fn record_materialize_outcome_conflict_records_fresh_and_never_commits() {
     )
     .expect("record conflict");
 
-    assert!(!result.committed);
-    let fresh = result.fresh.expect("fresh observation recorded");
+    let MatResult::Refused { fresh } = result else {
+        unreachable!("expected Refused");
+    };
     assert_eq!(fresh.origin, "probe");
     assert_eq!(
         fresh.blob_hash,
@@ -167,7 +183,9 @@ fn record_materialize_outcome_conflict_unconfirmed_records_confirmed_false() {
     )
     .expect("record conflict");
 
-    let fresh = result.fresh.expect("fresh observation recorded");
+    let MatResult::Refused { fresh } = result else {
+        unreachable!("expected Refused");
+    };
     assert_eq!(fresh.confirmed, Some(false));
 }
 
@@ -198,8 +216,10 @@ fn record_materialize_outcome_committed_records_save_and_rebinds() {
     )
     .expect("record committed");
 
-    assert!(result.committed);
-    let saved = result.saved.expect("saved observation recorded");
+    let MatResult::Committed { saved } = result else {
+        unreachable!("expected Committed");
+    };
+    let saved = saved.expect("saved observation recorded");
     assert_eq!(saved.origin, "save");
     assert_eq!(saved.seq, Some(7));
     assert_eq!(saved.blob_hash, observation::hash_bytes(b"new content"));
@@ -244,16 +264,17 @@ fn record_materialize_outcome_raced_records_both_displaced_and_committed() {
     )
     .expect("record raced");
 
-    assert!(result.committed);
-    assert!(result.raced);
-    let fresh = result.fresh.expect("displaced bytes recorded");
-    assert_eq!(fresh.origin, "swap");
-    assert_eq!(fresh.blob_hash, observation::hash_bytes(b"racer bytes"));
-    let saved = result.saved.expect("our write recorded");
+    let MatResult::CommittedRaced { saved, displaced } = result else {
+        unreachable!("expected CommittedRaced");
+    };
+    assert_eq!(displaced.origin, "swap");
+    assert_eq!(displaced.blob_hash, observation::hash_bytes(b"racer bytes"));
     assert_eq!(saved.blob_hash, observation::hash_bytes(b"our content"));
 
-    let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
-        .expect("racer bytes durably stored as a blob");
+    let blob = retry::with_retry(&mut conn, |tx| {
+        crate::blob::get_blob(tx, &displaced.blob_hash)
+    })
+    .expect("racer bytes durably stored as a blob");
     assert_eq!(blob, b"racer bytes");
 }
 
@@ -282,7 +303,9 @@ fn record_materialize_outcome_conflict_with_non_utf8_bytes_captures_them_byte_ex
     )
     .expect("record conflict with non-utf8 bytes");
 
-    let fresh = result.fresh.expect("fresh observation recorded");
+    let MatResult::Refused { fresh } = result else {
+        unreachable!("expected Refused");
+    };
     let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
         .expect("non-utf8 bytes must still be durably stored as a blob");
     assert_eq!(blob, racer_bytes);

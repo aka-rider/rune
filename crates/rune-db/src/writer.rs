@@ -390,14 +390,12 @@ fn execute_op(
         OpKind::MaterializePrepare {
             session_id,
             doc_id,
-            expect,
-            bind_new,
+            target,
         } => {
             let prep = crate::materialize::prepare_materialize(
                 conn,
                 crate::materialize::DocSession { doc_id, session_id },
-                expect,
-                bind_new,
+                target,
             )?;
             Ok(OpOutcome::MaterializePrep(Box::new(prep)))
         }

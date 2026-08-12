@@ -114,14 +114,7 @@ fn record_outcome(
         // (`published`); either way there is nothing left to record it
         // against, so finish exactly as a committed/refused ack would.
         if published {
-            handle_materialize_ack(
-                app,
-                id,
-                MatResult {
-                    committed: true,
-                    ..Default::default()
-                },
-            );
+            handle_materialize_ack(app, id, MatResult::Committed { saved: None });
         } else {
             fail_materialize_locally(app, id, "save failed: recovery store unavailable");
         }
@@ -157,14 +150,7 @@ fn record_outcome(
                 // (resolving this document's `save` back to `Idle`) so the
                 // subsequent whole-store degrade doesn't also flag it as a
                 // failed save.
-                handle_materialize_ack(
-                    app,
-                    id,
-                    MatResult {
-                        committed: true,
-                        ..Default::default()
-                    },
-                );
+                handle_materialize_ack(app, id, MatResult::Committed { saved: None });
             }
             on_store_failure(app, e.to_string());
         }
@@ -247,14 +233,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
         }
     }
     for id in resolved_committed {
-        handle_materialize_ack(
-            app,
-            id,
-            MatResult {
-                committed: true,
-                ..Default::default()
-            },
-        );
+        handle_materialize_ack(app, id, MatResult::Committed { saved: None });
     }
     if abandoned_any {
         messages::error(app, format!("save failed: {error}"));

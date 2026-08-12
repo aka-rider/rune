@@ -11,7 +11,7 @@ use rune_core::cursor::Cursor;
 use rune_vfs::Stat;
 
 use crate::load::LoadResult;
-use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep};
+use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
 use crate::merge_prep::MergePrepResult;
 use crate::observation::{ObsId, Observation};
 use crate::rename::RenameOutcome;
@@ -163,8 +163,7 @@ pub enum OpKind {
     MaterializePrepare {
         session_id: i64,
         doc_id: i64,
-        expect: ObsId,
-        bind_new: bool,
+        target: MaterializeTarget,
     },
     /// The recording half of `Materialize`: records what the caller's own
     /// `vfs` work concluded

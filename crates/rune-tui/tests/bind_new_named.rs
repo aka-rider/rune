@@ -383,7 +383,7 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
 /// internal test module, A2 — the observable property is "the next ⌘S
 /// still writes the file", not the document's replica internal shape): `record_outcome`'s
 /// "the store vanished entirely mid-flight" synthetic-commit arm builds a
-/// `MatResult { committed: true, ..Default::default() }` — `saved: None`.
+/// `MatResult::Committed { saved: None }`.
 /// With no store left to re-baseline from, the document's binding must be
 /// dropped rather than left standing with a stale `expect_obs` that would
 /// make the very next save's `materialize_prepare` immediately `NotFound`.

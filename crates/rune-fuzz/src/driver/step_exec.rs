@@ -215,13 +215,6 @@ pub(super) fn step_and_check(
             .note_prepare_ack(&msg, *doc, step_index);
     }
 
-    if let Some(v) = invariant::merge_theirs_confirmed(&msg) {
-        outcome.violation = Some(v);
-        outcome.final_snapshot = Some(prev.clone());
-        outcome.final_ctx = None;
-        return true;
-    }
-
     let effects = match run_update_catching_panic(&mut state.app, msg) {
         Ok(effects) => effects,
         Err(violation) => {

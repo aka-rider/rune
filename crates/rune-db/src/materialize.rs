@@ -41,9 +41,11 @@ use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
 use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
 
-pub use crate::materialize_types::{DocSession, MatResult, MaterializeOutcome, MaterializePrep};
+pub use crate::materialize_types::{
+    DocSession, MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget,
+};
 
-/// Step 1 (now caller-facing): fetches the decision data for a `!bind_new`
+/// Step 1 (now caller-facing): fetches the decision data for an `Existing`
 /// materialize attempt — the bound path to check the caller's own target
 /// against, the baseline hash to CAS-compare the live target against, and
 /// this session's own [`crate::sync::sync`] classification, all read in ONE
@@ -56,12 +58,12 @@ pub use crate::materialize_types::{DocSession, MatResult, MaterializeOutcome, Ma
 pub fn prepare_materialize(
     conn: &mut Connection,
     ds: DocSession,
-    expect: ObsId,
-    bind_new: bool,
+    target: MaterializeTarget,
 ) -> Result<MaterializePrep, Error> {
-    if bind_new {
-        return Ok(MaterializePrep::default());
-    }
+    let expect = match target {
+        MaterializeTarget::BindNew => return Ok(MaterializePrep::Create),
+        MaterializeTarget::Existing { expect } => expect,
+    };
 
     retry::with_retry(conn, |tx| {
         let db_path: String = tx.query_row(
@@ -77,10 +79,10 @@ pub fn prepare_materialize(
         }
         let expect_obs = observation::get_observation(tx, expect)?;
         let sync = crate::sync::sync(tx, ds.session_id, ds.doc_id)?;
-        Ok(MaterializePrep {
-            bound_path: Some(db_path),
+        Ok(MaterializePrep::Overwrite {
+            bound_path: db_path,
             expect_hash: expect_obs.blob_hash,
-            sync: Some(sync.kind),
+            sync: sync.kind,
         })
     })
 }
@@ -113,10 +115,7 @@ pub fn record_materialize_outcome(
         } => {
             let fresh =
                 record_fresh_from_stat(conn, ds, &data, origin, &stat, Some(confirmed), now)?;
-            Ok(MatResult {
-                fresh: Some(fresh),
-                ..Default::default()
-            })
+            Ok(MatResult::Refused { fresh })
         }
         MaterializeOutcome::Committed {
             data,
@@ -133,11 +132,7 @@ pub fn record_materialize_outcome(
                 reconciled: None,
             };
             let saved = commit_save_from_stat(conn, ds, facts, now)?;
-            Ok(MatResult {
-                committed: true,
-                saved: Some(saved),
-                ..Default::default()
-            })
+            Ok(MatResult::Committed { saved: Some(saved) })
         }
         MaterializeOutcome::Raced {
             data,
@@ -164,12 +159,9 @@ pub fn record_materialize_outcome(
                 reconciled: Some(fresh.id),
             };
             let saved = commit_save_from_stat(conn, ds, facts, now)?;
-            Ok(MatResult {
-                committed: true,
-                raced: true,
-                saved: Some(saved),
-                fresh: Some(fresh),
-                missing: false,
+            Ok(MatResult::CommittedRaced {
+                saved,
+                displaced: Box::new(fresh),
             })
         }
     }

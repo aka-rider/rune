@@ -42,12 +42,22 @@ pub(crate) fn handle_prepare_ack(
     if app.doc(id).and_then(|d| d.prep_op()) != Some(op_id) {
         return;
     }
-    if let Some(kind) = prep.sync.filter(|k| k.is_disk_divergent())
-        && app.doc(id).and_then(|d| d.preparing_mode()) == Some(SaveMode::Normal)
-    {
-        refuse_divergent_publish(app, id, kind);
-        return;
-    }
+    let (prep_expect_hash, bound_path) = match prep {
+        rune_db::MaterializePrep::Create => (String::new(), None),
+        rune_db::MaterializePrep::Overwrite {
+            bound_path,
+            expect_hash,
+            sync,
+        } => {
+            if sync.is_disk_divergent()
+                && app.doc(id).and_then(|d| d.preparing_mode()) == Some(SaveMode::Normal)
+            {
+                refuse_divergent_publish(app, id, sync);
+                return;
+            }
+            (expect_hash, Some(bound_path))
+        }
+    };
     // A baseline left unconfirmed by a prior commit whose observation was
     // lost (`FileBinding::pending_rebaseline_hash`'s own doc comment) stands
     // in for `expect_hash` here — the DB's own lookup would otherwise still
@@ -59,7 +69,7 @@ pub(crate) fn handle_prepare_ack(
     let expect_hash = app
         .doc_file_binding(id)
         .and_then(|b| b.pending_rebaseline_hash.clone())
-        .unwrap_or(prep.expect_hash);
+        .unwrap_or(prep_expect_hash);
     let Some(doc) = app.doc_mut(id) else { return };
     let Some((ticket, content, params)) = doc.begin_publishing() else {
         return;
@@ -72,7 +82,7 @@ pub(crate) fn handle_prepare_ack(
         content,
         params,
         expect_hash,
-        prep.bound_path,
+        bound_path,
     ));
 }
 
@@ -198,14 +208,7 @@ pub(crate) fn handle_materialize_vfs_done(
     match outcome {
         MaterializeVfsOutcome::Missing => {
             if live {
-                handle_materialize_ack(
-                    app,
-                    id,
-                    MatResult {
-                        missing: true,
-                        ..Default::default()
-                    },
-                );
+                handle_materialize_ack(app, id, MatResult::Missing);
             }
         }
         MaterializeVfsOutcome::PathDisagreement => {

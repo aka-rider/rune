@@ -149,7 +149,7 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: b
 }
 
 /// The re-baseline counterpart to [`load_document`]: same enqueue, but an
-/// error NEVER calls `on_store_failure` — used only by the `mat.committed`
+/// error NEVER calls `on_store_failure` — used only by the committed-outcome
 /// re-baseline in `materialize_ack::reactions`, which may run once per
 /// document inside a `DbEvent::Fatal` teardown loop still mid-flight over
 /// OTHER documents' own saves. Degrading the store from inside that loop

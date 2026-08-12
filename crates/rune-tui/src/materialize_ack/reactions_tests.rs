@@ -78,12 +78,8 @@ fn a_resolve_failure_on_the_racers_own_path_keeps_the_plain_refusal() {
     handle_materialize_ack(
         &mut app,
         id,
-        MatResult {
-            committed: false,
-            saved: None,
-            fresh: Some(racer_observation(row_id)),
-            missing: false,
-            raced: false,
+        MatResult::Refused {
+            fresh: racer_observation(row_id),
         },
     );
 
@@ -115,12 +111,8 @@ fn a_resolvable_racer_path_hands_off_to_a_load() {
     handle_materialize_ack(
         &mut app,
         id,
-        MatResult {
-            committed: false,
-            saved: None,
-            fresh: Some(racer_observation(row_id)),
-            missing: false,
-            raced: false,
+        MatResult::Refused {
+            fresh: racer_observation(row_id),
         },
     );
 
@@ -136,15 +128,11 @@ fn a_resolvable_racer_path_hands_off_to_a_load() {
 }
 
 fn committed_result(nlink: Option<i64>) -> MatResult {
-    MatResult {
-        committed: true,
+    MatResult::Committed {
         saved: Some(Observation {
             nlink,
             ..racer_observation(1)
         }),
-        fresh: None,
-        missing: false,
-        raced: false,
     }
 }
 

@@ -412,7 +412,7 @@ pub(crate) fn bootstrap_untitled_db(
 ///
 /// `expect_obs: 0` / `last_known_seq: 0` mirror `open::adopt_scratch_doc`'s
 /// own scratch binding: `prepare_materialize` short-circuits to
-/// `MaterializePrep::default()` on `bind_new`, so the fabricated `ObsId` is
+/// `MaterializePrep::Create` on `BindNew`, so the fabricated `ObsId` is
 /// never queried.
 ///
 /// Deliberately does not sweep other sessions' empty scratch rows the way

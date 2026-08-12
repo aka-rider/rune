@@ -82,10 +82,10 @@ pub use journal::{
 };
 pub use load::{LoadResult, has_history, load};
 pub use materialize::{
-    DocSession, MatResult, MaterializeOutcome, MaterializePrep, prepare_materialize,
-    record_materialize_outcome,
+    DocSession, MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget,
+    prepare_materialize, record_materialize_outcome,
 };
-pub use merge_prep::{AncestorRung, MergePrepResult};
+pub use merge_prep::{AncestorRung, MergePrepOutcome, MergePrepResult};
 pub use merge_state::{MergeCloseState, ResumableMerge};
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;

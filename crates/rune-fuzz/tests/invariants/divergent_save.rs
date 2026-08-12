@@ -34,12 +34,13 @@ fn committed_from(armed: &Snapshot) -> Snapshot {
     snap
 }
 
-fn prepare_ack(sync: Option<SyncKind>) -> Msg {
+fn prepare_ack(sync: SyncKind) -> Msg {
     Msg::Db(DbEvent::Ok {
         id: 1,
-        result: OpOutcome::MaterializePrep(Box::new(MaterializePrep {
+        result: OpOutcome::MaterializePrep(Box::new(MaterializePrep::Overwrite {
+            bound_path: String::new(),
+            expect_hash: String::new(),
             sync,
-            ..MaterializePrep::default()
         })),
     })
 }
@@ -51,11 +52,7 @@ fn divergent_save_tracker_detects_a_commit_the_prepare_verdict_forbade() {
     let armed = armed_from(&idle);
     assert_eq!(tracker.observe(&idle, &armed, &base_ctx()), None);
 
-    tracker.note_prepare_ack(
-        &prepare_ack(Some(SyncKind::Diverged)),
-        Some(base_active_id()),
-        2,
-    );
+    tracker.note_prepare_ack(&prepare_ack(SyncKind::Diverged), Some(base_active_id()), 2);
     let committed = committed_from(&armed);
     let v = tracker
         .observe(&armed, &committed, &base_ctx())
@@ -71,11 +68,7 @@ fn divergent_save_tracker_accepts_a_commit_the_disk_conflict_guard_authorized() 
     let armed = armed_from(&idle);
     assert_eq!(tracker.observe(&idle, &armed, &base_ctx()), None);
 
-    tracker.note_prepare_ack(
-        &prepare_ack(Some(SyncKind::Diverged)),
-        Some(base_active_id()),
-        2,
-    );
+    tracker.note_prepare_ack(&prepare_ack(SyncKind::Diverged), Some(base_active_id()), 2);
     let committed = committed_from(&armed);
     assert_eq!(
         tracker.observe(&armed, &committed, &base_ctx()),
@@ -92,7 +85,7 @@ fn divergent_save_tracker_accepts_a_commit_from_a_reconciled_verdict() {
     assert_eq!(tracker.observe(&idle, &armed, &base_ctx()), None);
 
     tracker.note_prepare_ack(
-        &prepare_ack(Some(SyncKind::BufferAhead)),
+        &prepare_ack(SyncKind::BufferAhead),
         Some(base_active_id()),
         2,
     );
@@ -114,7 +107,7 @@ fn divergent_save_tracker_ignores_a_stale_diverged_classification() {
     assert_eq!(tracker.observe(&idle, &armed, &base_ctx()), None);
 
     tracker.note_prepare_ack(
-        &prepare_ack(Some(SyncKind::BufferAhead)),
+        &prepare_ack(SyncKind::BufferAhead),
         Some(base_active_id()),
         2,
     );
@@ -134,11 +127,7 @@ fn divergent_save_tracker_accepts_an_attempt_that_never_committed() {
     let armed = armed_from(&idle);
     assert_eq!(tracker.observe(&idle, &armed, &base_ctx()), None);
 
-    tracker.note_prepare_ack(
-        &prepare_ack(Some(SyncKind::Diverged)),
-        Some(base_active_id()),
-        2,
-    );
+    tracker.note_prepare_ack(&prepare_ack(SyncKind::Diverged), Some(base_active_id()), 2);
     let mut refused = armed.clone();
     refused
         .save_in_flight_by_doc
@@ -163,11 +152,7 @@ fn divergent_save_tracker_reports_a_violation_while_another_save_arms() {
     let armed = armed_from(&idle);
     assert_eq!(tracker.observe(&idle, &armed, &base_ctx()), None);
 
-    tracker.note_prepare_ack(
-        &prepare_ack(Some(SyncKind::Diverged)),
-        Some(base_active_id()),
-        2,
-    );
+    tracker.note_prepare_ack(&prepare_ack(SyncKind::Diverged), Some(base_active_id()), 2);
     let mut committed = committed_from(&armed);
     committed.save_in_flight_by_doc.insert(other, true);
     let v = tracker

@@ -22,7 +22,7 @@ use crate::rename::{RenameOutcome, rebind};
 ///
 /// If step 3 fails the file is at `to` while the database still says
 /// `from`. That degrades safely: the next ⌘S CASes against a path that no
-/// longer exists and refuses with `MatResult{missing}` rather than writing
+/// longer exists and refuses with `MatResult::Missing` rather than writing
 /// anywhere unexpected.
 pub fn rename_bind(
     conn: &mut rusqlite::Connection,

@@ -5,7 +5,7 @@
 //! [`prepare_materialize`]: crate::materialize::prepare_materialize
 //! [`record_materialize_outcome`]: crate::materialize::record_materialize_outcome
 
-use crate::observation::{Observation, StatFacts};
+use crate::observation::{ObsId, Observation, StatFacts};
 use crate::sync::SyncKind;
 
 /// `doc_id`/`session_id` bundled together — every materialize operation
@@ -19,60 +19,45 @@ pub struct DocSession {
     pub session_id: i64,
 }
 
-/// The outcome of a materialize attempt, assembled by
-/// `record_materialize_outcome` (`missing` is set directly by the caller
-/// instead): `Missing`/`Fresh`-on-refusal/`Raced`
-/// stay mutually exclusive discriminants, never a shared sentinel
-/// (this crate's "Options for absent facts" rule).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MatResult {
-    pub committed: bool,
-    /// Meaningful when `committed` (an ordinary save OR a `raced` win).
-    pub saved: Option<Observation>,
-    /// Meaningful when `!committed && !missing`, OR `raced` (the
-    /// displaced/conflicting observation).
-    pub fresh: Option<Observation>,
-    /// `true` when `!committed` because the target doesn't exist and
-    /// `bind_new` was `false` (never silently (re)create). The
-    /// caller decides this entirely on its own vfs read; it is never
-    /// constructed by anything in this module.
-    pub missing: bool,
-    /// `true` when `committed` via a swap-race (F5): a writer raced inside
-    /// the atomic-swap window the caller performed, so the displaced bytes
-    /// differ from `expect`, but OUR bytes are already physically at the
-    /// target — this write commits for real, and the raced writer's
-    /// displaced bytes are ALSO surfaced (`fresh`, `origin='swap'`).
-    pub raced: bool,
+#[derive(Clone, Debug, PartialEq)]
+pub enum MatResult {
+    Committed {
+        saved: Option<Observation>,
+    },
+    CommittedRaced {
+        saved: Observation,
+        displaced: Box<Observation>,
+    },
+    Refused {
+        fresh: Observation,
+    },
+    Missing,
 }
 
-/// Bookkeeping-only decision data `prepare_materialize` hands the caller
-/// before any `vfs` call happens — no `vfs` call is made to produce this,
-/// only DB reads. `Default` (both fields empty) is exactly what `bind_new`
-/// needs: there is no bound path to disagree with, and `materialize_create`
-/// never consulted `expect` in the first place.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MaterializePrep {
-    /// `documents.path`, unresolved — the caller resolves both this and its
-    /// own target through its own `vfs` and refuses on disagreement (a
-    /// caller bug, not an ordinary CAS race — was `materialize`'s own
-    /// path-parameter check, [rune-db 5]). `None` when `bind_new` (nothing
-    /// to disagree with).
-    pub bound_path: Option<String>,
-    /// `expect`'s `blob_hash` — the CAS baseline the caller compares the
-    /// live target's hash against before writing. Empty when `bind_new`
-    /// (the create path never had a CAS baseline to compare).
-    pub expect_hash: String,
-    pub sync: Option<SyncKind>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterializeTarget {
+    BindNew,
+    Existing { expect: ObsId },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MaterializePrep {
+    Create,
+    Overwrite {
+        bound_path: String,
+        expect_hash: String,
+        sync: SyncKind,
+    },
 }
 
 /// What the caller's own `vfs` work concluded, carrying every disk-sourced
 /// fact `record_materialize_outcome` needs — this crate never calls `vfs`
 /// itself to re-derive any of it. A target that turned out `missing`
-/// (bind_new=false, `NotFound`) or a genuine I/O failure never reach this
+/// (`Existing`, `NotFound`) or a genuine I/O failure never reach this
 /// type at all: neither one has anything for the DB to record.
 pub enum MaterializeOutcome {
     /// The live target's hash disagreed with `expect` (an ordinary CAS
-    /// refusal), or a concurrent creator won a `bind_new` race — no write
+    /// refusal), or a concurrent creator won a `BindNew` race — no write
     /// was attempted; `data`/`stat` describe whatever is actually on disk
     /// now. `confirmed` carries the caller's own bracketed-read verdict
     /// (stat-read-stat around this exact `data`) — a read caught
