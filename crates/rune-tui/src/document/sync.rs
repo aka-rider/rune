@@ -6,7 +6,7 @@
 //! declared only in `document.rs`'s own `impl Document` block — it reads and
 //! writes the same public fields any other module would.
 
-use rune_core::coords::WrapPoint;
+use rune_core::coords::{DisplayRow, WrapPoint, WrapRow};
 use rune_core::cursor::Cursor;
 use rune_md::element::doc::ViewSnapshots;
 
@@ -116,7 +116,7 @@ impl Document {
             .reconcile(display_row, view.display.total_rows())
         {
             let wrap_row = view.display.display_to_wrap(target_row);
-            self.snap_cursor_to_row(view, wrap_row);
+            self.snap_cursor_to_row(view, wrap_row.0);
         }
     }
 
@@ -125,12 +125,12 @@ impl Document {
     /// needs. Both callers below depend on it being display-space: a
     /// document containing a table has border rows the wrap space knows
     /// nothing about.
-    fn cursor_display_row(&self, view: &ViewSnapshots) -> usize {
+    fn cursor_display_row(&self, view: &ViewSnapshots) -> DisplayRow {
         let primary = self.cursors.primary();
         let buffer_point = self.buffer.offset_to_line_col(primary.position);
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-        view.display.wrap_to_display(wrap_point.row)
+        view.display.wrap_to_display(WrapRow(wrap_point.row))
     }
 
     /// Whether the primary cursor's row lies inside the viewport's visible

@@ -31,7 +31,7 @@ pub(super) fn span_visible_len(span: &SyntaxSpan) -> usize {
 /// concatenation's own length) — the shared building block behind the
 /// free-function width walkers below, so both take a plain `&[SyntaxSpan]`
 /// rather than needing a whole `WrapSegment` to key off (WP3: a
-/// `DisplayRow`'s synthesised border spans have no backing `WrapSegment` at
+/// `SnapshotRow`'s synthesised border spans have no backing `WrapSegment` at
 /// all, only their own `spans`). The bounds feed straight into
 /// `next_grapheme` so these walkers draw cluster boundaries
 /// at the exact same byte positions the row's actual `Cell`s do — see that

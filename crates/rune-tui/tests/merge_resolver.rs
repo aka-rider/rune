@@ -15,6 +15,7 @@ mod merge_common;
 use std::path::Path;
 use std::sync::Arc;
 
+use rune_core::coords::DisplayRow;
 use rune_db::SyncKind;
 use rune_tui::app::App;
 use rune_tui::db::DbBridge;
@@ -337,7 +338,7 @@ fn bare_and_shift_arrows_still_scroll_without_nagging() {
 
     let posts_before = rune_tui::messages::posts(&app);
     press_key(&mut app, bare(KeyCode::Down));
-    assert_eq!(app.doc(doc_id).unwrap().viewport.scroll_row, 1);
+    assert_eq!(app.doc(doc_id).unwrap().viewport.scroll_row, DisplayRow(1));
     assert_eq!(
         rune_tui::messages::posts(&app),
         posts_before,
@@ -350,14 +351,17 @@ fn bare_and_shift_arrows_still_scroll_without_nagging() {
     };
     press_key(&mut app, chord(KeyCode::Down, shift));
     let scroll_after_shift = app.doc(doc_id).unwrap().viewport.scroll_row;
-    assert!(scroll_after_shift > 1, "shift-down must also scroll");
+    assert!(
+        scroll_after_shift > DisplayRow(1),
+        "shift-down must also scroll"
+    );
     assert_eq!(
         rune_tui::messages::posts(&app),
         posts_before,
         "no nag on scroll"
     );
 
-    let max_row = app.doc_mut(doc_id).unwrap().view().display.total_rows() - 1;
+    let max_row = DisplayRow(app.doc_mut(doc_id).unwrap().view().display.total_rows() - 1);
     while app.doc(doc_id).unwrap().viewport.scroll_row < max_row {
         press_key(&mut app, bare(KeyCode::Down));
     }

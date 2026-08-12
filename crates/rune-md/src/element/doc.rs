@@ -92,7 +92,7 @@ pub struct DocMachine {
     images: ImageDims,
     /// `(width, rows)` an image DOCUMENT's producer reserves — read only
     /// when `kind == DocumentKind::Image`. `rows` is the number of
-    /// synthetic `DisplayRow`s `rebuild` synthesizes in place of the
+    /// synthetic `SnapshotRow`s `rebuild` synthesizes in place of the
     /// ordinary emit/wrap pipeline; `width` is carried onto each row's
     /// `ImageRowRef` for the renderer. Defaults to `(0, 1)` — one row,
     /// nothing known about width yet — so an image document that has not

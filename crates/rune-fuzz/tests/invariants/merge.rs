@@ -6,6 +6,7 @@
 //! checker is called DIRECTLY, never through `invariant::check_all`, so
 //! first-wins ordering can never mask a case.
 
+use rune_core::coords::DisplayRow;
 use rune_fuzz::invariant::{
     RedivergenceTracker, merge_doc_active, merge_key_feedback, merge_save_blocked,
     merge_title_cleared,
@@ -183,7 +184,7 @@ fn merge_key_feedback_accepts_a_scroll_change() {
     prev.merge_active = true;
     prev.focus = Pane::Editor;
     let mut next = prev.clone();
-    next.scroll_row = 3;
+    next.scroll_row = DisplayRow(3);
     let ctx = plain_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }

@@ -7,7 +7,7 @@
 //! one-cell left margin when live, blank cells reserving its layout while
 //! not yet live, or `None` (falling through to the row's own alt-text
 //! span) when Kitty isn't available at all. `build_rows` calls
-//! [`row_cells`] instead of `segment_cells` for any row whose `DisplayRow`
+//! [`row_cells`] instead of `segment_cells` for any row whose `SnapshotRow`
 //! carries an `ImageRowRef` (the marker either the whole-document image
 //! producer or, for an embed, `expand_images` sets on every row it
 //! synthesizes).

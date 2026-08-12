@@ -55,6 +55,28 @@ pub struct WrapPoint {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DisplayRow(pub usize);
 
+impl std::ops::Add<usize> for DisplayRow {
+    type Output = DisplayRow;
+
+    fn add(self, rhs: usize) -> DisplayRow {
+        DisplayRow(self.0.saturating_add(rhs))
+    }
+}
+
+impl std::ops::Sub<usize> for DisplayRow {
+    type Output = DisplayRow;
+
+    fn sub(self, rhs: usize) -> DisplayRow {
+        DisplayRow(self.0.saturating_sub(rhs))
+    }
+}
+
+impl std::fmt::Display for DisplayRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DisplayPoint {
     /// Row relative to viewport top, in POST-expansion display-space.

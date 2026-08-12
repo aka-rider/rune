@@ -20,6 +20,7 @@ use ratatui::buffer::Buffer as RtBuffer;
 use ratatui::style::Modifier;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::{DisplayRow, WrapRow};
 use rune_core::cursor::CursorSet;
 use rune_tui::app::App;
 use rune_tui::pane::Pane;
@@ -143,18 +144,18 @@ fn caret_row_below_a_table_matches_wrap_to_display_of_its_wrap_row() {
     let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-    let expected_display_row = view.display.wrap_to_display(wrap_point.row);
+    let expected_display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
 
     let scroll_row = app.active_doc().viewport.scroll_row;
     assert!(
-        scroll_row > 0,
+        scroll_row > DisplayRow(0),
         "fixture must be long enough to force real scrolling, or this test is vacuous"
     );
 
     let buf = testgrid::draw(&app, WIDTH, HEIGHT);
     let actual_backend_row =
         caret_row(&buf, HEIGHT, WIDTH).expect("caret must be visible somewhere on screen");
-    let actual_display_row = (actual_backend_row - EDITOR_TOP_ROW) as usize + scroll_row;
+    let actual_display_row = scroll_row + (actual_backend_row - EDITOR_TOP_ROW) as usize;
 
     assert_eq!(
         actual_display_row, expected_display_row,

@@ -24,6 +24,7 @@
 
 mod messages_common;
 
+use rune_core::coords::WrapRow;
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_tui::app;
 use rune_tui::keymap::KeyCode;
@@ -194,7 +195,7 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
         .offset_to_line_col(doc.cursors.primary().position);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-    let display_row = view.display.wrap_to_display(wrap_point.row);
+    let display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
 
     assert!(
         display_row >= doc.viewport.scroll_row

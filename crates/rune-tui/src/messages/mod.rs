@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
+use rune_core::coords::DisplayRow;
 
 use crate::app::App;
 use crate::commands::clipboard::{extract_copy_text, write_to_clipboard_or_report};
@@ -350,7 +351,8 @@ pub fn sync(app: &mut App, width: u16, frame_height: u16) {
             .as_ref()
             .map(|v| v.display.total_rows())
             .unwrap_or(0);
-        app.messages.doc.viewport.scroll_row = total_rows.saturating_sub(height as usize);
+        app.messages.doc.viewport.scroll_row =
+            DisplayRow(total_rows.saturating_sub(height as usize));
     }
 }
 
@@ -367,11 +369,14 @@ fn scroll(app: &mut App, delta: isize) {
         .doc
         .view
         .as_ref()
-        .map(|v| v.display.total_rows().saturating_sub(1))
-        .unwrap_or(usize::MAX);
-    let current = app.messages.doc.viewport.scroll_row as isize;
-    let next = (current + delta).max(0) as usize;
-    app.messages.doc.viewport.scroll_row = next.min(max_row);
+        .map(|v| DisplayRow(v.display.total_rows().saturating_sub(1)))
+        .unwrap_or(DisplayRow(usize::MAX));
+    let scroll_row = app.messages.doc.viewport.scroll_row;
+    app.messages.doc.viewport.scroll_row = if delta >= 0 {
+        (scroll_row + delta as usize).min(max_row)
+    } else {
+        scroll_row - (-delta) as usize
+    };
 }
 
 /// The pane's own key handling, reached from stage 3 of the key pipeline

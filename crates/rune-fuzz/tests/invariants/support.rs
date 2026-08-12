@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
+use rune_core::coords::DisplayRow;
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_fuzz::snapshot::Snapshot;
 use rune_fuzz::step::{MsgTag, StepCtx};
@@ -147,7 +148,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         merge_pending: false,
         merge_doc: None,
         merge_unresolved: 0,
-        scroll_row: 0,
+        scroll_row: DisplayRow(0),
         display_name_by_doc: std::collections::BTreeMap::new(),
         active_last_sync: None,
         message_posts: 0,

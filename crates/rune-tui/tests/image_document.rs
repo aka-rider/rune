@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::DisplayRow;
 use rune_syntax::DocumentKind;
 use rune_tui::app::{App, update};
 use rune_tui::commands::nav_scroll;
@@ -97,7 +98,7 @@ fn a_known_reserved_row_count_is_visible_to_the_producer_and_scrollable() {
 
     let doc = app.doc_mut(id).expect("doc");
     nav_scroll::scroll_lines(doc, 1000);
-    assert_eq!(doc.viewport.scroll_row, n - 1);
+    assert_eq!(doc.viewport.scroll_row, DisplayRow(n - 1));
 }
 
 /// Plan WP4.S9: an image document's `file_path` is real, so without the
@@ -303,7 +304,7 @@ fn scrolling_a_live_image_document_clips_through_visible_rows() {
     nav_scroll::scroll_lines(doc, 1000);
     assert_eq!(
         doc.viewport.scroll_row,
-        total - 1,
+        DisplayRow(total - 1),
         "scrolling a Live image document must clip to the last reserved row, \
          exactly like WP4's info-card case"
     );

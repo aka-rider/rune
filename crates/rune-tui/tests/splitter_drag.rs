@@ -12,6 +12,7 @@ use std::sync::Arc;
 use ratatui::layout::Rect;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::DisplayRow;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::layout::{self, DEFAULT_LEFT_PANE_W, Geometry, MIN_CENTER_W, MIN_LEFT_PANE_W};
@@ -432,7 +433,7 @@ fn a_lost_button_up_does_not_latch_the_pointer_forever() {
 
     assert_eq!(
         app.active_doc().viewport.scroll_row,
-        3,
+        DisplayRow(3),
         "the wheel event must fall through to the editor, not be swallowed by a latched drag"
     );
 }

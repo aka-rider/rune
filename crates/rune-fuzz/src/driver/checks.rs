@@ -61,9 +61,9 @@ pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
         return Some(v);
     }
 
-    let scroll_before = app.active_doc().viewport.scroll_row;
+    let scroll_before = app.active_doc().viewport.scroll_row.0;
     app.sync_view();
-    let scroll_after = app.active_doc().viewport.scroll_row;
+    let scroll_after = app.active_doc().viewport.scroll_row.0;
     let rows_after = build_rows_or_empty(app);
     invariant::sync_idempotent(&production_rows, scroll_before, &rows_after, scroll_after)
 }

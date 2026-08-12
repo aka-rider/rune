@@ -4,7 +4,7 @@
 //! screen column corresponds to — the same cells `render::build_rows` just
 //! blitted, so a click always resolves to exactly what's on screen.
 
-use rune_core::coords::WrapPoint;
+use rune_core::coords::{DisplayRow, WrapPoint, WrapRow};
 use rune_md::element::doc::ViewSnapshots;
 
 use crate::app::App;
@@ -35,8 +35,8 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
     if total == 0 {
         return Some(0);
     }
-    let display_row = (doc.viewport.scroll_row + row as usize).min(total - 1);
-    let display_ref = view.display.rows().get(display_row);
+    let display_row = (doc.viewport.scroll_row + row as usize).min(DisplayRow(total - 1));
+    let display_ref = view.display.rows().get(display_row.0);
     if display_ref.is_some_and(|r| r.synthetic) {
         return None;
     }
@@ -76,12 +76,12 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
 /// The wrap segment `wrap_row`'s own first buffer position — what an image
 /// row's click resolves to (plan WP9.S3), since none of its placeholder
 /// cells carry a real one of their own to walk toward.
-fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: usize) -> usize {
+fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: WrapRow) -> usize {
     let content = doc.buffer.content();
     let syntax_point = view.wrap.wrap_to_syntax(
         content,
         WrapPoint {
-            row: wrap_row,
+            row: wrap_row.0,
             col: 0,
         },
     );
@@ -95,8 +95,8 @@ fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: usize) -> us
 fn offset_at_ordinary(
     doc: &Document,
     view: &ViewSnapshots,
-    display_row: usize,
-    wrap_row: usize,
+    display_row: DisplayRow,
+    wrap_row: WrapRow,
     content: &str,
     col: u16,
 ) -> Option<usize> {
@@ -112,14 +112,14 @@ fn offset_at_ordinary(
     let decor_width = view
         .display
         .rows()
-        .get(display_row)
+        .get(display_row.0)
         .map(crate::render::decor::decor_cell_width)
         .unwrap_or(0) as usize;
     let col = (col as usize).saturating_sub(decor_width) as u16;
 
     let mut acc = 0usize;
     let mut first_content_offset: Option<i64> = None;
-    if let Some(seg) = view.wrap.segments().get(wrap_row) {
+    if let Some(seg) = view.wrap.segments().get(wrap_row.0) {
         for cell in render::segment_geometry(content, &seg.spans) {
             if first_content_offset.is_none() && cell.buf_offset >= 0 {
                 first_content_offset = Some(cell.buf_offset);
@@ -144,11 +144,11 @@ fn offset_at_ordinary(
         }
     }
 
-    let seg_len = view.wrap.segment_len_at(wrap_row);
+    let seg_len = view.wrap.segment_len_at(wrap_row.0);
     let syntax_point = view.wrap.wrap_to_syntax(
         content,
         WrapPoint {
-            row: wrap_row,
+            row: wrap_row.0,
             col: seg_len,
         },
     );

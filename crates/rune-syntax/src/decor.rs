@@ -6,7 +6,7 @@
 //! text must stay byte-length-neutral with the buffer range it replaces, and
 //! several of these glyphs (nerd-font private-use-area codepoints, multi-cell
 //! bullets) cannot honor that constraint. `LineDecor` instead rides
-//! alongside a `SyntaxLine`, then a `WrapSegment`, then a `DisplayRow`, and
+//! alongside a `SyntaxLine`, then a `WrapSegment`, then a `SnapshotRow`, and
 //! is finally prefixed as cells with no buffer position at render time — the
 //! same `-1`-sentinel convention table chrome already uses.
 

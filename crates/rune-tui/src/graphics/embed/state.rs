@@ -1,7 +1,7 @@
 //! `EmbedState`/`EmbedSet` (plan WP9): the per-embed lifecycle state a
 //! markdown `Document` tracks for every live `![alt](x.png)`/`![[x.png]]`
 //! it contains, keyed by `ImageM::target_text` — the same raw string
-//! `rune_md::snapshot::ImageDims` (WP8) and `DisplayRow::image`'s own
+//! `rune_md::snapshot::ImageDims` (WP8) and `SnapshotRow::image`'s own
 //! `ImageRowRef::target` (plan WP9) key off, so the renderer, the
 //! reconciler and the row-reservation pass never disagree on which embed a
 //! key names.

@@ -15,7 +15,7 @@ use crate::app::App;
 /// `Snapshot.row_meta[i]` always describe the same row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowMeta {
-    /// Mirrors `DisplayRow::synthetic` (`rune_md::snapshot`) — a
+    /// Mirrors `SnapshotRow::synthetic` (`rune_md::snapshot`) — a
     /// synthesised border row with no source line at all.
     pub synthetic: bool,
     /// `Some(n)` for every row — content or synthetic border — that

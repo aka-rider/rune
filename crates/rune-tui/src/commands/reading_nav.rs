@@ -19,6 +19,8 @@
 //! chord scrolls exactly like its bare key, because keyboard selection does
 //! not exist in a read-only document at all.
 
+use rune_core::coords::DisplayRow;
+
 use crate::app::App;
 use crate::commands::nav_scroll;
 use crate::keymap::{Command, Motion};
@@ -45,7 +47,7 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
         // read-only document's cursor position carries no visible meaning
         // to test against.
         Command::Motion(Motion::LineUp, _) => {
-            if app.active_doc().viewport.scroll_row == 0 {
+            if app.active_doc().viewport.scroll_row == DisplayRow(0) {
                 app.focus_title();
             } else {
                 nav_scroll::scroll_lines(app.active_doc_mut(), -1);

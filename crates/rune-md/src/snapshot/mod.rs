@@ -3,7 +3,7 @@
 //! top/bottom/inter-row table borders that have no source line at all
 //! (architectural decision 3), and, in the sibling `image_rows` module,
 //! reserved rows for a standalone inline image embed (plan WP8). `from_wrap`
-//! is the identity (one `DisplayRow` per wrap row); `expand_tables` walks a
+//! is the identity (one `SnapshotRow` per wrap row); `expand_tables` walks a
 //! table's rendered rows and inserts a synthetic border row wherever
 //! `TableSegInfo::boundary` says one belongs; `expand_images` chains after
 //! it and does the same for a standalone image line. Kept as its own type,
@@ -12,7 +12,7 @@
 //! geometry through ONE place instead of each re-deriving "which wrap row
 //! is this synthetic row next to" itself.
 //!
-//! Split across two files to stay under the 500-line budget: this module owns `DisplayRow`
+//! Split across two files to stay under the 500-line budget: this module owns `SnapshotRow`
 //! and the table-border half of `DisplaySnapshot`'s API; `image_rows` owns
 //! `ImageDims` and the image half (`expand_images`, its own synthetic-row
 //! builder, and the standalone-image-line scan) as a second `impl
@@ -23,6 +23,7 @@ mod image_rows;
 
 pub use image_rows::{ImageDims, collect_standalone_images};
 
+use rune_core::coords::{DisplayRow, WrapRow};
 use rune_syntax::SyntaxSpan;
 use rune_syntax::syntax::{RowBoundary, TableRole};
 use rune_syntax::wrap::{SegDecor, WrapSnapshot};
@@ -38,7 +39,7 @@ use crate::table::layout::{BorderKind, border_row};
 /// `cell_map` entry `None` and an empty `range`: it has no buffer
 /// correspondence, decorative through and through.
 #[derive(Clone, Debug)]
-pub struct DisplayRow {
+pub struct SnapshotRow {
     pub spans: Vec<SyntaxSpan>,
     pub wrap_row: usize,
     pub synthetic: bool,
@@ -57,7 +58,7 @@ pub struct DisplayRow {
     pub image: Option<ImageRowRef>,
 }
 
-/// Which row of a multi-row image a `DisplayRow` renders, and how many
+/// Which row of a multi-row image a `SnapshotRow` renders, and how many
 /// cells wide the renderer should build for it. `row` is 0-based within the
 /// image (0 is the anchor row); `width` is the image's own reserved column
 /// count, not the pane width — the renderer clips against the pane
@@ -80,22 +81,22 @@ pub struct ImageRowRef {
 
 #[derive(Clone, Debug, Default)]
 pub struct DisplaySnapshot {
-    rows: Vec<DisplayRow>,
+    rows: Vec<SnapshotRow>,
     /// `wrap_to_display[w]` is the display-row index of wrap row `w`'s OWN
-    /// (non-synthetic) `DisplayRow` — sized to `wrap.total_rows()`, one
+    /// (non-synthetic) `SnapshotRow` — sized to `wrap.total_rows()`, one
     /// entry per wrap row, populated only by `expand_tables` (`from_wrap`
     /// alone is already the identity map).
     wrap_to_display: Vec<usize>,
 }
 
 impl DisplaySnapshot {
-    /// The identity mapping: one `DisplayRow` per wrap row, none synthetic.
+    /// The identity mapping: one `SnapshotRow` per wrap row, none synthetic.
     pub fn from_wrap(wrap: &WrapSnapshot) -> DisplaySnapshot {
-        let rows: Vec<DisplayRow> = wrap
+        let rows: Vec<SnapshotRow> = wrap
             .segments()
             .iter()
             .enumerate()
-            .map(|(i, seg)| DisplayRow {
+            .map(|(i, seg)| SnapshotRow {
                 spans: seg.spans.clone(),
                 wrap_row: i,
                 synthetic: false,
@@ -128,7 +129,7 @@ impl DisplaySnapshot {
     /// row's own `wrap_row`.
     pub fn expand_tables(self, wrap: &WrapSnapshot) -> DisplaySnapshot {
         let segments = wrap.segments();
-        let mut rows: Vec<DisplayRow> = Vec::with_capacity(self.rows.len());
+        let mut rows: Vec<SnapshotRow> = Vec::with_capacity(self.rows.len());
         let mut wrap_to_display = vec![0usize; segments.len()];
         // (role, model_line) of the previous row that carried table info —
         // `None` once a non-table row (or the very start) breaks the run.
@@ -211,7 +212,7 @@ impl DisplaySnapshot {
     pub fn image_rows(n: usize, width: usize) -> DisplaySnapshot {
         let n = n.max(1);
         let rows = (0..n)
-            .map(|row| DisplayRow {
+            .map(|row| SnapshotRow {
                 spans: vec![SyntaxSpan::substituted(
                     0,
                     String::new(),
@@ -234,7 +235,7 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn rows(&self) -> &[DisplayRow] {
+    pub fn rows(&self) -> &[SnapshotRow] {
         &self.rows
     }
 
@@ -245,12 +246,12 @@ impl DisplaySnapshot {
     /// The wrap row a display row was built from — for a synthetic row,
     /// the adjacent content row's own wrap row (never its own, since it has
     /// none), per `expand_tables`'s docs.
-    pub fn display_to_wrap(&self, row: usize) -> usize {
+    pub fn display_to_wrap(&self, row: DisplayRow) -> WrapRow {
         if self.rows.is_empty() {
-            return 0;
+            return WrapRow(0);
         }
-        let row = row.min(self.rows.len() - 1);
-        self.rows.get(row).map(|r| r.wrap_row).unwrap_or(0)
+        let row = row.0.min(self.rows.len() - 1);
+        WrapRow(self.rows.get(row).map(|r| r.wrap_row).unwrap_or(0))
     }
 
     /// The display row a wrap row's OWN content lives at — the inverse of
@@ -258,19 +259,19 @@ impl DisplaySnapshot {
     /// computation that starts from a wrap-space coordinate (cursors always
     /// do — border rows aren't addressable) must convert through this
     /// before indexing `rows()`.
-    pub fn wrap_to_display(&self, row: usize) -> usize {
+    pub fn wrap_to_display(&self, row: WrapRow) -> DisplayRow {
         if self.wrap_to_display.is_empty() {
-            return 0;
+            return DisplayRow(0);
         }
-        let row = row.min(self.wrap_to_display.len() - 1);
-        self.wrap_to_display.get(row).copied().unwrap_or(0)
+        let row = row.0.min(self.wrap_to_display.len() - 1);
+        DisplayRow(self.wrap_to_display.get(row).copied().unwrap_or(0))
     }
 }
 
 /// A content row's own spans always tile its whole source line (Gotcha 1),
 /// so its first span's range start IS the line's start — the anchor a
 /// synthetic border borrows for its own (empty) range.
-fn line_start_of(row: &DisplayRow) -> usize {
+fn line_start_of(row: &SnapshotRow) -> usize {
     row.spans.first().map(|s| s.range().start).unwrap_or(0)
 }
 
@@ -279,7 +280,7 @@ fn synthetic_border(
     kind: BorderKind,
     wrap_row: usize,
     line_start: usize,
-) -> DisplayRow {
+) -> SnapshotRow {
     let text = border_row(widths, kind);
     let cell_map = vec![None; text.chars().count()];
     let span = SyntaxSpan::substituted_mapped(
@@ -288,7 +289,7 @@ fn synthetic_border(
         line_start..line_start,
         cell_map,
     );
-    DisplayRow {
+    SnapshotRow {
         spans: vec![span],
         wrap_row,
         synthetic: true,
@@ -313,14 +314,14 @@ pub(crate) fn assert_round_trip_and_synthetic_adjacency(
     display: &DisplaySnapshot,
 ) {
     for w in 0..wrap.total_rows() {
-        let d = display.wrap_to_display(w);
+        let d = display.wrap_to_display(WrapRow(w));
         assert_eq!(
             display.display_to_wrap(d),
-            w,
+            WrapRow(w),
             "round trip failed for wrap row {w}"
         );
         assert!(
-            !display.rows()[d].synthetic,
+            !display.rows()[d.0].synthetic,
             "wrap_to_display must land on a real row"
         );
     }

@@ -11,6 +11,7 @@ use std::ops::Range;
 use ratatui::style::{Modifier as RtModifier, Style};
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::{DisplayRow, WrapRow};
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::ViewSnapshots;
 use rune_syntax::ScopeId;
@@ -158,7 +159,7 @@ pub(crate) fn apply_cursor_overlays(
     view: &ViewSnapshots,
     cursors: &CursorSet,
     buf: &Buffer,
-    scroll_row: usize,
+    scroll_row: DisplayRow,
     theme: &Theme,
 ) {
     let OverlayGates { caret, selection } = gates;
@@ -182,11 +183,11 @@ pub(crate) fn apply_cursor_overlays(
         // addressable by the caret); convert to the DISPLAY row `rows` is
         // now indexed by before comparing against/indexing off `scroll_row`
         // (also display-space).
-        let display_row = view.display.wrap_to_display(wrap_point.row);
+        let display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
         if display_row < scroll_row {
             continue;
         }
-        let Some(row) = rows.get_mut(display_row - scroll_row) else {
+        let Some(row) = rows.get_mut(display_row.0 - scroll_row.0) else {
             continue;
         };
         // `place_caret` walks cells POSITIONALLY and adds
@@ -207,7 +208,7 @@ pub(crate) fn apply_cursor_overlays(
         let on_image_row = view
             .display
             .rows()
-            .get(display_row)
+            .get(display_row.0)
             .is_some_and(|r| r.image.is_some());
         if on_image_row {
             continue;
@@ -227,7 +228,7 @@ pub(crate) fn apply_cursor_overlays(
             + view
                 .display
                 .rows()
-                .get(display_row)
+                .get(display_row.0)
                 .map(super::decor::decor_cell_width)
                 .unwrap_or(0) as usize;
         // A boxed (Grid/Wrapped) table row's rendered width is a hard

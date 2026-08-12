@@ -204,7 +204,7 @@ pub fn segment_geometry(content: &str, spans: &[SyntaxSpan]) -> Vec<Cell> {
 /// The ONE cell walk both entry points above share — `style_of` is its
 /// only theme-dependent input, so the styled and geometry-only paths can
 /// never drift in how they measure a row. Takes a plain `&[SyntaxSpan]`,
-/// not a whole `WrapSegment`: a `DisplayRow`'s synthesised border
+/// not a whole `WrapSegment`: a `SnapshotRow`'s synthesised border
 /// spans have no backing `WrapSegment` to read `.spans` off of.
 fn segment_cells_with(
     content: &str,

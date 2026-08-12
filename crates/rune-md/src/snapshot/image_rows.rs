@@ -17,7 +17,7 @@ use crate::element::block::Block;
 use crate::element::inline::{ImageM, standalone_image};
 use crate::emit::style::image_scope;
 
-use super::{DisplayRow, DisplaySnapshot, ImageRowRef};
+use super::{DisplaySnapshot, ImageRowRef, SnapshotRow};
 
 /// Per-embed cell footprint `(cols, rows)`, threaded in from `rune-tui`
 /// (plan WP8.S3) — the only crate that knows terminal cell-pixel geometry.
@@ -78,7 +78,7 @@ impl DisplaySnapshot {
         collect_standalone_images(blocks, content, &mut anchors);
 
         let segments = wrap.segments();
-        let mut rows: Vec<DisplayRow> = Vec::with_capacity(self.rows.len());
+        let mut rows: Vec<SnapshotRow> = Vec::with_capacity(self.rows.len());
         let mut wrap_to_display = vec![0usize; segments.len()];
 
         for mut row in self.rows {
@@ -130,7 +130,7 @@ impl DisplaySnapshot {
 /// A continuation row of a multi-row image — `expand_images`'s own
 /// `synthetic_border` counterpart. `width` many space chars stand in for
 /// the row's real content; the renderer never reads this text (it builds
-/// placeholder cells straight from `DisplayRow::image` instead, WP4/WP9),
+/// placeholder cells straight from `SnapshotRow::image` instead, WP4/WP9),
 /// so only the char COUNT — matching `cell_map`'s length, same invariant
 /// `synthetic_border` keeps — has to be right.
 fn synthetic_image_row(
@@ -138,11 +138,11 @@ fn synthetic_image_row(
     image_row: usize,
     width: usize,
     target: &str,
-) -> DisplayRow {
+) -> SnapshotRow {
     let text = " ".repeat(width);
     let cell_map = vec![None; text.chars().count()];
     let span = SyntaxSpan::substituted_mapped(image_scope(), text, 0..0, cell_map);
-    DisplayRow {
+    SnapshotRow {
         spans: vec![span],
         wrap_row,
         synthetic: true,
@@ -198,6 +198,7 @@ pub fn collect_standalone_images<'a>(
 mod tests {
     use super::*;
     use crate::snapshot::assert_round_trip_and_synthetic_adjacency;
+    use rune_core::coords::WrapRow;
     use rune_syntax::wrap::WrapMap;
 
     /// WP8.S1: the same round-trip/adjacency invariant, now over a document
@@ -279,9 +280,9 @@ mod tests {
             .expand_images(&wrap, &blocks, content, &dims);
 
         for w in 0..wrap.total_rows() {
-            let d = display.wrap_to_display(w);
-            assert!(!display.rows()[d].synthetic);
-            assert_eq!(display.rows()[d].image.as_ref().map(|i| i.row), Some(0));
+            let d = display.wrap_to_display(WrapRow(w));
+            assert!(!display.rows()[d.0].synthetic);
+            assert_eq!(display.rows()[d.0].image.as_ref().map(|i| i.row), Some(0));
         }
     }
 

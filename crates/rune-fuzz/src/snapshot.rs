@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 
 use ratatui::layout::Rect;
+use rune_core::coords::DisplayRow;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
 use rune_tui::document::{DocumentId, ReadOnly};
@@ -179,7 +180,7 @@ pub struct Snapshot {
     /// it changed the buffer, cursors, scroll position, merge state, or the
     /// status line — scroll is the one of those five this field alone
     /// supplies.
-    pub scroll_row: usize,
+    pub scroll_row: DisplayRow,
     /// Every open document's own `display_name`, the same per-document
     /// shape as `dirty_by_doc` above — `MergeState::Inactive` must never
     /// leave a stale `"editor <-> disk"` retitle behind on ANY document,

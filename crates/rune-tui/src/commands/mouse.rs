@@ -308,6 +308,7 @@ mod tests {
     use crate::pointer::ManualClock;
     use crate::runtime::Msg;
     use rune_core::buffer::Buffer;
+    use rune_core::coords::DisplayRow;
     use rune_vfs::Mem;
     use std::sync::Arc;
 
@@ -392,7 +393,7 @@ mod tests {
         let mut app = app_with(&content, 40, 10);
         let cursor_before = app.active_doc().cursors.primary().position;
         click(&mut app, MouseKind::ScrollDown, 0, 0);
-        assert_eq!(app.active_doc().viewport.scroll_row, 3);
+        assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(3));
         assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
     }
 

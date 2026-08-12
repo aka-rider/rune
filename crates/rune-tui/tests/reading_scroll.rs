@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::DisplayRow;
 use rune_tui::app::{self, App};
 use rune_tui::clipboard::osc52_copy;
 use rune_tui::commands::clipboard;
@@ -85,11 +86,11 @@ fn help_doc() -> App {
 #[test]
 fn first_down_press_scrolls_a_read_only_document() {
     let mut app = help_doc();
-    assert_eq!(app.active_doc().viewport.scroll_row, 0);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
 
     send(&mut app, plain(KeyCode::Down));
 
-    assert_eq!(app.active_doc().viewport.scroll_row, 1);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
 }
 
 /// `ReadOnly::Preview` has no insertion point either
@@ -103,11 +104,11 @@ fn first_down_press_scrolls_a_preview_document() {
     let mut app = app_basic(&content);
     app.active_doc_mut().read_only = ReadOnly::Preview;
     app.sync_view();
-    assert_eq!(app.active_doc().viewport.scroll_row, 0);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
 
     send(&mut app, plain(KeyCode::Down));
 
-    assert_eq!(app.active_doc().viewport.scroll_row, 1);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
     assert_eq!(
         app.active_doc().read_only,
         ReadOnly::Preview,
@@ -121,11 +122,11 @@ fn up_scrolls_before_it_focuses_the_title() {
     for _ in 0..3 {
         send(&mut app, plain(KeyCode::Down));
     }
-    assert_eq!(app.active_doc().viewport.scroll_row, 3);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(3));
 
     send(&mut app, plain(KeyCode::Up));
 
-    assert_eq!(app.active_doc().viewport.scroll_row, 2);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(2));
     assert_eq!(app.focus(), Pane::Editor);
 }
 
@@ -141,7 +142,7 @@ fn up_scrolls_before_it_focuses_the_title() {
 #[test]
 fn up_at_the_top_of_a_read_only_document_focuses_the_title() {
     let mut app = help_doc();
-    assert_eq!(app.active_doc().viewport.scroll_row, 0);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
 
     send(&mut app, plain(KeyCode::Up));
 
@@ -162,17 +163,17 @@ fn left_and_right_page_a_read_only_document() {
 
     send(&mut app, plain(KeyCode::Right));
     let height = app.active_doc().viewport.height as usize;
-    assert_eq!(app.active_doc().viewport.scroll_row, height - 1);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(height - 1));
 
     send(&mut app, plain(KeyCode::Left));
-    assert_eq!(app.active_doc().viewport.scroll_row, 0);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
 }
 
 #[test]
 fn home_and_end_jump_to_the_first_and_last_page() {
     let mut app = help_doc();
     send(&mut app, plain(KeyCode::Down));
-    assert_eq!(app.active_doc().viewport.scroll_row, 1);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
 
     let (total, height) = {
         let doc = app.active_doc_mut();
@@ -182,10 +183,13 @@ fn home_and_end_jump_to_the_first_and_last_page() {
     };
 
     send(&mut app, plain(KeyCode::End));
-    assert_eq!(app.active_doc().viewport.scroll_row, total - height);
+    assert_eq!(
+        app.active_doc().viewport.scroll_row,
+        DisplayRow(total - height)
+    );
 
     send(&mut app, plain(KeyCode::Home));
-    assert_eq!(app.active_doc().viewport.scroll_row, 0);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
 }
 
 #[test]
@@ -194,7 +198,7 @@ fn shift_arrows_scroll_and_select_nothing_in_a_read_only_document() {
 
     send(&mut app, shifted(KeyCode::Down));
 
-    assert_eq!(app.active_doc().viewport.scroll_row, 1);
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
     assert!(
         !app.active_doc().cursors.primary().has_selection(),
         "keyboard selection does not exist in a read-only document"
@@ -272,7 +276,10 @@ fn leaving_the_reading_view_brings_the_caret_back_into_view() {
     send(&mut app, plain(KeyCode::End));
     app.sync_view();
     let scroll_after_reading = app.active_doc().viewport.scroll_row;
-    assert!(scroll_after_reading > 0, "must actually have scrolled");
+    assert!(
+        scroll_after_reading > DisplayRow(0),
+        "must actually have scrolled"
+    );
     assert_eq!(app.active_doc().viewport.mode, ScrollMode::FollowCursor);
 
     send(&mut app, ctrl('p'));

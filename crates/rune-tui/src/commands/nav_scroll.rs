@@ -17,7 +17,7 @@
 //! `Document::snap_cursor_to_row` is the sole `Independent`-mode writer of
 //! the cursor (see `document.rs`'s docs).
 
-use rune_core::coords::WrapPoint;
+use rune_core::coords::{DisplayRow, WrapPoint, WrapRow};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
@@ -119,11 +119,11 @@ pub fn page_down(doc: &mut Document, extend: Extend) {
 /// The row the PRIMARY cursor currently sits on, in wrap space — the input
 /// every viewport-only scroll command below needs before it can compute
 /// where to put `scroll_row`.
-fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> usize {
+fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
     let primary = doc.cursors.primary();
     let bp = doc.buffer.offset_to_line_col(primary.position);
     let sp = view.syntax.buffer_to_syntax(bp);
-    view.wrap.syntax_to_wrap(sp).row
+    WrapRow(view.wrap.syntax_to_wrap(sp).row)
 }
 
 /// Moves `scroll_row` by `delta` DISPLAY rows (WP3: `scroll_row` indexes
@@ -137,10 +137,12 @@ fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> usize {
 /// clamps or arms `Independent` mode.
 pub fn scroll_lines(doc: &mut Document, delta: isize) {
     let total = doc.view().display.total_rows();
-    let max_row = total.saturating_sub(1);
-    let current = doc.viewport.scroll_row as isize;
-    let next = (current + delta).clamp(0, max_row as isize);
-    doc.viewport.scroll_row = next as usize;
+    let max_row = DisplayRow(total.saturating_sub(1));
+    doc.viewport.scroll_row = if delta >= 0 {
+        (doc.viewport.scroll_row + delta as usize).min(max_row)
+    } else {
+        doc.viewport.scroll_row - (-delta) as usize
+    };
     doc.viewport.mode = ScrollMode::Independent;
 }
 
@@ -176,9 +178,9 @@ pub fn scroll_half_page_down(doc: &mut Document) {
 /// and arms `Independent` mode — shared by `centre_cursor`/`cursor_to_top`/
 /// `cursor_to_bottom` below, each of which converts the cursor's own WRAP
 /// row through `DisplaySnapshot::wrap_to_display` before calling this.
-fn scroll_to(doc: &mut Document, target_row: usize) {
+fn scroll_to(doc: &mut Document, target_row: DisplayRow) {
     let total = doc.view().display.total_rows();
-    let max_row = total.saturating_sub(1);
+    let max_row = DisplayRow(total.saturating_sub(1));
     doc.viewport.scroll_row = target_row.min(max_row);
     doc.viewport.mode = ScrollMode::Independent;
 }
@@ -197,7 +199,7 @@ pub(crate) fn scroll_to_byte_offset(doc: &mut Document, target: usize) {
     let clamped = target.min(doc.buffer.content().len());
     let bp = doc.buffer.offset_to_line_col(clamped);
     let sp = view.syntax.buffer_to_syntax(bp);
-    let wrap_row = view.wrap.syntax_to_wrap(sp).row;
+    let wrap_row = WrapRow(view.wrap.syntax_to_wrap(sp).row);
     let row = view.display.wrap_to_display(wrap_row);
     scroll_to(doc, row);
 }
@@ -208,7 +210,7 @@ pub fn centre_cursor(doc: &mut Document) {
     let view = doc.view();
     let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
     let half = doc.viewport.height as usize / 2;
-    scroll_to(doc, row.saturating_sub(half));
+    scroll_to(doc, row - half);
 }
 
 /// vim/Helix `zt`: scrolls the cursor's row to the top of the viewport.
@@ -223,13 +225,13 @@ pub fn cursor_to_bottom(doc: &mut Document) {
     let view = doc.view();
     let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
     let height = doc.viewport.height as usize;
-    scroll_to(doc, row.saturating_sub(height.saturating_sub(1)));
+    scroll_to(doc, row - height.saturating_sub(1));
 }
 
 /// `commands::reading_nav`'s `Home`: scrolls a read-only document to its
 /// very first row.
 pub fn scroll_to_document_top(doc: &mut Document) {
-    scroll_to(doc, 0);
+    scroll_to(doc, DisplayRow(0));
 }
 
 /// `commands::reading_nav`'s `End`: scrolls a read-only document to its
@@ -239,7 +241,7 @@ pub fn scroll_to_document_top(doc: &mut Document) {
 pub fn scroll_to_document_bottom(doc: &mut Document) {
     let total = doc.view().display.total_rows();
     let height = doc.viewport.height as usize;
-    scroll_to(doc, total.saturating_sub(height));
+    scroll_to(doc, DisplayRow(total.saturating_sub(height)));
 }
 
 #[cfg(test)]
@@ -262,7 +264,7 @@ mod tests {
         let mut doc = doc_with_lines(100, 10);
         let cursor_before = doc.cursors.primary().position;
         scroll_line_down(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 1);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(1));
         assert_eq!(doc.viewport.mode, ScrollMode::Independent);
         assert_eq!(doc.cursors.primary().position, cursor_before);
     }
@@ -271,14 +273,14 @@ mod tests {
     fn scroll_line_up_is_clamped_at_the_top() {
         let mut doc = doc_with_lines(100, 10);
         scroll_line_up(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 0);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(0));
     }
 
     #[test]
     fn scroll_half_page_down_moves_half_the_viewport_height() {
         let mut doc = doc_with_lines(100, 20);
         scroll_half_page_down(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 10);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(10));
     }
 
     #[test]
@@ -291,7 +293,7 @@ mod tests {
             .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         centre_cursor(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 40); // 50 - 20/2
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(40)); // 50 - 20/2
     }
 
     #[test]
@@ -303,7 +305,7 @@ mod tests {
             .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         cursor_to_top(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 50);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(50));
     }
 
     #[test]
@@ -315,15 +317,15 @@ mod tests {
             .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         cursor_to_bottom(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 50 - 19);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(50 - 19));
     }
 
     #[test]
     fn scroll_to_document_top_lands_on_row_zero() {
         let mut doc = doc_with_lines(100, 20);
-        doc.viewport.scroll_row = 42;
+        doc.viewport.scroll_row = DisplayRow(42);
         scroll_to_document_top(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, 0);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(0));
         assert_eq!(doc.viewport.mode, ScrollMode::Independent);
     }
 
@@ -332,6 +334,6 @@ mod tests {
         let mut doc = doc_with_lines(100, 20);
         scroll_to_document_bottom(&mut doc);
         let total = doc.view().display.total_rows();
-        assert_eq!(doc.viewport.scroll_row, total - 20);
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(total - 20));
     }
 }

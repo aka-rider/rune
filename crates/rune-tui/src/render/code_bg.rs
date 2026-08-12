@@ -36,6 +36,7 @@
 
 use ratatui::style::{Color, Style};
 
+use rune_core::coords::DisplayRow;
 use rune_md::element::code_region::CodeRegion;
 use rune_md::element::doc::ViewSnapshots;
 
@@ -59,7 +60,7 @@ use super::decor::decor_cell_width;
 pub(super) fn paint_code_background(
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,
-    scroll_row: usize,
+    scroll_row: DisplayRow,
     width: u16,
     bg: Color,
 ) {
@@ -70,7 +71,7 @@ pub(super) fn paint_code_background(
     let display_rows = view.display.rows();
     let segments = view.wrap.segments();
     for (i, cells) in rows.iter_mut().enumerate() {
-        let Some(row) = display_rows.get(scroll_row.saturating_add(i)) else {
+        let Some(row) = display_rows.get((scroll_row + i).0) else {
             continue;
         };
         // A synthesised table border has no source line to belong to a

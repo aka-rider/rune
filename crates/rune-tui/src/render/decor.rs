@@ -1,4 +1,4 @@
-//! Renders a `DisplayRow`'s own line decoration (heading icon / list bullet
+//! Renders a `SnapshotRow`'s own line decoration (heading icon / list bullet
 //! / quote bar / hr rule, `rune_syntax::wrap::decor::SegDecor`) into the
 //! prefix `Cell`s `build_rows` prepends to that row before any overlay
 //! walk runs (500-line budget split of the render module). A decoration cell carries no
@@ -15,7 +15,7 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use rune_md::snapshot::DisplayRow;
+use rune_md::snapshot::SnapshotRow;
 use rune_syntax::wrap::grapheme_width;
 
 use crate::theme::Theme;
@@ -29,7 +29,7 @@ use super::Cell;
 /// `Theme::scope_style` (never `overlay_scope_style`: a decoration cell has
 /// no base cell underneath it to preserve a background for, unlike an
 /// overlay patch onto already-emitted content).
-pub fn decor_row_cells(theme: &Theme, row: &DisplayRow) -> Vec<Cell> {
+pub fn decor_row_cells(theme: &Theme, row: &SnapshotRow) -> Vec<Cell> {
     let Some(decor) = row.decor.as_ref() else {
         return Vec::new();
     };
@@ -55,7 +55,7 @@ pub fn decor_row_cells(theme: &Theme, row: &DisplayRow) -> Vec<Cell> {
 /// (subtracting the same prefix before its cell walk) and the code-region
 /// background fill (starting at the first content column) all read, so none
 /// of them can disagree about how wide a given row's decoration rendered.
-pub fn decor_cell_width(row: &DisplayRow) -> u16 {
+pub fn decor_cell_width(row: &SnapshotRow) -> u16 {
     row.decor.as_ref().map(|d| d.cells as u16).unwrap_or(0)
 }
 
@@ -66,8 +66,8 @@ mod tests {
     use rune_syntax::scope::scope_table;
     use rune_syntax::wrap::{SegDecor, SegDecorPiece};
 
-    fn row_with_decor(decor: Option<SegDecor>) -> DisplayRow {
-        DisplayRow {
+    fn row_with_decor(decor: Option<SegDecor>) -> SnapshotRow {
+        SnapshotRow {
             spans: Vec::new(),
             wrap_row: 0,
             synthetic: false,

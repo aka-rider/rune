@@ -4,6 +4,8 @@
 //! (which side is authoritative for the next `reconcile` call), and the
 //! vim/Helix scrolloff convergence logic.
 
+use rune_core::coords::DisplayRow;
+
 /// The vim/Helix scrolloff default (Helix's own default), clamped per
 /// viewport at `reconcile` time (plan WP7.S1) so a tiny pane still has a
 /// valid `[top, bottom]` band.
@@ -28,13 +30,12 @@ pub enum ScrollMode {
 }
 
 /// The visible window onto the wrapped document: `width`/`height` in cells,
-/// `scroll_row` the first visible wrap row (plan Context, "Cell model" /
-/// coords.rs `WrapRow`).
+/// `scroll_row` the first visible DISPLAY row.
 #[derive(Clone, Copy, Debug)]
 pub struct Viewport {
     pub width: u16,
     pub height: u16,
-    pub scroll_row: usize,
+    pub scroll_row: DisplayRow,
     /// The minimum number of wrap rows kept visible above/below the cursor
     /// (plan WP7.S1) — Helix's default (`DEFAULT_SCROLLOFF`), clamped at
     /// `reconcile` time to at most half the viewport height.
@@ -50,7 +51,7 @@ impl Default for Viewport {
         Viewport {
             width: 80,
             height: 24,
-            scroll_row: 0,
+            scroll_row: DisplayRow(0),
             scrolloff: DEFAULT_SCROLLOFF,
             mode: ScrollMode::FollowCursor,
         }
@@ -71,7 +72,9 @@ impl Viewport {
     /// at `FollowCursor`: idempotent by construction, since a second call with
     /// the same `total_rows` recomputes the same already-clamped `scroll_row`.
     pub fn clamp_to_document(&mut self, total_rows: usize) {
-        self.scroll_row = self.scroll_row.min(total_rows.saturating_sub(1));
+        self.scroll_row = self
+            .scroll_row
+            .min(DisplayRow(total_rows.saturating_sub(1)));
         self.mode = ScrollMode::FollowCursor;
     }
 
@@ -121,21 +124,21 @@ impl Viewport {
     /// the same `cursor_row` (and the resulting `mode == FollowCursor`)
     /// is a no-op. See the effective_scrolloff doc for why the clamp is
     /// `(height - 1) / 2`, not `height / 2`.
-    pub fn reconcile(&mut self, cursor_row: usize, total_rows: usize) -> Option<usize> {
+    pub fn reconcile(&mut self, cursor_row: DisplayRow, total_rows: usize) -> Option<DisplayRow> {
         let height = self.height as usize;
         if height == 0 {
             self.mode = ScrollMode::FollowCursor;
             return None;
         }
         let off = self.effective_scrolloff();
-        let last_row = total_rows.saturating_sub(1);
+        let last_row = DisplayRow(total_rows.saturating_sub(1));
         let top = (self.scroll_row + off).min(last_row);
         let bottom = (self.scroll_row + height - 1 - off).min(last_row);
 
         match self.mode {
             ScrollMode::FollowCursor => {
                 if cursor_row < top {
-                    self.scroll_row = cursor_row.saturating_sub(off);
+                    self.scroll_row = cursor_row - off;
                 } else if cursor_row > bottom {
                     self.scroll_row = cursor_row + off + 1 - height;
                 }
@@ -164,11 +167,11 @@ impl Viewport {
 /// `Snapshot.cells[i]` and `Snapshot.row_meta[i]` for the session fuzzer's
 /// TABLE-* invariants.
 pub fn visible_rows<'a>(
-    rows: &'a [rune_md::snapshot::DisplayRow],
+    rows: &'a [rune_md::snapshot::SnapshotRow],
     viewport: &Viewport,
-) -> impl Iterator<Item = &'a rune_md::snapshot::DisplayRow> {
+) -> impl Iterator<Item = &'a rune_md::snapshot::SnapshotRow> {
     rows.iter()
-        .skip(viewport.scroll_row)
+        .skip(viewport.scroll_row.0)
         .take(viewport.height as usize)
 }
 
@@ -181,7 +184,7 @@ mod tests {
         Viewport {
             width,
             height,
-            scroll_row: 0,
+            scroll_row: DisplayRow(0),
             scrolloff: 0,
             mode: ScrollMode::FollowCursor,
         }
@@ -197,10 +200,10 @@ mod tests {
     fn reconcile_follow_cursor_keeps_row_in_view() {
         // scrolloff 0 reproduces the old `scroll_to_row` behaviour exactly.
         let mut vp = viewport(80, 5);
-        assert_eq!(vp.reconcile(10, PLENTY_OF_ROWS), None);
-        assert_eq!(vp.scroll_row, 6); // 10 + 1 - 5
-        assert_eq!(vp.reconcile(2, PLENTY_OF_ROWS), None);
-        assert_eq!(vp.scroll_row, 2); // scrolled back up to keep row 2 visible
+        assert_eq!(vp.reconcile(DisplayRow(10), PLENTY_OF_ROWS), None);
+        assert_eq!(vp.scroll_row, DisplayRow(6)); // 10 + 1 - 5
+        assert_eq!(vp.reconcile(DisplayRow(2), PLENTY_OF_ROWS), None);
+        assert_eq!(vp.scroll_row, DisplayRow(2)); // scrolled back up to keep row 2 visible
     }
 
     #[test]
@@ -208,12 +211,12 @@ mod tests {
         let mut vp = viewport(20, 20);
         vp.scrolloff = 5;
         // Cursor at row 3 must be at least 5 rows from the top.
-        assert_eq!(vp.reconcile(3, PLENTY_OF_ROWS), None);
-        assert_eq!(vp.scroll_row, 0); // clamped: can't scroll above row 0
-        assert_eq!(vp.reconcile(30, PLENTY_OF_ROWS), None);
+        assert_eq!(vp.reconcile(DisplayRow(3), PLENTY_OF_ROWS), None);
+        assert_eq!(vp.scroll_row, DisplayRow(0)); // clamped: can't scroll above row 0
+        assert_eq!(vp.reconcile(DisplayRow(30), PLENTY_OF_ROWS), None);
         // top = scroll_row + 5, bottom = scroll_row + 20 - 1 - 5: row 30 must
         // land exactly on the bottom margin.
-        assert_eq!(vp.scroll_row + 20 - 1 - 5, 30);
+        assert_eq!(vp.scroll_row + 20 - 1 - 5, DisplayRow(30));
     }
 
     #[test]
@@ -223,7 +226,7 @@ mod tests {
         // `scroll_row` again.
         let mut vp = viewport(17, 23); // odd dimensions exercise the clamp
         vp.scrolloff = 5;
-        for cursor_row in [0usize, 3, 11, 47, 199] {
+        for cursor_row in [0usize, 3, 11, 47, 199].map(DisplayRow) {
             vp.reconcile(cursor_row, PLENTY_OF_ROWS);
             let scroll_before = vp.scroll_row;
             assert_eq!(
@@ -248,15 +251,16 @@ mod tests {
         // is moved onto the window", not the other way around).
         let mut vp = viewport(10, 10);
         vp.scrolloff = 2;
-        vp.scroll_row = 50;
+        vp.scroll_row = DisplayRow(50);
         vp.mode = ScrollMode::Independent;
-        let cursor_row = 0; // far above the new viewport
+        let cursor_row = DisplayRow(0); // far above the new viewport
         let snapped = vp.reconcile(cursor_row, PLENTY_OF_ROWS);
         assert_eq!(
-            vp.scroll_row, 50,
+            vp.scroll_row,
+            DisplayRow(50),
             "Independent mode must not move scroll_row"
         );
-        assert_eq!(snapped, Some(52)); // top = scroll_row(50) + off(2)
+        assert_eq!(snapped, Some(DisplayRow(52))); // top = scroll_row(50) + off(2)
         assert_eq!(vp.mode, ScrollMode::FollowCursor, "consumed exactly once");
     }
 
@@ -276,18 +280,19 @@ mod tests {
     fn reconcile_independent_mode_clamps_to_the_documents_own_last_row() {
         let mut vp = viewport(80, 20);
         vp.scrolloff = 5;
-        vp.scroll_row = 1; // pinned at the last row of a 2-row document
+        vp.scroll_row = DisplayRow(1); // pinned at the last row of a 2-row document
         vp.mode = ScrollMode::Independent;
         let total_rows = 2;
 
-        let snapped = vp.reconcile(0, total_rows);
+        let snapped = vp.reconcile(DisplayRow(0), total_rows);
         assert_eq!(
             snapped,
-            Some(1),
+            Some(DisplayRow(1)),
             "must hand back the document's own last row, never a row past it"
         );
         assert_eq!(
-            vp.scroll_row, 1,
+            vp.scroll_row,
+            DisplayRow(1),
             "Independent mode must not move scroll_row"
         );
 
@@ -296,7 +301,7 @@ mod tests {
         // snapped to must not move `scroll_row` again.
         let scroll_before = vp.scroll_row;
         assert_eq!(
-            vp.reconcile(1, total_rows),
+            vp.reconcile(DisplayRow(1), total_rows),
             None,
             "the settled cursor row must already satisfy the (clamped) band"
         );
@@ -309,11 +314,15 @@ mod tests {
     #[test]
     fn clamp_to_document_is_idempotent_and_resets_to_follow_cursor() {
         let mut vp = viewport(80, 20);
-        vp.scroll_row = 90;
+        vp.scroll_row = DisplayRow(90);
         vp.mode = ScrollMode::Independent;
 
         vp.clamp_to_document(100);
-        assert_eq!(vp.scroll_row, 90, "still within the document, unchanged");
+        assert_eq!(
+            vp.scroll_row,
+            DisplayRow(90),
+            "still within the document, unchanged"
+        );
         assert_eq!(vp.mode, ScrollMode::FollowCursor);
 
         let scroll_before = vp.scroll_row;
@@ -327,12 +336,13 @@ mod tests {
     #[test]
     fn clamp_to_document_pulls_scroll_row_back_when_the_document_shrinks() {
         let mut vp = viewport(80, 20);
-        vp.scroll_row = 90;
+        vp.scroll_row = DisplayRow(90);
         vp.mode = ScrollMode::Independent;
 
         vp.clamp_to_document(10);
         assert_eq!(
-            vp.scroll_row, 9,
+            vp.scroll_row,
+            DisplayRow(9),
             "clamped to the shorter document's last row"
         );
         assert_eq!(vp.mode, ScrollMode::FollowCursor);
