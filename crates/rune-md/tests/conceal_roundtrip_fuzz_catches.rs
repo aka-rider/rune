@@ -47,6 +47,32 @@ fn minimal_multiline_code_span_ending_past_its_own_line() {
     }
 }
 
+/// The mirror image of the case above: comrak's reported end column falls
+/// SHORT of the true close instead of past it, still inside the line, so
+/// no bounds check can catch it. A three-line floor with the span opening
+/// on the paragraph's continuation line, not its first line, is required
+/// to observe it at all.
+#[test]
+fn minimal_multiline_code_span_ending_short_of_its_own_line() {
+    for cursor in 0..=6usize {
+        assert_no_duplicate_content_at("a\n`\n e`", &[cursor], 78);
+    }
+}
+
+#[test]
+fn minimal_multiline_code_span_ending_short_of_its_own_line_multibyte() {
+    for cursor in 0..=7usize {
+        assert_no_duplicate_content_at("a\n`\n é`", &[cursor], 78);
+    }
+}
+
+#[test]
+fn minimal_multiline_fenced_open_code_span_ending_short_of_its_own_line() {
+    for cursor in 0..=13usize {
+        assert_no_duplicate_content_at("h\nô```\n  é```", &[cursor], 78);
+    }
+}
+
 #[test]
 fn case_conflict_markers_with_fences_and_multiline_code_span() {
     assert_no_duplicate_content_at(

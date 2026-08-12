@@ -6,7 +6,7 @@
 //! out to keep this one under the 500-line budget.
 
 use super::embed::{image_alt_range, image_target_range, recover_embeds};
-use super::{ScanHint, line_end_at, node_range};
+use super::{ScanHint, last_line_of, line_end_at, node_range};
 use crate::element::inline::{
     EmphasisKind, EmphasisM, ImageM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
 };
@@ -207,60 +207,57 @@ enum InlineKind {
     WikiLink(String),
 }
 
-/// The leading run of exactly `want` backtick bytes at the start of
-/// `line` — comrak's own delimiter matching guarantees a code span's
-/// OPEN is always found this way (the backtick run that started the
-/// match), so `line.start` is trustworthy as-is; this only clamps
-/// defensively (never scans backward past `line.start`) for the same
-/// "checked, not assumed" reason `trailing_backtick_run` below scans at
-/// all. Returns `line` itself if fewer than `want` backtick bytes are
-/// actually present (should not happen; degrades to "whole line hidden"
-/// rather than panicking on a malformed slice).
-fn leading_backtick_run(content: &str, line: ByteRange, want: usize) -> ByteRange {
+/// CommonMark matches a code span's opening delimiter as a MAXIMAL run of
+/// backtick bytes — not merely "at least `want`". A comrak-reported
+/// `line.start` that is off by a column (the same sourcepos quirk
+/// `trailing_backtick_run` below works around) can land inside a run whose
+/// true length differs from `want`; capping the scan at `want` bytes would
+/// hide that and accept a wrong-length run as if it matched. Refuses
+/// (`None`) rather than guess when the run at `line.start` isn't exactly
+/// `want` bytes long.
+fn leading_backtick_run(content: &str, line: ByteRange, want: usize) -> Option<ByteRange> {
     let bytes = content.as_bytes();
     let mut end = line.start;
-    while end < line.end && end - line.start < want && bytes.get(end) == Some(&b'`') {
+    while end < line.end && bytes.get(end) == Some(&b'`') {
         end += 1;
     }
-    if end - line.start == want {
-        ByteRange::new(line.start, end)
-    } else {
-        line
-    }
+    (end - line.start == want).then(|| ByteRange::new(line.start, end))
 }
 
-/// The trailing run of exactly `want` backtick bytes at the end of
-/// `line`, found by scanning BACKWARD from `line.end` rather than
-/// subtracting `want` from `line.end` directly (verification round 9's
-/// exhaustive audit, third pass): comrak's own sourcepos for a `Code`
-/// node's outer span can extend one or more bytes past the true closing
-/// backtick run — confirmed empirically with two independent minimal
-/// repros (`"]\n x```\n``` `\"`, where a trailing space after the real
-/// close run got folded into the node's own end column; and `">t\n>`\n`>"`,
-/// where the very next character after a single-backtick close got
-/// folded in the same way). Neither involves a container prefix or a
-/// `\r` — this is a raw comrak sourcepos quirk, not a mixed-index seam,
-/// so the fix is structural: don't trust `line.end` as the close run's
-/// own end, DERIVE it by skipping any trailing non-backtick bytes first.
-fn trailing_backtick_run(content: &str, line: ByteRange, want: usize) -> ByteRange {
+/// The first run of exactly `want` backtick bytes at or after `after`,
+/// bounded by `limit` — CommonMark's own closing-delimiter rule, applied by
+/// scanning forward instead of trusting comrak's reported end column.
+/// comrak's `Sourcepos` for a multi-line `Code` node's end can name the
+/// right line but the wrong column on it (`adjust_node_newlines` indexes
+/// the enclosing block's per-line offsets by the code span's own start line
+/// instead of the block's, so the read lands on a neighbouring line's
+/// indentation); the error never crosses a UTF-8 boundary check because it
+/// still lands inside the line, so nothing catches it downstream unless the
+/// close is relocated by content instead of by column. Refuses (`None`)
+/// when no such run exists in bounds, leaving the span unterminated rather
+/// than inventing a delimiter.
+fn trailing_backtick_run(
+    content: &str,
+    after: usize,
+    limit: usize,
+    want: usize,
+) -> Option<ByteRange> {
     let bytes = content.as_bytes();
-    let mut end = line.end;
-    while end > line.start && bytes.get(end - 1) != Some(&b'`') {
-        end -= 1;
+    let mut pos = after;
+    while pos < limit {
+        if bytes.get(pos) != Some(&b'`') {
+            pos += 1;
+            continue;
+        }
+        let run_start = pos;
+        while pos < limit && bytes.get(pos) == Some(&b'`') {
+            pos += 1;
+        }
+        if pos - run_start == want {
+            return Some(ByteRange::new(run_start, pos));
+        }
     }
-    let mut start = end;
-    while start > line.start && bytes.get(start - 1) == Some(&b'`') {
-        start -= 1;
-    }
-    if end - start >= want {
-        let close_start = end - want;
-        ByteRange::new(close_start, end)
-    } else {
-        // No backtick run of the expected length found in this line at
-        // all — fall back to the naive clamp rather than guessing.
-        let close_start = line.end.saturating_sub(want).max(line.start);
-        ByteRange::new(close_start, line.end)
-    }
+    None
 }
 
 fn inline_kind(v: &NodeValue) -> InlineKind {
@@ -365,12 +362,23 @@ fn build_inline<'a>(
         InlineKind::Code(num_backticks) => {
             let raw_lines = super::per_line_content(content, starts, range, hint);
             let first_line = raw_lines.first().copied().unwrap_or(range);
-            let last_line = raw_lines.last().copied().unwrap_or(range);
-            let open = leading_backtick_run(content, first_line, num_backticks);
-            let close = trailing_backtick_run(content, last_line, num_backticks);
-            Inline::Code(InlineCodeM::between_delimiters(open, close, |span| {
-                super::per_line_content(content, starts, span.clamp(content.len()), hint)
-            }))
+            let limit = line_end_at(content.len(), starts, last_line_of(starts, range));
+            let delimiters =
+                leading_backtick_run(content, first_line, num_backticks).and_then(|open| {
+                    trailing_backtick_run(content, open.end, limit, num_backticks)
+                        .map(|close| (open, close))
+                });
+            match delimiters {
+                Some((open, close)) => {
+                    Inline::Code(InlineCodeM::between_delimiters(open, close, |span| {
+                        super::per_line_content(content, starts, span.clamp(content.len()), hint)
+                    }))
+                }
+                None => Inline::Text(TextRun {
+                    range,
+                    content_lines: raw_lines,
+                }),
+            }
         }
         InlineKind::Link(url) => {
             let text = build_inlines(content, starts, node, hint);
@@ -458,4 +466,47 @@ fn wikilink_label_range(content: &str, range: ByteRange) -> ByteRange {
         None => inner_start,
     };
     ByteRange::new(label_start, label_end).clamp(content.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_backtick_run_refuses_a_run_longer_than_want() {
+        let content = "```x";
+        let line = ByteRange::new(0, content.len());
+        assert_eq!(leading_backtick_run(content, line, 2), None);
+    }
+
+    #[test]
+    fn leading_backtick_run_accepts_an_exact_run() {
+        let content = "``x";
+        let line = ByteRange::new(0, content.len());
+        assert_eq!(
+            leading_backtick_run(content, line, 2),
+            Some(ByteRange::new(0, 2))
+        );
+    }
+
+    #[test]
+    fn trailing_backtick_run_refuses_when_no_run_of_want_length_exists_in_bounds() {
+        let content = "`x``y";
+        assert_eq!(trailing_backtick_run(content, 1, content.len(), 1), None);
+    }
+
+    #[test]
+    fn trailing_backtick_run_finds_the_first_matching_run() {
+        let content = "`ab`cd`";
+        assert_eq!(
+            trailing_backtick_run(content, 1, content.len(), 1),
+            Some(ByteRange::new(3, 4))
+        );
+    }
+
+    #[test]
+    fn trailing_backtick_run_never_scans_past_its_limit() {
+        let content = "`ab`cd`";
+        assert_eq!(trailing_backtick_run(content, 1, 3, 1), None);
+    }
 }
