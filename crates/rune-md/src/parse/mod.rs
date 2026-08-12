@@ -182,12 +182,14 @@ pub(crate) fn per_line_content(
     let last_line = last_line_of(starts, range);
     (first_line..=last_line)
         .map(|l| {
+            let line_end = line_end_at(content.len(), starts, l);
             let s = if l == first_line {
                 range.start
             } else {
                 hint.start_for_line(starts, l)
-            };
-            let e = line_end_at(content.len(), starts, l).min(range.end).max(s);
+            }
+            .min(line_end);
+            let e = line_end.min(range.end).max(s);
             ByteRange::new(s, e).clamp(content.len())
         })
         .collect()
@@ -419,6 +421,20 @@ mod tests {
             panic!("expected frontmatter, got {:?}", blocks[0]);
         };
         assert_eq!(fm.sm.state(), RevealState::Revealed);
+    }
+
+    #[test]
+    fn per_line_content_clamps_a_hint_start_that_overshoots_its_own_line() {
+        let content = "x".repeat(15);
+        let starts = vec![0, 5, 10];
+        let range = ByteRange::new(0, 15);
+        let hint = ScanHint::Nested {
+            marker_ends: std::collections::HashMap::from([(1, 12)]),
+            parent: &ScanHint::Root,
+        };
+        let lines = per_line_content(&content, &starts, range, &hint);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[1], ByteRange::new(9, 9));
     }
 }
 

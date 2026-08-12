@@ -50,13 +50,23 @@ mod walk_inline;
 
 use crate::element::block::Block;
 use crate::icons::IconSet;
-use crate::parse::{line_at, line_end_at, line_starts};
+use crate::parse::{line_at, line_end_at, line_start_at, line_starts};
 use rune_core::assert_invariant;
-use rune_syntax::element::{ByteRange, RevealState};
+use rune_syntax::element::{ByteRange, LineLocal, RevealState};
 use rune_syntax::syntax::TableRowInfo;
 use rune_syntax::{LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
 
 pub(crate) use claim::{Accounted, EmitOut, Sinks};
+
+pub(crate) fn line_local(
+    content_len: usize,
+    starts: &[usize],
+    line: usize,
+    range: std::ops::Range<usize>,
+) -> Option<LineLocal> {
+    let bounds = line_start_at(starts, line)..line_end_at(content_len, starts, line);
+    LineLocal::clip(line, bounds, range)
+}
 
 /// The chokepoint every range->line-bucket routine in this crate is built
 /// on: splits `range` across every source line it touches and calls `f`
@@ -77,7 +87,7 @@ fn for_each_line_slice(
     content: &str,
     starts: &[usize],
     range: ByteRange,
-    mut f: impl FnMut(usize, usize, usize),
+    mut f: impl FnMut(LineLocal),
 ) {
     if range.is_empty() {
         return;
@@ -90,7 +100,14 @@ fn for_each_line_slice(
         let seg_start = range.start.max(line_start);
         let seg_end = range.end.min(line_end);
         if seg_end > seg_start {
-            f(line, seg_start, seg_end);
+            match LineLocal::clip(line, line_start..line_end, seg_start..seg_end) {
+                Some(ll) => f(ll),
+                None => assert_invariant!(false, || {
+                    format!(
+                        "for_each_line_slice: computed slice [{seg_start},{seg_end}) on line {line} escaped its own physical line bounds [{line_start},{line_end}) — producer bug"
+                    )
+                }),
+            }
         }
     }
 }
@@ -111,8 +128,9 @@ pub(crate) fn push_span_split_by_line(
     state: RevealState,
     out: &mut EmitOut,
 ) {
-    for_each_line_slice(content, starts, range, |line, seg_start, seg_end| {
-        let granted = out.claim_free(line, seg_start, seg_end);
+    for_each_line_slice(content, starts, range, |ll| {
+        let line = ll.line();
+        let granted = out.claim_free(ll);
         let spans: Vec<SyntaxSpan> = granted
             .pieces()
             .iter()
@@ -170,8 +188,8 @@ fn build_line_span(
 /// landing on an already-emitted visible byte reachable) is clipped and
 /// asserted on instead of double-counted.
 pub(crate) fn hide_range(content: &str, starts: &[usize], range: ByteRange, out: &mut EmitOut) {
-    for_each_line_slice(content, starts, range, |line, s, e| {
-        out.claim_free(line, s, e).record_hidden();
+    for_each_line_slice(content, starts, range, |ll| {
+        out.claim_free(ll).record_hidden();
     });
 }
 

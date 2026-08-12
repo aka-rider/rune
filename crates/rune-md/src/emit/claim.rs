@@ -15,6 +15,7 @@
 //! contract.
 
 use crate::icons::IconSet;
+use rune_syntax::element::LineLocal;
 use rune_syntax::syntax::TableRowInfo;
 use rune_syntax::{LineDecor, SyntaxSpan, merge_overlapping};
 
@@ -95,6 +96,16 @@ impl Granted<'_, '_> {
                 self.line
             )
         });
+        let fully_covered = self
+            .pieces
+            .iter()
+            .all(|&piece| piece_is_covered(&spans, piece));
+        rune_core::assert_invariant!(fully_covered, || {
+            format!(
+                "line {}: granted piece(s) not fully covered by pushed span(s) — producer bug (accounted would record bytes nothing paints)",
+                self.line
+            )
+        });
         if let Some(bucket) = self.out.spans.get_mut(self.line) {
             bucket.extend(spans);
         }
@@ -113,6 +124,23 @@ impl Granted<'_, '_> {
             bucket.extend(self.pieces.iter().copied());
         }
     }
+}
+
+fn piece_is_covered(spans: &[SyntaxSpan], piece: (usize, usize)) -> bool {
+    let (piece_start, piece_end) = piece;
+    if piece_start >= piece_end {
+        return true;
+    }
+    let ranges: Vec<(usize, usize)> = spans
+        .iter()
+        .map(|span| {
+            let r = span.range();
+            (r.start, r.end)
+        })
+        .collect();
+    merge_overlapping(ranges)
+        .iter()
+        .any(|&(s, e)| s <= piece_start && piece_end <= e)
 }
 
 /// `claim_whole`'s error case: the requested range was not entirely free,
@@ -154,7 +182,9 @@ impl<'a> EmitOut<'a> {
     /// what this returns. A producer whose own range arithmetic overlaps
     /// another producer's claim is a bug, not a legitimate outcome — unlike
     /// `claim_whole`, this asserts on that instead of returning a refusal.
-    pub(crate) fn claim_free(&mut self, line: usize, start: usize, end: usize) -> Granted<'_, 'a> {
+    pub(crate) fn claim_free(&mut self, ll: LineLocal) -> Granted<'_, 'a> {
+        let line = ll.line();
+        let (start, end) = (ll.start(), ll.end());
         let pieces = self.unclaimed(line, start, end);
 
         let requested_len = end.saturating_sub(start);
@@ -183,19 +213,16 @@ impl<'a> EmitOut<'a> {
     /// with nothing and is always granted. A non-empty range that is not
     /// entirely free is still a PRODUCER bug — the caller degrades
     /// gracefully, but the mismatch is asserted exactly like `claim_free`'s.
-    pub(crate) fn claim_whole(
-        &mut self,
-        line: usize,
-        start: usize,
-        end: usize,
-    ) -> Result<Granted<'_, 'a>, Refused> {
-        if end <= start {
+    pub(crate) fn claim_whole(&mut self, ll: LineLocal) -> Result<Granted<'_, 'a>, Refused> {
+        let line = ll.line();
+        if ll.is_empty() {
             return Ok(Granted {
                 out: self,
                 line,
                 pieces: Vec::new(),
             });
         }
+        let (start, end) = (ll.start(), ll.end());
         let pieces = self.unclaimed(line, start, end);
         if pieces == [(start, end)] {
             Ok(Granted {
@@ -251,8 +278,9 @@ fn unclaimed_subranges(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing)]
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use rune_syntax::ScopeId;
 
     /// The visible-side dedup computation, tested in isolation (no assert
     /// involved — `unclaimed_subranges` itself never panics, it just
@@ -300,7 +328,8 @@ mod tests {
             &mut decors,
         );
 
-        let granted = out.claim_free(0, 0, 4);
+        let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
+        let granted = out.claim_free(ll);
         drop(granted);
 
         assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
@@ -329,7 +358,8 @@ mod tests {
             &mut decors,
         );
 
-        let result = out.claim_whole(0, 4, 4);
+        let ll = LineLocal::clip(0, 0..8, 4..4).unwrap();
+        let result = out.claim_whole(ll);
 
         assert!(result.is_ok());
     }
@@ -358,7 +388,8 @@ mod tests {
             &mut decors,
         );
 
-        let _ = out.claim_whole(0, 0, 8);
+        let ll = LineLocal::clip(0, 0..8, 0..8).unwrap();
+        let _ = out.claim_whole(ll);
     }
 
     /// The producer-bug path above only proves the assert fires; this
@@ -386,11 +417,66 @@ mod tests {
         );
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            out.claim_whole(0, 0, 8).is_err()
+            let ll = LineLocal::clip(0, 0..8, 0..8).unwrap();
+            out.claim_whole(ll).is_err()
         }));
 
         assert!(result.is_err());
         let _ = out;
         assert_eq!(accounted[0], vec![(2, 4)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "not fully covered")]
+    fn push_visible_catches_a_dropped_span_leaving_a_granted_piece_uncovered() {
+        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+        let mut hidden: Accounted = vec![Vec::new()];
+        let mut accounted: Accounted = vec![Vec::new()];
+        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+        let mut decors: Vec<Option<LineDecor>> = vec![None];
+        let icons = IconSet::unicode();
+        let mut out = EmitOut::new(
+            Sinks {
+                spans: &mut spans,
+                hidden: &mut hidden,
+                accounted: &mut accounted,
+            },
+            &mut tables,
+            80,
+            &icons,
+            &mut decors,
+        );
+
+        let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
+        let granted = out.claim_free(ll);
+        granted.push_visible(Vec::new());
+    }
+
+    #[test]
+    fn push_visible_accepts_a_span_that_exactly_covers_the_granted_piece() {
+        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+        let mut hidden: Accounted = vec![Vec::new()];
+        let mut accounted: Accounted = vec![Vec::new()];
+        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+        let mut decors: Vec<Option<LineDecor>> = vec![None];
+        let icons = IconSet::unicode();
+        let mut out = EmitOut::new(
+            Sinks {
+                spans: &mut spans,
+                hidden: &mut hidden,
+                accounted: &mut accounted,
+            },
+            &mut tables,
+            80,
+            &icons,
+            &mut decors,
+        );
+
+        let ll = LineLocal::clip(0, 0..8, 2..6).unwrap();
+        let granted = out.claim_free(ll);
+        let span = SyntaxSpan::identical("abcdefgh", ScopeId(0), 2..6);
+        granted.push_visible(vec![span]);
+
+        assert_eq!(accounted[0], vec![(2, 6)]);
     }
 }
