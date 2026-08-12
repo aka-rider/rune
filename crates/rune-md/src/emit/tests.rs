@@ -36,6 +36,32 @@ fn unclaimed_subranges_skips_already_claimed_bytes() {
     );
 }
 
+/// A `Granted` dropped without being spent through `push_visible` or
+/// `record_hidden` leaves `accounted` untouched — the bytes it would have
+/// claimed still reach `fill_gaps` instead of vanishing.
+#[test]
+fn dropped_claim_leaves_accounted_unchanged() {
+    let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
+    let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let icons = IconSet::unicode();
+    let mut out = test_out(
+        &mut spans,
+        &mut hidden,
+        &mut accounted,
+        &mut tables,
+        &mut decors,
+        &icons,
+    );
+
+    let granted = out.claim_free(0, 0, 4);
+    drop(granted);
+
+    assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
+}
+
 /// Proves `push_span_split_by_line`'s strict-invariants-gated assert
 /// actually fires when a second visible claim overlaps a byte an
 /// earlier one already claimed — the exact shape an empty list item's

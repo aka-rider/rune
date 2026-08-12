@@ -136,10 +136,12 @@ pub(crate) struct EmitOut<'a> {
 
 /// A claim on `line`'s unclaimed sub-ranges of a requested byte range,
 /// returned by `EmitOut::claim_free` and spent by `push_visible` or
-/// `record_hidden`. Neither `Copy` nor `Clone` and its fields are private to
-/// this module (and its descendants — `walk`, `walk_inline`, `table`,
-/// `decor`), so a producer outside the emit tree cannot fabricate one and a
-/// producer inside it cannot hold two at once for the same call.
+/// `record_hidden` — spending is what records the claim into `accounted`, so
+/// a `Granted` dropped without being spent leaves no trace and its bytes
+/// still reach `fill_gaps`. Neither `Copy` nor `Clone` and its fields are
+/// private to this module (and its descendants — `walk`, `walk_inline`,
+/// `table`, `decor`), so a producer outside the emit tree cannot fabricate
+/// one and a producer inside it cannot hold two at once for the same call.
 pub(crate) struct Granted {
     line: usize,
     pieces: Vec<(usize, usize)>,
@@ -163,26 +165,27 @@ impl EmitOut<'_> {
             )
         });
 
-        for &(s, e) in &pieces {
-            if let Some(bucket) = self.accounted.get_mut(line) {
-                bucket.push((s, e));
-            }
-        }
-
         Granted { line, pieces }
     }
 
-    /// Spends `granted` by pushing `spans` as that line's visible content.
+    /// Spends `granted` by pushing `spans` as that line's visible content
+    /// and recording its pieces into `accounted`.
     pub(crate) fn push_visible(&mut self, granted: Granted, spans: Vec<SyntaxSpan>) {
         if let Some(bucket) = self.spans.get_mut(granted.line) {
             bucket.extend(spans);
         }
+        if let Some(bucket) = self.accounted.get_mut(granted.line) {
+            bucket.extend(granted.pieces.iter().copied());
+        }
     }
 
     /// Spends `granted` by recording its pieces as hidden (delimiter bytes
-    /// dropped from the emitted text).
+    /// dropped from the emitted text) and into `accounted`.
     pub(crate) fn record_hidden(&mut self, granted: Granted) {
         if let Some(bucket) = self.hidden.get_mut(granted.line) {
+            bucket.extend(granted.pieces.iter().copied());
+        }
+        if let Some(bucket) = self.accounted.get_mut(granted.line) {
             bucket.extend(granted.pieces.iter().copied());
         }
     }
