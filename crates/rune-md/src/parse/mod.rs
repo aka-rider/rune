@@ -197,10 +197,9 @@ pub(crate) fn per_line_content(
 }
 
 /// Per-line scan-start hints for locating a container's own claim on a
-/// content line: a blockquote depth's `"> "`, re-scanned fresh per line
-/// (`blockquote_markers`), or a list item's/indented code block's own
-/// fixed continuation width, computed once from its first line and held
-/// constant (`indent::fixed_indent_ends`). Both populate the same
+/// content line: a blockquote depth's `"> "`, re-scanned fresh per line,
+/// or a list item's/indented code block's own fixed continuation width,
+/// computed once from its first line and held constant. Both populate the same
 /// `marker_ends` map — line -> the byte offset right after whatever this
 /// depth claims on it — because both need the identical fallback: a line
 /// this depth found no claim on (a lazy continuation line, e.g. `"> >

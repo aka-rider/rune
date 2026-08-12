@@ -182,9 +182,9 @@ fn paste_verbatim_detects_a_swallowed_search_field_paste() {
     assert_eq!(v.id, "PASTE-VERBATIM");
 }
 
-/// `filesearch::keys::paste` takes only the first line and strips control
-/// characters before appending — a multi-line paste that sanitizes down to
-/// an empty first line is a legitimate no-op, not a swallow.
+/// The file-search paste handler takes only the first line and strips
+/// control characters before appending — a multi-line paste that sanitizes
+/// down to an empty first line is a legitimate no-op, not a swallow.
 #[test]
 fn paste_verbatim_accepts_a_filesearch_paste_that_sanitizes_to_nothing() {
     let mut prev = base_snapshot("ac");
