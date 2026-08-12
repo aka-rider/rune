@@ -8,6 +8,8 @@ This is the law — read it before contributing anything, not only persistence o
 
 Never corrupt, never lose what the user wrote. When data safety conflicts with performance, elegance, or features, data safety wins.
 
+If it can be a compile error, it MUST be a compile error.
+
 Rank every defect by the harm it can do, and always trade a failure down:
 
 1. **Catastrophic — silent corruption.** Wrong/garbled/reordered bytes, a silent rewrite, a good file overwritten by a bad buffer. Never ships.
