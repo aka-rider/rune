@@ -113,7 +113,9 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     selection::SELECT_WORD_LEFT_ARROW,
     selection::SELECT_WORD_RIGHT_ARROW,
     selection::SELECT_WORD_LEFT_B,
+    selection::SELECT_WORD_LEFT_B_ALT,
     selection::SELECT_WORD_RIGHT_F,
+    selection::SELECT_WORD_RIGHT_F_ALT,
     motion::LINE_UP,
     motion::LINE_DOWN,
     selection::SELECT_LINE_UP,
@@ -146,13 +148,16 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     selection::SELECT_ALL_SUP,
     clipboard::COPY_SUP,
     clipboard::COPY_CTRL_SHIFT,
+    clipboard::COPY_CTRL_SHIFT_ALT,
     clipboard::CUT,
     clipboard::PASTE,
     editing::UNDO_SUP,
     editing::UNDO_CTRL,
     editing::REDO_SUP_SHIFT,
+    editing::REDO_SUP_SHIFT_ALT,
     editing::REDO_CTRL_Y,
     editing::DELETE_LINE,
+    editing::DELETE_LINE_ALT,
     editing::SAVE,
     motion::SCROLL_LINE_UP,
     motion::SCROLL_LINE_DOWN,
@@ -228,5 +233,79 @@ mod tests {
             vec![editing::RELOAD.help],
             "⌘R must be claimed by exactly the reload binding, not shared with any other row"
         );
+    }
+
+    #[test]
+    fn alternate_key_forms_exist_for_shifted_chars_under_kitty_protocol() {
+        use crate::binding::resolve_in;
+        use crate::keymap::{KeyCode, KeyInput, Mods};
+
+        struct AffectedAction {
+            lowercase_shift: (KeyCode, Mods),
+            uppercase_noshift: (KeyCode, Mods),
+            help: &'static str,
+        }
+
+        let affected = [
+            AffectedAction {
+                lowercase_shift: (KeyCode::Char('z'), super::SUP_SHIFT),
+                uppercase_noshift: (KeyCode::Char('Z'), super::SUP),
+                help: "redo",
+            },
+            AffectedAction {
+                lowercase_shift: (KeyCode::Char('k'), super::SUP_SHIFT),
+                uppercase_noshift: (KeyCode::Char('K'), super::SUP),
+                help: "delete line",
+            },
+            AffectedAction {
+                lowercase_shift: (KeyCode::Char('c'), super::CTRL_SHIFT),
+                uppercase_noshift: (KeyCode::Char('C'), super::CTRL),
+                help: "copy",
+            },
+            AffectedAction {
+                lowercase_shift: (KeyCode::Char('b'), super::SHIFT_ALT),
+                uppercase_noshift: (KeyCode::Char('B'), super::ALT),
+                help: "select word left",
+            },
+            AffectedAction {
+                lowercase_shift: (KeyCode::Char('f'), super::SHIFT_ALT),
+                uppercase_noshift: (KeyCode::Char('F'), super::ALT),
+                help: "select word right",
+            },
+        ];
+
+        for action in affected {
+            let lowercase_shift_key = KeyInput {
+                code: action.lowercase_shift.0,
+                mods: action.lowercase_shift.1,
+            };
+            let uppercase_noshift_key = KeyInput {
+                code: action.uppercase_noshift.0,
+                mods: action.uppercase_noshift.1,
+            };
+
+            let lowercase_result = resolve_in(EDITOR_BINDINGS, lowercase_shift_key);
+            let uppercase_result = resolve_in(EDITOR_BINDINGS, uppercase_noshift_key);
+
+            assert!(
+                lowercase_result.is_some(),
+                "action '{}': lowercase shift form {:?} should resolve",
+                action.help,
+                lowercase_shift_key
+            );
+
+            assert!(
+                uppercase_result.is_some(),
+                "action '{}': uppercase no-shift form {:?} should resolve",
+                action.help,
+                uppercase_noshift_key
+            );
+
+            assert_eq!(
+                lowercase_result, uppercase_result,
+                "action '{}': both forms should resolve to the same command",
+                action.help
+            );
+        }
     }
 }
