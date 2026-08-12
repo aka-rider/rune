@@ -4,6 +4,7 @@
 
 use std::fmt::Write as _;
 
+use super::keyword::{self, Keyword};
 use crate::action::{Action, HighlightVersion};
 use crate::driver::DOC_PATH;
 use rune_tui::keymap::{KeyCode, Mods};
@@ -32,52 +33,54 @@ pub fn encode(path: &str, content: &str, actions: &[Action]) -> String {
 }
 
 fn encode_action(out: &mut String, action: &Action) {
+    out.push_str(Keyword::for_action(action).as_str());
     match action {
         Action::Key(k) => {
-            out.push_str("key ");
+            out.push(' ');
             out.push_str(&encode_code(k.code));
             out.push(' ');
             out.push_str(&encode_mods(k.mods));
             out.push('\n');
         }
         Action::Type(s) => {
-            out.push_str("type ");
+            out.push(' ');
             out.push_str(&escape(s));
             out.push('\n');
         }
         Action::Paste(s) => {
-            out.push_str("paste ");
+            out.push(' ');
             out.push_str(&escape(s));
             out.push('\n');
         }
         Action::Resize(w, h) => {
-            let _ = writeln!(out, "resize {w} {h}");
+            let _ = writeln!(out, " {w} {h}");
         }
         Action::ClipboardReply(s) => {
-            out.push_str("clip ");
+            out.push(' ');
             out.push_str(&escape(s));
             out.push('\n');
         }
-        Action::ConfirmTimeout => out.push_str("confirm-timeout\n"),
+        Action::ConfirmTimeout => out.push('\n'),
         Action::StaleConfirmTimeout(generation) => {
-            out.push_str("stale-confirm-timeout ");
+            out.push(' ');
             out.push_str(&generation.to_string());
             out.push('\n');
         }
-        Action::Deliver => out.push_str("deliver\n"),
-        Action::FailNextSave => out.push_str("fail-next-save\n"),
+        Action::Deliver => out.push('\n'),
+        Action::FailNextSave => out.push('\n'),
         Action::DirLoaded {
             entries,
             cause,
             generation,
         } => {
-            out.push_str("dirloaded ");
+            out.push(' ');
             out.push_str(encode_dir_cause(*cause));
             out.push(' ');
             out.push_str(&generation.to_string());
             out.push('\n');
             for entry in entries {
-                out.push_str("dirloaded-entry ");
+                out.push_str(keyword::DIRLOADED_ENTRY);
+                out.push(' ');
                 out.push(if entry.kind == rune_vfs::FileKind::Dir {
                     'd'
                 } else {
@@ -89,24 +92,25 @@ fn encode_action(out: &mut String, action: &Action) {
             }
         }
         Action::Highlight { version, spans } => {
-            out.push_str("highlight ");
+            out.push(' ');
             out.push_str(encode_highlight_version(*version));
             out.push(' ');
             out.push_str(&spans.len().to_string());
             out.push('\n');
             for (start, end, scope) in spans {
-                let _ = writeln!(out, "highlight-span {start} {end} {scope}");
+                out.push_str(keyword::HIGHLIGHT_SPAN);
+                let _ = writeln!(out, " {start} {end} {scope}");
             }
         }
-        Action::DivergeDisk => out.push_str("diverge-disk\n"),
-        Action::DeliverDb => out.push_str("deliver-db\n"),
-        Action::DeliverDbAll => out.push_str("deliver-db-all\n"),
+        Action::DivergeDisk => out.push('\n'),
+        Action::DeliverDb => out.push('\n'),
+        Action::DeliverDbAll => out.push('\n'),
         Action::HighlightTree {
             version,
             fixture,
             base,
         } => {
-            out.push_str("highlight-tree ");
+            out.push(' ');
             out.push_str(encode_highlight_version(*version));
             out.push(' ');
             out.push_str(&fixture.to_string());

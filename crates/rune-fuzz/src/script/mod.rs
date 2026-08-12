@@ -49,7 +49,9 @@
 //! idiom.
 
 mod decode;
+mod decode_key;
 mod encode;
+mod keyword;
 
 use std::fmt;
 

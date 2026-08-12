@@ -10,9 +10,16 @@
     clippy::panic
 )]
 
-use rune_fuzz::action::Action;
+use std::collections::HashSet;
+use std::mem::{Discriminant, discriminant};
+
+use proptest::strategy::{Strategy, ValueTree};
+use proptest::test_runner::{Config, RngSeed, TestRunner};
+
+use rune_fuzz::action::{Action, HighlightVersion};
 use rune_fuzz::driver;
-use rune_fuzz::generate::TYPE_PALETTE;
+use rune_fuzz::generate::{self, TYPE_PALETTE};
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
@@ -102,4 +109,105 @@ fn dir_loaded_never_panics_and_never_touches_editor_content() {
     );
     assert_eq!(result.violation, None, "{:?}", result.violation);
     assert_eq!(result.final_content, "abcdefhello");
+}
+
+const SAMPLED_SESSIONS: u32 = 1500;
+
+fn action_variant_name(action: &Action) -> &'static str {
+    match action {
+        Action::Key(_) => "Key",
+        Action::Type(_) => "Type",
+        Action::Paste(_) => "Paste",
+        Action::Resize(_, _) => "Resize",
+        Action::ClipboardReply(_) => "ClipboardReply",
+        Action::ConfirmTimeout => "ConfirmTimeout",
+        Action::StaleConfirmTimeout(_) => "StaleConfirmTimeout",
+        Action::Deliver => "Deliver",
+        Action::FailNextSave => "FailNextSave",
+        Action::DirLoaded { .. } => "DirLoaded",
+        Action::Highlight { .. } => "Highlight",
+        Action::DivergeDisk => "DivergeDisk",
+        Action::DeliverDb => "DeliverDb",
+        Action::DeliverDbAll => "DeliverDbAll",
+        Action::HighlightTree { .. } => "HighlightTree",
+    }
+}
+
+fn every_action_variant_witness() -> [Action; 15] {
+    [
+        Action::Key(KeyInput {
+            code: KeyCode::Char('a'),
+            mods: Mods::NONE,
+        }),
+        Action::Type(String::new()),
+        Action::Paste(String::new()),
+        Action::Resize(1, 1),
+        Action::ClipboardReply(String::new()),
+        Action::ConfirmTimeout,
+        Action::StaleConfirmTimeout(0),
+        Action::Deliver,
+        Action::FailNextSave,
+        Action::DirLoaded {
+            entries: Vec::new(),
+            cause: DirCause::Nav,
+            generation: 0,
+        },
+        Action::Highlight {
+            version: HighlightVersion::Live,
+            spans: Vec::new(),
+        },
+        Action::DivergeDisk,
+        Action::DeliverDb,
+        Action::DeliverDbAll,
+        Action::HighlightTree {
+            version: HighlightVersion::Live,
+            fixture: 0,
+            base: 0,
+        },
+    ]
+}
+
+const EXEMPT_ACTION_VARIANTS: &[&str] = &[];
+
+/// Samples `arb_session()` `SAMPLED_SESSIONS` times off a fixed seed
+/// (deterministic, no wall-clock), collecting the `Discriminant` of every
+/// produced `Action`. `every_action_variant_witness` is exhaustive over
+/// `Action`, so a new variant fails this file's build until it gains a
+/// witness here; an existing variant the generator never actually reaches
+/// fails this test unless it is named in `EXEMPT_ACTION_VARIANTS`.
+#[test]
+fn arb_session_reaches_every_action_variant() {
+    let config = Config {
+        rng_seed: RngSeed::Fixed(0x5255_4e45),
+        ..Config::default()
+    };
+    let mut runner = TestRunner::new(config);
+
+    let mut seen: HashSet<Discriminant<Action>> = HashSet::new();
+    let mut total_actions = 0usize;
+    for _ in 0..SAMPLED_SESSIONS {
+        let tree = generate::arb_session()
+            .new_tree(&mut runner)
+            .unwrap_or_else(|e| panic!("arb_session generation failed: {e}"));
+        let (_, _, actions) = tree.current();
+        total_actions += actions.len();
+        seen.extend(actions.iter().map(discriminant));
+    }
+    assert!(
+        total_actions >= 2500,
+        "expected at least 2500 sampled actions across {SAMPLED_SESSIONS} sessions, got {total_actions}"
+    );
+
+    for witness in &every_action_variant_witness() {
+        let name = action_variant_name(witness);
+        if EXEMPT_ACTION_VARIANTS.contains(&name) {
+            continue;
+        }
+        assert!(
+            seen.contains(&discriminant(witness)),
+            "Action::{name} was never produced across {SAMPLED_SESSIONS} sampled sessions \
+             ({total_actions} actions); give it generator coverage or add it to \
+             EXEMPT_ACTION_VARIANTS"
+        );
+    }
 }

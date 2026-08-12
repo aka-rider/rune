@@ -7,16 +7,25 @@ use std::iter::Peekable;
 use std::path::PathBuf;
 
 use super::ScriptError;
+use super::decode_key::parse_key;
+use super::keyword::{self, Keyword};
 use crate::action::{Action, HighlightVersion};
 use crate::driver::DOC_PATH;
-use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
+
+fn strip_token<'a>(raw: &'a str, token: &str) -> Option<&'a str> {
+    raw.strip_prefix(token)?.strip_prefix(' ')
+}
+
+fn is_token(raw: &str, token: &str) -> bool {
+    raw == token
+}
 
 /// Hand-written unescape, the inverse of `encode::escape`/`escape_char`.
 /// Handles exactly `\n \r \t \\ \' \" \0 \u{...}`. `line` attributes an
 /// error to the right source line.
-fn unescape(s: &str, line: usize) -> Result<String, ScriptError> {
+pub(super) fn unescape(s: &str, line: usize) -> Result<String, ScriptError> {
     let invalid = |reason: String| ScriptError::InvalidEscape { line, reason };
     let mut out = String::new();
     let mut chars = s.chars();
@@ -98,12 +107,12 @@ pub fn decode(text: &str) -> Result<(String, String, Vec<Action>), ScriptError> 
             continue;
         }
 
-        if let Some(rest) = raw.strip_prefix("dirloaded ") {
+        if let Some(rest) = strip_token(raw, Keyword::DirLoaded.as_str()) {
             actions.push(parse_dir_loaded(rest, line, &mut lines)?);
             continue;
         }
 
-        if let Some(rest) = raw.strip_prefix("highlight ") {
+        if let Some(rest) = strip_token(raw, Keyword::Highlight.as_str()) {
             actions.push(parse_highlight(rest, line, &mut lines)?);
             continue;
         }
@@ -151,7 +160,7 @@ fn parse_dir_loaded<'a>(
 
     let mut entries = Vec::new();
     while let Some(&(_, next_raw)) = lines.peek() {
-        let Some(entry_rest) = next_raw.strip_prefix("dirloaded-entry ") else {
+        let Some(entry_rest) = strip_token(next_raw, keyword::DIRLOADED_ENTRY) else {
             break;
         };
         let entry_line = match lines.next() {
@@ -235,13 +244,12 @@ fn parse_highlight<'a>(
             });
         };
         let entry_line = next_idx + 1;
-        let entry_rest =
-            next_raw
-                .strip_prefix("highlight-span ")
-                .ok_or_else(|| ScriptError::MalformedLine {
-                    line: entry_line,
-                    reason: "expected `highlight-span <start> <end> <scope>`".to_string(),
-                })?;
+        let entry_rest = strip_token(next_raw, keyword::HIGHLIGHT_SPAN).ok_or_else(|| {
+            ScriptError::MalformedLine {
+                line: entry_line,
+                reason: "expected `highlight-span <start> <end> <scope>`".to_string(),
+            }
+        })?;
         spans.push(parse_highlight_span(entry_rest, entry_line)?);
     }
 
@@ -319,10 +327,10 @@ fn parse_highlight_tree(rest: &str, line: usize) -> Result<Action, ScriptError> 
 }
 
 fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
-    if raw == "confirm-timeout" {
+    if is_token(raw, Keyword::ConfirmTimeout.as_str()) {
         return Ok(Action::ConfirmTimeout);
     }
-    if let Some(rest) = raw.strip_prefix("stale-confirm-timeout ") {
+    if let Some(rest) = strip_token(raw, Keyword::StaleConfirmTimeout.as_str()) {
         let generation: u32 = rest
             .trim()
             .parse()
@@ -332,22 +340,22 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
             })?;
         return Ok(Action::StaleConfirmTimeout(generation));
     }
-    if raw == "deliver" {
+    if is_token(raw, Keyword::Deliver.as_str()) {
         return Ok(Action::Deliver);
     }
-    if raw == "fail-next-save" {
+    if is_token(raw, Keyword::FailNextSave.as_str()) {
         return Ok(Action::FailNextSave);
     }
-    if raw == "diverge-disk" {
+    if is_token(raw, Keyword::DivergeDisk.as_str()) {
         return Ok(Action::DivergeDisk);
     }
-    if raw == "deliver-db-all" {
+    if is_token(raw, Keyword::DeliverDbAll.as_str()) {
         return Ok(Action::DeliverDbAll);
     }
-    if raw == "deliver-db" {
+    if is_token(raw, Keyword::DeliverDb.as_str()) {
         return Ok(Action::DeliverDb);
     }
-    if let Some(rest) = raw.strip_prefix("type ") {
+    if let Some(rest) = strip_token(raw, Keyword::Type.as_str()) {
         let text = unescape(rest, line)?;
         // Reject any control char other than `\n` (CODE-REVIEW.md rune-fuzz
         // finding 4): `Action::Type` can only ever deliver these one `char`
@@ -358,19 +366,19 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
         }
         return Ok(Action::Type(text));
     }
-    if let Some(rest) = raw.strip_prefix("paste ") {
+    if let Some(rest) = strip_token(raw, Keyword::Paste.as_str()) {
         return Ok(Action::Paste(unescape(rest, line)?));
     }
-    if let Some(rest) = raw.strip_prefix("clip ") {
+    if let Some(rest) = strip_token(raw, Keyword::ClipboardReply.as_str()) {
         return Ok(Action::ClipboardReply(unescape(rest, line)?));
     }
-    if let Some(rest) = raw.strip_prefix("resize ") {
+    if let Some(rest) = strip_token(raw, Keyword::Resize.as_str()) {
         return parse_resize(rest, line);
     }
-    if let Some(rest) = raw.strip_prefix("key ") {
+    if let Some(rest) = strip_token(raw, Keyword::Key.as_str()) {
         return parse_key(rest, line).map(Action::Key);
     }
-    if let Some(rest) = raw.strip_prefix("highlight-tree ") {
+    if let Some(rest) = strip_token(raw, Keyword::HighlightTree.as_str()) {
         return parse_highlight_tree(rest, line);
     }
 
@@ -402,102 +410,4 @@ fn parse_resize(rest: &str, line: usize) -> Result<Action, ScriptError> {
         num("resize width", w_str)?,
         num("resize height", h_str)?,
     ))
-}
-
-/// Splits a `key` line's remainder into code and mods fields by taking the
-/// LAST 4 characters as mods and the character before that as the
-/// separator — never by a generic whitespace split (module docs).
-fn parse_key(rest: &str, line: usize) -> Result<KeyInput, ScriptError> {
-    let malformed = |reason: &str| ScriptError::MalformedLine {
-        line,
-        reason: reason.to_string(),
-    };
-    let chars: Vec<char> = rest.chars().collect();
-    let n = chars.len();
-    if n < 5 {
-        return Err(malformed("key line too short to contain a mods field"));
-    }
-    let mods_start = n - 4;
-    let sep_idx = n - 5;
-
-    let mods_chars = chars
-        .get(mods_start..)
-        .ok_or_else(|| malformed("could not read mods field"))?;
-    let sep_char = *chars
-        .get(sep_idx)
-        .ok_or_else(|| malformed("could not read separator before mods field"))?;
-    let code_chars = chars
-        .get(..sep_idx)
-        .ok_or_else(|| malformed("could not read code field"))?;
-    if sep_char != ' ' {
-        return Err(malformed(&format!(
-            "expected a space before the mods field, found {sep_char:?}"
-        )));
-    }
-
-    let mods_str: String = mods_chars.iter().collect();
-    let code_str: String = code_chars.iter().collect();
-    Ok(KeyInput {
-        code: parse_code(&code_str, line)?,
-        mods: parse_mods(&mods_str, line)?,
-    })
-}
-
-fn parse_mods(s: &str, line: usize) -> Result<Mods, ScriptError> {
-    let invalid = || ScriptError::InvalidMods {
-        line,
-        mods: s.to_string(),
-    };
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() != 4 {
-        return Err(invalid());
-    }
-    let flag = |idx: usize, on: char| match chars.get(idx) {
-        Some('-') => Ok(false),
-        Some(&c) if c == on => Ok(true),
-        _ => Err(invalid()),
-    };
-    Ok(Mods {
-        shift: flag(0, 's')?,
-        alt: flag(1, 'a')?,
-        ctrl: flag(2, 'c')?,
-        sup: flag(3, 'u')?,
-    })
-}
-
-/// Mirrors `encode::encode_code`'s spellings; the `_` arm is the only place
-/// a `char:` payload is accepted.
-fn parse_code(s: &str, line: usize) -> Result<KeyCode, ScriptError> {
-    let code = match s {
-        "enter" => KeyCode::Enter,
-        "backspace" => KeyCode::Backspace,
-        "tab" => KeyCode::Tab,
-        "backtab" => KeyCode::BackTab,
-        "escape" => KeyCode::Escape,
-        "left" => KeyCode::Left,
-        "right" => KeyCode::Right,
-        "up" => KeyCode::Up,
-        "down" => KeyCode::Down,
-        "home" => KeyCode::Home,
-        "end" => KeyCode::End,
-        "pageup" => KeyCode::PageUp,
-        "pagedown" => KeyCode::PageDown,
-        "delete" => KeyCode::Delete,
-        "f1" => KeyCode::F1,
-        _ => {
-            let invalid = || ScriptError::InvalidKeyCode {
-                line,
-                code: s.to_string(),
-            };
-            let escaped = s.strip_prefix("char:").ok_or_else(invalid)?;
-            let unescaped = unescape(escaped, line)?;
-            let mut it = unescaped.chars();
-            let c = it.next().ok_or_else(invalid)?;
-            if it.next().is_some() {
-                return Err(invalid());
-            }
-            KeyCode::Char(c)
-        }
-    };
-    Ok(code)
 }
