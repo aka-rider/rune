@@ -41,6 +41,7 @@ pub mod listnav;
 pub mod materialize_ack;
 pub mod merge;
 pub mod messages;
+pub mod navhistory;
 pub mod navigate;
 pub mod opentabs;
 mod overlay;
