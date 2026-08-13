@@ -29,9 +29,10 @@ use tui_render_common::{
 #[test]
 fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cells() {
     let content = "ab\r\ncd\r\n";
-    let app = app_for(content, 0, true);
+    let session = app_for(content, 0, true);
+    let app = session.app();
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     // `full_text` itself joins rows with '\n' as a formatting separator, so
     // only '\r' is checked here — a real leaked '\n' cell is instead caught
     // below, directly on the `Cell` grid (which has no such separator).
@@ -44,7 +45,7 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     for row in &rows {
         for cell in row {
             assert!(
@@ -67,9 +68,10 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
 #[test]
 fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_cells() {
     let content = "ab\rcd\r";
-    let app = app_for(content, 0, true);
+    let session = app_for(content, 0, true);
+    let app = session.app();
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     let text = full_text(&buf, HEIGHT, WIDTH);
     assert!(
         !text.contains('\r'),
@@ -79,7 +81,7 @@ fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_c
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     for row in &rows {
         for cell in row {
             assert!(
@@ -101,7 +103,8 @@ fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_c
 fn tab_caret_column_agrees_with_wrap_visual_col() {
     let content = "ab\tcd\n";
     let cursor_offset = 3; // byte offset of 'c', right after the tab
-    let app = app_for(content, cursor_offset, true);
+    let session = app_for(content, cursor_offset, true);
+    let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
     let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
@@ -115,7 +118,7 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
         "a tab starting at column 2 must expand to the next 4-stop (column 4)"
     );
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     // Skip the center block's left AND right border columns (plan gotcha
     // 10) before comparing against the editor-relative text.
     let text: String = row_text(&buf, EDITOR_TOP_ROW, WIDTH)
@@ -144,7 +147,8 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
 fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     let content = "\u{6c49}\tab\n"; // U+6C49 (汉, width 2), tab, "ab"
     let cursor_offset = 4; // byte offset of 'a': 3 bytes of 汉 + 1 byte tab
-    let app = app_for(content, cursor_offset, true);
+    let session = app_for(content, cursor_offset, true);
+    let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
     let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
@@ -158,7 +162,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
         "汉 (width 2) then a tab to the next 4-stop must land 'a' at column 4"
     );
 
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.first().map(|c| (c.text.as_str(), c.width)),
@@ -175,7 +179,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
         "the tab (starting at visual col 2) must expand to exactly 2 single-width cells: {first_row:?}"
     );
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
         .expect("caret cell must be present on the editor's first row");
     assert_eq!((caret_x - EDITOR_LEFT_COL) as usize, expected_visual_col);
@@ -192,7 +196,8 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
 fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"; // 👨‍👩‍👧‍👦
     let content = format!("{family}\n");
-    let app = app_for(&content, 0, true);
+    let session = app_for(&content, 0, true);
+    let app = session.app();
 
     assert_eq!(
         app.active_doc().buffer.content(),
@@ -201,7 +206,7 @@ fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.len(),
@@ -221,7 +226,8 @@ fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
 fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     let wave = "\u{1F44B}\u{1F3FD}"; // 👋🏽 (waving hand + medium skin tone)
     let content = format!("{wave}\n");
-    let app = app_for(&content, 0, true);
+    let session = app_for(&content, 0, true);
+    let app = session.app();
 
     assert_eq!(
         app.active_doc().buffer.content(),
@@ -230,7 +236,7 @@ fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.len(),
@@ -252,17 +258,18 @@ fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
 fn wide_cell_leaves_a_blank_continuation_column_in_the_real_backend() {
     let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
     let content = format!("{family} x\n");
-    let app = app_for(&content, 0, true);
+    let session = app_for(&content, 0, true);
+    let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     let family_cell = first_row.first().expect("family cell present");
     assert_eq!(family_cell.text, family);
     let width = family_cell.width;
     assert!(width > 1, "family emoji must occupy more than one column");
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     for dx in 1..u16::from(width) {
         let x = EDITOR_LEFT_COL + dx;
         let cell = buf.cell((x, EDITOR_TOP_ROW)).expect("cell in bounds");
@@ -282,9 +289,10 @@ fn wide_cell_leaves_a_blank_continuation_column_in_the_real_backend() {
 #[test]
 fn control_char_gets_a_safe_placeholder_glyph() {
     let content = "a\u{7}b\n";
-    let app = app_for(content, 0, true);
+    let session = app_for(content, 0, true);
+    let app = session.app();
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     let text = full_text(&buf, HEIGHT, WIDTH);
     assert!(
         !text.contains('\u{7}'),
@@ -296,7 +304,7 @@ fn control_char_gets_a_safe_placeholder_glyph() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     let placeholder = rows
         .first()
         .and_then(|row| row.iter().find(|c| c.text == "\u{2407}"))
@@ -361,10 +369,11 @@ fn grapheme_width_agrees_with_ratatuis_own_cell_width_derivation() {
 fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
     let heart = "\u{2764}\u{FE0F}"; // ❤️
     let content = format!("{heart}x\n");
-    let app = app_for(&content, 0, true);
+    let session = app_for(&content, 0, true);
+    let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
     let first_row = rows.first().expect("at least one row");
     let heart_cell = first_row.first().expect("heart cell present");
     assert_eq!(heart_cell.text, heart);
@@ -374,7 +383,7 @@ fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
         "the Cell's own width must match ratatui's derivation for the same symbol"
     );
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(app);
     let text = full_text(&buf, HEIGHT, WIDTH);
     assert!(
         text.contains('x'),
@@ -424,7 +433,8 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
         // standing alone, which is the already-agreeing case the corpus
         // test above covers, not this one.
         let content = format!("{ch}ab\n");
-        let app = app_for(&content, 0, true);
+        let session = app_for(&content, 0, true);
+        let app = session.app();
 
         assert_eq!(
             app.active_doc().buffer.content(),
@@ -433,7 +443,7 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
         );
 
         let view = app.active_doc().view.as_ref().expect("synced view");
-        let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+        let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
         let cell = rows
             .first()
             .and_then(|row| row.iter().find(|c| c.text.chars().eq(std::iter::once(*ch))))
@@ -447,7 +457,7 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
         // own strict-mode `assert_invariant`, narrowed to admit exactly
         // this divergence, in a real cfg(test) build (the strict-invariants
         // gate is armed here).
-        let buf = render_to_test_backend(&app);
+        let buf = render_to_test_backend(app);
         let text = full_text(&buf, HEIGHT, WIDTH);
         assert!(
             text.contains('a') && text.contains('b'),

@@ -12,13 +12,36 @@
 
 mod tui_render_common;
 
-use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_tui::document::ReadOnly;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::testgrid;
 
 use tui_render_common::{
     EDITOR_TOP_ROW, HEIGHT, WIDTH, app_for, caret_column, render_to_test_backend,
 };
+
+const SHIFT_RIGHT: KeyInput = KeyInput {
+    code: KeyCode::Right,
+    mods: Mods {
+        shift: true,
+        ..Mods::NONE
+    },
+};
+
+/// Extends the active document's selection from wherever the caret already
+/// sits up to `target`, one `Shift+Right` press per grapheme step — the real
+/// selection gesture, never a `CursorSet::new_from` poke.
+fn extend_selection_to(session: &mut rune_fuzz::Session, target: usize) {
+    let mut guard = 0usize;
+    while session.app().active_doc().cursors.primary().position < target {
+        session.key(SHIFT_RIGHT);
+        guard += 1;
+        assert!(
+            guard <= target + 8,
+            "selection extension stalled before reaching offset {target}"
+        );
+    }
+}
 
 /// WP2 Done-when: a table's Grid layout reaches the real terminal render
 /// through the full `App` pipeline, not just `rune-md`'s own `emit` unit
@@ -29,8 +52,8 @@ use tui_render_common::{
 fn table_renders_as_box_drawing_not_raw_pipes() {
     let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
     let cursor = content.find("tail").expect("fixture has a tail paragraph");
-    let app = app_for(content, cursor, true);
-    let row = testgrid::row(&app, EDITOR_TOP_ROW, WIDTH, HEIGHT);
+    let session = app_for(content, cursor, true);
+    let row = testgrid::row(session.app(), EDITOR_TOP_ROW, WIDTH, HEIGHT);
     assert!(
         row.contains('│'),
         "expected the table's Grid border in the first editor row:\n{row:?}"
@@ -51,7 +74,7 @@ fn caret_not_visible_when_unfocused() {
     let offset = 3;
 
     let unfocused = app_for(content, offset, false);
-    let buf = render_to_test_backend(&unfocused);
+    let buf = render_to_test_backend(unfocused.app());
     assert_eq!(
         caret_column(&buf, EDITOR_TOP_ROW, WIDTH),
         None,
@@ -59,7 +82,7 @@ fn caret_not_visible_when_unfocused() {
     );
 
     let focused = app_for(content, offset, true);
-    let buf = render_to_test_backend(&focused);
+    let buf = render_to_test_backend(focused.app());
     assert!(
         caret_column(&buf, EDITOR_TOP_ROW, WIDTH).is_some(),
         "the focused counterpart must still show a caret, or this test is vacuous"
@@ -74,17 +97,15 @@ fn caret_not_visible_when_unfocused() {
 fn selection_not_highlighted_when_unfocused() {
     let content = "hello world\n";
 
-    let mut unfocused = app_for(content, 0, false);
-    let id = unfocused.active;
-    unfocused.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[Cursor {
-        position: 5,
-        anchor: 0,
-        desired_col: 0,
-        id: CursorId::FIRST,
-    }]);
-    unfocused.sync_view();
-    let buf = render_to_test_backend(&unfocused);
-    let selection_bg = unfocused.theme.chrome.selection_bg;
+    // Built focused so the `Shift+Right` selection gesture actually reaches
+    // the editor (keys route to whichever pane holds focus), then unfocused
+    // afterward — `tui_render_common::unfocus` is the same focus-move
+    // `app_for(..., false)` itself performs.
+    let mut unfocused = app_for(content, 0, true);
+    extend_selection_to(&mut unfocused, 5);
+    tui_render_common::unfocus(&mut unfocused);
+    let buf = render_to_test_backend(unfocused.app());
+    let selection_bg = unfocused.app().theme.chrome.selection_bg;
     let has_selection = (0..WIDTH).any(|x| {
         buf.cell((x, EDITOR_TOP_ROW))
             .is_some_and(|c| c.bg == selection_bg)
@@ -95,16 +116,9 @@ fn selection_not_highlighted_when_unfocused() {
     );
 
     let mut focused = app_for(content, 0, true);
-    let id = focused.active;
-    focused.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[Cursor {
-        position: 5,
-        anchor: 0,
-        desired_col: 0,
-        id: CursorId::FIRST,
-    }]);
-    focused.sync_view();
-    let buf = render_to_test_backend(&focused);
-    let selection_bg = focused.theme.chrome.selection_bg;
+    extend_selection_to(&mut focused, 5);
+    let buf = render_to_test_backend(focused.app());
+    let selection_bg = focused.app().theme.chrome.selection_bg;
     let has_selection = (0..WIDTH).any(|x| {
         buf.cell((x, EDITOR_TOP_ROW))
             .is_some_and(|c| c.bg == selection_bg)
@@ -123,11 +137,11 @@ fn selection_not_highlighted_when_unfocused() {
 fn caret_not_visible_on_a_read_only_document() {
     let content = "hello world\n";
     let offset = 3;
-    let mut app = app_for(content, offset, true);
-    let id = app.active;
-    app.doc_mut(id).unwrap().read_only = ReadOnly::Always;
-    app.sync_view();
-    let buf = render_to_test_backend(&app);
+    let mut session = app_for(content, offset, true);
+    let id = session.app().active;
+    session.app_mut().doc_mut(id).unwrap().read_only = ReadOnly::Always;
+    session.app_mut().sync_view();
+    let buf = render_to_test_backend(session.app());
     assert_eq!(
         caret_column(&buf, EDITOR_TOP_ROW, WIDTH),
         None,

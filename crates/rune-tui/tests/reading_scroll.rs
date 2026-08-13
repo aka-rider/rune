@@ -206,22 +206,20 @@ fn shift_arrows_scroll_and_select_nothing_in_a_read_only_document() {
 #[test]
 fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
     let content = "one two three\nfour five six\nseven eight nine\n";
-    let mut app = app_for(content, 0, true);
-    // `layout::geometry` (and so the mouse gesture's `editor` rect below)
-    // reads `frame_width`/`frame_height`, not the viewport size `app_for`
-    // sets directly — `tests/navigate.rs`'s own click helper carries the
-    // identical note.
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
-    app.sync_view();
-    send(&mut app, ctrl('p'));
-    assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
+    // `app_for` already resizes to `WIDTH`/`HEIGHT` through the real
+    // `Msg::Resize` chokepoint, so `layout::geometry` (and so the mouse
+    // gesture's `editor` rect below, which reads `frame_width`/
+    // `frame_height`) is already sized to match.
+    let mut session = app_for(content, 0, true);
+    send(session.app_mut(), ctrl('p'));
+    assert_eq!(session.app().active_doc().read_only, ReadOnly::Reading);
 
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    let editor = rune_tui::layout::geometry(area, &app).editor;
+    let area =
+        ratatui::layout::Rect::new(0, 0, session.app().frame_width, session.app().frame_height);
+    let editor = rune_tui::layout::geometry(area, session.app()).editor;
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Mouse(MouseInput {
             kind: MouseKind::Down(MouseButton::Left),
             column: editor.x,
@@ -233,7 +231,7 @@ fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
         &mut effects,
     );
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Mouse(MouseInput {
             kind: MouseKind::Drag(MouseButton::Left),
             column: editor.x + 8,
@@ -244,16 +242,16 @@ fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
         }),
         &mut effects,
     );
-    app.sync_view();
+    session.app_mut().sync_view();
     assert!(
-        app.active_doc().cursors.primary().has_selection(),
+        session.app().active_doc().cursors.primary().has_selection(),
         "the drag must have produced a selection before scrolling"
     );
 
-    send(&mut app, plain(KeyCode::Down));
+    send(session.app_mut(), plain(KeyCode::Down));
 
     assert!(
-        !app.active_doc().cursors.primary().has_selection(),
+        !session.app().active_doc().cursors.primary().has_selection(),
         "a keyboard scroll now moves a real caret, so it must collapse a selection \
          exactly like an ordinary unshifted Down press does in an editable document"
     );

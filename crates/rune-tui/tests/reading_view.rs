@@ -161,13 +161,13 @@ fn help_tab_table_stays_boxed_when_the_cursor_lands_inside_it() {
 fn ctrl_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
     let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
     let cursor = content.find("Alice").expect("fixture has a data row");
-    let mut app = app_for(content, cursor, true);
+    let mut session = app_for(content, cursor, true);
 
-    send(&mut app, ctrl('p'));
-    assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
-    app.sync_view();
+    send(session.app_mut(), ctrl('p'));
+    assert_eq!(session.app().active_doc().read_only, ReadOnly::Reading);
+    session.app_mut().sync_view();
 
-    let boxed = full_text(&render_to_test_backend(&app), HEIGHT, WIDTH);
+    let boxed = full_text(&render_to_test_backend(session.app()), HEIGHT, WIDTH);
     assert!(
         boxed.contains('│'),
         "reading view must box the table regardless of cursor position:\n{boxed}"
@@ -177,11 +177,11 @@ fn ctrl_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
         "reading view must not reveal the raw source row:\n{boxed}"
     );
 
-    send(&mut app, ctrl('p'));
-    assert_eq!(app.active_doc().read_only, ReadOnly::No);
-    app.sync_view();
+    send(session.app_mut(), ctrl('p'));
+    assert_eq!(session.app().active_doc().read_only, ReadOnly::No);
+    session.app_mut().sync_view();
 
-    let raw = full_text(&render_to_test_backend(&app), HEIGHT, WIDTH);
+    let raw = full_text(&render_to_test_backend(session.app()), HEIGHT, WIDTH);
     assert!(
         raw.contains("| Alice | 30 |"),
         "leaving reading view with the cursor still inside the table must reveal raw source again:\n{raw}"
@@ -268,11 +268,11 @@ fn ctrl_r_in_reading_view_refuses_with_the_reading_wording_not_the_always_wordin
 fn reading_view_paints_no_caret_anywhere() {
     let content = "# Doc\n\nSome paragraph text with **bold** and a [link](x).\n";
     let cursor = content.find("bold").expect("fixture has bold text");
-    let mut app = app_for(content, cursor, true);
-    app.active_doc_mut().read_only = ReadOnly::Reading;
-    app.sync_view();
+    let mut session = app_for(content, cursor, true);
+    session.app_mut().active_doc_mut().read_only = ReadOnly::Reading;
+    session.app_mut().sync_view();
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(session.app());
     for y in 0..HEIGHT {
         assert_eq!(
             caret_column(&buf, y, WIDTH),

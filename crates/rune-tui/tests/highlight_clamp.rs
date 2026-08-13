@@ -24,16 +24,16 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
     // 3 CJK codepoints (3 bytes each) + `\n` = 10 bytes; byte 1 sits inside
     // the first codepoint, never on a `char` boundary.
     let content = "日本語\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let len = app.doc(id).expect("doc").buffer.content().len();
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
+    let len = session.app().doc(id).expect("doc").buffer.content().len();
     assert_eq!(len, 10);
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer.version();
     let keyword = scope_table().resolve("keyword").expect("known scope");
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -47,8 +47,14 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
         &mut effects,
     );
 
-    let spans = all_spans(&app);
-    let content = app.doc(id).expect("doc").buffer.content().to_string();
+    let spans = all_spans(session.app());
+    let content = session
+        .app()
+        .doc(id)
+        .expect("doc")
+        .buffer
+        .content()
+        .to_string();
     for (range, _) in &spans {
         assert!(range.start < range.end);
         assert!(range.end <= content.len());
@@ -69,14 +75,14 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
 /// range reachable.
 #[test]
 fn a_stored_span_is_re_clamped_after_the_buffer_shrinks() {
-    let mut app = app_for("fn main() {}\n", "/x/main.rs");
-    let id = app.active;
+    let mut session = app_for("fn main() {}\n", "/x/main.rs");
+    let id = session.app().active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer.version();
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -86,12 +92,19 @@ fn a_stored_span_is_re_clamped_after_the_buffer_shrinks() {
     );
 
     {
+        let app = session.app_mut();
         let doc = app.doc_mut(id).expect("doc");
         doc.buffer = doc.buffer.delete(2, 13).expect("in-bounds delete");
     }
 
-    let content = app.doc(id).expect("doc").buffer.content().to_string();
-    for (range, _) in all_spans(&app) {
+    let content = session
+        .app()
+        .doc(id)
+        .expect("doc")
+        .buffer
+        .content()
+        .to_string();
+    for (range, _) in all_spans(session.app()) {
         assert!(
             range.end <= content.len(),
             "span {range:?} outlives the shrunken content of length {}",
