@@ -45,7 +45,7 @@ fn app_with(mem: &Arc<Mem>) -> App {
         vfs,
         None,
     );
-    app.pointer_clock = Box::new(ManualClock::new());
+    app.clock = Arc::new(ManualClock::new());
     app.frame_width = WIDTH;
     app.frame_height = HEIGHT;
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);

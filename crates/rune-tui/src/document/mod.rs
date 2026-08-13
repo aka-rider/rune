@@ -32,6 +32,7 @@ use save_state::{SaveState, SaveTicketMint};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
@@ -81,6 +82,8 @@ pub struct Document {
     /// pushed here as a `Step`; `commands::edit::undo`/`redo` peek-then-
     /// commit against it.
     pub journal: Journal,
+    pub(crate) ladder_presses: usize,
+    pub(crate) ladder_pressed_at: Option<Instant>,
     /// Guards every buffer-mutating command (typing, backspace/delete,
     /// indent/outdent, cut, paste — anything that reaches
     /// `commands::edit::commit_edit_batch`, the sole writer of buffer
@@ -394,6 +397,8 @@ impl Document {
             focused: true,
             reveal_engaged: true,
             journal: Journal::new(),
+            ladder_presses: 0,
+            ladder_pressed_at: None,
             read_only: ReadOnly::No,
             file_path: None,
             saved_version,

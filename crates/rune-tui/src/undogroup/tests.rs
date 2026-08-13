@@ -102,6 +102,92 @@ fn paste_step_is_never_absorbed_into_a_neighbouring_group() {
     );
 }
 
+fn undo_all(journal: &mut Journal) {
+    while let Some((_, token)) = journal.undo_peek() {
+        journal.commit(token);
+    }
+}
+
+#[test]
+fn redo_rune_returns_one_step() {
+    let mut journal = journal_of(&[
+        step(EditKind::Insert, "h"),
+        step(EditKind::Insert, "e"),
+        step(EditKind::Insert, "l"),
+    ]);
+    undo_all(&mut journal);
+    assert_eq!(steps_for_redo(&journal, Tier::Rune), 1);
+}
+
+#[test]
+fn redo_word_press_mirrors_the_forward_word_boundary() {
+    let chars = "hello world";
+    let steps: Vec<Step> = chars
+        .chars()
+        .map(|c| step(EditKind::Insert, &c.to_string()))
+        .collect();
+    let mut journal = journal_of(&steps);
+    undo_all(&mut journal);
+
+    assert_eq!(
+        steps_for_redo(&journal, Tier::Word),
+        6,
+        "one Word redo must replay the leading word plus the whitespace \
+         that separates it from the next one, mirroring the undo direction"
+    );
+}
+
+#[test]
+fn redo_line_press_stops_at_a_newline() {
+    let mut journal = journal_of(&[
+        step(EditKind::Insert, "a"),
+        step(EditKind::Insert, "b"),
+        step(EditKind::Insert, "\n"),
+        step(EditKind::Insert, "c"),
+        step(EditKind::Insert, "d"),
+    ]);
+    undo_all(&mut journal);
+    assert_eq!(
+        steps_for_redo(&journal, Tier::Line),
+        3,
+        "a Line redo must stop once it has replayed the newline itself"
+    );
+}
+
+#[test]
+fn redo_paste_step_is_never_absorbed_into_a_neighbouring_group() {
+    let mut journal = journal_of(&[step(EditKind::Paste, "ab"), step(EditKind::Paste, "cd")]);
+    undo_all(&mut journal);
+    assert_eq!(
+        steps_for_redo(&journal, Tier::Line),
+        1,
+        "a Paste step is an isolated unit even next to another Paste step"
+    );
+}
+
+#[test]
+fn steps_for_redo_never_exceeds_the_remaining_journal() {
+    let mut journal = journal_of(&[
+        step(EditKind::Insert, "a"),
+        step(EditKind::Insert, "b"),
+        step(EditKind::Insert, "c"),
+        step(EditKind::Insert, "d"),
+        step(EditKind::Insert, "e"),
+    ]);
+    undo_all(&mut journal);
+    let remaining = journal.steps().len() - journal.pos();
+    for tier in [
+        Tier::Rune,
+        Tier::Word,
+        Tier::MultiWord,
+        Tier::Sentence,
+        Tier::Line,
+    ] {
+        assert!(steps_for_redo(&journal, tier) <= remaining);
+    }
+    assert_eq!(steps_for_redo(&journal, Tier::Line), remaining);
+}
+
 #[test]
 fn steps_for_never_exceeds_journal_pos() {
     let journal = journal_of(&[

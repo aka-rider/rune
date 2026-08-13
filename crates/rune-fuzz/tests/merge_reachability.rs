@@ -50,7 +50,7 @@ fn session_without_a_store_refuses_merge_and_stays_inactive() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
     let mut app = App::new(Buffer::new("hello"), Some(path), vfs, None);
-    app.pointer_clock = Box::new(rune_tui::pointer::ManualClock::new());
+    app.clock = Arc::new(rune_tui::pointer::ManualClock::new());
     app.active_doc_mut().focused = true;
     app.frame_width = 80;
     app.frame_height = 24;

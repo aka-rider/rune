@@ -43,7 +43,7 @@ fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
         return;
     };
 
-    let now = app.pointer_clock.now();
+    let now = app.clock.now();
     let count = app
         .pointer
         .register_row_click(now, input.column, input.row, index);
