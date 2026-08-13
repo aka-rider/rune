@@ -2326,6 +2326,7 @@ dependencies = [
  "ratatui-termina",
  "rune-core",
  "rune-db",
+ "rune-fuzz",
  "rune-image",
  "rune-md",
  "rune-merge",
