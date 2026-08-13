@@ -4,13 +4,6 @@
 //! every wrapped row), plain click-drag extends a selection, and the wheel
 //! scrolls 3 rows. `app::update` routes `Msg::Mouse` here directly, exactly
 //! like `app::handle_key` routes a resolved `Command` to `commands::nav`.
-//!
-//! Hit-testing (`mouse_hit::offset_at`, split out for the 500-line
-//! budget) reuses
-//! `render::segment_cells` — the SAME per-cell `buf_offset` the renderer
-//! just blitted — rather than re-deriving a wrap-row/visual-column ->
-//! buffer conversion independently: whatever glyph is on screen at a
-//! clicked cell is, by construction, what the click resolves to.
 
 use rune_core::cursor::{Cursor, CursorSet, CursorSpec};
 
@@ -21,8 +14,11 @@ use crate::commands::nav_line::line_range_incl_newline;
 use crate::commands::nav_scroll;
 use crate::commands::splitter;
 use crate::document::Document;
+use crate::explorer_mouse;
+use crate::filesearch;
 use crate::messages;
 use crate::navigate;
+use crate::opentabs;
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
@@ -32,15 +28,12 @@ use crate::runtime::Effects;
 /// converge on this number).
 pub(crate) const WHEEL_ROWS: isize = 3;
 
-/// Routes one `Msg::Mouse`. Mouse support is no longer editor-only: the
-/// two splitter bands (the left column's grab band, the `Open` divider
-/// row) are live everywhere in the frame; the rest of the chrome still
-/// drops its events, same as before. Takes `effects` because a ctrl-click
-/// may follow an external link, which needs an `OpenExternal` `Cmd`.
+/// Routes one `Msg::Mouse`. Takes `effects` because a ctrl-click may follow
+/// an external link, which needs an `OpenExternal` `Cmd`.
 pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     // A splitter drag owns the pointer until the button comes up: it
     // routinely leaves every rect mid-gesture, so this is decided before
-    // the editor-rect gate below would otherwise drop the event. A fresh
+    // the pane dispatch below would otherwise drop the event. A fresh
     // press ends any latched gesture rather than being swallowed — mode
     // 1002 reports no hover, so a release lost to a focus change or an
     // out-of-window mouse-up has no second signal to recover from, and
@@ -101,42 +94,47 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         return;
     }
 
+    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
+        filesearch::cancel(app, effects);
+        return;
+    }
+
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = crate::layout::geometry(area, app);
 
-    if let Some(rect) = geo.messages {
-        let inside = input.column >= rect.x
-            && input.column < rect.x.saturating_add(rect.width)
-            && input.row >= rect.y
-            && input.row < rect.y.saturating_add(rect.height);
-        if inside {
-            messages::mouse(app, input, effects);
-            return;
+    match geo.pane_at(input.column, input.row) {
+        Some(Pane::Messages) => messages::mouse(app, input, effects),
+        // The finder paints over the Explorer's own rect while it is open,
+        // so a wheel tick there must move what the user can actually see.
+        Some(Pane::Explorer) if app.filesearch().is_some() => {
+            filesearch::mouse(app, input, effects)
         }
-    }
-
-    let editor = geo.editor;
-    if input.column < editor.x
-        || input.row < editor.y
-        || input.column >= editor.x.saturating_add(editor.width)
-        || input.row >= editor.y.saturating_add(editor.height)
-    {
-        return;
-    }
-    let col = input.column - editor.x;
-    let row = input.row - editor.y;
-
-    match input.kind {
-        MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
-        MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
-        MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row, effects),
-        MouseKind::Down(MouseButton::Right | MouseButton::Middle)
-        | MouseKind::Up(_)
-        | MouseKind::Drag(_) => {}
+        Some(Pane::Explorer) => explorer_mouse::mouse(app, input, effects),
+        Some(Pane::Tabs) => opentabs::mouse::mouse(app, input, effects),
+        Some(Pane::Editor) => {
+            let col = input.column.saturating_sub(geo.editor.x);
+            let row = input.row.saturating_sub(geo.editor.y);
+            match input.kind {
+                MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
+                MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
+                MouseKind::Down(MouseButton::Left) => {
+                    handle_left_down(app, input, col, row, effects);
+                }
+                MouseKind::Down(MouseButton::Right | MouseButton::Middle)
+                | MouseKind::Up(_)
+                | MouseKind::Drag(_) => {}
+            }
+        }
+        Some(Pane::Title) | None => {}
     }
 }
 
 fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {
+    app.set_focus_pane(Pane::Editor, effects);
+    if app.focus() != Pane::Editor {
+        return;
+    }
+
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;
     };
@@ -284,14 +282,11 @@ pub(crate) fn extend_drag_cursor(
 /// pre-WP3 behaviour this replaces.
 fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    let editor = crate::layout::geometry(area, app).editor;
-    if input.column < editor.x
-        || input.row < editor.y
-        || input.column >= editor.x.saturating_add(editor.width)
-        || input.row >= editor.y.saturating_add(editor.height)
-    {
+    let geo = crate::layout::geometry(area, app);
+    if geo.pane_at(input.column, input.row) != Some(Pane::Editor) {
         return;
     }
+    let editor = geo.editor;
     let col = input.column - editor.x;
     let row = input.row - editor.y;
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {

@@ -14,7 +14,6 @@ use crate::app::App;
 use crate::document::ReadOnly;
 use crate::messages;
 use crate::pane::Pane;
-use crate::viewport::ScrollMode;
 
 /// Toggles the active document's `ReadOnly` state between `No` and
 /// `Reading`. `Always`/`Preview` are left untouched with a status message —
@@ -46,19 +45,7 @@ pub fn toggle(app: &mut App) {
         ReadOnly::No => doc.read_only = ReadOnly::Reading,
         ReadOnly::Reading => {
             doc.read_only = ReadOnly::No;
-            // While reading, every motion key moved `scroll_row` directly
-            // and the cursor was never chased, so it can now be off-screen
-            // entirely — where the default `FollowCursor` settle would yank
-            // the view off the page the user was just reading. `Independent`
-            // inverts that: the CURSOR snaps onto the visible band instead,
-            // so the caret reappears where they were reading. Armed only
-            // when the cursor really is off-screen, because the snap moves
-            // the cursor to the scrolloff band's edge — doing that to a
-            // cursor the user can already see would drag it off whatever it
-            // was resting on.
-            if !doc.cursor_on_screen() {
-                doc.viewport.mode = ScrollMode::Independent;
-            }
+            doc.reading_link_focus = None;
         }
         ReadOnly::Always | ReadOnly::Preview => {
             if let Some(message) = doc.read_only.refusal_message() {

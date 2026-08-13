@@ -188,6 +188,7 @@ pub enum Drag {
 pub struct PointerState {
     pub last_click: Option<(Instant, u16, u16)>,
     pub click_count: u8,
+    pub last_row_index: Option<usize>,
     pub drag: Option<Drag>,
 }
 
@@ -200,16 +201,38 @@ impl PointerState {
     /// the same convention most editors use rather than growing a
     /// selection unit past "logical line".
     pub fn register_click(&mut self, now: Instant, col: u16, row: u16) -> u8 {
-        let continues = self.last_click.is_some_and(|(t, c, r)| {
-            now.saturating_duration_since(t) <= MULTI_CLICK_WINDOW
-                && chebyshev(c, r, col, row) <= MULTI_CLICK_DIST
-        });
+        self.register(now, col, row, None)
+    }
+
+    /// The list panes' own registration: the same window and distance, plus
+    /// the resolved row index. One cell of hand drift is a stray inside a
+    /// word, but a DIFFERENT item in a list, so a run continues only while
+    /// consecutive clicks name the same index.
+    pub fn register_row_click(&mut self, now: Instant, col: u16, row: u16, index: usize) -> u8 {
+        self.register(now, col, row, Some(index))
+    }
+
+    /// Ends any run in flight, so the next click starts a fresh one — what
+    /// a click resolving to no row at all reports.
+    pub fn end_click_run(&mut self) {
+        self.last_click = None;
+        self.click_count = 0;
+        self.last_row_index = None;
+    }
+
+    fn register(&mut self, now: Instant, col: u16, row: u16, index: Option<usize>) -> u8 {
+        let continues = self.last_row_index == index
+            && self.last_click.is_some_and(|(t, c, r)| {
+                now.saturating_duration_since(t) <= MULTI_CLICK_WINDOW
+                    && chebyshev(c, r, col, row) <= MULTI_CLICK_DIST
+            });
         self.click_count = if continues {
             (self.click_count + 1).min(3)
         } else {
             1
         };
         self.last_click = Some((now, col, row));
+        self.last_row_index = index;
         self.click_count
     }
 }
@@ -262,6 +285,40 @@ mod tests {
             1,
             "far away -> not a multi-click"
         );
+    }
+
+    #[test]
+    fn a_neighbouring_row_click_starts_its_own_run() {
+        let clock = ManualClock::new();
+        let mut pointer = PointerState::default();
+        assert_eq!(pointer.register_row_click(clock.now(), 10, 5, 3), 1);
+        clock.advance(Duration::from_millis(100));
+        assert_eq!(
+            pointer.register_row_click(clock.now(), 10, 6, 4),
+            1,
+            "one row down is a different item, not a double-click"
+        );
+        clock.advance(Duration::from_millis(100));
+        assert_eq!(pointer.register_row_click(clock.now(), 10, 6, 4), 2);
+    }
+
+    #[test]
+    fn ending_the_run_makes_the_next_click_a_single() {
+        let clock = ManualClock::new();
+        let mut pointer = PointerState::default();
+        assert_eq!(pointer.register_row_click(clock.now(), 10, 5, 3), 1);
+        pointer.end_click_run();
+        clock.advance(Duration::from_millis(100));
+        assert_eq!(pointer.register_row_click(clock.now(), 10, 5, 3), 1);
+    }
+
+    #[test]
+    fn an_editor_click_never_continues_a_list_run() {
+        let clock = ManualClock::new();
+        let mut pointer = PointerState::default();
+        assert_eq!(pointer.register_row_click(clock.now(), 10, 5, 3), 1);
+        clock.advance(Duration::from_millis(100));
+        assert_eq!(pointer.register_click(clock.now(), 10, 5), 1);
     }
 
     #[test]

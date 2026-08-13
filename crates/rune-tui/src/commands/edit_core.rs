@@ -19,6 +19,7 @@ use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::materialize_ack;
 use crate::messages;
+use crate::navhistory;
 
 /// Shared low-level chokepoint underneath `commit_edit_batch`: sort the
 /// batch, apply it, journal exactly ONE `Step`, mirror it to the async
@@ -107,6 +108,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
             doc.buffer = new_buf;
             doc.cursors = CursorSet::new_from(&new_cursors);
             let cursors_after = doc.cursors.all().to_vec();
+            let caret = doc.cursors.primary().position;
             doc.journal.push(Step {
                 edits: applied.clone(),
                 cursors_before: cursors_before.all().to_vec(),
@@ -120,6 +122,11 @@ pub(crate) fn apply_edit_batch_with_cursors(
             // store degraded on failure (`db::append_edit`'s doc comment).
             db::append_edit(app, id, &applied, cursors_before.all(), &cursors_after);
             materialize_ack::recompute_dirty(app, id);
+            for ae in &applied {
+                app.nav_history
+                    .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
+            }
+            navhistory::record_edit(app, id, caret);
             true
         }
         Err(e) => {

@@ -14,8 +14,6 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_core::coords::DisplayRow;
 use rune_tui::app::{self, App};
-use rune_tui::clipboard::osc52_copy;
-use rune_tui::commands::clipboard;
 use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
@@ -206,7 +204,7 @@ fn shift_arrows_scroll_and_select_nothing_in_a_read_only_document() {
 }
 
 #[test]
-fn a_mouse_selection_survives_scrolling_in_a_read_only_document() {
+fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
     let content = "one two three\nfour five six\nseven eight nine\n";
     let mut app = app_for(content, 0, true);
     // `layout::geometry` (and so the mouse gesture's `editor` rect below)
@@ -255,19 +253,14 @@ fn a_mouse_selection_survives_scrolling_in_a_read_only_document() {
     send(&mut app, plain(KeyCode::Down));
 
     assert!(
-        app.active_doc().cursors.primary().has_selection(),
-        "scrolling a read-only document must not collapse a mouse selection"
+        !app.active_doc().cursors.primary().has_selection(),
+        "a keyboard scroll now moves a real caret, so it must collapse a selection \
+         exactly like an ordinary unshifted Down press does in an editable document"
     );
-
-    let id = app.active;
-    let mut copy_effects = Effects::default();
-    clipboard::copy(&mut app, id, &mut copy_effects);
-    let selected = &content[..8];
-    assert_eq!(copy_effects.raw, vec![osc52_copy(selected.as_bytes())]);
 }
 
 #[test]
-fn leaving_the_reading_view_brings_the_caret_back_into_view() {
+fn leaving_the_reading_view_does_not_move_the_caret() {
     let content: String = (0..100).map(|i| format!("line {i}\n")).collect();
     let mut app = app_basic(&content);
     send(&mut app, ctrl('p'));
@@ -281,16 +274,18 @@ fn leaving_the_reading_view_brings_the_caret_back_into_view() {
         "must actually have scrolled"
     );
     assert_eq!(app.active_doc().viewport.mode, ScrollMode::FollowCursor);
+    let caret_before_leaving = app.active_doc().cursors.primary().position;
 
     send(&mut app, ctrl('p'));
     assert_eq!(app.active_doc().read_only, ReadOnly::No);
+    assert_eq!(
+        app.active_doc().cursors.primary().position,
+        caret_before_leaving,
+        "leaving reading view must not move the caret"
+    );
+
     app.sync_view();
 
-    assert_eq!(
-        app.active_doc().viewport.scroll_row,
-        scroll_after_reading,
-        "the view must not jump when reading view is left"
-    );
     let buf = render_to_test_backend(&app);
     let mut painted = false;
     for y in 0..HEIGHT {

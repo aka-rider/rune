@@ -273,6 +273,10 @@ pub fn undo(app: &mut App, id: DocumentId) {
                 doc.cursors = CursorSet::new_from(&cursors_before);
                 doc.journal.commit(token);
                 reached = Some(target);
+                for ae in &edits {
+                    app.nav_history
+                        .shift(id, ae.start, ae.insert.len(), ae.deleted.len());
+                }
                 resync_after_journal_jump(app, id, affected);
             }
             Err(e) => {
@@ -321,6 +325,10 @@ pub fn redo(app: &mut App, id: DocumentId) {
                 doc.cursors = CursorSet::new_from(&cursors_after);
                 doc.journal.commit(token);
                 reached = Some(target);
+                for ae in &edits {
+                    app.nav_history
+                        .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
+                }
                 resync_after_journal_jump(app, id, affected);
             }
             Err(e) => {

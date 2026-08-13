@@ -136,12 +136,12 @@ entry is deleted in the same commit that fixes it.
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
   - `crates/rune-db/src/sync.rs` — 801 (split candidate: move the `#[cfg(test)]` module to a sibling `sync_tests.rs`, the `materialize.rs`/`materialize_tests.rs` pattern this crate already uses)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1064 (test file)
-  - `crates/rune-tui/src/global.rs` — 767
-  - `crates/rune-tui/src/pane.rs` — 862
+  - `crates/rune-tui/src/global.rs` — 793 (grew from 767: `GlobalCommand::NavBack`/`NavForward` and their four bindings)
+  - `crates/rune-tui/src/pane.rs` — 866 (grew from 862: the `NavBack`/`NavForward` dispatch arms)
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
   - `crates/rune-tui/src/runtime/mod.rs` — 621 (grew from 608: `Msg::BootstrapViewReady`, issue #11's deferred-compute reply)
   - `crates/rune-fuzz/src/generate/palette.rs` — 659
-  - `crates/rune-tui/src/app.rs` — 591
+  - `crates/rune-tui/src/app.rs` — 602 (grew from 591: the `nav_history` field and its `update` seam wiring)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 586 (test file)
   - `crates/rune-tui/src/merge/landing.rs` — 608 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
@@ -167,6 +167,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/workspace/mod.rs` — 561 (pushed over by the `resolve_or_report` chokepoint added alongside the `resolve` signature change; split candidate: move the `#[cfg(test)] mod tests` block to a sibling test module)
   - `crates/rune-db/tests/multiprocess/scenarios.rs` — 509 (test file)
   - `crates/rune-tui/src/save/materialize_tests.rs` — 531 (test file; newly over — split candidate: move `snapshot_due_with_the_current_generation_enqueues_a_snapshot`/`snapshot_due_with_a_stale_generation_is_ignored`, which exercise `handle_snapshot_due` from `materialize_ack.rs` rather than this file's own CAS/publish path, to a sibling test module)
+  - `crates/rune-tui/src/layout.rs` — 518 (newly over — `Geometry::pane_at`, the mouse hit test, carried a file that was already 499 past the line; split candidate: move the pane-limit constants, `Splits`, `explorer_budget` and `explorer_fallback` to a sibling `layout_splits.rs`, leaving `resolve`/`geometry` and `Geometry` itself here)
   - `crates/rune-tui/src/footer_hints.rs` — 517 (newly over — split candidate: move its `#[cfg(test)] mod tests` block, over half the file, to a sibling `footer_hints_tests.rs`)
 - **Wrong**: source files exceed the 500-line house rule, none ledgered. Five files dropped below 500 and are removed from this list: `crates/rune-tui/src/materialize_ack.rs` (305), `crates/rune-tui/src/materialize_ack/reactions.rs` (378), `crates/rune-fuzz/src/script/decode.rs` (413), `crates/rune-md/src/emit/mod.rs` (343), `crates/rune-syntax/src/wrap/mod.rs` (494). `crates/rune-syntax/src/syntax.rs` (466) and `crates/rune-tui/src/save/materialize.rs` (329) remain under the threshold from an earlier drop.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.

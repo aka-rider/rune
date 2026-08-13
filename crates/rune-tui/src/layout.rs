@@ -6,7 +6,7 @@
 //! itself never touches a `Frame` and never takes `&mut App` — it is safe to call as often as
 //! any of its three readers like, always with the same answer for the same inputs.
 
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
 use rune_core::assert_invariant;
 
 use crate::app::App;
@@ -134,6 +134,25 @@ pub struct Geometry {
     /// `None` when the column isn't showing. The VERTICAL grab band needs
     /// no field of its own — it is exactly `tabs_divider`.
     pub left_splitter: Option<Rect>,
+}
+
+impl Geometry {
+    pub fn pane_at(&self, column: u16, row: u16) -> Option<crate::pane::Pane> {
+        let point = Position::new(column, row);
+        if self.messages.is_some_and(|rect| rect.contains(point)) {
+            return Some(crate::pane::Pane::Messages);
+        }
+        if self.explorer_inner.contains(point) {
+            return Some(crate::pane::Pane::Explorer);
+        }
+        if self.tabs_inner.contains(point) {
+            return Some(crate::pane::Pane::Tabs);
+        }
+        if self.editor.contains(point) {
+            return Some(crate::pane::Pane::Editor);
+        }
+        None
+    }
 }
 
 /// What `resolve` below decides, before `geometry` carves a single further

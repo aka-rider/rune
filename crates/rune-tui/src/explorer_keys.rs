@@ -138,11 +138,17 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
     KeyOutcome::Consumed
 }
 
+pub(crate) fn select_index(app: &mut App, index: usize, effects: &mut Effects) {
+    let len = app.explorer.entries.len();
+    app.explorer.nav.cursor = index.min(len.saturating_sub(1));
+    ensure_visible(app);
+    explorer_preview::after_cursor_move(app, effects);
+}
+
 fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
     let len = app.explorer.entries.len();
     app.explorer.nav.move_by(delta, len);
-    ensure_visible(app);
-    explorer_preview::after_cursor_move(app, effects);
+    select_index(app, app.explorer.nav.cursor, effects);
 }
 
 /// Opens the currently selected entry: a file activates it through
@@ -168,7 +174,7 @@ fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
 /// lands focus on the Editor only when `open_path` actually returns an id —
 /// a read failure raises the error banner instead and must not ALSO steal
 /// the keyboard from a user still arrowing the Explorer list.
-fn open_selected(app: &mut App, effects: &mut Effects) {
+pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some((target, is_dir)) = app
         .explorer
         .entries

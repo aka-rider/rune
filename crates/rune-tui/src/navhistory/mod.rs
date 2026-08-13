@@ -2,10 +2,14 @@ use std::path::PathBuf;
 
 use crate::document::DocumentId;
 
+mod record;
 #[cfg(test)]
 mod tests;
+mod travel;
 
-#[allow(dead_code)]
+pub use record::{observe, record_edit};
+pub use travel::{back, forward};
+
 const MAX_PLACES: usize = 50;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,7 +37,14 @@ impl NavHistory {
         self.current
     }
 
-    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.places.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.places.is_empty()
+    }
+
     fn push(&mut self, place: Place, replace_last: bool) {
         self.places.truncate(self.current);
         if replace_last {
@@ -102,6 +113,17 @@ impl NavHistory {
         self.places.remove(index);
         if index <= self.current {
             self.current = self.current.saturating_sub(1);
+        }
+    }
+
+    pub fn drop_doc(&mut self, doc: DocumentId) {
+        let mut i = 0;
+        while let Some(place) = self.places.get(i) {
+            if place.doc == doc {
+                self.drop_at(i);
+            } else {
+                i += 1;
+            }
         }
     }
 }
