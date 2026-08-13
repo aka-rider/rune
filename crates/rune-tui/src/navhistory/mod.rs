@@ -59,6 +59,14 @@ impl NavHistory {
         &self.places
     }
 
+    pub fn can_back(&self) -> bool {
+        self.current > 0
+    }
+
+    pub fn can_forward(&self) -> bool {
+        self.current + 1 < self.places.len()
+    }
+
     fn push(&mut self, place: Place, replace_last: bool) {
         self.places.truncate(self.current);
         if replace_last {
@@ -82,7 +90,7 @@ impl NavHistory {
     }
 
     pub fn back(&mut self, live: Place) -> Option<Place> {
-        if self.current == 0 {
+        if !self.can_back() {
             return None;
         }
         if self.current == self.places.len() {
@@ -93,7 +101,7 @@ impl NavHistory {
     }
 
     pub fn forward(&mut self) -> Option<Place> {
-        if self.current + 1 >= self.places.len() {
+        if !self.can_forward() {
             return None;
         }
         self.current += 1;

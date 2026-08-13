@@ -35,7 +35,6 @@ fn peek_current(history: &NavHistory) -> Option<Place> {
 pub fn back(app: &mut App, effects: &mut Effects) {
     let live = live_place(app);
     let Some(mut place) = app.nav_history.back(live) else {
-        messages::info(app, "no earlier location");
         return;
     };
     loop {
@@ -59,7 +58,6 @@ pub fn back(app: &mut App, effects: &mut Effects) {
 pub fn forward(app: &mut App, effects: &mut Effects) {
     loop {
         let Some(place) = app.nav_history.forward() else {
-            messages::info(app, "no later location");
             return;
         };
         match travel_to(app, &place, effects) {
