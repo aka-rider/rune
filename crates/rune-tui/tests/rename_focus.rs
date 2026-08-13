@@ -2,12 +2,11 @@
 //! chokepoint suite — the hoisted blur gate, the invalid-name veto, the
 //! Explorer/Tabs focus landings, the outgoing-vs-incoming-document
 //! ordering guard, and the close-while-renaming reseed/preserve pair —
-//! TODO.md's 500-line budget split of the original `rename.rs`. Focus/typing, the
-//! refusals, the no-store end-to-end rename, and draft naming live in the
-//! sibling `rename_bind.rs`; the collision guard and hazard-1 tests live
-//! in `rename_collision.rs`; the store-backed `[R]eplace` path lives in
-//! `rename_replace.rs`. All four pull shared fixtures from
-//! `rename_common`.
+//! TODO.md's 500-line budget split of the original `rename.rs`, driven
+//! through `rune_fuzz::Session` wherever the flow is key-drivable. The
+//! bare-`App` stragglers each need something the session driver
+//! deliberately withholds: a `ReadDir`/`ReadFile` `Cmd` run by hand, a raw
+//! `Msg::ClipboardRead` injection, or an `Effects`-level timer assertion.
 
 #![allow(
     clippy::unwrap_used,
@@ -20,7 +19,8 @@ mod rename_common;
 
 use std::path::Path;
 
-use rune_tui::keymap::{KeyCode, Mods};
+use rune_tui::document::DocumentId;
+use rune_tui::keymap::KeyCode;
 use rune_tui::messages;
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
@@ -29,8 +29,30 @@ use rune_tui::workspace;
 use rune_vfs::Vfs;
 
 use rename_common::{
-    app_with, app_with_store, ctrl, key, plain, rename_to, seeded_vfs, send, sup, type_new_name,
+    app_with, bound_session, commit_name, ctrl, ctrl_key, plain, plain_key, rename_to, seeded_vfs,
+    send, set_name, sup, sup_key, type_new_name, unbound_session,
 };
+
+/// The open tab holding `path`, and its position in the tab order — the
+/// two facts `Session::switch_tab_by_index`'s real `^t`/arrows/Enter chord
+/// needs to walk back to an already-open document.
+fn tab_for(session: &rune_fuzz::Session, path: &str) -> (DocumentId, usize) {
+    let id = session
+        .app()
+        .documents
+        .iter()
+        .find(|(_, doc)| doc.file_path.as_deref() == Some(Path::new(path)))
+        .map(|(&id, _)| id)
+        .expect("the document is open");
+    let index = session
+        .app()
+        .documents
+        .order()
+        .iter()
+        .position(|&t| t == id)
+        .expect("the document has a tab");
+    (id, index)
+}
 
 // ── WP2: focus loss is the single commit chokepoint ─────────────────────
 
@@ -39,24 +61,24 @@ use rename_common::{
 /// `pane::handle_global_command` runs before the `FocusExplorer` arm.
 #[test]
 fn leaving_the_title_for_the_explorer_commits_the_rename() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    type_new_name(&mut app, "b");
+    let (mut session, mem) = unbound_session();
+    set_name(&mut session, "b");
 
-    let mut effects = send(&mut app, ctrl('b'));
+    assert!(session.key(ctrl_key('b')).is_none());
 
-    assert_eq!(app.focus(), Pane::Explorer);
-    let cmds: Vec<_> = effects
-        .cmds
-        .drain(..)
-        .filter(|c| c.kind() == CmdKind::Rename)
-        .collect();
-    assert_eq!(
-        cmds.len(),
-        1,
+    assert_eq!(session.app().focus(), Pane::Explorer);
+    assert!(
+        matches!(session.app().rename, RenameState::Committing { .. }),
         "leaving the title must commit the pending rename"
     );
-    assert!(matches!(app.rename, RenameState::Committing { .. }));
+
+    assert!(session.deliver().is_none());
+    assert_eq!(
+        mem.read(Path::new("/root/b.md")).unwrap(),
+        b"a content",
+        "the committed rename must land"
+    );
+    assert!(mem.read(Path::new("/root/a.md")).is_err());
 }
 
 /// Escape is an unconditional exit even while the typed name is invalid
@@ -66,20 +88,26 @@ fn leaving_the_title_for_the_explorer_commits_the_rename() {
 /// focus always releases.
 #[test]
 fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    send(&mut app, ctrl('r'));
-    send(&mut app, plain(KeyCode::Right));
-    send(&mut app, ctrl('a'));
-    send(&mut app, plain(KeyCode::Backspace));
-    assert_eq!(app.title.text(), "");
+    let (mut session, mem) = bound_session();
+    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::Right)).is_none());
+    assert!(session.key(ctrl_key('a')).is_none());
+    assert!(session.key(plain_key(KeyCode::Backspace)).is_none());
+    assert_eq!(session.app().title.text(), "");
 
-    let effects = send(&mut app, plain(KeyCode::Escape));
+    assert!(session.key(plain_key(KeyCode::Escape)).is_none());
 
-    assert_eq!(app.focus(), Pane::Editor);
-    assert_eq!(app.title.text(), "a.md", "reverted to the committed name");
-    assert!(
-        !effects.cmds.iter().any(|c| c.kind() == CmdKind::Rename),
+    assert_eq!(session.app().focus(), Pane::Editor);
+    assert_eq!(
+        session.app().title.text(),
+        "a.md",
+        "reverted to the committed name"
+    );
+    assert!(session.deliver().is_none());
+    assert!(session.deliver_db_all().is_none());
+    assert_eq!(
+        mem.read(Path::new("/root/a.md")).unwrap(),
+        b"a content",
         "Escape must never fire a rename"
     );
 }
@@ -90,23 +118,22 @@ fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
 /// name.
 #[test]
 fn an_invalid_name_vetoes_the_focus_change() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    send(&mut app, ctrl('r'));
-    send(&mut app, plain(KeyCode::Right));
-    send(&mut app, ctrl('a'));
-    send(&mut app, plain(KeyCode::Backspace));
-    assert_eq!(app.title.text(), "");
+    let (mut session, _mem) = bound_session();
+    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::Right)).is_none());
+    assert!(session.key(ctrl_key('a')).is_none());
+    assert!(session.key(plain_key(KeyCode::Backspace)).is_none());
+    assert_eq!(session.app().title.text(), "");
 
-    send(&mut app, plain(KeyCode::Enter));
+    assert!(session.key(plain_key(KeyCode::Enter)).is_none());
 
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Title,
         "a refused commit must not release focus"
     );
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         Some("that name can't be used for a file")
     );
 }
@@ -116,18 +143,17 @@ fn an_invalid_name_vetoes_the_focus_change() {
 /// while the title holds an unusable (empty) name.
 #[test]
 fn an_invalid_name_still_lets_the_user_quit_and_save() {
-    let mem = seeded_vfs();
-    let (mut app, _rx) = app_with_store(&mem);
-    // A real edit, not `mark_dirty_from_hydration` — `trigger_save` gates on
-    // `buffer.version() != saved_version`, which only an actual edit moves.
-    send(&mut app, plain(KeyCode::Char('!')));
-    send(&mut app, ctrl('r'));
-    send(&mut app, plain(KeyCode::Right));
-    send(&mut app, ctrl('a'));
-    send(&mut app, plain(KeyCode::Backspace));
-    assert_eq!(app.title.text(), "");
+    let (mut session, _mem) = bound_session();
+    // A real edit — `trigger_save` gates on `buffer.version() !=
+    // saved_version`, which only an actual edit moves.
+    assert!(session.key(plain_key(KeyCode::Char('!'))).is_none());
+    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::Right)).is_none());
+    assert!(session.key(ctrl_key('a')).is_none());
+    assert!(session.key(plain_key(KeyCode::Backspace)).is_none());
+    assert_eq!(session.app().title.text(), "");
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Title,
         "test setup: the veto leaves focus in the title"
     );
@@ -135,29 +161,26 @@ fn an_invalid_name_still_lets_the_user_quit_and_save() {
     // ⌘S must still reach `Save`'s own arm rather than being swallowed by
     // the title: the hoisted gate only ever vetoes the FOCUS transition,
     // never the command itself.
-    let cmd_s = Mods {
-        sup: true,
-        ..Mods::NONE
-    };
-    send(&mut app, key(KeyCode::Char('s'), cmd_s));
+    assert!(session.key(sup_key('s')).is_none());
     assert!(
-        app.active_doc().save_in_flight(),
+        session.app().active_doc().save_in_flight(),
         "\u{2318}S must still trigger a save even with an unusable name pending"
     );
 
     // `^c` twice must still reach the quit chord's own arm and complete
     // quit — this document is store-bound, so the unpreserved-dirty Guard
     // gate never intercepts it.
-    send(&mut app, ctrl('c'));
-    send(&mut app, ctrl('c'));
-    assert!(app.should_quit, "^c^c must still be able to quit");
+    assert!(session.key(ctrl_key('c')).is_none());
+    assert!(session.key(ctrl_key('c')).is_none());
+    assert!(session.app().should_quit, "^c^c must still be able to quit");
 }
 
 /// WP2.S8 did not strand focus: both the Explorer's `Enter`
 /// (`workspace::open_path`, wrapped by `explorer_keys::open_selected`) and
 /// the Tabs pane's `Enter` (`opentabs::handle_key`'s `Select` arm) still
 /// land focus on the Editor now that `switch_to` itself no longer writes
-/// it.
+/// it. Bare-`App`: the Explorer's entries only populate through a
+/// `ReadDir` `Cmd` run by hand, which the session driver drops.
 #[test]
 fn explorer_enter_and_tabs_enter_both_land_focus_on_the_editor() {
     let mem = seeded_vfs();
@@ -208,17 +231,17 @@ fn explorer_enter_and_tabs_enter_both_land_focus_on_the_editor() {
 /// stranded on the chrome list.
 #[test]
 fn ctrl_1_and_f1_from_explorer_focus_land_focus_on_the_editor() {
-    let mem = seeded_vfs();
+    let (mut session, mem) = bound_session();
     mem.save_atomic(Path::new("/root/b.md"), b"b content")
         .expect("seed b.md");
-    let mut app = app_with(&mem);
-    workspace::open_path(&mut app, Path::new("/root/b.md"));
+    workspace::open_path(session.app_mut(), Path::new("/root/b.md")).expect("open b.md");
+    session.app_mut().active_doc_mut().focused = true;
 
-    send(&mut app, ctrl('b'));
-    assert_eq!(app.focus(), Pane::Explorer);
-    send(&mut app, ctrl('1'));
+    assert!(session.key(ctrl_key('b')).is_none());
+    assert_eq!(session.app().focus(), Pane::Explorer);
+    assert!(session.key(ctrl_key('1')).is_none());
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Editor,
         "^1 from Explorer focus must land focus on the Editor"
     );
@@ -228,12 +251,12 @@ fn ctrl_1_and_f1_from_explorer_focus_land_focus_on_the_editor() {
     // rework), so ONE press here would hide it instead of re-focusing the
     // Explorer. Two presses (hide, then show) reach the Explorer reliably
     // regardless of the column's visibility going in.
-    send(&mut app, ctrl('b'));
-    send(&mut app, ctrl('b'));
-    assert_eq!(app.focus(), Pane::Explorer);
-    send(&mut app, plain(KeyCode::F1));
+    assert!(session.key(ctrl_key('b')).is_none());
+    assert!(session.key(ctrl_key('b')).is_none());
+    assert_eq!(session.app().focus(), Pane::Explorer);
+    assert!(session.key(plain_key(KeyCode::F1)).is_none());
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Editor,
         "F1 from Explorer focus must land focus on the Editor"
     );
@@ -243,7 +266,9 @@ fn ctrl_1_and_f1_from_explorer_focus_land_focus_on_the_editor() {
 /// OUTGOING document, never the one about to become active. A different
 /// document opening asynchronously (`workspace::open_path_async`, e.g. a
 /// ctrl-click on a link) blurs the title — and so fires the pending rename
-/// — BEFORE its `Msg::FileOpened` reply reassigns `app.active`.
+/// — BEFORE its `Msg::FileOpened` reply reassigns `app.active`. Bare-`App`:
+/// the async open's `ReadFile` `Cmd` is run by hand, which the session
+/// driver drops.
 #[test]
 fn an_uncommitted_title_renames_the_outgoing_document_not_the_incoming_one() {
     let mem = seeded_vfs();
@@ -295,7 +320,8 @@ fn an_uncommitted_title_renames_the_outgoing_document_not_the_incoming_one() {
 
 /// Decision 8's conditional half: a failed Explorer open raises the error
 /// banner and must NOT steal the keyboard — focus stays on the Explorer so
-/// the user can try a different entry.
+/// the user can try a different entry. Bare-`App` for the same `ReadDir`
+/// reason as `explorer_enter_and_tabs_enter_both_land_focus_on_the_editor`.
 #[test]
 fn a_failed_explorer_open_leaves_focus_on_the_explorer() {
     let mem = seeded_vfs();
@@ -339,20 +365,19 @@ fn a_failed_explorer_open_leaves_focus_on_the_explorer() {
 /// the title from the document that becomes active in its place.
 #[test]
 fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
-    let mem = seeded_vfs();
+    let (mut session, mem) = bound_session();
+    let first = session.app().active;
     mem.save_atomic(Path::new("/root/b.md"), b"b content")
         .expect("seed b.md");
-    let mut app = app_with(&mem);
-    let first = app.active;
-    workspace::open_path(&mut app, Path::new("/root/b.md"));
-    let second = app.active;
+    workspace::open_path(session.app_mut(), Path::new("/root/b.md")).expect("open b.md");
+    let second = session.app().active;
     assert_ne!(first, second, "test setup: two distinct documents");
 
-    let _ = workspace::close_now(&mut app, second, &mut Effects::default());
+    let _ = workspace::close_now(session.app_mut(), second, &mut Effects::default());
 
-    assert_eq!(app.active, first);
+    assert_eq!(session.app().active, first);
     assert_eq!(
-        app.title.text(),
+        session.app().title.text(),
         "a.md",
         "the title must reseed from the new active document"
     );
@@ -369,39 +394,35 @@ fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
 /// the field would otherwise describe a document that no longer exists.
 #[test]
 fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
-    let mem = seeded_vfs();
+    let (mut session, mem) = bound_session();
+    // A second document, so the last-document floor doesn't refuse.
     mem.save_atomic(Path::new("/root/b.md"), b"b content")
         .expect("seed b.md");
-    let mut app = app_with(&mem);
-    // A second document, so the last-document floor doesn't refuse.
-    workspace::open_path(&mut app, Path::new("/root/b.md"));
-    let first_tab = app.documents.order()[0];
-    workspace::switch_to(&mut app, first_tab);
-    let renaming = app.active;
-    let background = *app
-        .documents
-        .order()
-        .iter()
-        .find(|&&t| t != renaming)
-        .expect("a second, non-active tab");
+    workspace::open_path(session.app_mut(), Path::new("/root/b.md")).expect("open b.md");
+    session.app_mut().active_doc_mut().focused = true;
+    let (background, _) = tab_for(&session, "/root/b.md");
+    let (renaming, index) = tab_for(&session, "/root/a.md");
+    assert!(session.switch_tab_by_index(index).is_none());
+    assert_eq!(session.app().active, renaming);
 
-    type_new_name(&mut app, "zzz");
+    set_name(&mut session, "zzz");
 
     // An async close for some OTHER document lands with no blur in front of
     // it (mirrors `materialize_ack::close_if_pending`'s own shape).
-    let _ = workspace::close_now(&mut app, background, &mut Effects::default());
+    let _ = workspace::close_now(session.app_mut(), background, &mut Effects::default());
 
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Title,
         "focus must not be silently displaced"
     );
     assert_eq!(
-        app.active, renaming,
+        session.app().active,
+        renaming,
         "closing a background tab must not move the active document"
     );
     assert_eq!(
-        app.title.text(),
+        session.app().title.text(),
         "zzz.md",
         "the typed name must survive an async close of an unrelated document"
     );
@@ -413,6 +434,8 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
 /// specific document (captured when the paste was requested) must land on
 /// THAT document even after the active document has since changed — never
 /// on whatever happens to be active by the time the reply arrives.
+/// Bare-`App`: the reply is a raw injected `Msg` the session driver has no
+/// title/document-targeted counterpart for.
 #[test]
 fn a_document_targeted_clipboard_read_lands_on_its_captured_document_even_after_the_active_document_changes()
  {
@@ -449,7 +472,8 @@ fn a_document_targeted_clipboard_read_lands_on_its_captured_document_even_after_
 
 /// `title::keys::paste` no-ops unless the title still has focus: `pbpaste`
 /// runs on its own thread and can take a while, and a late reply must not
-/// write into a field the user has since left.
+/// write into a field the user has since left. Bare-`App` for the same
+/// injected-reply reason as the document-targeted case above.
 #[test]
 fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
     let mem = seeded_vfs();
@@ -487,32 +511,24 @@ fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
 /// through the real VFS with nothing surfaced.
 #[test]
 fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
-    let mem = seeded_vfs();
+    let (mut session, mem) = unbound_session();
     mem.save_atomic(Path::new("/root/b.md"), b"b content")
         .expect("seed b.md");
-    let mut app = app_with(&mem);
-    workspace::open_path(&mut app, Path::new("/root/b.md"));
-    let first_tab = app.documents.order()[0];
-    workspace::switch_to(&mut app, first_tab);
-    let victim = app.active;
+    workspace::open_path(session.app_mut(), Path::new("/root/b.md")).expect("open b.md");
+    session.app_mut().active_doc_mut().focused = true;
+    let (victim, index) = tab_for(&session, "/root/a.md");
+    assert!(session.switch_tab_by_index(index).is_none());
+    assert_eq!(session.app().active, victim);
 
-    type_new_name(&mut app, "zzz");
+    set_name(&mut session, "zzz");
 
     // The async close lands with no blur in front of it.
-    let _ = workspace::close_now(&mut app, victim, &mut Effects::default());
+    let _ = workspace::close_now(session.app_mut(), victim, &mut Effects::default());
 
     // Whatever the field still holds, releasing focus must not rename the
     // surviving neighbour to it.
-    let mut effects = send(&mut app, plain(KeyCode::Enter));
-    for cmd in effects
-        .cmds
-        .drain(..)
-        .filter(|c| c.kind() == CmdKind::Rename)
-    {
-        if let Some(msg) = cmd.run() {
-            send(&mut app, msg);
-        }
-    }
+    assert!(session.key(plain_key(KeyCode::Enter)).is_none());
+    assert!(session.deliver().is_none());
 
     assert!(
         mem.read(Path::new("/root/b.md")).is_ok(),
@@ -534,32 +550,24 @@ fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
 /// of moving away from and leaving the new name holding stale bytes.
 #[test]
 fn a_save_is_refused_while_a_rename_is_in_flight() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
+    let (mut session, mem) = unbound_session();
 
-    let mut effects = rename_to(&mut app, "b");
-    let rename_cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Rename)
-        .expect("a Rename Cmd");
-    assert!(matches!(app.rename, RenameState::Committing { .. }));
+    commit_name(&mut session, "b");
+    assert!(matches!(
+        session.app().rename,
+        RenameState::Committing { .. }
+    ));
 
     // The user edits and hits save before the rename ack lands.
-    send(&mut app, plain(KeyCode::Char('X')));
-    let save_effects = send(&mut app, sup('s'));
-    let saves: Vec<_> = save_effects
-        .cmds
-        .iter()
-        .filter(|c| c.kind() == CmdKind::Save)
-        .collect();
+    assert!(session.key(plain_key(KeyCode::Char('X'))).is_none());
+    assert!(session.key(sup_key('s')).is_none());
     assert!(
-        saves.is_empty(),
+        !session.app().active_doc().save_in_flight(),
         "no save may be issued against the pre-rename path while the rename is in flight"
     );
 
     // The rename lands; the old name must be gone, not resurrected.
-    send(&mut app, rename_cmd.run().expect("a reply"));
+    assert!(session.deliver().is_none());
     assert!(
         mem.read(Path::new("/root/a.md")).is_err(),
         "the pre-rename path must not be resurrected by a racing save"
@@ -569,6 +577,8 @@ fn a_save_is_refused_while_a_rename_is_in_flight() {
 /// The save-refused-during-rename message (finding 2) must stay on screen
 /// until the user dismisses it: nothing was written, so an auto-collapsing
 /// `warn` would leave the refusal with no trace once its 5s window elapses.
+/// Bare-`App`: whether the auto-collapse timer was armed is only visible on
+/// the very `Effects` the refusal produced.
 #[test]
 fn a_save_refused_during_a_rename_leaves_the_message_pane_open() {
     let mem = seeded_vfs();

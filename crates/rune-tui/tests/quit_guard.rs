@@ -15,7 +15,7 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_db::{ClockFn, Store};
 use rune_tui::app::{App, update};
-use rune_tui::db::{Db, DocDb};
+use rune_tui::db::Db;
 use rune_tui::document::DocumentId;
 use rune_tui::guard::{GuardKind, GuardPrompt};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -403,35 +403,52 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
 /// on a save that never started.
 #[test]
 fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let mem = Arc::new(Mem::new());
+    {
+        let vfs: &dyn Vfs = mem.as_ref();
+        vfs.save_atomic(std::path::Path::new("/a.md"), b"hello")
+            .expect("seed a.md");
+        vfs.save_atomic(std::path::Path::new("/b.md"), b"second")
+            .expect("seed b.md");
+    }
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
     let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-    let store = Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {}))
-        .expect("open in-memory store");
     let bridge = rune_tui::db::DbBridge::bootstrap();
-    let db = Db::new(store, bridge, true); // degraded from the start
+    let store =
+        Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("open store");
+    let db = Db::new(store, Arc::clone(&bridge), false);
 
-    let mut app = App::new(
-        Buffer::new("hello"),
-        Some(PathBuf::from("/a.md")),
-        vfs,
-        Some(db),
+    // Both documents bind through the REAL `Load`-ack path while the store
+    // is still healthy; the degradation lands afterwards, exactly as a
+    // writer-thread fatality would mid-session.
+    let mut session = rune_fuzz::Session::open_with_db("/a.md", Arc::clone(&mem), db);
+    let id_a = session.app().active;
+    let id_b = rune_tui::workspace::open_path(session.app_mut(), std::path::Path::new("/b.md"))
+        .expect("open b.md");
+    assert!(session.deliver_db_all().is_none());
+    assert!(session.app().doc(id_a).unwrap().is_store_bound());
+    assert!(session.app().doc(id_b).unwrap().is_store_bound());
+
+    let app = session.app_mut();
+    let mut effects = Effects::default();
+    update(
+        app,
+        Msg::Db(rune_db::DbEvent::Fatal {
+            error: "writer panicked".to_string(),
+        }),
+        &mut effects,
     );
-    let id_a = app.active;
-    app.doc_mut(id_a)
-        .unwrap()
-        .set_doc_db_for_test(DocDb::new(1, false, rune_db::Seq(0)));
-    dirty_common::force_dirty(&mut app, id_a);
+    assert!(
+        app.db.as_ref().is_some_and(|db| db.degraded),
+        "test setup: the store must be degraded"
+    );
 
-    let id_b = app.open_document(Buffer::new("second"));
-    app.doc_mut(id_b).unwrap().bind_path(PathBuf::from("/b.md"));
-    app.doc_mut(id_b)
-        .unwrap()
-        .set_doc_db_for_test(DocDb::new(2, false, rune_db::Seq(0)));
-    dirty_common::force_dirty(&mut app, id_b);
+    dirty_common::force_dirty(app, id_a);
+    dirty_common::force_dirty(app, id_b);
 
-    press(&mut app, ctrl_c());
-    assert_eq!(guard_kind(&app), Some(&GuardKind::DirtyQuit));
-    press(&mut app, key(KeyCode::Char('s')));
+    press(app, ctrl_c());
+    assert_eq!(guard_kind(app), Some(&GuardKind::DirtyQuit));
+    press(app, key(KeyCode::Char('s')));
 
     assert!(
         app.pending_save_confirm.is_some(),
@@ -448,10 +465,10 @@ fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
     );
     let expected_name = if armed_id == id_a { "a.md" } else { "b.md" };
     assert!(
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(app)
             .is_some_and(|m| m.contains("recovery disabled") && m.contains(expected_name)),
         "the status must name the SAME document the confirm gate is armed for, got {:?}",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(app)
     );
     assert!(
         app.quit_intent.is_none(),
