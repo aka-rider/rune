@@ -46,6 +46,7 @@ use crate::db::DocDb;
 pub use crate::document_support::Hydration;
 use crate::document_support::{is_suspicious_shrink, kind_for};
 use crate::highlight::HighlightState;
+use crate::undogroup::Direction;
 use crate::viewport::Viewport;
 
 /// Identifies one open `Document` for the lifetime of the process — minted
@@ -84,6 +85,7 @@ pub struct Document {
     pub journal: Journal,
     pub(crate) ladder_presses: usize,
     pub(crate) ladder_pressed_at: Option<Instant>,
+    pub(crate) ladder_direction: Option<Direction>,
     /// Guards every buffer-mutating command (typing, backspace/delete,
     /// indent/outdent, cut, paste — anything that reaches
     /// `commands::edit::commit_edit_batch`, the sole writer of buffer
@@ -399,6 +401,7 @@ impl Document {
             journal: Journal::new(),
             ladder_presses: 0,
             ladder_pressed_at: None,
+            ladder_direction: None,
             read_only: ReadOnly::No,
             file_path: None,
             saved_version,

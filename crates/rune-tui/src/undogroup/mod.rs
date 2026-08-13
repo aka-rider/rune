@@ -6,6 +6,12 @@ pub const MULTI_WORD_WORDS: usize = 3;
 pub const LADDER_RESET: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    Undo,
+    Redo,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
     Rune,
     Word,

@@ -41,7 +41,7 @@ use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
 use crate::materialize_ack;
 use crate::messages;
-use crate::undogroup::{self, Tier};
+use crate::undogroup::{self, Direction, Tier};
 
 /// One edit per cursor, replacing its selection when it has one, or
 /// `bare`'s caller-chosen range otherwise. `bare` returning `None` skips
@@ -222,17 +222,24 @@ fn merge_active_on(app: &App, id: DocumentId) -> bool {
     matches!(&app.merge, crate::merge::MergeState::Active { doc, .. } if *doc == id)
 }
 
-fn ladder_press(app: &mut App, id: DocumentId, steps_for: fn(&Journal, Tier) -> usize) -> usize {
+fn ladder_press(
+    app: &mut App,
+    id: DocumentId,
+    direction: Direction,
+    steps_for: fn(&Journal, Tier) -> usize,
+) -> usize {
     let now = app.clock.now();
     let Some(doc) = app.doc_mut(id) else {
         return 0;
     };
-    let reset = doc
-        .ladder_pressed_at
-        .is_none_or(|last| now.duration_since(last) >= undogroup::LADDER_RESET);
+    let reset = doc.ladder_direction != Some(direction)
+        || doc
+            .ladder_pressed_at
+            .is_none_or(|last| now.duration_since(last) >= undogroup::LADDER_RESET);
     if reset {
         doc.ladder_presses = 0;
     }
+    doc.ladder_direction = Some(direction);
     let tier = undogroup::tier_for(doc.ladder_presses);
     let count = steps_for(&doc.journal, tier);
     doc.ladder_presses += 1;
@@ -252,7 +259,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
     let count = if merge_active_on(app, id) {
         1
     } else {
-        ladder_press(app, id, undogroup::steps_for)
+        ladder_press(app, id, Direction::Undo, undogroup::steps_for)
     };
 
     let mut reached = None;
@@ -304,7 +311,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
     let count = if merge_active_on(app, id) {
         1
     } else {
-        ladder_press(app, id, undogroup::steps_for_redo)
+        ladder_press(app, id, Direction::Redo, undogroup::steps_for_redo)
     };
 
     let mut reached = None;

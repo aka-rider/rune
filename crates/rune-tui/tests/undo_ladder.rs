@@ -298,3 +298,24 @@ fn a_mid_run_apply_failure_leaves_the_durable_position_at_the_step_actually_reac
         "the failed second step must surface an error"
     );
 }
+
+#[test]
+fn flipping_direction_restarts_the_ladder_at_rune() {
+    let (mut app, _clock) = app_with_clock("");
+    let id = app.active;
+    type_str(&mut app, "alpha beta gamma delta");
+
+    for _ in 0..4 {
+        press_undo(&mut app);
+    }
+    let after_undo_run = app.doc(id).unwrap().journal.pos();
+
+    press_redo(&mut app);
+    assert_eq!(
+        app.doc(id).unwrap().journal.pos(),
+        after_undo_run + 1,
+        "the first press of a redo run must restart the ladder at Rune \
+         rather than continue the undo run's tier, which would overshoot \
+         the position the run started from"
+    );
+}
