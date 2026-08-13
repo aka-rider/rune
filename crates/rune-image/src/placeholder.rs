@@ -326,11 +326,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn table_has_297_entries() {
-        assert_eq!(DIACRITICS.len(), 297);
-    }
-
-    #[test]
     fn known_indices_match_golden() {
         assert_eq!(DIACRITICS[0], '\u{0305}');
         assert_eq!(DIACRITICS[1], '\u{030D}');

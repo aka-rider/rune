@@ -4,7 +4,7 @@
 //! every settled message: action model -> driver -> snapshot/step-context
 //! -> pure invariant checkers.
 //!
-//! # Invariant roster (28 total)
+//! # Invariant roster (39 total)
 //!
 //! Each entry: id, one-line meaning. See `invariant/mod.rs` for the
 //! checker-shape taxonomy (L0/L1/L2) and the per-domain file split. This
@@ -25,14 +25,24 @@
 //!   in-bounds, char-boundary byte offset.
 //! - `CUR-ORDER` — cursors are ordered and non-overlapping.
 //! - `CUR-ID` — at least one cursor; every id is non-zero and unique.
+//! - `CUR-NO-CARET-HIDDEN` — when `caret_visible` is false, no rendered
+//!   cell carries `Modifier::REVERSED` (sampled per G19).
 //! - `BUF-LINE-INDEX` — the line index (`line_count`/`line_starts`/
 //!   `line_ends`) is internally consistent with the buffer content.
 //! - `VERSION-MONOTONE` — `Buffer::version()`/`saved_version` never regress
 //!   across a step.
+//! - `NAV-BOUNDS` — every recorded nav place is an in-bounds, char-boundary
+//!   byte offset into its document, and `nav_current` stays within the
+//!   places list.
 //! - `PANE-NO-BLEED` — a keystroke aimed at chrome (no modal up, focus off
 //!   `Pane::Editor`, active document unchanged) never mutates the document
 //!   behind it — the rule the `UNDO-TOTAL`/`REDO-TOTAL` harness fix
 //!   (`driver.rs::restore_editor_focus`) rests on.
+//! - `LAYOUT-FITS` — every rect `layout::geometry` hands `render::draw`
+//!   stays inside its frame, and the left-column panes it carves out never
+//!   overlap each other or spill past the block that borders them.
+//! - `LAYOUT-TILES` — no frame column inside `main` goes unpainted by both
+//!   `left_block` and `center`.
 //! - `SYNC-IDEMPOTENT` — a second `app.sync_view()` with no intervening
 //!   message reproduces the same rendered rows and the same
 //!   `viewport.scroll_row` (sampled per G19).
@@ -60,6 +70,9 @@
 //!   driver never constructs one (`step::MsgTag`'s own docs).
 //! - `CONFIRM-GEN` — a `ConfirmTimeout` clears `pending_quit` iff its
 //!   generation matches the armed one.
+//! - `GUARD-ANSWERED` — a key that actually answers a `DirtyQuit` Guard
+//!   always leaves the app quitting, mid-save, or showing an explanatory
+//!   status — never back in the bit-for-bit identical Guard.
 //! - `PASTE-VERBATIM` — a paste into a collapsed cursor inserts exactly the
 //!   pasted bytes at the caret, unfiltered (the only path that can carry
 //!   control bytes, G3).
@@ -85,6 +98,23 @@
 //!   `version`, the journal, `is_dirty`, or any rendered cell's
 //!   `buf_offset`/`width` — it is a pure style overlay (plan WP7.S7,
 //!   decision 1).
+//! - `MERGE-DOC-ACTIVE` — whenever merge mode is `Active`, the document it
+//!   names is still open and is the active document.
+//! - `MERGE-SAVE-BLOCKED` — a `Command::Save` key pressed while merge is
+//!   `Active` with unresolved blocks never arms a save.
+//! - `MERGE-KEY-FEEDBACK` — every key dispatched while merge is `Active`
+//!   and the Editor pane is focused leaves an observable trace (buffer,
+//!   cursors, scroll, merge state, or status), never a silent swallow.
+//! - `MERGE-TITLE-CLEARED` — once merge mode is fully `Inactive`, no open
+//!   document's `display_name` still reads the merge retitle.
+//! - `MERGE-NO-INSTANT-REDIVERGENCE` — once a retired merge leaves its
+//!   document reconciled, no later step re-classifies it `Diverged`
+//!   without something genuinely moving underneath it again. Stateful
+//!   across steps, driven directly by `driver.rs`, like `SAVE-SINGLE-
+//!   FLIGHT`.
+//! - `SAVE-AGREES-WITH-DIVERGENCE` — a publish never commits once the
+//!   store's own prepare-time verdict said the disk holds changes the
+//!   buffer does not, unless the user explicitly forced it.
 pub mod action;
 pub mod driver;
 pub mod fault;

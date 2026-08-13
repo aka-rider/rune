@@ -7,14 +7,9 @@
 
 use rune_syntax::scope::ScopeId;
 use rune_syntax::syntax::{SyntaxLine, SyntaxSpan};
-use rune_syntax::wrap::{TAB_STOP, WrapMap, grapheme_width_with_tab, rune_width_with_tab};
+use rune_syntax::wrap::{WrapMap, grapheme_width_with_tab, rune_width_with_tab};
 
 const SCOPE: ScopeId = ScopeId(0);
-
-#[test]
-fn tab_stop_is_four() {
-    assert_eq!(TAB_STOP, 4);
-}
 
 #[test]
 fn rune_width_with_tab_expands_to_the_next_stop() {

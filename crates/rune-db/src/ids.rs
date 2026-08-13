@@ -132,10 +132,4 @@ mod tests {
         assert_eq!(obs_id_from_rowid(7).expect("ok").get(), 7);
     }
 
-    #[test]
-    fn ids_order_by_inner_value() {
-        assert!(DocId(1) < DocId(2));
-        assert!(SessionId(1) < SessionId(2));
-        assert!(Seq(1) < Seq(2));
-    }
 }

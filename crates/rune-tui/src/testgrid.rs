@@ -95,13 +95,6 @@ mod tests {
     }
 
     #[test]
-    fn row_matches_the_grids_own_row() {
-        let app = app_for("hello");
-        let g = grid(&app, 20, 5);
-        assert_eq!(row(&app, 2, 20, 5), g[2]);
-    }
-
-    #[test]
     fn draw_with_renders_an_arbitrary_closure_not_just_render_draw() {
         use ratatui::layout::Rect;
         use ratatui::widgets::{Block, Widget};

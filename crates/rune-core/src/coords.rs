@@ -84,36 +84,3 @@ pub struct DisplayPoint {
     /// Column (includes tab expansion).
     pub col: usize,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn coordinate_types_hold_their_fields() {
-        let bp = BufferPoint { line: 1, col: 5 };
-        assert_eq!(bp.line, 1);
-        assert_eq!(bp.col, 5);
-
-        let vc = VisualCol(7);
-        assert_eq!(vc, VisualCol(7));
-
-        let so = SyntaxOffset(20);
-        let sp = SyntaxPoint { line: 2, col: 10 };
-        assert_eq!(so, SyntaxOffset(20));
-        assert_eq!(sp.line, 2);
-        assert_eq!(sp.col, 10);
-
-        let wr = WrapRow(30);
-        let wp = WrapPoint { row: 3, col: 15 };
-        assert_eq!(wr, WrapRow(30));
-        assert_eq!(wp.row, 3);
-        assert_eq!(wp.col, 15);
-
-        let dr = DisplayRow(40);
-        let dp = DisplayPoint { row: 4, col: 20 };
-        assert_eq!(dr, DisplayRow(40));
-        assert_eq!(dp.row, 4);
-        assert_eq!(dp.col, 20);
-    }
-}

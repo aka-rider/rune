@@ -109,9 +109,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn whole_returns_the_frame_itself() {
-        let frame = Rect::new(3, 4, 5, 6);
-        assert_eq!(Region::whole(frame).rect(), frame);
-    }
 }

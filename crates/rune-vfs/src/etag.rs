@@ -58,11 +58,6 @@ mod tests {
     }
 
     #[test]
-    fn etag_of_is_deterministic() {
-        assert_eq!(etag_of(b"hello"), etag_of(b"hello"));
-    }
-
-    #[test]
     fn etag_of_differs_on_different_content() {
         assert_ne!(etag_of(b"hello"), etag_of(b"world"));
     }

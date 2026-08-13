@@ -19,7 +19,6 @@ mod conceal_common;
 use conceal_common::{joined_line, synced};
 use rune_md::emit::emit;
 use rune_syntax::element::RevealState;
-use rune_syntax::scope::scope_table;
 
 /// (content, underline_row, description) — the four fixtures the task
 /// requires: top-level, the user's real list-item shape, nested in a
@@ -63,59 +62,12 @@ fn heading_reveal_state(doc: &rune_md::element::doc::DocMachine) -> RevealState 
     find(doc.blocks()).expect("fixture must contain a Heading block")
 }
 
-fn dump_document(content: &str, underline_row: usize) {
-    for &(focused, cursor_offset, label) in &[
-        (false, 0, "concealed"),
-        (
-            true,
-            underline_line_offset(content, underline_row),
-            "cursor-on-underline",
-        ),
-    ] {
-        let (buf, doc) = synced(content, cursor_offset, focused);
-        let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
-        let table = scope_table();
-        eprintln!("--- document {content:?} [{label}] ---");
-        for line in 0..buf.line_count() {
-            let joined = joined_line(&lines, line, buf.content());
-            let hidden = snap.hidden_byte_count(line);
-            eprintln!("  row {line}: joined={joined:?} hidden_byte_count={hidden}");
-            if let Some(l) = lines.get(line) {
-                for (i, span) in l.spans.iter().enumerate() {
-                    let scope_name = table.name(span.scope()).unwrap_or("?");
-                    let reveal = if span.is_rendered() {
-                        "Substituted(Rendered)"
-                    } else {
-                        "Identical(raw-bytes)"
-                    };
-                    eprintln!(
-                        "    span {i}: scope={scope_name:?} range={:?} kind={reveal} text={:?}",
-                        span.range(),
-                        span.text(buf.content())
-                    );
-                }
-            }
-        }
-        eprintln!("  heading reveal_state={:?}", heading_reveal_state(&doc));
-    }
-}
-
 fn underline_line_offset(content: &str, underline_row: usize) -> usize {
     content
         .split('\n')
         .take(underline_row)
         .map(|l| l.len() + 1)
         .sum()
-}
-
-#[test]
-fn dump_setext_rows() {
-    dump_document(TOP_LEVEL, 1);
-    dump_document(LIST_ITEM_SHAPE, 1);
-    dump_document(BLOCKQUOTE, 1);
-    dump_document(ATX_CONTROL, 0);
-    dump_document(MULTI_LINE_TEXT, 2);
-    dump_document(LEVEL_ONE, 1);
 }
 
 #[test]

@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 36 invariants total, one domain per file:
+//! 39 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
 //! - `nav` — `NAV-BOUNDS`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
