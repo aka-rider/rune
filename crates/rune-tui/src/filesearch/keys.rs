@@ -175,6 +175,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         crate::messages::info(app, "no file selected");
         return;
     };
+    let departed = app.filesearch().map(|state| state.return_to);
 
     if let Some(id) = app.explorer.preview
         && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(path.as_path())
@@ -182,12 +183,14 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         close(app);
         crate::explorer_preview::promote(app, id);
         app.set_focus_pane(Pane::Editor, effects);
+        crate::navhistory::record_departure_if_moved(app, departed);
         return;
     }
 
     if crate::workspace::open_path_checked(app, &path, effects).is_some() {
         close(app);
         app.set_focus_pane(Pane::Editor, effects);
+        crate::navhistory::record_departure_if_moved(app, departed);
     }
 }
 

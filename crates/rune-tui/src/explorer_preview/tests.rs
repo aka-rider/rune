@@ -956,6 +956,7 @@ fn discarding_a_preview_via_focus_to_title_restores_the_document_active_before_p
     workspace::switch_to(&mut app, third);
     load_entries(&mut app, &["a.md"]);
     let mut effects = Effects::default();
+    app.set_focus_pane(Pane::Explorer, &mut effects);
     app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
@@ -1033,11 +1034,12 @@ fn discarding_a_preview_falls_back_to_the_adjacent_tab_when_the_remembered_docum
     workspace::switch_to(&mut app, third);
     load_entries(&mut app, &["a.md"]);
     let mut effects = Effects::default();
+    app.set_focus_pane(crate::pane::Pane::Explorer, &mut effects);
     app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let preview_id = app.explorer.preview.expect("preview minted");
-    assert_eq!(app.explorer.preview_return_to, Some(third));
+    assert_eq!(app.explorer.browsing_origin, Some(third));
 
     // `third` — the remembered return-to document — closes while the
     // preview is still live, e.g. via the Tabs pane.

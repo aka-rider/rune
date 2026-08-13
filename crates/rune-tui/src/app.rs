@@ -55,14 +55,12 @@ pub struct App {
     next_doc_id: NonZeroU64,
     pub vfs: Arc<dyn Vfs + Send + Sync>,
     /// Which chrome region owns the next keystroke once `GLOBAL_BINDINGS`
-    /// doesn't claim it (`pane.rs`) — defaults to `Editor`. `pub(crate)`,
-    /// not private: the writers (`focus_title`/`refocus_title`/`set_focus`,
-    /// `focus.rs`'s own `impl App` block — moved there to keep this file
-    /// under the 500-line budget) live in a different module now, but they
-    /// remain the ONLY code in this crate that assigns it directly; every
-    /// other call site goes through `focus()`/`set_focus_pane`. Leaving the
-    /// title always runs through the one commit chokepoint
-    /// (`title::on_blur`).
+    /// doesn't claim it — defaults to `Editor`. `pub(crate)`, not private:
+    /// the writers (`focus_title`/`refocus_title`/`set_focus`) live in
+    /// another module, but they remain the ONLY code in this crate that
+    /// assigns it directly; every other call site goes through
+    /// `focus()`/`set_focus_pane`. Leaving the title always runs through
+    /// the one commit chokepoint (`title::on_blur`).
     pub(crate) focus: Pane,
     /// The draggable splitter positions sizing the left column and its
     /// Explorer/Tabs division; starts hidden.
@@ -532,8 +530,6 @@ impl App {
     pub fn set_root(&mut self, root: PathBuf) {
         self.root = root;
     }
-
-    // `focus.rs` is the sole writer of `focus` outside this constructor.
 }
 
 /// The ONLY writer of `App` state. `effects` accumulates I/O for the
@@ -556,18 +552,14 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let buffer_version_before = app.active_doc().buffer.version();
     let focus_before = app.focus();
     let nav_index_before = app.nav_history.index();
-    let nav_caret_snapshot: Vec<(DocumentId, usize)> = app
-        .documents
-        .iter()
-        .map(|(&id, doc)| (id, doc.cursors.primary().position))
-        .collect();
+    let nav_caret_before = app.active_doc().cursors.primary().position;
     dispatch::update_inner(app, msg, effects);
     if app.active_doc().journal.pos() != journal_pos_before {
         let id = app.active;
         save::schedule_snapshot_debounce(app, id);
     }
     if app.nav_history.index() == nav_index_before {
-        crate::navhistory::observe(app, active_before, &nav_caret_snapshot);
+        crate::navhistory::observe_jump(app, active_before, nav_caret_before);
     }
     // The rest of the post-dispatch chokepoint (highlight scheduling, a
     // newly-active image document's decode, the embed reconciler) lives

@@ -9,7 +9,9 @@ mod record;
 mod tests;
 mod travel;
 
-pub use record::{observe, record_edit};
+pub use record::{
+    departure_origin, observe_jump, record_departure, record_departure_if_moved, record_edit,
+};
 pub use travel::{back, forward};
 
 const MAX_PLACES: usize = 50;
