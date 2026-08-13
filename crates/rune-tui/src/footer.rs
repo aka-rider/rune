@@ -12,7 +12,8 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::footer_hints::{default_hint_spans, truncated_default_hint_spans};
-use crate::guard::{self, GuardKind, GuardPrompt};
+use crate::footer_modes::{disk_changed_spans, guard_spans, hint_row, merge_hint_spans};
+use crate::guard::GuardPrompt;
 use crate::pane::Pane;
 use crate::width::display_width;
 use rune_syntax::wrap::line_visual_col;
@@ -34,8 +35,8 @@ enum Mode<'a> {
     Guard(&'a GuardPrompt),
     /// The messages pane's own hint row — entered whenever the pane holds
     /// focus, ranked directly below `Guard` and above every
-    /// other mode: while the user is inside the pane, its own keys
-    /// (`[⌘C] copy`, `[Esc] close`) are the only thing worth showing.
+    /// other mode: while the user is inside the pane, its own keys are the
+    /// only thing worth showing.
     Messages,
     ChordPending(String),
     Degraded(&'a str),
@@ -67,7 +68,7 @@ fn mode(app: &App) -> Mode<'_> {
     // Review fix F5: gated on the merge doc being the ACTIVE one, same as
     // `merge/keys.rs`'s own intercept — otherwise switching to a different
     // tab mid-merge (before the auto-exit below ever runs, or on a path
-    // that leaves a stale reference) would keep showing "[O]urs [T]heirs"
+    // that leaves a stale reference) would keep showing the resolver's
     // hints for a document that isn't even on screen.
     if let crate::merge::MergeState::Active { doc, .. } = app.merge
         && doc == app.active
@@ -75,7 +76,7 @@ fn mode(app: &App) -> Mode<'_> {
         return Mode::MergeHint(app.merge.unresolved_count());
     }
     // Suppressed while a merge attempt is underway (plan WP4.S4): `Active`
-    // returned above, and a `Pending` attempt's "[^M]erge" invitation
+    // returned above, and a `Pending` attempt's merge invitation
     // would be stale advice about the very thing already in flight.
     if matches!(app.merge, crate::merge::MergeState::Inactive)
         && app
@@ -123,104 +124,13 @@ fn quit_hint(app: &App) -> &'static str {
 fn left_spans(app: &App) -> Vec<Span<'static>> {
     match mode(app) {
         Mode::Guard(prompt) => guard_spans(app, prompt),
-        Mode::Messages => vec![
-            Span::styled("[\u{2318}C] copy", app.theme.chrome.footer_key),
-            Span::styled("  ", app.theme.chrome.footer_hint),
-            Span::styled("[Esc] close", app.theme.chrome.footer_hint),
-        ],
+        Mode::Messages => hint_row(app, [("\u{2318}C", "copy"), ("Esc", "close")]),
         Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
-        Mode::DiskChanged => vec![Span::styled(
-            "\u{21c4} disk changed \u{2014} [^M]erge",
-            app.theme.chrome.footer_hint,
-        )],
-        Mode::MergeHint(unresolved) => vec![Span::styled(
-            format!(
-                "\u{2699} merge \u{2014} [O]urs [T]heirs [B]oth · [ ] navigate · {unresolved} left"
-            ),
-            app.theme.chrome.footer_hint,
-        )],
+        Mode::DiskChanged => disk_changed_spans(app),
+        Mode::MergeHint(unresolved) => merge_hint_spans(app, unresolved),
         Mode::DefaultHints => default_hint_spans(app),
     }
-}
-
-/// The dirty-close/dirty-quit Guard's `[S]ave [D]iscard [Esc] Cancel` hint,
-/// built from `guard::DIRTY_CLOSE_OPTIONS`/`DIRTY_CLOSE_CANCEL_LABEL` — the
-/// SAME consts `guard::handle_guard_key` matches its `s`/`d` keys against,
-/// so this render can
-/// never drift from what those keys actually do (review fix).
-fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-
-    // A rename collision names its target: "replace <what>?" is a question
-    // the user can answer; a bare `[R]eplace` is not. `DirtyClose`/
-    // `DirtyQuit` both name WHICH document is waiting — `DirtyQuit` for the
-    // original reason (plan WP2: "a background dirty document blocks quit
-    // with no hint which one"), and `DirtyClose` because the tab-cap
-    // eviction can now arm it for a document that was not the active one a
-    // moment ago, so the prompt must say which buffer it covers just as
-    // plainly. Both read the name via `Document::file_name`, the same name
-    // the tab bar shows, so the user matches the prompt against something
-    // already on screen. Deliberately NOT `title::name_for`: that one
-    // answers "what should the title FIELD hold", which for a pathless
-    // draft is the editable `.md` stub — a prompt reading "unsaved changes
-    // in .md" names nothing at all.
-    let options: &[guard::GuardOption] = match &prompt.kind {
-        GuardKind::DirtyClose | GuardKind::DirtyQuit => {
-            let name = app
-                .doc(prompt.doc)
-                .map(|doc| doc.file_name().to_string())
-                .unwrap_or_default();
-            spans.push(Span::styled(
-                format!("unsaved changes in {name} \u{2014} "),
-                app.theme.chrome.footer_hint,
-            ));
-            guard::DIRTY_CLOSE_OPTIONS
-        }
-        GuardKind::RenameCollision { target } => {
-            spans.push(Span::styled(
-                format!("{target} already exists  "),
-                app.theme.chrome.footer_hint,
-            ));
-            // Without a durable store there is nowhere to preserve
-            // the replaced file's bytes, so the option is not offered at
-            // all — an offer the app would then refuse is worse than none.
-            if crate::rename::replace_allowed(app) {
-                guard::RENAME_COLLISION_OPTIONS
-            } else {
-                &[]
-            }
-        }
-        GuardKind::DiskConflict => {
-            let name = app
-                .doc(prompt.doc)
-                .map(|doc| doc.file_name().to_string())
-                .unwrap_or_default();
-            spans.push(Span::styled(
-                format!("{name} changed on disk \u{2014} "),
-                app.theme.chrome.footer_hint,
-            ));
-            guard::DISK_CONFLICT_OPTIONS
-        }
-        GuardKind::Trash { path } => {
-            let name = crate::trash::display_name(path);
-            spans.push(Span::styled(
-                format!("Trash {name}? "),
-                app.theme.chrome.footer_hint,
-            ));
-            guard::TRASH_OPTIONS
-        }
-    };
-
-    for opt in options {
-        spans.push(Span::styled(opt.label, app.theme.chrome.footer_key));
-        spans.push(Span::styled("  ", app.theme.chrome.footer_hint));
-    }
-    spans.push(Span::styled(
-        guard::DIRTY_CLOSE_CANCEL_LABEL,
-        app.theme.chrome.footer_hint,
-    ));
-    spans
 }
 
 /// The footer's left-side text content, with no styling — for tests that
@@ -313,7 +223,7 @@ mod tests {
     /// Review fix F5: `MergeHint` is gated on the merge doc being the
     /// ACTIVE one, the same check `merge/keys.rs::intercept` uses — a
     /// merge `Active` on some OTHER (not-currently-shown) document must
-    /// not paint "[O]urs [T]heirs" hints over it.
+    /// not paint the resolver's hints over it.
     #[test]
     fn merge_hint_is_suppressed_when_the_merge_document_is_not_active() {
         let mut app = app_with("hello");
@@ -330,7 +240,7 @@ mod tests {
 
         let text = footer_text(&app);
         assert!(
-            !text.contains('⚙') && !text.contains("[O]urs"),
+            !text.contains('⚙') && !text.contains("O ours"),
             "merge hint leaked onto an inactive document's footer: {text:?}"
         );
     }
@@ -387,30 +297,6 @@ mod tests {
         app.set_focus_pane(Pane::Tabs, &mut crate::runtime::Effects::default());
         let text = footer_text(&app);
         assert!(text.contains("close"), "footer text: {text:?}");
-    }
-
-    /// The Guard mode's rendered labels are exactly `guard::DIRTY_CLOSE_
-    /// OPTIONS`/`DIRTY_CLOSE_CANCEL_LABEL` — the same consts `guard::
-    /// handle_guard_key` matches its `s`/`d` keys against (review fix: no
-    /// more independently hand-maintained literal here).
-    #[test]
-    fn guard_mode_labels_come_from_the_shared_dirty_close_consts() {
-        let mut app = app_with("hello");
-        let doc = app.active;
-        app.guard = Some(crate::guard::GuardPrompt {
-            doc,
-            kind: crate::guard::GuardKind::DirtyClose,
-        });
-
-        let text = footer_text(&app);
-        for opt in crate::guard::DIRTY_CLOSE_OPTIONS {
-            assert!(
-                text.contains(opt.label),
-                "expected {:?} in the Guard footer text {text:?}",
-                opt.label
-            );
-        }
-        assert!(text.contains(crate::guard::DIRTY_CLOSE_CANCEL_LABEL));
     }
 
     #[test]

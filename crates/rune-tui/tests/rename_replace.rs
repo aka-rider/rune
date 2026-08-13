@@ -48,8 +48,8 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
         app.rename
     );
     assert!(
-        footer::footer_text(&app).contains(guard::RENAME_REPLACE.label),
-        "a store-bound document must be offered [R]eplace"
+        footer::footer_text(&app).contains(guard::RENAME_REPLACE.help),
+        "a store-bound document must be offered the replace answer"
     );
 
     let ops_before = app.db_ops.len();

@@ -119,7 +119,10 @@ fn clean_named_doc_raises_the_guard_and_names_the_file() {
     ));
     let text = rune_tui::footer::footer_text(&app);
     assert!(text.contains("a.md"), "footer must name the file: {text:?}");
-    assert!(text.contains("[Y]es"));
+    assert!(
+        text.contains("Y yes"),
+        "footer must offer the answer: {text:?}"
+    );
 }
 
 /// `Esc` cancels the trash guard with "trash cancelled".
@@ -358,7 +361,7 @@ fn guard_at_reply_is_cleared_before_the_close() {
     );
     let text = rune_tui::footer::footer_text(&app);
     assert!(
-        !text.contains("[S]ave"),
+        !text.contains("Y yes"),
         "footer must not keep prompting for a trashed document: {text:?}"
     );
 }

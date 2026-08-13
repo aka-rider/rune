@@ -456,10 +456,17 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
 /// breadcrumb's navigation controls. Rebinding a command moves its glyph
 /// everywhere at once; no chrome spells a chord out by hand.
 pub fn label_for(cmd: GlobalCommand) -> Option<String> {
-    GLOBAL_BINDINGS
-        .iter()
-        .find(|b| !b.alias && b.cmd == cmd)
-        .map(Binding::label)
+    canonical(cmd).map(Binding::label)
+}
+
+/// `label_for` paired with the command's own help text, for chrome that
+/// names a command as a whole key hint rather than a bare glyph.
+pub fn hint_for(cmd: GlobalCommand) -> Option<(String, &'static str)> {
+    canonical(cmd).map(|b| (b.label(), b.help))
+}
+
+fn canonical(cmd: GlobalCommand) -> Option<&'static Binding<GlobalCommand>> {
+    GLOBAL_BINDINGS.iter().find(|b| !b.alias && b.cmd == cmd)
 }
 
 #[cfg(test)]

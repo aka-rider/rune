@@ -49,7 +49,7 @@ fn a_collision_raises_the_guard_and_the_footer_names_the_target() {
         text.contains("b.md"),
         "footer must name the target: {text:?}"
     );
-    assert!(text.contains(guard::DIRTY_CLOSE_CANCEL_LABEL));
+    assert!(text.contains(guard::GUARD_CANCEL.help));
 
     // Both files are still intact — a collision writes nothing.
     assert_eq!(mem.read(Path::new("/root/a.md")).unwrap(), b"a content");
@@ -149,7 +149,7 @@ fn replace_is_refused_and_unoffered_without_a_store() {
     send(&mut app, reply);
 
     assert!(
-        !footer::footer_text(&app).contains(guard::RENAME_REPLACE.label),
+        !footer::footer_text(&app).contains(guard::RENAME_REPLACE.help),
         "an option the app would refuse must not be offered"
     );
 

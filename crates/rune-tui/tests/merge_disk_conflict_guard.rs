@@ -104,7 +104,7 @@ fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
     assert!(
-        footer::footer_text(&app).contains("\u{21c4} disk changed \u{2014} [^M]erge"),
+        footer::footer_text(&app).contains("\u{21c4} disk changed  ^M merge"),
         "the footer must fall through to the disk-changed hint, got: {}",
         footer::footer_text(&app)
     );

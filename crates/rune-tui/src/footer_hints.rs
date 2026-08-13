@@ -77,11 +77,9 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             app.active_doc().read_only,
             ReadOnly::Always | ReadOnly::Preview
         )
-        && let Some(save) = GLOBAL_BINDINGS
-            .iter()
-            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+        && let Some((label, help)) = crate::global::hint_for(GlobalCommand::Save)
     {
-        entries.push((labeled(save, &mut label_buf), save.help, app.is_dirty()));
+        entries.push((label, help, app.is_dirty()));
     }
 
     entries.extend(
