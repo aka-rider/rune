@@ -22,8 +22,8 @@ use tui_render_common::{app_for, draw_into};
 /// degrade to "draw nothing" rather than index out of range.
 #[test]
 fn zero_by_zero_backend_does_not_panic() {
-    let app = app_for("hello\n", 0, true);
-    let _buf = draw_into(&app, 0, 0);
+    let session = app_for("hello\n", 0, true);
+    let _buf = draw_into(session.app(), 0, 0);
 }
 
 /// A 1x1 terminal must not panic either. At this size the status line's
@@ -31,8 +31,8 @@ fn zero_by_zero_backend_does_not_panic() {
 /// the editor viewport — exercising `blit`'s empty-area clipping path.
 #[test]
 fn one_by_one_backend_does_not_panic() {
-    let app = app_for("hello\n", 0, true);
-    let _buf = draw_into(&app, 1, 1);
+    let session = app_for("hello\n", 0, true);
+    let _buf = draw_into(session.app(), 1, 1);
 }
 
 /// WP13.S2 regression: `blit` must fits-check, not just start-check, a

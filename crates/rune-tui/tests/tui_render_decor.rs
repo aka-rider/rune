@@ -26,9 +26,10 @@ use tui_render_common::app_for;
 /// consume, so a decor assertion here is pinned against exactly what a
 /// real frame would show, not a hand-rolled approximation of it.
 fn rows_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<Vec<render::Cell>> {
-    let app = app_for(content, cursor_offset, focused);
+    let session = app_for(content, cursor_offset, focused);
+    let app = session.app();
     let view = app.active_doc().view.as_ref().expect("synced view");
-    render::build_rows(&app, app.active_doc(), Some(app.active), view)
+    render::build_rows(app, app.active_doc(), Some(app.active), view)
 }
 
 /// (a) A concealed `# h` row's own decor prefix carries `buf_offset == -1`
@@ -45,8 +46,8 @@ fn concealed_heading_row_starts_with_a_styled_decorative_icon() {
     let heading1 = scope_table()
         .resolve("markup.heading.1")
         .expect("registered scope");
-    let app = app_for(content, cursor, true);
-    let expected_style = app.theme.scope_style(heading1);
+    let session = app_for(content, cursor, true);
+    let expected_style = session.app().theme.scope_style(heading1);
 
     let icon_cells: Vec<_> = row.iter().take_while(|c| c.buf_offset < 0).collect();
     assert!(
@@ -83,7 +84,8 @@ fn concealed_quote_row_shows_its_bar_decor() {
     let marker_scope = scope_table()
         .resolve("markup.quote.marker")
         .expect("registered scope");
-    let app = app_for(content, cursor, true);
+    let session = app_for(content, cursor, true);
+    let app = session.app();
     let expected_style = app.theme.scope_style(marker_scope);
 
     let bar = row.first().expect("row has at least the bar cell");
@@ -108,9 +110,12 @@ fn thematic_break_renders_a_full_width_rule_row() {
         row.iter().all(|c| c.buf_offset < 0),
         "every cell of an hr rule row must be decorative:\n{row:?}"
     );
-    // The doc's own wrap width (`tui_render_common::app_for` sets
-    // `WIDTH`/`HEIGHT - 1`) is what the rule is clamped to.
-    assert_eq!(total_width, tui_render_common::WIDTH as usize);
+    // The doc's own editor viewport width — narrower than the full backend
+    // `WIDTH` by the center `Block::bordered()`'s left/right border columns
+    // (plan gotcha 10) — is what the rule is clamped to.
+    let session = app_for(content, cursor, true);
+    let expected_width = session.app().active_doc().viewport.width as usize;
+    assert_eq!(total_width, expected_width);
 }
 
 /// (d) An ordered list item's decor carries the user's OWN marker text
@@ -202,8 +207,8 @@ fn unfocused_pane_with_cursor_on_a_decorated_heading_still_renders_its_icon() {
     let heading2 = scope_table()
         .resolve("markup.heading.2")
         .expect("registered scope");
-    let app = app_for(content, 0, false);
-    let expected_style = app.theme.scope_style(heading2);
+    let session = app_for(content, 0, false);
+    let expected_style = session.app().theme.scope_style(heading2);
 
     let icon_cells: Vec<_> = row.iter().take_while(|c| c.buf_offset < 0).collect();
     assert!(
@@ -214,7 +219,7 @@ fn unfocused_pane_with_cursor_on_a_decorated_heading_still_renders_its_icon() {
         assert_eq!(cell.style, expected_style);
     }
 
-    let buf = tui_render_common::render_to_test_backend(&app);
+    let buf = tui_render_common::render_to_test_backend(session.app());
     assert_eq!(
         tui_render_common::caret_column(
             &buf,

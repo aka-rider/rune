@@ -42,11 +42,12 @@ fn scope(name: &str) -> ScopeId {
 /// single flat run of dim grey the whole block used to be.
 #[test]
 fn frontmatter_yaml_is_highlighted() {
-    let mut app = app_for(FRONTMATTER, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(FRONTMATTER, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let region = app
+    let region = session
+        .app()
         .active_doc()
         .highlight
         .regions
@@ -57,7 +58,7 @@ fn frontmatter_yaml_is_highlighted() {
         "the yaml grammar must have parsed the frontmatter body"
     );
 
-    let painted = span_texts(&app);
+    let painted = span_texts(session.app());
     let selected: Vec<&str> = painted.iter().map(|(text, _)| text.as_str()).collect();
     // The quoted string's span text includes both quote characters; a plain
     // mapping key's excludes the colon. Both are the grammar's own node
@@ -82,11 +83,11 @@ fn frontmatter_yaml_is_highlighted() {
 /// overlay had escaped the block the document actually declared.
 #[test]
 fn frontmatter_spans_stay_inside_the_frontmatter() {
-    let mut app = app_for(FRONTMATTER, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(FRONTMATTER, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let updated = app.active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer.content().to_string();
     let body = updated
         .find("title")
         .expect("fixture has a frontmatter body");
@@ -94,7 +95,7 @@ fn frontmatter_spans_stay_inside_the_frontmatter() {
         .find("---\n\n# Heading")
         .expect("fixture has a closing delimiter");
 
-    let spans = all_spans(&app);
+    let spans = all_spans(session.app());
     assert!(
         !spans.is_empty(),
         "the frontmatter must produce spans at all"
@@ -113,11 +114,11 @@ fn frontmatter_spans_stay_inside_the_frontmatter() {
 /// neither may be handed the other's grammar.
 #[test]
 fn a_document_with_frontmatter_and_a_fence_highlights_both() {
-    let mut app = app_for(FRONTMATTER_AND_FENCE, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(FRONTMATTER_AND_FENCE, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let regions = &app.active_doc().highlight.regions;
+    let regions = &session.app().active_doc().highlight.regions;
     assert_eq!(
         regions.len(),
         2,
@@ -130,7 +131,10 @@ fn a_document_with_frontmatter_and_a_fence_highlights_both() {
         );
     }
 
-    let selected: Vec<String> = span_texts(&app).into_iter().map(|(text, _)| text).collect();
+    let selected: Vec<String> = span_texts(session.app())
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect();
     assert!(
         selected.iter().any(|text| text == "a"),
         "no span selects the yaml key `a`; the pass selected {selected:?}"
@@ -148,11 +152,11 @@ fn a_document_with_frontmatter_and_a_fence_highlights_both() {
 /// index alone would paint the dead frontmatter's yaml onto the fence.
 #[test]
 fn destroying_the_frontmatter_delimiter_recolours_every_region() {
-    let mut app = app_for(FRONTMATTER_AND_FENCE, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(FRONTMATTER_AND_FENCE, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
     assert_eq!(
-        app.active_doc().highlight.regions.len(),
+        session.app().active_doc().highlight.regions.len(),
         2,
         "the fixture must start with both regions"
     );
@@ -161,9 +165,9 @@ fn destroying_the_frontmatter_delimiter_recolours_every_region() {
         .find("---\n\n```")
         .expect("fixture has a closing delimiter")
         + "---".len();
-    settle_after_insert(&mut app, close, " ");
+    settle_after_insert(&mut session, close, " ");
 
-    let regions = &app.active_doc().highlight.regions;
+    let regions = &session.app().active_doc().highlight.regions;
     assert_eq!(
         regions.len(),
         1,
@@ -174,9 +178,9 @@ fn destroying_the_frontmatter_delimiter_recolours_every_region() {
         "the surviving region must carry a parse of its own"
     );
 
-    let updated = app.active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer.content().to_string();
     let fence_body = updated.find("fn f()").expect("the fence body survives");
-    let painted = span_texts(&app);
+    let painted = span_texts(session.app());
     let selected: Vec<&str> = painted.iter().map(|(text, _)| text.as_str()).collect();
     assert!(
         selected.contains(&"fn"),
@@ -189,7 +193,7 @@ fn destroying_the_frontmatter_delimiter_recolours_every_region() {
         "a yaml mapping key is still coloured after the frontmatter that \
          produced it stopped existing; the pass selected {selected:?}"
     );
-    for (range, _) in all_spans(&app) {
+    for (range, _) in all_spans(session.app()) {
         assert!(
             range.start >= fence_body,
             "span {range:?} lands before the fence body at {fence_body} — \

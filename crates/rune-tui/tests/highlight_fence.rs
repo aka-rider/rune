@@ -24,23 +24,56 @@ use highlight_common::{
     all_spans, app_for, region_tree_source, settle_after_insert, settle_highlight,
     type_one_char_at_end,
 };
-use rune_core::cursor::CursorSet;
+use rune_fuzz::Session;
 use rune_tui::app;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
+
+const RIGHT: KeyInput = KeyInput {
+    code: KeyCode::Right,
+    mods: Mods::NONE,
+};
+
+const LEFT: KeyInput = KeyInput {
+    code: KeyCode::Left,
+    mods: Mods::NONE,
+};
+
+/// Walks the active document's caret from wherever it sits to `offset`, one
+/// `Left`/`Right` press per grapheme step — the real navigation path, never
+/// a `CursorSet::new` poke. Bidirectional: `settle_highlight` leaves the
+/// caret at the document's end, past many callers' own target offset.
+fn place_caret(session: &mut Session, offset: usize) {
+    let len = session.app().active_doc().buffer.content().len();
+    let target = offset.min(len);
+    let mut guard = 0usize;
+    loop {
+        let position = session.app().active_doc().cursors.primary().position;
+        if position == target {
+            break;
+        }
+        session.key(if position < target { RIGHT } else { LEFT });
+        guard += 1;
+        assert!(
+            guard <= len + 8,
+            "caret placement stalled before reaching offset {target}"
+        );
+    }
+}
 
 /// Every span a settled document would paint, as the exact source text each
 /// one selects. Comparing TEXT rather than offsets is what lets the same
 /// code be compared across two documents that place it at different buffer
 /// positions.
 fn settled_span_texts(content: &str, path: &str, code_at: usize) -> Vec<String> {
-    let mut app = app_for(content, path);
-    app.sync_view();
+    let mut session = app_for(content, path);
+    session.app_mut().sync_view();
     // The version bump lands INSIDE the code in both documents, so the two
     // parsers see byte-identical source — the comparison is about the
     // pipeline, not about what an edit outside a fence does to it.
-    settle_after_insert(&mut app, code_at, "\n");
-    let doc_content = app.active_doc().buffer.content().to_string();
-    all_spans(&app)
+    settle_after_insert(&mut session, code_at, "\n");
+    let doc_content = session.app().active_doc().buffer.content().to_string();
+    all_spans(session.app())
         .into_iter()
         .filter_map(|(range, _)| doc_content.get(range).map(str::to_string))
         .collect()
@@ -86,11 +119,11 @@ fn every_fence_in_a_many_fence_document_highlights() {
         content.push_str("```\n\n");
     }
 
-    let mut app = app_for(&content, "/x/many.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(&content, "/x/many.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let doc = app.active_doc();
+    let doc = session.app().active_doc();
     assert_eq!(
         doc.highlight.regions.len(),
         langs.len(),
@@ -123,7 +156,7 @@ fn every_fence_in_a_many_fence_document_highlights() {
         })
         .collect();
     let end_of_document = doc.buffer.content().len();
-    let spans = all_spans(&app);
+    let spans = all_spans(session.app());
     for (i, start) in starts.iter().enumerate() {
         let limit = starts.get(i + 1).copied().unwrap_or(end_of_document);
         assert!(
@@ -144,25 +177,27 @@ fn every_fence_in_a_many_fence_document_highlights() {
 #[test]
 fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
     let content = "```rust\nfn a() {}\n```\n\nprose\n\n```rust\nfn b() {}\n```\n";
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
     assert_eq!(
-        region_tree_source(&app, 0).as_deref(),
+        region_tree_source(session.app(), 0).as_deref(),
         Some("fn a() {}"),
         "the first fence must have parsed its own body"
     );
-    assert_eq!(region_tree_source(&app, 1).as_deref(), Some("fn b() {}"));
+    assert_eq!(
+        region_tree_source(session.app(), 1).as_deref(),
+        Some("fn b() {}")
+    );
 
     // Edit the prose paragraph sitting between the two fences. It shifts the
     // second fence's buffer offsets without changing either fence's text.
-    let id = app.active;
     let at = content.find("prose").expect("fixture has prose");
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(at);
+    place_caret(&mut session, at);
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Paste("a much longer paragraph of prose ".to_string()),
         &mut effects,
     );
@@ -189,24 +224,27 @@ fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
         );
     }
     let mut settled = Effects::default();
-    app::update(&mut app, msg, &mut settled);
+    app::update(session.app_mut(), msg, &mut settled);
 
     assert_eq!(
-        app.active_doc().highlight.version,
-        app.active_doc().buffer.version(),
+        session.app().active_doc().highlight.version,
+        session.app().active_doc().buffer.version(),
         "the regions' maps must still have been refreshed to the new version"
     );
     assert_eq!(
-        region_tree_source(&app, 0).as_deref(),
+        region_tree_source(session.app(), 0).as_deref(),
         Some("fn a() {}"),
         "the first fence must still hold its original parse"
     );
-    assert_eq!(region_tree_source(&app, 1).as_deref(), Some("fn b() {}"));
+    assert_eq!(
+        region_tree_source(session.app(), 1).as_deref(),
+        Some("fn b() {}")
+    );
 
     // The colours must have MOVED with the text, not stayed at pre-edit
     // offsets: reusing a tree is only correct if the map was refreshed.
-    let updated = app.active_doc().buffer.content().to_string();
-    let texts: Vec<&str> = all_spans(&app)
+    let updated = session.app().active_doc().buffer.content().to_string();
+    let texts: Vec<&str> = all_spans(session.app())
         .into_iter()
         .filter_map(|(range, _)| updated.get(range))
         .collect();
@@ -222,11 +260,11 @@ fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
 #[test]
 fn a_markdown_fence_highlights_through_the_span_channel() {
     let content = "```markdown\n# Title\n\nplain text\n```\n";
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let doc = app.active_doc();
+    let doc = session.app().active_doc();
     let region = doc
         .highlight
         .regions
@@ -245,7 +283,9 @@ fn a_markdown_fence_highlights_through_the_span_channel() {
         .resolve("markup.heading.1")
         .expect("known scope");
     assert!(
-        all_spans(&app).iter().any(|(_, scope)| *scope == heading),
+        all_spans(session.app())
+            .iter()
+            .any(|(_, scope)| *scope == heading),
         "the fenced heading must reach the render query"
     );
 }
@@ -255,21 +295,21 @@ fn a_markdown_fence_highlights_through_the_span_channel() {
 #[test]
 fn markdown_rust_fence_produces_spans_inside_the_fence_only() {
     let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
-    let mut app = app_for(content, "/x/notes.md");
+    let mut session = app_for(content, "/x/notes.md");
     // Mirrors `runtime::run`'s own bootstrap ordering: a view's
     // `code_regions` describe the LAST parse the display pipeline produced,
     // not the live buffer, so a fence must have been parsed at least once
     // before an edit can find it.
-    app.sync_view();
-    settle_highlight(&mut app);
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let updated = app.active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer.content().to_string();
     let fence_start = updated.find("fn main").expect("fixture has a fence body");
     let fence_end = updated
         .find("```\n\nOutro")
         .expect("fixture has a fence close");
 
-    let spans = all_spans(&app);
+    let spans = all_spans(session.app());
     assert!(!spans.is_empty());
     for (range, _) in &spans {
         assert!(
@@ -284,12 +324,12 @@ fn markdown_rust_fence_produces_spans_inside_the_fence_only() {
 /// spans.
 #[test]
 fn fence_tagged_rust_comma_ignore_still_highlights() {
-    let mut app = app_for("```rust,ignore\nfn main() {}\n```\n", "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for("```rust,ignore\nfn main() {}\n```\n", "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
     assert!(
-        !all_spans(&app).is_empty(),
+        !all_spans(session.app()).is_empty(),
         "a rust,ignore fence must still produce spans"
     );
 }
@@ -301,11 +341,11 @@ fn fence_tagged_rust_comma_ignore_still_highlights() {
 #[test]
 fn unknown_and_untagged_fences_produce_no_region() {
     let content = "```klingon\nQapla'\n```\n\n```\nplain fenced text\n```\n";
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
 
     let mut effects = Effects::default();
-    type_one_char_at_end(&mut app, &mut effects);
+    type_one_char_at_end(&mut session, &mut effects);
 
     assert!(
         effects.cmds.is_empty(),
@@ -313,8 +353,8 @@ fn unknown_and_untagged_fences_produce_no_region() {
          nothing should be dispatched"
     );
 
-    assert!(app.active_doc().highlight.regions.is_empty());
-    assert!(all_spans(&app).is_empty());
+    assert!(session.app().active_doc().highlight.regions.is_empty());
+    assert!(all_spans(session.app()).is_empty());
 }
 
 /// An edit that lands BEFORE a fence must not leave that fence's spans at
@@ -325,37 +365,36 @@ fn unknown_and_untagged_fences_produce_no_region() {
 #[test]
 fn an_edit_before_a_fence_does_not_shift_its_spans() {
     let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
     // Insert ahead of the fence in ONE edit, and insert enough bytes that a
     // stale range cannot accidentally still work: with a single byte the two
     // errors cancel. A wider shift moves the stale window off the fence body
-    // entirely.
-    let id = app.active;
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(0);
+    // entirely. `Session::open` already leaves the caret at byte 0, so no
+    // caret placement is needed before this edit.
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Paste("a much longer prefix inserted ahead of the fence\n\n".to_string()),
         &mut effects,
     );
     for cmd in effects.cmds.drain(..) {
         if let Some(msg) = cmd.run() {
             let mut effects2 = Effects::default();
-            app::update(&mut app, msg, &mut effects2);
+            app::update(session.app_mut(), msg, &mut effects2);
         }
     }
 
-    let updated = app.active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer.content().to_string();
     let fence_start = updated.find("fn main").expect("fence body");
     let fence_end = updated[fence_start..]
         .find("```")
         .map(|i| fence_start + i)
         .expect("fence close");
 
-    let spans = all_spans(&app);
+    let spans = all_spans(session.app());
     assert!(
         !spans.is_empty(),
         "the rust fence must still produce spans after a leading insert"

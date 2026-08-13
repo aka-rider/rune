@@ -6,6 +6,7 @@
 mod highlight_common;
 
 use highlight_common::{all_spans, app_for, span_reply};
+use rune_fuzz::Session;
 use rune_syntax::scope::scope_table;
 use rune_tui::app;
 use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult};
@@ -24,7 +25,8 @@ fn schedules_a_highlight_cmd(effects: &Effects) -> bool {
 
 /// Installs one span-backed region carrying `spans` through the real
 /// `app::update` chokepoint, at the live buffer version.
-fn install(app: &mut app::App, spans: Vec<(std::ops::Range<usize>, rune_syntax::ScopeId)>) {
+fn install(session: &mut Session, spans: Vec<(std::ops::Range<usize>, rune_syntax::ScopeId)>) {
+    let app = session.app_mut();
     let id = app.active;
     let version = app.doc(id).expect("doc").buffer.version();
     let mut effects = Effects::default();
@@ -41,17 +43,17 @@ fn install(app: &mut app::App, spans: Vec<(std::ops::Range<usize>, rune_syntax::
 
 #[test]
 fn none_result_leaves_spans_byte_identical() {
-    let mut app = app_for("fn main() {}\n", "/x/main.rs");
-    let id = app.active;
+    let mut session = app_for("fn main() {}\n", "/x/main.rs");
+    let id = session.app().active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    install(&mut app, vec![(0..2, keyword)]);
-    let before = all_spans(&app);
+    install(&mut session, vec![(0..2, keyword)]);
+    let before = all_spans(session.app());
     assert_eq!(before, vec![(0..2, keyword)]);
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer.version();
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -60,23 +62,24 @@ fn none_result_leaves_spans_byte_identical() {
         &mut effects,
     );
 
-    assert_eq!(all_spans(&app), before);
+    assert_eq!(all_spans(session.app()), before);
 }
 
 #[test]
 fn reply_at_a_stale_version_leaves_spans_unchanged() {
-    let mut app = app_for("fn main() {}\n", "/x/main.rs");
-    let id = app.active;
+    let mut session = app_for("fn main() {}\n", "/x/main.rs");
+    let id = session.app().active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    install(&mut app, vec![(0..2, keyword)]);
-    let before = all_spans(&app);
-    let stale_version = app.doc(id).expect("doc").buffer.version();
+    install(&mut session, vec![(0..2, keyword)]);
+    let before = all_spans(session.app());
+    let stale_version = session.app().doc(id).expect("doc").buffer.version();
 
     // Advance the buffer past `stale_version` without going through a real
     // edit command — a direct field write is the same convention
-    // `tests/tui_render.rs::app_for` already uses for other `Document`
-    // fields (`cursors`, `viewport`).
+    // `tests/tui_render.rs::app_for` already used for other `Document`
+    // fields (`cursors`, `viewport`) before the migration onto `Session`.
     {
+        let app = session.app_mut();
         let doc = app.doc_mut(id).expect("doc");
         doc.buffer = doc
             .buffer
@@ -86,7 +89,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version: stale_version,
@@ -95,7 +98,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
         &mut effects,
     );
 
-    assert_eq!(all_spans(&app), before);
+    assert_eq!(all_spans(session.app()), before);
 }
 
 /// A `None` reply for a never-yet-highlighted document (every region's parse
@@ -105,18 +108,18 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
 #[test]
 fn a_timed_out_document_surfaces_a_message() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
+    let version = session.app().doc(id).expect("doc").buffer.version();
     assert_eq!(
-        app.doc(id).expect("doc").highlight.version,
+        session.app().doc(id).expect("doc").highlight.version,
         0,
         "a fresh document must never have been highlighted yet"
     );
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -125,7 +128,7 @@ fn a_timed_out_document_surfaces_a_message() {
         &mut effects,
     );
 
-    let doc = app.doc(id).expect("doc");
+    let doc = session.app().doc(id).expect("doc");
     assert!(
         doc.highlight.regions.is_empty(),
         "a None reply must never invent a region"
@@ -133,18 +136,18 @@ fn a_timed_out_document_surfaces_a_message() {
     assert_eq!(
         doc.highlight.in_flight, None,
         "in_flight must still clear on a timed-out reply, or this document \
-         could never be highlighted again by any future edit"
+        could never be highlighted again by any future edit"
     );
     assert!(
         !schedules_a_highlight_cmd(&effects),
         "a single-attempt timeout schedules no further highlight cmd — there \
-         is no retry chain to continue"
+        is no retry chain to continue"
     );
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         Some("syntax highlighting timed out for this document"),
         "a timed-out document's parse must surface a status line, not fail \
-         silently"
+        silently"
     );
 }
 
@@ -155,13 +158,13 @@ fn a_timed_out_document_surfaces_a_message() {
 #[test]
 fn a_timed_out_markdown_fence_surfaces_the_same_message() {
     let content = "```rust\nfn main() {}\n```\n";
-    let mut app = app_for(content, "/x/notes.md");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
+    let mut session = app_for(content, "/x/notes.md");
+    let id = session.app().active;
+    let version = session.app().doc(id).expect("doc").buffer.version();
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -171,7 +174,7 @@ fn a_timed_out_markdown_fence_surfaces_the_same_message() {
     );
 
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         Some("syntax highlighting timed out for this document"),
         "a fence that times out must report like a file that times out"
     );
@@ -185,22 +188,22 @@ fn a_timed_out_markdown_fence_surfaces_the_same_message() {
 #[test]
 fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    install(&mut app, vec![(0..2, keyword)]);
+    install(&mut session, vec![(0..2, keyword)]);
 
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer.version();
     assert_eq!(
-        app.doc(id).expect("doc").highlight.version,
+        session.app().doc(id).expect("doc").highlight.version,
         version,
         "the first successful reply must stamp highlight.version"
     );
-    let spans_before = all_spans(&app);
+    let spans_before = all_spans(session.app());
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -210,16 +213,16 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
     );
 
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         None,
         "a reparse timeout on an already-highlighted document must stay \
-         silent, not surface the timed-out status a second time"
+        silent, not surface the timed-out status a second time"
     );
     assert_eq!(
-        all_spans(&app),
+        all_spans(session.app()),
         spans_before,
         "the stale-but-good spans from the first successful reply must be \
-         left untouched"
+        left untouched"
     );
 }
 
@@ -231,14 +234,19 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
 #[test]
 fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
-    app.doc_mut(id).expect("doc").highlight.pending = true;
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
+    let version = session.app().doc(id).expect("doc").buffer.version();
+    session
+        .app_mut()
+        .doc_mut(id)
+        .expect("doc")
+        .highlight
+        .pending = true;
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -250,10 +258,10 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
     assert!(
         !schedules_a_highlight_cmd(&effects),
         "a terminal timeout must schedule no further highlight cmd even with \
-         `pending` armed by a mere document switch"
+        `pending` armed by a mere document switch"
     );
     assert_eq!(
-        app.doc(id).expect("doc").highlight.in_flight,
+        session.app().doc(id).expect("doc").highlight.in_flight,
         None,
         "the timed-out reply must still clear in_flight"
     );
@@ -265,16 +273,16 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
 #[test]
 fn a_payload_less_region_slot_carries_its_existing_colours_forward() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    install(&mut app, vec![(0..2, keyword)]);
-    let before = all_spans(&app);
+    install(&mut session, vec![(0..2, keyword)]);
+    let before = all_spans(session.app());
 
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer.version();
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -289,7 +297,7 @@ fn a_payload_less_region_slot_carries_its_existing_colours_forward() {
         &mut effects,
     );
 
-    assert_eq!(all_spans(&app), before);
+    assert_eq!(all_spans(session.app()), before);
 }
 
 /// A reply carrying `truncated: true` (a producer hit its span cap) must
@@ -299,14 +307,14 @@ fn a_payload_less_region_slot_carries_its_existing_colours_forward() {
 #[test]
 fn span_cap_truncation_surfaces_a_status_line() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
+    let version = session.app().doc(id).expect("doc").buffer.version();
     let keyword = scope_table().resolve("keyword").expect("known scope");
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -321,10 +329,10 @@ fn span_cap_truncation_surfaces_a_status_line() {
         &mut effects,
     );
 
-    let doc = app.doc(id).expect("doc");
+    let doc = session.app().doc(id).expect("doc");
     assert!(doc.highlight.truncated, "the truncated flag must be stored");
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         Some("syntax highlighting was truncated; the tail of this document is uncoloured"),
         "a truncated reply must surface a status line, not fail silently"
     );
@@ -338,14 +346,19 @@ fn span_cap_truncation_surfaces_a_status_line() {
 #[test]
 fn timeout_outranks_truncation_in_the_status_line() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
-    app.doc_mut(id).expect("doc").highlight.truncated = true;
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
+    let version = session.app().doc(id).expect("doc").buffer.version();
+    session
+        .app_mut()
+        .doc_mut(id)
+        .expect("doc")
+        .highlight
+        .truncated = true;
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Highlighted {
             doc: id,
             version,
@@ -355,7 +368,7 @@ fn timeout_outranks_truncation_in_the_status_line() {
     );
 
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         Some("syntax highlighting timed out for this document"),
         "the timeout message must win over a sticky truncated flag"
     );

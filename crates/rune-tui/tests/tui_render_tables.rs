@@ -14,19 +14,13 @@
 //! separate test binaries).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use std::sync::Arc;
-
 use ratatui::buffer::Buffer as RtBuffer;
 use ratatui::style::Modifier;
 
-use rune_core::buffer::Buffer;
 use rune_core::coords::{DisplayRow, WrapRow};
-use rune_core::cursor::CursorSet;
-use rune_tui::app::App;
-use rune_tui::pane::Pane;
-use rune_tui::runtime::Effects;
+use rune_fuzz::Session;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::testgrid;
-use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
@@ -40,23 +34,48 @@ const EDITOR_TOP_ROW: u16 = 2;
 /// column 1.
 const EDITOR_LEFT_COL: usize = 1;
 
-fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
-    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
+const RIGHT: KeyInput = KeyInput {
+    code: KeyCode::Right,
+    mods: Mods::NONE,
+};
+
+/// Walks the active document's caret from `Session::open`'s own byte 0 up to
+/// `offset`, one `Right` press per grapheme step — the real navigation path,
+/// never a `CursorSet::new` poke.
+fn place_caret(session: &mut Session, offset: usize) {
+    let target = offset.min(session.app().active_doc().buffer.content().len());
+    let mut guard = 0usize;
+    while session.app().active_doc().cursors.primary().position < target {
+        session.key(RIGHT);
+        guard += 1;
+        assert!(
+            guard <= target + 8,
+            "caret placement stalled before reaching offset {target}"
+        );
+    }
+}
+
+fn app_for(content: &str, cursor_offset: usize, focused: bool) -> Session {
+    let mut session = Session::open("/doc.md", content);
+    session.resize(WIDTH, HEIGHT);
+    place_caret(&mut session, cursor_offset);
     if !focused {
+        use rune_tui::pane::Pane;
+        use rune_tui::runtime::Effects;
         // Focus is gated on `LayoutMode` — show the column first so
         // `Explorer` is actually painted and the fixture keeps landing
-        // focus off the Editor as intended.
-        app.splits.left.show();
-        app.set_focus_pane(Pane::Explorer, &mut Effects::default());
+        // focus off the Editor as intended. The focus change itself
+        // doesn't go through `app::update`'s own post-dispatch sync, so
+        // this `sync_view()`s explicitly rather than leaving conceal/caret
+        // state stale for whatever reads it next.
+        let mut effects = Effects::default();
+        session.app_mut().splits.left.show();
+        session
+            .app_mut()
+            .set_focus_pane(Pane::Explorer, &mut effects);
+        session.app_mut().sync_view();
     }
-    let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
-    app.doc_mut(id)
-        .unwrap()
-        .viewport
-        .set_size(WIDTH, HEIGHT - 1);
-    app.sync_view();
-    app
+    session
 }
 
 /// The backend row carrying the cursor's reverse-video overlay, searched
@@ -93,16 +112,16 @@ fn table_borders_render_at_the_predicted_display_rows() {
     let cursor = TWO_BODY_ROW_TABLE
         .find("tail")
         .expect("fixture has a tail paragraph");
-    let app = app_for(TWO_BODY_ROW_TABLE, cursor, true);
+    let session = app_for(TWO_BODY_ROW_TABLE, cursor, true);
 
-    let top = testgrid::row(&app, EDITOR_TOP_ROW, WIDTH, HEIGHT);
+    let top = testgrid::row(session.app(), EDITOR_TOP_ROW, WIDTH, HEIGHT);
     let top_editor_text: String = top.chars().skip(EDITOR_LEFT_COL).collect();
     assert!(
         top_editor_text.starts_with('┌'),
         "expected the synthesised top border on the table's first editor row:\n{top:?}"
     );
 
-    let bottom = testgrid::row(&app, EDITOR_TOP_ROW + 6, WIDTH, HEIGHT);
+    let bottom = testgrid::row(session.app(), EDITOR_TOP_ROW + 6, WIDTH, HEIGHT);
     let bottom_editor_text: String = bottom.chars().skip(EDITOR_LEFT_COL).collect();
     assert!(
         bottom_editor_text.starts_with('└'),
@@ -138,7 +157,8 @@ fn table_then_many_lines(n: usize) -> String {
 fn caret_row_below_a_table_matches_wrap_to_display_of_its_wrap_row() {
     let content = table_then_many_lines(60);
     let cursor = content.len(); // the very last byte: last line, forces scrolling
-    let app = app_for(&content, cursor, true);
+    let session = app_for(&content, cursor, true);
+    let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
     let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor);
@@ -152,7 +172,7 @@ fn caret_row_below_a_table_matches_wrap_to_display_of_its_wrap_row() {
         "fixture must be long enough to force real scrolling, or this test is vacuous"
     );
 
-    let buf = testgrid::draw(&app, WIDTH, HEIGHT);
+    let buf = testgrid::draw(app, WIDTH, HEIGHT);
     let actual_backend_row =
         caret_row(&buf, HEIGHT, WIDTH).expect("caret must be visible somewhere on screen");
     let actual_display_row = scroll_row + (actual_backend_row - EDITOR_TOP_ROW) as usize;
@@ -180,11 +200,12 @@ fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
         .find(" a | b |\n")
         .map(|i| i + " a | b |".len())
         .expect("fixture has the ragged row's dropped tail");
-    let app = app_for(RAGGED_ROW_TABLE, cursor, false);
+    let session = app_for(RAGGED_ROW_TABLE, cursor, false);
+    let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = rune_tui::render::build_rows(&app, app.active_doc(), Some(app.active), view);
-    let meta = rune_tui::row_meta::row_meta(view, &app);
+    let rows = rune_tui::render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let meta = rune_tui::row_meta::row_meta(view, app);
 
     let widths: Vec<usize> = rows
         .iter()
@@ -224,7 +245,7 @@ fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
         "a truncated row must render outside the table's own box, got {ragged_row_meta:?}"
     );
 
-    let buf = testgrid::draw(&app, WIDTH, HEIGHT);
+    let buf = testgrid::draw(app, WIDTH, HEIGHT);
     assert_eq!(
         caret_row(&buf, HEIGHT, WIDTH),
         None,

@@ -25,9 +25,9 @@ fn concealed_heading_marker_not_visible_when_cursor_elsewhere() {
     let content = "## Heading\n\nSome text below.\n";
     // Cursor on line 2 ("Some text below."), not on the heading's line 0.
     let cursor_offset = content.find("Some").expect("fixture contains 'Some'");
-    let app = app_for(content, cursor_offset, true);
+    let session = app_for(content, cursor_offset, true);
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(session.app());
     let text = full_text(&buf, HEIGHT, WIDTH);
 
     assert!(
@@ -45,9 +45,9 @@ fn concealed_heading_marker_not_visible_when_cursor_elsewhere() {
 #[test]
 fn concealed_heading_marker_not_visible_when_unfocused_even_with_cursor_on_it() {
     let content = "## Heading\n";
-    let app = app_for(content, 0, false); // cursor ON the heading line, but unfocused
+    let session = app_for(content, 0, false); // cursor ON the heading line, but unfocused
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(session.app());
     let text = full_text(&buf, HEIGHT, WIDTH);
 
     assert!(
@@ -63,9 +63,9 @@ fn bold_text_is_styled_bold() {
     let content = "plain **bold** plain\n";
     // Cursor away from the emphasis span so it stays concealed/rendered
     // (folded), not revealed with its `**` delimiters.
-    let app = app_for(content, 0, true);
+    let session = app_for(content, 0, true);
 
-    let buf = render_to_test_backend(&app);
+    let buf = render_to_test_backend(session.app());
     let text = row_text(&buf, EDITOR_TOP_ROW, WIDTH);
     assert!(
         text.contains("bold"),
@@ -93,8 +93,8 @@ fn bold_text_is_styled_bold() {
 /// to check for moved out of the footer; WP6's `title.rs` owns it next).
 #[test]
 fn status_line_present_on_last_row() {
-    let app = app_for("hello\n", 0, true);
-    let buf = render_to_test_backend(&app);
+    let session = app_for("hello\n", 0, true);
+    let buf = render_to_test_backend(session.app());
     let status_row = row_text(&buf, HEIGHT - 1, WIDTH);
     assert!(
         status_row.contains("explorer"),
@@ -114,9 +114,10 @@ fn status_line_present_on_last_row() {
 #[test]
 fn cell_grid_buf_offsets_map_back_into_the_source_text() {
     let content = "## Heading\n";
-    let app = app_for(content, 0, true); // cursor on the heading line: revealed
+    let session = app_for(content, 0, true); // cursor on the heading line: revealed
+    let app = session.app();
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
 
     let first_row = rows.first().expect("at least one row");
     assert!(

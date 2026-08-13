@@ -17,22 +17,21 @@ use rune_syntax::ScopeId;
 /// exactly one resolvable fence produces, and returns the spans it would
 /// paint. Used by the container-prefix-leak cases below.
 fn fence_highlight_spans(content: &str, path: &str) -> Vec<(Range<usize>, ScopeId)> {
-    let mut app = app_for(content, path);
-    app.sync_view();
-    settle_highlight(&mut app);
-    all_spans(&app)
+    let mut session = app_for(content, path);
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
+    all_spans(session.app())
 }
 
 /// The same settle as [`fence_highlight_spans`], but returns each span's OWN
 /// selected text rather than its range — what the exact-bytes assertions
-/// below need, and owned (not borrowed) since `settle_highlight` mutates the
-/// buffer out from under a borrow taken before it runs.
+/// below need.
 fn settled_span_texts(content: &str, path: &str) -> Vec<String> {
-    let mut app = app_for(content, path);
-    app.sync_view();
-    settle_highlight(&mut app);
-    let updated = app.active_doc().buffer.content().to_string();
-    all_spans(&app)
+    let mut session = app_for(content, path);
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
+    let updated = session.app().active_doc().buffer.content().to_string();
+    all_spans(session.app())
         .into_iter()
         .filter_map(|(range, _)| updated.get(range).map(str::to_string))
         .collect()
@@ -114,12 +113,12 @@ fn rust_fence_nested_in_list_item_produces_the_same_span_count_as_top_level() {
 #[test]
 fn nested_fence_spans_never_select_the_blockquote_prefix_bytes() {
     let content = "> ```yaml\n> key: value\n> nested:\n>   child: 1\n> ```\n";
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
-    settle_highlight(&mut app);
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
+    settle_highlight(&mut session);
 
-    let updated = app.active_doc().buffer.content().to_string();
-    let spans = all_spans(&app);
+    let updated = session.app().active_doc().buffer.content().to_string();
+    let spans = all_spans(session.app());
     assert!(
         !spans.is_empty(),
         "the blockquoted yaml fence must still produce spans"
