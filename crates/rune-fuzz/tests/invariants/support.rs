@@ -158,6 +158,9 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         display_name_by_doc: std::collections::BTreeMap::new(),
         active_last_sync: None,
         message_posts: 0,
+        nav_places: Vec::new(),
+        nav_current: 0,
+        buffer_len_by_doc: std::collections::BTreeMap::new(),
     }
 }
 

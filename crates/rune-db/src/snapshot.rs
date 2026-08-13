@@ -50,10 +50,11 @@ pub fn create_snapshot(
 ///    `session_documents` (no row, or NULL, means "at head" → use
 ///    `i64::MAX`).
 /// 2. Find the newest snapshot tagged `session_id` with `seq <= target`,
-///    tie-broken `seq DESC, id DESC` (coalesced edits keep the SAME seq, so
-///    several snapshots can share one seq with progressively newer content
-///    — `id DESC` picks the freshest one at that seq, never an arbitrary
-///    tie); `anchor_content = ""` if none.
+///    tie-broken `seq DESC, id DESC` — separate call sites (`writer.rs`'s
+///    periodic snapshot, `sync.rs`, `inherit.rs`, `load_anchor.rs`) can each
+///    create a snapshot anchored at the SAME seq with no edit landing in
+///    between, so `id DESC` picks the freshest row at that seq, never an
+///    arbitrary tie; `anchor_content = ""` if none.
 /// 3. Gather `session_id`'s own edit batches with `seq` in
 ///    `(anchor_seq, target]`.
 /// 4. Forward-replay those batches onto `anchor_content`, one row at a

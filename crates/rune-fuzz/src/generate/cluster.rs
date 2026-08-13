@@ -11,8 +11,9 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use crate::action::Action;
 
 use super::arb::{
-    FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START, arb_any_keycode, arb_dir_cause, arb_dir_entry,
-    arb_dir_loaded_generation, arb_highlight_span, arb_highlight_version, arb_mods, arb_resize,
+    FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START, arb_any_keycode, arb_clock_advance_millis,
+    arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_highlight_span,
+    arb_highlight_version, arb_mods, arb_resize,
 };
 #[cfg(test)]
 pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
@@ -20,8 +21,9 @@ use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
     EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL, FILESEARCH_KEY_SUP, MARKDOWN_FRAGMENTS, MERGE_KEY,
-    MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, REDO_KEY_ALT, SAVE_KEY,
-    SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
+    MERGE_RESOLVE_KEYS, NAV_BACK_KEY, NAV_FORWARD_KEY, NAV_KEYS, PASTE_KEY, PASTE_PALETTE,
+    REDO_KEY, REDO_KEY_ALT, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS,
+    TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
 };
 
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
@@ -74,6 +76,18 @@ fn cluster_undo_redo() -> impl Strategy<Value = Vec<Action>> {
             None => Just(actions).boxed(),
         }
     })
+}
+
+fn cluster_caret_history() -> impl Strategy<Value = Vec<Action>> {
+    proptest::collection::vec(
+        prop_oneof![Just(NAV_BACK_KEY), Just(NAV_FORWARD_KEY)],
+        1..=4,
+    )
+    .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
+}
+
+fn cluster_advance_clock() -> impl Strategy<Value = Vec<Action>> {
+    arb_clock_advance_millis().prop_map(|millis| vec![Action::AdvanceClock(millis)])
 }
 
 /// 6 — a structural markdown fragment, or the two-action code-fence form
@@ -448,7 +462,7 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
     })
 }
 
-/// The user-approved weighted table, now over 17 clusters (plan WP7.S6
+/// The user-approved weighted table, now over 19 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
@@ -456,7 +470,10 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
 /// added `cluster_merge`, since bumped from a `MERGE_KEY`-only weight of 1
 /// once a store-backed session made `MergeState::Active` actually
 /// reachable; issue #37's own generator arm added `cluster_highlight_tree`,
-/// the TREE-channel twin of `cluster_highlight`). All arms are `.boxed()` —
+/// the TREE-channel twin of `cluster_highlight`; plan WP8 added
+/// `cluster_caret_history`, the `NavBack`/`NavForward` chord twin of
+/// `cluster_undo_redo`, and `cluster_advance_clock`, the only way a
+/// session's `ManualClock` ever moves). All arms are `.boxed()` —
 /// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
 /// boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
@@ -466,6 +483,8 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         10 => cluster_selection().boxed(),
         8 => cluster_delete().boxed(),
         7 => cluster_undo_redo().boxed(),
+        5 => cluster_caret_history().boxed(),
+        2 => cluster_advance_clock().boxed(),
         6 => cluster_markdown_write().boxed(),
         5 => cluster_save().boxed(),
         4 => cluster_clipboard().boxed(),

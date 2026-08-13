@@ -10,22 +10,6 @@
 //!     `recover_document` after every single action.
 //!
 //! After every action the two must report byte-identical content.
-//!
-//! Deliberate scope limit: every generated insert is 2+ ASCII characters
-//! (`is_insert_char` in `journal.rs` only ever coalesces a SINGLE-rune pure
-//! insert), so `append_edit`'s keystroke-coalescing UPDATE never triggers
-//! here. Coalescing merges TWO of the ground truth's own `Journal::push`
-//! steps into ONE `rune-db` journal row, which would decouple the two
-//! journals' undo-stop granularity from each other — an undo action would
-//! then legitimately undo a different number of edits on each side. That
-//! collapse is real, deliberate DB-only behavior, and it already has its
-//! own dedicated deterministic tests (`journal.rs`'s
-//! `two_inserts_200ms_apart_coalesce_to_one_seq`,
-//! `snapshot_anchored_at_seq_prevents_coalescing`,
-//! `whitespace_breaks_the_next_coalesce`) — this property test's job is
-//! REPLAY correctness (append/truncate/undo/redo/recover_document), not
-//! coalescing, so it sidesteps the granularity mismatch by construction
-//! rather than modeling coalescing in the reference journal too.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 

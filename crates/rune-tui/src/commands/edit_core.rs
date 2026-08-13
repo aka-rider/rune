@@ -116,13 +116,14 @@ pub(crate) fn apply_edit_batch_with_cursors(
                 kind,
             });
             doc.ladder_presses = 0;
+            doc.ladder_anchor = None;
             // Async replica journaling (plan WP5.S3): the LOCAL journal
             // above is already the authoritative, synchronous source of
             // truth — this enqueue can never roll it back, only mark the
             // store degraded on failure (`db::append_edit`'s doc comment).
             db::append_edit(app, id, &applied, cursors_before.all(), &cursors_after);
             materialize_ack::recompute_dirty(app, id);
-            for ae in &applied {
+            for ae in applied.iter().rev() {
                 app.nav_history
                     .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
             }

@@ -337,6 +337,24 @@ pub(super) const REDO_KEY_ALT: KeyInput = KeyInput {
         sup: true,
     },
 };
+pub(super) const NAV_BACK_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('['),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+pub(super) const NAV_FORWARD_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char(']'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
 pub(super) const ENTER_KEY: KeyInput = KeyInput {
     code: KeyCode::Enter,
     mods: Mods::NONE,

@@ -148,6 +148,7 @@ struct State {
     /// `Diverged`, defeating the very divergence this action exists to
     /// seed.
     diverge_step: u64,
+    manual_clock: Arc<rune_tui::pointer::ManualClock>,
 }
 
 /// Accumulates the frozen state once a violation fires, so the driving loop
@@ -209,7 +210,8 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     // onto a driver that spent real wall-clock time all along — replay
     // would silently stop reproducing the moment a click sequence
     // straddled a click-window boundary at real, non-reproducible speed.
-    app.clock = Arc::new(rune_tui::pointer::ManualClock::new());
+    let manual_clock = Arc::new(rune_tui::pointer::ManualClock::new());
+    app.clock = Arc::clone(&manual_clock) as Arc<dyn rune_tui::pointer::Clock + Send + Sync>;
     let draft_doc = app.active;
 
     // The session opens its seeded document the same way a real launch or
@@ -264,6 +266,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         rediverge: crate::invariant::RedivergenceTracker::default(),
         divergent_save: crate::invariant::DivergentSaveTracker::default(),
         diverge_step: 0,
+        manual_clock,
     };
     let mut prev = Snapshot::capture(&mut state.app, false);
     let mut outcome = Outcome {
@@ -280,6 +283,11 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         match action {
             Action::FailNextSave => {
                 state.mem.fail_next_save(io::ErrorKind::PermissionDenied);
+            }
+            Action::AdvanceClock(millis) => {
+                state
+                    .manual_clock
+                    .advance(std::time::Duration::from_millis(*millis));
             }
             Action::DivergeDisk => {
                 if diverge_disk(&mut state, &mut prev, &mut outcome) {

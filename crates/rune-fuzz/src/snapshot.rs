@@ -209,6 +209,9 @@ pub struct Snapshot {
     /// "was a message posted" as "did `status` change" is blind to that
     /// case. `MERGE-KEY-FEEDBACK` needs the distinction directly.
     pub message_posts: u64,
+    pub nav_places: Vec<(DocumentId, usize, bool)>,
+    pub nav_current: usize,
+    pub buffer_len_by_doc: BTreeMap<DocumentId, usize>,
 }
 
 /// `Snapshot.status`'s builder: the footer's own text, plus the message
@@ -275,6 +278,7 @@ impl Snapshot {
         let mut save_in_flight_by_doc = BTreeMap::new();
         let mut display_name_by_doc = BTreeMap::new();
         let mut saved_version_by_doc = BTreeMap::new();
+        let mut buffer_len_by_doc = BTreeMap::new();
         for doc_id in doc_ids {
             app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
@@ -282,8 +286,21 @@ impl Snapshot {
                 save_in_flight_by_doc.insert(doc_id, d.save_in_flight());
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
                 saved_version_by_doc.insert(doc_id, d.saved_version);
+                buffer_len_by_doc.insert(doc_id, d.buffer.content().len());
             }
         }
+        let nav_places = app
+            .nav_history
+            .places()
+            .iter()
+            .map(|place| {
+                let on_char_boundary = app
+                    .doc(place.doc)
+                    .is_none_or(|d| d.buffer.content().is_char_boundary(place.offset));
+                (place.doc, place.offset, on_char_boundary)
+            })
+            .collect();
+        let nav_current = app.nav_history.index();
         let merge_active = matches!(app.merge, rune_tui::merge::MergeState::Active { .. });
         let merge_pending = matches!(app.merge, rune_tui::merge::MergeState::Pending { .. });
         let merge_doc = app.merge.doc();
@@ -346,6 +363,9 @@ impl Snapshot {
             display_name_by_doc,
             active_last_sync: doc.last_sync,
             message_posts: rune_tui::messages::posts(app),
+            nav_places,
+            nav_current,
+            buffer_len_by_doc,
         }
     }
 }

@@ -20,8 +20,9 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 35 invariants total, one domain per file:
+//! 36 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
+//! - `nav` — `NAV-BOUNDS`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
 //! - `pane` — `PANE-NO-BLEED`, `LAYOUT-FITS`, `LAYOUT-TILES`
 //! - `render` — `SYNC-IDEMPOTENT`, `CELL-OFFSET`, `CELL-NO-EOL`,
@@ -49,6 +50,7 @@ mod clipboard;
 mod cursor;
 mod highlight;
 mod merge;
+mod nav;
 mod pane;
 mod render;
 mod save;
@@ -64,6 +66,7 @@ pub use merge::{
     DivergentSaveTracker, RedivergenceTracker, merge_doc_active, merge_key_feedback,
     merge_save_blocked, merge_title_cleared,
 };
+pub use nav::nav_bounds;
 pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
 pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,
@@ -169,4 +172,5 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| merge_save_blocked(prev, next, ctx))
         .or_else(|| merge_key_feedback(prev, next, ctx))
         .or_else(|| merge_title_cleared(next))
+        .or_else(|| nav_bounds(next))
 }

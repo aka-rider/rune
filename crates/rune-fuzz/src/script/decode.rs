@@ -384,6 +384,16 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     if let Some(rest) = strip_token(raw, Keyword::HighlightTree.as_str()) {
         return parse_highlight_tree(rest, line);
     }
+    if let Some(rest) = strip_token(raw, Keyword::AdvanceClock.as_str()) {
+        let millis: u64 = rest
+            .trim()
+            .parse()
+            .map_err(|_| ScriptError::InvalidNumber {
+                line,
+                reason: "expected a u64 millisecond count".to_string(),
+            })?;
+        return Ok(Action::AdvanceClock(millis));
+    }
 
     let keyword = raw.split(' ').next().unwrap_or(raw);
     Err(ScriptError::UnknownKeyword {

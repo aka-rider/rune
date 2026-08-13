@@ -119,6 +119,11 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push_str(&base.to_string());
             out.push('\n');
         }
+        Action::AdvanceClock(millis) => {
+            out.push(' ');
+            out.push_str(&millis.to_string());
+            out.push('\n');
+        }
     }
 }
 

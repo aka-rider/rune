@@ -131,10 +131,11 @@ fn action_variant_name(action: &Action) -> &'static str {
         Action::DeliverDb => "DeliverDb",
         Action::DeliverDbAll => "DeliverDbAll",
         Action::HighlightTree { .. } => "HighlightTree",
+        Action::AdvanceClock(_) => "AdvanceClock",
     }
 }
 
-fn every_action_variant_witness() -> [Action; 16] {
+fn every_action_variant_witness() -> [Action; 17] {
     [
         Action::Key(KeyInput {
             code: KeyCode::Char('a'),
@@ -166,6 +167,7 @@ fn every_action_variant_witness() -> [Action; 16] {
             fixture: 0,
             base: 0,
         },
+        Action::AdvanceClock(0),
     ]
 }
 

@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::document::DocumentId;
 
-use super::{NavHistory, Place, PlaceKind};
+use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
 
 const NAV_JUMP_LINES: usize = 10;
 
@@ -14,11 +14,11 @@ fn eligible(app: &App, id: DocumentId) -> bool {
 }
 
 fn place_for(app: &App, doc: DocumentId, offset: usize, kind: PlaceKind) -> Option<Place> {
-    let path = app.doc(doc)?.file_path.clone();
+    let document = app.doc(doc)?;
     Some(Place {
         doc,
-        path,
-        offset,
+        path: document.file_path.clone(),
+        offset: clamp_to_char_boundary(&document.buffer, offset),
         kind,
     })
 }

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use rune_core::buffer::Buffer;
+
 use crate::document::DocumentId;
 
 mod record;
@@ -11,6 +13,14 @@ pub use record::{observe, record_edit};
 pub use travel::{back, forward};
 
 const MAX_PLACES: usize = 50;
+
+fn clamp_to_char_boundary(buffer: &Buffer, offset: usize) -> usize {
+    let mut offset = offset.min(buffer.len());
+    while offset > 0 && !buffer.content().is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaceKind {
@@ -43,6 +53,10 @@ impl NavHistory {
 
     pub fn is_empty(&self) -> bool {
         self.places.is_empty()
+    }
+
+    pub fn places(&self) -> &[Place] {
+        &self.places
     }
 
     fn push(&mut self, place: Place, replace_last: bool) {

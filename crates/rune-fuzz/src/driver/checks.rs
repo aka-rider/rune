@@ -299,6 +299,14 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
 /// tore itself down via quit (G15: a torn-down model must not receive
 /// more input).
 ///
+/// The clock is advanced past the undo ladder's reset window first, so
+/// this drive begins a FRESH ladder run. Without that, a session whose
+/// own last action was an undo leaves its run open (the clock only moves
+/// when a session action moves it), the drive's presses join that run,
+/// and the redo half correctly mirrors back to where the SESSION's run
+/// began rather than to where this drive began — which is the position
+/// `REDO-TOTAL` compares against.
+///
 /// Also skipped whenever the drive would not be running on the SEEDED
 /// document. Both checkers compare against the content THIS session was
 /// seeded with, while `⌘Z` reaches whichever document is active — run them
@@ -329,6 +337,10 @@ pub(super) fn drive_end_of_session_checks(
         && !restore_editor_focus(state, prev, outcome)
         && state.app.active == state.seed_doc
     {
+        state
+            .manual_clock
+            .advance(rune_tui::undogroup::LADDER_RESET);
+
         let pre_undo = prev.clone();
         let bound = pre_undo.journal_len.saturating_add(8);
 

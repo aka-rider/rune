@@ -238,10 +238,21 @@ fn ladder_press(
             .is_none_or(|last| now.duration_since(last) >= undogroup::LADDER_RESET);
     if reset {
         doc.ladder_presses = 0;
+        if direction == Direction::Undo {
+            doc.ladder_anchor = Some(doc.journal.pos());
+        }
     }
     doc.ladder_direction = Some(direction);
     let tier = undogroup::tier_for(doc.ladder_presses);
-    let count = steps_for(&doc.journal, tier);
+    let mut count = steps_for(&doc.journal, tier);
+    if direction == Direction::Redo {
+        match doc.ladder_anchor {
+            Some(anchor) if doc.journal.pos() < anchor => {
+                count = count.min(anchor - doc.journal.pos());
+            }
+            _ => doc.ladder_anchor = None,
+        }
+    }
     doc.ladder_presses += 1;
     doc.ladder_pressed_at = Some(now);
     count
@@ -332,7 +343,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
                 doc.cursors = CursorSet::new_from(&cursors_after);
                 doc.journal.commit(token);
                 reached = Some(target);
-                for ae in &edits {
+                for ae in edits.iter().rev() {
                     app.nav_history
                         .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
                 }

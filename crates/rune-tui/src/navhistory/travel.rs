@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_nav::{DefRole, Ref, RefKind};
 
@@ -11,7 +10,7 @@ use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
 
-use super::{NavHistory, Place, PlaceKind};
+use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
 
 enum TravelOutcome {
     Landed,
@@ -128,14 +127,6 @@ fn land(app: &mut App, id: DocumentId, offset: usize, effects: &mut Effects) {
     if cross_doc {
         report_cross_doc_landing(app, id, clamped);
     }
-}
-
-fn clamp_to_char_boundary(buffer: &Buffer, offset: usize) -> usize {
-    let mut offset = offset.min(buffer.len());
-    while offset > 0 && !buffer.content().is_char_boundary(offset) {
-        offset -= 1;
-    }
-    offset
 }
 
 fn report_cross_doc_landing(app: &mut App, id: DocumentId, offset: usize) {

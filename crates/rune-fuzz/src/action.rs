@@ -169,6 +169,7 @@ pub enum Action {
         fixture: u8,
         base: usize,
     },
+    AdvanceClock(u64),
 }
 
 /// Rebuilds the concrete `(Range<usize>, ScopeId)` pairs `Msg::Highlighted`

@@ -105,6 +105,17 @@ pub(super) fn arb_dir_loaded_generation() -> impl Strategy<Value = u32> {
     0u32..=4u32
 }
 
+pub(super) fn arb_clock_advance_millis() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        Just(0u64),
+        Just(100u64),
+        Just(499u64),
+        Just(500u64),
+        Just(501u64),
+        Just(1000u64),
+    ]
+}
+
 pub(super) fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
     prop_oneof![
         Just(HighlightVersion::Live),

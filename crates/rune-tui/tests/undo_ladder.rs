@@ -319,3 +319,38 @@ fn flipping_direction_restarts_the_ladder_at_rune() {
          the position the run started from"
     );
 }
+
+#[test]
+fn a_redo_run_stops_at_the_position_its_undo_run_started_from() {
+    let (mut app, clock) = app_with_clock("");
+    let id = app.active;
+    type_str(&mut app, "alpha beta gamma delta");
+
+    press_undo(&mut app);
+    clock.advance(Duration::from_millis(1_000));
+    let run_start = app.doc(id).unwrap().journal.pos();
+
+    for _ in 0..8 {
+        press_undo(&mut app);
+    }
+    assert_eq!(app.doc(id).unwrap().journal.pos(), 0);
+
+    for _ in 0..8 {
+        press_redo(&mut app);
+        if app.doc(id).unwrap().journal.pos() >= run_start {
+            break;
+        }
+    }
+    assert_eq!(
+        app.doc(id).unwrap().journal.pos(),
+        run_start,
+        "a redo run must land exactly where its undo run began rather than \
+         overshoot and resurrect an edit undone before the run started"
+    );
+
+    press_redo(&mut app);
+    assert!(
+        app.doc(id).unwrap().journal.pos() > run_start,
+        "once the barrier is reached a further press may travel past it"
+    );
+}

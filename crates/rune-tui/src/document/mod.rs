@@ -86,6 +86,7 @@ pub struct Document {
     pub(crate) ladder_presses: usize,
     pub(crate) ladder_pressed_at: Option<Instant>,
     pub(crate) ladder_direction: Option<Direction>,
+    pub(crate) ladder_anchor: Option<usize>,
     /// Guards every buffer-mutating command (typing, backspace/delete,
     /// indent/outdent, cut, paste — anything that reaches
     /// `commands::edit::commit_edit_batch`, the sole writer of buffer
@@ -402,6 +403,7 @@ impl Document {
             ladder_presses: 0,
             ladder_pressed_at: None,
             ladder_direction: None,
+            ladder_anchor: None,
             read_only: ReadOnly::No,
             file_path: None,
             saved_version,

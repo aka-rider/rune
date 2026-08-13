@@ -18,6 +18,7 @@ pub(super) enum Keyword {
     DeliverDb,
     DeliverDbAll,
     HighlightTree,
+    AdvanceClock,
 }
 
 impl Keyword {
@@ -39,6 +40,7 @@ impl Keyword {
             Keyword::DeliverDb => "deliver-db",
             Keyword::DeliverDbAll => "deliver-db-all",
             Keyword::HighlightTree => "highlight-tree",
+            Keyword::AdvanceClock => "advance-clock",
         }
     }
 
@@ -60,6 +62,7 @@ impl Keyword {
             Action::DeliverDb => Keyword::DeliverDb,
             Action::DeliverDbAll => Keyword::DeliverDbAll,
             Action::HighlightTree { .. } => Keyword::HighlightTree,
+            Action::AdvanceClock(_) => Keyword::AdvanceClock,
         }
     }
 }

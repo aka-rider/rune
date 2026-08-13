@@ -1,0 +1,8 @@
+content # Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n
+key down -a-u
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+key char:c ---u
+key delete ----
+key up s---
+key char:c --c-
+key char:d ----

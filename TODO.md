@@ -139,12 +139,12 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/global.rs` — 793 (grew from 767: `GlobalCommand::NavBack`/`NavForward` and their four bindings)
   - `crates/rune-tui/src/pane.rs` — 866 (grew from 862: the `NavBack`/`NavForward` dispatch arms)
   - `crates/rune-merge/src/hunks.rs` — 702 (the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
-  - `crates/rune-tui/src/runtime/mod.rs` — 621 (grew from 608: `Msg::BootstrapViewReady`, issue #11's deferred-compute reply)
-  - `crates/rune-fuzz/src/generate/palette.rs` — 659
-  - `crates/rune-tui/src/app.rs` — 602 (grew from 591: the `nav_history` field and its `update` seam wiring)
+  - `crates/rune-tui/src/runtime/mod.rs` — 649 (grew from 621)
+  - `crates/rune-fuzz/src/generate/palette.rs` — 686 (grew from 659: the `NAV_BACK_KEY`/`NAV_FORWARD_KEY` consts, plan WP8)
+  - `crates/rune-tui/src/app.rs` — 605 (grew from 602)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 586 (test file)
-  - `crates/rune-tui/src/merge/landing.rs` — 608 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
+  - `crates/rune-tui/src/merge/landing.rs` — 610 (split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
   - `crates/rune-tui/src/db.rs` — 552 (split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
   - `crates/rune-tui/src/db_ack.rs` — 697 (the binding/replica-seam work — `Replica::take_pending`'s call sites, the hardlink-fork load warning and its tests — has pushed this further over collectively, no single change owning it; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to a sibling `db_ack_tests.rs`, matching the crate's own `merge/landing.rs`-style split elsewhere)
   - `crates/rune-tui/src/guard.rs` — 754 (split candidate unchanged: its `#[cfg(test)] mod tests` block is well over a third of the file — move it to a `#[path]`-included sibling `guard_tests.rs` so it keeps access to the private `set_guard`/`handle_disk_conflict_key` it exercises)
@@ -153,8 +153,8 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 559
   - `crates/rune-vfs/src/mem.rs` — 705 (`fail_resolve` and its tests pushed this further over)
   - `crates/rune-vfs/src/publish.rs` — 552 (already over before the narrow `put_force`/`put_if_absent` outcome types, which moved to a sibling `put_result.rs` rather than growing this further; split candidate: move the `#[cfg(test)] mod tests` block, well over half the file, to a `#[path]`-included sibling `publish_tests.rs` so it keeps access to the private `put_if_match`/`put_if_absent`/`finish_over_existing` it exercises)
-  - `crates/rune-tui/src/dispatch.rs` — 536 (grew from 507: `handle_bootstrap_view_ready`, issue #11's deferred-compute reply handler)
-  - `crates/rune-tui/src/document/mod.rs` — 671 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-tui/src/dispatch.rs` — 540 (grew from 536)
+  - `crates/rune-tui/src/document/mod.rs` — 683 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-db/src/observation.rs` — 537 (split candidate: separate the observation row I/O — `scan_observation`, `insert_observation_row`, the query functions — from the stat-facts side — `StatFacts`, `ObservationMeta`, `stat_identity` — into a sibling `stat_facts.rs`)
   - `crates/rune-db/src/probe.rs` — 531 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
   - `crates/rune-db/src/writer.rs` — 560 (split candidate: move the `execute_op` match into a sibling `writer_exec.rs`)
@@ -162,13 +162,14 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-cli/src/bootstrap_tests.rs` — 688 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
   - `crates/rune-tui/src/footer.rs` — 511
   - `crates/rune-md/src/catalogue.rs` — 512
-  - `crates/rune-fuzz/src/driver/mod.rs` — 549 (pushed further over by the session-setup panic guard; split candidate: move the `'session` per-`Action` dispatch loop out of `run` into a sibling `action_loop.rs`, leaving `run` with setup, the end-of-session rules, and the `RunResult` assembly)
+  - `crates/rune-fuzz/src/driver/mod.rs` — 562 (grew from 549: the `manual_clock` field and `Action::AdvanceClock` arm, plan WP8; split candidate: move the `'session` per-`Action` dispatch loop out of `run` into a sibling `action_loop.rs`, leaving `run` with setup, the end-of-session rules, and the `RunResult` assembly)
   - `crates/rune-tui/src/focus.rs` — 503
   - `crates/rune-tui/src/workspace/mod.rs` — 561 (pushed over by the `resolve_or_report` chokepoint added alongside the `resolve` signature change; split candidate: move the `#[cfg(test)] mod tests` block to a sibling test module)
   - `crates/rune-db/tests/multiprocess/scenarios.rs` — 509 (test file)
   - `crates/rune-tui/src/save/materialize_tests.rs` — 531 (test file; newly over — split candidate: move `snapshot_due_with_the_current_generation_enqueues_a_snapshot`/`snapshot_due_with_a_stale_generation_is_ignored`, which exercise `handle_snapshot_due` from `materialize_ack.rs` rather than this file's own CAS/publish path, to a sibling test module)
   - `crates/rune-tui/src/layout.rs` — 518 (newly over — `Geometry::pane_at`, the mouse hit test, carried a file that was already 499 past the line; split candidate: move the pane-limit constants, `Splits`, `explorer_budget` and `explorer_fallback` to a sibling `layout_splits.rs`, leaving `resolve`/`geometry` and `Geometry` itself here)
   - `crates/rune-tui/src/footer_hints.rs` — 517 (newly over — split candidate: move its `#[cfg(test)] mod tests` block, over half the file, to a sibling `footer_hints_tests.rs`)
+  - `crates/rune-fuzz/src/generate/cluster.rs` — 506 (newly over — plan WP8's `cluster_caret_history`/`cluster_advance_clock` pushed it past the line; split candidate: move the merge/highlight/multicursor cluster functions, `cluster_merge` through `cluster_multicursor`, to a sibling `cluster_scenarios.rs`, leaving the simpler single-shape clusters and `arb_cluster` itself here)
 - **Wrong**: source files exceed the 500-line house rule, none ledgered. Five files dropped below 500 and are removed from this list: `crates/rune-tui/src/materialize_ack.rs` (305), `crates/rune-tui/src/materialize_ack/reactions.rs` (378), `crates/rune-fuzz/src/script/decode.rs` (413), `crates/rune-md/src/emit/mod.rs` (343), `crates/rune-syntax/src/wrap/mod.rs` (494). `crates/rune-syntax/src/syntax.rs` (466) and `crates/rune-tui/src/save/materialize.rs` (329) remain under the threshold from an earlier drop.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
