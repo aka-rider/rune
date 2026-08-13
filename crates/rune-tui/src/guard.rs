@@ -1,9 +1,9 @@
 //! The close/quit/rename/disk-conflict confirmation prompt — `App`'s one
 //! `guard: Option<GuardPrompt>` slot, replacing the old `banner::Modal`'s
 //! `Guard` variant now that its `Error` sibling has moved to the message
-//! log, `messages.rs`. `GuardPrompt`/`GuardKind`, the
-//! `[S]ave`/`[D]iscard`/`[Esc]` option labels every kind shares, and
-//! `handle_guard_key`'s dispatch to each kind's own answer.
+//! log, `messages.rs`. `GuardPrompt`/`GuardKind`, the save/discard/cancel
+//! options every kind shares, and `handle_guard_key`'s dispatch to each
+//! kind's own answer.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -102,7 +102,7 @@ pub(crate) fn retract_disk_conflict_on_convergence(
 /// `workspace::request_close`/
 /// `pane::handle_quit_key` when the document at `doc` is dirty (and, for
 /// quit, unpreserved), and resolved by `handle_guard_key` below —
-/// `[S]ave`/`[D]iscard`/`Esc`. `kind` distinguishes what the ANSWER should
+/// `s`/`d`/`Esc`. `kind` distinguishes what the ANSWER should
 /// actually do (close vs. quit) — the prompt text and options otherwise
 /// look the same to the user.
 pub struct GuardPrompt {
@@ -117,12 +117,12 @@ pub enum GuardKind {
     /// trustworthy recovery journal (`App::is_preserved`) — otherwise quit
     /// would be impossible to exit from once armed. Distinct from
     /// `DirtyClose` so the SAME `s`/`d` keys can be answered with the
-    /// correct continuation: `DirtyClose`'s `[D]iscard` only ever closes one
+    /// correct continuation: `DirtyClose`'s discard only ever closes one
     /// document, but here it must complete the quit the user actually
     /// asked for.
     DirtyQuit,
     /// A rename whose destination already exists — a destructive
-    /// transition. `[R]eplace` preserves the replaced file's bytes as a
+    /// transition. Replace preserves the replaced file's bytes as a
     /// durable blob before destroying it — see `rename.rs`.
     /// `target` is the destination's display name, so the prompt can say
     /// WHICH file is about to be replaced rather than asking blind.
@@ -130,7 +130,7 @@ pub enum GuardKind {
         target: String,
     },
     /// The save-time CAS conflict: `doc`'s ⌘S found the disk bytes no
-    /// longer match what it last read. `[S]ave anyway` from here is a
+    /// longer match what it last read. Save-anyway from here is a
     /// force-save, not a CAS retry — it bypasses the comparison entirely
     /// rather than re-running it against a fresher baseline, so a disk that
     /// keeps moving can never make the escape hatch itself refuse.
@@ -144,61 +144,80 @@ pub enum GuardKind {
     },
 }
 
-/// One `[X]abel` option in a Guard's footer chord list: `key` is the exact
-/// char `handle_guard_key`'s answer arms match via `eq_ignore_ascii_case`;
-/// `label` is what `footer.rs`'s `Mode::Guard` rendering shows for it. The
-/// ONE source both sides read from (review fix: `footer.rs` previously
-/// carried its own independently hand-maintained `[S]ave [D]iscard [Esc]
-/// Cancel` literal, free to drift from this function's `s`/`d`/Esc match
-/// arms).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GuardKey {
+    Char(char),
+    Escape,
+}
+
+impl GuardKey {
+    pub fn label(self) -> String {
+        match self {
+            GuardKey::Char(c) => c.to_ascii_uppercase().to_string(),
+            GuardKey::Escape => "Esc".to_string(),
+        }
+    }
+}
+
+/// One option in a Guard's footer chord list: the key that answers it and
+/// the help text naming what answering does. The ONE source both the
+/// footer's rendering and `handle_guard_key`'s dispatch read from.
 pub struct GuardOption {
-    pub key: char,
-    pub label: &'static str,
+    pub key: GuardKey,
+    pub help: &'static str,
+}
+
+impl GuardOption {
+    fn answers(&self, key: KeyInput) -> bool {
+        match (self.key, key.code) {
+            (GuardKey::Char(want), KeyCode::Char(got)) => got.eq_ignore_ascii_case(&want),
+            (GuardKey::Escape, KeyCode::Escape) => true,
+            _ => false,
+        }
+    }
 }
 
 pub const DIRTY_CLOSE_SAVE: GuardOption = GuardOption {
-    key: 's',
-    label: "[S]ave",
+    key: GuardKey::Char('s'),
+    help: "save",
 };
 pub const DIRTY_CLOSE_DISCARD: GuardOption = GuardOption {
-    key: 'd',
-    label: "[D]iscard",
+    key: GuardKey::Char('d'),
+    help: "discard",
 };
-/// In display order — `footer.rs` iterates this for the Save/Discard pair;
-/// `Esc`/Cancel isn't a `GuardOption` (it never triggers an ACTION beyond
-/// clearing the modal, so there's no behavior to key off) and keeps its own
-/// `DIRTY_CLOSE_CANCEL_LABEL` below instead. Shared verbatim by
-/// `GuardKind::DirtyQuit`: the two prompts answer to the exact
-/// same keys, only the CONTINUATION differs.
+/// In display order. Shared verbatim by `GuardKind::DirtyQuit`: the two
+/// prompts answer to the exact same keys, only the CONTINUATION differs.
 pub const DIRTY_CLOSE_OPTIONS: &[GuardOption] = &[DIRTY_CLOSE_SAVE, DIRTY_CLOSE_DISCARD];
-pub const DIRTY_CLOSE_CANCEL_LABEL: &str = "[Esc] Cancel";
 
-/// The rename-collision Guard's only action. `key` is the exact char
-/// `handle_guard_key` matches; `label` is what the footer shows — the same
-/// one-source-of-truth pairing `DIRTY_CLOSE_*` established.
+/// Every Guard kind cancels the same way, so the footer appends this after
+/// whatever options the kind itself offers — including the rename collision
+/// whose only action can be withheld, leaving cancel the sole answer.
+pub const GUARD_CANCEL: GuardOption = GuardOption {
+    key: GuardKey::Escape,
+    help: "cancel",
+};
+
 pub const RENAME_REPLACE: GuardOption = GuardOption {
-    key: 'r',
-    label: "[R]eplace",
+    key: GuardKey::Char('r'),
+    help: "replace",
 };
 pub const RENAME_COLLISION_OPTIONS: &[GuardOption] = &[RENAME_REPLACE];
 
-/// The disk-conflict Guard's three answers — `handle_guard_
-/// key`'s `s`/`d`/Esc dispatch above already covers Save/Discard/Cancel by
-/// key, so only `[M]erge` needs a new key; `DISK_CONFLICT_SAVE`/`_DISCARD`
-/// reuse the same `s`/`d` keys as `DIRTY_CLOSE_*` (this Guard never competes
-/// with that one for the same modal slot) but carry their own labels — "Save
-/// anyway" says what's actually happening, unlike a plain "Save" here.
+/// The disk-conflict Guard's three answers. Save and Discard reuse the same
+/// `s`/`d` keys as `DIRTY_CLOSE_*` — this Guard never competes with that one
+/// for the same modal slot — but "save anyway" says what is actually
+/// happening here, unlike a plain "save".
 pub const DISK_CONFLICT_SAVE: GuardOption = GuardOption {
-    key: 's',
-    label: "[S]ave anyway",
+    key: GuardKey::Char('s'),
+    help: "save anyway",
 };
 pub const DISK_CONFLICT_DISCARD: GuardOption = GuardOption {
-    key: 'd',
-    label: "[D]iscard",
+    key: GuardKey::Char('d'),
+    help: "discard",
 };
 pub const DISK_CONFLICT_MERGE: GuardOption = GuardOption {
-    key: 'm',
-    label: "[M]erge",
+    key: GuardKey::Char('m'),
+    help: "merge",
 };
 pub const DISK_CONFLICT_OPTIONS: &[GuardOption] = &[
     DISK_CONFLICT_SAVE,
@@ -208,8 +227,8 @@ pub const DISK_CONFLICT_OPTIONS: &[GuardOption] = &[
 
 /// The trash Guard's only action.
 pub const TRASH_YES: GuardOption = GuardOption {
-    key: 'y',
-    label: "[Y]es",
+    key: GuardKey::Char('y'),
+    help: "yes",
 };
 pub const TRASH_OPTIONS: &[GuardOption] = &[TRASH_YES];
 
@@ -235,7 +254,7 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         return;
     };
     let doc = prompt.doc;
-    if key.code == KeyCode::Escape {
+    if GUARD_CANCEL.answers(key) {
         let msg = cancel_status(&prompt.kind);
         clear_guard(app);
         // The log never clears an earlier entry, so an unacknowledged save
@@ -244,7 +263,7 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         // needs no special case either: `footer::mode` ranks `Guard` above
         // `DiskChanged` only while `app.guard` is `Some`, so clearing it
         // here already lets the footer fall through to the persistent
-        // disk-changed/`[^M]erge` hint on its own.
+        // disk-changed merge hint on its own.
         messages::info(app, msg);
         return;
     }
@@ -269,19 +288,15 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
 /// `d`/`D` discards and closes immediately. Every other key is a consumed
 /// no-op.
 fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
-    match key.code {
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            clear_guard(app);
-            let _ = save::trigger_save(app, doc, SaveMode::Normal, effects);
-            if app.doc(doc).is_some_and(|d| d.save_in_flight()) {
-                app.pending_close_on_save = Some(doc);
-            }
+    if DIRTY_CLOSE_SAVE.answers(key) {
+        clear_guard(app);
+        let _ = save::trigger_save(app, doc, SaveMode::Normal, effects);
+        if app.doc(doc).is_some_and(|d| d.save_in_flight()) {
+            app.pending_close_on_save = Some(doc);
         }
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            clear_guard(app);
-            let _ = crate::workspace::close_now(app, doc, effects);
-        }
-        _ => {}
+    } else if DIRTY_CLOSE_DISCARD.answers(key) {
+        clear_guard(app);
+        let _ = crate::workspace::close_now(app, doc, effects);
     }
 }
 
@@ -299,16 +314,12 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
 /// (the user asked to answer, and got an answer: "here is why not"), but
 /// nothing is wedged waiting on a save that will never complete.
 fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    match key.code {
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            clear_guard(app);
-            app.should_quit = true;
-        }
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            clear_guard(app);
-            start_quit_save_fan_out(app, effects);
-        }
-        _ => {}
+    if DIRTY_CLOSE_DISCARD.answers(key) {
+        clear_guard(app);
+        app.should_quit = true;
+    } else if DIRTY_CLOSE_SAVE.answers(key) {
+        clear_guard(app);
+        start_quit_save_fan_out(app, effects);
     }
 }
 
@@ -360,8 +371,7 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
 /// STAYS up: silently doing nothing would look like a dropped keypress,
 /// and clearing it would look like the replace happened.
 fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
-    let KeyCode::Char(c) = key.code else { return };
-    if !c.eq_ignore_ascii_case(&RENAME_REPLACE.key) {
+    if !RENAME_REPLACE.answers(key) {
         return;
     }
     if !crate::rename::replace_allowed(app) {
@@ -384,46 +394,39 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
 /// round trip rather than repeating it. Every other key is a consumed
 /// no-op, matching every other Guard kind.
 fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
-    match key.code {
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_SAVE.key) => {
-            // The consent this prompt exists to capture must survive a
-            // refused attempt: `trigger_save` runs FIRST, and the prompt is
-            // torn down only once THIS press actually started a save — a
-            // save already in flight before this press (its own warning
-            // already posted by `trigger_save`), a rename in flight, or
-            // unresolved merge conflicts each leave the Guard up so the
-            // user's "save anyway" is never silently dropped on the floor,
-            // and a repeat press once the in-flight save has finished can
-            // still answer it.
-            let already_in_flight = app.doc(doc).is_some_and(|d| d.save_in_flight());
-            let start = save::trigger_save(app, doc, SaveMode::Force, effects);
-            if !already_in_flight && matches!(start, SaveStart::InFlight) {
-                clear_guard(app);
-            }
-        }
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_DISCARD.key) => {
+    if DISK_CONFLICT_SAVE.answers(key) {
+        // The consent this prompt exists to capture must survive a refused
+        // attempt: `trigger_save` runs FIRST, and the prompt is torn down
+        // only once THIS press actually started a save — a save already in
+        // flight before this press (its own warning already posted by
+        // `trigger_save`), a rename in flight, or unresolved merge conflicts
+        // each leave the Guard up so the user's "save anyway" is never
+        // silently dropped on the floor, and a repeat press once the
+        // in-flight save has finished can still answer it.
+        let already_in_flight = app.doc(doc).is_some_and(|d| d.save_in_flight());
+        let start = save::trigger_save(app, doc, SaveMode::Force, effects);
+        if !already_in_flight && matches!(start, SaveStart::InFlight) {
             clear_guard(app);
-            if app.active != doc {
-                workspace::switch_to(app, doc);
-            }
-            crate::merge::begin(app, MergeIntent::Discard, effects);
         }
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_MERGE.key) => {
-            clear_guard(app);
-            if app.active != doc {
-                workspace::switch_to(app, doc);
-            }
-            crate::merge::begin(app, MergeIntent::Merge, effects);
+    } else if DISK_CONFLICT_DISCARD.answers(key) {
+        clear_guard(app);
+        if app.active != doc {
+            workspace::switch_to(app, doc);
         }
-        _ => {}
+        crate::merge::begin(app, MergeIntent::Discard, effects);
+    } else if DISK_CONFLICT_MERGE.answers(key) {
+        clear_guard(app);
+        if app.active != doc {
+            workspace::switch_to(app, doc);
+        }
+        crate::merge::begin(app, MergeIntent::Merge, effects);
     }
 }
 
 /// `y`/`Y` confirms the trash. Every other key is a consumed no-op,
 /// matching every other Guard kind.
 fn handle_trash_key(app: &mut App, path: PathBuf, key: KeyInput, effects: &mut Effects) {
-    let KeyCode::Char(c) = key.code else { return };
-    if !c.eq_ignore_ascii_case(&TRASH_YES.key) {
+    if !TRASH_YES.answers(key) {
         return;
     }
     clear_guard(app);
@@ -685,7 +688,7 @@ mod tests {
         assert_eq!(messages::newest_text(&app), None);
     }
 
-    /// The DiskConflict Guard's `[S]ave anyway` is already the user's
+    /// The DiskConflict Guard's save-anyway is already the user's
     /// explicit last-resort consent — on a degraded store it must reach the
     /// materialize dance on the FIRST press, never arm the two-press
     /// confirm gate the way an ordinary `⌘S` does.

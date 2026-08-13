@@ -40,7 +40,7 @@ use merge_common::{
 const ANCESTOR: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
 const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\n";
 
-const BANNER: &str = "\u{21c4} disk changed \u{2014} [^M]erge";
+const BANNER: &str = "\u{21c4} disk changed  ^M merge";
 
 /// The footer row as actually rendered — the one row carrying the
 /// `Ln n, Col n` position readout, whose right side hosts the persistent

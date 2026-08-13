@@ -30,6 +30,7 @@ mod filesearch;
 pub mod focus;
 pub mod footer;
 pub mod footer_hints;
+pub mod footer_modes;
 pub mod global;
 pub mod graphics;
 pub mod guard;
