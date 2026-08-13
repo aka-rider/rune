@@ -208,7 +208,7 @@ fn erase(app: &mut App) {
     }
 }
 
-fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
+pub(super) fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
     let height = page_amount(app).max(1) as usize;
     let margin = (height / 4).min(4);
     let Some(state) = app.filesearch_mut() else {

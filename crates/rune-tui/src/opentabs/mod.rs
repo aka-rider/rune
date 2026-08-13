@@ -1,6 +1,9 @@
 //! The tab display order and MRU activation order live on `DocumentMap`.
 
+use ratatui::layout::Rect;
+
 use crate::app::App;
+use crate::document::{Document, DocumentId};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::pane::Pane;
@@ -8,6 +11,7 @@ use crate::runtime::Effects;
 use crate::workspace;
 
 pub mod limit;
+pub(crate) mod mouse;
 pub mod render;
 
 pub use render::{draw, draw_divider};
@@ -91,20 +95,28 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
     match cmd {
         TabsCommand::Up => move_selection(app, -1),
         TabsCommand::Down => move_selection(app, 1),
-        TabsCommand::Select => {
-            app.blur_title(effects);
-            workspace::switch_to_index(app, app.tabs.nav.cursor);
-            app.set_focus_pane(Pane::Editor, effects);
-        }
+        TabsCommand::Select => activate(app, effects),
         TabsCommand::Leave => app.set_focus_pane(Pane::Editor, effects),
     }
     KeyOutcome::Consumed
 }
 
+pub(crate) fn activate(app: &mut App, effects: &mut Effects) {
+    app.blur_title(effects);
+    workspace::switch_to_index(app, app.tabs.nav.cursor);
+    app.set_focus_pane(Pane::Editor, effects);
+}
+
+pub(crate) fn select_index(app: &mut App, index: usize) {
+    let len = app.documents.order().len();
+    app.tabs.nav.cursor = index.min(len.saturating_sub(1));
+    ensure_visible(app);
+}
+
 fn move_selection(app: &mut App, delta: isize) {
     let len = app.documents.order().len();
     app.tabs.nav.move_by(delta, len);
-    ensure_visible(app);
+    select_index(app, app.tabs.nav.cursor);
 }
 
 /// Scrolls the Tabs pane's window to keep the cursor visible — same
@@ -122,7 +134,35 @@ fn ensure_visible(app: &mut App) {
 /// title row here (unlike Explorer's root-path row).
 fn visible_rows(app: &App) -> usize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    (crate::layout::geometry(area, app).tabs_inner.height as usize).max(1)
+    entry_rows(crate::layout::geometry(area, app).tabs_inner).max(1)
+}
+
+pub(crate) fn entry_rows(rect: Rect) -> usize {
+    rect.height as usize
+}
+
+/// The rows the Tabs pane actually paints into `rect`, in paint order: the
+/// window's slice of `order`, minus any id with no document behind it. The
+/// one source both `render::draw` and [`entry_at`] read, so a skipped row
+/// can never leave the click mapping naming a different tab than the one
+/// under the pointer.
+pub(crate) fn painted_tabs(app: &App, rect: Rect) -> Vec<(usize, DocumentId, &Document)> {
+    let order = app.documents.order();
+    let window = app.tabs.nav.window(order.len(), entry_rows(rect));
+    let start = window.start;
+    order
+        .get(window)
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, &id)| app.doc(id).map(|doc| (start + offset, id, doc)))
+        .collect()
+}
+
+pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
+    painted_tabs(app, rect)
+        .get(row as usize)
+        .map(|&(index, _, _)| index)
 }
 
 #[cfg(test)]

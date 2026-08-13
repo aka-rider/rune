@@ -155,9 +155,23 @@ pub(crate) fn ensure_visible(app: &mut App) {
 /// rect) that isn't available for entries.
 fn visible_rows(app: &App) -> usize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    (crate::layout::geometry(area, app).explorer_inner.height as usize)
-        .saturating_sub(1)
-        .max(1)
+    entry_rows(crate::layout::geometry(area, app).explorer_inner).max(1)
+}
+
+pub(crate) fn entry_rows(rect: Rect) -> usize {
+    (rect.height as usize).saturating_sub(1)
+}
+
+pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
+    if row == 0 || row >= rect.height {
+        return None;
+    }
+    let window = app
+        .explorer
+        .nav
+        .window(app.explorer.entries.len(), entry_rows(rect));
+    let index = window.start.saturating_add(row as usize).saturating_sub(1);
+    (index < window.end).then_some(index)
 }
 
 /// Issues the `ReadDir` `Cmd` that (re)lists `root`. `pub(crate)`, not
@@ -258,11 +272,10 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         app.theme.chrome.pane_title,
     )));
 
-    let entry_rows = (area.height as usize).saturating_sub(1);
     let window = app
         .explorer
         .nav
-        .window(app.explorer.entries.len(), entry_rows);
+        .window(app.explorer.entries.len(), entry_rows(area));
     let start = window.start;
     let visible = app.explorer.entries.get(window).unwrap_or(&[]);
     let mut cursor_row: Option<u16> = None;
