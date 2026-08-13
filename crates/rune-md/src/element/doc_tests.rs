@@ -116,7 +116,11 @@ fn sync_cursors_never_bumps_built_version() {
     let before = doc.built_version();
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
-    assert_eq!(doc.built_version(), before, "reveal must never bump version");
+    assert_eq!(
+        doc.built_version(),
+        before,
+        "reveal must never bump version"
+    );
 }
 
 #[test]
