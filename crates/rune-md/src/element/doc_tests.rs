@@ -38,7 +38,7 @@ fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
     doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
     let buf = Buffer::new("# hello\n");
     doc.sync_content(&buf);
-    assert_eq!(doc.built_version, buf.version());
+    assert_eq!(doc.built_version(), buf.version());
     assert!(!doc.blocks().is_empty());
 
     // Reveal the heading (cursor on its line), so its `RevealSm` is now
@@ -113,10 +113,10 @@ fn sync_cursors_never_bumps_built_version() {
     let mut doc = DocMachine::new();
     let buf = Buffer::new("# hello\nworld\n");
     doc.sync_content(&buf);
-    let before = doc.built_version;
+    let before = doc.built_version();
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
-    assert_eq!(doc.built_version, before, "reveal must never bump version");
+    assert_eq!(doc.built_version(), before, "reveal must never bump version");
 }
 
 #[test]

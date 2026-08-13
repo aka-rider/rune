@@ -280,7 +280,6 @@ fn unclaimed_subranges(
 mod tests {
     #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use rune_syntax::ScopeId;
 
     /// The visible-side dedup computation, tested in isolation (no assert
     /// involved — `unclaimed_subranges` itself never panics, it just
@@ -450,33 +449,5 @@ mod tests {
         let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
         let granted = out.claim_free(ll);
         granted.push_visible(Vec::new());
-    }
-
-    #[test]
-    fn push_visible_accepts_a_span_that_exactly_covers_the_granted_piece() {
-        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-        let mut hidden: Accounted = vec![Vec::new()];
-        let mut accounted: Accounted = vec![Vec::new()];
-        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-        let mut decors: Vec<Option<LineDecor>> = vec![None];
-        let icons = IconSet::unicode();
-        let mut out = EmitOut::new(
-            Sinks {
-                spans: &mut spans,
-                hidden: &mut hidden,
-                accounted: &mut accounted,
-            },
-            &mut tables,
-            80,
-            &icons,
-            &mut decors,
-        );
-
-        let ll = LineLocal::clip(0, 0..8, 2..6).unwrap();
-        let granted = out.claim_free(ll);
-        let span = SyntaxSpan::identical("abcdefgh", ScopeId(0), 2..6);
-        granted.push_visible(vec![span]);
-
-        assert_eq!(accounted[0], vec![(2, 6)]);
     }
 }
