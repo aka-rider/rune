@@ -286,9 +286,8 @@ pub struct App {
     /// a raw indexed- or truecolor literal directly (those live only under
     /// `theme/`). `App::new` defaults to truecolor (Catppuccin Mocha,
     /// unquantized) — production
-    /// startup (`rune-cli`) overwrites it once `term::Guard` exists and
-    /// `theme::probe::supports_truecolor` can actually query the real
-    /// terminal; every test and the fuzzer keep this default.
+    /// startup overwrites it from the real environment; every test and the
+    /// fuzzer keep this default.
     pub theme: crate::theme::Theme,
     /// The icon tier — `theme::icons::choose`'s one decision,
     /// made once at startup from the real environment and held here beside

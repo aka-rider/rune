@@ -7,8 +7,7 @@
 //! Explorer glyph on demand — `rune-md` only ever holds the two `IconSet`
 //! VALUES (its own module doc: "choosing WHICH set applies is the
 //! caller's job"), and this module makes that choice once at startup from
-//! the same kind of environment signal `theme::probe`'s `COLORTERM` check
-//! reads, never re-decided per frame.
+//! the environment, never re-decided per frame.
 
 use rune_md::icons::IconSet;
 
@@ -33,12 +32,10 @@ impl IconTier {
 }
 
 /// Picks the icon tier from three environment-shaped inputs, taken as
-/// PARAMETERS rather than read from `std::env` directly — same reasoning
-/// as `theme::probe::colorterm_claims_truecolor`'s doc comment: `RUNE_ICONS`/
+/// PARAMETERS rather than read from `std::env` directly: `RUNE_ICONS`/
 /// `TERM_PROGRAM`/`TERM` are process-global, so a test that set/unset them
 /// directly would race every other test in this binary running
-/// concurrently. The one real caller reads the actual environment once,
-/// at startup, and passes the values in here.
+/// concurrently.
 ///
 /// `RUNE_ICONS=nerd`/`RUNE_ICONS=unicode` is an explicit override and wins
 /// outright, whatever the terminal claims to be. Absent that, the nerd

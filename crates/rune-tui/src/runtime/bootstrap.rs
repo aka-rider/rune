@@ -1,6 +1,6 @@
 //! The startup sequence `runtime::run` executes exactly once before it ever
 //! enters its main `recv` loop (split out of `runtime/mod.rs`, 500-line budget):
-//! acquiring the terminal, probing the theme, wiring up every background
+//! acquiring the terminal, choosing the theme, wiring up every background
 //! thread (input reader, `rune-db` bridge, snapshot timer), seeding the
 //! initial size, the one bounded synchronous first-paint parse, and the
 //! very first draw. Nothing about the sequence itself changes — this is
@@ -51,28 +51,14 @@ pub(crate) struct Bootstrap {
 pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     let mut guard = Guard::new()?;
 
-    // Plan WP4.S5: probe BEFORE `spawn_input_reader` starts consuming
-    // events on its own thread — the probe's own poll/read round trip
-    // over the DA1 query would otherwise race that thread for the same
-    // input stream (the "typed Csi response" it waits for could be
-    // delivered to either reader). One-shot, at startup, never per frame.
-    app.theme = crate::theme::Theme::catppuccin_mocha(!guard.probe_truecolor());
+    app.theme = crate::theme::Theme::catppuccin_mocha(!crate::theme::probe::supports_truecolor());
 
-    // Plan WP3.S5: populate `app.graphics` in this same startup block,
-    // before `spawn_input_reader` — same ordering reason as the theme probe
-    // immediately above (and the icon tier immediately below): decided once
-    // here, never per frame, from real environment/window state that only
-    // exists once a real `Guard` does. `Msg::Resize` (`runtime::apply`)
-    // re-derives this on every later resize, since the reported pixel
-    // dimensions can change even when the Kitty/truecolor decision itself
-    // cannot.
+    // Decided once here, never per frame, from real window state that only
+    // exists once a `Guard` does. `Msg::Resize` re-derives it on every later
+    // resize, since the reported pixel dimensions can change even when the
+    // Kitty decision itself cannot.
     crate::graphics::redetect(app, &mut guard);
 
-    // Plan WP5.S2: the icon tier is decided once, right beside the theme
-    // probe above — same "one-shot, at startup, never per frame" reasoning,
-    // and the pure selector itself takes these three as plain values (see
-    // `theme::icons::choose`'s doc comment) so this is the one place that
-    // actually reads the real process environment.
     app.icon_tier = crate::theme::icons::choose(
         std::env::var("RUNE_ICONS").ok().as_deref(),
         std::env::var("TERM_PROGRAM").ok().as_deref(),

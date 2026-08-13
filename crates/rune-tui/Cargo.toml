@@ -15,11 +15,8 @@ rune-ts = { path = "../rune-ts" }
 rune-vfs = { path = "../rune-vfs" }
 compact_str = { workspace = true }
 ratatui = { workspace = true, features = ["termina"] }
-# `unstable-backend-writer` (plan WP4.S5): `theme::probe::supports_truecolor`
-# needs the raw `termina::Terminal` underneath ratatui's backend (to write
-# the DA1 query and poll/read its reply) — `TerminaBackend::terminal_mut`
-# is gated behind this feature. Everything else `term::Guard` does still
-# goes through plain `io::Write`, unaffected (see its own module docs).
+# `unstable-backend-writer` gates `TerminaBackend::terminal_mut`, which
+# `Guard::window_size` needs to query the terminal's pixel dimensions.
 ratatui-termina = { workspace = true, features = ["unstable-backend-writer"] }
 termina = { workspace = true }
 base64 = { workspace = true }

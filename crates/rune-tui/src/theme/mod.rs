@@ -109,9 +109,7 @@ pub struct Theme {
 
 impl Theme {
     /// Builds Catppuccin Mocha. `quantized` selects the 256-colour
-    /// fallback path (`theme::probe::supports_truecolor` is what a real
-    /// terminal decides it from); this constructor itself stays
-    /// terminal-free, so it's exercisable in tests without one.
+    /// fallback path.
     pub fn catppuccin_mocha(quantized: bool) -> Theme {
         let p = Mocha::palette();
         let c = move |rgb: Color| -> Color { if quantized { to_ansi256(rgb) } else { rgb } };

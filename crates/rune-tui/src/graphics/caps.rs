@@ -5,9 +5,7 @@
 /// A source of environment variables, so [`detect`] is unit-testable
 /// without mutating the real process environment (`std::env::var` is
 /// process-global — a test that set/unset a variable directly would race
-/// every other test in this binary running concurrently, exactly the
-/// reason `theme::probe` factored its own COLORTERM decision out from the
-/// real env read).
+/// every other test in this binary running concurrently).
 pub trait EnvSource {
     fn var(&self, key: &str) -> Option<String>;
 }

@@ -16,9 +16,7 @@
 //! (the one skip condition, `has_panic_hook && thread::panicking()`, never
 //! applies here since this crate never installs a termina panic hook), so
 //! `Guard::drop` only needs to reverse the escape sequences it wrote by
-//! hand (alt screen, bracketed paste, Kitty flags, cursor visibility) — it
-//! never reaches into the wrapped `PlatformTerminal` at all, so no
-//! `unstable-backend-writer` feature is needed.
+//! hand (alt screen, bracketed paste, Kitty flags, cursor visibility).
 
 use std::io::{self, Write};
 
@@ -148,31 +146,14 @@ impl Guard {
         self.events.clone()
     }
 
-    /// `true` iff the real terminal behind this `Guard` claims truecolor
-    /// support (plan WP4.S5) — delegates to `theme::probe::supports_
-    /// truecolor` over the raw `termina::Terminal` this backend wraps
-    /// (`TerminaBackend::terminal_mut`, the one place in this module that
-    /// needs the `unstable-backend-writer` feature: every other method
-    /// here goes through plain `io::Write`). `runtime::run` calls this
-    /// once, right after construction, to decide which `Theme` to build —
-    /// never per frame.
-    pub fn probe_truecolor(&mut self) -> bool {
-        crate::theme::probe::supports_truecolor(self.terminal.backend_mut().terminal_mut())
-    }
-
     pub fn size(&self) -> io::Result<(u16, u16)> {
         let size = self.terminal.size()?;
         Ok((size.width, size.height))
     }
 
-    /// This terminal's current `(cols, rows, pixel_width, pixel_height)`
-    /// (plan WP3.S5), queried through the same raw `termina::Terminal`
-    /// `probe_truecolor` above reaches into. `None` when the underlying
-    /// dimensions query fails — `graphics::detect`'s caller treats that
-    /// exactly like an unpopulated pixel field and falls back to
-    /// `rune_image::DEFAULT_CELL_SIZE`. Queried once at startup
-    /// (`runtime::bootstrap`) and again on every `Msg::Resize`
-    /// (`runtime::apply`), never per frame.
+    /// This terminal's current `(cols, rows, pixel_width, pixel_height)`.
+    /// `None` when the underlying dimensions query fails — the caller then
+    /// falls back to `rune_image::DEFAULT_CELL_SIZE`.
     pub fn window_size(&mut self) -> Option<(u16, u16, u16, u16)> {
         let dims = self
             .terminal

@@ -574,10 +574,6 @@ pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
     })
 }
 
-// `run`'s startup sequence (theme probe, background-thread wiring, the
-// initial size seed, the first-paint parse, the first draw) moved to
-// `runtime::bootstrap` (500-line budget) — `run` above calls it through
-// `bootstrap::`.
 mod bootstrap;
 
 // The tree-sitter highlight `Cmd` constructor and the region pass behind it
@@ -616,15 +612,6 @@ fn translate_event(event: termina::Event) -> Option<Msg> {
         termina::Event::Paste(text) => Some(Msg::Paste(text)),
         termina::Event::WindowResized(size) => Some(Msg::Resize(size.cols, size.rows)),
         termina::Event::Mouse(mouse) => crate::pointer::from_termina(mouse).map(Msg::Mouse),
-        termina::Event::Csi(csi) => {
-            Some(Msg::Error(format!("unsolicited terminal reply: {csi:?}")))
-        }
-        termina::Event::Osc(osc) => {
-            Some(Msg::Error(format!("unsolicited terminal reply: {osc:?}")))
-        }
-        termina::Event::Dcs(dcs) => {
-            Some(Msg::Error(format!("unsolicited terminal reply: {dcs:?}")))
-        }
         _ => None,
     }
 }
@@ -633,12 +620,12 @@ fn translate_event(event: termina::Event) -> Option<Msg> {
 mod translate_event_tests {
     use termina::escape::csi::{Csi, Cursor};
 
-    use super::{Msg, translate_event};
+    use super::translate_event;
 
     #[test]
-    fn an_unsolicited_csi_reply_surfaces_as_an_error() {
+    fn a_terminal_reply_nobody_asked_for_produces_no_message() {
         let event = termina::Event::Csi(Csi::Cursor(Cursor::RequestActivePositionReport));
-        assert!(matches!(translate_event(event), Some(Msg::Error(_))));
+        assert!(translate_event(event).is_none());
     }
 
     #[test]
