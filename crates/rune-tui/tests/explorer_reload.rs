@@ -17,7 +17,7 @@ use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::{explorer, explorer_keys, workspace};
 use rune_vfs::Vfs;
 
-use explorer_common::{app_with, key, load_explorer, seeded_vfs};
+use explorer_common::{drive_load_explorer, key, open_seeded, seeded_vfs};
 
 /// `open_selected`'s directory branch resolves the new root through
 /// `workspace::resolve`, same as `initial_root` already does — and, on a
@@ -26,16 +26,17 @@ use explorer_common::{app_with, key, load_explorer, seeded_vfs};
 #[test]
 fn open_selected_on_a_directory_reports_and_aborts_when_resolve_fails() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    load_explorer(&mut app);
-    let idx = app
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    let idx = session
+        .app()
         .explorer
         .entries
         .iter()
         .position(|e| e.name == "sub")
         .expect("sub listed");
-    app.explorer.nav.cursor = idx;
-    let root_before = app.explorer.root.clone();
+    session.app_mut().explorer.nav.cursor = idx;
+    let root_before = session.app().explorer.root.clone();
 
     // Armed AFTER the initial `^b` load (which itself resolves
     // `initial_root`) so it targets THIS Enter-on-a-directory's own
@@ -43,18 +44,19 @@ fn open_selected_on_a_directory_reports_and_aborts_when_resolve_fails() {
     mem.fail_next(rune_vfs::OpKind::Resolve, std::io::ErrorKind::Other);
 
     let mut effects = Effects::default();
-    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+    let outcome = explorer_keys::handle_key(session.app_mut(), key(KeyCode::Enter), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert!(
         effects.cmds.is_empty(),
         "a resolve failure must never spawn a ReadDir Cmd"
     );
     assert_eq!(
-        app.explorer.root, root_before,
+        session.app().explorer.root,
+        root_before,
         "a resolve failure must never re-root the Explorer"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_some(),
+        rune_tui::messages::newest_text(session.app()).is_some(),
         "a resolve failure must post a message"
     );
 }
@@ -63,26 +65,27 @@ fn open_selected_on_a_directory_reports_and_aborts_when_resolve_fails() {
 #[test]
 fn go_to_parent_reports_and_aborts_when_resolve_fails() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    load_explorer(&mut app);
-    assert_eq!(app.explorer.root, PathBuf::from("/root"));
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    assert_eq!(session.app().explorer.root, PathBuf::from("/root"));
 
     mem.fail_next(rune_vfs::OpKind::Resolve, std::io::ErrorKind::Other);
 
     let mut effects = Effects::default();
-    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
+    let outcome =
+        explorer_keys::handle_key(session.app_mut(), key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert!(
         effects.cmds.is_empty(),
         "a resolve failure must never spawn a ReadDir Cmd"
     );
     assert_eq!(
-        app.explorer.root,
+        session.app().explorer.root,
         PathBuf::from("/root"),
         "a resolve failure must never re-root the Explorer"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_some(),
+        rune_tui::messages::newest_text(session.app()).is_some(),
         "a resolve failure must post a message"
     );
 }
@@ -90,21 +93,22 @@ fn go_to_parent_reports_and_aborts_when_resolve_fails() {
 #[test]
 fn refresh_cause_preserves_the_selected_entry_by_name() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    load_explorer(&mut app);
-    let idx = app
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    let idx = session
+        .app()
         .explorer
         .entries
         .iter()
         .position(|e| e.name == "b.md")
         .expect("b.md listed");
-    app.explorer.nav.cursor = idx;
+    session.app_mut().explorer.nav.cursor = idx;
 
-    let root = app.explorer.root.clone();
-    let generation = app.explorer.request_generation;
+    let root = session.app().explorer.root.clone();
+    let generation = session.app().explorer.request_generation;
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::DirLoaded {
             root,
             generation,
@@ -135,7 +139,10 @@ fn refresh_cause_preserves_the_selected_entry_by_name() {
         &mut effects,
     );
 
-    assert_eq!(app.explorer.entries[app.explorer.nav.cursor].name, "b.md");
+    assert_eq!(
+        session.app().explorer.entries[session.app().explorer.nav.cursor].name,
+        "b.md"
+    );
 }
 
 /// Two in-flight `ReadDir` Cmds landing out of order (Backspace to the
@@ -145,26 +152,28 @@ fn refresh_cause_preserves_the_selected_entry_by_name() {
 #[test]
 fn an_out_of_order_stale_dir_loaded_reply_is_ignored() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    load_explorer(&mut app);
-    let stale_generation = app.explorer.request_generation;
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    let stale_generation = session.app().explorer.request_generation;
 
     // Issue a second `ReadDir` (Backspace to the parent) — bumps the
     // generation without yet delivering a reply.
     let mut effects = Effects::default();
-    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
+    let outcome =
+        explorer_keys::handle_key(session.app_mut(), key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(effects.cmds.len(), 1);
-    let fresh_root = app.explorer.root.clone();
+    let fresh_root = session.app().explorer.root.clone();
     assert_ne!(
-        app.explorer.request_generation, stale_generation,
+        session.app().explorer.request_generation,
+        stale_generation,
         "test setup: the second request must bump the generation"
     );
 
     // The FIRST (now-stale) request's reply arrives late.
     let mut effects2 = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::DirLoaded {
             root: PathBuf::from("/stale/should-not-apply"),
             entries: vec![rune_vfs::DirEntry {
@@ -179,27 +188,31 @@ fn an_out_of_order_stale_dir_loaded_reply_is_ignored() {
     );
 
     assert_eq!(
-        app.explorer.root, fresh_root,
+        session.app().explorer.root,
+        fresh_root,
         "a stale-generation reply must not overwrite the newer in-flight request's root"
     );
-    assert_ne!(app.explorer.root, PathBuf::from("/stale/should-not-apply"));
+    assert_ne!(
+        session.app().explorer.root,
+        PathBuf::from("/stale/should-not-apply")
+    );
 }
 
 #[test]
 fn open_path_on_an_already_open_document_reactivates_instead_of_duplicating() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let before = app.documents.len();
-    let first_active = app.active;
+    let mut session = open_seeded(&mem);
+    let before = session.app().documents.len();
+    let first_active = session.app().active;
 
     // `open_path` itself never moves focus (`switch_to` never writes it,
     // and this function has no `Effects` sink to run `App::set_focus`
     // through) — this test's own re-activation contract is
     // `documents.len()`/`active` staying put, not a focus assertion.
-    workspace::open_path(&mut app, Path::new("/root/a.md"));
+    workspace::open_path(session.app_mut(), Path::new("/root/a.md"));
 
-    assert_eq!(app.documents.len(), before, "must not duplicate");
-    assert_eq!(app.active, first_active);
+    assert_eq!(session.app().documents.len(), before, "must not duplicate");
+    assert_eq!(session.app().active, first_active);
 }
 
 /// The launch-mode gap the "Explorer visible on untitled launch" work left
@@ -239,11 +252,11 @@ fn an_untitled_app_requests_its_first_listing_without_any_keypress() {
 #[test]
 fn a_hidden_left_column_requests_no_listing() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    assert!(!app.splits.left.is_shown());
+    let mut session = open_seeded(&mem);
+    assert!(!session.app().splits.left.is_shown());
 
     let mut effects = Effects::default();
-    explorer::ensure_loaded(&mut app, &mut effects);
+    explorer::ensure_loaded(session.app_mut(), &mut effects);
 
     assert!(effects.cmds.is_empty(), "nothing visible, nothing to load");
 }
@@ -255,12 +268,12 @@ fn a_hidden_left_column_requests_no_listing() {
 #[test]
 fn ensure_loaded_is_a_no_op_once_the_explorer_has_entries() {
     let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    load_explorer(&mut app);
-    assert!(!app.explorer.entries.is_empty());
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    assert!(!session.app().explorer.entries.is_empty());
 
     let mut effects = Effects::default();
-    explorer::ensure_loaded(&mut app, &mut effects);
+    explorer::ensure_loaded(session.app_mut(), &mut effects);
 
     assert!(effects.cmds.is_empty(), "already listed; no reload");
 }

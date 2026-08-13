@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_nav::{Ref, RefKind, Target, UseRole};
-use rune_syntax::element::ByteRange;
+use rune_nav::RefKind;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
@@ -341,25 +340,20 @@ fn a_file_scheme_link_produces_no_cmd_and_resolves_to_unresolved() {
 #[test]
 fn an_embed_ref_is_never_followed() {
     let mem = Arc::new(Mem::new());
-    // Injects a synthetic `Embed` `Ref` directly onto the catalogue
-    // (rather than relying on markdown image syntax, which this parser
-    // does not model as a navigable `Ref` at all — see
-    // `rune-md::catalogue`'s own pinned `embed_prefixed_wikilink_comrak_
-    // behaviour_is_pinned` test): this is the one thing under test here,
-    // `navigate::follow` must skip a `UseRole::Embed` hit under the cursor.
-    let mut app = app_with(&mem, "/root/a.md", "placeholder\n");
+    mem.save_atomic(Path::new("/root/note.md"), b"note body\n")
+        .expect("seed note.md");
+    // Real markdown image syntax — `rune-md::catalogue`'s `Inline::Image`
+    // arm emits a genuine `UseRole::Embed` `Ref` for it (pinned by its own
+    // `markdown_image_becomes_an_embed_use` test), so this reaches
+    // `navigate::follow`'s embed skip through the real parser pipeline
+    // rather than a hand-built catalogue entry.
+    let content = "![alt](note.md)\n";
+    let mut app = app_with(&mem, "/root/a.md", content);
     let before = app.documents.len();
-    app.active_doc_mut().catalogue = vec![Ref {
-        site: ByteRange::new(0, 11),
-        kind: RefKind::Use {
-            role: UseRole::Embed,
-            target: Target::Path {
-                path: "note.md".to_string(),
-                anchor: None,
-            },
-        },
-    }];
-    place_cursor(&mut app, 2);
+    place_cursor(
+        &mut app,
+        content.find("note.md").expect("fixture has target"),
+    );
 
     let effects = press(&mut app, sup_enter());
 

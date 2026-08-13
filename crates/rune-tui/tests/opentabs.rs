@@ -12,38 +12,34 @@
 
 mod opentabs_common;
 
-use rune_tui::app::{self, App};
+use rune_tui::app;
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
-use rune_tui::testgrid;
 use rune_tui::{opentabs, workspace};
 
-use opentabs_common::{HEIGHT, WIDTH, app_with, key, open_second, seeded_vfs};
+use opentabs_common::{frame_text, key, open_second, open_seeded};
 
 fn plain(code: KeyCode) -> KeyInput {
     key(code, Mods::NONE)
-}
-
-fn frame_text(app: &App) -> String {
-    testgrid::grid(app, WIDTH, HEIGHT).concat()
 }
 
 /// Opening two documents populates `documents.order()`, and both render with their
 /// digit shortcut and name below the `Open` divider row.
 #[test]
 fn tabs_render_both_open_documents_with_digit_shortcuts() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    open_second(&mut app);
-    assert_eq!(app.documents.order().len(), 2);
+    let mut session = open_seeded();
+    open_second(&mut session);
+    assert_eq!(session.app().documents.order().len(), 2);
 
-    app.splits.left.show();
-    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
-    app.sync_view();
+    session.app_mut().splits.left.show();
+    session
+        .app_mut()
+        .set_focus_pane(Pane::Tabs, &mut Effects::default());
+    session.app_mut().sync_view();
 
-    let text = frame_text(&app);
+    let text = frame_text(&mut session);
     assert!(
         text.contains("1:"),
         "expected the first tab's shortcut '1:' in:\n{text}"
@@ -61,14 +57,15 @@ fn tabs_render_both_open_documents_with_digit_shortcuts() {
 /// rows follow immediately underneath it.
 #[test]
 fn the_open_divider_row_precedes_the_tab_rows() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    open_second(&mut app);
-    app.splits.left.show();
-    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
-    app.sync_view();
+    let mut session = open_seeded();
+    open_second(&mut session);
+    session.app_mut().splits.left.show();
+    session
+        .app_mut()
+        .set_focus_pane(Pane::Tabs, &mut Effects::default());
+    session.app_mut().sync_view();
 
-    let rows = testgrid::grid(&app, WIDTH, HEIGHT);
+    let rows = session.grid(opentabs_common::WIDTH, opentabs_common::HEIGHT);
     let divider = rows
         .iter()
         .position(|r| r.contains(" Open "))
@@ -96,19 +93,24 @@ fn the_open_divider_row_precedes_the_tab_rows() {
 /// `tests/explorer.rs` already uses for its own pane-local assertions.
 #[test]
 fn enter_switches_the_active_document() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let first = app.active;
-    let second = open_second(&mut app);
-    app.set_focus_pane(Pane::Editor, &mut Effects::default());
-    workspace::switch_to(&mut app, first); // back to a.md, cursor -> index 0
+    let mut session = open_seeded();
+    let first = session.app().active;
+    let second = open_second(&mut session);
+    session
+        .app_mut()
+        .set_focus_pane(Pane::Editor, &mut Effects::default());
+    workspace::switch_to(session.app_mut(), first); // back to a.md, cursor -> index 0
 
-    app.tabs.nav.cursor = 1; // b.md's row
-    let outcome = opentabs::handle_key(&mut app, plain(KeyCode::Enter), &mut Effects::default());
+    session.app_mut().tabs.nav.cursor = 1; // b.md's row
+    let outcome = opentabs::handle_key(
+        session.app_mut(),
+        plain(KeyCode::Enter),
+        &mut Effects::default(),
+    );
 
     assert_eq!(outcome, rune_tui::keymap::KeyOutcome::Consumed);
-    assert_eq!(app.active, second);
-    assert_eq!(app.focus(), Pane::Editor);
+    assert_eq!(session.app().active, second);
+    assert_eq!(session.app().focus(), Pane::Editor);
 }
 
 /// A dirty document's tab shows the `x` dirty marker; a clean one shows a
@@ -116,21 +118,20 @@ fn enter_switches_the_active_document() {
 /// columns: pin, dirty, sync (blank here), separator, name.
 #[test]
 fn dirty_dot_appears_after_an_edit_to_the_active_document() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    app.splits.left.show();
-    app.sync_view();
+    let mut session = open_seeded();
+    let second = open_second(&mut session);
+    session.app_mut().splits.left.show();
+    session.app_mut().sync_view();
     assert!(
-        !frame_text(&app).contains(" x "),
+        !frame_text(&mut session).contains(" x "),
         "test setup: nothing should be dirty yet"
     );
 
-    edit::insert_char(&mut app, second, '!');
-    app.sync_view();
+    edit::insert_char(session.app_mut(), second, '!');
+    session.app_mut().sync_view();
 
-    assert!(app.doc(second).unwrap().is_dirty());
-    let text = frame_text(&app);
+    assert!(session.app().doc(second).unwrap().is_dirty());
+    let text = frame_text(&mut session);
     assert!(
         text.contains(" x  b.md"),
         "expected the dirty marker in b.md's tab row:\n{text}"
@@ -142,22 +143,21 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
 /// (clean) document is active, so the footer shows no marker of its own.
 #[test]
 fn diverged_background_doc_tab_shows_the_sync_marker() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let first = app.active;
-    let second = open_second(&mut app);
-    workspace::switch_to(&mut app, first);
-    app.splits.left.show();
-    app.sync_view();
+    let mut session = open_seeded();
+    let first = session.app().active;
+    let second = open_second(&mut session);
+    workspace::switch_to(session.app_mut(), first);
+    session.app_mut().splits.left.show();
+    session.app_mut().sync_view();
     assert!(
-        !frame_text(&app).contains('\u{21c4}'),
+        !frame_text(&mut session).contains('\u{21c4}'),
         "test setup: nothing should be diverged yet"
     );
 
-    app.doc_mut(second).unwrap().last_sync = Some(rune_db::SyncKind::Diverged);
-    app.sync_view();
+    session.app_mut().doc_mut(second).unwrap().last_sync = Some(rune_db::SyncKind::Diverged);
+    session.app_mut().sync_view();
 
-    let text = frame_text(&app);
+    let text = frame_text(&mut session);
     assert!(
         text.contains("\u{21c4} b.md"),
         "expected the sync marker in b.md's tab row:\n{text}"
@@ -173,59 +173,84 @@ fn diverged_background_doc_tab_shows_the_sync_marker() {
 /// it's up: it never reaches the editor's own buffer.
 #[test]
 fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
-    assert!(app.doc(second).unwrap().is_dirty());
+    let mut session = open_seeded();
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
+    assert!(session.app().doc(second).unwrap().is_dirty());
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.guard.is_some(), "a dirty close must arm a modal");
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
+    assert!(
+        session.app().guard.is_some(),
+        "a dirty close must arm a modal"
+    );
 
-    let before = app.doc(second).unwrap().buffer.content().to_string();
+    let before = session
+        .app()
+        .doc(second)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Char('q'))), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Char('q'))),
+        &mut effects,
+    );
 
     assert_eq!(
-        app.doc(second).unwrap().buffer.content(),
+        session.app().doc(second).unwrap().buffer.content(),
         before,
         "a key consumed by the Guard must never reach commands::edit"
     );
     assert!(
-        app.guard.is_some(),
+        session.app().guard.is_some(),
         "an unbound key must leave the Guard up"
     );
-    assert!(app.documents.contains_key(&second), "must not close yet");
+    assert!(
+        session.app().documents.contains_key(&second),
+        "must not close yet"
+    );
 }
 
 /// `[D]iscard` closes the document immediately and activates its neighbor.
 #[test]
 fn discard_closes_and_activates_the_neighbor() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let first = app.active;
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
-    assert_eq!(app.active, second);
+    let mut session = open_seeded();
+    let first = session.app().active;
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
+    assert_eq!(session.app().active, second);
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.guard.is_some());
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
+    assert!(session.app().guard.is_some());
     // A degraded-save confirm gate armed for `second` and left unresolved
     // (review fix: `close_now` must sweep it, not just `pending_close_on_
     // save`) — must not survive the close as a dangling reference to a
     // document that no longer exists.
-    app.pending_save_confirm = Some((second, 0));
+    session.app_mut().pending_save_confirm = Some((second, 0));
 
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Char('d'))), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Char('d'))),
+        &mut effects,
+    );
 
-    assert!(app.guard.is_none());
-    assert!(!app.documents.contains_key(&second), "b.md must be closed");
-    assert_eq!(app.documents.len(), 1);
-    assert_eq!(app.active, first, "the sole remaining document takes over");
-    assert!(!app.documents.order().contains(&second));
+    assert!(session.app().guard.is_none());
     assert!(
-        app.pending_save_confirm.is_none(),
+        !session.app().documents.contains_key(&second),
+        "b.md must be closed"
+    );
+    assert_eq!(session.app().documents.len(), 1);
+    assert_eq!(
+        session.app().active,
+        first,
+        "the sole remaining document takes over"
+    );
+    assert!(!session.app().documents.order().contains(&second));
+    assert!(
+        session.app().pending_save_confirm.is_none(),
         "a pending_save_confirm targeting the closed doc must be cleared too"
     );
 }
@@ -233,38 +258,44 @@ fn discard_closes_and_activates_the_neighbor() {
 /// `[S]ave` triggers a save, closing only once its `Msg::SaveDone` ack
 /// reports success — never before, and never on a failure (plan WP5.S3,
 /// mind Assumption A1: `db: None` documents take the `SaveDone` fallback
-/// path, exercised here since `app_with` builds an `App` with no store).
+/// path, exercised here since `open_seeded` builds an `App` with no store).
 #[test]
 fn save_then_close_waits_for_the_save_done_ack() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
-    assert!(app.doc(second).unwrap().is_dirty());
+    let mut session = open_seeded();
+    if let Some(db) = session.app_mut().db.take() {
+        db.shutdown();
+    }
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
+    assert!(session.app().doc(second).unwrap().is_dirty());
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.guard.is_some());
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
+    assert!(session.app().guard.is_some());
 
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Char('s'))), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Char('s'))),
+        &mut effects,
+    );
 
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "the Guard clears the moment Save fires"
     );
     assert_eq!(
-        app.pending_close_on_save,
+        session.app().pending_close_on_save,
         Some(second),
         "a save must actually have started"
     );
     assert!(
-        app.documents.contains_key(&second),
+        session.app().documents.contains_key(&second),
         "must not close before the save's ack lands"
     );
     assert_eq!(effects.cmds.len(), 1);
     assert_eq!(effects.cmds[0].kind(), CmdKind::Save);
 
-    let version = app.doc(second).unwrap().buffer.version();
+    let version = session.app().doc(second).unwrap().buffer.version();
     let cmd = effects.cmds.remove(0);
     let msg = cmd.run().expect("the Save Cmd replies with a Msg");
     // Sanity: the driver really did produce `SaveDone` for `second`.
@@ -274,13 +305,13 @@ fn save_then_close_waits_for_the_save_done_ack() {
     }
 
     let mut effects2 = Effects::default();
-    app::update(&mut app, msg, &mut effects2);
+    app::update(session.app_mut(), msg, &mut effects2);
 
     assert!(
-        !app.documents.contains_key(&second),
+        !session.app().documents.contains_key(&second),
         "must close once the save's ack reports success"
     );
-    assert_eq!(app.pending_close_on_save, None);
+    assert_eq!(session.app().pending_close_on_save, None);
     let _ = version;
 }
 
@@ -288,21 +319,27 @@ fn save_then_close_waits_for_the_save_done_ack() {
 /// honoring a stale close intent.
 #[test]
 fn a_failed_save_ack_leaves_the_document_open() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
+    let mut session = open_seeded();
+    if let Some(db) = session.app_mut().db.take() {
+        db.shutdown();
+    }
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Char('s'))), &mut effects);
-    assert_eq!(app.pending_close_on_save, Some(second));
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Char('s'))),
+        &mut effects,
+    );
+    assert_eq!(session.app().pending_close_on_save, Some(second));
 
-    let version = app.doc(second).unwrap().buffer.version();
-    let ticket = app.doc(second).unwrap().save_ticket().unwrap();
+    let version = session.app().doc(second).unwrap().buffer.version();
+    let ticket = session.app().doc(second).unwrap().save_ticket().unwrap();
     let mut effects2 = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::SaveDone {
             id: second,
             ticket,
@@ -314,32 +351,44 @@ fn a_failed_save_ack_leaves_the_document_open() {
     );
 
     assert!(
-        app.documents.contains_key(&second),
+        session.app().documents.contains_key(&second),
         "a failed save must never close the document"
     );
-    assert_eq!(app.pending_close_on_save, None);
+    assert_eq!(session.app().pending_close_on_save, None);
 }
 
 /// `Esc` cancels the Guard, leaving the document and its content untouched.
 #[test]
 fn escape_cancels_the_guard() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
-    let content_before = app.doc(second).unwrap().buffer.content().to_string();
+    let mut session = open_seeded();
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
+    let content_before = session
+        .app()
+        .doc(second)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.guard.is_some());
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
+    assert!(session.app().guard.is_some());
 
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Escape)),
+        &mut effects,
+    );
 
-    assert!(app.guard.is_none());
-    assert!(app.documents.contains_key(&second));
-    assert_eq!(app.doc(second).unwrap().buffer.content(), content_before);
+    assert!(session.app().guard.is_none());
+    assert!(session.app().documents.contains_key(&second));
+    assert_eq!(
+        session.app().doc(second).unwrap().buffer.content(),
+        content_before
+    );
     assert!(
-        app.doc(second).unwrap().is_dirty(),
+        session.app().doc(second).unwrap().is_dirty(),
         "still dirty, untouched"
     );
 }
@@ -349,19 +398,22 @@ fn escape_cancels_the_guard() {
 /// cancelled via a status message.
 #[test]
 fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
+    let mut session = open_seeded();
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.guard.is_some());
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
+    assert!(session.app().guard.is_some());
 
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Escape)),
+        &mut effects,
+    );
 
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
+        rune_tui::messages::newest_text(session.app()),
         Some("close cancelled")
     );
 }
@@ -371,30 +423,32 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
 /// document just to close the untitled one before they could leave.
 #[test]
 fn closing_the_only_document_mints_a_fresh_untitled_instead_of_refusing() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let only = app.active;
-    assert_eq!(app.documents.len(), 1);
+    let mut session = open_seeded();
+    let only = session.app().active;
+    assert_eq!(session.app().documents.len(), 1);
 
-    workspace::request_close(&mut app, only, &mut Effects::default());
+    workspace::request_close(session.app_mut(), only, &mut Effects::default());
 
-    assert!(app.guard.is_none(), "a clean close never arms a Guard");
     assert!(
-        !app.documents.contains_key(&only),
+        session.app().guard.is_none(),
+        "a clean close never arms a Guard"
+    );
+    assert!(
+        !session.app().documents.contains_key(&only),
         "the original document must actually be gone"
     );
     assert_eq!(
-        app.documents.len(),
+        session.app().documents.len(),
         1,
         "closing the last document leaves exactly one — a fresh untitled"
     );
     assert_eq!(
-        app.active_doc().display_name.as_deref(),
+        session.app().active_doc().display_name.as_deref(),
         Some("Untitled 1"),
         "the replacement is the fresh untitled draft, and it's now active"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_none(),
+        rune_tui::messages::newest_text(session.app()).is_none(),
         "there is no more \"can't close\" refusal to report"
     );
 }
@@ -404,28 +458,37 @@ fn closing_the_only_document_mints_a_fresh_untitled_instead_of_refusing() {
 /// `[D]iscard` then lands on the same fresh-untitled replacement.
 #[test]
 fn closing_a_dirty_only_document_still_routes_through_the_guard() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let only = app.active;
-    edit::insert_char(&mut app, only, '!');
-    assert!(app.doc(only).unwrap().is_dirty());
+    let mut session = open_seeded();
+    let only = session.app().active;
+    edit::insert_char(session.app_mut(), only, '!');
+    assert!(session.app().doc(only).unwrap().is_dirty());
 
-    workspace::request_close(&mut app, only, &mut Effects::default());
+    workspace::request_close(session.app_mut(), only, &mut Effects::default());
 
     assert!(
-        app.guard.is_some(),
+        session.app().guard.is_some(),
         "a dirty close still arms the Guard, even for the only document"
     );
-    assert!(app.documents.contains_key(&only), "not closed yet");
-    assert_eq!(app.documents.len(), 1);
+    assert!(
+        session.app().documents.contains_key(&only),
+        "not closed yet"
+    );
+    assert_eq!(session.app().documents.len(), 1);
 
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Char('d'))), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Char('d'))),
+        &mut effects,
+    );
 
-    assert!(app.guard.is_none());
-    assert!(!app.documents.contains_key(&only));
-    assert_eq!(app.documents.len(), 1);
-    assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
+    assert!(session.app().guard.is_none());
+    assert!(!session.app().documents.contains_key(&only));
+    assert_eq!(session.app().documents.len(), 1);
+    assert_eq!(
+        session.app().active_doc().display_name.as_deref(),
+        Some("Untitled 1")
+    );
 }
 
 /// A prior error message must never block a Guard from being raised (plan
@@ -434,19 +497,18 @@ fn closing_a_dirty_only_document_still_routes_through_the_guard() {
 /// lower-priority Guard request).
 #[test]
 fn an_error_message_never_blocks_a_guard_from_being_raised() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
+    let mut session = open_seeded();
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
 
-    rune_tui::messages::error(&mut app, "boom");
-    assert_eq!(rune_tui::messages::newest_text(&app), Some("boom"));
+    rune_tui::messages::error(session.app_mut(), "boom");
+    assert_eq!(rune_tui::messages::newest_text(session.app()), Some("boom"));
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
 
     assert!(
         matches!(
-            app.guard,
+            session.app().guard,
             Some(ref prompt) if prompt.kind == rune_tui::guard::GuardKind::DirtyClose
         ),
         "a prior error message must never block a Guard from being raised"
@@ -458,21 +520,30 @@ fn an_error_message_never_blocks_a_guard_from_being_raised() {
 /// cancellation posts its own entry without ever touching an earlier one.
 #[test]
 fn escape_on_a_guard_keeps_an_unacknowledged_save_failure_in_the_log() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let second = open_second(&mut app);
-    edit::insert_char(&mut app, second, '!');
-    rune_tui::messages::error(&mut app, "save failed: disk full");
+    let mut session = open_seeded();
+    let second = open_second(&mut session);
+    edit::insert_char(session.app_mut(), second, '!');
+    rune_tui::messages::error(session.app_mut(), "save failed: disk full");
 
-    workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.guard.is_some(), "a dirty close arms the Guard");
+    workspace::request_close(session.app_mut(), second, &mut Effects::default());
+    assert!(
+        session.app().guard.is_some(),
+        "a dirty close arms the Guard"
+    );
 
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Key(plain(KeyCode::Escape)),
+        &mut effects,
+    );
 
-    assert!(app.guard.is_none(), "Escape still cancels the Guard");
+    assert!(
+        session.app().guard.is_none(),
+        "Escape still cancels the Guard"
+    );
     assert_eq!(
-        rune_tui::messages::log_text(&app),
+        rune_tui::messages::log_text(session.app()),
         "save failed: disk full\nclose cancelled",
         "the save failure must survive an unrelated cancellation, in order"
     );

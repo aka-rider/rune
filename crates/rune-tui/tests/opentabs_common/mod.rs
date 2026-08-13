@@ -3,55 +3,55 @@
 //! guard's three resolutions) and `opentabs_global.rs` (the GLOBAL `^w`/
 //! `^1`-`^0` bindings, TODO.md's 500-line budget). Each file pulls this in via
 //! `mod opentabs_common;` — integration test files are separate binaries,
-//! so this is the one place both draw an identical `App`/`Mem` fixture
-//! from, rather than risking the two drifting apart.
+//! so this is the one place both draw an identical `Session` fixture from,
+//! rather than risking the two drifting apart.
 #![allow(dead_code)]
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
-use rune_core::buffer::Buffer;
-use rune_tui::app::App;
+use rune_fuzz::Session;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::runtime::Effects;
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
 
 pub const WIDTH: u16 = 80;
 pub const HEIGHT: u16 = 24;
 
-pub fn seeded_vfs() -> Arc<Mem> {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(Path::new("/root/a.md"), b"a content")
-        .expect("seed a.md");
-    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+/// A `Session` seeded with `/root/a.md` as the initial (sole) document and
+/// `/root/b.md` sitting alongside it on disk, ready for `open_second`.
+pub fn open_seeded() -> Session {
+    let mut session = Session::open("/root/a.md", "a content");
+    session
+        .app()
+        .vfs
+        .save_atomic(Path::new("/root/b.md"), b"b content")
         .expect("seed b.md");
-    mem
-}
 
-/// An `App` with `/root/a.md` as the initial (sole) document, no store
-/// bound (`db: None`) — so any save on any document funnels through the
-/// no-store `Msg::SaveDone` fallback (Assumption A1), matching an
-/// Explorer-opened document's own shape.
-pub fn app_with(mem: &Arc<Mem>) -> App {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new(
-        Buffer::new("a content"),
-        Some(PathBuf::from("/root/a.md")),
-        vfs,
-        None,
-    );
-    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
-    app.sync_view();
-    app
+    // `Session::boot` mints its own untitled draft before opening the
+    // seeded document, so `documents.len()` starts at 2 — close that
+    // surplus draft through the real close path so a test sees the same
+    // single-document starting point the pre-migration `App::new` fixture
+    // did.
+    let seed = session.app().active;
+    let draft = *session
+        .app()
+        .documents
+        .order()
+        .iter()
+        .find(|&&id| id != seed)
+        .expect("Session::boot mints a draft alongside the seeded document");
+    workspace::request_close(session.app_mut(), draft, &mut Effects::default());
+
+    session
 }
 
 /// Opens `/root/b.md` as a second document via the real `workspace::
 /// open_path` — mirroring how a real session accumulates tabs.
-pub fn open_second(app: &mut App) -> DocumentId {
-    let first = app.active;
-    workspace::open_path(app, Path::new("/root/b.md"));
-    let second = app.active;
+pub fn open_second(session: &mut Session) -> DocumentId {
+    let first = session.app().active;
+    workspace::open_path(session.app_mut(), Path::new("/root/b.md"));
+    let second = session.app().active;
     assert_ne!(
         first, second,
         "test setup: b.md must open as a NEW document"
@@ -61,4 +61,10 @@ pub fn open_second(app: &mut App) -> DocumentId {
 
 pub fn key(code: KeyCode, mods: Mods) -> KeyInput {
     KeyInput { code, mods }
+}
+
+/// Renders `session`'s current frame and concatenates every row — the
+/// whole-frame text search idiom the Open Tabs render assertions use.
+pub fn frame_text(session: &mut Session) -> String {
+    session.grid(WIDTH, HEIGHT).concat()
 }

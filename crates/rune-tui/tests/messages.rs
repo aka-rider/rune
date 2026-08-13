@@ -31,24 +31,27 @@ use rune_tui::keymap::KeyCode;
 use rune_tui::messages;
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
-use rune_tui::testgrid;
 
-use messages_common::{HEIGHT, WIDTH, app_for, ctrl_e, frame_text, key};
+use messages_common::{app_for, ctrl_e, frame_text, key};
 
 /// `Msg::Error` posts into the log and opens the pane rather than raising
 /// the old modal banner — the routing chokepoint (`dispatch::update_inner`'s
 /// `Msg::Error` arm -> `messages::error`).
 #[test]
 fn an_error_posts_and_opens_the_pane() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Error("boom".to_string()), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Error("boom".to_string()),
+        &mut effects,
+    );
 
-    assert!(messages::is_open(&app));
-    assert_eq!(messages::newest_text(&app), Some("boom"));
+    assert!(messages::is_open(session.app()));
+    assert_eq!(messages::newest_text(session.app()), Some("boom"));
 
-    app.sync_view();
-    let text = frame_text(&app);
+    session.app_mut().sync_view();
+    let text = frame_text(&mut session);
     assert!(
         text.contains("boom"),
         "expected the error text somewhere in the frame"
@@ -59,22 +62,26 @@ fn an_error_posts_and_opens_the_pane() {
 /// subsequent printable key still reaches the buffer.
 #[test]
 fn the_editor_keeps_focus_and_a_character_still_reaches_the_buffer() {
-    let mut app = app_for("hello");
-    let id = app.active;
+    let mut session = app_for("hello");
+    let id = session.app().active;
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Error("boom".to_string()), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Error("boom".to_string()),
+        &mut effects,
+    );
 
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Editor,
         "posting a message must never steal focus"
     );
 
     let mut effects2 = Effects::default();
-    app::update(&mut app, key(KeyCode::Char('x')), &mut effects2);
+    app::update(session.app_mut(), key(KeyCode::Char('x')), &mut effects2);
 
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer.content(),
         "xhello",
         "a character typed after a message posts must still reach the buffer"
     );
@@ -84,44 +91,44 @@ fn the_editor_keeps_focus_and_a_character_still_reaches_the_buffer() {
 /// collapses it and returns focus to the editor.
 #[test]
 fn ctrl_e_focuses_the_pane_and_a_second_collapses_it() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
 
     let mut effects = Effects::default();
-    app::update(&mut app, ctrl_e(), &mut effects);
-    assert!(messages::is_open(&app));
-    assert_eq!(app.focus(), Pane::Messages);
+    app::update(session.app_mut(), ctrl_e(), &mut effects);
+    assert!(messages::is_open(session.app()));
+    assert_eq!(session.app().focus(), Pane::Messages);
 
     let mut effects2 = Effects::default();
-    app::update(&mut app, ctrl_e(), &mut effects2);
-    assert!(!messages::is_open(&app));
-    assert_eq!(app.focus(), Pane::Editor);
+    app::update(session.app_mut(), ctrl_e(), &mut effects2);
+    assert!(!messages::is_open(session.app()));
+    assert_eq!(session.app().focus(), Pane::Editor);
 }
 
 /// `Esc` inside the pane collapses it and returns focus to the editor —
 /// same outcome as the second `^E`, reached a different way.
 #[test]
 fn escape_in_the_pane_collapses_and_returns_focus_to_the_editor() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     let mut effects = Effects::default();
-    app::update(&mut app, ctrl_e(), &mut effects);
-    assert_eq!(app.focus(), Pane::Messages);
+    app::update(session.app_mut(), ctrl_e(), &mut effects);
+    assert_eq!(session.app().focus(), Pane::Messages);
 
     let mut effects2 = Effects::default();
-    app::update(&mut app, key(KeyCode::Escape), &mut effects2);
+    app::update(session.app_mut(), key(KeyCode::Escape), &mut effects2);
 
-    assert!(!messages::is_open(&app));
-    assert_eq!(app.focus(), Pane::Editor);
+    assert!(!messages::is_open(session.app()));
+    assert_eq!(session.app().focus(), Pane::Editor);
 }
 
 /// `^E` on an empty log opens the pane showing the `EMPTY_TEXT` placeholder.
 #[test]
 fn ctrl_e_on_an_empty_log_shows_no_messages() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     let mut effects = Effects::default();
-    app::update(&mut app, ctrl_e(), &mut effects);
-    app.sync_view();
+    app::update(session.app_mut(), ctrl_e(), &mut effects);
+    session.app_mut().sync_view();
 
-    let text = frame_text(&app);
+    let text = frame_text(&mut session);
     assert!(
         text.contains("no messages"),
         "expected the empty-log placeholder somewhere in the frame, got {text:?}"
@@ -132,19 +139,20 @@ fn ctrl_e_on_an_empty_log_shows_no_messages() {
 /// 30-40% band, however much text the log holds.
 #[test]
 fn pane_height_never_exceeds_forty_percent_of_the_frame() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     let huge: String = (0..80)
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    messages::error(&mut app, huge);
-    app.sync_view();
+    messages::error(session.app_mut(), huge);
+    session.app_mut().sync_view();
 
-    let cap = (app.frame_height as usize * 2 / 5) as u16 + 1;
+    let frame_height = session.app().frame_height;
+    let cap = (frame_height as usize * 2 / 5) as u16 + 1;
     assert!(
-        messages::height(&app, app.frame_height) <= cap,
+        messages::height(session.app(), frame_height) <= cap,
         "pane height {} exceeds the 40% cap {}",
-        messages::height(&app, app.frame_height),
+        messages::height(session.app(), frame_height),
         cap
     );
 }
@@ -156,17 +164,17 @@ fn pane_height_never_exceeds_forty_percent_of_the_frame() {
 /// reach the rendered grid.
 #[test]
 fn a_c0_byte_in_a_posted_message_never_reaches_the_rendered_grid() {
-    let mut app = app_for("hello");
-    messages::error(&mut app, "bad\u{0}\u{7}\u{85}text");
+    let mut session = app_for("hello");
+    messages::error(session.app_mut(), "bad\u{0}\u{7}\u{85}text");
 
     assert_eq!(
-        messages::newest_text(&app),
+        messages::newest_text(session.app()),
         Some("badtext"),
         "C0 and C1 control characters must be stripped before the entry is stored"
     );
 
-    app.sync_view();
-    let text = frame_text(&app);
+    session.app_mut().sync_view();
+    let text = frame_text(&mut session);
     assert!(text.contains("badtext"));
 }
 
@@ -179,15 +187,16 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut app = app_for(&content);
-    let end = app.active_doc().buffer.len();
-    app.active_doc_mut().cursors = CursorSet::new(end);
-    app.sync_view();
+    let mut session = app_for(&content);
+    let end = session.app().active_doc().buffer.len();
+    session.app_mut().active_doc_mut().cursors = CursorSet::new(end);
+    session.app_mut().sync_view();
 
     let mut effects = Effects::default();
-    app::update(&mut app, ctrl_e(), &mut effects);
-    app.sync_view();
+    app::update(session.app_mut(), ctrl_e(), &mut effects);
+    session.app_mut().sync_view();
 
+    let app = session.app();
     let doc = app.active_doc();
     let view = doc.view.as_ref().expect("synced view");
     let buffer_point = doc
@@ -215,30 +224,30 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
 /// fit the rect they are blitted into.
 #[test]
 fn a_second_settle_after_a_post_changes_neither_the_viewport_nor_the_rows() {
-    let mut app = app_for("# Title\n\nsome body text\n");
+    let mut session = app_for("# Title\n\nsome body text\n");
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Error("something went wrong\nwith a second line".to_string()),
         &mut effects,
     );
-    app.sync_view();
+    session.app_mut().sync_view();
 
-    let height_after_first = app.active_doc().viewport.height;
-    let rows_after_first = testgrid::grid(&app, WIDTH, HEIGHT);
+    let height_after_first = session.app().active_doc().viewport.height;
+    let rows_after_first = session.grid(messages_common::WIDTH, messages_common::HEIGHT);
 
-    app.sync_view();
+    session.app_mut().sync_view();
 
     assert_eq!(
         height_after_first,
-        app.active_doc().viewport.height,
+        session.app().active_doc().viewport.height,
         "the editor viewport height changed on a second settle with no \
          intervening message"
     );
     assert_eq!(
         rows_after_first,
-        testgrid::grid(&app, WIDTH, HEIGHT),
+        session.grid(messages_common::WIDTH, messages_common::HEIGHT),
         "the rendered rows changed on a second settle with no intervening \
          message"
     );
@@ -249,11 +258,11 @@ fn a_second_settle_after_a_post_changes_neither_the_viewport_nor_the_rows() {
 /// height — changes with no message involved at all.
 #[test]
 fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
-    let mut app = app_for("# Title\n\nsome body text\n");
+    let mut session = app_for("# Title\n\nsome body text\n");
 
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Error(
             "a message long enough that it must re-wrap onto a different \
              number of rows when the terminal narrows"
@@ -261,24 +270,28 @@ fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
         ),
         &mut effects,
     );
-    app.sync_view();
+    session.app_mut().sync_view();
 
-    app::update(&mut app, Msg::Resize(40, HEIGHT), &mut effects);
-    app.sync_view();
+    app::update(
+        session.app_mut(),
+        Msg::Resize(40, messages_common::HEIGHT),
+        &mut effects,
+    );
+    session.app_mut().sync_view();
 
-    let height_after_first = app.active_doc().viewport.height;
-    let rows_after_first = testgrid::grid(&app, 40, HEIGHT);
+    let height_after_first = session.app().active_doc().viewport.height;
+    let rows_after_first = session.grid(40, messages_common::HEIGHT);
 
-    app.sync_view();
+    session.app_mut().sync_view();
 
     assert_eq!(
         height_after_first,
-        app.active_doc().viewport.height,
+        session.app().active_doc().viewport.height,
         "the editor viewport height changed on a second settle after a resize"
     );
     assert_eq!(
         rows_after_first,
-        testgrid::grid(&app, 40, HEIGHT),
+        session.grid(40, messages_common::HEIGHT),
         "the rendered rows changed on a second settle after a resize"
     );
 }
@@ -289,13 +302,13 @@ fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
 /// never moves.
 #[test]
 fn a_newest_message_is_visible_after_the_pane_overflows() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     for i in 0..20 {
-        messages::error(&mut app, format!("entry number {i}"));
+        messages::error(session.app_mut(), format!("entry number {i}"));
     }
-    app.sync_view();
+    session.app_mut().sync_view();
 
-    let text = frame_text(&app);
+    let text = frame_text(&mut session);
     assert!(
         text.contains("entry number 19"),
         "expected the newest entry visible somewhere in the frame, got {text:?}"
@@ -306,12 +319,12 @@ fn a_newest_message_is_visible_after_the_pane_overflows() {
 /// sending the matching `Msg` back collapses the pane.
 #[test]
 fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_pane() {
-    let mut app = app_for("hello");
-    messages::info(&mut app, "saved");
-    assert!(messages::is_open(&app));
+    let mut session = app_for("hello");
+    messages::info(session.app_mut(), "saved");
+    assert!(messages::is_open(session.app()));
 
     let mut effects = Effects::default();
-    app::update(&mut app, key(KeyCode::Right), &mut effects);
+    app::update(session.app_mut(), key(KeyCode::Right), &mut effects);
     let armed: Vec<_> = effects
         .cmds
         .iter()
@@ -325,12 +338,12 @@ fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_
 
     let mut effects2 = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::MessagesCollapseTimeout { generation: 0 },
         &mut effects2,
     );
     assert!(
-        !messages::is_open(&app),
+        !messages::is_open(session.app()),
         "the matching generation must collapse the pane"
     );
 }
@@ -339,34 +352,34 @@ fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_
 /// fired) is ignored; only the current generation collapses the pane.
 #[test]
 fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
-    let mut app = app_for("hello");
-    messages::info(&mut app, "first");
+    let mut session = app_for("hello");
+    messages::info(session.app_mut(), "first");
     let mut e0 = Effects::default();
-    app::update(&mut app, key(KeyCode::Right), &mut e0); // arms generation 0
+    app::update(session.app_mut(), key(KeyCode::Right), &mut e0); // arms generation 0
 
-    messages::info(&mut app, "second"); // clears armed, restarting the countdown
+    messages::info(session.app_mut(), "second"); // clears armed, restarting the countdown
     let mut e1 = Effects::default();
-    app::update(&mut app, key(KeyCode::Right), &mut e1); // arms generation 1
+    app::update(session.app_mut(), key(KeyCode::Right), &mut e1); // arms generation 1
 
     let mut stale_effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::MessagesCollapseTimeout { generation: 0 },
         &mut stale_effects,
     );
     assert!(
-        messages::is_open(&app),
+        messages::is_open(session.app()),
         "a stale (generation 0) timeout must not collapse the pane"
     );
 
     let mut fresh_effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::MessagesCollapseTimeout { generation: 1 },
         &mut fresh_effects,
     );
     assert!(
-        !messages::is_open(&app),
+        !messages::is_open(session.app()),
         "the current (generation 1) timeout must collapse the pane"
     );
 }
@@ -376,9 +389,13 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
 /// pending.
 #[test]
 fn an_error_post_arms_nothing_and_the_pane_stays_open() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Error("boom".to_string()), &mut effects);
+    app::update(
+        session.app_mut(),
+        Msg::Error("boom".to_string()),
+        &mut effects,
+    );
 
     let armed = effects
         .cmds
@@ -388,16 +405,16 @@ fn an_error_post_arms_nothing_and_the_pane_stays_open() {
         !armed,
         "an error post must never arm the auto-collapse timer"
     );
-    assert!(messages::is_open(&app));
+    assert!(messages::is_open(session.app()));
 }
 
 /// A focused pane arms nothing — the user is actively reading/scrolling it.
 #[test]
 fn a_focused_pane_arms_nothing() {
-    let mut app = app_for("hello");
+    let mut session = app_for("hello");
     let mut effects = Effects::default();
-    app::update(&mut app, ctrl_e(), &mut effects);
-    assert_eq!(app.focus(), Pane::Messages);
+    app::update(session.app_mut(), ctrl_e(), &mut effects);
+    assert_eq!(session.app().focus(), Pane::Messages);
 
     let armed = effects
         .cmds
@@ -414,9 +431,9 @@ fn a_focused_pane_arms_nothing() {
 /// discard it.
 #[test]
 fn a_pane_with_a_selection_arms_nothing() {
-    let mut app = app_for("hello");
-    messages::info(&mut app, "saved");
-    messages::doc_mut(&mut app).cursors = CursorSet::new_from(&[Cursor {
+    let mut session = app_for("hello");
+    messages::info(session.app_mut(), "saved");
+    messages::doc_mut(session.app_mut()).cursors = CursorSet::new_from(&[Cursor {
         position: 0,
         anchor: 3,
         desired_col: 0,
@@ -424,7 +441,7 @@ fn a_pane_with_a_selection_arms_nothing() {
     }]);
 
     let mut effects = Effects::default();
-    app::update(&mut app, key(KeyCode::Right), &mut effects);
+    app::update(session.app_mut(), key(KeyCode::Right), &mut effects);
     let armed = effects
         .cmds
         .iter()
