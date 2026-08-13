@@ -13,6 +13,7 @@ mod highlight_common;
 
 use highlight_common::app_for;
 use ratatui::buffer::Buffer as RtBuffer;
+use rune_fuzz::Session;
 use rune_merge::Hunk;
 use rune_tui::app::App;
 use rune_tui::merge::frame::build_marker_buffer;
@@ -26,15 +27,18 @@ fn draw(app: &App) -> RtBuffer {
     testgrid::draw(app, W, H)
 }
 
-fn sized_app_with_merge(buffer: &str, mut install: impl FnMut(&mut App)) -> App {
-    let mut app = app_for(buffer, "/x/notes.md");
-    app.doc_mut(app.active)
+fn sized_app_with_merge(buffer: &str, mut install: impl FnMut(&mut App)) -> Session {
+    let mut session = app_for(buffer, "/x/notes.md");
+    let active = session.app().active;
+    session
+        .app_mut()
+        .doc_mut(active)
         .expect("doc")
         .viewport
         .set_size(W, H);
-    install(&mut app);
-    app.sync_view();
-    app
+    install(session.app_mut());
+    session.app_mut().sync_view();
+    session
 }
 
 fn row_text(buf: &RtBuffer, y: u16) -> String {
@@ -75,7 +79,7 @@ fn two_block_fixture() -> (String, Vec<rune_tui::merge::state::ConflictBlock>) {
 #[test]
 fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
     let (buffer, pairs) = two_block_fixture();
-    let app = sized_app_with_merge(&buffer, |app| {
+    let session = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
             pairs: pairs.clone(),
@@ -84,7 +88,8 @@ fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
     });
-    let buf = draw(&app);
+    let app = session.app();
+    let buf = draw(app);
 
     let ours_row = row_containing(&buf, "mine one");
     let theirs_row = row_containing(&buf, "yours one");
@@ -122,7 +127,7 @@ fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
 fn a_resolved_blocks_region_carries_no_merge_background() {
     let (buffer, mut pairs) = two_block_fixture();
     pairs[0].block.resolved = true;
-    let app = sized_app_with_merge(&buffer, |app| {
+    let session = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
             pairs: pairs.clone(),
@@ -131,7 +136,8 @@ fn a_resolved_blocks_region_carries_no_merge_background() {
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
     });
-    let buf = draw(&app);
+    let app = session.app();
+    let buf = draw(app);
 
     let ours_row = row_containing(&buf, "mine one");
     let ours_col = row_text(&buf, ours_row).find("mine one").unwrap() as u16;
@@ -152,7 +158,7 @@ fn a_resolved_blocks_region_carries_no_merge_background() {
 #[test]
 fn the_current_blocks_marker_carries_a_distinct_cue() {
     let (buffer, pairs) = two_block_fixture();
-    let app = sized_app_with_merge(&buffer, |app| {
+    let session = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
             pairs: pairs.clone(),
@@ -161,7 +167,8 @@ fn the_current_blocks_marker_carries_a_distinct_cue() {
             theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
         };
     });
-    let buf = draw(&app);
+    let app = session.app();
+    let buf = draw(app);
 
     let markers: Vec<u16> = (0..H)
         .filter(|&y| row_text(&buf, y).contains("<<<<<<<"))

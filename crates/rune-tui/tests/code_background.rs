@@ -19,6 +19,7 @@ mod highlight_common;
 use highlight_common::app_for;
 use ratatui::buffer::Buffer as RtBuffer;
 use rune_core::cursor::CursorSet;
+use rune_fuzz::Session;
 use rune_tui::app::App;
 use rune_tui::render;
 use rune_tui::testgrid;
@@ -30,14 +31,17 @@ fn draw(app: &App) -> RtBuffer {
     testgrid::draw(app, W, H)
 }
 
-fn sized_app(content: &str, path: &str) -> App {
-    let mut app = app_for(content, path);
-    app.doc_mut(app.active)
+fn sized_app(content: &str, path: &str) -> Session {
+    let mut session = app_for(content, path);
+    let active = session.app().active;
+    session
+        .app_mut()
+        .doc_mut(active)
         .expect("doc")
         .viewport
         .set_size(W, H);
-    app.sync_view();
-    app
+    session.app_mut().sync_view();
+    session
 }
 
 /// The columns of screen row `y` whose background is the theme's code
@@ -91,8 +95,9 @@ const FENCED: &str = concat!(
 /// into the document.
 #[test]
 fn a_code_block_paints_a_rectangle_over_blank_and_short_lines_alike() {
-    let app = sized_app(FENCED, "/x/notes.md");
-    let buf = draw(&app);
+    let session = sized_app(FENCED, "/x/notes.md");
+    let app = session.app();
+    let buf = draw(app);
 
     let long = row_containing(&buf, "fn main() {}");
     let blank = long + 1;
@@ -103,10 +108,10 @@ fn a_code_block_paints_a_rectangle_over_blank_and_short_lines_alike() {
     );
     assert!(row_text(&buf, short).contains("let x = 1;"));
 
-    let long_run = painted_run(&buf, &app, long).expect("the code row must be painted");
+    let long_run = painted_run(&buf, app, long).expect("the code row must be painted");
     let blank_run =
-        painted_run(&buf, &app, blank).expect("a blank line inside a code block must be painted");
-    let short_run = painted_run(&buf, &app, short).expect("the short code row must be painted");
+        painted_run(&buf, app, blank).expect("a blank line inside a code block must be painted");
+    let short_run = painted_run(&buf, app, short).expect("the short code row must be painted");
     assert_eq!(
         blank_run, long_run,
         "a blank line must span exactly the same columns as the code around it"
@@ -123,12 +128,12 @@ fn a_code_block_paints_a_rectangle_over_blank_and_short_lines_alike() {
     );
 
     assert_eq!(
-        painted_run(&buf, &app, row_containing(&buf, "Intro.")),
+        painted_run(&buf, app, row_containing(&buf, "Intro.")),
         None,
         "prose above the block must stay unpainted"
     );
     assert_eq!(
-        painted_run(&buf, &app, row_containing(&buf, "Outro.")),
+        painted_run(&buf, app, row_containing(&buf, "Outro.")),
         None,
         "prose below the block must stay unpainted"
     );
@@ -140,17 +145,19 @@ fn a_code_block_paints_a_rectangle_over_blank_and_short_lines_alike() {
 /// fence's own text happens to carry.
 #[test]
 fn a_fence_and_a_code_document_paint_the_same_background_geometry() {
-    let fence_app = sized_app(FENCED, "/x/notes.md");
-    let fence_buf = draw(&fence_app);
-    let file_app = sized_app("fn main() {}\n\nlet x = 1;\n", "/x/main.ts");
-    let file_buf = draw(&file_app);
+    let fence_session = sized_app(FENCED, "/x/notes.md");
+    let fence_app = fence_session.app();
+    let fence_buf = draw(fence_app);
+    let file_session = sized_app("fn main() {}\n\nlet x = 1;\n", "/x/main.ts");
+    let file_app = file_session.app();
+    let file_buf = draw(file_app);
 
     let fence_top = row_containing(&fence_buf, "fn main() {}");
     let file_top = row_containing(&file_buf, "fn main() {}");
     for delta in 0..3u16 {
         assert_eq!(
-            painted_run(&fence_buf, &fence_app, fence_top + delta),
-            painted_run(&file_buf, &file_app, file_top + delta),
+            painted_run(&fence_buf, fence_app, fence_top + delta),
+            painted_run(&file_buf, file_app, file_top + delta),
             "code line {delta} paints a different background in a fence than in a source file"
         );
     }
@@ -172,21 +179,23 @@ fn a_blockquoted_fence_paints_after_the_quote_bar_never_under_it() {
         "\n",
         "Outro.\n",
     );
-    let app = sized_app(content, "/x/notes.md");
-    let buf = draw(&app);
+    let session = sized_app(content, "/x/notes.md");
+    let app = session.app();
+    let buf = draw(app);
 
-    let plain = sized_app(FENCED, "/x/notes.md");
-    let plain_buf = draw(&plain);
+    let plain_session = sized_app(FENCED, "/x/notes.md");
+    let plain_app = plain_session.app();
+    let plain_buf = draw(plain_app);
     let plain_start = painted_run(
         &plain_buf,
-        &plain,
+        plain_app,
         row_containing(&plain_buf, "fn main() {}"),
     )
     .expect("the unquoted fence must be painted")
     .0;
 
     let code = row_containing(&buf, "fn main() {}");
-    let (first, _) = painted_run(&buf, &app, code).expect("the quoted fence must be painted");
+    let (first, _) = painted_run(&buf, app, code).expect("the quoted fence must be painted");
     assert!(
         first > plain_start,
         "the background must start further right than an unquoted fence's, past the quote bar"
@@ -213,13 +222,15 @@ fn a_blockquoted_fence_paints_after_the_quote_bar_never_under_it() {
 /// by the same rule with no special case either way.
 #[test]
 fn a_revealed_fences_delimiter_rows_are_covered() {
-    let mut app = sized_app(FENCED, "/x/notes.md");
+    let mut session = sized_app(FENCED, "/x/notes.md");
     let inside = FENCED
         .find("fn main")
         .expect("fixture contains the code line");
-    app.doc_mut(app.active).expect("doc").cursors = CursorSet::new(inside);
-    app.sync_view();
-    let buf = draw(&app);
+    let active = session.app().active;
+    session.app_mut().doc_mut(active).expect("doc").cursors = CursorSet::new(inside);
+    session.app_mut().sync_view();
+    let app = session.app();
+    let buf = draw(app);
 
     let opening = row_containing(&buf, "```rust");
     let code = row_containing(&buf, "fn main() {}");
@@ -229,8 +240,8 @@ fn a_revealed_fences_delimiter_rows_are_covered() {
         "the revealed opening delimiter must sit directly above the code"
     );
     assert_eq!(
-        painted_run(&buf, &app, opening),
-        painted_run(&buf, &app, code),
+        painted_run(&buf, app, opening),
+        painted_run(&buf, app, code),
         "a revealed delimiter row must be covered exactly like the body"
     );
 }
@@ -250,8 +261,9 @@ fn frontmatter_paints_a_rectangle_over_its_delimiter_rows() {
         "\n",
         "# Heading\n",
     );
-    let app = sized_app(content, "/x/notes.md");
-    let buf = draw(&app);
+    let session = sized_app(content, "/x/notes.md");
+    let app = session.app();
+    let buf = draw(app);
 
     let first_key = row_containing(&buf, "title: x");
     let open = first_key - 1;
@@ -265,10 +277,10 @@ fn frontmatter_paints_a_rectangle_over_its_delimiter_rows() {
         "the row below the last key must be the closing delimiter"
     );
 
-    let body = painted_run(&buf, &app, first_key).expect("a frontmatter body row must be painted");
+    let body = painted_run(&buf, app, first_key).expect("a frontmatter body row must be painted");
     for y in open..=close {
         assert_eq!(
-            painted_run(&buf, &app, y),
+            painted_run(&buf, app, y),
             Some(body),
             "frontmatter row {y} must span exactly the same columns as the rest of the block — \
              delimiter rows included"
@@ -276,12 +288,12 @@ fn frontmatter_paints_a_rectangle_over_its_delimiter_rows() {
     }
 
     assert_eq!(
-        painted_run(&buf, &app, close + 1),
+        painted_run(&buf, app, close + 1),
         None,
         "the blank line after the frontmatter is document body, not part of the block"
     );
     assert_eq!(
-        painted_run(&buf, &app, row_containing(&buf, "Heading")),
+        painted_run(&buf, app, row_containing(&buf, "Heading")),
         None,
         "the heading below the frontmatter must stay unpainted"
     );
@@ -293,15 +305,17 @@ fn frontmatter_paints_a_rectangle_over_its_delimiter_rows() {
 /// included.
 #[test]
 fn two_message_free_renders_produce_identical_rows() {
-    let mut app = sized_app(FENCED, "/x/notes.md");
+    let mut session = sized_app(FENCED, "/x/notes.md");
     let before = {
+        let app = session.app();
         let view = app.active_doc().view.as_ref().expect("synced view");
-        render::build_rows(&app, app.active_doc(), Some(app.active), view)
+        render::build_rows(app, app.active_doc(), Some(app.active), view)
     };
-    app.sync_view();
+    session.app_mut().sync_view();
     let after = {
+        let app = session.app();
         let view = app.active_doc().view.as_ref().expect("synced view");
-        render::build_rows(&app, app.active_doc(), Some(app.active), view)
+        render::build_rows(app, app.active_doc(), Some(app.active), view)
     };
     assert_eq!(
         before, after,

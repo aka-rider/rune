@@ -24,29 +24,35 @@ use rune_tui::testgrid;
 #[test]
 fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
     let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
-    app.sync_view();
+    let mut session = app_for(content, "/x/main.rs");
+    let id = session.app().active;
+    session
+        .app_mut()
+        .doc_mut(id)
+        .expect("doc")
+        .viewport
+        .set_size(40, 10);
+    session.app_mut().sync_view();
 
     let mut effects = Effects::default();
-    type_one_char_at_end(&mut app, &mut effects);
+    type_one_char_at_end(&mut session, &mut effects);
     let msg = effects
         .cmds
         .remove(0)
         .run()
         .expect("the highlight cmd always replies");
     let mut effects = Effects::default();
-    app::update(&mut app, msg, &mut effects);
+    app::update(session.app_mut(), msg, &mut effects);
 
-    app.sync_view();
-    let rendered = testgrid::grid(&app, 40, 10).join("\n");
+    session.app_mut().sync_view();
+    let app = session.app();
+    let rendered = testgrid::grid(app, 40, 10).join("\n");
     assert!(
         rendered.contains("fn main() {}"),
         "the overlay must never change the rendered TEXT, only cell styles"
     );
 
-    let buf = testgrid::draw(&app, 40, 10);
+    let buf = testgrid::draw(app, 40, 10);
     let plain = app
         .theme
         .scope_style(scope_table().resolve("text").expect("known scope"));
@@ -75,25 +81,29 @@ fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
 #[test]
 fn code_background_survives_the_highlight_overlay_patch() {
     let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
-    app.doc_mut(app.active)
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
+    let active = session.app().active;
+    session
+        .app_mut()
+        .doc_mut(active)
         .expect("doc")
         .viewport
         .set_size(40, 12);
 
     let mut effects = Effects::default();
-    type_one_char_at_end(&mut app, &mut effects);
+    type_one_char_at_end(&mut session, &mut effects);
     let msg = effects
         .cmds
         .remove(0)
         .run()
         .expect("the highlight cmd always replies");
     let mut effects2 = Effects::default();
-    app::update(&mut app, msg, &mut effects2);
+    app::update(session.app_mut(), msg, &mut effects2);
 
-    app.sync_view();
-    let buf = testgrid::draw(&app, 40, 12);
+    session.app_mut().sync_view();
+    let app = session.app();
+    let buf = testgrid::draw(app, 40, 12);
     let code_bg = Some(app.theme.chrome.code_bg);
     assert_eq!(
         app.theme

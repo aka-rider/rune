@@ -85,15 +85,18 @@ fn markdown_fence_highlights_inline_markdown_over_the_code_background() {
         "\n",
         "Outro.\n",
     );
-    let mut app = app_for(content, "/x/notes.md");
-    app.sync_view();
-    app.doc_mut(app.active)
+    let mut session = app_for(content, "/x/notes.md");
+    session.app_mut().sync_view();
+    let active = session.app().active;
+    session
+        .app_mut()
+        .doc_mut(active)
         .expect("doc")
         .viewport
         .set_size(60, 20);
 
     let mut effects = Effects::default();
-    type_one_char_at_end(&mut app, &mut effects);
+    type_one_char_at_end(&mut session, &mut effects);
     assert_eq!(
         effects.cmds.len(),
         1,
@@ -105,10 +108,11 @@ fn markdown_fence_highlights_inline_markdown_over_the_code_background() {
         .run()
         .expect("the highlight cmd always replies");
     let mut effects2 = Effects::default();
-    app::update(&mut app, msg, &mut effects2);
+    app::update(session.app_mut(), msg, &mut effects2);
 
-    app.sync_view();
-    let buf = testgrid::draw(&app, 60, 20);
+    session.app_mut().sync_view();
+    let app = session.app();
+    let buf = testgrid::draw(app, 60, 20);
 
     let heading_style = app.theme.scope_style(
         scope_table()
