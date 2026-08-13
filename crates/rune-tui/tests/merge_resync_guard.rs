@@ -1,9 +1,8 @@
 //! WP6 "Done when" integration tests for undo/redo resync and auto-exit
 //! (plan `merge-user-s-changes-with-idempotent-octopus.md`). The
 //! disk-conflict Guard tests live in `merge_disk_conflict_guard.rs` — split
-//! out to keep both files under the 500-line budget. Follows
-//! `merge_entry.rs`/`merge_resolver.rs`'s own fixture pattern, pulling
-//! shared setup from `merge_common` (review fix F9's dedupe).
+//! out to keep both files under the 500-line budget. Driven through
+//! `rune_fuzz::Session`, pulling shared setup from `merge_common`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -13,98 +12,89 @@
 
 mod merge_common;
 
-use std::path::Path;
-use std::sync::Arc;
-
 use rune_db::SyncKind;
-use rune_tui::app::App;
-use rune_tui::db::DbBridge;
+use rune_fuzz::Session;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
 
-use merge_common::db_wiring_common::{app_with_store, publish};
-use merge_common::{
-    bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key, reprobe,
-};
+use merge_common::{bare, ch, ctrl, external_write, reprobe, sup, untitled_draft};
 
 /// Three separate conflicts (lines 1, 5, 9), each surrounded by three
 /// unchanged context lines — the same spacing `merge_resolver.rs`'s own
 /// two-conflict fixture uses, extended by one more conflict so accepting two
 /// of the three leaves the resolver `Active` (the third still unresolved)
 /// rather than auto-exiting (decision 13).
-const ANCESTOR: &[u8] = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n";
+const ANCESTOR: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n";
 const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\nsix\nseven\neight\nnine disk\n";
 
-fn enter_three_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), ANCESTOR);
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+fn enter_three_conflict_merge() -> (Session, DocumentId) {
+    let mut session = Session::open("/doc.md", ANCESTOR);
+    let doc_id = session.app().active;
+    let draft_id = untitled_draft(session.app(), doc_id);
 
-    let (mut app, bridge) = app_with_store("merge-resync", Arc::clone(&vfs));
-    let draft_id = app.active;
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
-
-    press_key(&mut app, ch('X'));
+    assert!(session.key(ch('X')).is_none());
     for _ in 0..4 {
-        press_key(&mut app, bare(KeyCode::Down));
+        assert!(session.key(bare(KeyCode::Down)).is_none());
     }
-    press_key(&mut app, bare(KeyCode::Home));
-    press_key(&mut app, ch('X'));
+    assert!(session.key(bare(KeyCode::Home)).is_none());
+    assert!(session.key(ch('X')).is_none());
     for _ in 0..4 {
-        press_key(&mut app, bare(KeyCode::Down));
+        assert!(session.key(bare(KeyCode::Down)).is_none());
     }
-    press_key(&mut app, bare(KeyCode::Home));
-    press_key(&mut app, ch('X'));
+    assert!(session.key(bare(KeyCode::Home)).is_none());
+    assert!(session.key(ch('X')).is_none());
     assert_eq!(
-        app.doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer.content(),
         "Xone\ntwo\nthree\nfour\nXfive\nsix\nseven\neight\nXnine\n"
     );
-    drain_all_ops_for(&mut app, &bridge, doc_id);
+    assert!(session.deliver_db_all().is_none());
 
-    external_write(vfs.as_ref(), THEIRS);
-    reprobe(&mut app, &bridge, draft_id, doc_id);
-    assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
+    external_write(session.app().vfs.as_ref(), THEIRS);
+    reprobe(&mut session, draft_id, doc_id);
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().last_sync,
+        Some(SyncKind::Diverged)
+    );
 
-    app.active = doc_id;
-    press_key(&mut app, ctrl('m'));
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ctrl('m')).is_none());
+    assert!(session.deliver_db().is_none());
 
-    let MergeState::Active { pairs, cur, .. } = &app.merge else {
-        panic!("expected an active resolver, got {:?}", app.merge);
+    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
+        panic!("expected an active resolver, got {:?}", session.app().merge);
     };
     assert_eq!(pairs.len(), 3, "fixture must produce three conflicts");
     assert_eq!(*cur, 0);
-    (app, bridge, doc_id)
+    (session, doc_id)
 }
 
 /// Plan WP6 "Done when" (1): undo after two accepts reopens exactly the
-/// last-accepted hunk — `Active` again, `cur` on it, unresolved.
+/// last-accepted hunk — `Active` again, `cur` on it, unresolved. Undo
+/// mid-merge is not reachable through the key pipeline (the resolver's
+/// intercept swallows `⌘Z`), so the command entry point is the seam under
+/// test here and below.
 #[test]
 fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
-    let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
+    let (mut session, doc_id) = enter_three_conflict_merge();
 
-    press_key(&mut app, ch('o')); // block 0 -> resolved, cur -> 1
-    let pos_after_first_accept = app.doc(doc_id).unwrap().journal.pos();
-    press_key(&mut app, ch('t')); // block 1 -> resolved, cur -> 2
-    let MergeState::Active { pairs, cur, .. } = &app.merge else {
+    assert!(session.key(ch('o')).is_none()); // block 0 -> resolved, cur -> 1
+    let pos_after_first_accept = session.app().doc(doc_id).unwrap().journal.pos();
+    assert!(session.key(ch('t')).is_none()); // block 1 -> resolved, cur -> 2
+    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
         panic!("resolver must still be active — one conflict (block 2) remains");
     };
     assert!(pairs[0].block.resolved && pairs[1].block.resolved && !pairs[2].block.resolved);
     assert_eq!(*cur, 2);
 
-    rune_tui::commands::edit::undo(&mut app, doc_id);
+    rune_tui::commands::edit::undo(session.app_mut(), doc_id);
     assert_eq!(
-        app.doc(doc_id).unwrap().journal.pos(),
+        session.app().doc(doc_id).unwrap().journal.pos(),
         pos_after_first_accept,
         "undo must reverse exactly the second accept's one journal step"
     );
 
-    let MergeState::Active { pairs, cur, .. } = &app.merge else {
+    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
         panic!("resync must leave the resolver active");
     };
     assert!(
@@ -125,24 +115,24 @@ fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
 /// verdict untouched.
 #[test]
 fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
-    let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
+    let (mut session, doc_id) = enter_three_conflict_merge();
 
-    press_key(&mut app, ch('b')); // block 0 -> resolved, one journal step
-    let pos_before_ours = app.doc(doc_id).unwrap().journal.pos();
-    press_key(&mut app, ch('o')); // block 1 -> resolved, one journal step
-    let MergeState::Active { pairs, .. } = &app.merge else {
+    assert!(session.key(ch('b')).is_none()); // block 0 -> resolved, one journal step
+    let pos_before_ours = session.app().doc(doc_id).unwrap().journal.pos();
+    assert!(session.key(ch('o')).is_none()); // block 1 -> resolved, one journal step
+    let MergeState::Active { pairs, .. } = &session.app().merge else {
         panic!("resolver must still be active — block 2 remains");
     };
     assert!(pairs[0].block.resolved && pairs[1].block.resolved && !pairs[2].block.resolved);
 
-    rune_tui::commands::edit::undo(&mut app, doc_id);
+    rune_tui::commands::edit::undo(session.app_mut(), doc_id);
     assert_eq!(
-        app.doc(doc_id).unwrap().journal.pos(),
+        session.app().doc(doc_id).unwrap().journal.pos(),
         pos_before_ours,
         "undo must reverse exactly the ours-accept's one journal step"
     );
 
-    let MergeState::Active { pairs, .. } = &app.merge else {
+    let MergeState::Active { pairs, .. } = &session.app().merge else {
         panic!("resync must leave the resolver active — block 2 is still unresolved");
     };
     assert!(
@@ -160,24 +150,24 @@ fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
 /// framed markers return) and leaving the earlier `o` accept untouched.
 #[test]
 fn undo_after_ours_then_both_reopens_only_the_both_block() {
-    let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
+    let (mut session, doc_id) = enter_three_conflict_merge();
 
-    press_key(&mut app, ch('o')); // block 0 -> resolved, one journal step
-    let pos_before_both = app.doc(doc_id).unwrap().journal.pos();
-    press_key(&mut app, ch('b')); // block 1 -> resolved, one journal step
-    let MergeState::Active { pairs, .. } = &app.merge else {
+    assert!(session.key(ch('o')).is_none()); // block 0 -> resolved, one journal step
+    let pos_before_both = session.app().doc(doc_id).unwrap().journal.pos();
+    assert!(session.key(ch('b')).is_none()); // block 1 -> resolved, one journal step
+    let MergeState::Active { pairs, .. } = &session.app().merge else {
         panic!("resolver must still be active — block 2 remains");
     };
     assert!(pairs[0].block.resolved && pairs[1].block.resolved && !pairs[2].block.resolved);
 
-    rune_tui::commands::edit::undo(&mut app, doc_id);
+    rune_tui::commands::edit::undo(session.app_mut(), doc_id);
     assert_eq!(
-        app.doc(doc_id).unwrap().journal.pos(),
+        session.app().doc(doc_id).unwrap().journal.pos(),
         pos_before_both,
         "undo must reverse exactly the both-accept's one journal step"
     );
 
-    let MergeState::Active { pairs, .. } = &app.merge else {
+    let MergeState::Active { pairs, .. } = &session.app().merge else {
         panic!("resync must leave the resolver active — block 2 is still unresolved");
     };
     assert!(
@@ -185,7 +175,9 @@ fn undo_after_ours_then_both_reopens_only_the_both_block() {
         "the just-undone both-accepted block must be unresolved again"
     );
     assert!(
-        app.doc(doc_id)
+        session
+            .app()
+            .doc(doc_id)
             .unwrap()
             .buffer
             .content()
@@ -208,41 +200,37 @@ fn undo_after_ours_then_both_reopens_only_the_both_block() {
 fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
     let quoted_ours =
         "a quoted example:\n<<<<<<< editor\nfake ours\n=======\nfake theirs\n>>>>>>> disk\nend";
-    let ancestor = b"intro\nSTART\noutro\n".to_vec();
-    let theirs = b"intro\ntheirs replacement\noutro\n".to_vec();
+    let ancestor = "intro\nSTART\noutro\n";
+    let theirs = b"intro\ntheirs replacement\noutro\n";
 
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), &ancestor);
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-
-    let (mut app, bridge) = app_with_store("merge-resync-quoted", Arc::clone(&vfs));
-    let draft_id = app.active;
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    let mut session = Session::open("/doc.md", ancestor);
+    let doc_id = session.app().active;
+    let draft_id = untitled_draft(session.app(), doc_id);
 
     // Replace the whole buffer with the quoted-marker `ours` text: select
     // all, then type over the selection one rune/`Enter` at a time.
-    rune_tui::commands::nav::select_all(app.doc_mut(doc_id).unwrap());
+    assert!(session.key(sup('a')).is_none());
     for c in quoted_ours.chars() {
         if c == '\n' {
-            press_key(&mut app, bare(KeyCode::Enter));
+            assert!(session.key(bare(KeyCode::Enter)).is_none());
         } else {
-            press_key(&mut app, ch(c));
+            assert!(session.key(ch(c)).is_none());
         }
     }
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), quoted_ours);
-    drain_all_ops_for(&mut app, &bridge, doc_id);
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        quoted_ours
+    );
+    assert!(session.deliver_db_all().is_none());
 
-    external_write(vfs.as_ref(), &theirs);
-    reprobe(&mut app, &bridge, draft_id, doc_id);
+    external_write(session.app().vfs.as_ref(), theirs);
+    reprobe(&mut session, draft_id, doc_id);
 
-    app.active = doc_id;
-    press_key(&mut app, ctrl('m'));
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ctrl('m')).is_none());
+    assert!(session.deliver_db().is_none());
 
-    let MergeState::Active { pairs, .. } = &app.merge else {
-        panic!("expected an active resolver, got {:?}", app.merge);
+    let MergeState::Active { pairs, .. } = &session.app().merge else {
+        panic!("expected an active resolver, got {:?}", session.app().merge);
     };
     assert_eq!(
         pairs.len(),
@@ -250,22 +238,35 @@ fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
         "the quoted marker prose is INSIDE ours — one real conflict"
     );
 
-    let pre_accept_bytes = app.doc(doc_id).unwrap().buffer.content().to_string();
-    press_key(&mut app, ch('t')); // accept theirs — resolves the only block, auto-exits
-    assert_eq!(app.merge, MergeState::Inactive);
-    let post_accept_bytes = app.doc(doc_id).unwrap().buffer.content().to_string();
+    let pre_accept_bytes = session
+        .app()
+        .doc(doc_id)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
+    // Accept theirs — resolves the only block, auto-exits.
+    assert!(session.key(ch('t')).is_none());
+    assert_eq!(session.app().merge, MergeState::Inactive);
+    let post_accept_bytes = session
+        .app()
+        .doc(doc_id)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
     assert!(post_accept_bytes.contains("theirs replacement"));
 
-    rune_tui::commands::edit::undo(&mut app, doc_id);
+    assert!(session.key(sup('z')).is_none());
     assert_eq!(
-        app.doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer.content(),
         pre_accept_bytes,
         "undo must restore the quoted-marker working form byte-for-byte"
     );
 
-    rune_tui::commands::edit::redo(&mut app, doc_id);
+    assert!(session.key(ctrl('y')).is_none());
     assert_eq!(
-        app.doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer.content(),
         post_accept_bytes,
         "redo must reapply the accept byte-for-byte"
     );
@@ -275,27 +276,39 @@ fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
 /// keeps the buffer bytes exactly, and reverts the tab title.
 #[test]
 fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
-    let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
-    let other = app.open_document(rune_core::buffer::Buffer::new("scratch"));
+    let (mut session, doc_id) = enter_three_conflict_merge();
+    let other = session
+        .app_mut()
+        .open_document(rune_core::buffer::Buffer::new("scratch"));
 
-    let bytes_before = app.doc(doc_id).unwrap().buffer.content().to_string();
+    let bytes_before = session
+        .app()
+        .doc(doc_id)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
     assert!(
-        app.doc(doc_id)
+        session
+            .app()
+            .doc(doc_id)
             .unwrap()
             .file_name()
             .ends_with(": editor <-> disk")
     );
 
-    workspace::switch_to(&mut app, other);
+    workspace::switch_to(session.app_mut(), other);
 
-    assert_eq!(app.merge, MergeState::Inactive);
+    assert_eq!(session.app().merge, MergeState::Inactive);
     assert_eq!(
-        app.doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer.content(),
         bytes_before,
         "auto-exit must never touch the buffer"
     );
     assert!(
-        !app.doc(doc_id)
+        !session
+            .app()
+            .doc(doc_id)
             .unwrap()
             .file_name()
             .ends_with(": editor <-> disk"),
@@ -313,49 +326,45 @@ fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
 /// has since switched away from.
 #[test]
 fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_the_stale_ack() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
+    let draft_id = untitled_draft(session.app(), doc_id);
 
-    let (mut app, bridge) = app_with_store("merge-resync-pending-cancel", Arc::clone(&vfs));
-    let draft_id = app.active;
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('!')).is_none());
+    assert!(session.deliver_db().is_none());
+    external_write(session.app().vfs.as_ref(), b"disk changed this");
+    reprobe(&mut session, draft_id, doc_id);
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().last_sync,
+        Some(SyncKind::Diverged)
+    );
 
-    press_key(&mut app, ch('!'));
-    drain_one_op_for(&mut app, &bridge, doc_id);
-    external_write(vfs.as_ref(), b"disk changed this");
-    reprobe(&mut app, &bridge, draft_id, doc_id);
-    assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
-
-    app.active = doc_id;
-    press_key(&mut app, ctrl('m'));
+    assert!(session.key(ctrl('m')).is_none());
     assert!(
-        matches!(app.merge, MergeState::Pending { doc, .. } if doc == doc_id),
+        matches!(session.app().merge, MergeState::Pending { doc, .. } if doc == doc_id),
         "expected a Pending merge attempt, got {:?}",
-        app.merge
+        session.app().merge
     );
 
     // Switch away BEFORE the MergePrep ack ever arrives.
-    workspace::switch_to(&mut app, draft_id);
+    workspace::switch_to(session.app_mut(), draft_id);
 
     assert_eq!(
-        app.merge,
+        session.app().merge,
         MergeState::Inactive,
         "a Pending attempt must be cancelled, not left dangling"
     );
     assert!(
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(session.app())
             .unwrap_or_default()
             .contains("cancelled"),
         "expected a cancellation status, got {:?}",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(session.app())
     );
 
     // The now-stale MergePrep ack must land safely: no panic, and it must
     // NOT resurrect `Active` on a document the user has switched away from.
-    drain_one_op_for(&mut app, &bridge, doc_id);
-    assert_eq!(app.merge, MergeState::Inactive);
-    assert_eq!(app.active, draft_id);
+    assert!(session.deliver_db().is_none());
+    assert_eq!(session.app().merge, MergeState::Inactive);
+    assert_eq!(session.app().active, draft_id);
 }
