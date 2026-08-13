@@ -117,6 +117,7 @@
 //!   buffer does not, unless the user explicitly forced it.
 pub mod action;
 pub mod driver;
+pub use driver::Session;
 pub mod fault;
 pub mod generate;
 pub mod guard;

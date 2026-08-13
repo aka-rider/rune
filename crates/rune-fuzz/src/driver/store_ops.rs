@@ -17,8 +17,8 @@ use rune_vfs::Vfs;
 use crate::guard;
 use crate::snapshot::Snapshot;
 
+use super::session::{Outcome, State};
 use super::step_exec::{drain_one_db_op, step_and_check};
-use super::{Outcome, State};
 
 /// Blocks on `bridge` for the recovery-store reply completing `op_id` — the
 /// one drain predicate every consumer of a buffered `DbEvent` shares,
