@@ -45,7 +45,7 @@ fn ctrl(c: char) -> Msg {
 /// into.
 fn app_sized(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.pointer_clock = Box::new(ManualClock::new());
+    app.clock = Arc::new(ManualClock::new());
     app.frame_width = WIDTH;
     app.frame_height = HEIGHT;
     app.sync_view();

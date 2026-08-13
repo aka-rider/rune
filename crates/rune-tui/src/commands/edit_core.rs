@@ -113,6 +113,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
                 cursors_after: cursors_after.clone(),
                 kind,
             });
+            doc.ladder_presses = 0;
             // Async replica journaling (plan WP5.S3): the LOCAL journal
             // above is already the authoritative, synchronous source of
             // truth — this enqueue can never roll it back, only mark the

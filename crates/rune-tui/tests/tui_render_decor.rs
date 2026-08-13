@@ -149,7 +149,7 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
     let content = "## Heading\n\ntext\n";
     let cursor = content.find("text").expect("fixture has a tail line");
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.pointer_clock = Box::new(ManualClock::new());
+    app.clock = Arc::new(ManualClock::new());
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor);
     app.doc_mut(id).unwrap().viewport.set_size(40, 10);

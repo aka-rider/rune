@@ -205,11 +205,14 @@ pub struct App {
     /// The click-aggregation + drag-selection state a mouse gesture needs
     /// across messages — `commands::mouse`'s sole owner.
     pub pointer: crate::pointer::PointerState,
-    /// Answers "what time is it right now?" for `pointer`'s multi-click
-    /// window: the clock is a field so the fuzzer can inject time to
-    /// reproduce a gesture. Production installs the real wall clock, tests
-    /// install a `ManualClock`.
-    pub pointer_clock: Box<dyn crate::pointer::Clock>,
+    /// Answers "what time is it right now?" — shared by `pointer`'s
+    /// multi-click window and the undo/redo ladder's pause timeout. The
+    /// clock is an injected field so a fuzz seed or a test can reproduce
+    /// timing-dependent behavior. Production installs the real wall clock;
+    /// tests install a `ManualClock`, retaining an `Arc` clone to advance
+    /// it. `Arc`, not `Box`: a test needs to keep its own handle to the
+    /// SAME clock this field points at.
+    pub clock: Arc<dyn crate::pointer::Clock + Send + Sync>,
     /// Which binding set governs the editor pane — defaults to
     /// `BindingSet::Default` (the VS Code-style set this crate has always
     /// had). `app::handle_editor_key` does not consult this yet: full vim
@@ -369,7 +372,7 @@ impl App {
             next_quit_gen: 0,
             quit_intent: None,
             pointer: crate::pointer::PointerState::default(),
-            pointer_clock: Box::new(crate::pointer::SystemClock),
+            clock: Arc::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
             guard: None,
             trash_gen: 0,

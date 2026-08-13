@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use rune_core::undo::{EditKind, Journal, Step};
 
 pub const MULTI_WORD_WORDS: usize = 3;
+pub const LADDER_RESET: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
@@ -45,6 +48,36 @@ fn crossings_needed(tier: Tier) -> usize {
     }
 }
 
+fn walk(
+    steps: &[Step],
+    first_kind: EditKind,
+    tier: Tier,
+    indices: impl Iterator<Item = usize>,
+    cap: usize,
+) -> usize {
+    let target = crossings_needed(tier);
+    let mut crossings = 0;
+    let mut count = 1;
+
+    for idx in indices {
+        let Some(step) = steps.get(idx) else {
+            break;
+        };
+        if step.kind != first_kind || is_isolated(step.kind) {
+            break;
+        }
+        count += 1;
+        if crosses_boundary(tier, &step_text(step)) {
+            crossings += 1;
+            if crossings >= target {
+                break;
+            }
+        }
+    }
+
+    count.min(cap)
+}
+
 pub fn steps_for(journal: &Journal, tier: Tier) -> usize {
     let pos = journal.pos();
     if pos == 0 {
@@ -57,31 +90,23 @@ pub fn steps_for(journal: &Journal, tier: Tier) -> usize {
     if tier == Tier::Rune || is_isolated(first.kind) {
         return 1;
     }
+    walk(steps, first.kind, tier, (0..pos - 1).rev(), pos)
+}
 
-    let target = crossings_needed(tier);
-    let mut crossings = 0;
-    let mut count = 1;
-    let mut idx = pos - 1;
-
-    while idx > 0 {
-        let next_idx = idx - 1;
-        let Some(step) = steps.get(next_idx) else {
-            break;
-        };
-        if step.kind != first.kind || is_isolated(step.kind) {
-            break;
-        }
-        count += 1;
-        idx = next_idx;
-        if crosses_boundary(tier, &step_text(step)) {
-            crossings += 1;
-            if crossings >= target {
-                break;
-            }
-        }
+pub fn steps_for_redo(journal: &Journal, tier: Tier) -> usize {
+    let pos = journal.pos();
+    let steps = journal.steps();
+    let len = steps.len();
+    if pos == len {
+        return 0;
     }
-
-    count.min(pos)
+    let Some(first) = steps.get(pos) else {
+        return 0;
+    };
+    if tier == Tier::Rune || is_isolated(first.kind) {
+        return 1;
+    }
+    walk(steps, first.kind, tier, pos + 1..len, len - pos)
 }
 
 #[cfg(test)]

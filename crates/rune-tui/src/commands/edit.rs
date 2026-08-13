@@ -31,7 +31,7 @@
 
 use rune_core::buffer::{AppliedEdit, Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
-use rune_core::undo::EditKind;
+use rune_core::undo::{EditKind, Journal};
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
@@ -41,6 +41,7 @@ use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
 use crate::materialize_ack;
 use crate::messages;
+use crate::undogroup::{self, Tier};
 
 /// One edit per cursor, replacing its selection when it has one, or
 /// `bare`'s caller-chosen range otherwise. `bare` returning `None` skips
@@ -217,19 +218,28 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Peek the target step (without moving the journal), apply its inverse
-/// to the buffer, and commit the position move ONLY if the buffer edit
-/// succeeds — a failed apply posts an error to the message log and leaves
-/// the journal position (and buffer) untouched, so the journal never runs
-/// ahead of the buffer. Same ownership rule as `commit_edit_batch` (F2): a
-/// success posts nothing — only this function's own failure path posts.
-///
-/// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
-/// `is_read_only()` — see `Document::read_only`'s doc comment for why
-/// `ReadOnly::Always` stays exempt. `ReadOnly::Preview` routes through
-/// `App::refuse_if_preview` so the refusal posts a status message like
-/// every other preview refusal; `ReadOnly::Reading`'s refusal stays silent,
-/// unchanged from before.
+fn merge_active_on(app: &App, id: DocumentId) -> bool {
+    matches!(&app.merge, crate::merge::MergeState::Active { doc, .. } if *doc == id)
+}
+
+fn ladder_press(app: &mut App, id: DocumentId, steps_for: fn(&Journal, Tier) -> usize) -> usize {
+    let now = app.clock.now();
+    let Some(doc) = app.doc_mut(id) else {
+        return 0;
+    };
+    let reset = doc
+        .ladder_pressed_at
+        .is_none_or(|last| now.duration_since(last) >= undogroup::LADDER_RESET);
+    if reset {
+        doc.ladder_presses = 0;
+    }
+    let tier = undogroup::tier_for(doc.ladder_presses);
+    let count = steps_for(&doc.journal, tier);
+    doc.ladder_presses += 1;
+    doc.ladder_pressed_at = Some(now);
+    count
+}
+
 pub fn undo(app: &mut App, id: DocumentId) {
     if app.refuse_if_preview(id) {
         return;
@@ -238,46 +248,46 @@ pub fn undo(app: &mut App, id: DocumentId) {
     if matches!(doc.read_only, ReadOnly::Reading) {
         return;
     }
-    let Some((step, new_pos)) = doc.journal.undo_peek() else {
-        return;
+
+    let count = if merge_active_on(app, id) {
+        1
+    } else {
+        ladder_press(app, id, undogroup::steps_for)
     };
-    let edits: Vec<AppliedEdit> = step.edits.clone();
-    let cursors_before: Vec<Cursor> = step.cursors_before.clone();
 
-    // The step's own `AppliedEdit`s are already in the CURRENT (pre-undo)
-    // buffer's coordinates (`buffer.rs`: `AppliedEdit::start`/`end` is the
-    // post-edit range of the edit that produced the buffer as it stands
-    // right now) — exactly the span undo is about to overwrite (plan review
-    // F1).
-    let affected = affected_range(&edits);
+    let mut reached = None;
+    for _ in 0..count {
+        let Some(doc) = app.doc(id) else { break };
+        let Some((step, token)) = doc.journal.undo_peek() else {
+            break;
+        };
+        let edits: Vec<AppliedEdit> = step.edits.clone();
+        let cursors_before: Vec<Cursor> = step.cursors_before.clone();
+        let affected = affected_range(&edits);
 
-    match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
-        Ok(new_buf) => {
-            let target = new_pos.target();
-            let Some(doc) = app.doc_mut(id) else { return };
-            doc.buffer = new_buf;
-            doc.cursors = CursorSet::new_from(&cursors_before);
-            doc.journal.commit(new_pos);
-            db::move_undo_pos(app, id, target);
-            materialize_ack::recompute_dirty(app, id);
-            resync_after_journal_jump(app, id, affected);
+        match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
+            Ok(new_buf) => {
+                let target = token.target();
+                let Some(doc) = app.doc_mut(id) else { break };
+                doc.buffer = new_buf;
+                doc.cursors = CursorSet::new_from(&cursors_before);
+                doc.journal.commit(token);
+                reached = Some(target);
+                resync_after_journal_jump(app, id, affected);
+            }
+            Err(e) => {
+                messages::error(app, format!("undo failed: {e}"));
+                break;
+            }
         }
-        Err(e) => {
-            messages::error(app, format!("undo failed: {e}"));
-        }
+    }
+
+    if let Some(target) = reached {
+        db::move_undo_pos(app, id, target);
+        materialize_ack::recompute_dirty(app, id);
     }
 }
 
-/// Mirrors `undo` above: reapply the step forward, commit the position
-/// move only on success. Same ownership rule as `commit_edit_batch`/`undo`
-/// (F2).
-///
-/// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
-/// `is_read_only()` — see `Document::read_only`'s doc comment for why
-/// `ReadOnly::Always` stays exempt. `ReadOnly::Preview` routes through
-/// `App::refuse_if_preview` so the refusal posts a status message like
-/// every other preview refusal; `ReadOnly::Reading`'s refusal stays silent,
-/// unchanged from before.
 pub fn redo(app: &mut App, id: DocumentId) {
     if app.refuse_if_preview(id) {
         return;
@@ -286,34 +296,43 @@ pub fn redo(app: &mut App, id: DocumentId) {
     if matches!(doc.read_only, ReadOnly::Reading) {
         return;
     }
-    let Some((step, new_pos)) = doc.journal.redo_peek() else {
-        return;
+
+    let count = if merge_active_on(app, id) {
+        1
+    } else {
+        ladder_press(app, id, undogroup::steps_for_redo)
     };
-    let edits: Vec<AppliedEdit> = step.edits.clone();
-    let cursors_after: Vec<Cursor> = step.cursors_after.clone();
 
-    // Redo replays each edit's DELETE range — `[start, start + deleted.len())`
-    // — against the running CURRENT (pre-redo) buffer (`rune_core::undo::
-    // reapply`'s own doc), which is the same buffer state the step's
-    // original forward application saw (no other edits interpose between an
-    // undo and its matching redo) — so this is that same pre-redo buffer's
-    // coordinates too (plan review F1).
-    let affected = affected_delete_range(&edits);
+    let mut reached = None;
+    for _ in 0..count {
+        let Some(doc) = app.doc(id) else { break };
+        let Some((step, token)) = doc.journal.redo_peek() else {
+            break;
+        };
+        let edits: Vec<AppliedEdit> = step.edits.clone();
+        let cursors_after: Vec<Cursor> = step.cursors_after.clone();
+        let affected = affected_delete_range(&edits);
 
-    match rune_core::undo::reapply(&doc.buffer, &edits) {
-        Ok(new_buf) => {
-            let target = new_pos.target();
-            let Some(doc) = app.doc_mut(id) else { return };
-            doc.buffer = new_buf;
-            doc.cursors = CursorSet::new_from(&cursors_after);
-            doc.journal.commit(new_pos);
-            db::move_undo_pos(app, id, target);
-            materialize_ack::recompute_dirty(app, id);
-            resync_after_journal_jump(app, id, affected);
+        match rune_core::undo::reapply(&doc.buffer, &edits) {
+            Ok(new_buf) => {
+                let target = token.target();
+                let Some(doc) = app.doc_mut(id) else { break };
+                doc.buffer = new_buf;
+                doc.cursors = CursorSet::new_from(&cursors_after);
+                doc.journal.commit(token);
+                reached = Some(target);
+                resync_after_journal_jump(app, id, affected);
+            }
+            Err(e) => {
+                messages::error(app, format!("redo failed: {e}"));
+                break;
+            }
         }
-        Err(e) => {
-            messages::error(app, format!("redo failed: {e}"));
-        }
+    }
+
+    if let Some(target) = reached {
+        db::move_undo_pos(app, id, target);
+        materialize_ack::recompute_dirty(app, id);
     }
 }
 
@@ -350,7 +369,7 @@ fn resync_after_journal_jump(
     id: DocumentId,
     affected: Option<std::ops::Range<usize>>,
 ) {
-    if matches!(&app.merge, crate::merge::MergeState::Active { doc, .. } if *doc == id) {
+    if merge_active_on(app, id) {
         crate::merge::resync(app, id, affected);
     } else {
         crate::db_enqueue::probe(app, id);

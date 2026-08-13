@@ -9,7 +9,7 @@
 //! `Clock` is an injected field on `App`, so a click sequence is
 //! reproducible from a fuzz seed instead of depending on real elapsed time.
 
-use std::cell::Cell;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// A mouse button, decoupled from `termina::event::MouseButton`.
@@ -82,8 +82,7 @@ pub fn from_termina(event: termina::event::MouseEvent) -> Option<MouseInput> {
 /// Answers "what time is it right now?" — a trait rather than a bare
 /// `Instant::now()` call so `App` can carry the answer source as a field
 /// (plan WP7.S5: "inject the clock as a field so the fuzzer can reproduce
-/// a gesture"). Deliberately no `Send`/`Sync` bound — `App` is never sent
-/// across threads.
+/// a gesture").
 pub trait Clock: std::fmt::Debug {
     fn now(&self) -> Instant;
 }
@@ -108,7 +107,7 @@ impl Clock for SystemClock {
 #[derive(Debug)]
 pub struct ManualClock {
     epoch: Instant,
-    elapsed: Cell<Duration>,
+    elapsed: Mutex<Duration>,
 }
 
 impl Default for ManualClock {
@@ -121,19 +120,21 @@ impl ManualClock {
     pub fn new() -> ManualClock {
         ManualClock {
             epoch: Instant::now(),
-            elapsed: Cell::new(Duration::ZERO),
+            elapsed: Mutex::new(Duration::ZERO),
         }
     }
 
     /// Advances this clock by `d` — the only way its `now()` ever changes.
     pub fn advance(&self, d: Duration) {
-        self.elapsed.set(self.elapsed.get() + d);
+        let mut elapsed = self.elapsed.lock().unwrap_or_else(|p| p.into_inner());
+        *elapsed += d;
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        self.epoch + self.elapsed.get()
+        let elapsed = self.elapsed.lock().unwrap_or_else(|p| p.into_inner());
+        self.epoch + *elapsed
     }
 }
 

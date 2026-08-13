@@ -161,7 +161,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         return;
     }
 
-    let now = app.pointer_clock.now();
+    let now = app.clock.now();
     let count = app.pointer.register_click(now, input.column, input.row);
 
     if input.alt {
@@ -314,7 +314,7 @@ mod tests {
 
     fn app_with(content: &str, width: u16, height: u16) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-        app.pointer_clock = Box::new(ManualClock::new());
+        app.clock = Arc::new(ManualClock::new());
         app.frame_width = width;
         app.frame_height = height + 1; // + footer row
         app.sync_view();
@@ -464,7 +464,7 @@ mod tests {
     fn click_on_a_synthetic_table_border_row_does_not_move_the_cursor() {
         let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-        app.pointer_clock = Box::new(ManualClock::new());
+        app.clock = Arc::new(ManualClock::new());
         app.frame_width = 40;
         app.frame_height = 21; // + footer row
         let cursor_offset = content.find("tail").expect("fixture has a tail paragraph");

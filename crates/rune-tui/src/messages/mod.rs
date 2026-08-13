@@ -511,7 +511,7 @@ fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
         return;
     };
 
-    let now = app.pointer_clock.now();
+    let now = app.clock.now();
     let count = app.pointer.register_click(now, input.column, input.row);
 
     if place_click_cursor(&mut app.messages.doc, offset, desired_col, count) {
