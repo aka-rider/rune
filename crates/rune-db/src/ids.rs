@@ -131,5 +131,4 @@ mod tests {
     fn obs_id_from_rowid_accepts_positive() {
         assert_eq!(obs_id_from_rowid(7).expect("ok").get(), 7);
     }
-
 }
