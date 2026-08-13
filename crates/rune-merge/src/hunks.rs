@@ -620,12 +620,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_diff3_interleaves_clean_before_each_conflict_and_trailing_clean() {
-        let output = b"before\n<<<<<<< ours\nours-line\n||||||| ancestor\nanc-line\n=======\ntheirs-line\n>>>>>>> theirs\nafter\n";
-        let parsed = parse_diff3(output);
-        assert_eq!(parsed.conflicts.len(), 1);
-        assert_eq!(parsed.conflicts[0].0, b"before\n");
-        assert_eq!(parsed.trailing_clean, b"after\n");
+    fn clean_text_brackets_a_conflict_on_both_sides() {
+        let ancestor = b"before\nshared\nafter\n";
+        let ours = b"before\nours-change\nafter\n";
+        let theirs = b"before\ntheirs-change\nafter\n";
+
+        let hunks = merge_hunks(ancestor, ours, theirs);
+
+        assert_eq!(
+            hunks,
+            vec![
+                Hunk::Clean(b"before\n".to_vec()),
+                Hunk::Conflict {
+                    ours: b"ours-change\n".to_vec(),
+                    theirs: b"theirs-change\n".to_vec(),
+                },
+                Hunk::Clean(b"after\n".to_vec()),
+            ]
+        );
     }
 
     #[test]
@@ -678,24 +690,19 @@ DDDD\n";
         );
     }
 
-    // Same shape, but nothing downstream ever re-anchors either: the
-    // widened conflict has no resync point to stop at, so it is the
-    // genuine last resort — the whole remaining file, not an arbitrary
-    // truncation.
     #[test]
-    fn unanchorable_section_with_no_resync_runs_to_end_of_input() {
-        let ours = b"AAAA\nBBBB\n";
-        let theirs = b"AAAA\nXXXX\n";
-        let diff3_output: &[u8] =
-            b"AAAA\n<<<<<<< ours\nZZZZ\n||||||| ancestor\nanc\n=======\nXXXX\n>>>>>>> theirs\n";
+    fn unanchorable_conflict_with_no_resync_runs_to_end_of_input() {
+        let ancestor: &[u8] = b"eta\r\nBBBB\nCCCC\nzeta";
+        let ours: &[u8] = b"AAAA\r\nBBBB\nCCCC\nAAAA";
+        let theirs: &[u8] = b"eta\r\nBBBB\nCCCC\nXXXX";
 
-        let hunks = parse_hunks(ours, theirs, diff3_output);
+        let hunks = merge_hunks(ancestor, ours, theirs);
 
         assert_eq!(
             hunks,
             vec![Hunk::Conflict {
-                ours: b"AAAA\nBBBB\n".to_vec(),
-                theirs: b"AAAA\nXXXX\n".to_vec(),
+                ours: ours.to_vec(),
+                theirs: theirs.to_vec(),
             }]
         );
     }
