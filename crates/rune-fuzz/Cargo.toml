@@ -27,7 +27,10 @@ rune-syntax = { path = "../rune-syntax" }
 # `assert_invariant` horizontal-tiling checks silently compile out of the
 # fuzzer binary — `cfg(test)` covers only rune-tui's own `cargo test`, not
 # a normal dependency link like this one.
-rune-tui = { path = "../rune-tui", features = ["strict-invariants"] }
+# `testgrid` on purpose: `Session::grid`/`Session::row` (plan Phase 3)
+# delegate to `rune_tui::testgrid`, which only exists behind this feature
+# outside `cfg(test)`.
+rune-tui = { path = "../rune-tui", features = ["strict-invariants", "testgrid"] }
 rune-vfs = { path = "../rune-vfs" }
 rune-ts = { path = "../rune-ts" }
 base64 = { workspace = true }

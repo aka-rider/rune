@@ -53,6 +53,11 @@ unicode-width = { workspace = true }
 # `#[cfg(test)] mod tests`, never for `tests/layout.rs`, which links the
 # library as an ordinary (non-test) dependency.
 rune-tui = { path = ".", features = ["testgrid", "strict-invariants"] }
+# A dev-dependency cycle (Cargo permits it, same trick as the
+# self-dependency above): lets integration tests drive the app through
+# `rune_fuzz::driver::Session`'s stepwise vocabulary instead of hand-rolling
+# `Msg`/`update` calls.
+rune-fuzz = { path = "../rune-fuzz" }
 
 [features]
 # Exposes `testgrid` (plan WP1.S1) to integration tests, which link the

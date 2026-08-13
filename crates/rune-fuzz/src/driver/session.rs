@@ -3,11 +3,14 @@ mod actions;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use ratatui::layout::Rect;
+
 use rune_core::buffer::Buffer;
 use rune_tui::app::App;
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
-use rune_tui::keymap::KeyInput;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::Cmd;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
@@ -129,6 +132,39 @@ pub struct Session {
 enum Phase {
     Live(Box<Snapshot>),
     SetupPanicked,
+}
+
+/// `GlobalCommand::FocusTabs`'s `^t` chord (`global::GLOBAL_BINDINGS`).
+const FOCUS_TABS: KeyInput = KeyInput {
+    code: KeyCode::Char('t'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
+const UP: KeyInput = KeyInput {
+    code: KeyCode::Up,
+    mods: Mods::NONE,
+};
+
+const DOWN: KeyInput = KeyInput {
+    code: KeyCode::Down,
+    mods: Mods::NONE,
+};
+
+const ENTER: KeyInput = KeyInput {
+    code: KeyCode::Enter,
+    mods: Mods::NONE,
+};
+
+/// The Tabs pane's own paint rect, the same `layout::geometry` call the
+/// renderer and `opentabs::mouse` both make.
+fn tabs_inner_rect(app: &App) -> Rect {
+    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    rune_tui::layout::geometry(area, app).tabs_inner
 }
 
 fn new_state(
@@ -290,6 +326,85 @@ impl Session {
 
     pub fn snapshot(&mut self) -> Snapshot {
         Snapshot::capture(&mut self.state.app, true)
+    }
+
+    /// Renders the session's `App` into a `width`x`height` `TestBackend`
+    /// and returns every row as its own `String` — delegates to
+    /// `rune_tui::testgrid::grid`, the crate's sole `TestBackend` site.
+    pub fn grid(&mut self, width: u16, height: u16) -> Vec<String> {
+        rune_tui::testgrid::grid(&self.state.app, width, height)
+    }
+
+    /// Renders the session's `App` and returns row `y` only — delegates to
+    /// `rune_tui::testgrid::row`.
+    pub fn row(&mut self, y: u16, width: u16, height: u16) -> String {
+        rune_tui::testgrid::row(&self.state.app, y, width, height)
+    }
+
+    /// Switches to the tab at `index` (in `app.documents.order()`) the way a
+    /// user actually would: `^t` focuses the Tabs pane, `Up` repeated
+    /// clamps the cursor to the top, `Down` walks it to `index`, and
+    /// `Enter` opens it — the real chord set `opentabs::TABS_BINDINGS`
+    /// resolves, never `workspace::switch_to` directly.
+    pub fn switch_tab_by_index(&mut self, index: usize) -> Option<&Violation> {
+        self.focus_and_select_tab(index);
+        self.key(ENTER)
+    }
+
+    /// Switches to the tab at `index` the way a mouse click would: focuses
+    /// the Tabs pane and scrolls `index` into view via the same real key
+    /// sequence `switch_tab_by_index` uses, then synthesizes the
+    /// double-click (`Down`+`Up` twice, `PointerState::register_row_click`'s
+    /// own activation rule) on that row's cells, computed from the same
+    /// `layout::geometry` rect the renderer paints the Tabs pane into.
+    pub fn switch_tab_by_click(&mut self, index: usize) -> Option<&Violation> {
+        self.focus_and_select_tab(index);
+
+        let rect = tabs_inner_rect(&self.state.app);
+        let order_len = self.state.app.documents.order().len();
+        let window = self
+            .state
+            .app
+            .tabs
+            .nav
+            .window(order_len, rect.height as usize);
+        let local_row = index.saturating_sub(window.start) as u16;
+        let column = rect.x;
+        let row = rect.y + local_row;
+
+        for _ in 0..2 {
+            self.mouse(MouseInput {
+                kind: MouseKind::Down(MouseButton::Left),
+                column,
+                row,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            });
+            self.mouse(MouseInput {
+                kind: MouseKind::Up(MouseButton::Left),
+                column,
+                row,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            });
+        }
+        self.outcome.violation.as_ref()
+    }
+
+    /// Focuses the Tabs pane and walks its cursor to `index` via `Up`/`Down`
+    /// — the shared prefix `switch_tab_by_index` and `switch_tab_by_click`
+    /// both need before they diverge on how the tab is actually opened.
+    fn focus_and_select_tab(&mut self, index: usize) {
+        self.key(FOCUS_TABS);
+        let order_len = self.state.app.documents.order().len();
+        for _ in 0..order_len {
+            self.key(UP);
+        }
+        for _ in 0..index {
+            self.key(DOWN);
+        }
     }
 
     pub fn app(&self) -> &App {
