@@ -3,6 +3,7 @@ use crate::action::Action;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Keyword {
     Key,
+    Mouse,
     Type,
     Paste,
     OpenFileSearch,
@@ -25,6 +26,7 @@ impl Keyword {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Keyword::Key => "key",
+            Keyword::Mouse => "mouse",
             Keyword::Type => "type",
             Keyword::Paste => "paste",
             Keyword::OpenFileSearch => "open-filesearch",
@@ -47,6 +49,7 @@ impl Keyword {
     pub(super) fn for_action(action: &Action) -> Self {
         match action {
             Action::Key(_) => Keyword::Key,
+            Action::Mouse(_) => Keyword::Mouse,
             Action::Type(_) => Keyword::Type,
             Action::Paste(_) => Keyword::Paste,
             Action::OpenFileSearch => Keyword::OpenFileSearch,

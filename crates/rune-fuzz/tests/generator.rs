@@ -20,6 +20,7 @@ use rune_fuzz::action::{Action, HighlightVersion};
 use rune_fuzz::driver;
 use rune_fuzz::generate::{self, TYPE_PALETTE};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
@@ -116,6 +117,7 @@ const SAMPLED_SESSIONS: u32 = 1500;
 fn action_variant_name(action: &Action) -> &'static str {
     match action {
         Action::Key(_) => "Key",
+        Action::Mouse(_) => "Mouse",
         Action::Type(_) => "Type",
         Action::Paste(_) => "Paste",
         Action::OpenFileSearch => "OpenFileSearch",
@@ -135,11 +137,19 @@ fn action_variant_name(action: &Action) -> &'static str {
     }
 }
 
-fn every_action_variant_witness() -> [Action; 17] {
+fn every_action_variant_witness() -> [Action; 18] {
     [
         Action::Key(KeyInput {
             code: KeyCode::Char('a'),
             mods: Mods::NONE,
+        }),
+        Action::Mouse(MouseInput {
+            kind: MouseKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            shift: false,
+            alt: false,
+            ctrl: false,
         }),
         Action::Type(String::new()),
         Action::Paste(String::new()),

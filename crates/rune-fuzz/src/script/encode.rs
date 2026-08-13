@@ -8,6 +8,7 @@ use super::keyword::{self, Keyword};
 use crate::action::{Action, HighlightVersion};
 use crate::driver::DOC_PATH;
 use rune_tui::keymap::{KeyCode, Mods};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::DirCause;
 
 /// Encodes `(path, content, actions)` as script text, one action per line.
@@ -41,6 +42,11 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push(' ');
             out.push_str(&encode_mods(k.mods));
             out.push('\n');
+        }
+        Action::Mouse(m) => {
+            let kind = encode_mouse_kind(m.kind);
+            let mods = encode_mouse_mods(*m);
+            let _ = writeln!(out, " {kind} {} {} {mods}", m.column, m.row);
         }
         Action::Type(s) => {
             out.push(' ');
@@ -133,6 +139,31 @@ fn encode_highlight_version(version: HighlightVersion) -> &'static str {
         HighlightVersion::Stale => "stale",
         HighlightVersion::Future => "future",
     }
+}
+
+/// Exhaustive on `MouseKind`/`MouseButton` (compiler-checked the same way
+/// `encode_code` is against `decode`'s mirror match).
+fn encode_mouse_kind(kind: MouseKind) -> String {
+    let button = |b: MouseButton| match b {
+        MouseButton::Left => "left",
+        MouseButton::Right => "right",
+        MouseButton::Middle => "middle",
+    };
+    match kind {
+        MouseKind::Down(b) => format!("down:{}", button(b)),
+        MouseKind::Up(b) => format!("up:{}", button(b)),
+        MouseKind::Drag(b) => format!("drag:{}", button(b)),
+        MouseKind::ScrollUp => "scroll-up".into(),
+        MouseKind::ScrollDown => "scroll-down".into(),
+    }
+}
+
+fn encode_mouse_mods(m: MouseInput) -> String {
+    let mut s = String::with_capacity(3);
+    s.push(if m.shift { 's' } else { '-' });
+    s.push(if m.alt { 'a' } else { '-' });
+    s.push(if m.ctrl { 'c' } else { '-' });
+    s
 }
 
 fn encode_dir_cause(cause: DirCause) -> &'static str {

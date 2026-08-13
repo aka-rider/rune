@@ -6,6 +6,7 @@
 //! content <escaped>            # always the first line
 //! path <escaped>                # OPTIONAL, only right after `content`; defaults to DOC_PATH
 //! key <code> <mods>            # key char:a ----   |  key left s---  |  key char:\u{20} ---u
+//! mouse <kind> <col> <row> <mods>   # mouse down:left 10 5 ---  |  mouse scroll-up 0 0 s-c
 //! type <escaped>
 //! paste <escaped>
 //! resize <w> <h>
@@ -31,11 +32,14 @@
 //! no `DeliverMode` — G9 proves at most one save can ever be outstanding —
 //! so `deliver` is a bare token, never `deliver oldest|newest|all`.
 //!
-//! `<mods>` is a fixed 4-char field (shift, alt, ctrl, sup), each `-` or its
-//! initial letter. Decode locates it by taking the LAST 4 characters of the
-//! line plus the separating space before them, never by a generic
-//! whitespace split — so an escaped `char:` payload may itself contain a
-//! literal space with no ambiguity.
+//! `key`'s `<mods>` is a fixed 4-char field (shift, alt, ctrl, sup), each
+//! `-` or its initial letter. Decode locates it by taking the LAST 4
+//! characters of the line plus the separating space before them, never by a
+//! generic whitespace split — so an escaped `char:` payload may itself
+//! contain a literal space with no ambiguity. `mouse`'s `<mods>` follows the
+//! same convention minus `sup` (a mouse event carries no super modifier): a
+//! fixed 3-char field, and since no `mouse` field is ever escaped, decode
+//! splits it plainly.
 //!
 //! Text payloads are escaped with `char::escape_default()` — always ASCII:
 //! printable ASCII passes through unescaped, everything else becomes one of
@@ -128,6 +132,7 @@ mod tests {
     use crate::action::{Action, HighlightVersion};
     use crate::driver::DOC_PATH;
     use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+    use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
     use rune_tui::runtime::DirCause;
     use rune_vfs::DirEntry;
     use std::path::PathBuf;
@@ -161,6 +166,46 @@ mod tests {
             key(KeyCode::Left, mods(true, false, false, false)),
             key(KeyCode::Char(' '), mods(false, false, false, true)),
             key(KeyCode::Char('😀'), mods(true, true, true, true)),
+            Action::Mouse(MouseInput {
+                kind: MouseKind::Down(MouseButton::Left),
+                column: 10,
+                row: 5,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            }),
+            Action::Mouse(MouseInput {
+                kind: MouseKind::Up(MouseButton::Right),
+                column: 0,
+                row: 0,
+                shift: true,
+                alt: true,
+                ctrl: true,
+            }),
+            Action::Mouse(MouseInput {
+                kind: MouseKind::Drag(MouseButton::Middle),
+                column: u16::MAX,
+                row: u16::MAX,
+                shift: false,
+                alt: true,
+                ctrl: false,
+            }),
+            Action::Mouse(MouseInput {
+                kind: MouseKind::ScrollUp,
+                column: 79,
+                row: 23,
+                shift: true,
+                alt: false,
+                ctrl: false,
+            }),
+            Action::Mouse(MouseInput {
+                kind: MouseKind::ScrollDown,
+                column: 1,
+                row: 2,
+                shift: false,
+                alt: false,
+                ctrl: true,
+            }),
             Action::Type("some prose".to_string()),
             Action::Paste("line1\r\nline2".to_string()),
             Action::Resize(80, 24),
@@ -444,6 +489,100 @@ mod tests {
         let err = decode("content hi\nhighlight-tree\n").unwrap_err();
         assert!(
             matches!(err, ScriptError::UnknownKeyword { ref keyword, .. } if keyword == "highlight-tree"),
+            "bare keyword with no fields: got {err:?}"
+        );
+    }
+
+    #[test]
+    fn mouse_round_trips_every_kind_and_button() {
+        let buttons = [MouseButton::Left, MouseButton::Right, MouseButton::Middle];
+        let mut kinds: Vec<MouseKind> = vec![MouseKind::ScrollUp, MouseKind::ScrollDown];
+        for b in buttons {
+            kinds.extend([MouseKind::Down(b), MouseKind::Up(b), MouseKind::Drag(b)]);
+        }
+        for kind in kinds {
+            let actions = vec![Action::Mouse(MouseInput {
+                kind,
+                column: 42,
+                row: 7,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            })];
+            let encoded = encode(DOC_PATH, "hi", &actions);
+            assert_eq!(must_decode(&encoded).2, actions, "kind {kind:?}");
+        }
+    }
+
+    #[test]
+    fn mouse_decodes_a_hand_written_line_exactly() {
+        let (_, _, actions) = must_decode("content hi\nmouse drag:left 12 3 s-c\n");
+        assert_eq!(
+            actions,
+            vec![Action::Mouse(MouseInput {
+                kind: MouseKind::Drag(MouseButton::Left),
+                column: 12,
+                row: 3,
+                shift: true,
+                alt: false,
+                ctrl: true,
+            })]
+        );
+    }
+
+    #[test]
+    fn mouse_rejects_malformed_inputs_with_typed_errors() {
+        let err = decode("content hi\nmouse hover:left 0 0 ---\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "unknown kind verb: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse down:pinky 0 0 ---\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "unknown button: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse scroll-up 0 0\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "missing mods field: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse down:left wide 0 ---\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "non-numeric col: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse down:left 0 65536 ---\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "row above u16::MAX: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse down:left 0 0 xxx\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidMods { .. }),
+            "bad mods flags: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse down:left 0 0 ---u\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidMods { .. }),
+            "4-char key-style mods field: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse down:left 0 0 --- extra\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "trailing garbage field: got {err:?}"
+        );
+
+        let err = decode("content hi\nmouse\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::UnknownKeyword { ref keyword, .. } if keyword == "mouse"),
             "bare keyword with no fields: got {err:?}"
         );
     }

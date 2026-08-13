@@ -8,6 +8,7 @@
 
 use rune_syntax::ScopeId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pointer::MouseInput;
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
@@ -56,6 +57,8 @@ impl HighlightVersion {
 pub enum Action {
     /// One keystroke, delivered as `Msg::Key`.
     Key(KeyInput),
+    /// One mouse event, delivered as `Msg::Mouse`.
+    Mouse(MouseInput),
     /// Typed text. Expanded per char by the driver: `'\n'` -> `KeyCode::
     /// Enter` (mods NONE), everything else -> `KeyCode::Char(c)`. Other
     /// control characters are UNREPRESENTABLE here — `is_insertable_key_

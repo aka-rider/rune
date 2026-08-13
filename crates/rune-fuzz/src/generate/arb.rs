@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use proptest::prelude::*;
 
 use rune_tui::keymap::{KeyCode, Mods};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
@@ -29,6 +30,70 @@ pub(super) fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
         RESIZE_MIN_WIDTH..=RESIZE_MAX_WIDTH,
         RESIZE_MIN_HEIGHT..=RESIZE_MAX_HEIGHT,
     )
+}
+
+/// The frame every session starts on (the driver's own setup geometry), so
+/// a mouse event's cell is in the visible frame unless a `Resize` moved it —
+/// the same reasoning `arb_resize`'s bounds follow for the frame itself.
+const MOUSE_IN_FRAME_COLUMN: std::ops::Range<u16> = 0..80;
+const MOUSE_IN_FRAME_ROW: std::ops::Range<u16> = 0..24;
+
+pub(super) fn arb_mouse_button() -> impl Strategy<Value = MouseButton> {
+    prop_oneof![
+        Just(MouseButton::Left),
+        Just(MouseButton::Right),
+        Just(MouseButton::Middle),
+    ]
+}
+
+/// Every `MouseKind`: the three per-button gestures over every button, plus
+/// the two wheel directions.
+pub(super) fn arb_mouse_kind() -> impl Strategy<Value = MouseKind> {
+    prop_oneof![
+        arb_mouse_button().prop_map(MouseKind::Down),
+        arb_mouse_button().prop_map(MouseKind::Up),
+        arb_mouse_button().prop_map(MouseKind::Drag),
+        Just(MouseKind::ScrollUp),
+        Just(MouseKind::ScrollDown),
+    ]
+}
+
+/// A mouse cell: 7-in-8 inside the driver's setup frame, 1-in-8 anywhere up
+/// to `arb_resize`'s own maxima — a click can legitimately land outside the
+/// live frame after a shrink, so the hostile arm stays within the bounds a
+/// generated `Resize` can reach, never past them.
+pub(super) fn arb_mouse_cell() -> impl Strategy<Value = (u16, u16)> {
+    (
+        prop_oneof![
+            7 => MOUSE_IN_FRAME_COLUMN,
+            1 => 0..RESIZE_MAX_WIDTH,
+        ],
+        prop_oneof![
+            7 => MOUSE_IN_FRAME_ROW,
+            1 => 0..RESIZE_MAX_HEIGHT,
+        ],
+    )
+}
+
+/// One arbitrary `MouseInput`: any kind, a cell from `arb_mouse_cell`, and
+/// each modifier held 1-in-10 — clicks are mostly plain, the way a human
+/// session's are, while alt-/shift-/ctrl-click all stay reachable.
+pub(super) fn arb_mouse_input() -> impl Strategy<Value = MouseInput> {
+    (
+        arb_mouse_kind(),
+        arb_mouse_cell(),
+        proptest::bool::weighted(0.1),
+        proptest::bool::weighted(0.1),
+        proptest::bool::weighted(0.1),
+    )
+        .prop_map(|(kind, (column, row), shift, alt, ctrl)| MouseInput {
+            kind,
+            column,
+            row,
+            shift,
+            alt,
+            ctrl,
+        })
 }
 
 /// Every one of the 16 `KeyCode` variants; `Char` draws an arbitrary

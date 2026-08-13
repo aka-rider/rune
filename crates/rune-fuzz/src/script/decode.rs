@@ -11,6 +11,7 @@ use super::decode_key::parse_key;
 use super::keyword::{self, Keyword};
 use crate::action::{Action, HighlightVersion};
 use crate::driver::DOC_PATH;
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
@@ -381,6 +382,9 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     if let Some(rest) = strip_token(raw, Keyword::Key.as_str()) {
         return parse_key(rest, line).map(Action::Key);
     }
+    if let Some(rest) = strip_token(raw, Keyword::Mouse.as_str()) {
+        return parse_mouse(rest, line);
+    }
     if let Some(rest) = strip_token(raw, Keyword::HighlightTree.as_str()) {
         return parse_highlight_tree(rest, line);
     }
@@ -400,6 +404,85 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
         line,
         keyword: keyword.to_string(),
     })
+}
+
+/// Parses a single-line `mouse <kind> <col> <row> <mods>` action — every
+/// field is space-free by construction (no escaped payload), so a plain
+/// split suffices, unlike `parse_key`'s last-4-chars mods recovery. `<mods>`
+/// is a fixed 3-char field (shift, alt, ctrl — a mouse event carries no
+/// `sup`), each `-` or its initial letter, mirroring `key`'s convention.
+fn parse_mouse(rest: &str, line: usize) -> Result<Action, ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `mouse <kind> <col> <row> <mods>`".to_string(),
+    };
+    let mut parts = rest.split(' ');
+    let kind_str = parts.next().ok_or_else(malformed)?;
+    let col_str = parts.next().ok_or_else(malformed)?;
+    let row_str = parts.next().ok_or_else(malformed)?;
+    let mods_str = parts.next().ok_or_else(malformed)?;
+    if parts.next().is_some() {
+        return Err(malformed());
+    }
+
+    let kind = parse_mouse_kind(kind_str, line)?;
+    let num = |field: &str, v: &str| -> Result<u16, ScriptError> {
+        v.parse().map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: format!("invalid {field} {v:?}"),
+        })
+    };
+    let column = num("mouse col", col_str)?;
+    let row = num("mouse row", row_str)?;
+
+    let invalid_mods = || ScriptError::InvalidMods {
+        line,
+        mods: mods_str.to_string(),
+    };
+    let chars: Vec<char> = mods_str.chars().collect();
+    if chars.len() != 3 {
+        return Err(invalid_mods());
+    }
+    let flag = |idx: usize, on: char| match chars.get(idx) {
+        Some('-') => Ok(false),
+        Some(&c) if c == on => Ok(true),
+        _ => Err(invalid_mods()),
+    };
+    Ok(Action::Mouse(MouseInput {
+        kind,
+        column,
+        row,
+        shift: flag(0, 's')?,
+        alt: flag(1, 'a')?,
+        ctrl: flag(2, 'c')?,
+    }))
+}
+
+/// Mirrors `encode::encode_mouse_kind`'s spellings.
+fn parse_mouse_kind(s: &str, line: usize) -> Result<MouseKind, ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: format!("unknown mouse kind {s:?}"),
+    };
+    if s == "scroll-up" {
+        return Ok(MouseKind::ScrollUp);
+    }
+    if s == "scroll-down" {
+        return Ok(MouseKind::ScrollDown);
+    }
+    let (verb, button_str) = s.split_once(':').ok_or_else(malformed)?;
+    let button = match button_str {
+        "left" => MouseButton::Left,
+        "right" => MouseButton::Right,
+        "middle" => MouseButton::Middle,
+        _ => return Err(malformed()),
+    };
+    match verb {
+        "down" => Ok(MouseKind::Down(button)),
+        "up" => Ok(MouseKind::Up(button)),
+        "drag" => Ok(MouseKind::Drag(button)),
+        _ => Err(malformed()),
+    }
 }
 
 fn parse_resize(rest: &str, line: usize) -> Result<Action, ScriptError> {

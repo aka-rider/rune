@@ -7,13 +7,14 @@ use proptest::prelude::*;
 use proptest::sample::select;
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 
 use crate::action::Action;
 
 use super::arb::{
     FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START, arb_any_keycode, arb_clock_advance_millis,
     arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_highlight_span,
-    arb_highlight_version, arb_mods, arb_resize,
+    arb_highlight_version, arb_mods, arb_mouse_button, arb_mouse_cell, arb_mouse_input, arb_resize,
 };
 #[cfg(test)]
 pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
@@ -342,6 +343,82 @@ fn cluster_multicursor() -> impl Strategy<Value = Vec<Action>> {
         })
 }
 
+/// 2 — a mouse gesture, mostly the shapes a real hand produces: 1-3
+/// press-release pairs on one cell (a single/double/triple click — no
+/// `AdvanceClock` between them, so consecutive pairs land inside the 500 ms
+/// multi-click window by construction), a plain left drag across two cells,
+/// 1-3 wheel ticks, or — least often — one lone `arb_mouse_input` event (an
+/// unpaired `Up`/`Drag` is legal terminal input: a press can be lost to a
+/// focus change, so production must survive the orphaned half too).
+fn cluster_mouse() -> impl Strategy<Value = Vec<Action>> {
+    let press_release = |button: MouseButton, (column, row): (u16, u16)| {
+        [MouseKind::Down(button), MouseKind::Up(button)].map(|kind| {
+            Action::Mouse(MouseInput {
+                kind,
+                column,
+                row,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            })
+        })
+    };
+    prop_oneof![
+        3 => (arb_mouse_button(), arb_mouse_cell(), 1usize..=3).prop_map(
+            move |(button, cell, clicks)| {
+                (0..clicks).flat_map(|_| press_release(button, cell)).collect()
+            }
+        ),
+        2 => (arb_mouse_cell(), arb_mouse_cell()).prop_map(|(from, to)| {
+            vec![
+                Action::Mouse(MouseInput {
+                    kind: MouseKind::Down(MouseButton::Left),
+                    column: from.0,
+                    row: from.1,
+                    shift: false,
+                    alt: false,
+                    ctrl: false,
+                }),
+                Action::Mouse(MouseInput {
+                    kind: MouseKind::Drag(MouseButton::Left),
+                    column: to.0,
+                    row: to.1,
+                    shift: false,
+                    alt: false,
+                    ctrl: false,
+                }),
+                Action::Mouse(MouseInput {
+                    kind: MouseKind::Up(MouseButton::Left),
+                    column: to.0,
+                    row: to.1,
+                    shift: false,
+                    alt: false,
+                    ctrl: false,
+                }),
+            ]
+        }),
+        2 => (
+            prop_oneof![Just(MouseKind::ScrollUp), Just(MouseKind::ScrollDown)],
+            arb_mouse_cell(),
+            1usize..=3
+        )
+            .prop_map(|(kind, (column, row), ticks)| {
+                vec![
+                    Action::Mouse(MouseInput {
+                        kind,
+                        column,
+                        row,
+                        shift: false,
+                        alt: false,
+                        ctrl: false,
+                    });
+                    ticks
+                ]
+            }),
+        1 => arb_mouse_input().prop_map(|m| vec![Action::Mouse(m)]),
+    ]
+}
+
 /// Presses `^C` (may arm the quit-confirm at whatever generation is
 /// currently next, OR — on a dirty, unpreserved document, which this
 /// no-`db` fuzz harness always has — raise the `DirtyQuit` Guard instead;
@@ -462,7 +539,7 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
     })
 }
 
-/// The user-approved weighted table, now over 19 clusters (plan WP7.S6
+/// The user-approved weighted table, now over 20 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
@@ -473,7 +550,9 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
 /// the TREE-channel twin of `cluster_highlight`; plan WP8 added
 /// `cluster_caret_history`, the `NavBack`/`NavForward` chord twin of
 /// `cluster_undo_redo`, and `cluster_advance_clock`, the only way a
-/// session's `ManualClock` ever moves). All arms are `.boxed()` —
+/// session's `ManualClock` ever moves; the mouse plan added
+/// `cluster_mouse`, the pointer-gesture twin of `cluster_navigate`). All
+/// arms are `.boxed()` —
 /// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
 /// boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
@@ -493,6 +572,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         3 => cluster_highlight().boxed(),
         3 => cluster_highlight_tree().boxed(),
         2 => cluster_async_deliver().boxed(),
+        2 => cluster_mouse().boxed(),
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),
         1 => cluster_quit_guard().boxed(),

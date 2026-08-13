@@ -8,6 +8,7 @@
 
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{Command, KeyInput};
+use rune_tui::pointer::MouseInput;
 use rune_tui::runtime::PasteTarget;
 
 /// Which message the driver just settled, tagged with everything a checker
@@ -21,6 +22,12 @@ pub enum MsgTag {
         input: KeyInput,
         command: Option<Command>,
     },
+    /// `Msg::Mouse` — no keymap resolution to carry, unlike `Key`:
+    /// `dispatch` routes a pointer event straight to `commands::mouse::
+    /// handle`. No checker keys off this yet; the point of driving it is
+    /// that `update` never panics on a mouse event, whichever pane it
+    /// lands on.
+    Mouse(MouseInput),
     Paste(String),
     Resize(u16, u16),
     /// `target` is the `PasteTarget` captured when the driver spawned the

@@ -260,6 +260,10 @@ impl Session {
         self.act(Action::Key(key))
     }
 
+    pub fn mouse(&mut self, input: rune_tui::pointer::MouseInput) -> Option<&Violation> {
+        self.act(Action::Mouse(input))
+    }
+
     pub fn type_(&mut self, text: &str) -> Option<&Violation> {
         self.act(Action::Type(text.to_string()))
     }

@@ -33,6 +33,13 @@ pub(super) fn key_step(key: KeyInput) -> (Msg, MsgTag) {
     (Msg::Key(key), tag)
 }
 
+/// Builds the `(Msg, MsgTag)` pair for one mouse event — no keymap
+/// resolution to consult, unlike `key_step`: `dispatch` routes `Msg::Mouse`
+/// straight to `commands::mouse::handle`.
+pub(super) fn mouse_step(input: rune_tui::pointer::MouseInput) -> (Msg, MsgTag) {
+    (Msg::Mouse(input), MsgTag::Mouse(input))
+}
+
 /// Builds the `(Msg, MsgTag)` pair for a `Msg::Highlighted` reply from its
 /// already-built `HighlightReply` — the one place `Action::Highlight` and
 /// `Action::HighlightTree` both resolve the version they claim against the
@@ -306,8 +313,8 @@ pub(super) fn step_and_check(
                 // (`QuitTimeout`/`ClipboardRead`/`SaveConfirmTimeout`/
                 // `MessagesCollapseTimeout`) sleep or fork and must never
                 // run inline in a headless driver; `OpenExternal` forks
-                // `/usr/bin/open` and is unreachable from this driver by
-                // construction; `ReadDir`/`ReadFile`/`Highlight`/
+                // `/usr/bin/open` (reachable via a ctrl-click on a link) and
+                // must never fork here; `ReadDir`/`ReadFile`/`Highlight`/
                 // `ImageDecode`/`SearchHistory`/`BootstrapView` are off-thread
                 // reads/parses this driver has no discharge path for yet
                 // (their results never reach `update`, so nothing they'd

@@ -11,7 +11,7 @@ use crate::step::MsgTag;
 
 use super::super::step_exec::{
     discharge_pending_rename, discharge_pending_save, discharge_pending_trash, drain_one_db_op,
-    highlight_step, highlight_tree_step, key_step, step_and_check,
+    highlight_step, highlight_tree_step, key_step, mouse_step, step_and_check,
 };
 use super::super::store_ops::{diverge_disk, drain_all_db_ops};
 use super::{Outcome, State};
@@ -85,6 +85,10 @@ pub(super) fn apply(
         }
         Action::Key(k) => {
             let (msg, tag) = key_step(*k);
+            step_and_check(state, prev, msg, tag, None, outcome);
+        }
+        Action::Mouse(m) => {
+            let (msg, tag) = mouse_step(*m);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::OpenFileSearch => {
