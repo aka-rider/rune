@@ -3,8 +3,8 @@
 //! retrying it, plus the
 //! baseline-lifecycle fix that keeps a save started right after a
 //! lost-bookkeeping commit from conflicting against this session's own
-//! bytes. Follows `merge_disk_conflict_guard.rs`'s fixture pattern, pulling
-//! shared setup from `merge_common`.
+//! bytes. Driven through `rune_fuzz::Session`, pulling shared setup from
+//! `merge_common`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -15,47 +15,34 @@
 mod merge_common;
 
 use std::path::Path;
-use std::sync::Arc;
 
-use rune_tui::app::App;
-use rune_tui::db::DbBridge;
+use rune_fuzz::Session;
 use rune_tui::document::DocumentId;
 use rune_tui::guard::GuardKind;
-use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
 
-use merge_common::db_wiring_common::{app_with_store, publish};
-use merge_common::{
-    ch, drain_materialize_round_trip, drain_one_op_for, external_write, press_key, save_and_ack,
-    sup,
-};
+use merge_common::{ch, drain_materialize_round_trip, external_write, save_and_ack, sup};
 
 /// Sets up a document whose disk changed since it was opened, edits the
 /// buffer, and drives a real `⌘S` all the way through the materialize dance
 /// to the point where `handle_materialize_ack` raises the disk-conflict
 /// Guard — the same fixture `merge_disk_conflict_guard.rs` builds, needed
 /// again here because it is private to that file.
-fn enter_disk_conflict_guard(
-    disk_bytes: &[u8],
-) -> (App, Arc<DbBridge>, DocumentId, Arc<dyn Vfs + Send + Sync>) {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+fn enter_disk_conflict_guard(disk_bytes: &[u8]) -> (Session, DocumentId) {
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
 
-    let (mut app, bridge) = app_with_store("force-save", Arc::clone(&vfs));
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('!')).is_none());
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "!hello"
+    );
+    assert!(session.deliver_db().is_none());
 
-    press_key(&mut app, ch('!'));
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    external_write(session.app().vfs.as_ref(), disk_bytes);
 
-    external_write(vfs.as_ref(), disk_bytes);
+    save_and_ack(&mut session);
 
-    save_and_ack(&mut app, &bridge, doc_id);
-
-    (app, bridge, doc_id, vfs)
+    (session, doc_id)
 }
 
 /// The escape hatch's whole point: a force-save publishes over whatever is
@@ -63,37 +50,41 @@ fn enter_disk_conflict_guard(
 /// time, and never discarding the bytes it overwrote.
 #[test]
 fn disk_conflict_guard_save_anyway_force_saves_and_preserves_the_displaced_bytes() {
-    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
-    let Some(prompt) = &app.guard else {
+    let (mut session, doc_id) = enter_disk_conflict_guard(b"disk changed underneath");
+    let Some(prompt) = &session.app().guard else {
         panic!("expected the disk-conflict Guard");
     };
     assert!(matches!(prompt.kind, GuardKind::DiskConflict));
 
-    press_key(&mut app, ch('s'));
+    assert!(session.key(ch('s')).is_none());
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "[S]ave anyway must clear the Guard immediately, not wait on the save's own ack"
     );
 
-    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    drain_materialize_round_trip(&mut session);
 
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a force-save must never re-raise the conflict it was answering"
     );
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "!hello"
+    );
     assert!(
-        !app.doc(doc_id).unwrap().is_dirty(),
+        !session.app().doc(doc_id).unwrap().is_dirty(),
         "a committed force-save must clear the dirty flag"
     );
     assert_eq!(
-        vfs.read(Path::new("/doc.md")).unwrap(),
+        session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello",
         "the destination must hold the buffer's bytes, not the interloper's"
     );
 
     let hash = rune_db::hash_bytes(b"disk changed underneath");
-    let blob = app
+    let blob = session
+        .app()
         .db
         .as_ref()
         .unwrap()
@@ -107,7 +98,7 @@ fn disk_conflict_guard_save_anyway_force_saves_and_preserves_the_displaced_bytes
         "the interloper's exact bytes must be durably recoverable"
     );
 
-    let log = rune_tui::messages::log_text(&app);
+    let log = rune_tui::messages::log_text(session.app());
     assert!(
         log.contains("preserved"),
         "a successful force-save that displaced foreign bytes must say so: {log:?}"
@@ -120,19 +111,22 @@ fn disk_conflict_guard_save_anyway_force_saves_and_preserves_the_displaced_bytes
 /// overwritten" message must NOT fire.
 #[test]
 fn disk_conflict_guard_save_anyway_over_the_restored_baseline_posts_no_race_message() {
-    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
+    let (mut session, doc_id) = enter_disk_conflict_guard(b"disk changed underneath");
 
     // The interloper reverts its change while the Guard is up — the disk
     // holds the exact baseline bytes this session loaded.
-    external_write(vfs.as_ref(), b"hello");
+    external_write(session.app().vfs.as_ref(), b"hello");
 
-    press_key(&mut app, ch('s'));
-    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
-    assert!(app.guard.is_none());
-    assert!(!app.doc(doc_id).unwrap().is_dirty());
-    assert_eq!(vfs.read(Path::new("/doc.md")).unwrap(), b"!hello");
-    let log = rune_tui::messages::log_text(&app);
+    assert!(session.app().guard.is_none());
+    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert_eq!(
+        session.app().vfs.read(Path::new("/doc.md")).unwrap(),
+        b"!hello"
+    );
+    let log = rune_tui::messages::log_text(session.app());
     assert!(
         !log.contains("preserved"),
         "a force-save that displaced only its own baseline overwrote nothing \
@@ -148,26 +142,33 @@ fn disk_conflict_guard_save_anyway_over_the_restored_baseline_posts_no_race_mess
 /// from when the conflict was first detected.
 #[test]
 fn disk_conflict_guard_save_anyway_succeeds_even_if_the_disk_moves_again_before_the_answer() {
-    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed once");
+    let (mut session, doc_id) = enter_disk_conflict_guard(b"disk changed once");
 
     // The disk moves AGAIN while the Guard is still up — this is exactly
     // what made a CAS *retry* refuse a second time.
-    external_write(vfs.as_ref(), b"disk changed twice");
+    external_write(session.app().vfs.as_ref(), b"disk changed twice");
 
-    press_key(&mut app, ch('s'));
-    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a force-save must never re-raise the conflict it was answering, \
          no matter how many times the disk moved in between"
     );
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
-    assert!(!app.doc(doc_id).unwrap().is_dirty());
-    assert_eq!(vfs.read(Path::new("/doc.md")).unwrap(), b"!hello");
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "!hello"
+    );
+    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert_eq!(
+        session.app().vfs.read(Path::new("/doc.md")).unwrap(),
+        b"!hello"
+    );
 
     let hash = rune_db::hash_bytes(b"disk changed twice");
-    let blob = app
+    let blob = session
+        .app()
         .db
         .as_ref()
         .unwrap()
@@ -188,18 +189,27 @@ fn disk_conflict_guard_save_anyway_succeeds_even_if_the_disk_moves_again_before_
 /// existence-aware publish falls back to a no-clobber create.
 #[test]
 fn disk_conflict_guard_save_anyway_recreates_the_file_when_it_vanished_meanwhile() {
-    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed underneath");
+    let (mut session, doc_id) = enter_disk_conflict_guard(b"disk changed underneath");
 
-    vfs.remove(Path::new("/doc.md"))
+    session
+        .app()
+        .vfs
+        .remove(Path::new("/doc.md"))
         .expect("remove the destination while the Guard is up");
 
-    press_key(&mut app, ch('s'));
-    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
-    assert!(app.guard.is_none());
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
-    assert!(!app.doc(doc_id).unwrap().is_dirty());
-    assert_eq!(vfs.read(Path::new("/doc.md")).unwrap(), b"!hello");
+    assert!(session.app().guard.is_none());
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "!hello"
+    );
+    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert_eq!(
+        session.app().vfs.read(Path::new("/doc.md")).unwrap(),
+        b"!hello"
+    );
 }
 
 /// The ordinary compare-and-swap path is untouched by any of the above: once
@@ -207,26 +217,21 @@ fn disk_conflict_guard_save_anyway_recreates_the_file_when_it_vanished_meanwhile
 /// having needed the force-save escape hatch.
 #[test]
 fn an_ordinary_save_still_succeeds_once_the_disk_is_quiet() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-    let (mut app, bridge) = app_with_store("force-save-quiet", Arc::clone(&vfs));
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
 
-    press_key(&mut app, ch('!'));
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('!')).is_none());
+    assert!(session.deliver_db().is_none());
 
-    save_and_ack(&mut app, &bridge, doc_id);
+    save_and_ack(&mut session);
 
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a save against a quiet disk must never raise the conflict guard"
     );
-    assert!(!app.doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
     assert_eq!(
-        vfs.read(Path::new("/doc.md")).unwrap(),
+        session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello",
         "the ordinary CAS path must still publish correctly"
     );
@@ -240,26 +245,24 @@ fn an_ordinary_save_still_succeeds_once_the_disk_is_quiet() {
 /// finished then succeeds normally.
 #[test]
 fn disk_conflict_prompt_survives_refused_force() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-    let (mut app, bridge) = app_with_store("force-save-inflight", Arc::clone(&vfs));
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
 
-    press_key(&mut app, ch('!'));
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('!')).is_none());
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "!hello"
+    );
+    assert!(session.deliver_db().is_none());
 
-    press_key(&mut app, sup('s'));
+    assert!(session.key(sup('s')).is_none());
     assert!(
-        app.doc(doc_id).unwrap().save_in_flight(),
+        session.app().doc(doc_id).unwrap().save_in_flight(),
         "the real ⌘S must actually start a save"
     );
 
     let raise = rune_tui::guard::set_guard(
-        &mut app,
+        session.app_mut(),
         rune_tui::guard::GuardPrompt {
             doc: doc_id,
             kind: GuardKind::DiskConflict,
@@ -267,36 +270,36 @@ fn disk_conflict_prompt_survives_refused_force() {
     );
     assert_eq!(raise, rune_tui::guard::GuardRaise::Raised);
 
-    press_key(&mut app, ch('s'));
+    assert!(session.key(ch('s')).is_none());
     assert!(
         matches!(
-            &app.guard,
+            &session.app().guard,
             Some(prompt) if matches!(prompt.kind, GuardKind::DiskConflict)
         ),
         "a refused force-save must leave the disk-conflict prompt up"
     );
-    let log = rune_tui::messages::log_text(&app);
+    let log = rune_tui::messages::log_text(session.app());
     assert!(
         log.contains("a save is already in progress"),
         "the refusal must be posted, not silent: {log:?}"
     );
 
-    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    drain_materialize_round_trip(&mut session);
     assert!(
-        !app.doc(doc_id).unwrap().save_in_flight(),
+        !session.app().doc(doc_id).unwrap().save_in_flight(),
         "the original save must have finished against the quiet disk"
     );
 
-    press_key(&mut app, ch('s'));
+    assert!(session.key(ch('s')).is_none());
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a force-save that actually starts must clear the Guard"
     );
-    drain_materialize_round_trip(&mut app, &bridge, doc_id);
+    drain_materialize_round_trip(&mut session);
 
-    assert!(!app.doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
     assert_eq!(
-        vfs.read(Path::new("/doc.md")).unwrap(),
+        session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello",
         "the retried force-save must still publish the buffer's bytes"
     );
@@ -312,29 +315,29 @@ fn disk_conflict_prompt_survives_refused_force() {
 /// conflict against it.
 #[test]
 fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_save() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-    let (mut app, bridge) = app_with_store("baseline-lifecycle", Arc::clone(&vfs));
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
 
-    press_key(&mut app, ch('!'));
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('!')).is_none());
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "!hello"
+    );
+    assert!(session.deliver_db().is_none());
 
     // The write this session is about to "retry" already physically landed
     // (a prior attempt's own commit, whose `MaterializeRecord` bookkeeping
     // never came back) — the disk holds exactly the buffer's own bytes.
-    external_write(vfs.as_ref(), b"!hello");
-    let db_id = app
+    external_write(session.app().vfs.as_ref(), b"!hello");
+    let db_id = session
+        .app()
         .doc(doc_id)
         .and_then(|d| d.doc_db())
         .expect("the document is store-bound")
         .db_id;
     {
-        let binding = app
+        let binding = session
+            .app_mut()
             .file_binding_mut(db_id)
             .expect("the file has a shared baseline");
         binding.pending_rebaseline_hash = Some(rune_db::hash_bytes(b"!hello"));
@@ -344,16 +347,20 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
         // save through.
     }
 
-    save_and_ack(&mut app, &bridge, doc_id);
+    save_and_ack(&mut session);
 
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a baseline unconfirmed only because bookkeeping was lost must not \
          conflict against bytes this session itself just wrote"
     );
-    assert!(!app.doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
     assert_eq!(
-        app.file_binding(db_id).unwrap().pending_rebaseline_hash,
+        session
+            .app()
+            .file_binding(db_id)
+            .unwrap()
+            .pending_rebaseline_hash,
         None,
         "a real observation landing must clear the stand-in"
     );
@@ -364,35 +371,32 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
 /// conflict Guard honestly.
 #[test]
 fn a_baseline_left_unconfirmed_by_lost_bookkeeping_still_conflicts_on_foreign_bytes() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-    let (mut app, bridge) = app_with_store("baseline-lifecycle-foreign", Arc::clone(&vfs));
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
 
-    press_key(&mut app, ch('!'));
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.key(ch('!')).is_none());
+    assert!(session.deliver_db().is_none());
 
     // A DIFFERENT writer's bytes land on disk — not this session's own
     // stashed commit.
-    external_write(vfs.as_ref(), b"someone else wrote this");
+    external_write(session.app().vfs.as_ref(), b"someone else wrote this");
     {
-        let db_id = app
+        let db_id = session
+            .app()
             .doc(doc_id)
             .and_then(|d| d.doc_db())
             .expect("the document is store-bound")
             .db_id;
-        let binding = app
+        let binding = session
+            .app_mut()
             .file_binding_mut(db_id)
             .expect("the file has a shared baseline");
         binding.pending_rebaseline_hash = Some(rune_db::hash_bytes(b"!hello"));
     }
 
-    save_and_ack(&mut app, &bridge, doc_id);
+    save_and_ack(&mut session);
 
-    let Some(prompt) = &app.guard else {
+    let Some(prompt) = &session.app().guard else {
         panic!("a stashed hash must never license adopting someone else's bytes");
     };
     assert!(matches!(prompt.kind, GuardKind::DiskConflict));

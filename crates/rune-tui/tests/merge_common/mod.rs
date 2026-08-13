@@ -1,27 +1,24 @@
-//! Shared setup helpers for the merge-mode integration test suite, split
-//! across `merge_entry.rs` (WP3), `merge_resolver.rs` (WP4), and
-//! `merge_resync_guard.rs` (WP6) — review fix F9's dedupe of what used to be
-//! three verbatim copies of the same key-press/op-drain/external-write
-//! plumbing, following the `db_wiring_common` pattern every consumer pulls
-//! its `App`/`Store` fixture from already. Each consumer pulls this in via
+//! Shared helpers for the merge-mode / save-truth integration suites, driven
+//! through `rune_fuzz::Session` (the same ~39-invariant checked driver the
+//! fuzzer runs): key builders, the away-and-back reprobe, and the
+//! store-backed materialize dance as checked steps. Real-store construction
+//! stays in `db_wiring_common`. Each consumer pulls this in via
 //! `mod merge_common;`.
 #![allow(dead_code)]
 
 #[path = "../db_wiring_common/mod.rs"]
 pub mod db_wiring_common;
 
-use std::path::Path;
+use std::sync::Arc;
 
-use rune_db::DbEvent;
+use rune_fuzz::Session;
+use rune_fuzz::driver::wait_for_db_op;
 use rune_tui::app::{self, App};
-use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::Vfs;
-
-use db_wiring_common::recv_ok;
 
 pub fn bare(code: KeyCode) -> KeyInput {
     KeyInput {
@@ -58,61 +55,86 @@ pub fn chord(code: KeyCode, mods: Mods) -> KeyInput {
     KeyInput { code, mods }
 }
 
-pub fn press_key(app: &mut App, key: KeyInput) -> Effects {
-    let mut effects = Effects::default();
-    app::update(app, Msg::Key(key), &mut effects);
-    effects
-}
-
-/// Drains the single op currently recorded in `app.db_ops` for `doc`,
-/// feeding its ack through `app::update` exactly as the real runtime loop
-/// would when the op's `DbEvent` arrives on `Msg::Db`.
-pub fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) -> Effects {
-    let op_id = *app
-        .db_ops
+/// The untitled draft `Session::open` leaves open alongside the seeded
+/// document — the switch-away target a reprobe needs.
+pub fn untitled_draft(app: &App, seed: DocumentId) -> DocumentId {
+    app.documents
         .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let result = recv_ok(bridge, op_id);
+        .map(|(&id, _)| id)
+        .find(|&id| id != seed)
+        .expect("the untitled draft stays open alongside the seed")
+}
+
+/// Re-probes `doc` by switching away to `away` and back, then delivers the
+/// probe's ack as a checked step — the only detection wiring this feature
+/// has (no file watcher). Callers must have drained every other pending op
+/// first, or the oldest-first `deliver_db` would deliver that op instead of
+/// the probe.
+pub fn reprobe(session: &mut Session, away: DocumentId, doc: DocumentId) {
+    workspace::switch_to(session.app_mut(), away);
+    workspace::switch_to(session.app_mut(), doc);
+    assert!(session.deliver_db().is_none());
+}
+
+/// The store-backed materialize dance's middle+end hops as checked steps:
+/// the `MaterializePrepare` ack (whose caller-side vfs `Cmd` the driver
+/// parks as its pending save), the `Cmd` itself, then whatever ops its
+/// reply enqueued (the record ack, and on a lost-bookkeeping re-baseline, a
+/// further `Load`). Callers must have drained every other pending op first,
+/// same as `reprobe`. Ends with `app.db_ops` empty whether the save
+/// committed or CAS-refused into the disk-conflict Guard — assertions on
+/// which of the two happened belong to the caller.
+pub fn drain_materialize_round_trip(session: &mut Session) {
+    assert!(session.deliver_db().is_none());
+    assert!(session.deliver().is_none());
+    assert!(session.deliver_db_all().is_none());
+}
+
+/// Drives a real `⌘S` all the way through [`drain_materialize_round_trip`].
+pub fn save_and_ack(session: &mut Session) {
+    assert!(session.key(sup('s')).is_none());
+    drain_materialize_round_trip(session);
+}
+
+/// Drives a real `⌘S` up to the prepare ack the pre-publish divergence gate
+/// answers — no caller-side vfs `Cmd` follows a refusal, so there is nothing
+/// further to discharge. What the user then sees belongs to the caller to
+/// assert.
+pub fn save_expecting_refusal(session: &mut Session) {
+    assert!(session.key(sup('s')).is_none());
+    assert!(session.deliver_db().is_none());
+}
+
+/// Delivers exactly the op named by `op_id` straight through `update`,
+/// outside the checked-step cycle — for tests that deliberately hold one op
+/// back to control arrival order, which the driver's oldest-first
+/// `deliver_db` cannot express.
+pub fn deliver_op_unchecked(session: &mut Session, op_id: u64) -> Effects {
+    let bridge = Arc::clone(&session.app().db.as_ref().expect("store wired").bridge);
+    let evt = wait_for_db_op(&bridge, op_id);
     let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
+    app::update(session.app_mut(), Msg::Db(evt), &mut effects);
     effects
 }
 
-pub fn drain_all_ops_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    while app.db_ops.iter().any(|(_, pending)| pending.doc == doc) {
-        drain_one_op_for(app, bridge, doc);
-    }
+fn oldest_op_for(app: &App, doc: DocumentId) -> Option<u64> {
+    app.db_ops
+        .iter()
+        .filter(|(_, pending)| pending.doc == doc)
+        .map(|(&id, _)| id)
+        .min()
 }
 
-/// Re-probes `doc` by switching away to `away` and back, then drains the
-/// probe's ack — the only detection wiring this feature has (no file
-/// watcher). Callers must have drained every other pending op for `doc`
-/// first, or `drain_one_op_for` cannot tell which entry is the probe.
-pub fn reprobe(app: &mut App, bridge: &DbBridge, away: DocumentId, doc: DocumentId) {
-    workspace::switch_to(app, away);
-    workspace::switch_to(app, doc);
-    drain_one_op_for(app, bridge, doc);
-}
-
-/// The store-backed materialize dance's middle+end hops: drains the
-/// `MaterializePrepare` ack (which spawns the caller-side vfs `Cmd`), runs
-/// that `Cmd`, feeds its `MaterializeVfsDone` reply back through `update`,
-/// then drains whatever op that reply itself enqueued (the record ack, and
-/// on a lost-bookkeeping re-baseline, a further `Load`). Callers must have
-/// drained every other pending op for `doc` first, same as `reprobe`. Ends
-/// with `app.db_ops` empty for `doc` whether the save committed or
-/// CAS-refused into the disk-conflict Guard — assertions on which of the
-/// two happened belong to the caller. Shared by [`save_and_ack`] (after its
-/// own `⌘S` keypress) and the disk-conflict Guard's `[S]ave anyway` answer
-/// (after its own keypress).
-pub fn drain_materialize_round_trip(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    let prepare_effects = drain_one_op_for(app, bridge, doc);
+/// [`drain_materialize_round_trip`] outside the checked-step cycle — for
+/// the one fixture shape the driver's redivergence tracker cannot be told
+/// the truth about: an external write landing AFTER a completed merge.
+/// `Action::DivergeDisk` owns its own bytes and its own reprobe, and the
+/// tracker's `note_external_write` is driver-private, so a checked delivery
+/// of the save's truthful `Diverged` refusal would read as the
+/// re-merge-prompt loop.
+pub fn drain_materialize_round_trip_unchecked(session: &mut Session, doc: DocumentId) {
+    let prepare_op = oldest_op_for(session.app(), doc).expect("prepare op enqueued");
+    let prepare_effects = deliver_op_unchecked(session, prepare_op);
     let save_cmd = prepare_effects
         .cmds
         .into_iter()
@@ -120,28 +142,15 @@ pub fn drain_materialize_round_trip(app: &mut App, bridge: &DbBridge, doc: Docum
         .expect("the prepare ack must spawn the caller-side vfs Cmd");
     let vfs_done_msg = save_cmd.run().expect("the vfs Cmd must reply");
     let mut effects = Effects::default();
-    app::update(app, vfs_done_msg, &mut effects);
-    drain_all_ops_for(app, bridge, doc);
-}
-
-/// Drives a real `⌘S` all the way through [`drain_materialize_round_trip`].
-pub fn save_and_ack(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    press_key(app, sup('s'));
-    drain_materialize_round_trip(app, bridge, doc);
-}
-
-/// Drives a real `⌘S` up to the prepare ack the pre-publish divergence gate
-/// answers — no caller-side vfs `Cmd` follows a refusal, so there is nothing
-/// further to discharge. What the user then sees belongs to the caller to
-/// assert.
-pub fn save_expecting_refusal(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    press_key(app, sup('s'));
-    drain_one_op_for(app, bridge, doc);
+    app::update(session.app_mut(), vfs_done_msg, &mut effects);
+    while let Some(op_id) = oldest_op_for(session.app(), doc) {
+        deliver_op_unchecked(session, op_id);
+    }
 }
 
 /// Overwrites `/doc.md`'s content in place, simulating an external editor.
 pub fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
-    let path = Path::new("/doc.md");
+    let path = std::path::Path::new("/doc.md");
     vfs.remove(path).expect("remove the stale file");
     let temp = vfs.write_durable(path, bytes).expect("write_durable");
     vfs.rename_excl(&temp, path).expect("publish");
