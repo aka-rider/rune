@@ -203,7 +203,35 @@ impl Session {
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
         let (bridge, db) = open_store(&vfs);
+        Session::boot(mem, path, content.to_string(), bridge, db)
+    }
 
+    /// The store-injecting variant of [`Session::open`]: the caller owns the
+    /// `Mem` (so it can outlive this session — a "restart" reopens a second
+    /// session over the same disk) and the `Db` (so the `Store` can live at
+    /// a real on-disk path, carry a liveness override, or start degraded —
+    /// none of which `open`'s own in-memory store can express). The seeded
+    /// document's content is whatever `mem` already holds at `path`; this
+    /// constructor writes nothing to disk.
+    pub fn open_with_db(path: &str, mem: Arc<Mem>, db: rune_tui::db::Db) -> Session {
+        let path = PathBuf::from(path);
+        let content = mem
+            .read(&path)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default();
+        let bridge = Arc::clone(&db.bridge);
+        Session::boot(mem, path, content, bridge, Some(db))
+    }
+
+    fn boot(
+        mem: Arc<Mem>,
+        path: PathBuf,
+        content: String,
+        bridge: Arc<DbBridge>,
+        db: Option<rune_tui::db::Db>,
+    ) -> Session {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
         let mut app = App::new(Buffer::new(""), None, Arc::clone(&vfs), db);
         // WP14.S2 (CODE-REVIEW.md rune-fuzz finding 17): `App::new`'s default
         // `clock` is the real wall clock (`SystemClock`) — harmless today only
@@ -258,7 +286,7 @@ impl Session {
                 };
                 Session {
                     state,
-                    content: content.to_string(),
+                    content,
                     outcome,
                     phase: Phase::Live(Box::new(prev)),
                 }
@@ -269,7 +297,7 @@ impl Session {
                 }
                 Session {
                     state: new_state(app, mem, path, draft_doc, draft_doc, bridge, manual_clock),
-                    content: content.to_string(),
+                    content,
                     outcome: Outcome {
                         violation: Some(violation),
                         final_snapshot: None,

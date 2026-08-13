@@ -1,6 +1,7 @@
 //! A doc-scoped read op failing (a probe against an externally deleted
 //! file) surfaces a per-document error message and leaves the recovery
-//! store trusted; only real journal failures degrade it.
+//! store trusted; only real journal failures degrade it. Driven through
+//! `rune_fuzz::Session`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -8,86 +9,79 @@
     clippy::panic
 )]
 
-mod db_wiring_common;
-
 use std::path::Path;
-use std::sync::Arc;
 
-use rune_db::DbEvent;
+use rune_fuzz::Session;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, drain_one_op_for, press, publish};
+const END: KeyInput = KeyInput {
+    code: KeyCode::End,
+    mods: Mods::NONE,
+};
 
 #[test]
 fn probe_missing_file_keeps_store() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-
-    let (mut app, bridge) = app_with_store("probe-missing-file", Arc::clone(&vfs));
-    let draft_id = app.active;
-
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    assert_ne!(doc_id, draft_id);
-    let load_evt = drain_one_op_for(&mut app, &bridge, doc_id);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
+    let draft_id = session
+        .app()
+        .documents
+        .iter()
+        .map(|(&id, _)| id)
+        .find(|&id| id != doc_id)
+        .expect("the untitled draft stays open alongside the seed");
     assert!(
-        matches!(load_evt, DbEvent::Ok { .. }),
-        "test setup: the Load ack must succeed, got {load_evt:?}"
+        session.app().db_ops.is_empty(),
+        "test setup: session setup fully drained"
     );
-    assert!(app.db_ops.is_empty(), "test setup: Load ack fully drained");
 
-    vfs.remove(Path::new("/doc.md"))
+    session
+        .app()
+        .vfs
+        .remove(Path::new("/doc.md"))
         .expect("delete the file out from under the open document");
 
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    let posts_before = rune_tui::messages::posts(&app);
-    let probe_evt = drain_one_op_for(&mut app, &bridge, doc_id);
-    assert!(
-        matches!(probe_evt, DbEvent::Err { .. }),
-        "probing a deleted file must fail, got {probe_evt:?}"
-    );
+    workspace::switch_to(session.app_mut(), draft_id);
+    workspace::switch_to(session.app_mut(), doc_id);
+    let posts_before = rune_tui::messages::posts(session.app());
+    assert!(session.deliver_db().is_none());
 
     assert!(
-        rune_tui::messages::posts(&app) > posts_before,
+        rune_tui::messages::posts(session.app()) > posts_before,
         "the probe failure must post a message"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("doc.md")),
+        rune_tui::messages::newest_text(session.app()).is_some_and(|s| s.contains("doc.md")),
         "the error must name the document, got {:?}",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(session.app())
     );
     assert!(
-        app.db.as_ref().is_some_and(|d| !d.degraded),
+        session.app().db.as_ref().is_some_and(|d| !d.degraded),
         "a doc-scoped probe failure must never degrade the whole store"
     );
     assert!(
-        app.db_banner.is_none(),
+        session.app().db_banner.is_none(),
         "no sticky degraded banner for a missing file, got {:?}",
-        app.db_banner
+        session.app().db_banner
     );
 
-    press(&mut app, '!');
+    assert!(session.key(END).is_none());
+    assert!(session.type_("!").is_none());
     assert!(
-        app.doc(doc_id).unwrap().buffer.content().contains('!'),
+        session
+            .app()
+            .doc(doc_id)
+            .unwrap()
+            .buffer
+            .content()
+            .contains('!'),
         "editing must keep working after the failed probe, got {:?}",
-        app.doc(doc_id).unwrap().buffer.content()
+        session.app().doc(doc_id).unwrap().buffer.content()
     );
-    let append_evt = drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(session.deliver_db().is_none());
     assert!(
-        matches!(
-            append_evt,
-            DbEvent::Ok {
-                result: rune_db::OpOutcome::Seq(_),
-                ..
-            }
-        ),
-        "a subsequent journal append must still ack Ok, got {append_evt:?}"
-    );
-    assert!(
-        app.db.as_ref().is_some_and(|d| !d.degraded),
+        session.app().db.as_ref().is_some_and(|d| !d.degraded),
         "the store must stay trusted for recovery after the whole sequence"
     );
 }

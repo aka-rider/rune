@@ -1,11 +1,6 @@
 //! WP5/WP6 "Done when" integration tests for the rune-tui <-> rune-db
-//! wiring's hydration paths: post-restart hydration/undo (plan WP5.S4,
-//! replacing the plan's interactive manual gate) and `Load`-ack adoption
-//! into `Document`/`DocDb` — TODO.md's 500-line budget split of the original
-//! `db_wiring.rs`. The degraded-store banner and open/close lifecycle
-//! tests live in the sibling `db_wiring_degraded.rs`/
-//! `db_wiring_lifecycle.rs`; all three pull shared fixtures from
-//! `db_wiring_common`.
+//! wiring's hydration paths: post-restart hydration/undo and `Load`-ack
+//! adoption into `Document`/`DocDb`, driven through `rune_fuzz::Session`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -18,136 +13,113 @@ mod db_wiring_common;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rune_core::buffer::{AppliedEdit, Buffer};
-use rune_core::cursor::CursorSet;
-use rune_core::undo::{EditKind, Step};
-use rune_db::{DbEvent, LoadResult, OpOutcome, Store, SyncKind, SyncState, Version};
+use rune_core::buffer::Buffer;
+use rune_db::{DbEvent, LoadResult, OpOutcome, SyncKind, SyncState, Version};
+use rune_fuzz::Session;
 use rune_tui::app::{self, App};
-use rune_tui::commands::edit;
-use rune_tui::db::{DbBridge, PendingOp};
+use rune_tui::db::{Db, PendingOp};
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
+use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{
-    app_with_store, db_from, doc_db_from, join_binding_from, open_and_load, press, publish,
-    recv_ok, temp_db_dir,
+use db_wiring_common::{publish, restarted_store_at, store_at, temp_db_dir};
+
+const END: KeyInput = KeyInput {
+    code: KeyCode::End,
+    mods: Mods::NONE,
 };
 
-/// Plan WP5 "Done when" (replaces the interactive manual gate): edits
-/// journaled by one session -> a NEW `Store` opened on the SAME db path
-/// (a simulated restart) hydrates the recovered content, and undo reaches
-/// the pre-crash anchor.
+const UNDO: KeyInput = KeyInput {
+    code: KeyCode::Char('z'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
+
+const SELECT_ALL: KeyInput = KeyInput {
+    code: KeyCode::Char('a'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
+
+const BACKSPACE: KeyInput = KeyInput {
+    code: KeyCode::Backspace,
+    mods: Mods::NONE,
+};
+
+/// Plan WP5 "Done when": edits journaled by one session -> a NEW `Store`
+/// opened on the SAME db path (a simulated restart) hydrates the recovered
+/// content through the real `Load`-ack path, and undo reaches the pre-crash
+/// anchor.
 #[test]
 fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     let dir = temp_db_dir("restart");
     let db_path = dir.join("rune-v1.db");
-    let doc_path = Path::new("/doc.md");
-
-    let mem = Mem::new();
-    publish(&mem, doc_path, b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mem = Arc::new(Mem::new());
+    publish(mem.as_ref(), Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
     // Session A: types more, never saves (materializes) to disk.
-    let (store_a, bridge_a, load_a) = open_and_load(&db_path, Arc::clone(&vfs), doc_path);
-    assert_eq!(load_a.disk_content, "hello");
-    assert_eq!(load_a.recovered, "hello");
-    let db_a = db_from(store_a, bridge_a, false);
-    let doc_db_a = doc_db_from(&load_a);
-
-    let mut app_a = App::new(
-        Buffer::new(load_a.recovered.clone()),
-        Some(doc_path.to_path_buf()),
-        Arc::clone(&vfs),
-        Some(db_a),
+    let (store_a, bridge_a) = store_at(&db_path, Arc::clone(&vfs));
+    let mut session_a = Session::open_with_db(
+        "/doc.md",
+        Arc::clone(&mem),
+        Db::new(store_a, bridge_a, false),
     );
-    let id_a = app_a.active;
-    app_a.doc_mut(id_a).unwrap().set_doc_db_for_test(doc_db_a);
-    join_binding_from(&mut app_a, &load_a);
-    let len_a = app_a.doc(id_a).unwrap().buffer.len();
-    app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(len_a);
-    for ch in " world".chars() {
-        press(&mut app_a, ch);
-    }
-    assert_eq!(app_a.doc(id_a).unwrap().buffer.content(), "hello world");
+    assert!(session_a.key(END).is_none());
+    assert!(session_a.type_(" world").is_none());
+    assert_eq!(session_a.snapshot().content, "hello world");
     assert!(
-        app_a.db_banner.is_none(),
+        session_a.app().db_banner.is_none(),
         "session A's own store must stay healthy throughout"
     );
+    assert!(session_a.deliver_db_all().is_none());
 
     // Every journaled edit must be durably committed before "restarting" —
     // `Store::shutdown` drains its writer FIFO to empty before returning
     // (deterministic; no polling needed).
-    let store_a = app_a.db.take().expect("app_a has a store").store;
-    store_a.shutdown();
+    session_a
+        .app_mut()
+        .db
+        .take()
+        .expect("session A has a store")
+        .shutdown();
+    drop(session_a);
 
-    // Session B (simulated restart): a brand-new `Store` on the SAME path.
-    // Both "sessions" here share one OS process/pid, so the real liveness
-    // check (which would see this very test process as alive) can't tell
-    // them apart — override it to report session A dead, the documented,
-    // supported way to simulate a genuinely dead session
-    // (`Store::set_liveness_check`).
-    let bridge_b = DbBridge::bootstrap();
-    let (store_b, _warning) =
-        Store::open(&db_path, Arc::clone(&vfs), bridge_b.on_event()).expect("open store b");
-    store_b.set_liveness_check(Arc::new(|_pid, _started_at| false));
-    let op_id = store_b.load(doc_path).expect("enqueue load b");
-    let load_b = match bridge_b.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    }) {
-        DbEvent::Ok {
-            result: OpOutcome::Load(r),
-            ..
-        } => *r,
-        DbEvent::Ok { result, .. } => panic!("unexpected reply to Load: {result:?}"),
-        DbEvent::Err { error, .. } => panic!("load b failed: {error}"),
-        DbEvent::Fatal { error } => panic!("writer b fatal during load: {error}"),
-    };
+    // Session B (simulated restart): a brand-new `Store` on the SAME path,
+    // with session A reported dead, hydrating through the ordinary
+    // open/ack path — `db_ack::handle_load_ack` seeds the bridge step and
+    // `undo_base` here, not test scaffolding.
+    let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
+    let mut session_b = Session::open_with_db(
+        "/doc.md",
+        Arc::clone(&mem),
+        Db::new(store_b, bridge_b, false),
+    );
 
     assert_eq!(
-        load_b.recovered, "hello world",
+        session_b.snapshot().content,
+        "hello world",
         "restart must recover session A's unsaved edits"
     );
     assert_eq!(
-        load_b.disk_content, "hello",
+        mem.read(Path::new("/doc.md")).expect("file still readable"),
+        b"hello",
         "the on-disk file itself was never touched — session A never saved"
     );
 
-    // The same synthetic bridge-edit reconstruction `rune-cli::main` does
-    // (plan WP5.S4) — seeds the LOCAL undo journal so undo reaches the
-    // anchor in one step.
-    let bridge_edit = (load_b.recovered != load_b.disk_content).then(|| AppliedEdit {
-        start: 0,
-        end: load_b.disk_content.len(),
-        deleted: load_b.disk_content.clone(),
-        insert: load_b.recovered.clone(),
-    });
-    let db_b = db_from(store_b, bridge_b, false);
-    let doc_db_b = doc_db_from(&load_b);
-
-    let mut app_b = App::new(
-        Buffer::new(load_b.recovered.clone()),
-        Some(doc_path.to_path_buf()),
-        Arc::clone(&vfs),
-        Some(db_b),
-    );
-    let id_b = app_b.active;
-    app_b.doc_mut(id_b).unwrap().set_doc_db_for_test(doc_db_b);
-    join_binding_from(&mut app_b, &load_b);
-    if let Some(bridge_edit) = bridge_edit {
-        app_b.doc_mut(id_b).unwrap().journal.push(Step {
-            edits: vec![bridge_edit],
-            cursors_before: Vec::new(),
-            cursors_after: Vec::new(),
-            kind: EditKind::Other,
-        });
-    }
-
-    assert_eq!(app_b.doc(id_b).unwrap().buffer.content(), "hello world");
-
-    edit::undo(&mut app_b, id_b);
+    assert!(session_b.key(UNDO).is_none());
+    assert!(session_b.deliver_db().is_none());
     assert_eq!(
-        app_b.doc(id_b).unwrap().buffer.content(),
+        session_b.snapshot().content,
         "hello",
         "post-restart undo must reach the pre-crash anchor (the disk content)"
     );
@@ -156,33 +128,27 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
 /// The `Load` ack installs `Document::db` as `Some` once it lands.
 #[test]
 fn load_ack_installs_document_db_as_some() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/seed.md", "seed");
+    publish(session.app().vfs.as_ref(), Path::new("/doc.md"), b"hello");
 
-    let (mut app, rx) = app_with_store("open-path-ack-installs-db", vfs);
-    rune_tui::workspace::open_path(&mut app, Path::new("/doc.md"));
-    let id = app.active;
-    let op_id = *app.db_ops.keys().next().expect("one op enqueued");
-
-    let result = recv_ok(&rx, op_id);
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
+    let id = workspace::open_path(session.app_mut(), Path::new("/doc.md")).expect("open doc");
+    assert!(
+        !session.app().doc(id).unwrap().is_store_bound(),
+        "db stays None until the Load ack lands"
     );
 
+    assert!(session.deliver_db().is_none());
+
     assert!(
-        app.doc(id).unwrap().is_store_bound(),
+        session.app().doc(id).unwrap().is_store_bound(),
         "a Load ack with a saved_obs baseline must install DocDb"
     );
     assert!(
-        !app.db_ops.contains_key(&op_id),
+        session.app().db_ops.is_empty(),
         "the ack must pop its own db_ops entry"
     );
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer.content(),
         "hello",
         "no divergence to recover: the buffer stays exactly what was read off disk"
     );
@@ -196,37 +162,27 @@ fn load_ack_installs_document_db_as_some() {
 /// is real and should be used going forward.
 #[test]
 fn ack_for_a_document_edited_during_the_round_trip_leaves_the_buffer_unchanged() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/seed.md", "seed");
+    publish(session.app().vfs.as_ref(), Path::new("/doc.md"), b"hello");
 
-    let (mut app, rx) = app_with_store("open-path-edited-in-flight", vfs);
-    rune_tui::workspace::open_path(&mut app, Path::new("/doc.md"));
-    let id = app.active;
-    let op_id = *app.db_ops.keys().next().expect("one op enqueued");
+    let id = workspace::open_path(session.app_mut(), Path::new("/doc.md")).expect("open doc");
+    session.app_mut().active_doc_mut().focused = true;
 
     // The user types while the Load round trip is still in flight — this
     // bumps the buffer's version past what was recorded at enqueue time.
-    let len = app.doc(id).unwrap().buffer.len();
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
-    press(&mut app, '!');
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+    assert!(session.key(END).is_none());
+    assert!(session.type_("!").is_none());
+    assert_eq!(session.app().doc(id).unwrap().buffer.content(), "hello!");
 
-    let result = recv_ok(&rx, op_id);
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
+    assert!(session.deliver_db().is_none());
 
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer.content(),
         "hello!",
         "the ack must never clobber a keystroke typed during the round trip"
     );
     assert!(
-        app.doc(id).unwrap().is_store_bound(),
+        session.app().doc(id).unwrap().is_store_bound(),
         "DocDb must still be installed even when the buffer adopt is skipped"
     );
 }
@@ -298,59 +254,51 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
 
 /// Review fix (plan WP5.S2, [rune-tui A 3]): `handle_load_ack` must refuse
 /// to adopt recovered content that would empty (or drastically shrink) a
-/// non-empty on-disk file — the destructive-async-reset suspicion
-/// check, run through the shared `Document::hydrate` chokepoint. The buffer
-/// stays exactly what was on disk, and a status message explains why.
+/// non-empty on-disk file — the destructive-async-reset suspicion check,
+/// run through the shared `Document::hydrate` chokepoint. Reached through a
+/// REAL round trip: session A deletes everything and dies unsaved, so the
+/// restarted session's `Load` genuinely recovers an empty draft against a
+/// non-empty disk file. The buffer stays exactly what was on disk, and a
+/// status message explains why.
 #[test]
 fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let dir = temp_db_dir("refuse-empty-adopt");
+    let db_path = dir.join("rune-v1.db");
     let disk_content = "a whole paragraph of real content that must not vanish";
-    let mut app = App::new(
-        Buffer::new(disk_content),
-        Some(PathBuf::from("/doc.md")),
-        vfs,
-        None,
+    let mem = Arc::new(Mem::new());
+    publish(mem.as_ref(), Path::new("/doc.md"), disk_content.as_bytes());
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+
+    // Session A: deletes the whole document, never saves, then "dies".
+    let (store_a, bridge_a) = store_at(&db_path, Arc::clone(&vfs));
+    let mut session_a = Session::open_with_db(
+        "/doc.md",
+        Arc::clone(&mem),
+        Db::new(store_a, bridge_a, false),
     );
+    assert!(session_a.key(SELECT_ALL).is_none());
+    assert!(session_a.key(BACKSPACE).is_none());
+    assert_eq!(session_a.snapshot().content, "");
+    assert!(session_a.deliver_db_all().is_none());
+    session_a
+        .app_mut()
+        .db
+        .take()
+        .expect("session A has a store")
+        .shutdown();
+    drop(session_a);
+
+    // Session B (restart): the recovered empty draft is exactly the
+    // destructive async-reset pattern that must never be adopted silently.
+    let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
+    let session_b = Session::open_with_db(
+        "/doc.md",
+        Arc::clone(&mem),
+        Db::new(store_b, bridge_b, false),
+    );
+
+    let app = session_b.app();
     let id = app.active;
-
-    let op_id = 1u64;
-    let issued_version = app.doc(id).unwrap().buffer.version();
-    app.db_ops
-        .insert(op_id, PendingOp::load(id, issued_version, false));
-
-    let load_result = LoadResult {
-        doc_id: rune_db::DocId(1),
-        renamed_from: None,
-        disk_content: disk_content.to_string(),
-        // A suspicious "recovered" empty string — the exact destructive
-        // async-reset pattern that must never be adopted silently.
-        recovered: String::new(),
-        has_history: false,
-        sync: SyncState {
-            kind: SyncKind::Clean,
-            ancestor: None,
-            ours: Version {
-                hash: rune_db::BlobHash(String::new()),
-                obs: None,
-            },
-            theirs: None,
-        },
-        nlink: 1,
-        saved_obs: rune_db::ObsId::new(1),
-        bridge_seq: None,
-        resumable_merge: None,
-    };
-
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Db(DbEvent::Ok {
-            id: op_id,
-            result: OpOutcome::Load(Box::new(load_result)),
-        }),
-        &mut effects,
-    );
-
     assert_eq!(
         app.doc(id).unwrap().buffer.content(),
         disk_content,
@@ -366,8 +314,8 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
          rejected must never keep journaling against that row"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("crash recovery")),
+        rune_tui::messages::newest_text(app).is_some_and(|s| s.contains("crash recovery")),
         "a status message must explain the refusal (got {:?})",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(app)
     );
 }
