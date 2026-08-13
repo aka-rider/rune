@@ -1,9 +1,7 @@
-//! WP2 "Done when" integration tests for the sync-state plumbing (plan
-//! `merge-user-s-changes-with-idempotent-octopus.md`, WP2.S1-S5): an
+//! WP2 "Done when" integration tests for the sync-state plumbing: an
 //! external disk edit reaches `Document::last_sync` through a `Probe` ack
 //! enqueued by `workspace::switch_to`, and the footer's passive
-//! `Mode::DiskChanged` hint tracks it. Follows the `db_wiring_lifecycle.rs`
-//! pattern, pulling the shared fixtures from `db_wiring_common`.
+//! `Mode::DiskChanged` hint tracks it. Driven through `rune_fuzz::Session`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -11,17 +9,15 @@
     clippy::panic
 )]
 
-mod db_wiring_common;
-
 use std::path::Path;
-use std::sync::Arc;
 
 use rune_db::SyncKind;
+use rune_fuzz::Session;
+use rune_tui::app::App;
+use rune_tui::document::DocumentId;
 use rune_tui::footer::footer_text;
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
-
-use db_wiring_common::{app_with_store, drain_one_op_for, publish};
+use rune_vfs::Vfs;
 
 /// Overwrites `/doc.md`'s content in place, simulating an external editor —
 /// `rename_excl` refuses to publish over an existing destination, so the
@@ -34,6 +30,15 @@ fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
     vfs.rename_excl(&temp, path).expect("publish");
 }
 
+/// The session's untitled draft — the switch-away target a reprobe needs.
+fn other_doc(app: &App, active: DocumentId) -> DocumentId {
+    app.documents
+        .iter()
+        .map(|(&id, _)| id)
+        .find(|&id| id != active)
+        .expect("the untitled draft stays open alongside the seed")
+}
+
 /// Plan WP2 "Done when": open a document, edit the same file externally,
 /// switch tabs away and back (firing the WP2.S4 probe) — the footer must
 /// show the `disk changed` hint. Restoring the original disk content and
@@ -41,67 +46,58 @@ fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
 /// `probe.rs`'s doc comment).
 #[test]
 fn external_disk_edit_surfaces_the_footer_hint_and_clears_on_restore() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
+    let draft_id = other_doc(session.app(), doc_id);
 
-    let (mut app, bridge) = app_with_store("sync-plumbing-external-edit", Arc::clone(&vfs));
-    let draft_id = app.active;
-
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    assert_ne!(doc_id, draft_id);
-
-    // Drain the `Load` ack — installs the DocDb and seeds `last_sync` (S3).
-    drain_one_op_for(&mut app, &bridge, doc_id);
     assert_eq!(
-        app.doc(doc_id).unwrap().last_sync,
+        session.app().doc(doc_id).unwrap().last_sync,
         Some(SyncKind::Clean),
         "a freshly loaded, unedited document starts Clean"
     );
     assert!(
-        !footer_text(&app).contains("disk changed"),
+        !footer_text(session.app()).contains("disk changed"),
         "no hint while Clean: {:?}",
-        footer_text(&app)
+        footer_text(session.app())
     );
 
     // External edit: the file changes on disk, the buffer does not.
-    external_write(vfs.as_ref(), b"hello world");
+    external_write(session.app().vfs.as_ref(), b"hello world");
 
     // Switch away and back — `workspace::switch_to`'s own WP2.S4 probe
     // enqueue only fires for the doc actually switched ONTO.
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    workspace::switch_to(session.app_mut(), draft_id);
+    workspace::switch_to(session.app_mut(), doc_id);
+    assert!(session.deliver_db().is_none());
 
     assert_eq!(
-        app.doc(doc_id).unwrap().last_sync,
+        session.app().doc(doc_id).unwrap().last_sync,
         Some(SyncKind::DiskAhead),
         "disk moved, buffer didn't: DiskAhead"
     );
     assert!(
-        footer_text(&app).contains("disk changed"),
+        footer_text(session.app()).contains("disk changed"),
         "expected the disk-changed hint, got {:?}",
-        footer_text(&app)
+        footer_text(session.app())
     );
 
     // Restore the original content — the next probe's auto-adopt heals it
     // back to Clean, and the hint must disappear.
-    external_write(vfs.as_ref(), b"hello");
+    external_write(session.app().vfs.as_ref(), b"hello");
 
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    workspace::switch_to(session.app_mut(), draft_id);
+    workspace::switch_to(session.app_mut(), doc_id);
+    assert!(session.deliver_db().is_none());
 
     assert_eq!(
-        app.doc(doc_id).unwrap().last_sync,
+        session.app().doc(doc_id).unwrap().last_sync,
         Some(SyncKind::Clean),
         "content restored: back to Clean"
     );
     assert!(
-        !footer_text(&app).contains("disk changed"),
+        !footer_text(session.app()).contains("disk changed"),
         "hint must clear once Clean again: {:?}",
-        footer_text(&app)
+        footer_text(session.app())
     );
 }
 
@@ -110,28 +106,28 @@ fn external_disk_edit_surfaces_the_footer_hint_and_clears_on_restore() {
 /// away-and-back switch.
 #[test]
 fn switch_to_skips_a_second_probe_while_one_is_already_in_flight() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/doc.md", "hello");
+    let doc_id = session.app().active;
+    let draft_id = other_doc(session.app(), doc_id);
+    assert!(
+        session.app().db_ops.is_empty(),
+        "test setup: session setup fully drained"
+    );
 
-    let (mut app, bridge) = app_with_store("sync-plumbing-no-double-probe", Arc::clone(&vfs));
-    let draft_id = app.active;
-
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
-    assert!(app.db_ops.is_empty(), "test setup: Load ack fully drained");
-
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    assert_eq!(app.db_ops.len(), 1, "test setup: one probe now in flight");
+    workspace::switch_to(session.app_mut(), draft_id);
+    workspace::switch_to(session.app_mut(), doc_id);
+    assert_eq!(
+        session.app().db_ops.len(),
+        1,
+        "test setup: one probe now in flight"
+    );
 
     // Switching away and back again while that probe is still outstanding
     // must not enqueue a second one.
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
+    workspace::switch_to(session.app_mut(), draft_id);
+    workspace::switch_to(session.app_mut(), doc_id);
     assert_eq!(
-        app.db_ops.len(),
+        session.app().db_ops.len(),
         1,
         "a probe already in flight for this document must not be duplicated"
     );

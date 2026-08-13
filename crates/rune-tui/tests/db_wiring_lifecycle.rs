@@ -1,9 +1,6 @@
 //! WP6 "Done when" integration tests for the rune-tui <-> rune-db wiring's
-//! open/close op bookkeeping and the bootstrap-bridge handover —
-//! TODO.md's 500-line budget split of the original `db_wiring.rs`. The degraded-store
-//! banner and restart/hydration tests live in the sibling
-//! `db_wiring_degraded.rs`/`db_wiring_hydrate.rs`; all three pull shared
-//! fixtures from `db_wiring_common`.
+//! open/close op bookkeeping and the bootstrap-bridge handover, driven
+//! through `rune_fuzz::Session` wherever the flow is a real user flow.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -18,28 +15,27 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use rune_db::{DbEvent, OpOutcome, Store};
+use rune_fuzz::Session;
 use rune_tui::app::{self, App};
 use rune_tui::db::{Db, DbBridge};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, publish, temp_db_dir};
+use db_wiring_common::{publish, temp_db_dir};
 
 /// Plan WP6.S6: opening an Explorer path enqueues exactly one `Load` op and
 /// records it in `app.db_ops`, keyed to the newly opened document — not the
-/// app's pre-existing untitled draft.
+/// already-open one.
 #[test]
 fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/seed.md", "seed");
+    let initial_id = session.app().active;
+    publish(session.app().vfs.as_ref(), Path::new("/doc.md"), b"hello");
 
-    let (mut app, _rx) = app_with_store("open-path-enqueue", vfs);
-    let initial_id = app.active;
+    workspace::open_path(session.app_mut(), Path::new("/doc.md"));
 
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-
+    let app = session.app();
     let opened_id = app.active;
     assert_ne!(
         opened_id, initial_id,
@@ -53,7 +49,7 @@ fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
     assert_eq!(
         app.db_ops.values().next().map(|pending| pending.doc),
         Some(opened_id),
-        "the enqueued op must be routed to the opened document, not the initial draft"
+        "the enqueued op must be routed to the opened document, not the already-open one"
     );
     assert!(
         !app.doc(opened_id).unwrap().is_store_bound(),
@@ -69,29 +65,27 @@ fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
 /// load was outstanding.
 #[test]
 fn closing_a_document_sweeps_its_pending_load_version() {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+    let mut session = Session::open("/seed.md", "seed");
+    let initial_id = session.app().active;
+    publish(session.app().vfs.as_ref(), Path::new("/doc.md"), b"hello");
 
-    let (mut app, _rx) = app_with_store("close-sweeps-load-version", vfs);
-    let initial_id = app.active;
-
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let opened_id = app.active;
+    let opened_id =
+        workspace::open_path(session.app_mut(), Path::new("/doc.md")).expect("open doc");
     assert_eq!(
-        app.db_ops.len(),
+        session.app().db_ops.len(),
         1,
         "test setup: one Load op in flight for the opened document"
     );
 
-    // Switch back to the untitled draft before closing the opened document
-    // — `close_now` only reassigns `active` away from `id` when `id` is
+    // Reassign `active` directly rather than via `switch_to` — a real
+    // switch would enqueue its own probe on the seed document, and
+    // `close_now` only reassigns `active` away from `id` when `id` is
     // currently active, which is not what this test is exercising.
-    app.active = initial_id;
-    let _ = workspace::close_now(&mut app, opened_id, &mut Effects::default());
+    session.app_mut().active = initial_id;
+    let _ = workspace::close_now(session.app_mut(), opened_id, &mut Effects::default());
 
     assert!(
-        app.db_ops.is_empty(),
+        session.app().db_ops.is_empty(),
         "closing a document must sweep every fact about its in-flight ops, \
          not just the routing half of a still-pending Load"
     );

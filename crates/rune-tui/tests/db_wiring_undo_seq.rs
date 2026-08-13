@@ -4,8 +4,7 @@
 //! never desynchronize the durable journal from the live buffer — the
 //! writer thread resolves the undo target itself, from ops it has already
 //! executed, never from this app's own lagging `last_known_seq` estimate.
-//! Shares fixtures with the rest of the `db_wiring_*` suite via
-//! `db_wiring_common`.
+//! Driven through `rune_fuzz::Session`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -18,35 +17,24 @@ mod db_wiring_common;
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_core::buffer::Buffer;
-use rune_core::cursor::CursorSet;
-use rune_db::{DbEvent, Store};
-use rune_tui::app::{self, App};
-use rune_tui::commands::edit;
-use rune_tui::db::DbBridge;
-use rune_tui::runtime::{Effects, Msg};
+use rune_db::{DbEvent, OpOutcome};
+use rune_fuzz::Session;
+use rune_fuzz::driver::wait_for_db_op;
+use rune_tui::db::Db;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{
-    db_from, doc_db_from, join_binding_from, open_and_load, publish, temp_db_dir,
-};
+use db_wiring_common::{publish, restarted_store_at, store_at, temp_db_dir};
 
-/// Delivers exactly one buffered `DbEvent` for `op_id` into `app` — the
-/// same shape `recv_ok` uses, but keeping the raw event instead of
-/// unwrapping to `OpOutcome`, so a caller can assert it was `Ok` (not
-/// `Err`) without losing that distinction.
-fn deliver_one(app: &mut App, bridge: &DbBridge, op_id: u64) {
-    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    });
-    assert!(
-        matches!(evt, DbEvent::Ok { .. }),
-        "op {op_id} must not fail: {evt:?}"
-    );
-    let mut effects = Effects::default();
-    app::update(app, Msg::Db(evt), &mut effects);
-}
+const UNDO: KeyInput = KeyInput {
+    code: KeyCode::Char('z'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
 
 /// Data-safety regression: an undo committed while several of this
 /// session's own `AppendEdit` acks are still in flight must resolve to the
@@ -59,26 +47,13 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
     let dir = temp_db_dir("undo-seq");
     let db_path = dir.join("rune-v1.db");
     let doc_path = Path::new("/doc.md");
+    let mem = Arc::new(Mem::new());
+    publish(mem.as_ref(), doc_path, b"");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let mem = Mem::new();
-    publish(&mem, doc_path, b"");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-
-    let (store, bridge, load) = open_and_load(&db_path, Arc::clone(&vfs), doc_path);
-    let db = db_from(store, Arc::clone(&bridge), false);
-    let doc_db = doc_db_from(&load);
-
-    let mut app = App::new(
-        Buffer::new(load.recovered.clone()),
-        Some(doc_path.to_path_buf()),
-        Arc::clone(&vfs),
-        Some(db),
-    );
-    let id = app.active;
-    app.doc_mut(id).unwrap().set_doc_db_for_test(doc_db);
-    join_binding_from(&mut app, &load);
-    let len = app.doc(id).unwrap().buffer.len();
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
+    let (store, bridge) = store_at(&db_path, Arc::clone(&vfs));
+    let mut session =
+        Session::open_with_db("/doc.md", Arc::clone(&mem), Db::new(store, bridge, false));
 
     // Three whole-word pastes: each is ONE journal push and ONE `AppendEdit`
     // enqueue (`edit_core::insert_text`'s multi-char batch never coalesces
@@ -87,29 +62,34 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
     // no ambiguity from the durable side's typing-run coalescing muddying
     // what this test is isolating.
     for word in ["alpha", "beta", "gamma"] {
-        let mut effects = Effects::default();
-        app::update(&mut app, Msg::Paste(word.to_string()), &mut effects);
+        assert!(session.paste(word).is_none());
     }
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "alphabetagamma");
-    assert_eq!(app.db_ops.len(), 3, "three AppendEdit ops in flight");
+    assert_eq!(session.snapshot().content, "alphabetagamma");
+    assert_eq!(
+        session.app().db_ops.len(),
+        3,
+        "three AppendEdit ops in flight"
+    );
 
-    // Deliver ONLY the FIRST ack — "alpha" — a typing burst leaving the
-    // other two ("beta", "gamma") still unacknowledged, exactly the
+    // Deliver ONLY the FIRST (oldest) ack — "alpha" — a typing burst leaving
+    // the other two ("beta", "gamma") still unacknowledged, exactly the
     // `last_known_seq`-lagging window the bug chain started from.
-    let mut op_ids: Vec<u64> = app.db_ops.keys().copied().collect();
-    op_ids.sort_unstable();
-    deliver_one(&mut app, &bridge, op_ids[0]);
-    assert_eq!(app.db_ops.len(), 2, "beta/gamma acks still in flight");
+    assert!(session.deliver_db().is_none());
+    assert_eq!(
+        session.app().db_ops.len(),
+        2,
+        "beta/gamma acks still in flight"
+    );
 
     // Undo once: removes "gamma" from the LOCAL buffer/journal. Its
     // `MoveUndoPos` enqueues while "beta"'s AND "gamma"'s own `AppendEdit`
     // acks are still undelivered — the writer thread has already EXECUTED
     // both (strict FIFO), so it can resolve this exactly; only this app's
     // OWN bookkeeping is behind.
-    edit::undo(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "alphabeta");
+    assert!(session.key(UNDO).is_none());
+    assert_eq!(session.snapshot().content, "alphabeta");
     assert!(
-        !app.db.as_ref().unwrap().degraded,
+        !session.app().db.as_ref().unwrap().degraded,
         "MoveUndoPos must not fail against unacked in-flight AppendEdits"
     );
 
@@ -117,67 +97,60 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
     // corrupted current_seq" step in the bug chain: if `MoveUndoPos` above
     // had resolved to an underestimate, this append would truncate durable
     // events it never should have.
-    let mut effects = Effects::default();
-    app::update(&mut app, Msg::Paste("delta".to_string()), &mut effects);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "alphabetadelta");
+    assert!(session.paste("delta").is_none());
+    assert_eq!(session.snapshot().content, "alphabetadelta");
 
     // Drain every remaining in-flight ack — including the pre-undo "beta"/
-    // "gamma" acks and the post-undo ops — asserting NONE of them is an
-    // `Err` (a truncated/corrupted journal surfaces exactly there, via
-    // `edit out of bounds`/`current_seq` mismatches on the writer side).
-    while let Some(&op_id) = app.db_ops.keys().next() {
-        deliver_one(&mut app, &bridge, op_id);
-    }
+    // "gamma" acks and the post-undo ops. A truncated/corrupted journal
+    // surfaces exactly there, via `edit out of bounds`/`current_seq`
+    // mismatches on the writer side — which would degrade the store or
+    // post an error message.
+    assert!(session.deliver_db_all().is_none());
     assert!(
-        !app.db.as_ref().unwrap().degraded,
+        !session.app().db.as_ref().unwrap().degraded,
         "the store must still be healthy once every op has been acked"
     );
+    assert_eq!(
+        rune_tui::messages::posts(session.app()),
+        0,
+        "no ack in the whole sequence may surface an error, got {:?}",
+        rune_tui::messages::newest_text(session.app())
+    );
 
-    // Force a probe (switch away and back) — the same disk-fact refresh a
-    // real tab switch triggers; draining its ack must not surface an error
-    // either.
-    let probe_op = app
-        .db
-        .as_ref()
-        .unwrap()
-        .store
-        .probe(rune_db::DocId(app.doc(id).unwrap().doc_db().unwrap().db_id))
-        .expect("enqueue probe");
-    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == probe_op,
-        DbEvent::Fatal { .. } => true,
-    });
+    // Force a probe — the same disk-fact refresh a real tab switch triggers;
+    // its ack must not surface an error either.
+    let db = session.app().db.as_ref().unwrap();
+    let db_id = rune_db::DocId(session.app().active_doc().doc_db().unwrap().db_id);
+    let probe_op = db.store.probe(db_id).expect("enqueue probe");
+    let evt = wait_for_db_op(&db.bridge, probe_op);
     assert!(
         matches!(evt, DbEvent::Ok { .. }),
         "probe must not fail: {evt:?}"
     );
 
-    let live_content = app.doc(id).unwrap().buffer.content().to_string();
+    let live_content = session.snapshot().content;
     assert_eq!(live_content, "alphabetadelta");
 
     // Restart: a brand-new `Store` on the SAME db path must recover
     // EXACTLY this session's live buffer — the definitive proof the
     // durable journal was never truncated behind an underestimated undo
-    // target (mirrors `db_wiring_hydrate.rs`'s own restart-recovery shape).
-    let store = app.db.take().unwrap().store;
-    store.shutdown();
+    // target.
+    session
+        .app_mut()
+        .db
+        .take()
+        .expect("session has a store")
+        .shutdown();
+    drop(session);
 
-    let bridge_b = DbBridge::bootstrap();
-    let (store_b, _warning) =
-        Store::open(&db_path, Arc::clone(&vfs), bridge_b.on_event()).expect("open store b");
-    store_b.set_liveness_check(Arc::new(|_pid, _started_at| false));
+    let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
     let op_id = store_b.load(doc_path).expect("enqueue load b");
-    let load_b = match bridge_b.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    }) {
+    let load_b = match wait_for_db_op(&bridge_b, op_id) {
         DbEvent::Ok {
-            result: rune_db::OpOutcome::Load(r),
+            result: OpOutcome::Load(r),
             ..
         } => *r,
-        DbEvent::Ok { result, .. } => panic!("unexpected reply to Load: {result:?}"),
-        DbEvent::Err { error, .. } => panic!("load b failed: {error}"),
-        DbEvent::Fatal { error } => panic!("writer b fatal during load: {error}"),
+        other => panic!("expected a Load ack, got {other:?}"),
     };
     store_b.shutdown();
 

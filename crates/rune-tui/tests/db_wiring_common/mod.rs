@@ -1,25 +1,18 @@
-//! Shared setup helpers for the rune-tui <-> rune-db wiring test suite,
-//! split across `db_wiring_degraded.rs` (the degraded-store banner and its
-//! confirm gate), `db_wiring_hydrate.rs` (restart hydration and Load-ack
-//! adoption), and `db_wiring_lifecycle.rs` (open/close op bookkeeping and
-//! the bootstrap handover) — TODO.md's 500-line budget split of the original
-//! `db_wiring.rs`. Each consumer pulls this in via `mod db_wiring_common;`
-//! — integration test files are separate binaries, so this is the one
-//! place all three draw an identical `Store`/`App` fixture from, rather
-//! than risking drift.
+//! Shared fixtures for the `db_wiring_*`, `merge_*`, and save-epoch test
+//! suites: real-`Store` construction at a temp path, the atomic-publish
+//! shape, and the bootstrap-bridge drain primitives. Everything a
+//! `rune_fuzz::Session` already provides (App construction, key delivery,
+//! op draining as checked steps) lives there, not here.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
-use rune_db::{DbEvent, LoadResult, OpOutcome, Store};
-use rune_tui::app::{self, App};
-use rune_tui::db::{Db, DbBridge, DocDb};
-use rune_tui::document::DocumentId;
-use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Effects, Msg};
-use rune_vfs::{Mem, Vfs};
+use rune_db::{DbEvent, OpOutcome, Store};
+use rune_tui::app::App;
+use rune_tui::db::{Db, DbBridge};
+use rune_vfs::Vfs;
 
 /// A per-process monotonic counter, folded into [`temp_db_dir`]'s own name
 /// alongside its wall-clock nanosecond reading — the clock alone is not a
@@ -47,127 +40,35 @@ pub fn temp_db_dir(label: &str) -> PathBuf {
 
 /// The same atomic-publish shape `rune-db`'s own tests use: `write_durable`
 /// + `rename_excl`.
-pub fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
+pub fn publish(vfs: &dyn Vfs, path: &Path, bytes: &[u8]) {
     let temp = vfs.write_durable(path, bytes).expect("write_durable");
     vfs.rename_excl(&temp, path).expect("publish");
 }
 
-/// Opens a `Store` at `db_path` and hydrates `doc_path` through it,
-/// blocking for the `Load` ack on the bridge's own bootstrap channel —
-/// mirrors `rune-cli::main::bootstrap_db`.
-pub fn open_and_load(
+/// Opens a fresh real `Store` at `db_path` with a bootstrap-mode bridge —
+/// the two halves `Session::open_with_db` and a bespoke `Db::new` both
+/// start from.
+pub fn store_at(db_path: &Path, vfs: Arc<dyn Vfs + Send + Sync>) -> (Store, Arc<DbBridge>) {
+    let bridge = DbBridge::bootstrap();
+    let (store, _warning) = Store::open(db_path, vfs, bridge.on_event()).expect("open store");
+    (store, bridge)
+}
+
+/// [`store_at`], with the liveness check overridden to report every other
+/// session dead — the documented, supported way to simulate a restart after
+/// a crash when both "sessions" share this one OS process/pid
+/// (`Store::set_liveness_check`).
+pub fn restarted_store_at(
     db_path: &Path,
     vfs: Arc<dyn Vfs + Send + Sync>,
-    doc_path: &Path,
-) -> (Store, Arc<DbBridge>, LoadResult) {
-    let bridge = DbBridge::bootstrap();
-    let (store, _warning) =
-        Store::open(db_path, Arc::clone(&vfs), bridge.on_event()).expect("open store");
-    let op_id = store.load(doc_path).expect("enqueue load");
-    let load_result = match bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    }) {
-        DbEvent::Ok {
-            result: OpOutcome::Load(r),
-            ..
-        } => *r,
-        DbEvent::Ok { result, .. } => panic!("unexpected reply to Load: {result:?}"),
-        DbEvent::Err { error, .. } => panic!("load failed: {error}"),
-        DbEvent::Fatal { error } => panic!("writer thread fatal during load: {error}"),
-    };
-    (store, bridge, load_result)
-}
-
-pub fn db_from(store: Store, bridge: Arc<DbBridge>, degraded: bool) -> Db {
-    Db::new(store, bridge, degraded)
-}
-
-pub fn doc_db_from(load: &LoadResult) -> DocDb {
-    DocDb::new(
-        load.doc_id.0,
-        false, // bind_new: the doc already exists on disk in every test here
-        rune_db::Seq(0),
-    )
-}
-
-/// The [`doc_db_from`] counterpart for the shared per-file CAS baseline:
-/// joins `App::file_bindings` for `load.doc_id`, seeded from
-/// `load.saved_obs`, exactly like `db_ack::handle_load_ack`'s own production
-/// call to `App::install_or_join_file_binding` does. Every test that installs a `doc_db_from`
-/// binding onto a live `App` must call this too, or that document's CAS
-/// baseline reads back as the unseeded default instead of what its own
-/// fixture `Load` actually observed.
-pub fn join_binding_from(app: &mut App, load: &LoadResult) {
-    app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
-}
-
-pub fn press(app: &mut App, ch: char) {
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Key(KeyInput {
-            code: KeyCode::Char(ch),
-            mods: Mods::NONE,
-        }),
-        &mut effects,
-    );
-}
-
-pub fn save_key() -> KeyInput {
-    KeyInput {
-        code: KeyCode::Char('s'),
-        mods: Mods {
-            sup: true,
-            ..Mods::NONE
-        },
-    }
-}
-
-/// Opens a real `Store` at a fresh temp dir and wires it onto a brand-new
-/// `App` with exactly one untitled draft (no path) — the state
-/// `workspace::open_path`'s WP6 hydration runs against, since it only ever
-/// hydrates the document it opens, never the app's initial one. The
-/// returned bridge is left in its `Bootstrap` sink (never `attach`ed), so
-/// every `DbEvent` — including the `Load` ack `open_path` enqueues — stays
-/// buffered on the bridge itself for the test to drain through
-/// `recv_ok`/`app::update`, exactly like `open_and_load` above does for
-/// bootstrap hydration.
-pub fn app_with_store(label: &str, vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Arc<DbBridge>) {
-    let dir = temp_db_dir(label);
-    let db_path = dir.join("rune-v1.db");
-    let bridge = DbBridge::bootstrap();
-    let (store, _warning) =
-        Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()).expect("open store");
-    let db = Db::new(store, Arc::clone(&bridge), false);
-    let app = App::new(Buffer::new(""), None, vfs, Some(db));
-    (app, bridge)
-}
-
-/// Drains the single op currently recorded in `app.db_ops` for `doc`,
-/// feeding its ack through `app::update` exactly as the real runtime loop
-/// would when the op's `DbEvent` arrives on `Msg::Db` — `Err` events
-/// included, so a caller asserting on a failure path gets the event back
-/// rather than a panic.
-pub fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) -> DbEvent {
-    let op_id = *app
-        .db_ops
-        .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    });
-    let mut effects = Effects::default();
-    app::update(app, Msg::Db(evt.clone()), &mut effects);
-    evt
+) -> (Store, Arc<DbBridge>) {
+    let (store, bridge) = store_at(db_path, vfs);
+    store.set_liveness_check(Arc::new(|_pid, _started_at| false));
+    (store, bridge)
 }
 
 /// Blocks for the next `DbEvent::Ok` reply to `op_id` buffered on `bridge`,
-/// panicking on an `Err`/`Fatal`/mismatched-id reply — the same shape
-/// `open_and_load` above uses for bootstrap's own `Load` ack.
+/// panicking on an `Err`/`Fatal`/mismatched-id reply.
 pub fn recv_ok(bridge: &DbBridge, op_id: u64) -> OpOutcome {
     match bridge.wait_for_bootstrap_event(|evt| match evt {
         DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
@@ -177,4 +78,19 @@ pub fn recv_ok(bridge: &DbBridge, op_id: u64) -> OpOutcome {
         DbEvent::Err { id, error } => panic!("op {id} failed: {error}"),
         DbEvent::Fatal { error } => panic!("writer thread fatal: {error}"),
     }
+}
+
+/// Opens a real `Store` at a fresh temp dir and wires it onto a brand-new
+/// `App` with exactly one untitled draft (no path) — the state
+/// `workspace::open_path`'s WP6 hydration runs against, since it only ever
+/// hydrates the document it opens, never the app's initial one. The
+/// returned bridge is left in its `Bootstrap` sink (never `attach`ed), so
+/// every `DbEvent` — including the `Load` ack `open_path` enqueues — stays
+/// buffered on the bridge itself for the test to drain through `recv_ok`.
+pub fn app_with_store(label: &str, vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Arc<DbBridge>) {
+    let dir = temp_db_dir(label);
+    let (store, bridge) = store_at(&dir.join("rune-v1.db"), Arc::clone(&vfs));
+    let db = Db::new(store, Arc::clone(&bridge), false);
+    let app = App::new(Buffer::new(""), None, vfs, Some(db));
+    (app, bridge)
 }

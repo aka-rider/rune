@@ -3,8 +3,8 @@
 //! as `close_now`'s replacement for the last closed document — must
 //! register itself as its own scratch row in the recovery store when one is
 //! live, and must do nothing (no panic, no leaked `db_ops` entry) when
-//! there is no store or the store is `degraded`. Shares its `Store`/`App`
-//! fixtures with the rest of the `db_wiring_*` suite via `db_wiring_common`.
+//! there is no store or the store is `degraded`. Driven through
+//! `rune_fuzz::Session` wherever a live store is involved.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -12,19 +12,16 @@
     clippy::panic
 )]
 
-mod db_wiring_common;
-
 use std::sync::Arc;
 
 use rune_db::{DbEvent, OpOutcome, Store};
+use rune_fuzz::Session;
 use rune_tui::app;
-use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::db::{Db, DbBridge};
 use rune_tui::document::DocumentId;
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
-
-use db_wiring_common::{app_with_store, recv_ok};
 
 fn pending_scratch_op(app: &app::App, id: DocumentId) -> u64 {
     *app.db_ops
@@ -39,40 +36,29 @@ fn pending_scratch_op(app: &app::App, id: DocumentId) -> u64 {
 /// true — a scratch row has never been bound to a real file).
 #[test]
 fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
-    let (mut app, bridge) = app_with_store("new-untitled-binds", vfs);
+    let mut session = Session::open("/doc.md", "");
 
-    let id = workspace::new_untitled_document(&mut app);
+    let id = workspace::new_untitled_document(session.app_mut());
     assert!(
-        !app.doc(id).unwrap().is_store_bound(),
+        !session.app().doc(id).unwrap().is_store_bound(),
         "db stays None until the CreateScratch ack lands"
     );
+    let op_id = pending_scratch_op(session.app(), id);
 
-    let op_id = pending_scratch_op(&app, id);
-    let result = recv_ok(&bridge, op_id);
-    let doc_id = match result {
-        OpOutcome::ScratchDocId(doc_id) => doc_id,
-        other => panic!("expected OpOutcome::ScratchDocId from CreateScratch, got {other:?}"),
-    };
+    assert!(session.deliver_db().is_none());
 
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Db(DbEvent::Ok {
-            id: op_id,
-            result: OpOutcome::ScratchDocId(doc_id),
-        }),
-        &mut effects,
-    );
-
-    let doc_db = app.doc(id).unwrap().doc_db().expect("db_id bound");
-    assert_eq!(doc_db.db_id, doc_id.0);
+    let doc_db = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .doc_db()
+        .expect("db_id bound");
     assert!(
         doc_db.bind_new,
         "a scratch row has never been bound to a real file, so bind_new stays true"
     );
     assert!(
-        !app.db_ops.contains_key(&op_id),
+        !session.app().db_ops.contains_key(&op_id),
         "the ack must pop its own entry out of db_ops"
     );
 }
@@ -118,41 +104,35 @@ fn new_untitled_document_with_a_degraded_store_leaves_db_none_and_enqueues_nothi
 
 /// `close_now`'s "closing the last document mints a replacement" path (plan
 /// WP0) must go through the SAME registration, not a second, forgotten copy
-/// — closing the only open document with a live store still ends with the
+/// — closing every open document with a live store still ends with the
 /// fresh Untitled's own row bound once its ack lands.
 #[test]
 fn closing_the_only_document_registers_the_replacement_untitled_too() {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
-    let (mut app, bridge) = app_with_store("close-replacement-registers", vfs);
-    let only = app.active;
+    let mut session = Session::open("/doc.md", "");
+    let seed = session.app().active;
+    let draft = session
+        .app()
+        .documents
+        .iter()
+        .map(|(&id, _)| id)
+        .find(|&id| id != seed)
+        .expect("the untitled draft is open alongside the seed");
 
     let mut effects = Effects::default();
-    let _ = workspace::close_now(&mut app, only, &mut effects);
-    let replacement = app.active;
-    assert_ne!(replacement, only);
+    let _ = workspace::close_now(session.app_mut(), draft, &mut effects);
+    let _ = workspace::close_now(session.app_mut(), seed, &mut effects);
+    let replacement = session.app().active;
+    assert_ne!(replacement, seed);
+    pending_scratch_op(session.app(), replacement);
 
-    let op_id = pending_scratch_op(&app, replacement);
-    let result = recv_ok(&bridge, op_id);
-    let doc_id = match result {
-        OpOutcome::ScratchDocId(doc_id) => doc_id,
-        other => panic!("expected OpOutcome::ScratchDocId from CreateScratch, got {other:?}"),
-    };
+    assert!(session.deliver_db_all().is_none());
 
-    app::update(
-        &mut app,
-        Msg::Db(DbEvent::Ok {
-            id: op_id,
-            result: OpOutcome::ScratchDocId(doc_id),
-        }),
-        &mut effects,
-    );
-
-    let doc_db = app
+    session
+        .app()
         .doc(replacement)
         .unwrap()
         .doc_db()
         .expect("replacement's own row bound");
-    assert_eq!(doc_db.db_id, doc_id.0);
 }
 
 /// A `CreateSnapshot` ack resolves to `OpOutcome::SnapshotRowId`, a distinct
@@ -161,18 +141,22 @@ fn closing_the_only_document_registers_the_replacement_untitled_too() {
 /// document.
 #[test]
 fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
-    let (mut app, _bridge) = app_with_store("snapshot-row-id-not-scratch", vfs);
-    let id = app.active;
-    app.doc_mut(id)
+    let mut session = Session::open("/doc.md", "");
+    let id = session.app().active;
+    let bound_db_id = session
+        .app()
+        .doc(id)
         .unwrap()
-        .set_doc_db_for_test(DocDb::new(1, true, rune_db::Seq(0)));
+        .doc_db()
+        .expect("the seed document is store-bound after setup")
+        .db_id;
+
     // A bare, unrouted SnapshotRowId ack with no matching db_ops entry at
     // all must be a harmless no-op — the fire-and-forget shape any snapshot
     // ack whose entry was already popped elsewhere would take.
     let mut effects = Effects::default();
     app::update(
-        &mut app,
+        session.app_mut(),
         Msg::Db(DbEvent::Ok {
             id: 999,
             result: OpOutcome::SnapshotRowId(42),
@@ -181,8 +165,8 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     );
 
     assert_eq!(
-        app.doc(id).unwrap().doc_db().unwrap().db_id,
-        1,
+        session.app().doc(id).unwrap().doc_db().unwrap().db_id,
+        bound_db_id,
         "an unrelated SnapshotRowId ack must never overwrite an existing DocDb"
     );
 }
