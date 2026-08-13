@@ -14,7 +14,8 @@ use rune_tui::render;
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 
-use super::{Outcome, State, key_step, step_and_check};
+use super::session::{Outcome, State};
+use super::step_exec::{key_step, step_and_check};
 
 /// `SYNC-IDEMPOTENT`/`CELL-*`/`WRAP-RT` sampling cadence (G19: the display
 /// pipeline — comrak parse -> emit -> wrap — runs on every `sync_view()`,

@@ -87,6 +87,7 @@
 //!   decision 1).
 pub mod action;
 pub mod driver;
+pub use driver::Session;
 pub mod fault;
 pub mod generate;
 pub mod guard;

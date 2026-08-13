@@ -18,8 +18,9 @@ use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
+use super::checks;
+use super::session::{Outcome, State};
 use super::store_ops::wait_for_db_op;
-use super::{Outcome, State, checks};
 
 /// Builds the `(Msg, MsgTag)` pair for one keystroke — the one place
 /// `keymap::resolve` is consulted for tagging, shared by `Action::Key` and
