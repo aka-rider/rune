@@ -144,7 +144,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // on the chrome list.
         GlobalCommand::NewDocument => {
             app.set_focus_pane(Pane::Editor, effects);
+            let departed = crate::navhistory::departure_origin(app);
             crate::workspace::new_untitled_document(app);
+            crate::navhistory::record_departure_if_moved(app, departed);
             app.focus_title();
         }
         // Out-of-range is a silent no-op, so a digit naming a tab that
@@ -152,7 +154,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // pre-switch focus move as `Help` above, and for the same reason.
         GlobalCommand::TabSwitch(idx) => {
             app.set_focus_pane(Pane::Editor, effects);
-            crate::workspace::switch_to_index(app, idx);
+            crate::workspace::select_tab(app, idx);
         }
         // No focus change and no manual view invalidation needed — the
         // toggle's geometry change is absorbed by the next `view()` call

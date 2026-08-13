@@ -389,16 +389,20 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     crate::db_enqueue::probe(app, id);
 }
 
-/// Switches to the tab sitting at `idx` in the current tab order, if there
-/// is one. Positional rather than by id, for the callers that only know a
-/// row or a typed digit; an index past the end is a silent no-op, so a
-/// digit chord naming a tab that isn't open simply does nothing. Funnels
-/// into [`switch_to`], so a positional switch can never skip the title
-/// reseed or the cursor move.
-pub fn switch_to_index(app: &mut App, idx: usize) {
-    if let Some(&id) = app.documents.order().get(idx) {
-        switch_to(app, id);
-    }
+/// Selects the tab sitting at `idx` in the current tab order, if there is
+/// one. Positional rather than by id, for the callers that only know a row
+/// or a typed digit; an index past the end is a silent no-op, so a digit
+/// chord naming a tab that isn't open simply does nothing. Funnels into
+/// [`switch_to`], so a positional switch can never skip the title reseed or
+/// the cursor move — and records the departure, which [`switch_to`] itself
+/// must never do, since `^[`/`^]` travel reaches it too.
+pub fn select_tab(app: &mut App, idx: usize) {
+    let Some(&id) = app.documents.order().get(idx) else {
+        return;
+    };
+    let departed = crate::navhistory::departure_origin(app);
+    switch_to(app, id);
+    crate::navhistory::record_departure_if_moved(app, departed);
 }
 
 /// `F1` (plan WP7.S2, `keymap::GlobalCommand::Help`): mints the read-only

@@ -133,7 +133,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         }
         ExplorerCommand::Open => open_selected(app, effects),
         ExplorerCommand::ParentDir => go_to_parent(app, effects),
-        ExplorerCommand::Leave => app.set_focus_pane(Pane::Editor, effects),
+        ExplorerCommand::Leave => leave(app, effects),
     }
     KeyOutcome::Consumed
 }
@@ -190,6 +190,7 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
         explorer::request_dir(app, resolved, effects);
         return;
     }
+    let departed = crate::navhistory::departure_origin(app);
 
     // The cursor's own preview already loaded this exact file: promote it
     // in place rather than re-reading it through `open_path` — same
@@ -202,6 +203,7 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
     {
         explorer_preview::promote(app, id);
         app.set_focus_pane(Pane::Editor, effects);
+        crate::navhistory::record_departure_if_moved(app, departed);
         return;
     }
 
@@ -212,7 +214,22 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
     // the opened id, never an unsurfaced error.
     if workspace::open_path_checked(app, &target, effects).is_some() {
         app.set_focus_pane(Pane::Editor, effects);
+        crate::navhistory::record_departure_if_moved(app, departed);
     }
+}
+
+/// Escape off the Explorer promotes the live preview, so it commits the
+/// browse exactly like Enter does — but only once focus has actually
+/// landed on the Editor: a frame too narrow to paint both panes
+/// (`LayoutMode::ExplorerOnly`) resolves the Editor back to the Explorer,
+/// leaving the preview live and the user exactly where they were.
+fn leave(app: &mut App, effects: &mut Effects) {
+    let departed = crate::navhistory::departure_origin(app);
+    app.set_focus_pane(Pane::Editor, effects);
+    if app.focus() != Pane::Editor {
+        return;
+    }
+    crate::navhistory::record_departure_if_moved(app, departed);
 }
 
 /// Backspace navigates to the CURRENT root's own parent — a no-op at a

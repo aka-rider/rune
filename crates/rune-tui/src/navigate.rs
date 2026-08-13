@@ -112,6 +112,7 @@ fn follow_location(
     anchor: Option<Anchor>,
     effects: &mut Effects,
 ) {
+    crate::navhistory::record_departure(app, app.active);
     workspace::open_path_async(app, path, anchor, effects);
 }
 

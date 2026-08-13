@@ -1,129 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod explorer_common;
+mod navhistory_common;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
-use rune_core::buffer::Buffer;
-use rune_core::cursor::CursorSet;
-use rune_tui::app::{self, App};
-use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::keymap::KeyCode;
 use rune_vfs::{Mem, Vfs};
 
-const WIDTH: u16 = 80;
-const HEIGHT: u16 = 30;
-
-fn app_with(mem: &Arc<Mem>, path: &str, content: &str) -> App {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new(Buffer::new(content), Some(PathBuf::from(path)), vfs, None);
-    app.set_root(PathBuf::from("/root"));
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
-    app.sync_view();
-    app
-}
-
-fn plain_app(content: &str, width: u16, height: u16) -> App {
-    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.frame_width = width;
-    app.frame_height = height;
-    app.sync_view();
-    app
-}
-
-fn place_cursor(app: &mut App, offset: usize) {
-    app.active_doc_mut().cursors = CursorSet::new(offset);
-}
-
-fn modded(code: KeyCode, mods: Mods) -> KeyInput {
-    KeyInput { code, mods }
-}
-
-fn ctrl(code: KeyCode) -> KeyInput {
-    modded(
-        code,
-        Mods {
-            ctrl: true,
-            ..Mods::NONE
-        },
-    )
-}
-
-fn plain(code: KeyCode) -> KeyInput {
-    modded(code, Mods::NONE)
-}
-
-fn sup_enter() -> KeyInput {
-    modded(
-        KeyCode::Enter,
-        Mods {
-            sup: true,
-            ..Mods::NONE
-        },
-    )
-}
-
-fn back_key() -> KeyInput {
-    ctrl(KeyCode::Char('['))
-}
-
-fn forward_key() -> KeyInput {
-    ctrl(KeyCode::Char(']'))
-}
-
-fn press(app: &mut App, key: KeyInput) -> Effects {
-    let mut effects = Effects::default();
-    app::update(app, Msg::Key(key), &mut effects);
-    app.sync_view();
-    effects
-}
-
-fn settle_file_opens(app: &mut App, mut effects: Effects) {
-    for cmd in effects.cmds.drain(..) {
-        assert_eq!(cmd.kind(), CmdKind::ReadFile);
-        if let Some(msg) = cmd.run() {
-            let mut inner = Effects::default();
-            app::update(app, msg, &mut inner);
-        }
-    }
-    app.sync_view();
-}
-
-fn press_and_open(app: &mut App, key: KeyInput) {
-    let effects = press(app, key);
-    settle_file_opens(app, effects);
-}
-
-fn editor_origin(app: &App) -> (u16, u16) {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    let editor = rune_tui::layout::geometry(area, app).editor;
-    (editor.x, editor.y)
-}
-
-fn click(app: &mut App, col: u16, row: u16) {
-    let (ox, oy) = editor_origin(app);
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Mouse(MouseInput {
-            kind: MouseKind::Down(MouseButton::Left),
-            column: ox + col,
-            row: oy + row,
-            shift: false,
-            alt: false,
-            ctrl: false,
-        }),
-        &mut effects,
-    );
-    app.sync_view();
-}
-
-fn numbered_lines(count: usize) -> String {
-    (0..count).map(|i| format!("line {i}\n")).collect()
-}
+use navhistory_common::*;
 
 #[test]
 fn link_follow_then_back_returns_and_forward_returns_again() {
@@ -176,47 +61,6 @@ fn search_jump_then_back_returns_to_the_starting_caret() {
 
     press(&mut app, back_key());
     assert_eq!(app.active_doc().cursors.primary().position, start_offset);
-}
-
-#[test]
-fn arrowing_the_explorer_preview_records_nothing() {
-    let mem = explorer_common::seeded_vfs();
-    let mut app = explorer_common::app_with(&mem);
-    explorer_common::load_explorer(&mut app);
-
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Key(explorer_common::key(KeyCode::Down)),
-        &mut effects,
-    );
-    settle_file_opens(&mut app, effects);
-    assert!(app.active_doc().is_preview());
-    assert_eq!(app.nav_history.len(), 0);
-
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Key(explorer_common::key(KeyCode::Down)),
-        &mut effects,
-    );
-    settle_file_opens(&mut app, effects);
-    assert_eq!(app.nav_history.len(), 0);
-}
-
-#[test]
-fn ctrl_1_tab_switch_records_nothing() {
-    let mem = Arc::new(Mem::new());
-    let mut app = app_with(&mem, "/root/a.md", "a content\n");
-    let a_id = app.active;
-    let b_id = app.open_document(Buffer::new("b content\n"));
-    rune_tui::workspace::switch_to(&mut app, b_id);
-    assert_eq!(app.active, b_id);
-
-    press(&mut app, ctrl(KeyCode::Char('1')));
-
-    assert_eq!(app.active, a_id);
-    assert_eq!(app.nav_history.len(), 0);
 }
 
 #[test]

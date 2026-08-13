@@ -130,10 +130,12 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
 }
 
 fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {
+    let departed = crate::navhistory::departure_origin(app);
     app.set_focus_pane(Pane::Editor, effects);
     if app.focus() != Pane::Editor {
         return;
     }
+    crate::navhistory::record_departure_if_moved(app, departed);
 
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;

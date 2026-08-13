@@ -54,54 +54,56 @@ pub fn record_edit(app: &mut App, id: DocumentId, offset: usize) {
     app.nav_history.push(place, replace);
 }
 
-pub fn observe(app: &mut App, active_before: DocumentId, before: &[(DocumentId, usize)]) {
-    if app.active != active_before {
-        observe_switch(app, active_before, before);
+/// Where a navigation is departing FROM, read before that navigation moves
+/// anything: the browsing origin whenever the user is browsing the
+/// Explorer — `app.active` names an ineligible preview there, or the
+/// destination itself once the cursor lands on a file already open — and
+/// the active document otherwise.
+pub fn departure_origin(app: &App) -> Option<DocumentId> {
+    let browsing =
+        app.focus() == crate::pane::Pane::Explorer || app.explorer.preview == Some(app.active);
+    if browsing {
+        app.explorer.browsing_origin
     } else {
-        observe_same_doc(app, before);
+        Some(app.active)
     }
 }
 
-fn observe_switch(app: &mut App, outgoing: DocumentId, before: &[(DocumentId, usize)]) {
-    if !eligible(app, outgoing) || !eligible(app, app.active) {
+pub fn record_departure(app: &mut App, from: DocumentId) {
+    if !eligible(app, from) {
         return;
     }
-    let new_caret = app.active_doc().cursors.primary().position;
-    let before_caret = before
-        .iter()
-        .find(|(d, _)| *d == app.active)
-        .map(|&(_, p)| p);
-    if before_caret == Some(new_caret) {
-        return;
-    }
-    let Some(offset) = before.iter().find(|(d, _)| *d == outgoing).map(|&(_, p)| p) else {
+    let Some(offset) = app.doc(from).map(|doc| doc.cursors.primary().position) else {
         return;
     };
-    let Some(place) = place_for(app, outgoing, offset, PlaceKind::Visited) else {
+    let Some(place) = place_for(app, from, offset, PlaceKind::Visited) else {
         return;
     };
     push_with_line_dedup(app, place);
 }
 
-fn observe_same_doc(app: &mut App, before: &[(DocumentId, usize)]) {
-    let id = app.active;
-    if !eligible(app, id) {
-        return;
-    }
-    let Some(&(_, before_offset)) = before.iter().find(|(d, _)| *d == id) else {
+pub fn record_departure_if_moved(app: &mut App, from: Option<DocumentId>) {
+    let Some(from) = from.filter(|&id| id != app.active) else {
         return;
     };
+    record_departure(app, from);
+}
+
+pub fn observe_jump(app: &mut App, active_before: DocumentId, caret_before: usize) {
+    if app.active != active_before || !eligible(app, active_before) {
+        return;
+    }
     let after_offset = app.active_doc().cursors.primary().position;
-    if before_offset == after_offset {
+    if caret_before == after_offset {
         return;
     }
     let buffer = &app.active_doc().buffer;
-    let before_line = buffer.offset_to_line_col(before_offset).line;
+    let before_line = buffer.offset_to_line_col(caret_before).line;
     let after_line = buffer.offset_to_line_col(after_offset).line;
     if before_line.abs_diff(after_line) < NAV_JUMP_LINES {
         return;
     }
-    let Some(place) = place_for(app, id, before_offset, PlaceKind::Visited) else {
+    let Some(place) = place_for(app, active_before, caret_before, PlaceKind::Visited) else {
         return;
     };
     push_with_line_dedup(app, place);

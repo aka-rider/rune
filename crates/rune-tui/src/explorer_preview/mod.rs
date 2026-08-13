@@ -211,11 +211,6 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
                 doc.read_only = ReadOnly::Preview;
             }
             app.explorer.preview = Some(id);
-            // Remembers what the user was editing before this browsing
-            // session's preview took over — `discard_active`'s own way
-            // back, captured now because `switch_to` below is about to
-            // move `app.active` off it.
-            app.explorer.preview_return_to = Some(app.active);
             id
         }
     };
@@ -261,7 +256,6 @@ fn apply_failed(app: &mut App, path: &Path, reason: &str) {
                 doc.display_name = Some(file_name.to_string());
             }
             app.explorer.preview = Some(id);
-            app.explorer.preview_return_to = Some(app.active);
             id
         }
     };
@@ -327,7 +321,6 @@ pub(crate) fn promote(app: &mut App, id: DocumentId) {
         doc.read_only = ReadOnly::No;
     }
     app.explorer.preview = None;
-    app.explorer.preview_return_to = None;
     let path = app.doc(id).and_then(|doc| doc.file_path.clone());
     if let Some(path) = path {
         let _ = crate::db_enqueue::load_document(app, id, &path, false);
@@ -338,7 +331,7 @@ pub(crate) fn promote(app: &mut App, id: DocumentId) {
 /// without going through `workspace::switch_to` (a pure focus move touches
 /// no document) — restores `app.active` to the document the user was
 /// editing before this browsing session's preview took over
-/// (`Explorer::preview_return_to`) when the preview WAS the active
+/// (`Explorer::browsing_origin`) when the preview WAS the active
 /// document, since nothing else is about to reseat it the way
 /// `switch_to`'s own caller does for [`discard_if_switching_away`]. Falls
 /// back to `workspace::close::neighbor_of`'s adjacent-tab pick — reused
@@ -355,7 +348,7 @@ fn discard_active(app: &mut App) {
     let target = was_active
         .then(|| {
             app.explorer
-                .preview_return_to
+                .browsing_origin
                 .filter(|&t| t != id && app.documents.contains_key(&t))
                 .or_else(|| workspace::close::neighbor_of(app, id))
         })
@@ -373,15 +366,14 @@ fn discard_active(app: &mut App) {
 }
 
 /// The shared tail of every discard path: removes `id` from `app.documents`
-/// (its tab membership with it) and clears the preview slot (and its
-/// remembered return-to document). A preview is never dirty and never
-/// contacted the recovery store, so unlike `workspace::close::close_now`
-/// there is no guard prompt, no `db_ops`/`pending_*` sweep, and no
-/// image-delete effect to run — closing a preview is pure bookkeeping.
+/// (its tab membership with it) and clears the preview slot. A preview is
+/// never dirty and never contacted the recovery store, so unlike
+/// `workspace::close::close_now` there is no guard prompt, no `db_ops`/
+/// `pending_*` sweep, and no image-delete effect to run — closing a
+/// preview is pure bookkeeping.
 fn remove_preview_document(app: &mut App, id: DocumentId) {
     app.documents.remove(&id);
     app.explorer.preview = None;
-    app.explorer.preview_return_to = None;
     app.explorer.preview_failed = None;
 }
 

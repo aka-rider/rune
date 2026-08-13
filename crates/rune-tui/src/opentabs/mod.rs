@@ -103,7 +103,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
 
 pub(crate) fn activate(app: &mut App, effects: &mut Effects) {
     app.blur_title(effects);
-    workspace::switch_to_index(app, app.tabs.nav.cursor);
+    workspace::select_tab(app, app.tabs.nav.cursor);
     app.set_focus_pane(Pane::Editor, effects);
 }
 
