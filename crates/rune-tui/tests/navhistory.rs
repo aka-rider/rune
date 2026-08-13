@@ -279,17 +279,33 @@ fn an_entry_below_an_insertion_still_lands_on_the_same_text() {
 }
 
 #[test]
-fn back_with_empty_history_posts_a_message_and_moves_nothing() {
+fn forward_at_the_boundary_moves_nothing_and_stays_silent() {
     let mut app = plain_app("hello\n", WIDTH, HEIGHT);
     let before = app.active;
     let cursor_before = app.active_doc().cursors.primary().position;
+    assert!(!app.nav_history.can_forward());
+
+    press(&mut app, forward_key());
+
+    assert_eq!(rune_tui::messages::newest_text(&app), None);
+    assert!(!app.nav_history.can_forward());
+    assert_eq!(app.active, before);
+    assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+}
+
+/// At a boundary the dim control on the breadcrumb row IS the feedback:
+/// the key moves nothing and says nothing.
+#[test]
+fn back_at_the_boundary_moves_nothing_and_stays_silent() {
+    let mut app = plain_app("hello\n", WIDTH, HEIGHT);
+    let before = app.active;
+    let cursor_before = app.active_doc().cursors.primary().position;
+    assert!(!app.nav_history.can_back());
 
     press(&mut app, back_key());
 
-    assert_eq!(
-        rune_tui::messages::newest_text(&app),
-        Some("no earlier location")
-    );
+    assert_eq!(rune_tui::messages::newest_text(&app), None);
+    assert!(!app.nav_history.can_back());
     assert_eq!(app.active, before);
     assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
     assert_eq!(app.nav_history.index(), 0);

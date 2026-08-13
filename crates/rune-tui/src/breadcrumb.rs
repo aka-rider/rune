@@ -1,81 +1,68 @@
-//! The breadcrumb: the active document's path spliced onto the center
-//! pane's bottom border row — plan WP4.S4, replacing the pre-WP4
-//! `draw(app, area, frame)` (which gave the breadcrumb its OWN reserved
-//! row) now that the center pane has a real `Block::bordered()` (WP4.S2)
-//! to splice onto instead. `overlay` writes cells directly into
-//! `frame.buffer_mut()` on the block's own BOTTOM border row — the same
+//! The breadcrumb row: the location-history controls and the active
+//! document's path, spliced onto the center pane's bottom border row.
+//! `overlay` writes cells directly into `frame.buffer_mut()` — the same
 //! cell-writing idiom `render::blit` uses — rather than depending on
-//! ratatui's `Block` title-placement semantics, so the arithmetic (the
-//! 2-dash right margin, the `+7` bail-out, the `…/` ellipsis) is exact
+//! ratatui's `Block` title-placement semantics, so the arithmetic is exact
 //! cell for cell.
 //!
-//! The rendered shape is `dir/dir/dir › leaf`: directories run together
-//! separated by a bare `/`, and a wider ` › ` sets the leaf file name off
-//! from the directory chain. Parts themselves carry no padding — the one
-//! space on each side of the whole crumb comes from `overlay`.
+//! Render order is load-bearing: `render::draw` must have already painted
+//! the center `Block` over `block` before calling this, or `overlay`'s
+//! cells get painted over again.
 //!
-//! Render order is load-bearing (plan gotcha 16): `render::draw` must have
-//! already painted the center `Block` over `block` before calling this, or
-//! `overlay`'s cells get painted over again.
-//!
-//! Every width in this module — the `bc` total, `build_crumb`'s per-part
-//! accounting, and `put`'s column advance — goes through the crate's ONE
-//! chrome-width chokepoint (`crate::width::display_width`, backed by
-//! `rune_syntax::wrap::grapheme_width`), one grapheme CLUSTER per cell,
-//! so the dash fill can never be sized in one unit and drawn in
+//! Every width in this module — the segment totals, `build_crumb`'s
+//! per-part accounting, and `put`'s column advance — goes through the
+//! crate's ONE chrome-width chokepoint (`crate::width::display_width`,
+//! backed by `rune_syntax::wrap::grapheme_width`), one grapheme CLUSTER per
+//! cell, so the dash fill can never be sized in one unit and drawn in
 //! another: a CJK/emoji/NFD-accented path component makes the difference
 //! visible immediately if the two ever drift apart.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::text::Span;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
-use crate::breadcrumb_layout::{build_crumb, crumb_parts};
+use crate::breadcrumb_layout::{build_controls, build_crumb, crumb_parts, spans_width};
 use crate::width::display_width;
 use rune_syntax::wrap::grapheme_width;
 
-/// Splices the active document's breadcrumb onto `block`'s bottom border
-/// row (`block.y + block.height - 1`), left to right: `╰` · a `─` dash
-/// fill · a plain space · the crumb text · a plain space · `──╯`. Does
-/// nothing (leaves whatever `render::draw`'s `Block` already painted on
-/// that row) when:
-/// - `block` is too small to have a distinct bottom border row of its own
-///   (`block.height < 2`) or has no width at all;
-/// - the active document has no `file_path` (a draft, the Help virtual
-///   doc — same "renders nothing" contract the pre-WP4 `draw` had);
-/// - the path has no `Normal` components at all (a bare `/` renders as
-///   nothing rather than an empty crumb);
-/// - the crumb, even at its MOST truncated (a single leaf part plus the
-///   ellipsis, or fewer), still doesn't leave at least 7 spare columns in
-///   `block`'s width (`bc + 7 > block.width`).
+const CONTROLS_LEAD: &str = "── ";
+const TAIL: &str = "──╯";
+
+const CORNER_WIDTH: usize = 1;
+const TAIL_WIDTH: usize = 3;
+const MIN_DASH: usize = 1;
+
+const CRUMB_PADDING: usize = 2;
+
+/// Under width pressure the crumb goes first and the controls second: the
+/// controls are the interactive element, the crumb only a label.
 pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     if block.height < 2 || block.width == 0 {
         return;
     }
-    let Some(path) = &app.active_doc().file_path else {
-        return;
-    };
-    let parts = crumb_parts(path, &app.root);
-    if parts.is_empty() {
+    let width = block.width as usize;
+
+    let fixed = CORNER_WIDTH + MIN_DASH + TAIL_WIDTH;
+    let controls_padding = display_width(CONTROLS_LEAD) + 1;
+
+    let controls = build_controls(&app.nav_history, &app.theme);
+    let controls_block = spans_width(&controls) + controls_padding;
+    let controls = (!controls.is_empty() && controls_block + fixed <= width).then_some(controls);
+    let controls_block = controls.as_ref().map_or(0, |_| controls_block);
+
+    let crumb = crumb_spans(app, width.saturating_sub(controls_block))
+        .filter(|spans| spans_width(spans) + CRUMB_PADDING + controls_block + fixed <= width);
+    let crumb_block = crumb
+        .as_ref()
+        .map_or(0, |spans| spans_width(spans) + CRUMB_PADDING);
+
+    if controls.is_none() && crumb.is_none() {
         return;
     }
-
-    let segments = build_crumb(&parts, block.width as usize, &app.theme);
-
-    let bc: usize = segments
-        .iter()
-        .map(|s| display_width(s.content.as_ref()))
-        .sum();
-    // The 7-column minimum overhead — leaves the
-    // plain border row (already painted by `render::draw`'s `Block`)
-    // completely untouched rather than splicing a crumb that would collide
-    // with the corner glyphs.
-    if bc + 7 > block.width as usize {
-        return;
-    }
-    let dash = block.width as usize - bc - 6;
+    let dash = width - CORNER_WIDTH - controls_block - crumb_block - TAIL_WIDTH;
 
     let border_style = if focused {
         app.theme.chrome.active_border
@@ -89,18 +76,40 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     let mut x = block.x;
 
     put(buf, &mut x, y, "╰", border_style);
+    if let Some(controls) = &controls {
+        for cluster in CONTROLS_LEAD.graphemes(true) {
+            put(buf, &mut x, y, cluster, border_style);
+        }
+        put_spans(buf, &mut x, y, controls);
+        put(buf, &mut x, y, " ", plain);
+    }
     for _ in 0..dash {
         put(buf, &mut x, y, "─", border_style);
     }
-    put(buf, &mut x, y, " ", plain);
-    for span in &segments {
-        for cluster in span.content.graphemes(true) {
-            put(buf, &mut x, y, cluster, span.style);
-        }
+    if let Some(crumb) = &crumb {
+        put(buf, &mut x, y, " ", plain);
+        put_spans(buf, &mut x, y, crumb);
+        put(buf, &mut x, y, " ", plain);
     }
-    put(buf, &mut x, y, " ", plain);
-    for cluster in "──╯".graphemes(true) {
+    for cluster in TAIL.graphemes(true) {
         put(buf, &mut x, y, cluster, border_style);
+    }
+}
+
+fn crumb_spans(app: &App, budget: usize) -> Option<Vec<Span<'static>>> {
+    let path = app.active_doc().file_path.as_ref()?;
+    let parts = crumb_parts(path, &app.root);
+    if parts.is_empty() {
+        return None;
+    }
+    Some(build_crumb(&parts, budget, &app.theme))
+}
+
+fn put_spans(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, spans: &[Span<'_>]) {
+    for span in spans {
+        for cluster in span.content.graphemes(true) {
+            put(buf, x, y, cluster, span.style);
+        }
     }
 }
 
@@ -265,9 +274,11 @@ mod tests {
         // directories run together on a bare `/`, the leaf is set off by
         // ` › `, and no part carries padding of its own: 1 + 1 + 1 + 3 + 7
         // = 13 columns. `overlay` adds the ONE plain space on each side.
-        // At width 40, dash = 40 - 13 - 6 = 21.
         let row = overlay_bottom_row(&app, 40, 3, true);
-        assert_eq!(row, format!("╰{} a/b › note.md ──╯", "─".repeat(21)));
+        assert_eq!(
+            row,
+            format!("╰── ^[ ^] {} a/b › note.md ──╯", "─".repeat(12))
+        );
     }
 
     /// Once the parts no longer fit, the dropped leading directories are
@@ -278,8 +289,7 @@ mod tests {
         const W: u16 = 28;
         let app = app_for("hello", Some("/alpha/bravo/charlie/delta/note.md"));
         let row = overlay_bottom_row(&app, W, 3, true);
-        // "…/delta › note.md" is 17 wide, so dash = 28 - 17 - 6 = 5.
-        assert_eq!(row, format!("╰{} …/delta › note.md ──╯", "─".repeat(5)));
+        assert_eq!(row, format!("╰── ^[ ^] {} …/note.md ──╯", "─".repeat(4)));
         assert_eq!(
             oracle_cell_width(&row),
             W as usize,
@@ -349,28 +359,103 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bails_out_and_leaves_the_row_untouched_at_a_tiny_width() {
-        let app = app_for("hello", Some("/a/b/note.md"));
-        // Even the smallest possible crumb can't fit `bc + 7 <= width`
-        // at width 5 — the row must come back exactly as the plain
-        // `TestBackend` default (blank cells), untouched by `overlay`.
-        let untouched = overlay_bottom_row(&app_for("hello", None), 5, 3, true);
-        let row = overlay_bottom_row(&app, 5, 3, true);
-        assert_eq!(row, untouched, "bail-out must leave the row exactly as-is");
-    }
-
-    #[test]
-    fn pathless_doc_renders_nothing() {
-        let app = app_for("hello", None);
-        let touched = overlay_bottom_row(&app, 40, 3, true);
-        let buf = testgrid::draw_with(40, 3, |_frame| {});
+    fn blank_row(width: u16) -> String {
+        let buf = testgrid::draw_with(width, 3, |_frame| {});
         let mut expected = String::new();
-        for x in 0..40 {
+        for x in 0..width {
             if let Some(cell) = buf.cell((x, 2)) {
                 expected.push_str(cell.symbol());
             }
         }
-        assert_eq!(touched, expected);
+        expected
+    }
+
+    /// The control glyph at column `x` carries the footer key colour and
+    /// weight, but never the footer's own background — that block of
+    /// `surface0` would read as a stray chip sitting on the pane border.
+    fn assert_glyph_style(app: &App, x: u16, expected: Style) {
+        const W: u16 = 40;
+        let buf = testgrid::draw_with(W, 3, |frame| {
+            overlay(app, Rect::new(0, 0, W, 3), true, frame)
+        });
+        let style = buf.cell((x, 2)).map(|c| c.style()).unwrap_or_default();
+        assert_eq!(style.fg, expected.fg);
+        assert_eq!(style.add_modifier, expected.add_modifier);
+        assert_eq!(
+            style.bg,
+            Some(ratatui::style::Color::Reset),
+            "the footer background must not ride onto the border row"
+        );
+    }
+
+    /// The two control glyphs sit at columns 4-5 (`^[`) and 7-8 (`^]`),
+    /// right after the `╰── ` lead-in.
+    const BACK_GLYPH_X: u16 = 4;
+    const FORWARD_GLYPH_X: u16 = 7;
+
+    fn app_with_one_earlier_place() -> App {
+        let mut app = app_for(&"line\n".repeat(40), Some("/a/b/note.md"));
+        let id = app.active;
+        app.active_doc_mut().cursors = rune_core::cursor::CursorSet::new(150);
+        crate::navhistory::observe(&mut app, id, &[(id, 0)]);
+        app
+    }
+
+    #[test]
+    fn bails_out_and_leaves_the_row_untouched_at_a_tiny_width() {
+        let app = app_for("hello", Some("/a/b/note.md"));
+        // Neither the controls nor even the smallest crumb fit at width 5 —
+        // the row must come back exactly as the plain `TestBackend` default.
+        let row = overlay_bottom_row(&app, 5, 3, true);
+        assert_eq!(
+            row,
+            blank_row(5),
+            "bail-out must leave the row exactly as-is"
+        );
+    }
+
+    /// Location history spans documents, so a draft — which has no path and
+    /// therefore no crumb — still gets its controls.
+    #[test]
+    fn a_draft_renders_the_controls_without_a_crumb() {
+        let app = app_for("hello", None);
+        let row = overlay_bottom_row(&app, 40, 3, true);
+        assert_eq!(row, format!("╰── ^[ ^] {}╯", "─".repeat(29)));
+    }
+
+    #[test]
+    fn both_controls_are_dim_in_a_fresh_session() {
+        let app = app_for("hello", Some("/a/b/note.md"));
+        let dim = app.theme.chrome.footer_key_inactive;
+        assert!(!app.nav_history.can_back());
+        assert_glyph_style(&app, BACK_GLYPH_X, dim);
+        assert_glyph_style(&app, FORWARD_GLYPH_X, dim);
+    }
+
+    #[test]
+    fn back_lights_up_once_a_place_is_recorded() {
+        let app = app_with_one_earlier_place();
+        assert_glyph_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key);
+        assert_glyph_style(&app, FORWARD_GLYPH_X, app.theme.chrome.footer_key_inactive);
+    }
+
+    #[test]
+    fn forward_lights_up_after_stepping_back() {
+        let mut app = app_with_one_earlier_place();
+        crate::navhistory::back(&mut app, &mut crate::runtime::Effects::default());
+
+        assert_glyph_style(&app, FORWARD_GLYPH_X, app.theme.chrome.footer_key);
+        assert_glyph_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key_inactive);
+    }
+
+    /// Under width pressure the crumb goes first and the controls second:
+    /// the controls are what the user acts on, the crumb only names where
+    /// they are.
+    #[test]
+    fn the_crumb_is_dropped_before_the_controls() {
+        let app = app_for("hello", Some("/a/b/note.md"));
+        let row = overlay_bottom_row(&app, 16, 3, true);
+        assert_eq!(row, format!("╰── ^[ ^] {}╯", "─".repeat(5)));
+        assert_eq!(overlay_bottom_row(&app, 13, 3, true), blank_row(13));
     }
 }

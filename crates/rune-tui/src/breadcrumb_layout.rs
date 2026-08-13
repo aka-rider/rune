@@ -9,6 +9,9 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 use std::path::Component;
 
+use crate::global::{GlobalCommand, label_for};
+use crate::navhistory::NavHistory;
+use crate::theme::Theme;
 use crate::width::display_width;
 
 /// Marks a crumb whose leading parts were dropped to fit the width. Two
@@ -115,6 +118,43 @@ pub(crate) fn build_crumb(
     }
 
     segments
+}
+
+/// The chord glyphs for the two location-history moves, blue while the move
+/// is available and dim while it is not. The footer's own key styles carry
+/// its `surface0` background; the border row has none, so the background is
+/// dropped and only the colours are reused.
+pub(crate) fn build_controls(history: &NavHistory, theme: &Theme) -> Vec<Span<'static>> {
+    let glyph_style = |available: bool| {
+        let style = if available {
+            theme.chrome.footer_key
+        } else {
+            theme.chrome.footer_key_inactive
+        };
+        Style { bg: None, ..style }
+    };
+
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
+    for (cmd, available) in [
+        (GlobalCommand::NavBack, history.can_back()),
+        (GlobalCommand::NavForward, history.can_forward()),
+    ] {
+        let Some(label) = label_for(cmd) else {
+            continue;
+        };
+        if !spans.is_empty() {
+            spans.push(Span::styled(" ", Style::new()));
+        }
+        spans.push(Span::styled(label, glyph_style(available)));
+    }
+    spans
+}
+
+pub(crate) fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|s| display_width(s.content.as_ref()))
+        .sum()
 }
 
 #[cfg(test)]
