@@ -7,7 +7,7 @@
 
 mod conceal_common;
 
-use conceal_common::assert_no_duplicate_content_at;
+use rune_md::invariant::assert_no_duplicate_content_at;
 
 #[test]
 fn case_zero_width_spaces_around_multiline_code_span() {

@@ -17,8 +17,9 @@
 
 mod conceal_common;
 
-use conceal_common::{assert_full_line_coverage, assert_no_duplicate_content, joined_line, synced};
+use conceal_common::{joined_line, synced};
 use rune_md::emit::emit;
+use rune_md::invariant::{assert_full_line_coverage, assert_no_duplicate_content};
 
 fn assert_wikilink_label(content: &str, concealed_label: &str) {
     // Revealed: cursor ON the wikilink's own line shows the raw markup

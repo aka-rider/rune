@@ -12,9 +12,10 @@
 
 mod conceal_common;
 
-use conceal_common::{assert_full_line_coverage, synced};
+use conceal_common::synced;
 use rune_core::coords::BufferPoint;
 use rune_md::emit::emit;
+use rune_md::invariant::assert_full_line_coverage;
 
 fn assert_container_fence_invariants(content: &str) {
     for &focused in &[true, false] {
