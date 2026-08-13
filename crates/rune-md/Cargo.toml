@@ -24,7 +24,10 @@ proptest = { workspace = true }
 # dev-dependency with the feature enabled makes Cargo's feature
 # unification turn `strict-invariants` on for every use of `rune-md`
 # within a `cargo test` build — unit tests AND integration tests alike.
-rune-md = { path = ".", features = ["strict-invariants"] }
+# `fuzz-hooks` rides along for the same reason: `rune_md::invariant` (the
+# `conceal_roundtrip_*` byte-accounting assertions) is gated on it, and an
+# integration test under `tests/` needs it turned on the same way.
+rune-md = { path = ".", features = ["strict-invariants", "fuzz-hooks"] }
 
 [[bench]]
 name = "parse_bench"

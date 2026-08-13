@@ -18,10 +18,11 @@
 
 mod conceal_common;
 
-use conceal_common::{assert_no_duplicate_content, joined_line, synced};
+use conceal_common::{joined_line, synced};
 use rune_md::element::block::Block;
 use rune_md::element::inline::{Inline, InlineCodeM};
 use rune_md::emit::emit;
+use rune_md::invariant::assert_no_duplicate_content;
 use rune_syntax::element::ByteRange;
 
 #[test]

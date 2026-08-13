@@ -27,8 +27,9 @@
 
 mod conceal_common;
 
-use conceal_common::{assert_full_line_coverage, assert_no_duplicate_content, joined_line, synced};
+use conceal_common::{joined_line, synced};
 use rune_md::emit::emit;
+use rune_md::invariant::{assert_full_line_coverage, assert_no_duplicate_content};
 
 #[test]
 fn setext_heading_nested_in_double_blockquote_does_not_double_claim() {

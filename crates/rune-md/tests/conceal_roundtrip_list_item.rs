@@ -11,7 +11,7 @@
 
 mod conceal_common;
 
-use conceal_common::assert_no_duplicate_content;
+use rune_md::invariant::assert_no_duplicate_content;
 
 #[test]
 fn empty_list_item_marker_does_not_duplicate_continuation_indent() {

@@ -6,9 +6,10 @@
 
 mod conceal_common;
 
-use conceal_common::{assert_full_line_coverage, joined_line, synced};
+use conceal_common::{joined_line, synced};
 use rune_core::coords::BufferPoint;
 use rune_md::emit::emit;
+use rune_md::invariant::assert_full_line_coverage;
 use rune_syntax::element::RevealState;
 
 // ---------------------------------------------------------------------

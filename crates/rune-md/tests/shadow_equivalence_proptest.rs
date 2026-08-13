@@ -20,10 +20,10 @@ mod conceal_common;
 
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{Arena, parse_document};
-use conceal_common::assert_full_line_coverage;
 use proptest::prelude::*;
 use rune_core::buffer::Buffer;
 use rune_md::emit::emit;
+use rune_md::invariant::assert_full_line_coverage;
 use rune_md::parse::{line_starts, options, parse, parse_shadow};
 use rune_md::reveal_all;
 use std::mem::{Discriminant, discriminant};

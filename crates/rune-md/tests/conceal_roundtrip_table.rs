@@ -17,11 +17,10 @@
 mod conceal_common;
 mod table_render_common;
 
-use conceal_common::{
-    assert_no_duplicate_content, assert_no_duplicate_content_at, joined_line, synced,
-};
+use conceal_common::{joined_line, synced};
 use rune_core::coords::BufferPoint;
 use rune_md::emit::emit;
+use rune_md::invariant::{assert_no_duplicate_content, assert_no_duplicate_content_at};
 use table_render_common::wrap_pivot_url;
 
 #[test]
