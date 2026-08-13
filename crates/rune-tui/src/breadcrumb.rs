@@ -274,10 +274,13 @@ mod tests {
         // directories run together on a bare `/`, the leaf is set off by
         // ` › `, and no part carries padding of its own: 1 + 1 + 1 + 3 + 7
         // = 13 columns. `overlay` adds the ONE plain space on each side.
-        let row = overlay_bottom_row(&app, 40, 3, true);
+        let row = overlay_bottom_row(&app, 60, 3, true);
         assert_eq!(
             row,
-            format!("╰── ^[ ^] {} a/b › note.md ──╯", "─".repeat(12))
+            format!(
+                "╰── ^[ back  ^] forward {} a/b › note.md ──╯",
+                "─".repeat(18)
+            )
         );
     }
 
@@ -286,10 +289,10 @@ mod tests {
     /// edge, since the ellipsis is part of `bc` like any other span.
     #[test]
     fn a_too_long_path_is_truncated_with_an_ellipsis_prefix() {
-        const W: u16 = 28;
+        const W: u16 = 39;
         let app = app_for("hello", Some("/alpha/bravo/charlie/delta/note.md"));
         let row = overlay_bottom_row(&app, W, 3, true);
-        assert_eq!(row, format!("╰── ^[ ^] {} …/note.md ──╯", "─".repeat(4)));
+        assert_eq!(row, "╰── ^[ back  ^] forward ─ …/note.md ──╯");
         assert_eq!(
             oracle_cell_width(&row),
             W as usize,
@@ -304,7 +307,7 @@ mod tests {
     /// the independent oracle, never `display_width` itself.
     #[test]
     fn an_nfd_accent_rides_along_in_its_base_letters_cell() {
-        const W: u16 = 40;
+        const W: u16 = 50;
         let nfd_name = "cafe\u{0301}.md"; // "café.md", e + combining acute
         let app = app_for("hello", Some(&format!("/a/{nfd_name}")));
         let row = overlay_bottom_row(&app, W, 3, true);
@@ -324,7 +327,7 @@ mod tests {
     /// `chars()` walk would.
     #[test]
     fn a_zwj_emoji_family_component_occupies_one_cell_per_cluster() {
-        const W: u16 = 40;
+        const W: u16 = 50;
         let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}"; // 👨‍👩‍👧
         let app = app_for("hello", Some(&format!("/a/{family}/note.md")));
         let row = overlay_bottom_row(&app, W, 3, true);
@@ -342,7 +345,7 @@ mod tests {
         // same unit: advancing 1-per-`char` would land `──╯` three columns
         // short of the right edge here, leaving stale cells behind the
         // corner (the two coordinate systems must not be mixed).
-        const W: u16 = 40;
+        const W: u16 = 50;
         let app = app_for("hello", Some("/a/日本語/note.md"));
         let buf = testgrid::draw_with(W, 3, |frame| {
             overlay(&app, Rect::new(0, 0, W, 3), true, frame)
@@ -370,11 +373,11 @@ mod tests {
         expected
     }
 
-    /// The control glyph at column `x` carries the footer key colour and
-    /// weight, but never the footer's own background — that block of
-    /// `surface0` would read as a stray chip sitting on the pane border.
-    fn assert_glyph_style(app: &App, x: u16, expected: Style) {
-        const W: u16 = 40;
+    /// The control cell at column `x` carries the footer colour and weight,
+    /// but never the footer's own background — that block of `surface0`
+    /// would read as a stray chip sitting on the pane border.
+    fn assert_control_style(app: &App, x: u16, expected: Style) {
+        const W: u16 = 60;
         let buf = testgrid::draw_with(W, 3, |frame| {
             overlay(app, Rect::new(0, 0, W, 3), true, frame)
         });
@@ -388,10 +391,12 @@ mod tests {
         );
     }
 
-    /// The two control glyphs sit at columns 4-5 (`^[`) and 7-8 (`^]`),
-    /// right after the `╰── ` lead-in.
+    /// `╰── ^[ back  ^] forward`: the keystrokes start at columns 4 and 13,
+    /// their words at columns 7 and 16.
     const BACK_GLYPH_X: u16 = 4;
-    const FORWARD_GLYPH_X: u16 = 7;
+    const BACK_WORD_X: u16 = 7;
+    const FORWARD_GLYPH_X: u16 = 13;
+    const FORWARD_WORD_X: u16 = 16;
 
     fn app_with_one_earlier_place() -> App {
         let mut app = app_for(&"line\n".repeat(40), Some("/a/b/note.md"));
@@ -420,7 +425,7 @@ mod tests {
     fn a_draft_renders_the_controls_without_a_crumb() {
         let app = app_for("hello", None);
         let row = overlay_bottom_row(&app, 40, 3, true);
-        assert_eq!(row, format!("╰── ^[ ^] {}╯", "─".repeat(29)));
+        assert_eq!(row, format!("╰── ^[ back  ^] forward {}╯", "─".repeat(15)));
     }
 
     #[test]
@@ -428,15 +433,25 @@ mod tests {
         let app = app_for("hello", Some("/a/b/note.md"));
         let dim = app.theme.chrome.footer_key_inactive;
         assert!(!app.nav_history.can_back());
-        assert_glyph_style(&app, BACK_GLYPH_X, dim);
-        assert_glyph_style(&app, FORWARD_GLYPH_X, dim);
+        assert_control_style(&app, BACK_GLYPH_X, dim);
+        assert_control_style(&app, FORWARD_GLYPH_X, dim);
+    }
+
+    /// The keystroke carries the availability; its word stays the same dim
+    /// hint colour every other explanation in the chrome uses.
+    #[test]
+    fn the_words_keep_the_hint_colour_whatever_the_keystroke_does() {
+        let app = app_with_one_earlier_place();
+        let hint = app.theme.chrome.footer_hint;
+        assert_control_style(&app, BACK_WORD_X, hint);
+        assert_control_style(&app, FORWARD_WORD_X, hint);
     }
 
     #[test]
     fn back_lights_up_once_a_place_is_recorded() {
         let app = app_with_one_earlier_place();
-        assert_glyph_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key);
-        assert_glyph_style(&app, FORWARD_GLYPH_X, app.theme.chrome.footer_key_inactive);
+        assert_control_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key);
+        assert_control_style(&app, FORWARD_GLYPH_X, app.theme.chrome.footer_key_inactive);
     }
 
     #[test]
@@ -444,8 +459,8 @@ mod tests {
         let mut app = app_with_one_earlier_place();
         crate::navhistory::back(&mut app, &mut crate::runtime::Effects::default());
 
-        assert_glyph_style(&app, FORWARD_GLYPH_X, app.theme.chrome.footer_key);
-        assert_glyph_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key_inactive);
+        assert_control_style(&app, FORWARD_GLYPH_X, app.theme.chrome.footer_key);
+        assert_control_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key_inactive);
     }
 
     /// Under width pressure the crumb goes first and the controls second:
@@ -454,8 +469,29 @@ mod tests {
     #[test]
     fn the_crumb_is_dropped_before_the_controls() {
         let app = app_for("hello", Some("/a/b/note.md"));
-        let row = overlay_bottom_row(&app, 16, 3, true);
-        assert_eq!(row, format!("╰── ^[ ^] {}╯", "─".repeat(5)));
-        assert_eq!(overlay_bottom_row(&app, 13, 3, true), blank_row(13));
+        let row = overlay_bottom_row(&app, 34, 3, true);
+        assert_eq!(row, format!("╰── ^[ back  ^] forward {}╯", "─".repeat(9)));
+    }
+
+    /// Below the width the controls themselves need, the crumb comes back
+    /// alone — naming the file beats an empty border row.
+    #[test]
+    fn the_crumb_alone_survives_below_the_controls_width() {
+        let app = app_for("hello", Some("/a/b/note.md"));
+        assert_eq!(
+            overlay_bottom_row(&app, 24, 3, true),
+            format!("╰{} a/b › note.md ──╯", "─".repeat(5))
+        );
+    }
+
+    /// Too narrow for either block leaves the row blank — and a crumb that
+    /// has lost its file name says nothing at all, so it never buys itself
+    /// columns with a bare `…/`.
+    #[test]
+    fn neither_the_controls_nor_a_name_less_crumb_leaves_a_blank_row() {
+        let app = app_for("hello", Some("/alpha/bravo/charlie/note.md"));
+        for width in 10u16..16 {
+            assert_eq!(overlay_bottom_row(&app, width, 3, true), blank_row(width));
+        }
     }
 }

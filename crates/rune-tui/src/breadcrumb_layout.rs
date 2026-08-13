@@ -9,7 +9,8 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 use std::path::Component;
 
-use crate::global::{GlobalCommand, label_for};
+use crate::footer_hints::hint_entry_spans;
+use crate::global::{GlobalCommand, hint_for};
 use crate::navhistory::NavHistory;
 use crate::theme::Theme;
 use crate::width::display_width;
@@ -65,9 +66,11 @@ pub(crate) fn crumb_parts(path: &std::path::Path, root: &std::path::Path) -> Vec
 /// the part is the last directory (index `n - 2`) and `SEP` between any
 /// two directories above it. The walk stops as soon as adding the next
 /// part would overflow `max_width` by the 6-column buffer, at which point
-/// an `ELLIPSIS` span is prepended. Index `0` (the leftmost/root-most
-/// component) is NEVER dropped — the `&& i > 0` guard on the truncation
-/// check. A single-component path renders as just that leaf.
+/// an `ELLIPSIS` span is prepended. Neither the leaf nor index `0` (the
+/// leftmost/root-most component) is ever dropped: a crumb naming no file is
+/// worth no columns at all, and `overlay` drops the whole crumb instead when
+/// even that shortest form does not fit. A single-component path renders as
+/// just that leaf.
 pub(crate) fn build_crumb(
     parts: &[String],
     max_width: usize,
@@ -103,7 +106,7 @@ pub(crate) fn build_crumb(
         };
 
         // An arbitrary buffer for the ellipsis and some breathing room.
-        if current_width + seg_width + 6 > max_width && i > 0 {
+        if current_width + seg_width + 6 > max_width && i > 0 && !is_last {
             segments.insert(
                 0,
                 Span::styled(ELLIPSIS, Style::new().fg(theme.chrome.special)),
@@ -120,34 +123,24 @@ pub(crate) fn build_crumb(
     segments
 }
 
-/// The chord glyphs for the two location-history moves, blue while the move
-/// is available and dim while it is not. The footer's own key styles carry
-/// its `surface0` background; the border row has none, so the background is
-/// dropped and only the colours are reused.
 pub(crate) fn build_controls(history: &NavHistory, theme: &Theme) -> Vec<Span<'static>> {
-    let glyph_style = |available: bool| {
-        let style = if available {
-            theme.chrome.footer_key
-        } else {
-            theme.chrome.footer_key_inactive
-        };
-        Style { bg: None, ..style }
-    };
-
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
-    for (cmd, available) in [
+    [
         (GlobalCommand::NavBack, history.can_back()),
         (GlobalCommand::NavForward, history.can_forward()),
-    ] {
-        let Some(label) = label_for(cmd) else {
-            continue;
-        };
-        if !spans.is_empty() {
-            spans.push(Span::styled(" ", Style::new()));
-        }
-        spans.push(Span::styled(label, glyph_style(available)));
-    }
-    spans
+    ]
+    .into_iter()
+    .filter_map(|(cmd, available)| hint_for(cmd).map(|(label, help)| (label, help, available)))
+    .enumerate()
+    .flat_map(|(index, (label, help, available))| {
+        hint_entry_spans(theme, index, label, help, available)
+    })
+    .map(without_footer_background)
+    .collect()
+}
+
+fn without_footer_background(mut span: Span<'static>) -> Span<'static> {
+    span.style.bg = None;
+    span
 }
 
 pub(crate) fn spans_width(spans: &[Span<'_>]) -> usize {
