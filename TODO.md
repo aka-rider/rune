@@ -167,6 +167,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-cli/src/db_bootstrap.rs` — 507 (split candidate unchanged: move `bootstrap_untitled_db`/`ScratchDoc`/`DbBootstrapUntitled`/`degrade_untitled` to a sibling `db_bootstrap_untitled.rs`, matching the crate's own `bootstrap_tests.rs` split-out-of-`main.rs` pattern)
   - `crates/rune-cli/src/bootstrap_tests.rs` — 688 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
   - `crates/rune-tui/src/footer.rs` — 511
+  - `crates/rune-tui/tests/opentabs.rs` — 550 (test file; grew from 479 in the Session-driver migration — `session.app_mut()` call verbosity plus rustfmt re-wrapping; split candidate: move the tab-limit/eviction tests to a sibling `opentabs_limit.rs` sharing `opentabs_common`)
   - `crates/rune-md/src/catalogue.rs` — 512
   - `crates/rune-fuzz/src/driver/mod.rs` — 562 (grew from 549: the `manual_clock` field and `Action::AdvanceClock` arm, plan WP8; split candidate: move the `'session` per-`Action` dispatch loop out of `run` into a sibling `action_loop.rs`, leaving `run` with setup, the end-of-session rules, and the `RunResult` assembly)
   - `crates/rune-tui/src/focus.rs` — 503
