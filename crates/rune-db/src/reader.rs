@@ -16,7 +16,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 
 use crate::Error;
 
@@ -142,11 +142,7 @@ fn query_over(sender: &Sender<Msg>, kind: ReaderRequestKind) -> Result<ReaderRep
 /// connection does this first, per `store::open`'s ordering) — a read-only
 /// connection cannot create tables.
 pub fn spawn(path: &str) -> Result<ReaderHandle, Error> {
-    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
-        | OpenFlags::SQLITE_OPEN_NO_MUTEX
-        | OpenFlags::SQLITE_OPEN_URI;
-    let conn = Connection::open_with_flags(path, flags)?;
-    crate::store::apply_connection_pragmas(&conn)?;
+    let conn = crate::conn::open_read_replica(path)?;
 
     let (sender, receiver) = mpsc::channel::<Msg>();
     let thread = thread::spawn(move || reader_loop(&conn, &receiver));
@@ -208,21 +204,11 @@ mod tests {
 
     #[test]
     fn ping_round_trips_pong() {
-        let uri = "file:rune-db-reader-test-ping?mode=memory&cache=shared";
-        // The reader can't create the shared in-memory database on its own
-        // (SQLITE_OPEN_READ_ONLY, no CREATE flag) — open a throwaway
-        // read-write connection first to bring it into existence and apply
-        // schema, exactly as `store::open` sequences writer-before-reader.
-        let bootstrap = Connection::open_with_flags(
-            uri,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_URI,
-        )
-        .expect("bootstrap shared memdb");
-        crate::schema::apply(&bootstrap).expect("apply schema");
+        let uri = crate::conn::memory_uri();
+        let bootstrap = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(&uri))
+            .expect("bootstrap shared memdb");
 
-        let handle = spawn(uri).expect("spawn reader");
+        let handle = spawn(&uri).expect("spawn reader");
         let reply = handle.query(ReaderRequestKind::Ping).expect("ping");
         assert_eq!(reply, ReaderReply::Pong);
         handle.shutdown();
@@ -232,18 +218,12 @@ mod tests {
 
     #[test]
     fn get_blob_round_trips_through_the_reader() {
-        let uri = "file:rune-db-reader-test-getblob?mode=memory&cache=shared";
-        let bootstrap = Connection::open_with_flags(
-            uri,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_URI,
-        )
-        .expect("bootstrap shared memdb");
-        crate::schema::apply(&bootstrap).expect("apply schema");
+        let uri = crate::conn::memory_uri();
+        let bootstrap = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(&uri))
+            .expect("bootstrap shared memdb");
         let hash = crate::blob::put_blob(&bootstrap, b"reader blob content").expect("put blob");
 
-        let handle = spawn(uri).expect("spawn reader");
+        let handle = spawn(&uri).expect("spawn reader");
         let reply = handle
             .query(ReaderRequestKind::GetBlob { hash })
             .expect("get blob");
@@ -255,15 +235,10 @@ mod tests {
 
     #[test]
     fn recent_searches_round_trips_through_the_reader() {
-        let uri = "file:rune-db-reader-test-recentsearches?mode=memory&cache=shared";
-        let mut bootstrap = Connection::open_with_flags(
-            uri,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_URI,
-        )
-        .expect("bootstrap shared memdb");
-        crate::schema::apply(&bootstrap).expect("apply schema");
+        let uri = crate::conn::memory_uri();
+        let mut bootstrap =
+            crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(&uri))
+                .expect("bootstrap shared memdb");
 
         let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
         for (i, query) in ["alpha", "beta"].into_iter().enumerate() {
@@ -277,7 +252,7 @@ mod tests {
             tx.commit().expect("commit");
         }
 
-        let handle = spawn(uri).expect("spawn reader");
+        let handle = spawn(&uri).expect("spawn reader");
         let reply = handle
             .query(ReaderRequestKind::RecentSearches { limit: 10 })
             .expect("recent searches");
@@ -317,15 +292,10 @@ mod tests {
     /// correct end to end.
     #[test]
     fn recent_documents_round_trips_through_the_reader() {
-        let uri = "file:rune-db-reader-test-recentdocuments?mode=memory&cache=shared";
-        let mut bootstrap = Connection::open_with_flags(
-            uri,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_URI,
-        )
-        .expect("bootstrap shared memdb");
-        crate::schema::apply(&bootstrap).expect("apply schema");
+        let uri = crate::conn::memory_uri();
+        let mut bootstrap =
+            crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(&uri))
+                .expect("bootstrap shared memdb");
 
         let vfs = rune_vfs::Mem::new();
         let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
@@ -344,7 +314,7 @@ mod tests {
         )
         .expect("open b");
 
-        let handle = spawn(uri).expect("spawn reader");
+        let handle = spawn(&uri).expect("spawn reader");
         let reply = handle
             .query(ReaderRequestKind::RecentDocuments { limit: 10 })
             .expect("recent documents");

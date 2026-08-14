@@ -1,15 +1,10 @@
-//! The open ladder `Store::open` runs against a
-//! file path, plus the two connection-opening primitives it bottoms out
-//! at. Split out of `store.rs` — see that module's doc comment for
-//! the ladder's rungs.
-
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 
 use crate::Error;
-use crate::store::{DEGRADED_WARNING, apply_connection_pragmas, set_wal_mode_verified};
+use crate::conn::{self, RecoveryTarget};
+use crate::store::DEGRADED_WARNING;
 
 pub(crate) struct LadderResult {
     pub(crate) writer_conn: Connection,
@@ -28,7 +23,7 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
     // conversion failure here degrades to the next rung exactly like an
     // open failure would — `open_ladder` never hard-fails except at the
     // final in-memory rung.
-    if let Ok(conn) = open_file_backed(path)
+    if let Ok(conn) = conn::open_recovery_store(RecoveryTarget::File(path))
         && let Ok(reader_target) = crate::paths::to_db_string(path)
     {
         return Ok(LadderResult {
@@ -40,7 +35,7 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
 
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
-        && let Ok(conn) = open_file_backed(path)
+        && let Ok(conn) = conn::open_recovery_store(RecoveryTarget::File(path))
         && let Ok(reader_target) = crate::paths::to_db_string(path)
     {
         return Ok(LadderResult {
@@ -50,46 +45,11 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
         });
     }
 
-    let uri = memory_uri();
-    let conn = open_memory_backed(&uri)?;
+    let uri = conn::memory_uri();
+    let writer_conn = conn::open_recovery_store(RecoveryTarget::Memory(&uri))?;
     Ok(LadderResult {
-        writer_conn: conn,
+        writer_conn,
         reader_target: uri,
         warning: Some(DEGRADED_WARNING.to_string()),
     })
-}
-
-fn open_file_backed(path: &Path) -> Result<Connection, Error> {
-    let conn = Connection::open(path)?;
-    apply_connection_pragmas(&conn)?;
-    set_wal_mode_verified(&conn)?;
-    crate::schema::apply(&conn)?;
-    Ok(conn)
-}
-
-pub(crate) fn open_memory_backed(uri: &str) -> Result<Connection, Error> {
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-        | OpenFlags::SQLITE_OPEN_CREATE
-        | OpenFlags::SQLITE_OPEN_URI
-        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = Connection::open_with_flags(uri, flags)?;
-    apply_connection_pragmas(&conn)?;
-    // journal_mode=WAL is a documented no-op for :memory: databases (falls
-    // back to "memory" journaling) — nothing to verify here, unlike the
-    // file-backed rung.
-    crate::schema::apply(&conn)?;
-    Ok(conn)
-}
-
-/// A process-unique `cache=shared` in-memory database name, so the writer
-/// and reader connections of ONE degraded `Store` see the same data while
-/// two independent (degraded or explicitly in-memory) `Store`s never
-/// collide with each other.
-pub(crate) fn memory_uri() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "file:rune-db-mem-{}-{n}?mode=memory&cache=shared",
-        std::process::id()
-    )
 }

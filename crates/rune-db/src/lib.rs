@@ -35,6 +35,7 @@ mod adopt;
 mod blob;
 mod bracket;
 mod confirmation;
+mod conn;
 mod diag;
 mod doc_kind;
 mod document;
@@ -80,6 +81,11 @@ mod writer_ops;
 
 pub use bracket::stat_facts_from;
 pub use confirmation::Confirmation;
+#[cfg(feature = "test-support")]
+pub use conn::{
+    fresh_memory_uri_for_test, open_raw_connection_at_path_for_test,
+    open_recovery_store_at_path_for_test,
+};
 pub use error::Error;
 pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};
 pub use journal::{append_edit, current_seq, move_undo_pos, redo_peek, undo_peek};

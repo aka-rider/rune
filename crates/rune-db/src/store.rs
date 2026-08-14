@@ -20,14 +20,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use rusqlite::Connection;
-
 use rune_vfs::Vfs;
 
+use crate::conn::{self, RecoveryTarget};
 #[cfg(test)]
 use crate::ids::DocId;
 use crate::ids::SessionId;
-use crate::open_ladder::{LadderResult, memory_uri, open_ladder, open_memory_backed};
+use crate::open_ladder::{LadderResult, open_ladder};
 use crate::writer::{OnEvent, OpKind, WriteOp};
 use crate::{Error, reader, retry, session, writer};
 
@@ -104,8 +103,8 @@ impl Store {
         fs: Arc<dyn Vfs + Send + Sync>,
         on_event: OnEvent,
     ) -> Result<Store, Error> {
-        let uri = memory_uri();
-        let mut conn = open_memory_backed(&uri)?;
+        let uri = conn::memory_uri();
+        let mut conn = conn::open_recovery_store(RecoveryTarget::Memory(&uri))?;
         let now = clock();
         let session_id = session::establish_session(&conn, now)?;
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
@@ -289,27 +288,6 @@ impl Store {
     }
 }
 
-/// Sets the per-connection pragmas required on **both** the writer and
-/// reader connections on every open: only `journal_mode` persists in the
-/// file — everything else here does not.
-pub(crate) fn apply_connection_pragmas(conn: &Connection) -> Result<(), Error> {
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.pragma_update(None, "journal_size_limit", 67_108_864i64)?;
-    conn.pragma_update(None, "wal_autocheckpoint", 1000i64)?;
-    Ok(())
-}
-
-pub(crate) fn set_wal_mode_verified(conn: &Connection) -> Result<(), Error> {
-    let mode: String =
-        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
-    if mode.eq_ignore_ascii_case("wal") {
-        Ok(())
-    } else {
-        Err(Error::WalModeUnavailable(mode))
-    }
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -322,16 +300,7 @@ mod tests {
     use crate::writer::QUEUE_DEPTH;
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "rune-db-store-test-{label}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        dir
+        conn::test_temp_dir(label)
     }
 
     fn noop_on_event() -> OnEvent {
@@ -360,7 +329,7 @@ mod tests {
 
         assert_ne!(store_a.session_id(), store_b.session_id());
 
-        let verify = Connection::open(&path).expect("open verify connection");
+        let verify = conn::open_raw(&path).expect("open verify connection");
         let sessions: i64 = verify
             .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
             .expect("count sessions");

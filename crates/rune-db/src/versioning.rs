@@ -65,8 +65,6 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use rusqlite::{Connection, OpenFlags};
-
 use crate::diag::background_note;
 
 /// The current schema version. Bump on any shape change — new table, index,
@@ -169,7 +167,7 @@ fn parse_old_version_filename(name: &str) -> Option<u32> {
 /// SQLite database, or lacks a `sessions` table in this exact shape — is
 /// reported to the caller, which leaves the file alone and logs (WP6.S3).
 fn read_frozen_contract(path: &Path) -> Result<Vec<(i64, String)>, rusqlite::Error> {
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let conn = crate::conn::open_frozen_contract_probe(path)?;
     let mut stmt = conn.prepare("SELECT pid, proc_started_at FROM sessions")?;
     let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
     rows.collect()
@@ -242,7 +240,7 @@ mod tests {
         // Open a second, independent connection to the same file (mirrors
         // exactly what the WP6 GC does: a fresh read-only look, no Store
         // involved) and run the frozen-contract query verbatim.
-        let verify = rusqlite::Connection::open(&path).expect("open verify connection");
+        let verify = crate::conn::open_raw(&path).expect("open verify connection");
         let mut stmt = verify
             .prepare("SELECT pid, proc_started_at FROM sessions")
             .expect("prepare frozen contract query");
@@ -258,20 +256,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Local temp-dir helper (kept here rather than pulled in from a test
-    /// module elsewhere in the crate — `versioning.rs` is the one module
-    /// that needs a real file path rather than an in-memory store).
     fn tempfile_dir(label: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "rune-db-test-{label}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        dir
+        crate::conn::test_temp_dir(label)
     }
 
     /// Creates a fresh SQLite file with the crate's own schema applied and
@@ -279,8 +265,8 @@ mod tests {
     /// so the test controls the exact `(pid, proc_started_at)` pair, the
     /// same technique `reaper.rs`'s tests use).
     fn fabricate_old_version_db(path: &std::path::Path, sessions: &[(i64, &str)]) {
-        let conn = Connection::open(path).expect("create fabricated db");
-        crate::schema::apply(&conn).expect("apply schema to fabricated db");
+        let conn = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::File(path))
+            .expect("create fabricated db");
         for (pid, started_at) in sessions {
             conn.execute(
                 "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES(?1, ?2, 'x')",
@@ -338,7 +324,7 @@ mod tests {
     fn gc_old_versions_keeps_a_file_with_a_garbage_schema() {
         let dir = tempfile_dir("gc-garbage");
         let path = dir.join("rune-v0.db");
-        let conn = Connection::open(&path).expect("create garbage db");
+        let conn = crate::conn::open_raw(&path).expect("create garbage db");
         conn.execute_batch("CREATE TABLE not_sessions(x INTEGER)")
             .expect("garbage schema");
         drop(conn);
