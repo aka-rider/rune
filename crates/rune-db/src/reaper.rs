@@ -1,21 +1,3 @@
-//! The dead-session reaper.
-//! Best-effort on `Store::open` (never blocks open — any error here is
-//! swallowed by the caller, not surfaced as an open failure): for every
-//! `sessions` row confirmed dead, deletes its `session_documents`/`events`/
-//! `snapshots` footprint — but ONLY once it is no longer
-//! [`crate::inherit::most_recent_session_for_doc`] for any `doc_id` it ever
-//! touched. Reaping the currently-most-recent dead session for a doc would
-//! destroy the exact unsaved content the next opener still needs to
-//! inherit (`inherit::find_inheritable_draft`).
-//!
-//! A row that predates the current boot with no recorded `proc_started_at`
-//! (the legacy liveness hole `session::establish_session` no longer
-//! produces) is confirmed dead outright: no process survives a reboot. The
-//! `sessions` row itself is deleted alongside its footprint once it has
-//! recorded no `observations` — the one fact every OTHER session may still
-//! need to see forever; a row that recorded at least one observation stays
-//! in place as that provenance.
-
 use rusqlite::{Connection, Transaction, params};
 
 use std::time::SystemTime;
@@ -97,10 +79,6 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bo
     Ok(true)
 }
 
-/// Deletes `session_id`'s `session_documents`/`events`/`snapshots` rows,
-/// then the `sessions` row itself too — but only if it recorded no
-/// `observations`; a row with at least one stays behind as that dead
-/// session's own permanent "theirs" provenance for every other session.
 fn reap_session_footprint(tx: &Transaction<'_>, session_id: SessionId) -> Result<(), Error> {
     tx.execute(
         "DELETE FROM session_documents WHERE session_id=?1",
@@ -115,7 +93,9 @@ fn reap_session_footprint(tx: &Transaction<'_>, session_id: SessionId) -> Result
         params![session_id],
     )?;
     tx.execute(
-        "DELETE FROM sessions WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM observations WHERE session_id=?1)",
+        "DELETE FROM sessions WHERE id=?1 \
+         AND NOT EXISTS(SELECT 1 FROM observations WHERE session_id=?1) \
+         AND NOT EXISTS(SELECT 1 FROM merges WHERE session_id=?1)",
         params![session_id],
     )?;
     Ok(())
@@ -157,6 +137,12 @@ mod tests {
         SessionId(conn.last_insert_rowid())
     }
 
+    fn open_fk() -> Connection {
+        let conn = open();
+        conn.pragma_update(None, "foreign_keys", "ON").expect("fk");
+        conn
+    }
+
     fn seed_blob(conn: &Connection, hash: &str) {
         conn.execute(
             "INSERT INTO blobs(hash, content) VALUES(?1, ?2)",
@@ -174,6 +160,32 @@ mod tests {
             params![doc_id, session_id, hash],
         )
         .expect("seed observation");
+    }
+
+    fn seed_merges_row(
+        conn: &Connection,
+        merges_session_id: SessionId,
+        theirs_owner_session_id: SessionId,
+        doc_id: DocId,
+    ) {
+        let obs_hash = format!("theirs-{merges_session_id}-{doc_id}");
+        seed_blob(conn, &obs_hash);
+        conn.execute(
+            "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at) \
+             VALUES(?1, ?2, ?3, 'probe', 'x')",
+            params![doc_id, theirs_owner_session_id, obs_hash],
+        )
+        .expect("seed theirs observation");
+        let theirs_obs = conn.last_insert_rowid();
+
+        let marker_hash = format!("marker-{merges_session_id}-{doc_id}");
+        seed_blob(conn, &marker_hash);
+        conn.execute(
+            "INSERT INTO merges(doc_id, session_id, base_obs, theirs_obs, marker_hash, blocks, state, created_at) \
+             VALUES(?1, ?2, NULL, ?3, ?4, '[]', 'active', 'x')",
+            params![doc_id, merges_session_id, theirs_obs, marker_hash],
+        )
+        .expect("seed merges row");
     }
 
     fn journal_one_edit(conn: &mut Connection, session_id: SessionId, doc_id: DocId) {
@@ -402,6 +414,35 @@ mod tests {
         assert_eq!(
             recovered, "UNSAVED session A's content",
             "the bridged draft must survive reaping the dead session it came from"
+        );
+    }
+
+    #[test]
+    fn reaper_spares_the_sessions_row_of_a_dead_session_holding_only_a_merges_row() {
+        let mut conn = open_fk();
+        let session_old = seed_session(&conn, 111);
+        let session_new = seed_session(&conn, 222);
+        let doc_id = seed_doc(&conn);
+        journal_one_edit(&mut conn, session_old, doc_id);
+        journal_one_edit(&mut conn, session_new, doc_id);
+        seed_merges_row(&conn, session_old, session_new, doc_id);
+
+        reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
+
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id=?1",
+                params![session_old],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            old_events, 0,
+            "a dead session's footprint must still be reaped even when it holds a merges row"
+        );
+        assert!(
+            sessions_row_exists(&conn, session_old),
+            "a sessions row a merges row still references must survive as provenance"
         );
     }
 
