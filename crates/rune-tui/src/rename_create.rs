@@ -150,10 +150,12 @@ fn create_cmd(
                 to: path.clone(),
                 durable,
             }),
-            Ok(rune_vfs::PutOutcome::Conflict { current }) => current.sighted.stat().map_or_else(
-                || Err("target already exists".to_string()),
-                |seen| Ok(RenameOutcome::Collided { seen }),
-            ),
+            Ok(rune_vfs::PutOutcome::Conflict { current, .. }) => {
+                current.sighted.stat().map_or_else(
+                    || Err("target already exists".to_string()),
+                    |seen| Ok(RenameOutcome::Collided { seen }),
+                )
+            }
             Ok(_) => Err("create failed: unexpected publish outcome".to_string()),
             Err(e) => Err(e.to_string()),
         };

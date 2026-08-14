@@ -1,5 +1,5 @@
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::sighting::{GetRefusal, Sighted, Sighting, bracketed_stat, get};
 use crate::{Etag, Vfs, etag_of, published_not_durable};
@@ -19,14 +19,17 @@ pub enum PutOutcome {
         etag: Etag,
         sighted: Sighted,
         durable: bool,
+        stray_temp: Option<PathBuf>,
     },
     Conflict {
         current: Sighting,
+        stray_temp: Option<PathBuf>,
     },
     Raced {
         etag: Etag,
         sighted: Sighted,
         durable: bool,
+        stray_temp: Option<PathBuf>,
         displaced: Sighting,
     },
     Missing,
@@ -37,6 +40,19 @@ fn current_sighting<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<Option<
         Ok(sighting) => Ok(Some(sighting)),
         Err(GetRefusal::NotFound) => Ok(None),
         Err(other) => Err(other.into()),
+    }
+}
+
+fn remove_temp_noting_failure<V: Vfs + ?Sized>(vfs: &V, temp: &Path, e: io::Error) -> io::Error {
+    match vfs.remove(temp) {
+        Ok(()) => e,
+        Err(cleanup_err) => crate::wrap_io(
+            e,
+            format!(
+                "stray temp {} could not be cleaned up either: {cleanup_err}",
+                temp.display()
+            ),
+        ),
     }
 }
 
@@ -51,16 +67,14 @@ fn finish_over_existing<V: Vfs + ?Sized>(
     let durable = match publish {
         Ok(()) => true,
         Err(e) if published_not_durable(&e) => false,
-        Err(e) => {
-            let _ = vfs.remove(temp);
-            return Err(e);
-        }
+        Err(e) => return Err(remove_temp_noting_failure(vfs, temp, e)),
     };
     let sighted = bracketed_stat(vfs, path);
-    let published = Published {
+    let mut published = Published {
         etag: new_etag.clone(),
         sighted,
         durable,
+        stray_temp: None,
     };
     // The publish already took effect: a failure reading the displaced
     // bytes back off the temp is NOT a failed save. The temp is kept — it
@@ -77,8 +91,8 @@ fn finish_over_existing<V: Vfs + ?Sized>(
         sighted: displaced_sighted,
         bytes: displaced_bytes,
     };
-    if durable {
-        let _ = vfs.remove(temp);
+    if durable && vfs.remove(temp).is_err() {
+        published.stray_temp = Some(temp.to_path_buf());
     }
     let outcome = if &displaced.etag != race_baseline {
         ForceOutcome::Raced {
@@ -107,7 +121,10 @@ pub(crate) fn put_if_match<V: Vfs + ?Sized>(
         sighting = retry;
     }
     if !sighting.sighted.is_confirmed() || &sighting.etag != expect {
-        return Ok(PutOutcome::Conflict { current: sighting });
+        return Ok(PutOutcome::Conflict {
+            current: sighting,
+            stray_temp: None,
+        });
     }
     let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
@@ -132,6 +149,7 @@ fn finish_fresh_create<V: Vfs + ?Sized>(
         etag: etag_of(bytes),
         sighted: bracketed_stat(vfs, dest),
         durable,
+        stray_temp: None,
     })
 }
 
@@ -144,14 +162,17 @@ pub(crate) fn put_if_absent<V: Vfs + ?Sized>(
     let temp = vfs.write_durable(&dest, bytes)?;
     let publish = match vfs.rename_excl(&temp, &dest) {
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            let _ = vfs.remove(&temp);
+            let stray_temp = vfs.remove(&temp).err().map(|_| temp.clone());
             let current = current_sighting(vfs, &dest)?.ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
                     "winner vanished after AlreadyExists",
                 )
             })?;
-            return Ok(IfAbsentOutcome::Conflict { current });
+            return Ok(IfAbsentOutcome::Conflict {
+                current,
+                stray_temp,
+            });
         }
         other => other,
     };
@@ -171,8 +192,7 @@ pub(crate) fn put_force<V: Vfs + ?Sized>(
     if !dest_existed {
         let publish = match vfs.rename_excl(&temp, &dest) {
             Err(e) if !published_not_durable(&e) => {
-                let _ = vfs.remove(&temp);
-                return Err(e);
+                return Err(remove_temp_noting_failure(vfs, &temp, e));
             }
             other => other,
         };
@@ -438,7 +458,7 @@ mod tests {
 
         let before = vfs.debug_paths().len();
         let outcome = put(&vfs, path, b"loser", PutCondition::IfAbsent).unwrap();
-        let PutOutcome::Conflict { current } = outcome else {
+        let PutOutcome::Conflict { current, .. } = outcome else {
             unreachable!("expected Conflict, got {outcome:?}");
         };
         assert_eq!(current.bytes, b"winner");
@@ -535,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn if_match_over_a_directory_refuses_with_invalid_input() {
+    fn if_match_over_a_directory_refuses_with_is_a_directory() {
         let vfs = Mem::new();
         publish_direct(&vfs, Path::new("/a/b.md"), b"content");
 
@@ -546,6 +566,6 @@ mod tests {
             PutCondition::IfMatch(etag_of(b"anything")),
         );
         let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.kind(), io::ErrorKind::IsADirectory);
     }
 }

@@ -39,6 +39,7 @@ proptest = { workspace = true }
 # arm it for this crate's own unit tests, never for `tests/`. All without
 # making `cargo build` (no dev-dependencies) enable either.
 rune-db = { path = ".", features = ["test-support", "strict-invariants"] }
+rune-vfs = { path = "../rune-vfs", features = ["fault-injection"] }
 
 [lints]
 workspace = true

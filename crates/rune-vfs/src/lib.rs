@@ -24,8 +24,10 @@ use std::time::SystemTime;
 use std::{io, process};
 
 pub use disk::Disk;
-pub use etag::{Etag, etag_of};
-pub use mem::{Mem, OpKind};
+pub use etag::{Etag, MalformedEtag, etag_of};
+pub use mem::Mem;
+#[cfg(any(test, feature = "fault-injection"))]
+pub use mem::OpKind;
 pub use publish::{PutCondition, PutOutcome, put};
 pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, get};
 
@@ -245,10 +247,12 @@ pub trait Vfs {
     /// way). Kept only so existing callers (the plain `super+s` save path)
     /// keep working unchanged through this work package.
     fn save_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        let outcome = publish::put_force(self, path, bytes, None)?;
-        let durable = match &outcome {
-            publish::ForceOutcome::Committed(published)
-            | publish::ForceOutcome::Raced { published, .. } => published.durable,
+        let outcome = put(self, path, bytes, PutCondition::Force { expect: None })?;
+        let durable = match outcome {
+            PutOutcome::Committed { durable, .. } | PutOutcome::Raced { durable, .. } => durable,
+            PutOutcome::Conflict { .. } | PutOutcome::Missing => {
+                unreachable!("a Force put never conflicts or reports the destination missing")
+            }
         };
         if durable {
             return Ok(());

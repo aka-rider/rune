@@ -37,6 +37,13 @@ pub(crate) use reactions::{handle_materialize_ack, handle_save_done, retire_quit
 pub(crate) const DURABILITY_UNCONFIRMED_WARNING: &str =
     "saved \u{2014} durability unconfirmed; prior content kept at the sibling temp";
 
+pub(crate) fn stray_temp_warning(temp: &Path) -> String {
+    format!(
+        "saved, but a leftover temp file could not be removed: {}",
+        temp.display()
+    )
+}
+
 /// The one refusal text both save-time disk-conflict refusals post — the
 /// pre-publish divergence gate and the CAS refusal are the same fact to the
 /// user (the file holds changes this buffer does not), and must never

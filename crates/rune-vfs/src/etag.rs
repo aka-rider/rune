@@ -1,4 +1,3 @@
-use rune_core::assert_invariant;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -10,17 +9,29 @@ fn is_sha256_hex(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MalformedEtag(String);
+
+impl std::fmt::Display for MalformedEtag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} is not a lowercase SHA-256 hex digest", self.0)
+    }
+}
+
+impl std::error::Error for MalformedEtag {}
+
 impl Etag {
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    pub fn from_stored(hash: impl Into<String>) -> Etag {
+    pub fn from_stored(hash: impl Into<String>) -> Result<Etag, MalformedEtag> {
         let hash = hash.into();
-        assert_invariant!(is_sha256_hex(&hash), || format!(
-            "Etag::from_stored: {hash:?} is not a lowercase SHA-256 hex digest"
-        ));
-        Etag(hash)
+        if is_sha256_hex(&hash) {
+            Ok(Etag(hash))
+        } else {
+            Err(MalformedEtag(hash))
+        }
     }
 }
 
@@ -71,13 +82,16 @@ mod tests {
 
     #[test]
     fn from_stored_accepts_a_real_sha256_hex_digest() {
-        let etag = Etag::from_stored(etag_of(b"hello").to_string());
+        let etag = Etag::from_stored(etag_of(b"hello").to_string()).unwrap();
         assert_eq!(etag, etag_of(b"hello"));
     }
 
     #[test]
-    #[should_panic(expected = "not a lowercase SHA-256 hex digest")]
     fn from_stored_rejects_a_malformed_hash() {
-        Etag::from_stored("not-a-hash");
+        let err = Etag::from_stored("not-a-hash").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not a lowercase SHA-256 hex digest")
+        );
     }
 }
