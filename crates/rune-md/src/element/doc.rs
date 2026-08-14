@@ -222,16 +222,11 @@ impl DocMachine {
         self.dirty = false;
     }
 
-    /// `has_insertion_point` is `Document::has_insertion_point()` — whether
-    /// this document currently has a live insertion point to reveal at, not
+    /// `AtCursor` iff `Document::has_insertion_point()` — whether this
+    /// document currently has a live insertion point to reveal at, not
     /// whether its pane has focus (a focused-but-read-only document has no
     /// insertion point either).
-    pub fn set_reveal_mode(&mut self, has_insertion_point: bool) {
-        let next = if has_insertion_point {
-            RevealMode::AtCursor
-        } else {
-            RevealMode::Never
-        };
+    pub fn set_reveal_mode(&mut self, next: RevealMode) {
         if next != self.reveal_mode {
             self.transition(next);
         }

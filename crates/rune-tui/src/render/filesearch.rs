@@ -77,10 +77,23 @@ fn result_lines(
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            let selected = start + i == state.nav.cursor;
-            result_line(app, state, row, selected, focused, width)
+            let display = if start + i != state.nav.cursor {
+                RowDisplay::Plain
+            } else if focused {
+                RowDisplay::CursorFocused
+            } else {
+                RowDisplay::CursorUnfocused
+            };
+            result_line(app, state, row, display, width)
         })
         .collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowDisplay {
+    Plain,
+    CursorFocused,
+    CursorUnfocused,
 }
 
 /// One result row: a `›`-prefixed cursor row (full-row background rect,
@@ -90,12 +103,15 @@ fn result_line(
     app: &App,
     state: &FileSearchState,
     row: &ResultRow,
-    selected: bool,
-    focused: bool,
+    display: RowDisplay,
     width: usize,
 ) -> Line<'static> {
-    let row_bg = (selected && focused).then_some(app.theme.chrome.selection_bg);
-    let prefix = if selected { "\u{203a} " } else { "  " };
+    let row_bg = (display == RowDisplay::CursorFocused).then_some(app.theme.chrome.selection_bg);
+    let prefix = if display == RowDisplay::Plain {
+        "  "
+    } else {
+        "\u{203a} "
+    };
     let mut spans = vec![Span::styled(
         prefix.to_string(),
         with_bg(app.theme.chrome.file_normal, row_bg),

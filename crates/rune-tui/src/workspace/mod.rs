@@ -280,7 +280,7 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
     // documents" entry records): non-blocking, ack-driven via
     // `app::handle_db_event`'s `Load` arm — `Document::db` stays `None`
     // until that ack lands (or forever, if this store is absent/degraded).
-    let _ = db::load_document(app, id, resolved, false);
+    let _ = db::load_document(app, id, resolved, db::LoadIntent::Recover);
     switch_to(app, id);
     Some(id)
 }

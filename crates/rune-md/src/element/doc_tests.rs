@@ -10,9 +10,9 @@ fn set_reveal_mode_is_idempotent_and_marks_dirty_only_on_change() {
     let mut doc = DocMachine::new();
     assert_eq!(doc.reveal_mode(), RevealMode::Never);
     doc.clear_dirty();
-    doc.set_reveal_mode(false);
+    doc.set_reveal_mode(RevealMode::Never);
     assert!(!doc.is_dirty(), "no-op reveal-mode change must not dirty");
-    doc.set_reveal_mode(true);
+    doc.set_reveal_mode(RevealMode::AtCursor);
     assert!(doc.is_dirty());
     assert_eq!(doc.reveal_mode(), RevealMode::AtCursor);
 }
@@ -35,7 +35,7 @@ fn set_icons_is_idempotent_and_marks_dirty_only_on_change() {
 #[test]
 fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
     let mut doc = DocMachine::new();
-    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    doc.set_reveal_mode(RevealMode::AtCursor); // Decide policies only fire with a live insertion point.
     let buf = Buffer::new("# hello\n");
     doc.sync_content(&buf);
     assert_eq!(doc.built_version(), buf.version());
@@ -73,7 +73,7 @@ fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
     // `sync_cursors`/`set_reveal_mode`'s inputs — the second `snapshot` call
     // must be a memo hit, not a second emit + wrap + `expand_tables`.
     let mut doc = DocMachine::new();
-    doc.set_reveal_mode(true);
+    doc.set_reveal_mode(RevealMode::AtCursor);
     let buf = Buffer::new("# hello\nworld\n");
     let cursors = CursorSet::new(0);
 
@@ -172,7 +172,7 @@ fn table_never_forces_reveal_mode_rendered() {
 #[test]
 fn table_at_cursor_reveals_when_cursor_is_in_its_line_range() {
     let mut doc = DocMachine::new();
-    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    doc.set_reveal_mode(RevealMode::AtCursor); // Decide policies only fire with a live insertion point.
     let buf = Buffer::new("| Name | Age |\n| --- | --- |\n| Alice | 30 |\n");
     doc.sync_content(&buf);
     // cursor sits on the table's header line — `TableM::sync` decides off
@@ -192,7 +192,7 @@ fn table_at_cursor_reveals_when_cursor_is_in_its_line_range() {
 #[test]
 fn heading_at_cursor_reveals_when_cursor_is_on_its_line() {
     let mut doc = DocMachine::new();
-    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    doc.set_reveal_mode(RevealMode::AtCursor); // Decide policies only fire with a live insertion point.
     let buf = Buffer::new("# hello\n");
     doc.sync_content(&buf);
     // cursor sits on the heading line — `HeadingM::sync` decides off

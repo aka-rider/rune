@@ -323,7 +323,12 @@ pub(crate) fn promote(app: &mut App, id: DocumentId) {
     app.explorer.preview = None;
     let path = app.doc(id).and_then(|doc| doc.file_path.clone());
     if let Some(path) = path {
-        let _ = crate::db_enqueue::load_document(app, id, &path, false);
+        let _ = crate::db_enqueue::load_document(
+            app,
+            id,
+            &path,
+            crate::db_enqueue::LoadIntent::Recover,
+        );
     }
 }
 

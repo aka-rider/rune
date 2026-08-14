@@ -25,7 +25,7 @@ pub fn synced_at(
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
     doc.set_width(width);
-    doc.set_reveal_mode(focused);
+    doc.set_reveal_mode(focused.into());
     doc.sync_content(&buf);
     let positions: Vec<usize> = cursor_offsets.iter().map(|&o| o.min(buf.len())).collect();
     let cursors = CursorSet::new_from_positions(&positions);

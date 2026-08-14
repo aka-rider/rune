@@ -146,7 +146,7 @@ fn floor_and_ceil_char_boundary_snap_outward_never_split_a_char() {
 pub(crate) fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
-    doc.set_reveal_mode(focused);
+    doc.set_reveal_mode(focused.into());
     doc.sync_content(&buf);
     let cursors = CursorSet::new(cursor_offset);
     doc.sync_cursors(&buf, &cursors);

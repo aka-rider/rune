@@ -330,11 +330,17 @@ mod tests {
         (editor.x, editor.y)
     }
 
-    fn click(app: &mut App, kind: MouseKind, col: u16, row: u16) {
-        click_modified(app, kind, col, row, false, false);
+    #[derive(Clone, Copy, Default)]
+    struct Modifiers {
+        shift: bool,
+        alt: bool,
     }
 
-    fn click_modified(app: &mut App, kind: MouseKind, col: u16, row: u16, shift: bool, alt: bool) {
+    fn click(app: &mut App, kind: MouseKind, col: u16, row: u16) {
+        click_modified(app, kind, col, row, Modifiers::default());
+    }
+
+    fn click_modified(app: &mut App, kind: MouseKind, col: u16, row: u16, modifiers: Modifiers) {
         let (ox, oy) = editor_origin(app);
         let mut effects = crate::runtime::Effects::default();
         crate::app::update(
@@ -343,8 +349,8 @@ mod tests {
                 kind,
                 column: ox + col,
                 row: oy + row,
-                shift,
-                alt,
+                shift: modifiers.shift,
+                alt: modifiers.alt,
                 ctrl: false,
             }),
             &mut effects,
@@ -414,8 +420,10 @@ mod tests {
             MouseKind::Down(MouseButton::Left),
             6,
             0,
-            false,
-            true,
+            Modifiers {
+                alt: true,
+                ..Modifiers::default()
+            },
         );
         assert!(app.active_doc().cursors.is_multi());
     }
@@ -429,8 +437,10 @@ mod tests {
             MouseKind::Down(MouseButton::Left),
             5,
             0,
-            true,
-            false,
+            Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
         );
         let c = app.active_doc().cursors.primary();
         assert_eq!(c.selection_range(), (0, 5));

@@ -70,7 +70,7 @@ proptest! {
         let buf = Buffer::new(&content);
         let offset = if buf.is_empty() { 0 } else { raw_offset % (buf.len() + 1) };
         let mut doc = DocMachine::new();
-        doc.set_reveal_mode(focused);
+        doc.set_reveal_mode(focused.into());
         doc.sync_content(&buf);
         let cursors = CursorSet::new(offset);
         doc.sync_cursors(&buf, &cursors);
@@ -132,7 +132,7 @@ fn wrap_for(
 ) -> (rune_core::buffer::Buffer, rune_syntax::wrap::WrapSnapshot) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
-    doc.set_reveal_mode(true);
+    doc.set_reveal_mode(true.into());
     doc.sync_content(&buf);
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);

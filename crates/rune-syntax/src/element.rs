@@ -214,6 +214,16 @@ pub enum RevealMode {
     AtCursor,
 }
 
+impl From<bool> for RevealMode {
+    fn from(has_insertion_point: bool) -> RevealMode {
+        if has_insertion_point {
+            RevealMode::AtCursor
+        } else {
+            RevealMode::Never
+        }
+    }
+}
+
 /// Root-owned wrap state; only a document-root machine (`rune-md`'s
 /// `DocMachine`) mutates it. Downstream elements read it through
 /// `InheritCtx::wrap`, never own a copy.

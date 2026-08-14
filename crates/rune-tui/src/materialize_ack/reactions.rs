@@ -209,7 +209,12 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
             // the racer's file proves only that something else wrote the
             // target, never how the two sides relate.
             super::seed_refusal_classification(app, id, rune_db::SyncKind::Diverged);
-            let _ = crate::db_enqueue::load_document(app, id, &path, true);
+            let _ = crate::db_enqueue::load_document(
+                app,
+                id,
+                &path,
+                crate::db_enqueue::LoadIntent::Rebaseline,
+            );
         } else {
             messages::error(
                 app,

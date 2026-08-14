@@ -35,6 +35,18 @@ pub struct TextField {
     journal: Journal,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeleteDirection {
+    Backward,
+    Forward,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeleteUnit {
+    Rune,
+    Word,
+}
+
 impl TextField {
     /// A field seeded with `text`, cursor at the end, no selection, empty
     /// undo history.
@@ -135,10 +147,18 @@ impl TextField {
                 self.cursor.desired_col = 0;
                 KeyOutcome::Consumed
             }
-            Command::DeleteLeft => self.delete_bare(&window, true, false),
-            Command::DeleteRight => self.delete_bare(&window, false, false),
-            Command::DeleteWordLeft => self.delete_bare(&window, true, true),
-            Command::DeleteWordRight => self.delete_bare(&window, false, true),
+            Command::DeleteLeft => {
+                self.delete_bare(&window, DeleteDirection::Backward, DeleteUnit::Rune)
+            }
+            Command::DeleteRight => {
+                self.delete_bare(&window, DeleteDirection::Forward, DeleteUnit::Rune)
+            }
+            Command::DeleteWordLeft => {
+                self.delete_bare(&window, DeleteDirection::Backward, DeleteUnit::Word)
+            }
+            Command::DeleteWordRight => {
+                self.delete_bare(&window, DeleteDirection::Forward, DeleteUnit::Word)
+            }
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
             _ => KeyOutcome::Ignored,
@@ -214,21 +234,24 @@ impl TextField {
     /// The range a bare (non-selection) delete targets: one rune or one
     /// word, from the cursor toward `window`'s near edge. A live
     /// selection always wins over the bare range.
-    fn delete_bare(&mut self, window: &Range<usize>, backward: bool, word: bool) -> KeyOutcome {
+    fn delete_bare(
+        &mut self,
+        window: &Range<usize>,
+        direction: DeleteDirection,
+        unit: DeleteUnit,
+    ) -> KeyOutcome {
         let (start, end) = if self.cursor.has_selection() {
             self.cursor.selection_range()
-        } else if backward {
-            let target = if word {
-                nav::word_left_offset(&self.buffer, self.cursor.position)
-            } else {
-                nav::prev_rune_offset(&self.buffer, self.cursor.position)
+        } else if direction == DeleteDirection::Backward {
+            let target = match unit {
+                DeleteUnit::Word => nav::word_left_offset(&self.buffer, self.cursor.position),
+                DeleteUnit::Rune => nav::prev_rune_offset(&self.buffer, self.cursor.position),
             };
             (target, self.cursor.position)
         } else {
-            let target = if word {
-                nav::word_right_offset(&self.buffer, self.cursor.position)
-            } else {
-                nav::next_rune_offset(&self.buffer, self.cursor.position)
+            let target = match unit {
+                DeleteUnit::Word => nav::word_right_offset(&self.buffer, self.cursor.position),
+                DeleteUnit::Rune => nav::next_rune_offset(&self.buffer, self.cursor.position),
             };
             (self.cursor.position, target)
         };

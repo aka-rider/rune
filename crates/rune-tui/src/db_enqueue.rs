@@ -136,8 +136,8 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
 /// `Load` arm needs both to decide, on the ack, whether adopting the
 /// recovered content is still safe (see [`crate::db_ack::handle_load_ack`]'s
-/// docs). `binding_only` is carried onto that `PendingOp` verbatim — see
-/// `PendingOp::binding_only`'s own doc comment for why a re-baseline call
+/// docs). `intent` becomes that `PendingOp`'s `binding_only` flag — see
+/// `PendingOp::binding_only`'s own doc comment for why a `Rebaseline` call
 /// must set it. A degraded store enqueues nothing — there is no
 /// trustworthy recovery journal to bind this document to either way.
 ///
@@ -146,8 +146,8 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// on `false` rather than leave it standing with a baseline it can no
 /// longer refresh; the other call sites, which have no binding yet to
 /// protect, are unaffected either way.
-pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: bool) -> bool {
-    load_document_inner(app, id, path, binding_only, true)
+pub fn load_document(app: &mut App, id: DocumentId, path: &Path, intent: LoadIntent) -> bool {
+    load_document_inner(app, id, path, intent, LoadErrorPolicy::Degrade)
 }
 
 /// The re-baseline counterpart to [`load_document`]: same enqueue, but an
@@ -163,15 +163,33 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: b
 /// outer `Fatal` arm reports the store failure itself once the whole loop
 /// has finished.
 pub fn load_document_best_effort(app: &mut App, id: DocumentId, path: &Path) -> bool {
-    load_document_inner(app, id, path, true, false)
+    load_document_inner(
+        app,
+        id,
+        path,
+        LoadIntent::Rebaseline,
+        LoadErrorPolicy::Ignore,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LoadIntent {
+    Recover,
+    Rebaseline,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoadErrorPolicy {
+    Degrade,
+    Ignore,
 }
 
 fn load_document_inner(
     app: &mut App,
     id: DocumentId,
     path: &Path,
-    binding_only: bool,
-    degrade_on_err: bool,
+    intent: LoadIntent,
+    on_err: LoadErrorPolicy,
 ) -> bool {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return false;
@@ -183,12 +201,14 @@ fn load_document_inner(
     };
     match db.store.load(path) {
         Ok(op_id) => {
-            app.db_ops
-                .insert(op_id, PendingOp::load(id, issued_version, binding_only));
+            app.db_ops.insert(
+                op_id,
+                PendingOp::load(id, issued_version, intent == LoadIntent::Rebaseline),
+            );
             // A document with no binding yet starts buffering: every edit
             // committed before this op's ack lands must reach the store
             // eventually, not be dropped. A re-baseline/hand-off
-            // `Load` (`load_document_best_effort`, or a `binding_only` call
+            // `Load` (`load_document_best_effort`, or a `Rebaseline` call
             // against an already-`Bound` document) targets a document that
             // is already `Bound` or `Detached`-by-design, so this is a no-op
             // for those — only a genuinely fresh, never-bound document
@@ -203,7 +223,7 @@ fn load_document_inner(
             true
         }
         Err(e) => {
-            if degrade_on_err {
+            if on_err == LoadErrorPolicy::Degrade {
                 crate::materialize_ack::on_store_failure(app, &e.to_string());
             }
             false

@@ -241,7 +241,7 @@ pub(crate) fn meta_unboxed(table_group: Option<usize>) -> RowMeta {
 pub(crate) fn wrap_for(content: &str, width: u16) -> (Buffer, rune_syntax::wrap::WrapSnapshot) {
     let buf = Buffer::new(content);
     let mut doc = rune_md::element::doc::DocMachine::new();
-    doc.set_reveal_mode(true);
+    doc.set_reveal_mode(true.into());
     doc.sync_content(&buf);
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
