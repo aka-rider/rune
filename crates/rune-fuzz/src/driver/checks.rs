@@ -156,132 +156,126 @@ fn tab_switch_key(idx: usize) -> Option<KeyInput> {
 /// so leaving it Active into the sweep below would spend the whole `⌘Z`
 /// budget being swallowed by the resolver's own feedback fallback instead
 /// of ever reaching the journal.
+const ESCAPE: KeyInput = KeyInput {
+    code: KeyCode::Escape,
+    mods: Mods::NONE,
+};
+
+fn guard_up_key(state: &State) -> Option<KeyInput> {
+    state.app.guard.is_some().then_some(ESCAPE)
+}
+
+fn help_active_key(state: &State) -> Option<KeyInput> {
+    (state.app.help_doc == Some(state.app.active)).then_some(KeyInput {
+        code: KeyCode::F1,
+        mods: Mods::NONE,
+    })
+}
+
+fn title_focused_key(state: &State) -> Option<KeyInput> {
+    (state.app.focus() == Pane::Title).then_some(ESCAPE)
+}
+
+/// The search bar isn't a `Pane` at all (it's its own focus state,
+/// checked by `focus::target` ahead of the chrome-level `Pane` match),
+/// so the generic `^B` fallback below — which reads `app.focus()` —
+/// could never reach it either way. Esc is the bar's own dedicated
+/// exit and closes it outright (`search::keys::handle_key`'s `Escape`
+/// arm), mirroring the Title case just above.
+fn search_field_focused_key(state: &State) -> Option<KeyInput> {
+    (focus::target(&state.app) == FocusTarget::SearchField).then_some(ESCAPE)
+}
+
+/// The message pane isn't gated behind the left column, so the generic
+/// `^B` fallback below can't reach it — `^B` toggles a column this pane
+/// doesn't live in, leaving focus stuck here forever.
+/// `Escape` is its own dedicated exit (`messages::handle_key`), mirroring
+/// the Title case just above.
+fn messages_focused_key(state: &State) -> Option<KeyInput> {
+    (state.app.focus() == Pane::Messages).then_some(ESCAPE)
+}
+
+/// `⌘Z` reaches whichever document is ACTIVE, so the seed merely being
+/// open is not the precondition — it has to be the one under the
+/// keyboard. A session's own keys can leave another one there: a Tabs
+/// `Enter` on the untitled draft `App::new` mints before the seed is
+/// opened, a `⌘N` draft, an Explorer selection. `^1`-`^0` is the one
+/// chord that names a tab positionally from any pane, and it lands focus
+/// on the Editor itself, so it doubles as the restore below. Driven
+/// BEFORE the merge and reading-view restores, both of which describe
+/// the active document and would otherwise be read off the wrong one.
+fn seed_not_active_key(state: &State) -> Option<KeyInput> {
+    if state.app.active == state.seed_doc {
+        return None;
+    }
+    let idx = state
+        .app
+        .documents
+        .order()
+        .iter()
+        .position(|&t| t == state.seed_doc)?;
+    tab_switch_key(idx)
+}
+
+fn editor_unfocused_key(state: &State) -> Option<KeyInput> {
+    (state.app.focus() != Pane::Editor).then_some(KeyInput {
+        code: KeyCode::Char('b'),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    })
+}
+
+/// The merge resolver owns every key on its document while `Active`
+/// (`merge::keys::intercept`'s own docs) — the undo sweep below would
+/// otherwise spend its whole `⌘Z` budget being consumed by the
+/// resolver instead of ever reaching the journal. `Escape` is its own
+/// dedicated exit (`MergeCommand::Exit` -> `merge::exit_in_place`),
+/// reached only once the focus restores above have already landed back
+/// on `Pane::Editor` — the resolver's intercept is scoped to that pane.
+fn merge_active_key(state: &State) -> Option<KeyInput> {
+    matches!(state.app.merge, rune_tui::merge::MergeState::Active { .. }).then_some(ESCAPE)
+}
+
+/// Reading view blocks undo/redo by design, so a session that ends in it
+/// would leave the sweep below pressing keys that are correctly ignored —
+/// the same "keys went nowhere" misreading the focus restores above
+/// exist to prevent. `^p` leaves it. Restoring the precondition here
+/// rather than teaching `undo_total`/`redo_total` to skip a read-only
+/// document keeps those invariants asserted on EVERY session: a document
+/// in reading view can still converge, it just has to leave the view
+/// first. Only `ReadOnly::Reading` is restorable — a document with no
+/// editable form at all refuses the toggle, and the sweep is already
+/// gated on the seeded document still being present.
+fn reading_view_key(state: &State) -> Option<KeyInput> {
+    (state.app.active_doc().read_only == ReadOnly::Reading).then_some(KeyInput {
+        code: KeyCode::Char('p'),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    })
+}
+
+const RESTORE_STEPS: [fn(&State) -> Option<KeyInput>; 9] = [
+    guard_up_key,
+    help_active_key,
+    title_focused_key,
+    search_field_focused_key,
+    messages_focused_key,
+    seed_not_active_key,
+    editor_unfocused_key,
+    merge_active_key,
+    reading_view_key,
+];
+
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
-    if state.app.guard.is_some() {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Escape,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    if state.app.help_doc == Some(state.app.active) {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::F1,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    if state.app.focus() == Pane::Title {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Escape,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    // The search bar isn't a `Pane` at all (it's its own focus state,
-    // checked by `focus::target` ahead of the chrome-level `Pane` match),
-    // so the generic `^B` fallback below — which reads `app.focus()` —
-    // could never reach it either way. Esc is the bar's own dedicated
-    // exit and closes it outright (`search::keys::handle_key`'s `Escape`
-    // arm), mirroring the Title case just above.
-    if focus::target(&state.app) == FocusTarget::SearchField {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Escape,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    // The message pane isn't gated behind the left column, so the generic
-    // `^B` fallback below can't reach it — `^B` toggles a column this pane
-    // doesn't live in, leaving focus stuck here forever.
-    // `Escape` is its own dedicated exit (`messages::handle_key`), mirroring
-    // the Title case just above.
-    if state.app.focus() == Pane::Messages {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Escape,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    // `⌘Z` reaches whichever document is ACTIVE, so the seed merely being
-    // open is not the precondition — it has to be the one under the
-    // keyboard. A session's own keys can leave another one there: a Tabs
-    // `Enter` on the untitled draft `App::new` mints before the seed is
-    // opened, a `⌘N` draft, an Explorer selection. `^1`-`^0` is the one
-    // chord that names a tab positionally from any pane, and it lands focus
-    // on the Editor itself, so it doubles as the restore below. Driven
-    // BEFORE the merge and reading-view restores, both of which describe
-    // the active document and would otherwise be read off the wrong one.
-    if state.app.active != state.seed_doc
-        && let Some(idx) = state
-            .app
-            .documents
-            .order()
-            .iter()
-            .position(|&t| t == state.seed_doc)
-        && let Some(key) = tab_switch_key(idx)
-    {
+    for step in RESTORE_STEPS {
+        let Some(key) = step(state) else {
+            continue;
+        };
         let (msg, tag) = key_step(key);
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    if state.app.focus() != Pane::Editor {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Char('b'),
-            mods: Mods {
-                ctrl: true,
-                ..Mods::NONE
-            },
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    // The merge resolver owns every key on its document while `Active`
-    // (`merge::keys::intercept`'s own docs) — the undo sweep below would
-    // otherwise spend its whole `⌘Z` budget being consumed by the
-    // resolver instead of ever reaching the journal. `Escape` is its own
-    // dedicated exit (`MergeCommand::Exit` -> `merge::exit_in_place`),
-    // reached only once the focus restores above have already landed back
-    // on `Pane::Editor` — the resolver's intercept is scoped to that pane.
-    if matches!(state.app.merge, rune_tui::merge::MergeState::Active { .. }) {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Escape,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    // Reading view blocks undo/redo by design, so a session that ends in it
-    // would leave the sweep below pressing keys that are correctly ignored —
-    // the same "keys went nowhere" misreading the focus restores above
-    // exist to prevent. `^p` leaves it. Restoring the precondition here
-    // rather than teaching `undo_total`/`redo_total` to skip a read-only
-    // document keeps those invariants asserted on EVERY session: a document
-    // in reading view can still converge, it just has to leave the view
-    // first. Only `ReadOnly::Reading` is restorable — a document with no
-    // editable form at all refuses the toggle, and the sweep is already
-    // gated on the seeded document still being present.
-    if state.app.active_doc().read_only == ReadOnly::Reading {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Char('p'),
-            mods: Mods {
-                ctrl: true,
-                ..Mods::NONE
-            },
-        });
         if step_and_check(state, prev, msg, tag, None, outcome) {
             return true;
         }
