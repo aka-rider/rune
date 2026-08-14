@@ -91,6 +91,12 @@ pub fn fresh_memory_uri_for_test() -> String {
     memory_uri()
 }
 
+#[cfg(feature = "test-support")]
+pub fn open_recovery_store_in_memory_for_test() -> Result<Connection, Error> {
+    let uri = memory_uri();
+    open_recovery_store(RecoveryTarget::Memory(&uri))
+}
+
 #[cfg(test)]
 #[allow(clippy::panic)]
 pub(crate) fn test_temp_dir(label: &str) -> std::path::PathBuf {

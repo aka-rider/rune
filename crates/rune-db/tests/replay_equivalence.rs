@@ -70,16 +70,8 @@ fn resolve_delete(len: usize, at_frac: u8, len_frac: u8) -> Option<(usize, usize
     Some((start, start + del_len))
 }
 
-/// A fresh in-memory `rune-db` connection with schema applied, one session,
-/// and one document — self-contained setup, no `Store`/writer thread
-/// involved (this property test drives the domain functions directly
-/// against a single connection for full determinism across hundreds of
-/// cases, matching `journal.rs`'s own unit tests).
 fn open_test_db() -> (Connection, SessionId, DocId) {
-    let conn = Connection::open_in_memory().expect("open in-memory connection");
-    conn.execute_batch(rune_db::SCHEMA).expect("apply schema");
-    conn.pragma_update(None, "foreign_keys", "ON")
-        .expect("enable foreign_keys");
+    let conn = rune_db::open_recovery_store_in_memory_for_test().expect("open recovery store");
 
     conn.execute(
         "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES (1, '', 'x')",

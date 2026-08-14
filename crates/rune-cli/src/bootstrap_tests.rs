@@ -59,11 +59,6 @@ impl Vfs for CountingReadVfs {
     }
 }
 
-/// A real, throwaway `$HOME` under the OS temp dir — `Store::open`
-/// talks to the sqlite file directly via `rusqlite`, bypassing the
-/// injected `vfs` entirely (same pattern `rune-db`'s own multiprocess
-/// tests use), so the recovery-store half of these launch tests needs
-/// a real directory even though every document byte lives in `Mem`.
 struct ScratchHome(PathBuf);
 
 impl ScratchHome {
@@ -353,7 +348,8 @@ fn launch_missing_first_positional_never_sweeps_another_sessions_empty_scratch_r
     )
     .expect("bootstrap should succeed for a missing-path launch");
 
-    let raw = rusqlite::Connection::open(&db_path).expect("open db file directly");
+    let raw =
+        rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
     let still_present: bool = raw
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
@@ -408,7 +404,8 @@ fn bare_launch_never_sweeps_another_sessions_empty_scratch_row() {
     )
     .expect("bootstrap should succeed for a no-positional launch");
 
-    let raw = rusqlite::Connection::open(&db_path).expect("open db file directly");
+    let raw =
+        rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
     let still_present: bool = raw
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
@@ -581,7 +578,8 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     // directly through a raw connection, the only way to simulate a
     // truly dead prior process without spawning a real second one.
     {
-        let raw = rusqlite::Connection::open(&db_path).expect("open db file directly");
+        let raw =
+            rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
         raw.execute("UPDATE sessions SET pid = -1", [])
             .expect("mark every recorded session dead");
     }

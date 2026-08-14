@@ -132,7 +132,8 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     // A fresh, plain connection to the SAME db file — the definitive proof
     // the durable journal matches the buffer exactly, not just that no op
     // came back `Err`.
-    let conn = rusqlite::Connection::open(&db_path).expect("open db file directly");
+    let conn =
+        rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
     let recovered = rune_db::recover_document(&conn, session_id, doc_id).expect("recover_document");
     assert_eq!(
         recovered, buf,

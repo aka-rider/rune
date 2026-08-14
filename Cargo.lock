@@ -2185,7 +2185,6 @@ dependencies = [
  "rune-db",
  "rune-tui",
  "rune-vfs",
- "rusqlite",
 ]
 
 [[package]]

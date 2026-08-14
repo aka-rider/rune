@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, params};
+use rusqlite::params;
 
 /// A hang safety net, not a pacing bound: every rendezvous in these
 /// scenarios completes in well under a second on a healthy run, and a
@@ -106,14 +106,8 @@ pub(crate) fn spawn_helper(role: &str, envs: &[(&str, String)]) -> std::process:
         .unwrap_or_else(|e| panic!("spawn helper role {role}: {e}"))
 }
 
-/// Applies the crate's schema and seeds `n` document rows directly via a raw
-/// connection, BEFORE any child is spawned — setup is sequential and
-/// race-free by construction, so the scenarios can focus on the real
-/// cross-process behavior WP6 is meant to prove rather than document
-/// identity resolution (already covered by WP4's own tests).
 pub(crate) fn seed_schema_and_docs(path: &Path, n: usize) -> Vec<i64> {
-    let conn = Connection::open(path).expect("create db for seeding");
-    conn.execute_batch(rune_db::SCHEMA).expect("apply schema");
+    let conn = rune_db::open_recovery_store_at_path_for_test(path).expect("create db for seeding");
     let mut ids = Vec::with_capacity(n);
     for i in 0..n {
         conn.execute(
