@@ -137,6 +137,7 @@ pub enum MaterializeVfsOutcome {
         confirmed: bool,
         resolved_path: PathBuf,
         durable: bool,
+        stray_temp: Option<PathBuf>,
     },
     /// The write committed AND a racer's displaced bytes were captured in
     /// the same atomic-swap window. `confirmed` describes `stat` only.
@@ -147,6 +148,7 @@ pub enum MaterializeVfsOutcome {
         displaced: Vec<u8>,
         displaced_stat: StatFacts,
         resolved_path: PathBuf,
+        stray_temp: Option<PathBuf>,
         durable: bool,
     },
 }
@@ -262,9 +264,13 @@ pub(crate) fn handle_materialize_vfs_done(
             confirmed,
             resolved_path,
             durable,
+            stray_temp,
         } => {
             if !durable {
                 messages::warn(app, super::DURABILITY_UNCONFIRMED_WARNING);
+            }
+            if let Some(temp) = &stray_temp {
+                messages::warn(app, super::stray_temp_warning(temp));
             }
             let outcome = MaterializeOutcome::Committed {
                 data,
@@ -296,9 +302,13 @@ pub(crate) fn handle_materialize_vfs_done(
             displaced_stat,
             resolved_path,
             durable,
+            stray_temp,
         } => {
             if !durable {
                 messages::warn(app, super::DURABILITY_UNCONFIRMED_WARNING);
+            }
+            if let Some(temp) = &stray_temp {
+                messages::warn(app, super::stray_temp_warning(temp));
             }
             let outcome = MaterializeOutcome::Raced {
                 data,

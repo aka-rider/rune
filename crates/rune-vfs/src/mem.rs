@@ -15,6 +15,7 @@ use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name
 
 /// The `Vfs` operation a `Mem::fail_next`/`Mem::fail_after` injection
 /// targets.
+#[cfg(any(test, feature = "fault-injection"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OpKind {
     Read,
@@ -54,6 +55,7 @@ struct MemState {
 /// In-memory `Vfs` keyed by `PathBuf`. Suitable for tests.
 pub struct Mem {
     state: Mutex<MemState>,
+    #[cfg(any(test, feature = "fault-injection"))]
     fail_next: Mutex<Option<(OpKind, io::Error)>>,
     /// WP1.S5: the counterpart to `fail_next`. `fail_next` intercepts a call
     /// before it touches `state`; `fail_after` lets a mutating op (currently
@@ -62,23 +64,27 @@ pub struct Mem {
     /// effect, but the operation still reported failure" — the phase
     /// `WrappedIo::published` distinguishes, and which `fail_next` cannot
     /// express at all.
+    #[cfg(any(test, feature = "fault-injection"))]
     fail_after: Mutex<Option<(OpKind, io::Error)>>,
     /// WP-A: a one-shot mutation that fires the NEXT time `Vfs::stat(path)`
     /// is called, applied AFTER that call has already computed its answer —
     /// reproducing "the file changed in the gap between two stat calls that
     /// bracket a read": the bracket's first stat sees the state as it was,
     /// its second stat (or the read in between) sees the state after.
+    #[cfg(any(test, feature = "fault-injection"))]
     mutate_after_stat: Mutex<Option<(PathBuf, Vec<u8>)>>,
     /// WP-A: paths currently in "churn" mode — EVERY `Vfs::stat` call
     /// mutates content+identity right after computing its answer, forever,
     /// rather than the one-shot `mutate_after_stat`. Reproduces a file that
     /// never stops changing: no bracket around it can ever settle, since
     /// even its own retry attempts each see a fresh mutation mid-bracket.
+    #[cfg(any(test, feature = "fault-injection"))]
     churning: Mutex<std::collections::HashSet<PathBuf>>,
     /// Paths `Mem::resolve` refuses permanently, set via `Mem::fail_resolve`
     /// — an unreadable/missing ancestor or a symlink loop, unlike
     /// `fail_next(OpKind::Resolve, ..)`'s one-shot, path-blind trigger,
     /// which cannot target one path across a test that resolves several.
+    #[cfg(any(test, feature = "fault-injection"))]
     resolve_failures: Mutex<std::collections::HashSet<PathBuf>>,
 }
 
@@ -90,10 +96,15 @@ impl Mem {
                 next_inode: 1,
                 tick: 0,
             }),
+            #[cfg(any(test, feature = "fault-injection"))]
             fail_next: Mutex::new(None),
+            #[cfg(any(test, feature = "fault-injection"))]
             fail_after: Mutex::new(None),
+            #[cfg(any(test, feature = "fault-injection"))]
             mutate_after_stat: Mutex::new(None),
+            #[cfg(any(test, feature = "fault-injection"))]
             churning: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(any(test, feature = "fault-injection"))]
             resolve_failures: Mutex::new(std::collections::HashSet::new()),
         }
     }
@@ -101,6 +112,7 @@ impl Mem {
     /// Arms a one-shot failure for the next call to the `op` primitive. The
     /// failure fires exactly once (on the next matching call, regardless of
     /// how many non-matching calls happen first) and is then cleared.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_next(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_next({op:?}) triggered"));
         let mut guard = self
@@ -113,6 +125,7 @@ impl Mem {
     /// Arms a one-shot failure for the next `write_durable` — the first
     /// fallible step of `save_atomic`, so this reproduces the "next save
     /// fails" behavior a plain caller of `save_atomic` observes.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_next_save(&self, kind: io::ErrorKind) {
         self.fail_next(OpKind::WriteDurable, kind);
     }
@@ -122,6 +135,7 @@ impl Mem {
     /// [`crate::published_not_durable`] (only meaningful for `Exchange`/
     /// `RenameExcl`, the publish primitives `Disk::publish` also marks this
     /// way). See the field doc on `Mem::fail_after`.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_after(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_after({op:?}) triggered"));
         let mut guard = self
@@ -134,6 +148,7 @@ impl Mem {
     /// Consumes the armed failure if it targets `op`, returning it as an
     /// error. Otherwise leaves any differently-targeted armed failure
     /// untouched and returns `Ok`.
+    #[cfg(any(test, feature = "fault-injection"))]
     fn take_failure(&self, op: OpKind) -> io::Result<()> {
         let mut guard = self
             .fail_next
@@ -152,6 +167,7 @@ impl Mem {
     /// Consumes the armed `fail_after` failure if it targets `op`, wrapping
     /// it as `published_not_durable` since every current caller of this
     /// (`exchange`/`rename_excl`) is a publish primitive.
+    #[cfg(any(test, feature = "fault-injection"))]
     fn take_after_failure(&self, op: OpKind, context: impl Into<String>) -> Option<io::Error> {
         let mut guard = self
             .fail_after
@@ -177,6 +193,7 @@ impl Mem {
     /// lets a test prove a temp file left behind by a failed publish still
     /// physically exists (nothing is ever silently discarded) without
     /// hand-computing `temp_name`'s private naming scheme.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn debug_paths(&self) -> Vec<PathBuf> {
         self.lock_state().files.keys().cloned().collect()
     }
@@ -188,6 +205,7 @@ impl Mem {
     /// different writes land on identical stat facts. Errors `NotFound` if
     /// `path` doesn't already exist, matching every other `Mem` primitive's
     /// shape.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn set_content_keep_identity(&self, path: &Path, bytes: Vec<u8>) -> io::Result<()> {
         let mut state = self.lock_state();
         match state.files.get_mut(path) {
@@ -206,6 +224,7 @@ impl Mem {
     /// gap between two stat calls that bracket a read", the mid-bracket
     /// mutation a stat-read-stat confirmation must catch by re-reading
     /// rather than trusting a single stat pair.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn mutate_after_next_stat(&self, path: &Path, bytes: Vec<u8>) {
         let mut guard = self
             .mutate_after_stat
@@ -222,6 +241,7 @@ impl Mem {
     /// with itself across every re-probe, the shape
     /// [`crate::mem`]'s bracket-retry ceiling must degrade to unconfirmed
     /// against.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn set_churning(&self, path: &Path, churning: bool) {
         let mut guard = self
             .churning
@@ -237,6 +257,7 @@ impl Mem {
     /// Mutates `path`'s content to a fresh, unique payload and mints a
     /// fresh identity — the shared body behind churn mode and the one-shot
     /// [`Mem::mutate_after_next_stat`] hook.
+    #[cfg(any(test, feature = "fault-injection"))]
     fn mutate_now(&self, path: &Path, bytes: Vec<u8>) {
         let mut state = self.lock_state();
         state.tick += 1;
@@ -254,6 +275,7 @@ impl Mem {
     /// priority, since it fires unconditionally; the one-shot hook is
     /// consumed at most once) — called from `Vfs::stat` after it has
     /// already read the answer it is about to return.
+    #[cfg(any(test, feature = "fault-injection"))]
     fn apply_pending_mutation(&self, path: &Path) {
         let is_churning = self
             .churning
@@ -284,6 +306,7 @@ impl Mem {
     /// a hardcoded `nlink: Some(1)` made otherwise untestable against
     /// `Mem`. No-op (`Ok`) is not returned for a missing path — the caller
     /// gets `NotFound`, matching every other Mem primitive's shape.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn set_nlink(&self, path: &Path, nlink: u64) -> io::Result<()> {
         let mut state = self.lock_state();
         match state.files.get_mut(path) {
@@ -300,6 +323,7 @@ impl Mem {
     /// ever represents `FileKind::File`/`Dir`. No-op (`Ok`) is not returned
     /// for a missing path — the caller gets `NotFound`, matching every
     /// other `Mem` primitive's shape.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn set_kind(&self, path: &Path, kind: FileKind) -> io::Result<()> {
         let mut state = self.lock_state();
         match state.files.get_mut(path) {
@@ -319,6 +343,7 @@ impl Mem {
     /// succeed. No existing-file requirement, unlike `set_nlink`/`set_kind`
     /// — resolution failure (a missing/unreadable ancestor, a symlink loop)
     /// is exactly the case where the target need not exist at all.
+    #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_resolve(&self, path: &Path) {
         let mut guard = self
             .resolve_failures
@@ -373,14 +398,15 @@ fn sits_strictly_below(key: &Path, path: &Path) -> bool {
 }
 
 fn not_found(path: &Path, op: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::NotFound,
-        format!("{op} {}: not found in mem vfs", path.display()),
+    crate::wrap_io(
+        io::Error::new(io::ErrorKind::NotFound, "not found in mem vfs"),
+        format!("{op} {}", path.display()),
     )
 }
 
 impl Vfs for Mem {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::Read)?;
         let state = self.lock_state();
         state
@@ -391,6 +417,7 @@ impl Vfs for Mem {
     }
 
     fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::WriteDurable)?;
         let temp = temp_name(path);
         let mut state = self.lock_state();
@@ -400,9 +427,9 @@ impl Vfs for Mem {
         // would instead silently overwrite whatever the collision already
         // held, making that failure mode untestable against `Mem`.
         if state.files.contains_key(&temp) {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("write_durable {}: temp already exists", temp.display()),
+            return Err(crate::wrap_io(
+                io::Error::new(io::ErrorKind::AlreadyExists, "temp already exists"),
+                format!("write_durable {}", temp.display()),
             ));
         }
         state.tick += 1;
@@ -425,6 +452,7 @@ impl Vfs for Mem {
     }
 
     fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::Exchange)?;
         let mut state = self.lock_state();
         if a == b {
@@ -456,6 +484,7 @@ impl Vfs for Mem {
         state.files.insert(a.to_path_buf(), fb);
         state.files.insert(b.to_path_buf(), fa);
         drop(state);
+        #[cfg(any(test, feature = "fault-injection"))]
         if let Some(e) = self.take_after_failure(
             OpKind::Exchange,
             format!("exchange {} <-> {}", a.display(), b.display()),
@@ -466,19 +495,16 @@ impl Vfs for Mem {
     }
 
     fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::RenameExcl)?;
         let mut state = self.lock_state();
         if !state.files.contains_key(old) {
             return Err(not_found(old, "renameexcl"));
         }
         if state.files.contains_key(new) {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!(
-                    "renameexcl {} -> {}: destination exists",
-                    old.display(),
-                    new.display()
-                ),
+            return Err(crate::wrap_io(
+                io::Error::new(io::ErrorKind::AlreadyExists, "destination exists"),
+                format!("renameexcl {} -> {}", old.display(), new.display()),
             ));
         }
         // Confirmed present above under this same (still-held) lock, so
@@ -488,6 +514,7 @@ impl Vfs for Mem {
         };
         state.files.insert(new.to_path_buf(), f);
         drop(state);
+        #[cfg(any(test, feature = "fault-injection"))]
         if let Some(e) = self.take_after_failure(
             OpKind::RenameExcl,
             format!("renameexcl {} -> {}", old.display(), new.display()),
@@ -498,6 +525,7 @@ impl Vfs for Mem {
     }
 
     fn remove(&self, path: &Path) -> io::Result<()> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::Remove)?;
         let mut state = self.lock_state();
         if state.files.remove(path).is_none() {
@@ -508,6 +536,7 @@ impl Vfs for Mem {
     }
 
     fn trash(&self, path: &Path) -> io::Result<()> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::Trash)?;
         let mut state = self.lock_state();
         if state.files.remove(path).is_none() {
@@ -518,6 +547,7 @@ impl Vfs for Mem {
     }
 
     fn stat(&self, path: &Path) -> io::Result<Stat> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::Stat)?;
         let result = {
             let state = self.lock_state();
@@ -539,6 +569,7 @@ impl Vfs for Mem {
             })
         };
         if let Some(result) = result {
+            #[cfg(any(test, feature = "fault-injection"))]
             self.apply_pending_mutation(path);
             return result;
         }
@@ -570,24 +601,28 @@ impl Vfs for Mem {
     /// same target (`/a/./b.md`, `/a/x/../b.md`, `b.md` vs `/b.md`) become
     /// the same `HashMap` key instead of two unrelated ones.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::Resolve)?;
         let normalized = lexically_normalize(path);
-        let failing = self
-            .resolve_failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if failing.contains(&normalized) {
-            return Err(io::Error::other(format!(
-                "fail_resolve({}) triggered",
-                normalized.display()
-            )));
+        #[cfg(any(test, feature = "fault-injection"))]
+        {
+            let failing = self
+                .resolve_failures
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if failing.contains(&normalized) {
+                return Err(crate::wrap_io(
+                    io::Error::other("fail_resolve triggered"),
+                    format!("resolve {}", normalized.display()),
+                ));
+            }
         }
-        drop(failing);
         Ok(normalized)
     }
 
     /// No-op: Mem has no directory tree, only flat path->content keys.
     fn mkdir_all(&self, _path: &Path) -> io::Result<()> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::MkdirAll)?;
         Ok(())
     }
@@ -612,6 +647,7 @@ impl Vfs for Mem {
     /// turned into `entries`, so the result never depends on which of the
     /// colliding keys `state.files` happens to iterate first.
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::ReadDir)?;
         let state = self.lock_state();
         // WP13.S1: the `PathBuf` travels alongside `kind` in the same fold,

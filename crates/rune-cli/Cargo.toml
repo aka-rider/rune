@@ -24,6 +24,7 @@ rune-vfs = { path = "../rune-vfs" }
 # `rune-db` deliberately exposes no such escape hatch from its own public
 # API (decision 11: "no table-level CRUD escapes the crate").
 rusqlite = { workspace = true }
+rune-vfs = { path = "../rune-vfs", features = ["fault-injection"] }
 
 [lints]
 workspace = true

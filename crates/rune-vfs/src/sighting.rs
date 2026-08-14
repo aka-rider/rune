@@ -73,13 +73,17 @@ impl std::error::Error for GetRefusal {}
 
 impl From<GetRefusal> for io::Error {
     fn from(refusal: GetRefusal) -> io::Error {
-        match refusal {
-            GetRefusal::Io(e) => e,
-            other @ GetRefusal::NotFound => {
-                io::Error::new(io::ErrorKind::NotFound, other.to_string())
-            }
-            other => io::Error::new(io::ErrorKind::InvalidInput, other.to_string()),
+        if let GetRefusal::Io(e) = refusal {
+            return e;
         }
+        let kind = match &refusal {
+            GetRefusal::NotFound => io::ErrorKind::NotFound,
+            GetRefusal::NotAFile(FileKind::Dir) => io::ErrorKind::IsADirectory,
+            GetRefusal::NotAFile(_) => io::ErrorKind::InvalidInput,
+            GetRefusal::TooLarge { .. } => io::ErrorKind::FileTooLarge,
+            GetRefusal::Io(_) => unreachable!("handled above"),
+        };
+        io::Error::new(kind, refusal)
     }
 }
 

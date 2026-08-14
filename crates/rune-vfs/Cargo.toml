@@ -5,6 +5,7 @@ edition.workspace = true
 
 [features]
 strict-invariants = []
+fault-injection = []
 
 [dependencies]
 libc = { workspace = true }
@@ -13,7 +14,7 @@ rune-core = { path = "../rune-core" }
 sha2 = "0.10"
 
 [dev-dependencies]
-rune-vfs = { path = ".", features = ["strict-invariants"] }
+rune-vfs = { path = ".", features = ["strict-invariants", "fault-injection"] }
 
 [lints]
 workspace = true

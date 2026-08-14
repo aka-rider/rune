@@ -76,7 +76,7 @@ impl Disk {
 
 impl Vfs for Disk {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        fs::read(path)
+        fs::read(path).map_err(|e| crate::wrap_io(e, format!("read {}", path.display())))
     }
 
     fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
@@ -194,6 +194,7 @@ impl Vfs for Disk {
 
     fn mkdir_all(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
+            .map_err(|e| crate::wrap_io(e, format!("mkdir_all {}", path.display())))
     }
 
     /// `path` itself failing to open propagates (the caller needs to know
@@ -204,7 +205,9 @@ impl Vfs for Disk {
     /// use, so one flaky entry shouldn't fail the whole call.
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         let mut entries = Vec::new();
-        for entry in fs::read_dir(path)? {
+        let dir = fs::read_dir(path)
+            .map_err(|e| crate::wrap_io(e, format!("read_dir {}", path.display())))?;
+        for entry in dir {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => continue,

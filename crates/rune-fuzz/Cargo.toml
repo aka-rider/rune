@@ -31,7 +31,7 @@ rune-syntax = { path = "../rune-syntax" }
 # delegate to `rune_tui::testgrid`, which only exists behind this feature
 # outside `cfg(test)`.
 rune-tui = { path = "../rune-tui", features = ["strict-invariants", "testgrid"] }
-rune-vfs = { path = "../rune-vfs" }
+rune-vfs = { path = "../rune-vfs", features = ["fault-injection"] }
 rune-ts = { path = "../rune-ts" }
 base64 = { workspace = true }
 unicode-segmentation = { workspace = true }

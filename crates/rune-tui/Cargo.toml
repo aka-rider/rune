@@ -29,6 +29,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }
+rune-vfs = { path = "../rune-vfs", features = ["fault-injection"] }
 # Unifies in `test-support` (`Store::kill_writer_for_test`/
 # `probe_blocking_for_test`, `OpKind::KillWriterForTest`) for every test/
 # dev target only — the same double-listing trick as the `rune-tui`
