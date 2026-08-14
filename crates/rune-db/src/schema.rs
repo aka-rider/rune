@@ -22,22 +22,6 @@ CREATE TABLE IF NOT EXISTS blobs (
 	content BLOB NOT NULL
 );
 
--- sessions: one row per Store construction (one per rune process, in
--- production) — the process identity that lets the journal tell its own
--- history apart from a DIFFERENT process's edits sharing the same store
--- (v10). proc_started_at is the OS-reported start time
--- of pid, recorded once at construction (session.rs) — the only thing that
--- lets a LATER session tell "pid still running MY writer" apart from "pid
--- recycled to an unrelated process since". The reaper deletes a dead
--- session's session_documents/events/snapshots footprint, then the row
--- itself too once it has recorded no observations (see below) — a row that
--- DID record one stays in place as that dead session's own permanent
--- "theirs" provenance, the only fact every other session may still need.
---
--- FROZEN LIVENESS CONTRACT (versioning.rs): every rune-v*.db, past and
--- future, must satisfy `SELECT pid, proc_started_at FROM sessions` — this
--- table and these two columns may gain siblings but must never be renamed
--- or retyped.
 CREATE TABLE IF NOT EXISTS sessions (
 	id              INTEGER PRIMARY KEY,
 	pid             INTEGER NOT NULL,
@@ -45,12 +29,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 	opened_at       TEXT    NOT NULL
 );
 
--- session_documents: undo position (current_seq) and CAS baseline
--- (saved_obs) are inherently PER-SESSION once two sessions can independently
--- edit the same doc_id (v10): a document's undo/redo head and "what we last
--- wrote or adopted" are both facts belonging to the session that produced
--- them, never shared. documents itself keeps only identity fields
--- (path/inode/device/kind/timestamps).
 CREATE TABLE IF NOT EXISTS session_documents (
 	session_id  INTEGER NOT NULL REFERENCES sessions(id)  ON DELETE CASCADE,
 	doc_id      INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -59,13 +37,6 @@ CREATE TABLE IF NOT EXISTS session_documents (
 	PRIMARY KEY(session_id, doc_id)
 );
 
--- snapshots: PURE recovery anchors for RecoverDocument's replay — the disk
--- fact and the 3-way-merge ancestor are both served entirely by
--- observations/saved_obs/ancestorAt (WP4), never a snapshot-carried source
--- taxonomy. session_id (v10): a snapshot anchors ONE session's own replay
--- window — two sessions editing the same doc_id keep entirely separate
--- anchor chains, so neither can ever anchor its reconstruction on the
--- other's content.
 CREATE TABLE IF NOT EXISTS snapshots (
 	id         INTEGER PRIMARY KEY,
 	doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -77,13 +48,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_doc     ON snapshots(doc_id, id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_session ON snapshots(session_id);
 
--- events: one document = one event stream. No surface dimension — title is
--- never journaled and chat journals to its own reserved document, so doc_id
--- alone is always both the journal key and the recovery/undo unit.
--- session_id (v10): the journal author — AppendEdit's redo-truncation and
--- undo/redo position both scope to (doc_id, session_id) together, so a
--- session's own undo/redo can never see or truncate a DIFFERENT session's
--- edits to the same doc.
 CREATE TABLE IF NOT EXISTS events (
 	seq            INTEGER PRIMARY KEY AUTOINCREMENT,
 	doc_id         INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -96,28 +60,6 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_doc     ON events(doc_id, seq);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 
--- observations: every disk state ever seen, by any origin. Two DIFFERENT
--- facts are read from this table and must never be conflated:
--- session_documents.saved_obs (the CAS expectation for the next write —
--- moves only on our own Materialize or an explicit ResolveAdopt) and the
--- 3-way-merge ancestor (derived on the fly: the newest 'load'|'save'|
--- 'resolve' observation with seq <= the undo position — never a stored
--- pointer, so undoing past a merge/discard automatically re-exposes the
--- divergence). seq is nullable: NULL means this sighting is not correlated
--- to any journal position (e.g. a bare probe).
---
--- session_id (v10, NOT NULL) is WHO recorded this sighting — required so the
--- ancestor's ELIGIBILITY filter can be scoped to "my own prior agreement" (a
--- different session's save/load/resolve is exactly as seq-correlated and
--- origin-eligible but must never silently become MY ancestor). Reading
--- "theirs" (the newest observation) stays deliberately UNSCOPED by session —
--- any session's disk fact is everyone's disk fact; only ancestor
--- ELIGIBILITY is session-scoped. Unlike events/snapshots/session_documents
--- above, this FK has NO ON DELETE CASCADE: a dead session's own
--- save/load/resolve observation must remain visible as "theirs" to every
--- other, still-live session forever, so the dead-session reaper (WP4) never
--- deletes the sessions row itself, only its now-unreachable
--- session_documents/events/snapshots footprint (once superseded).
 CREATE TABLE IF NOT EXISTS observations (
 	id         INTEGER PRIMARY KEY,
 	doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -130,23 +72,9 @@ CREATE TABLE IF NOT EXISTS observations (
 	device     INTEGER,
 	nlink      INTEGER,
 	origin     TEXT    NOT NULL CHECK(origin IN ('load','save','watch','probe','resolve','swap')),
-	-- parent_a/parent_b: the version DAG's two lineage edges a row may
-	-- carry, always recorded in the SAME tx as the row itself. parent_a is
-	-- v1's single lineage edge, kept unrenamed in spirit: every adoption
-	-- primitive points it at the saved_obs baseline the adoption REPLACED (so a
-	-- resolve-abandon can restore the exact prior baseline later);
-	-- observe_from_stat_tx points a CONFIRMED fresh sighting at whatever
-	-- observation was newest a moment before it, when the two hashes differ
-	-- (a re-confirmation of unchanged content chains to nothing new).
-	-- parent_b is the second parent a two-parent join records: the disk-side
-	-- observation a resolve/merge or a racing save reconciled against.
-	-- NULL in either column means no such edge — a legacy/root row, or a
-	-- one-parent join, carries no parent_b at all.
 	parent_a INTEGER REFERENCES observations(id),
 	parent_b INTEGER REFERENCES observations(id),
 	at        TEXT    NOT NULL,
-	-- confirmed: NULL means legacy or not yet classified, 1 means a
-	-- confirmed sighting, 0 an unconfirmed one.
 	confirmed INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_observations_doc ON observations(doc_id, id);
