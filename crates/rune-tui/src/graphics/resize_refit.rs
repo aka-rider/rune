@@ -42,8 +42,8 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     let kitty = app.graphics.kitty;
     let Some(image) = doc.image() else { return };
     let ImageStatus::Live {
+        decoded,
         cells: current_cells,
-        ..
     } = &image.status
     else {
         return;
@@ -54,17 +54,8 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
         return;
     }
     let img_id = image.id;
-
-    let raw = kitty
-        .then(|| {
-            doc.image().and_then(|i| match &i.status {
-                ImageStatus::Live { decoded, .. } => {
-                    rune_image::fit_and_encode(decoded, img_id, cells.cols, cells.rows, cell).ok()
-                }
-                _ => None,
-            })
-        })
-        .flatten();
+    let encoded =
+        kitty.then(|| rune_image::fit_and_encode(decoded, img_id, cells.cols, cells.rows, cell));
 
     let Some(doc) = app.doc_mut(id) else { return };
     let Some(image) = doc.image_mut() else {
@@ -75,12 +66,15 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     else {
         return;
     };
-    image.status = ImageStatus::Live { decoded, cells };
-
-    if let Some(bytes) = raw {
-        effects.raw.push(bytes.into_bytes());
-        effects.force_redraw = true;
-    }
+    image.status = match encoded {
+        Some(Ok(bytes)) => {
+            effects.raw.push(bytes.into_bytes());
+            effects.force_redraw = true;
+            ImageStatus::Live { decoded, cells }
+        }
+        Some(Err(e)) => ImageStatus::Failed(e.to_string()),
+        None => ImageStatus::Live { decoded, cells },
+    };
 }
 
 #[cfg(test)]
