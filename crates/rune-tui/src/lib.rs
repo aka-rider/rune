@@ -17,6 +17,7 @@ mod dispatch;
 pub mod document;
 pub mod document_map;
 pub mod document_support;
+mod editor_fast_path;
 pub mod explorer;
 pub mod explorer_dirload;
 pub mod explorer_keys;

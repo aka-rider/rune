@@ -3,9 +3,20 @@
 //! — this is reached only through `dispatch::update_inner`'s `Msg::Db` arm.
 
 use crate::app::App;
+use crate::db::PendingOp;
 use crate::materialize_ack;
 use crate::runtime::Effects;
 use rune_db::DbEvent;
+
+/// The shape five of `handle_db_event`'s arms share: pop `op_id`'s entry
+/// out of `App::db_ops`, then react to it — a no-op when the id has no
+/// entry (already resolved, or a `Load` op handled during bootstrap
+/// hydration instead — see `db::DbBridge`'s own doc comment).
+fn with_pending_op(app: &mut App, op_id: u64, react: impl FnOnce(&mut App, PendingOp)) {
+    if let Some(pending) = app.db_ops.remove(&op_id) {
+        react(app, pending);
+    }
+}
 
 /// Routes a `rune-db` writer-thread completion via `App::db_ops`: the ack's
 /// own op id is popped from `db_ops` to find which `DocumentId` enqueued
@@ -22,27 +33,21 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::Seq(seq),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                crate::db_ack::resolve_append_ack(app, pending.doc, seq);
-            }
-        }
+        } => with_pending_op(app, op_id, |app, pending| {
+            crate::db_ack::resolve_append_ack(app, pending.doc, seq);
+        }),
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::MaterializePrep(prep),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                materialize_ack::handle_prepare_ack(app, pending.doc, op_id, *prep, effects);
-            }
-        }
+        } => with_pending_op(app, op_id, |app, pending| {
+            materialize_ack::handle_prepare_ack(app, pending.doc, op_id, *prep, effects);
+        }),
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::Materialize(mat),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                materialize_ack::handle_materialize_ack_for_op(app, pending.doc, op_id, *mat);
-            }
-        }
+        } => with_pending_op(app, op_id, |app, pending| {
+            materialize_ack::handle_materialize_ack_for_op(app, pending.doc, op_id, *mat);
+        }),
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::Rename(outcome),
@@ -53,17 +58,15 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::Load(load_result),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                crate::db_ack::handle_load_ack(
-                    app,
-                    pending.doc,
-                    *load_result,
-                    pending.issued_version,
-                    pending.binding_only,
-                );
-            }
-        }
+        } => with_pending_op(app, op_id, |app, pending| {
+            crate::db_ack::handle_load_ack(
+                app,
+                pending.doc,
+                *load_result,
+                pending.issued_version,
+                pending.binding_only,
+            );
+        }),
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::Sync(state),
@@ -113,7 +116,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // `pending.merge_gen` is this attempt's own ticket, checked
             // against `App.merge`'s CURRENT `Pending` generation inside the
             // landing handler itself (a later `^M` may have superseded it).
-            if let Some(pending) = app.db_ops.remove(&op_id) {
+            with_pending_op(app, op_id, |app, pending| {
                 crate::merge::handle_merge_prep_ack(
                     app,
                     pending.doc,
@@ -121,7 +124,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                     *prep,
                     effects,
                 );
-            }
+            });
         }
         DbEvent::Ok {
             id: op_id,
@@ -138,9 +141,9 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         } => {
             // A `CreateScratch` minting a mid-session untitled draft's own
             // recovery row binds a fresh `DocDb`.
-            if let Some(pending) = app.db_ops.remove(&op_id) {
+            with_pending_op(app, op_id, |app, pending| {
                 crate::db_ack::handle_create_scratch_ack(app, pending.doc, doc_id.0);
-            }
+            });
         }
         DbEvent::Ok {
             id: op_id,
