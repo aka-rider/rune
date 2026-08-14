@@ -43,8 +43,7 @@ pub(crate) fn enqueue_rename(
         };
     }
 
-    let generation = app.next_rename_gen;
-    app.next_rename_gen = app.next_rename_gen.wrapping_add(1);
+    let generation = app.next_rename_gen.mint();
     effects.cmds.push(rename_cmd(
         Arc::clone(&app.vfs),
         from.to_path_buf(),
@@ -66,7 +65,7 @@ pub(crate) fn rename_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     from: PathBuf,
     to: PathBuf,
-    generation: u32,
+    generation: crate::generation::Generation,
 ) -> Cmd {
     Cmd::rename(move || {
         let result = match vfs.rename_excl(&from, &to) {
@@ -109,8 +108,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         .doc(id)
         .map(|d| d.buffer.content().as_bytes().to_vec())
         .unwrap_or_default();
-    let generation = app.next_rename_gen;
-    app.next_rename_gen = app.next_rename_gen.wrapping_add(1);
+    let generation = app.next_rename_gen.mint();
     let path_for_state = path.clone();
     effects
         .cmds
@@ -137,7 +135,7 @@ fn create_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
     bytes: Vec<u8>,
-    generation: u32,
+    generation: crate::generation::Generation,
 ) -> Cmd {
     Cmd::rename(move || {
         let result = match rune_vfs::put(

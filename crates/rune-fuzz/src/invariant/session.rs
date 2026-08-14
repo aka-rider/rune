@@ -252,7 +252,7 @@ pub fn confirm_gen(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vi
     let MsgTag::ConfirmTimeout { generation } = &ctx.msg else {
         return None;
     };
-    let armed_generation = prev.pending_quit.map(|(_, g)| g);
+    let armed_generation = prev.pending_quit.map(|(_, g)| g.raw() as u32);
     let should_clear = armed_generation == Some(*generation);
     let cleared = prev.pending_quit.is_some() && next.pending_quit.is_none();
     let unchanged = prev.pending_quit == next.pending_quit;

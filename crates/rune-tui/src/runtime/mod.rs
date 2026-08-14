@@ -64,7 +64,7 @@ pub enum PasteTarget {
 /// `SaveDone`/`SnapshotDue` carry a `DocumentId` so multi-
 /// document acks route back to the document that triggered them;
 /// `ConfirmTimeout`/`SaveConfirmTimeout`/`MessagesCollapseTimeout` stay
-/// doc-agnostic — `pending_quit` is app-wide, `pending_save_confirm`'s doc
+/// doc-agnostic — `App::quit` is app-wide, `pending_save_confirm`'s doc
 /// tag lives in the `Option` tuple itself, and the message log is a single
 /// app-wide pane — none of them need a `Msg`-carried document identity.
 #[derive(Debug)]
@@ -92,13 +92,13 @@ pub enum Msg {
         durable: bool,
     },
     ConfirmTimeout {
-        generation: u32,
+        generation: crate::generation::Generation,
     },
     /// The 2s degraded-save confirm-gate timer (mirroring
     /// `ConfirmTimeout`'s quit-confirm shape) — a stale generation is
     /// ignored exactly like `ConfirmTimeout`.
     SaveConfirmTimeout {
-        generation: u32,
+        generation: crate::generation::Generation,
     },
     /// The message pane's 5s auto-collapse timer, armed by
     /// `dispatch::after_update` rather than by `messages::post` itself —
@@ -153,7 +153,7 @@ pub enum Msg {
     /// one — `spawn_cmd` has no cancellation, so this echo is the only
     /// thing standing between a late reply and a corrupted state.
     RenameDone {
-        generation: u32,
+        generation: crate::generation::Generation,
         result: Result<rune_db::RenameOutcome, String>,
     },
     /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
@@ -238,7 +238,7 @@ pub enum Msg {
     /// `Msg::Error`, so a stale reply is discarded exactly like a fresh one
     /// instead of always surfacing a message regardless of generation.
     SearchHistory {
-        generation: u64,
+        generation: crate::generation::Generation,
         result: Result<Vec<String>, String>,
     },
     /// The fuzzy file finder's recents load, requested once per finder-open
@@ -253,7 +253,7 @@ pub enum Msg {
     /// like a fresh one instead of always surfacing a message regardless of
     /// generation.
     FileSearchRecentsLoaded {
-        generation: u64,
+        generation: crate::generation::Generation,
         result: Result<Vec<crate::filesearch::Candidate>, String>,
     },
     /// The fuzzy file finder's ignore-aware workspace walk completed —
@@ -268,7 +268,7 @@ pub enum Msg {
     /// is discarded exactly like a stale success instead of always
     /// surfacing a message nobody's still waiting on.
     FileSearchScanned {
-        generation: u64,
+        generation: crate::generation::Generation,
         result: Result<crate::filesearch::walk::ScanResult, String>,
     },
     Quit,
@@ -522,7 +522,10 @@ pub fn read_file_cmd(
 /// handle_history_loaded` can apply the same stale-generation check to a
 /// failure as to a success instead of always surfacing a message even for a
 /// reply nobody's still waiting on.
-pub fn load_search_history_cmd(reader: rune_db::ReaderQuery, generation: u64) -> Cmd {
+pub fn load_search_history_cmd(
+    reader: rune_db::ReaderQuery,
+    generation: crate::generation::Generation,
+) -> Cmd {
     Cmd::search_history(move || {
         let result = reader
             .query(rune_db::ReaderRequestKind::RecentSearches { limit: 200 })

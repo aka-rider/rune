@@ -320,7 +320,7 @@ fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
     }
 }
 
-/// Retires `id`'s entry in `App::quit_intent` iff
+/// Retires `id`'s entry in `App::quit`'s `SaveFanOut` iff
 /// `version` matches what THIS entry recorded (idempotent — a later,
 /// unrelated ack for the same document, or a duplicate delivery, can never
 /// retire an entry twice or retire the wrong capture) and, if the map is
@@ -330,31 +330,26 @@ fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
 /// continuation waiting on a save that will never retry is worse than
 /// telling the user plainly that quit did not happen.
 ///
-/// A no-op when `id` isn't in `App::quit_intent` at all — every OTHER
+/// A no-op when `id` isn't in `App::quit`'s `SaveFanOut` at all — every OTHER
 /// document's save ack, and every ack once no quit-save fan-out is
 /// outstanding, must never touch this state.
 fn quit_if_pending(app: &mut App, id: DocumentId, version: Option<u64>, succeeded: bool) {
-    let Some(intent) = app.quit_intent.as_ref() else {
+    let Some(intent) = app.quit.fan_out() else {
         return;
     };
     if !intent.pending.contains_key(&id) {
         return;
     }
     if succeeded {
-        if version
-            == app
-                .quit_intent
-                .as_ref()
-                .and_then(|i| i.pending.get(&id).copied())
-        {
+        if version == app.quit.fan_out().and_then(|i| i.pending.get(&id).copied()) {
             retire_quit_wait(app, id);
         }
     } else {
-        app.quit_intent = None;
+        app.quit = crate::app::QuitNegotiation::Idle;
     }
 }
 
-/// Removes `id` from an outstanding `App::quit_intent`'s wait set — called
+/// Removes `id` from an outstanding `App::quit`'s `SaveFanOut` wait set — called
 /// by `quit_if_pending` above on a matching successful ack, and by
 /// `workspace::close_now` (plan WP2) when the document a quit-save was
 /// waiting on gets closed out from under it instead (a `[D]iscard` on a
@@ -364,14 +359,14 @@ fn quit_if_pending(app: &mut App, id: DocumentId, version: Option<u64>, succeede
 /// is exactly as final an answer as a successful save for the purpose of
 /// "is there still unpersisted work quit needs to wait on".
 pub(crate) fn retire_quit_wait(app: &mut App, id: DocumentId) {
-    let Some(intent) = app.quit_intent.as_mut() else {
+    let Some(intent) = app.quit.fan_out_mut() else {
         return;
     };
     if intent.pending.remove(&id).is_none() {
         return;
     }
     if intent.pending.is_empty() {
-        app.quit_intent = None;
+        app.quit = crate::app::QuitNegotiation::Idle;
         app.should_quit = true;
     }
 }

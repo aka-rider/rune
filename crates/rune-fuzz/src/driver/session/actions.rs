@@ -43,19 +43,23 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             drain_all_db_ops(state, prev, outcome);
         }
         Action::ConfirmTimeout => {
-            if let Some((_, generation)) = state.app.pending_quit {
+            if let rune_tui::app::QuitNegotiation::ConfirmArmed(_, generation) = state.app.quit {
                 let msg = Msg::ConfirmTimeout { generation };
-                let tag = MsgTag::ConfirmTimeout { generation };
+                let tag = MsgTag::ConfirmTimeout {
+                    generation: generation.raw() as u32,
+                };
                 step_and_check(state, prev, msg, tag, None, outcome);
             }
         }
         Action::StaleConfirmTimeout(generation) => {
-            // Deliberately no `pending_quit` precondition (unlike
+            // Deliberately no armed-quit precondition (unlike
             // `ConfirmTimeout` above) -- a stale timer firing after
-            // `pending_quit` already cleared entirely, or after a
+            // `App::quit` already cleared entirely, or after a
             // DIFFERENT generation re-armed it, is exactly the
             // production race this variant exists to exercise.
-            let msg = Msg::ConfirmTimeout { generation };
+            let msg = Msg::ConfirmTimeout {
+                generation: rune_tui::generation::Generation::from_raw(u64::from(generation)),
+            };
             let tag = MsgTag::ConfirmTimeout { generation };
             step_and_check(state, prev, msg, tag, None, outcome);
         }

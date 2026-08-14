@@ -8,6 +8,7 @@ use std::ops::Range;
 use rune_db::ObsId;
 
 use crate::document::DocumentId;
+use crate::generation::Generation;
 
 /// Why this merge attempt was started (plan Assumption A2 — shared entry
 /// pipeline): `Merge` installs the 3-way merge result; `Discard` (a future
@@ -58,7 +59,7 @@ pub enum MergeState {
     /// eventual stale ack mistaken for the current one.
     Pending {
         doc: DocumentId,
-        generation: u32,
+        generation: Generation,
         intent: MergeIntent,
     },
     /// The working-form buffer is installed and merge mode owns the editor

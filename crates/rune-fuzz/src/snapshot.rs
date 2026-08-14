@@ -19,6 +19,7 @@ use rune_tui::app::App;
 use rune_tui::document::{DocumentId, ReadOnly};
 use rune_tui::focus::{self, FocusTarget};
 use rune_tui::footer;
+use rune_tui::generation::Generation;
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::QuitKey;
 use rune_tui::layout::{self, Geometry};
@@ -45,7 +46,7 @@ pub struct Snapshot {
     pub journal_pos: usize,
     pub journal_len: usize,
     pub save_in_flight: bool,
-    pub pending_quit: Option<(QuitKey, u32)>,
+    pub pending_quit: Option<(QuitKey, Generation)>,
     pub should_quit: bool,
     pub status: String,
     /// `app.focus` — which chrome region owns the next keystroke (`pane::
@@ -276,8 +277,8 @@ impl Snapshot {
             .as_ref()
             .map(|prompt| (prompt.doc, prompt.kind.clone()));
         let quit_intent_pending = app
-            .quit_intent
-            .as_ref()
+            .quit
+            .fan_out()
             .map(|intent| intent.pending.iter().map(|(&id, &v)| (id, v)).collect());
         let doc_ids: Vec<DocumentId> = app.documents.keys().copied().collect();
         let mut dirty_by_doc = BTreeMap::new();
@@ -337,7 +338,13 @@ impl Snapshot {
             journal_pos: doc.journal.pos(),
             journal_len: doc.journal.len(),
             save_in_flight: doc.save_in_flight(),
-            pending_quit: app.pending_quit,
+            pending_quit: match app.quit {
+                rune_tui::app::QuitNegotiation::ConfirmArmed(key, generation) => {
+                    Some((key, generation))
+                }
+                rune_tui::app::QuitNegotiation::Idle
+                | rune_tui::app::QuitNegotiation::SaveFanOut(_) => None,
+            },
             should_quit: app.should_quit,
             status: fuzz_status(app),
             focus: app.focus(),

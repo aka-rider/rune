@@ -193,7 +193,7 @@ pub struct PendingOp {
     /// the current one (mirrors `is_probe`'s in-flight bookkeeping, but a
     /// generation counter rather than a plain flag, since more than one
     /// merge attempt can be in flight in sequence for the same document).
-    pub merge_gen: Option<u32>,
+    pub merge_gen: Option<crate::generation::Generation>,
     /// True iff this `Load` was issued to re-baseline an already-live
     /// document's `DocDb` (the save-ack re-baseline in `materialize_ack::
     /// reactions`, and the lost-create-race hand-off) rather than to
@@ -268,7 +268,7 @@ impl PendingOp {
         }
     }
 
-    pub fn merge_prep(doc: DocumentId, generation: u32) -> PendingOp {
+    pub fn merge_prep(doc: DocumentId, generation: crate::generation::Generation) -> PendingOp {
         PendingOp {
             doc,
             issued_version: None,

@@ -45,6 +45,32 @@ pub struct QuitIntent {
     pub pending: std::collections::BTreeMap<DocumentId, u64>,
 }
 
+/// The whole-session quit negotiation `App::quit` drives — see its own doc
+/// comment for the states and why they never overlap.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum QuitNegotiation {
+    #[default]
+    Idle,
+    ConfirmArmed(QuitKey, crate::generation::Generation),
+    SaveFanOut(QuitIntent),
+}
+
+impl QuitNegotiation {
+    pub fn fan_out(&self) -> Option<&QuitIntent> {
+        match self {
+            QuitNegotiation::SaveFanOut(intent) => Some(intent),
+            QuitNegotiation::Idle | QuitNegotiation::ConfirmArmed(..) => None,
+        }
+    }
+
+    pub fn fan_out_mut(&mut self) -> Option<&mut QuitIntent> {
+        match self {
+            QuitNegotiation::SaveFanOut(intent) => Some(intent),
+            QuitNegotiation::Idle | QuitNegotiation::ConfirmArmed(..) => None,
+        }
+    }
+}
+
 /// The whole editor model: a `DocumentId`-keyed map of every open document,
 /// the injected `Vfs` save target shared by all of them, this session's
 /// recovery store (app-level half), and app-wide UI state (status message,
@@ -114,14 +140,14 @@ pub struct App {
     pub rename: crate::rename::RenameState,
     /// `pub(crate)`: `rename.rs` is the sole minter of new generations for
     /// its own `Cmd` route (mirrors `next_quit_gen`/`next_save_confirm_gen`).
-    pub(crate) next_rename_gen: u32,
+    pub(crate) next_rename_gen: crate::generation::GenCounter,
     /// Merge mode's own state machine — a plain field, like
     /// `rename` above. `merge::begin`/`merge::exit_in_place` are its
     /// writers.
     pub merge: crate::merge::MergeState,
     /// `pub(crate)`: `merge::begin` is the sole minter of new generations,
     /// mirroring `next_rename_gen` above.
-    pub(crate) next_merge_gen: u32,
+    pub(crate) next_merge_gen: crate::generation::GenCounter,
     /// This session's recovery store — this is the app-wide half,
     /// shared by every open document; each document's own binding lives
     /// in its `Document::db: Option<DocDb>`. `None` only when no store
@@ -161,12 +187,12 @@ pub struct App {
     pub db_banner: Option<String>,
     /// The armed degraded-save confirm chord's target document and timer
     /// generation — `None` when no confirm is pending. Doc-tagged so a tab
-    /// switch can't misapply an armed confirm gate; mirrors `pending_quit`
-    /// below. Stale `SaveConfirmTimeout` generations are ignored.
-    pub pending_save_confirm: Option<(DocumentId, u32)>,
+    /// switch can't misapply an armed confirm gate; mirrors `quit`'s
+    /// `ConfirmArmed` below. Stale `SaveConfirmTimeout` generations are ignored.
+    pub pending_save_confirm: Option<(DocumentId, crate::generation::Generation)>,
     /// `pub(crate)`, not private: `save::trigger_save` — a different module
     /// — is the sole minter of new generations.
-    pub(crate) next_save_confirm_gen: u32,
+    pub(crate) next_save_confirm_gen: crate::generation::GenCounter,
     /// The document a Guard modal's `[S]ave` armed a save-then-close for
     /// — `None` when no close is waiting on a save ack.
     /// `guard::handle_guard_key`'s Guard arm sets this immediately before
@@ -176,30 +202,19 @@ pub struct App {
     /// matches AND the save actually committed — a failed save leaves the
     /// document open with its usual error surfaced instead.
     pub pending_close_on_save: Option<DocumentId>,
-    /// The armed quit chord and its timer generation — `None` when no quit
-    /// is pending. Stale `ConfirmTimeout` generations are ignored (plan
-    /// Context, "Quit-confirm"). App-wide, not doc-tagged: quitting closes
-    /// the whole session, not one document.
-    pub pending_quit: Option<(QuitKey, u32)>,
+    /// The whole-session quit negotiation: `Idle` until a quit chord is
+    /// pressed, then either the two-press confirm's `ConfirmArmed` (no
+    /// dirty document blocks a plain quit) or the dirty-quit Guard's
+    /// `[S]ave` answer's `SaveFanOut` (every unpreserved dirty document's
+    /// save must land before `should_quit` flips) — never both, since
+    /// `pane::handle_quit_key` raises the Guard instead of arming a confirm
+    /// whenever a dirty document exists. App-wide, not doc-tagged: quitting
+    /// closes the whole session, not one document.
+    pub quit: QuitNegotiation,
     /// `pub(crate)`: `pane::handle_quit_key` (moved out of this module)
-    /// is the sole minter of new generations.
-    pub(crate) next_quit_gen: u32,
-    /// The quit-save fan-out a `GuardKind::DirtyQuit` answer of `[S]ave`
-    /// armed, correlating every document it kicked a save off
-    /// for against the EXACT buffer version that save captured. A
-    /// `BTreeMap`, not a bare counter: retiring one document's entry is
-    /// idempotent (a duplicate/late ack can never double-decrement a
-    /// counter that no longer exists as such), an unrelated ⌘S ack for a
-    /// document quit never asked to save can't retire an entry it was
-    /// never keyed to, and a document that disappears mid-flight (closed,
-    /// or the whole store dying) is swept by removing its one entry rather
-    /// than needing to keep a parallel count in sync. `None` whenever no
-    /// quit-save fan-out is outstanding — the ordinary two-press quit-
-    /// confirm chord never touches this at all. `materialize_ack`'s
-    /// `quit_if_pending`/`retire_quit_wait` are the only writers of the map
-    /// once armed; `should_quit` flips only when the LAST entry retires
-    /// successfully.
-    pub quit_intent: Option<QuitIntent>,
+    /// is the sole minter of new generations, feeding `QuitNegotiation::
+    /// ConfirmArmed`.
+    pub(crate) next_quit_gen: crate::generation::GenCounter,
     /// The click-aggregation + drag-selection state a mouse gesture needs
     /// across messages — `commands::mouse`'s sole owner.
     pub pointer: crate::pointer::PointerState,
@@ -246,7 +261,7 @@ pub struct App {
     /// `next_search_history_gen`'s own shape: a close-then-reopen must keep
     /// a stale reply from a request the abandoned session issued
     /// distinguishable from the fresh one.
-    pub(crate) next_filesearch_gen: u64,
+    pub(crate) next_filesearch_gen: crate::generation::GenCounter,
     /// The last query the search bar held while open, kept after closing
     /// so a closed-bar next/prev chord (a later change) has something to
     /// navigate with. `None` until the bar has closed at least once with a
@@ -267,7 +282,7 @@ pub struct App {
     /// be recognizable as stale rather than accidentally matching whatever
     /// generation the new state happens to start at. Mirrors
     /// `next_rename_gen`/`next_quit_gen`'s own shape.
-    pub(crate) next_search_history_gen: u64,
+    pub(crate) next_search_history_gen: crate::generation::GenCounter,
     /// Op ids of an in-flight `TouchSearchQuery` write: a completed op id
     /// absent from `db_ops` still reaches `db_dispatch::handle_db_event`'s
     /// `DbEvent::Err` arm, which otherwise treats every unmatched failure
@@ -356,19 +371,18 @@ impl App {
             help_return_to: None,
             title: crate::title::TitleField::default(),
             rename: crate::rename::RenameState::default(),
-            next_rename_gen: 0,
+            next_rename_gen: crate::generation::GenCounter::default(),
             merge: crate::merge::MergeState::default(),
-            next_merge_gen: 0,
+            next_merge_gen: crate::generation::GenCounter::default(),
             db,
             db_ops: HashMap::new(),
             file_bindings: HashMap::new(),
             db_banner: None,
             pending_save_confirm: None,
-            next_save_confirm_gen: 0,
+            next_save_confirm_gen: crate::generation::GenCounter::default(),
             pending_close_on_save: None,
-            pending_quit: None,
-            next_quit_gen: 0,
-            quit_intent: None,
+            quit: QuitNegotiation::default(),
+            next_quit_gen: crate::generation::GenCounter::default(),
             pointer: crate::pointer::PointerState::default(),
             clock: Arc::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
@@ -377,10 +391,10 @@ impl App {
             trash_pending: None,
             messages: MessageLog::new(),
             overlay: crate::overlay::Overlay::None,
-            next_filesearch_gen: 0,
+            next_filesearch_gen: crate::generation::GenCounter::default(),
             last_search_query: None,
             last_persisted_search_query: None,
-            next_search_history_gen: 0,
+            next_search_history_gen: crate::generation::GenCounter::default(),
             search_history_ops: HashSet::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),

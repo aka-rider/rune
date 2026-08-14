@@ -46,7 +46,7 @@ pub(crate) struct SearchState {
     /// `explorer_dirload`'s own request generation uses, and for the same
     /// reason: a close-then-reopen before a load lands must not have the
     /// stale reply land in the fresh session it wasn't answering.
-    pub(crate) history_generation: u64,
+    pub(crate) history_generation: crate::generation::Generation,
     /// The ↑/↓ browse cursor into the fuzzy-filtered history list — `None`
     /// while the draft itself (not a browsed entry) is what's showing, i.e.
     /// before the first ↑ or after ↓ has walked back past the newest entry.
@@ -68,7 +68,7 @@ pub(crate) fn open(app: &mut App) {
     if app.search().is_some() {
         return;
     }
-    app.next_search_history_gen = app.next_search_history_gen.wrapping_add(1);
+    let history_generation = app.next_search_history_gen.mint();
     app.open_search(SearchState {
         focused: true,
         draft: String::new(),
@@ -77,7 +77,7 @@ pub(crate) fn open(app: &mut App) {
         doc: app.active,
         buffer_version: app.active_doc().buffer.version(),
         history: Vec::new(),
-        history_generation: app.next_search_history_gen,
+        history_generation,
         history_pos: None,
         history_draft: None,
     });
@@ -95,7 +95,7 @@ pub(crate) fn open(app: &mut App) {
 /// either way, since browsing an empty history is simply a no-op.
 pub(crate) fn handle_history_loaded(
     app: &mut App,
-    generation: u64,
+    generation: crate::generation::Generation,
     result: Result<Vec<String>, String>,
 ) {
     let current = app.search().map(|s| s.history_generation);

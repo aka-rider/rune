@@ -64,10 +64,10 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             durable,
         } => materialize_ack::handle_save_done(app, id, ticket, version, result, durable),
         Msg::ConfirmTimeout { generation } => {
-            if let Some((_, pending_gen)) = app.pending_quit
+            if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
                 && pending_gen == generation
             {
-                app.pending_quit = None;
+                app.quit = crate::app::QuitNegotiation::Idle;
             }
             // A stale generation (the user already quit-confirmed or
             // re-armed with a new chord since) is ignored.

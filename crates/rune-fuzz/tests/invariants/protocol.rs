@@ -4,6 +4,7 @@
 
 use rune_fuzz::invariant::{confirm_gen, guard_answered, quit_chord};
 use rune_fuzz::step::MsgTag;
+use rune_tui::generation::Generation;
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::{Command, KeyCode, Mods, QuitKey};
 
@@ -31,7 +32,7 @@ fn quit_chord_detects_arming_on_an_unrelated_key() {
 #[test]
 fn quit_chord_detects_a_mismatched_chord() {
     let mut prev = base_snapshot("abc");
-    prev.pending_quit = Some((QuitKey::CtrlC, 0));
+    prev.pending_quit = Some((QuitKey::CtrlC, Generation::ZERO));
     let mut next = base_snapshot("abc");
     next.should_quit = true;
     let ctrl_d = key(
@@ -54,7 +55,7 @@ fn quit_chord_detects_a_mismatched_chord() {
 #[test]
 fn quit_chord_accepts_the_same_chord_pressed_twice() {
     let mut prev = base_snapshot("abc");
-    prev.pending_quit = Some((QuitKey::CtrlC, 0));
+    prev.pending_quit = Some((QuitKey::CtrlC, Generation::ZERO));
     let mut next = base_snapshot("abc");
     next.should_quit = true;
     let ctrl_c = key(
@@ -230,7 +231,7 @@ fn guard_answered_ignores_keys_outside_the_answer_alphabet() {
 #[test]
 fn confirm_gen_detects_a_stale_generation_incorrectly_clearing() {
     let mut prev = base_snapshot("abc");
-    prev.pending_quit = Some((QuitKey::CtrlC, 1));
+    prev.pending_quit = Some((QuitKey::CtrlC, Generation::from_raw(1)));
     let next = base_snapshot("abc"); // pending_quit cleared, but generation is stale
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::ConfirmTimeout { generation: 0 };
@@ -242,9 +243,9 @@ fn confirm_gen_detects_a_stale_generation_incorrectly_clearing() {
 #[test]
 fn confirm_gen_detects_a_matching_generation_not_clearing() {
     let mut prev = base_snapshot("abc");
-    prev.pending_quit = Some((QuitKey::CtrlC, 0));
+    prev.pending_quit = Some((QuitKey::CtrlC, Generation::ZERO));
     let mut next = base_snapshot("abc");
-    next.pending_quit = Some((QuitKey::CtrlC, 0)); // should have cleared, didn't
+    next.pending_quit = Some((QuitKey::CtrlC, Generation::ZERO)); // should have cleared, didn't
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::ConfirmTimeout { generation: 0 };
     let v = confirm_gen(&prev, &next, &ctx)
@@ -255,7 +256,7 @@ fn confirm_gen_detects_a_matching_generation_not_clearing() {
 #[test]
 fn confirm_gen_accepts_a_matching_generation_clearing() {
     let mut prev = base_snapshot("abc");
-    prev.pending_quit = Some((QuitKey::CtrlC, 0));
+    prev.pending_quit = Some((QuitKey::CtrlC, Generation::ZERO));
     let next = base_snapshot("abc");
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::ConfirmTimeout { generation: 0 };
@@ -265,9 +266,9 @@ fn confirm_gen_accepts_a_matching_generation_clearing() {
 #[test]
 fn confirm_gen_accepts_a_stale_generation_left_untouched() {
     let mut prev = base_snapshot("abc");
-    prev.pending_quit = Some((QuitKey::CtrlC, 1));
+    prev.pending_quit = Some((QuitKey::CtrlC, Generation::from_raw(1)));
     let mut next = base_snapshot("abc");
-    next.pending_quit = Some((QuitKey::CtrlC, 1)); // unchanged: correct for a stale timeout
+    next.pending_quit = Some((QuitKey::CtrlC, Generation::from_raw(1))); // unchanged: correct for a stale timeout
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::ConfirmTimeout { generation: 0 };
     assert_eq!(confirm_gen(&prev, &next, &ctx), None);

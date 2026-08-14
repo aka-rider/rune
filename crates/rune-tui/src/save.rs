@@ -225,8 +225,7 @@ pub(crate) fn trigger_save(
             materialize_now(app, id, path, version, mode, effects);
             return SaveStart::InFlight;
         }
-        let generation = app.next_save_confirm_gen;
-        app.next_save_confirm_gen = app.next_save_confirm_gen.wrapping_add(1);
+        let generation = app.next_save_confirm_gen.mint();
         app.pending_save_confirm = Some((id, generation));
         // `App::pending_save_confirm` is a single global slot (plan WP1
         // decision 3), so a caller driving MORE than one document through
@@ -253,7 +252,7 @@ pub(crate) fn trigger_save(
 /// `app::quit_confirm_timeout_cmd`'s shape exactly. Doc-agnostic (plan WP1
 /// decision 3): the doc tag lives in `App::pending_save_confirm`'s `Option`
 /// tuple itself, not in this `Msg`.
-fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
+fn save_confirm_timeout_cmd(generation: crate::generation::Generation) -> Cmd {
     Cmd::save_confirm_timeout(move || {
         std::thread::sleep(SAVE_CONFIRM_TIMEOUT);
         Some(Msg::SaveConfirmTimeout { generation })

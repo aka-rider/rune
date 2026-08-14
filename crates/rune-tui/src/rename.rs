@@ -61,6 +61,7 @@ use rune_vfs::Stat;
 
 use crate::app::App;
 use crate::document::DocumentId;
+use crate::generation::Generation;
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::messages;
 use crate::runtime::Effects;
@@ -68,14 +69,14 @@ use crate::title;
 
 /// Which reply route an in-flight rename is waiting on.
 ///
-/// `Cmd(u32)` is the no-store path (a spawned `Cmd` replying with
+/// `Cmd(Generation)` is the no-store path (a spawned `Cmd` replying with
 /// `Msg::RenameDone`); `Db(u64)` is the `rune-db` writer-FIFO op id.
 /// `spawn_cmd` has no cancellation, so a dismissed-then-restarted rename
 /// would otherwise be corrupted by the first reply landing late — the
 /// generation echo mirrors `load_dir_cmd`'s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ticket {
-    Cmd(u32),
+    Cmd(Generation),
     Db(u64),
 }
 
@@ -297,7 +298,7 @@ fn target_path(from: &Path, name: &str) -> PathBuf {
 /// `Msg::RenameDone` — the no-store route's reply.
 pub fn handle_rename_done(
     app: &mut App,
-    generation: u32,
+    generation: Generation,
     result: Result<RenameOutcome, String>,
     effects: &mut Effects,
 ) {

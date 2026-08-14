@@ -256,7 +256,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: &str) {
     // raise a fresh, resolvable Guard instead of silently doing nothing —
     // the failure itself is already surfaced via `db_banner` above, so no
     // separate status is needed here.
-    app.quit_intent = None;
+    app.quit = crate::app::QuitNegotiation::Idle;
 }
 
 /// A stale `generation` (a later journal mutation already rescheduled the

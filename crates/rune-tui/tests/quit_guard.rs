@@ -114,7 +114,7 @@ fn pathless_draft_guard_save_focuses_the_title_and_abandons_the_quit_intent() {
     );
     assert!(!app.should_quit, "nothing was actually saved yet");
     assert!(
-        app.quit_intent.is_none(),
+        app.quit.fan_out().is_none(),
         "a refused save must never leave a quit intent waiting on it"
     );
 
@@ -147,7 +147,7 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
     );
     assert!(!app.should_quit);
     assert_eq!(
-        app.quit_intent.as_ref().map(|i| i.pending.len()),
+        app.quit.fan_out().map(|i| i.pending.len()),
         Some(1),
         "the fan-out must be waiting on exactly this document"
     );
@@ -170,7 +170,7 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
         app.should_quit,
         "the matching successful ack must complete the quit"
     );
-    assert!(app.quit_intent.is_none());
+    assert!(app.quit.fan_out().is_none());
 }
 
 /// The converse: a FAILED ack must abort the quit outright rather than
@@ -183,7 +183,7 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
 
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));
-    assert!(app.quit_intent.is_some());
+    assert!(app.quit.fan_out().is_some());
 
     let ticket = app.doc(id).unwrap().save_ticket().unwrap();
     let mut effects = Effects::default();
@@ -208,7 +208,7 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
         "the failure must be surfaced, not swallowed"
     );
     assert!(
-        app.quit_intent.is_none(),
+        app.quit.fan_out().is_none(),
         "a failed save must abort the whole quit intent, not just this document's entry"
     );
 }
@@ -229,7 +229,7 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));
 
-    assert_eq!(app.quit_intent.as_ref().map(|i| i.pending.len()), Some(2));
+    assert_eq!(app.quit.fan_out().map(|i| i.pending.len()), Some(2));
     assert!(app.doc(id_a).unwrap().save_in_flight());
     assert!(app.doc(id_b).unwrap().save_in_flight());
 
@@ -284,7 +284,7 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
 
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));
-    assert_eq!(app.quit_intent.as_ref().map(|i| i.pending.len()), Some(2));
+    assert_eq!(app.quit.fan_out().map(|i| i.pending.len()), Some(2));
 
     let mut effects = Effects::default();
     let _ = rune_tui::workspace::close_now(&mut app, id_b, &mut effects);
@@ -293,7 +293,7 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
         "closing one awaited document must not itself complete the quit \
          while the other is still outstanding"
     );
-    assert_eq!(app.quit_intent.as_ref().map(|i| i.pending.len()), Some(1));
+    assert_eq!(app.quit.fan_out().map(|i| i.pending.len()), Some(1));
 
     let ticket_a = app.doc(id_a).unwrap().save_ticket().unwrap();
     update(
@@ -333,7 +333,7 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
         Msg::Key(key(KeyCode::Char('s'))),
         &mut save_effects,
     );
-    assert!(app.quit_intent.is_some());
+    assert!(app.quit.fan_out().is_some());
     let save_cmd = save_effects
         .cmds
         .into_iter()
@@ -371,7 +371,7 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
         "the Direct save's own ack must resolve it once it actually lands"
     );
     assert!(
-        app.quit_intent.is_none(),
+        app.quit.fan_out().is_none(),
         "the stranded intent must be cleared"
     );
 
@@ -471,7 +471,7 @@ fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
         rune_tui::messages::newest_text(app)
     );
     assert!(
-        app.quit_intent.is_none(),
+        app.quit.fan_out().is_none(),
         "no save actually started, so no quit intent may be left waiting"
     );
     assert!(!app.should_quit);

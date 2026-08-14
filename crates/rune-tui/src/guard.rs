@@ -308,7 +308,7 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
 /// rather than routing through a save at all. `s`/`S` starts a save for EVERY dirty,
 /// unpreserved document (not just the one the prompt named — quit is a
 /// whole-session transition, so it must not leave a SECOND unpreserved
-/// dirty document behind unresolved), building `App::quit_intent` from
+/// dirty document behind unresolved), building `App::quit`'s `SaveFanOut` from
 /// whichever ones `trigger_save` actually started
 /// (`SaveStart::InFlight`). Any refusal (`NeedsName`/`Refused`/already-
 /// `InFlight`) leaves ITS OWN status up — `trigger_save` never returns a
@@ -364,10 +364,10 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
             SaveStart::NotDirty | SaveStart::NeedsName | SaveStart::Refused => {}
         }
     }
-    app.quit_intent = if pending.is_empty() {
-        None
+    app.quit = if pending.is_empty() {
+        crate::app::QuitNegotiation::Idle
     } else {
-        Some(QuitIntent { pending })
+        crate::app::QuitNegotiation::SaveFanOut(QuitIntent { pending })
     };
 }
 

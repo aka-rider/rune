@@ -11,8 +11,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
-use rune_tui::app::{App, update};
+use rune_tui::app::{App, QuitNegotiation, update};
 use rune_tui::commands::clipboard;
+use rune_tui::generation::Generation;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods, QuitKey};
 use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
 use rune_vfs::{Mem, Vfs};
@@ -40,7 +41,10 @@ fn first_quit_press_arms_and_spawns_a_timer_cmd_without_quitting() {
     update(&mut app, Msg::Key(ctrl_c), &mut effects);
 
     assert!(!app.should_quit);
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlC, 0)));
+    assert_eq!(
+        app.quit,
+        QuitNegotiation::ConfirmArmed(QuitKey::CtrlC, Generation::ZERO)
+    );
     assert_eq!(effects.cmds.len(), 1);
 }
 
@@ -84,12 +88,18 @@ fn different_quit_chord_re_arms_instead_of_quitting() {
 
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(ctrl_c), &mut effects);
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlC, 0)));
+    assert_eq!(
+        app.quit,
+        QuitNegotiation::ConfirmArmed(QuitKey::CtrlC, Generation::ZERO)
+    );
 
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(ctrl_d), &mut effects);
     assert!(!app.should_quit, "a different quit chord must not quit");
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlD, 1)));
+    assert_eq!(
+        app.quit,
+        QuitNegotiation::ConfirmArmed(QuitKey::CtrlD, Generation::from_raw(1))
+    );
 }
 
 #[test]
@@ -104,15 +114,20 @@ fn matching_confirm_timeout_clears_pending_quit() {
     );
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(ctrl_c), &mut effects);
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlC, 0)));
+    assert_eq!(
+        app.quit,
+        QuitNegotiation::ConfirmArmed(QuitKey::CtrlC, Generation::ZERO)
+    );
 
     let mut effects = Effects::default();
     update(
         &mut app,
-        Msg::ConfirmTimeout { generation: 0 },
+        Msg::ConfirmTimeout {
+            generation: Generation::ZERO,
+        },
         &mut effects,
     );
-    assert_eq!(app.pending_quit, None);
+    assert_eq!(app.quit, QuitNegotiation::Idle);
     assert!(!app.should_quit);
 }
 
@@ -137,16 +152,24 @@ fn stale_confirm_timeout_is_ignored() {
     update(&mut app, Msg::Key(ctrl_c), &mut effects); // generation 0
     let mut effects2 = Effects::default();
     update(&mut app, Msg::Key(ctrl_d), &mut effects2); // re-arms, generation 1
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlD, 1)));
+    assert_eq!(
+        app.quit,
+        QuitNegotiation::ConfirmArmed(QuitKey::CtrlD, Generation::from_raw(1))
+    );
 
     // The stale generation-0 timeout must not clear the generation-1 pending quit.
     let mut effects3 = Effects::default();
     update(
         &mut app,
-        Msg::ConfirmTimeout { generation: 0 },
+        Msg::ConfirmTimeout {
+            generation: Generation::ZERO,
+        },
         &mut effects3,
     );
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlD, 1)));
+    assert_eq!(
+        app.quit,
+        QuitNegotiation::ConfirmArmed(QuitKey::CtrlD, Generation::from_raw(1))
+    );
 }
 
 /// Regression for F1: a raw C0 control byte or DEL arriving as

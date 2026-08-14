@@ -359,7 +359,7 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
         return;
     }
 
-    if let Some((pending_key, generation)) = app.pending_quit
+    if let crate::app::QuitNegotiation::ConfirmArmed(pending_key, generation) = app.quit
         && pending_key == key
     {
         let _ = generation; // the SAME chord always quits regardless of generation
@@ -367,9 +367,8 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
         return;
     }
 
-    let generation = app.next_quit_gen;
-    app.next_quit_gen = app.next_quit_gen.wrapping_add(1);
-    app.pending_quit = Some((key, generation));
+    let generation = app.next_quit_gen.mint();
+    app.quit = crate::app::QuitNegotiation::ConfirmArmed(key, generation);
     effects.cmds.push(quit_confirm_timeout_cmd(generation));
 }
 
@@ -402,7 +401,7 @@ pub(crate) fn unpreserved_dirty_docs(app: &mut App) -> Vec<DocumentId> {
 /// Genuine wall-clock pacing for a real UI feature — not a test-ordering
 /// hack — so `std::thread::sleep` here is correct (this `Cmd` runs on its
 /// own dedicated thread by runtime design, never blocking the main loop).
-fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
+fn quit_confirm_timeout_cmd(generation: crate::generation::Generation) -> Cmd {
     Cmd::quit_timeout(move || {
         std::thread::sleep(CONFIRM_TIMEOUT);
         Some(Msg::ConfirmTimeout { generation })
