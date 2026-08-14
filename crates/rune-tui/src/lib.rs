@@ -40,6 +40,7 @@ pub mod help;
 pub mod highlight;
 pub mod keymap;
 pub mod layout;
+mod layout_column;
 pub mod linemap;
 pub mod listnav;
 pub mod materialize_ack;
