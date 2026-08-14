@@ -669,4 +669,15 @@ mod tests {
 
         assert_eq!(segment, "parent_a INTEGER REFERENCES observations(id)");
     }
+
+    #[test]
+    fn the_shipped_schema_ddl_carries_no_line_comments() {
+        assert!(
+            !SCHEMA.contains("--"),
+            "SCHEMA must stay comment-free: sqlite_master preserves DDL comments \
+             verbatim, and the column parser's real-schema test only smoke-checks \
+             a comment-free shape — knowledge belongs in module docs and the \
+             constitution, not the DDL"
+        );
+    }
 }
