@@ -109,16 +109,16 @@ impl Store {
         let now = clock();
         let session_id = session::establish_session(&conn, now)?;
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
-        // Best-effort dead-session reaper: never blocks open — a failure
-        // here is swallowed, not surfaced, on purpose.
-        let _ = crate::reaper::reap_dead_sessions(
+        if let Err(e) = crate::reaper::reap_dead_sessions(
             &mut conn,
             liveness_check.as_ref(),
             session::boot_time(),
-        );
-        // One startup blob-sweep batch, after the reaper — best effort,
-        // never blocks open.
-        let _ = retry::with_retry(&mut conn, crate::gc::sweep_unreferenced_blobs);
+        ) {
+            crate::diag::background_note(&format!("dead-session reaper failed at open: {e}"));
+        }
+        if let Err(e) = retry::with_retry(&mut conn, crate::gc::sweep_unreferenced_blobs) {
+            crate::diag::background_note(&format!("startup blob sweep failed at open: {e}"));
+        }
         let writer = writer::spawn(conn, fs, on_event);
         let reader = reader::spawn(&uri)?;
         Ok(Store {
@@ -142,17 +142,17 @@ impl Store {
         let mut writer_conn = rung.writer_conn;
         let session_id = session::establish_session(&writer_conn, now)?;
 
-        // Best-effort dead-session reaper: never blocks open — a failure
-        // here is swallowed, not surfaced, on purpose.
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
-        let _ = crate::reaper::reap_dead_sessions(
+        if let Err(e) = crate::reaper::reap_dead_sessions(
             &mut writer_conn,
             liveness_check.as_ref(),
             session::boot_time(),
-        );
-        // One startup blob-sweep batch, after the reaper — best effort,
-        // never blocks open.
-        let _ = retry::with_retry(&mut writer_conn, crate::gc::sweep_unreferenced_blobs);
+        ) {
+            crate::diag::background_note(&format!("dead-session reaper failed at open: {e}"));
+        }
+        if let Err(e) = retry::with_retry(&mut writer_conn, crate::gc::sweep_unreferenced_blobs) {
+            crate::diag::background_note(&format!("startup blob sweep failed at open: {e}"));
+        }
 
         let writer = writer::spawn(writer_conn, fs, on_event);
         let reader = reader::spawn(&rung.reader_target)?;
