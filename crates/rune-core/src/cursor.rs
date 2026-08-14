@@ -62,6 +62,22 @@ pub struct Cursor {
 }
 
 impl Cursor {
+    const FALLBACK: Cursor = Cursor {
+        position: 0,
+        anchor: 0,
+        desired_col: 0,
+        id: CursorId::FIRST,
+    };
+
+    fn from_spec(spec: CursorSpec, id: CursorId) -> Cursor {
+        Cursor {
+            position: spec.position,
+            anchor: spec.anchor,
+            desired_col: spec.desired_col,
+            id,
+        }
+    }
+
     pub fn has_selection(&self) -> bool {
         self.position != self.anchor
     }
@@ -158,12 +174,7 @@ impl CursorSet {
         let cursors: Vec<Cursor> = specs
             .iter()
             .map(|s| {
-                let cursor = Cursor {
-                    position: s.position,
-                    anchor: s.anchor,
-                    desired_col: s.desired_col,
-                    id: next_id,
-                };
+                let cursor = Cursor::from_spec(*s, next_id);
                 next_id = next_id.next();
                 cursor
             })
@@ -192,12 +203,7 @@ impl CursorSet {
         assert_invariant!(!self.cursors.is_empty(), || {
             "CursorSet::cursors must never be empty".to_string()
         });
-        self.cursors.first().copied().unwrap_or(Cursor {
-            position: 0,
-            anchor: 0,
-            desired_col: 0,
-            id: CursorId::FIRST,
-        })
+        self.cursors.first().copied().unwrap_or(Cursor::FALLBACK)
     }
 
     pub fn all(&self) -> &[Cursor] {
@@ -217,12 +223,7 @@ impl CursorSet {
     }
 
     pub fn add(&self, spec: CursorSpec) -> CursorSet {
-        let cursor = Cursor {
-            position: spec.position,
-            anchor: spec.anchor,
-            desired_col: spec.desired_col,
-            id: self.next_id,
-        };
+        let cursor = Cursor::from_spec(spec, self.next_id);
         let mut cp = self.cursors.clone();
         cp.push(cursor);
         let res = CursorSet {
@@ -267,12 +268,7 @@ impl CursorSet {
             "CursorSet::merge: cp must be non-empty past the len()<=1 guard".to_string()
         });
         let mut iter = cp.into_iter();
-        let mut current = iter.next().unwrap_or(Cursor {
-            position: 0,
-            anchor: 0,
-            desired_col: 0,
-            id: CursorId::FIRST,
-        });
+        let mut current = iter.next().unwrap_or(Cursor::FALLBACK);
         let mut merged: Vec<Cursor> = Vec::new();
 
         for next in iter {
