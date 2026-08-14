@@ -190,17 +190,14 @@ fn open_path_by_inode(
 /// (`path=''`) and a non-`'file'` `kind` (scratch/chat) are excluded: only
 /// a still-named, real file belongs in the finder's list.
 pub fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT path FROM documents WHERE path != '' AND kind = '{}' \
-         ORDER BY last_seen_at DESC LIMIT ?1",
-        DocKind::File.as_str()
-    ))?;
-    let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
-    Ok(result)
+    let mut stmt = conn.prepare(
+        "SELECT path FROM documents WHERE path != '' AND kind = ?1 \
+         ORDER BY last_seen_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![DocKind::File.as_str(), limit], |r| {
+        r.get::<_, String>(0)
+    })?;
+    Ok(rows.collect::<Result<Vec<String>, _>>()?)
 }
 
 #[cfg(test)]

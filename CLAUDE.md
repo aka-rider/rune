@@ -11,7 +11,7 @@
 ```
 crates/rune-cli      Entry point; constructs the one Vfs + store and starts the runtime
 crates/rune-core     UI-free kernel: buffer, coordinate spaces, cursor set, in-memory undo journal
-crates/rune-vfs      The single chokepoint for real-disk I/O (Disk/Mem); Exchange/RenameExcl publish
+crates/rune-vfs      The single chokepoint for real-disk I/O on user documents (Disk/Mem); Exchange/RenameExcl publish; rune-db sits below it and manages its own sidecar file directly
 crates/rune-db       Multiprocess-safe SQLite recovery store: journal, snapshots, observations, blobs, materialize
 crates/rune-syntax   Producer-agnostic syntax layer: reveal vocabulary, SyntaxSpan model, scopes, wrap pass
 crates/rune-md       Markdown pipeline over comrak: parse -> emit -> wrap -> snapshot. Terminal-free

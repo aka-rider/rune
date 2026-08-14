@@ -24,6 +24,21 @@ use crate::writer::{DbEvent, OnEvent, OpKind, WriteOp, WriterHandle};
 /// fire.
 pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Copy)]
+enum CheckpointMode {
+    Passive,
+    Truncate,
+}
+
+impl CheckpointMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            CheckpointMode::Passive => "PASSIVE",
+            CheckpointMode::Truncate => "TRUNCATE",
+        }
+    }
+}
+
 impl WriterHandle {
     /// Drops the enqueue side and blocks until the writer thread observes
     /// disconnection and exits — a deterministic drain, never a polling
@@ -91,7 +106,7 @@ pub(crate) fn fatal(receiver: mpsc::Receiver<WriteOp>, on_event: OnEvent, contex
 /// exactly as harmless as a checkpoint that never got a quiet enough moment
 /// to run — logged, never surfaced.
 pub(crate) fn run_idle_maintenance(conn: &mut Connection) {
-    if let Err(e) = checkpoint(conn, "PASSIVE") {
+    if let Err(e) = checkpoint(conn, CheckpointMode::Passive) {
         background_note(&format!("idle wal_checkpoint(PASSIVE) failed: {e}"));
     }
     if let Err(e) = retry::with_retry(conn, crate::gc::sweep_unreferenced_blobs) {
@@ -113,7 +128,7 @@ pub(crate) fn run_shutdown_maintenance(
     is_alive: &dyn Fn(i64, &str) -> bool,
 ) {
     if is_last_live_session(conn, session_id, is_alive) {
-        match checkpoint(conn, "TRUNCATE") {
+        match checkpoint(conn, CheckpointMode::Truncate) {
             Ok(busy) if busy != 0 => {
                 background_note(
                     "wal_checkpoint(TRUNCATE) could not fully complete at \
@@ -178,10 +193,12 @@ fn is_last_live_session(
 /// a conflicting lock — reported as data, not itself always a SQLite
 /// error). Extra columns (`log`, `checkpointed`) are unused by any caller
 /// here.
-fn checkpoint(conn: &Connection, mode: &str) -> Result<i64, rusqlite::Error> {
-    conn.query_row(&format!("PRAGMA wal_checkpoint({mode})"), [], |row| {
-        row.get::<_, i64>(0)
-    })
+fn checkpoint(conn: &Connection, mode: CheckpointMode) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        &format!("PRAGMA wal_checkpoint({})", mode.as_str()),
+        [],
+        |row| row.get::<_, i64>(0),
+    )
 }
 
 #[cfg(test)]
