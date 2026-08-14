@@ -12,6 +12,7 @@ use crate::explorer;
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::keymap::{GlobalCommand, QuitKey};
 use crate::messages;
+use crate::pane_global;
 use crate::runtime::{Cmd, Effects, Msg};
 use crate::save;
 
@@ -88,74 +89,27 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // `focus::LayoutMode` exists to close) is treated as hidden, and a
         // press there shows rather than uselessly re-hiding an already
         // invisible column.
-        GlobalCommand::ToggleLeft => {
-            if left_painted_before {
-                app.splits.left.hide();
-                crate::focus::reconcile(app, effects);
-            } else {
-                show_and_focus_explorer_on_active_file(app, effects);
-            }
-        }
+        GlobalCommand::ToggleLeft => pane_global::toggle_left(app, left_painted_before, effects),
         // Entering the title needs no `Effects` — it can never itself
         // leave any. Reseeds from the document that is actually
         // showing, every time: the field must never present a stale name
         // from a previous document or a previously abandoned edit (no
         // shadow state).
         GlobalCommand::FocusTitle => app.focus_title(),
-        // Mirrors `FocusExplorer`'s "show + focus" pairing: the Tabs pane's
-        // own cursor is meaningless to a user who can't see it. Also makes
-        // sure the tab rows themselves have room — a starved split from a
-        // dragged-down divider is raised back to its floor before focus
-        // lands there. No dir-load side effect needed here — unlike
-        // Explorer, Tabs has nothing to lazily fetch off-thread.
-        GlobalCommand::FocusTabs => {
-            app.splits.left.show();
-            let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-            let geo = crate::layout::geometry(area, app);
-            if let Some(block) = geo.left_block {
-                let budget = crate::layout::explorer_budget(block);
-                app.splits
-                    .explorer
-                    .ensure_trail(budget, crate::layout::TABS_LIMITS);
-            }
-            app.set_focus_pane(Pane::Tabs, effects);
-        }
+        // No dir-load side effect needed here — unlike Explorer, Tabs has
+        // nothing to lazily fetch off-thread.
+        GlobalCommand::FocusTabs => pane_global::focus_tabs(app, effects),
         GlobalCommand::Save => {
             let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
         }
-        // Mints/toggles the generated Help virtual document — a
-        // direct, same-tick call, no I/O involved. The hoisted
-        // gate above already blurred, but that gate fires only for
-        // `Pane::Title` — without moving focus here too, `F1` pressed from
-        // the Explorer or Tabs pane would switch the active document while
-        // focus stayed stranded on the chrome list.
-        GlobalCommand::Help => {
-            app.set_focus_pane(Pane::Editor, effects);
-            crate::workspace::toggle_help(app, effects);
-        }
+        GlobalCommand::Help => pane_global::help(app, effects),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
         // Routes through the one close chokepoint regardless of which pane
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
         GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active, effects),
-        // Same pre-switch focus move as `Help`/`TabSwitch` above, and for the
-        // same reason: without it, `^N` pressed from the Explorer or Tabs
-        // pane would switch the active document while focus stayed stranded
-        // on the chrome list.
-        GlobalCommand::NewDocument => {
-            app.set_focus_pane(Pane::Editor, effects);
-            let departed = crate::navhistory::departure_origin(app);
-            crate::workspace::new_untitled_document(app);
-            crate::navhistory::record_departure_if_moved(app, departed);
-            app.focus_title();
-        }
-        // Out-of-range is a silent no-op, so a digit naming a tab that
-        // isn't open does nothing rather than guessing at a neighbour. Same
-        // pre-switch focus move as `Help` above, and for the same reason.
-        GlobalCommand::TabSwitch(idx) => {
-            app.set_focus_pane(Pane::Editor, effects);
-            crate::workspace::select_tab(app, idx);
-        }
+        GlobalCommand::NewDocument => pane_global::new_document(app, effects),
+        GlobalCommand::TabSwitch(idx) => pane_global::tab_switch(app, idx, effects),
         // No focus change and no manual view invalidation needed — the
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
@@ -167,54 +121,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
-        // The finder is never trashed out from under: while it's open the
-        // active document may just be a file the user arrowed past, never
-        // opened for real (decision: Trash behaves like Esc there instead).
-        GlobalCommand::Trash => {
-            if app.filesearch().is_some() {
-                crate::filesearch::cancel(app, effects);
-                messages::info(
-                    app,
-                    "file finder closed \u{2014} open the file before trashing it",
-                );
-            } else {
-                crate::trash::request_trash(app, effects);
-            }
-        }
+        GlobalCommand::Trash => pane_global::trash(app, effects),
         GlobalCommand::TogglePin => crate::opentabs::limit::toggle_pin(app, app.active),
-        // Open creates a fresh, focused, empty draft; close saves it as
-        // `App::last_search_query` and clears the highlight overlay
-        // (`search::open`/`close`, the chokepoints — neither
-        // touches `App::focus`, since the bar was never a `Pane`). Refused
-        // while a merge is active on the active document — same precondition
-        // `focus_title` already refuses on — since the resolver claims
-        // every editor key for itself (`merge::keys::intercept`) and a bar
-        // opening on top of it would steal keys the resolver never gets a
-        // chance to see.
-        GlobalCommand::ToggleSearch => {
-            if app.search().is_some() {
-                crate::search::close(app);
-            } else if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active)
-            {
-                messages::info(app, "finish the merge first (^M)");
-            } else {
-                crate::search::open(app);
-                // Kicks off the ONE history load this bar-open
-                // needs, off-thread through a cloned `ReaderQuery` — never
-                // gated on `Db::degraded` (a write-path flag; reads run on
-                // their own connection, unaffected by it). No store at all
-                // (the extreme construction-failure fallback) just leaves
-                // history empty, same as an ordinary reader failure.
-                if let (Some(db), Some(generation)) =
-                    (app.db.as_ref(), app.search().map(|s| s.history_generation))
-                {
-                    effects.cmds.push(crate::runtime::load_search_history_cmd(
-                        db.store.reader_query(),
-                        generation,
-                    ));
-                }
-            }
-        }
+        GlobalCommand::ToggleSearch => pane_global::toggle_search(app, effects),
         // Reuses the same cursor-jump `advance` Enter/Shift+Enter already
         // drive: with the bar open, this chord behaves exactly like
         // Enter/Shift+Enter would; with it closed, `advance_closed`
@@ -223,15 +132,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Nothing to navigate with is reported, never swallowed silently.
         GlobalCommand::SearchNext => search_step(app, true),
         GlobalCommand::SearchPrev => search_step(app, false),
-        // Active -> `cancel` (closes it, restores the document that was
-        // active before it opened, focuses the Editor); inactive -> `open`.
-        GlobalCommand::ToggleFileSearch => {
-            if app.filesearch().is_some() {
-                crate::filesearch::cancel(app, effects);
-            } else {
-                crate::filesearch::open(app, effects);
-            }
-        }
+        GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
         GlobalCommand::NavForward => crate::navhistory::forward(app, effects),
     }

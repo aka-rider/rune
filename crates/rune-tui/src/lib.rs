@@ -49,6 +49,7 @@ pub mod navigate;
 pub mod opentabs;
 mod overlay;
 pub mod pane;
+mod pane_global;
 pub mod pointer;
 pub mod read_only;
 pub mod region;
