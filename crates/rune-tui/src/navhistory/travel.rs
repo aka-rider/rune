@@ -10,6 +10,7 @@ use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
 
+use super::record;
 use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
 
 enum TravelOutcome {
@@ -18,14 +19,17 @@ enum TravelOutcome {
     Dropped,
 }
 
-fn live_place(app: &App) -> Place {
+fn live_place(app: &App) -> Option<Place> {
+    if !record::eligible(app, app.active) {
+        return None;
+    }
     let doc = app.active_doc();
-    Place {
+    Some(Place {
         doc: app.active,
         path: doc.file_path.clone(),
         offset: doc.cursors.primary().position,
         kind: PlaceKind::Visited,
-    }
+    })
 }
 
 fn peek_current(history: &NavHistory) -> Option<Place> {
