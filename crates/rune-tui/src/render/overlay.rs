@@ -132,6 +132,7 @@ pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
 /// into one value rather than two loose `bool` parameters purely to keep
 /// that function's own argument count under the repo's `too_many_arguments`
 /// deny (the repo bans silencing it with an `#[allow]` instead).
+#[derive(Clone, Copy)]
 pub(crate) struct OverlayGates {
     /// Whether the caret may be painted — `Document::has_insertion_point`.
     pub caret: bool,

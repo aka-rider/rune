@@ -166,8 +166,7 @@ fn blocking_call(
         DbEvent::Fatal { .. } => true,
     }) {
         DbEvent::Ok { result, .. } => Ok(result),
-        DbEvent::Err { error, .. } => Err(error),
-        DbEvent::Fatal { error } => Err(error),
+        DbEvent::Err { error, .. } | DbEvent::Fatal { error } => Err(error),
     }
 }
 

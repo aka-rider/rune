@@ -79,7 +79,7 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
         app,
         doc,
         vec![(edit, CursorId::FIRST)],
-        cursors_before,
+        &cursors_before,
         EditKind::Other,
     ) {
         messages::error(

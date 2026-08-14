@@ -149,7 +149,7 @@ pub fn spawn(path: &str) -> Result<ReaderHandle, Error> {
     crate::store::apply_connection_pragmas(&conn)?;
 
     let (sender, receiver) = mpsc::channel::<Msg>();
-    let thread = thread::spawn(move || reader_loop(conn, receiver));
+    let thread = thread::spawn(move || reader_loop(&conn, &receiver));
     Ok(ReaderHandle {
         sender,
         thread: Some(thread),
@@ -159,7 +159,7 @@ pub fn spawn(path: &str) -> Result<ReaderHandle, Error> {
 // Exits on the `Shutdown` sentinel; the `recv()`-disconnect exit stays as a
 // fallback so a `ReaderHandle` dropped without calling `shutdown` (and no
 // surviving `ReaderQuery` clones) still terminates the thread.
-fn reader_loop(conn: Connection, receiver: mpsc::Receiver<Msg>) {
+fn reader_loop(conn: &Connection, receiver: &mpsc::Receiver<Msg>) {
     while let Ok(msg) = receiver.recv() {
         let req = match msg {
             Msg::Query(req) => req,
@@ -170,7 +170,7 @@ fn reader_loop(conn: Connection, receiver: mpsc::Receiver<Msg>) {
         // it (repo-wide rule: "any long-lived thread must catch panics
         // like spawn_cmd does"), reply with an error, and keep serving
         // subsequent requests rather than parking the whole thread.
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| execute(&conn, req.kind)))
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| execute(conn, req.kind)))
             .unwrap_or_else(|_| Err(Error::ReaderGone));
         // A send failure means the caller stopped waiting (dropped its
         // receiver) — there is no one left to hand `outcome` to.

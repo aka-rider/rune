@@ -106,7 +106,7 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
         Splitter::ExplorerTabs => {
             let inner_top = geo
                 .left_block
-                .map_or(geo.main.y.saturating_add(1), |b| b.y.saturating_add(1));
+                .map_or_else(|| geo.main.y.saturating_add(1), |b| b.y.saturating_add(1));
             app.splits
                 .explorer
                 .request(clamp_u16(input.row as i32 - inner_top as i32 + grab_delta));

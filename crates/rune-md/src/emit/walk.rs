@@ -29,6 +29,7 @@ use rune_syntax::{ScopeId, SyntaxSpan};
 /// line, ready to be emitted Revealed. A fence paints its delimiters at the
 /// same scope as its body; frontmatter dims its `---` lines instead, so the
 /// two scopes are named apart.
+#[derive(Clone, Copy)]
 struct DelimitedRevealed<'a> {
     open: ByteRange,
     content_lines: &'a [ByteRange],
@@ -246,7 +247,7 @@ fn push_task_checkbox(content: &str, starts: &[usize], task: ByteRange, out: &mu
         });
         return;
     };
-    let Ok(granted) = out.claim_whole(ll) else {
+    let Ok(granted) = out.claim_whole(&ll) else {
         return;
     };
 

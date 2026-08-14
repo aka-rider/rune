@@ -76,10 +76,10 @@ pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
 /// own pure function so the invalid-UTF-8 path is unit-testable without
 /// shelling out to a real `pbpaste`.
 fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
-    match String::from_utf8(stdout) {
-        Ok(text) => Msg::ClipboardRead { text, target },
-        Err(_) => Msg::Error("pbpaste produced bytes that are not valid UTF-8".to_string()),
-    }
+    String::from_utf8(stdout).map_or_else(
+        |_| Msg::Error("pbpaste produced bytes that are not valid UTF-8".to_string()),
+        |text| Msg::ClipboardRead { text, target },
+    )
 }
 
 #[cfg(test)]

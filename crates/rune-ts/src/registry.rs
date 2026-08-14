@@ -92,7 +92,7 @@ impl LanguageRegistry {
         self.entries
             .iter()
             .flatten()
-            .filter(|(_, slot)| slot.get().is_some_and(|r| r.is_ok()))
+            .filter(|(_, slot)| slot.get().is_some_and(std::result::Result::is_ok))
             .count()
     }
 }

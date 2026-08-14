@@ -102,7 +102,7 @@ mod tests {
         let buf = draw_with(10, 3, |frame| {
             Block::bordered().render(Rect::new(0, 0, 10, 3), frame.buffer_mut());
         });
-        let corner = buf.cell((0, 0)).map(|c| c.symbol());
+        let corner = buf.cell((0, 0)).map(ratatui::buffer::Cell::symbol);
         assert_ne!(
             corner,
             Some(" "),

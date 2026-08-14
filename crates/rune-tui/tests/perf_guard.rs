@@ -352,7 +352,7 @@ fn bootstrap_first_draw_stays_bounded_on_a_large_document() {
     let rendered = (0..40)
         .map(|y| {
             (0..120)
-                .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol()))
+                .filter_map(|x| buf.cell((x, y)).map(ratatui::buffer::Cell::symbol))
                 .collect::<String>()
         })
         .collect::<Vec<_>>()

@@ -44,7 +44,7 @@ fn run_cmds(app: &mut App, effects: &mut Effects) {
             anchor,
         }) = cmd.run()
         {
-            workspace::handle_file_opened(app, path, result, anchor, effects);
+            workspace::handle_file_opened(app, &path, result, anchor, effects);
         }
     }
 }
@@ -198,7 +198,7 @@ fn a_stale_reply_for_a_path_the_cursor_has_left_is_ignored() {
         anchor,
     }) = stale_cmd.run()
     {
-        workspace::handle_file_opened(&mut app, path, result, anchor, &mut effects);
+        workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
     }
     let shown_after_stale = app
         .explorer
@@ -469,7 +469,7 @@ fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
         anchor,
     }) = stale_cmd.run()
     {
-        workspace::handle_file_opened(&mut app, path, result, anchor, &mut effects);
+        workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
     }
 
     let shown_after_stale = app

@@ -23,7 +23,11 @@ fn emitted(content: &str, focused: bool) -> Vec<SyntaxLine> {
 }
 
 fn scopes_on_line(lines: &[SyntaxLine], line: usize) -> Vec<ScopeId> {
-    lines[line].spans.iter().map(|s| s.scope()).collect()
+    lines[line]
+        .spans
+        .iter()
+        .map(rune_syntax::SyntaxSpan::scope)
+        .collect()
 }
 
 #[test]

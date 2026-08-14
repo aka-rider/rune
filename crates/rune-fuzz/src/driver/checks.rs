@@ -28,10 +28,12 @@ pub(super) fn should_sample(step: usize) -> bool {
 /// Builds the current visible rows, or an empty grid before the first
 /// sync — mirrors `Snapshot::capture`'s own `cells` derivation.
 fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
-    match &app.active_doc().view {
-        Some(view) => render::build_rows(app, app.active_doc(), Some(app.active), view),
-        None => Vec::new(),
-    }
+    app.active_doc()
+        .view
+        .as_ref()
+        .map_or_else(Vec::new, |view| {
+            render::build_rows(app, app.active_doc(), Some(app.active), view)
+        })
 }
 
 /// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Document::

@@ -188,7 +188,7 @@ pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vio
         && next
             .quit_intent_pending
             .as_ref()
-            .is_none_or(|p| p.is_empty());
+            .is_none_or(std::vec::Vec::is_empty);
     let quit_intent_retirement_legitimate = quit_intent_fully_retired
         && prev
             .quit_intent_pending

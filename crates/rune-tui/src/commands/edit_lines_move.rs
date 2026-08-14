@@ -103,7 +103,7 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         app,
         id,
         vec![(edit, cid)],
-        cursors_before,
+        &cursors_before,
         EditKind::Other,
         move |_, _| {
             vec![Cursor {
@@ -166,7 +166,7 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         app,
         id,
         vec![(edit, cid)],
-        cursors_before,
+        &cursors_before,
         EditKind::Other,
         move |_, _| {
             vec![Cursor {

@@ -113,7 +113,7 @@ fn enqueue(
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }
 

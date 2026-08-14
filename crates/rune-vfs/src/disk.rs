@@ -231,13 +231,14 @@ impl Vfs for Disk {
 /// unqualified label for the rest rather than surfacing the dump.
 fn describe_trash_error(error: &trash::Error) -> String {
     match error {
-        trash::Error::Os { description, .. } => description.clone(),
+        trash::Error::Os { description, .. } | trash::Error::Unknown { description } => {
+            description.clone()
+        }
         trash::Error::CouldNotAccess { target } => format!("could not access {target}"),
         trash::Error::TargetedRoot => "refused to trash a root folder".to_string(),
         trash::Error::CanonicalizePath { original } => {
             format!("could not resolve path {}", original.display())
         }
-        trash::Error::Unknown { description } => description.clone(),
         _ => "trash operation failed".to_string(),
     }
 }

@@ -58,7 +58,10 @@ impl SnapshotTimer {
     /// `tx`, never spawns a second thread). Called exactly once, from
     /// `runtime::run`, mirroring `DbBridge::attach`.
     pub fn attach(self: &Arc<Self>, tx: Sender<Msg>) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.tx = Some(tx);
         if !state.thread_spawned {
             state.thread_spawned = true;
@@ -80,7 +83,10 @@ impl SnapshotTimer {
     /// the `Condvar` yet, so `notify_one` is simply a no-op.
     pub fn arm(&self, id: DocumentId, generation: u32, delay: Duration) {
         let deadline = Instant::now() + delay;
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.pending.insert(id, (generation, deadline));
         drop(state);
         self.condvar.notify_one();
@@ -91,7 +97,10 @@ impl SnapshotTimer {
     /// indefinitely, woken only by `arm`/`attach`, if nothing is pending).
     fn run(self: Arc<Self>) {
         loop {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             let now = Instant::now();
             let mut due = Vec::new();
@@ -123,10 +132,13 @@ impl SnapshotTimer {
                     let (_state, _timed_out) = self
                         .condvar
                         .wait_timeout(state, wait)
-                        .unwrap_or_else(|p| p.into_inner());
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                 }
                 None => {
-                    let _state = self.condvar.wait(state).unwrap_or_else(|p| p.into_inner());
+                    let _state = self
+                        .condvar
+                        .wait(state)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                 }
             }
         }

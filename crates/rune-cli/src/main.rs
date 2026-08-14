@@ -74,17 +74,17 @@ fn main() -> ExitCode {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
     let home = env::var_os("HOME").map(PathBuf::from);
 
-    launch(vfs, env::args_os().skip(1), cwd, home)
+    launch(&vfs, env::args_os().skip(1), &cwd, home.as_deref())
 }
 
 /// Everything `main` does after resolving `cwd`/`$HOME` and constructing the
 /// real `vfs` — factored out so it's callable with a `Mem` vfs and canned
 /// args/cwd/home in tests (plan WP4.S1/[rune-cli 13]).
 fn launch(
-    vfs: Arc<dyn Vfs + Send + Sync>,
+    vfs: &Arc<dyn Vfs + Send + Sync>,
     args: impl Iterator<Item = OsString>,
-    cwd: PathBuf,
-    home: Option<PathBuf>,
+    cwd: &Path,
+    home: Option<&Path>,
 ) -> ExitCode {
     let mut app = match bootstrap(vfs, args, cwd, home) {
         Ok(app) => app,
@@ -162,20 +162,20 @@ impl Drop for AppGuard {
 /// wiring testable against `Mem`: a test can call this directly and inspect
 /// the returned `App` without ever starting the interactive run loop.
 fn bootstrap(
-    vfs: Arc<dyn Vfs + Send + Sync>,
+    vfs: &Arc<dyn Vfs + Send + Sync>,
     args: impl Iterator<Item = OsString>,
-    cwd: PathBuf,
-    home: Option<PathBuf>,
+    cwd: &Path,
+    home: Option<&Path>,
 ) -> Result<AppGuard, ExitCode> {
-    let launch = parse_launch(vfs.as_ref(), args, &cwd)?;
-    let (app, db_bootstrap) = open_launch(&vfs, &launch, home.as_deref())?;
+    let launch = parse_launch(vfs.as_ref(), args, cwd)?;
+    let (app, db_bootstrap) = open_launch(vfs, &launch, home)?;
 
     // From here on, a panic unwinding through this function (or `launch`
     // above it, before `catch_unwind`) still drains the writer thread —
     // see `AppGuard`'s own doc.
     let mut app = AppGuard(app);
 
-    let first_doc_id = wire_root_and_extra_files(&mut app, &cwd, home.as_deref(), &launch);
+    let first_doc_id = wire_root_and_extra_files(&mut app, cwd, home, &launch);
     apply_db_bootstrap(&mut app, db_bootstrap, first_doc_id);
 
     Ok(app)
@@ -237,7 +237,7 @@ fn wire_root_and_extra_files(
         cwd,
         home,
         launch.work_dir.as_deref(),
-        launch.files.first().map(|p| p.as_path()),
+        launch.files.first().map(std::path::PathBuf::as_path),
     );
     app.set_root(root);
 
@@ -288,10 +288,9 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
         Ok(s) => return (*s).to_string(),
         Err(payload) => payload,
     };
-    match payload.downcast::<String>() {
-        Ok(s) => *s,
-        Err(_) => "non-string panic payload".to_string(),
-    }
+    payload
+        .downcast::<String>()
+        .map_or_else(|_| "non-string panic payload".to_string(), |s| *s)
 }
 
 fn to_abs_path(input: &str, cwd: &Path) -> PathBuf {

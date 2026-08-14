@@ -146,7 +146,7 @@ fn trash_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, generation: u32) ->
 pub(crate) fn handle_trash_done(
     app: &mut App,
     generation: u32,
-    path: PathBuf,
+    path: &Path,
     result: Result<(), String>,
     effects: &mut Effects,
 ) {
@@ -154,14 +154,14 @@ pub(crate) fn handle_trash_done(
         return;
     }
     app.trash_pending = None;
-    let name = display_name(&path);
+    let name = display_name(path);
     match result {
         Err(e) => {
             messages::error(app, format!("trash failed: {e}"));
         }
         Ok(()) => {
             let mut kept_open = false;
-            if let Some(id) = workspace::existing_document_for(app, &path) {
+            if let Some(id) = workspace::existing_document_for(app, path) {
                 sweep_live_guard(app, id);
                 if materialize_ack::is_dirty_now(app, id) {
                     kept_open = true;
@@ -175,7 +175,7 @@ pub(crate) fn handle_trash_done(
                     let _ = workspace::close_now(app, id, effects);
                 }
             }
-            explorer::refresh_for(app, &path, effects);
+            explorer::refresh_for(app, path, effects);
             if !kept_open {
                 messages::info(app, format!("moved to Trash: {name}"));
             }

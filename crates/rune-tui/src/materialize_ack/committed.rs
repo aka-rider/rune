@@ -6,13 +6,16 @@ pub(super) fn handle_committed_ack(
     app: &mut App,
     id: DocumentId,
     pending_version: Option<u64>,
-    saved: Option<rune_db::Observation>,
+    saved: Option<&rune_db::Observation>,
     raced: bool,
 ) {
     // A committed bind-new create is where an untitled draft finally
     // gets its path — only now, after the no-clobber publish actually
     // succeeded (see `bind_new_now`'s docs).
-    if let Some(path) = app.doc_mut(id).and_then(|d| d.take_bind_target()) {
+    if let Some(path) = app
+        .doc_mut(id)
+        .and_then(crate::document::Document::take_bind_target)
+    {
         if let Some(doc) = app.doc_mut(id) {
             doc.bind_path(path);
         }
@@ -44,7 +47,7 @@ pub(super) fn handle_committed_ack(
         // such a stale reply instead of trusting it.
         binding.save_epoch = binding.save_epoch.wrapping_add(1);
     }
-    if let Some(saved) = &saved
+    if let Some(saved) = saved
         && let Some(binding) = app.doc_file_binding_mut(id)
     {
         binding.expect_obs = Some(saved.id);
@@ -58,7 +61,7 @@ pub(super) fn handle_committed_ack(
         );
     }
     if let Some(doc) = app.doc_mut(id) {
-        doc.nlink = saved.as_ref().and_then(|o| o.nlink);
+        doc.nlink = saved.and_then(|o| o.nlink);
     }
     // Resolved BEFORE the `saved: None` re-baseline below: that arm may
     // enqueue a `Load`, and a `Load` enqueue failure sweeps every

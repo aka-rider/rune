@@ -206,7 +206,7 @@ pub struct Step {
     pub kind: EditKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct JournalCommit(usize);
 
 impl JournalCommit {

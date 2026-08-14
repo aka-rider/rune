@@ -118,6 +118,7 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
     true
 }
 
+#[derive(Clone, Copy)]
 enum LinkStep {
     Next,
     Prev,

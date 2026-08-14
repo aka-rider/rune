@@ -82,7 +82,7 @@ impl WriterHandle {
 /// Deliberately NOT park-forever (the prior design): parking left
 /// `WriterHandle::shutdown`'s `thread.join()` blocked forever, so a quit
 /// after a writer panic hung the whole app instead of exiting.
-pub(crate) fn fatal(receiver: mpsc::Receiver<WriteOp>, on_event: OnEvent, context: String) {
+pub(crate) fn fatal(receiver: &mpsc::Receiver<WriteOp>, on_event: &OnEvent, context: &str) {
     let _ = panic::catch_unwind(AssertUnwindSafe(|| {
         on_event(DbEvent::Fatal {
             error: format!("writer thread panicked during {context}"),
@@ -299,7 +299,7 @@ mod tests {
         let on_event: OnEvent = Box::new(move |evt| {
             events_for_cb
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(evt);
         });
 
@@ -329,7 +329,9 @@ mod tests {
         // all, not hang).
         handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
 
-        let events = events.lock().unwrap_or_else(|p| p.into_inner());
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert!(
             events.iter().any(|e| matches!(e, DbEvent::Fatal { .. })),
             "expected a Fatal event among {events:?}"

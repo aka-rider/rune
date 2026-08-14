@@ -47,7 +47,7 @@ fn find_needle(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<(u16, u16
 /// [`find_needle`]'s first cell's style.
 fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Style> {
     let (x, y) = find_needle(buf, w, h, needle)?;
-    buf.cell((x, y)).map(|cell| cell.style())
+    buf.cell((x, y)).map(ratatui::buffer::Cell::style)
 }
 
 /// A ```` ```markdown ```` fence (FOUR backticks, so its own

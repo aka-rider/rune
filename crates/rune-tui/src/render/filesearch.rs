@@ -36,7 +36,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let readout = readout_text(state);
     let spans = crate::render::search::build_spans(
         &state.query,
-        readout.as_deref(),
+        Some(readout.as_str()),
         true,
         area.width as usize,
         &app.theme,
@@ -224,10 +224,7 @@ fn fit_suffix(graphemes: &[(usize, &str)], total_w: usize, avail_w: usize) -> (u
 }
 
 fn with_bg(style: Style, bg: Option<Color>) -> Style {
-    match bg {
-        Some(color) => style.bg(color),
-        None => style,
-    }
+    bg.map_or(style, |color| style.bg(color))
 }
 
 /// The query row's right-aligned readout: `matched/total` ordinarily, or
@@ -237,9 +234,9 @@ fn with_bg(style: Style, bg: Option<Color>) -> Style {
 /// `total`, the full candidate pool, so a cap (either the result cap on a
 /// broad match, or a walk truncation) stays visible as `matched < total`
 /// without a second counter to keep in sync.
-fn readout_text(state: &FileSearchState) -> Option<String> {
+fn readout_text(state: &FileSearchState) -> String {
     if state.walk_pending {
-        return Some("scanning\u{2026}".to_string());
+        return "scanning\u{2026}".to_string();
     }
     let matched = state.results.len();
     let total = state.recents.len() + state.walk.len();
@@ -248,7 +245,7 @@ fn readout_text(state: &FileSearchState) -> Option<String> {
     } else {
         ""
     };
-    Some(format!("{matched}/{total}{truncated}"))
+    format!("{matched}/{total}{truncated}")
 }
 
 #[cfg(test)]
@@ -279,7 +276,7 @@ mod tests {
 
         assert_eq!(
             readout_text(app.filesearch().expect("open")),
-            Some("scanning\u{2026}".to_string())
+            "scanning\u{2026}".to_string()
         );
     }
 
@@ -303,7 +300,7 @@ mod tests {
 
         assert_eq!(
             readout_text(app.filesearch().expect("open")),
-            Some("0/0".to_string())
+            "0/0".to_string()
         );
     }
 
@@ -332,7 +329,7 @@ mod tests {
         );
         assert_eq!(
             readout_text(app.filesearch().expect("open")),
-            Some("scanning\u{2026}".to_string())
+            "scanning\u{2026}".to_string()
         );
 
         let generation = app.filesearch().expect("open").generation;
@@ -383,7 +380,7 @@ mod tests {
                 .map(|c| c.path.clone()),
             Some(PathBuf::from("/root/b.md"))
         );
-        assert_eq!(readout_text(state), Some("2/2".to_string()));
+        assert_eq!(readout_text(state), "2/2".to_string());
     }
 
     #[test]

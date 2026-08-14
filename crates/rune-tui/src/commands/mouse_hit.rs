@@ -61,7 +61,7 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
     if let Some(image_ref) = display_ref.and_then(|r| r.image.clone())
         && image_ref.target.is_some()
         && let Some(cells) =
-            crate::render::image::row_cells(app, doc, image_ref, doc.viewport.width)
+            crate::render::image::row_cells(app, doc, &image_ref, doc.viewport.width)
     {
         return if (col as usize) < cells.len() {
             Some(row_start_offset(doc, view, wrap_row))
@@ -70,7 +70,14 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
         };
     }
 
-    offset_at_ordinary(doc, view, display_row, wrap_row, content, col)
+    Some(offset_at_ordinary(
+        doc,
+        view,
+        display_row,
+        wrap_row,
+        content,
+        col,
+    ))
 }
 
 /// The wrap segment `wrap_row`'s own first buffer position — what an image
@@ -99,7 +106,7 @@ fn offset_at_ordinary(
     wrap_row: WrapRow,
     content: &str,
     col: u16,
-) -> Option<usize> {
+) -> usize {
     // WP4.S4: the clicked row may carry a decoration prefix (heading icon /
     // bullet / quote bar / hr rule, `build_rows` prepends it before this
     // same `render::segment_geometry` content the cell walk below reads) —
@@ -125,7 +132,7 @@ fn offset_at_ordinary(
             }
             let width = cell.width.max(1) as usize;
             if (col as usize) < acc + width {
-                return Some(if cell.buf_offset >= 0 {
+                return if cell.buf_offset >= 0 {
                     cell.buf_offset as usize
                 } else {
                     // A click resolving onto a decorative cell (should only
@@ -137,7 +144,7 @@ fn offset_at_ordinary(
                     // silently sent an unrelated click to the document
                     // start.
                     first_content_offset.unwrap_or(0) as usize
-                });
+                };
             }
             acc += width;
         }
@@ -152,7 +159,7 @@ fn offset_at_ordinary(
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    Some(doc.buffer.line_col_to_offset(buffer_point))
+    doc.buffer.line_col_to_offset(buffer_point)
 }
 
 /// The visual column `offset` sits at — so a cursor a click plants keeps a

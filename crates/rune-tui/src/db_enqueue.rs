@@ -74,7 +74,7 @@ fn append_edit_bound(
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(id));
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }
 
@@ -124,7 +124,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::move_undo_pos(id));
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }
 
@@ -204,7 +204,7 @@ fn load_document_inner(
         }
         Err(e) => {
             if degrade_on_err {
-                crate::materialize_ack::on_store_failure(app, e.to_string());
+                crate::materialize_ack::on_store_failure(app, &e.to_string());
             }
             false
         }
@@ -260,7 +260,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::probe(id, save_epoch));
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }
 
@@ -291,6 +291,6 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
                 };
             }
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }

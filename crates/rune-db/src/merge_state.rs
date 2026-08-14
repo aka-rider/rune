@@ -45,6 +45,7 @@ pub struct ResumableMerge {
     pub theirs_obs: ObsId,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct MergeOpenArgs<'a> {
     pub doc_id: DocId,
     pub session_id: SessionId,

@@ -190,7 +190,7 @@ pub fn open_path_async(
 /// not steal the keyboard from wherever it already was.
 pub(crate) fn handle_file_opened(
     app: &mut App,
-    path: PathBuf,
+    path: &Path,
     result: Result<Vec<u8>, String>,
     anchor: Option<rune_nav::Anchor>,
     effects: &mut Effects,
@@ -201,13 +201,13 @@ pub(crate) fn handle_file_opened(
     // only when it was the one that asked for it (`Explorer::
     // preview_awaiting`), so an ordinary open below never sees one of its
     // own requests intercepted.
-    if crate::explorer_preview::maybe_consume_reply(app, &path, &result) {
+    if crate::explorer_preview::maybe_consume_reply(app, path, &result) {
         return;
     }
 
     app.blur_title(effects);
 
-    if let Some(id) = existing_document_for(app, &path) {
+    if let Some(id) = existing_document_for(app, path) {
         switch_to(app, id);
         app.set_focus_pane(Pane::Editor, effects);
         if let Some(anchor) = anchor {
@@ -226,7 +226,7 @@ pub(crate) fn handle_file_opened(
     if !crate::opentabs::limit::ensure_room(app, effects) {
         return;
     }
-    let Some(id) = open_bytes(app, &path, bytes) else {
+    let Some(id) = open_bytes(app, path, bytes) else {
         return;
     };
     app.set_focus_pane(Pane::Editor, effects);
@@ -250,7 +250,7 @@ pub(crate) fn handle_file_opened(
 /// funnel through this one tail.
 fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
     if crate::document_support::is_image_path(resolved) {
-        return open_image_bytes(app, resolved, bytes);
+        return Some(open_image_bytes(app, resolved, &bytes));
     }
 
     let buffer = match Buffer::from_bytes(bytes) {
@@ -297,8 +297,8 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
 /// layered on afterward. `probe_dimensions` is header-only (no full decode,
 /// no `ratatui`/protocol dependency) — enough for the info card to show
 /// `WIDTHxHEIGHT` before any decode `Cmd` exists at all (WP5).
-fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
-    let dims = rune_image::probe_dimensions(&bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
+fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId {
+    let dims = rune_image::probe_dimensions(bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
     let id = rune_image::alloc_id(resolved.as_os_str().as_encoded_bytes());
     let bytes_len = bytes.len() as u64;
     let file_name = resolved
@@ -323,7 +323,7 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Do
         });
     }
     switch_to(app, doc_id);
-    Some(doc_id)
+    doc_id
 }
 
 pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {

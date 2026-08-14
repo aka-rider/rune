@@ -263,7 +263,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
         app,
         doc,
         vec![(edit, CursorId::FIRST)],
-        cursors_before,
+        &cursors_before,
         EditKind::Other,
         move |_, _| vec![CursorSet::new(cursor_at).primary()],
     )
@@ -302,7 +302,7 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
             true
         }
         Err(e) => {
-            crate::materialize_ack::on_store_failure(app, e.to_string());
+            crate::materialize_ack::on_store_failure(app, &e.to_string());
             false
         }
     }

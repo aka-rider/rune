@@ -92,7 +92,10 @@ impl DbBridge {
     }
 
     fn deliver(&self, evt: DbEvent) {
-        let mut sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match &mut *sink {
             Sink::Bootstrap(buf) => {
                 buf.push_back(evt);
@@ -118,7 +121,10 @@ impl DbBridge {
     /// [`DbBridge::attach`] to drain later, so this synchronous wait can
     /// never consume or discard a sibling document's event.
     pub fn wait_for_bootstrap_event(&self, mut pred: impl FnMut(&DbEvent) -> bool) -> DbEvent {
-        let mut sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Sink::Bootstrap(buf) = &mut *sink
                 && let Some(pos) = buf.iter().position(&mut pred)
@@ -126,7 +132,10 @@ impl DbBridge {
             {
                 return evt;
             }
-            sink = self.arrived.wait(sink).unwrap_or_else(|p| p.into_inner());
+            sink = self
+                .arrived
+                .wait(sink)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 
@@ -136,7 +145,10 @@ impl DbBridge {
     /// order, so an ack that arrived before this call is still delivered
     /// rather than left stranded once the sink switches over.
     pub fn attach(&self, tx: Sender<Msg>) {
-        let mut sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Sink::Bootstrap(buf) = &mut *sink {
             for evt in buf.drain(..) {
                 let _ = tx.send(Msg::Db(evt));

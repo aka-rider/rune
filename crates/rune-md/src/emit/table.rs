@@ -279,7 +279,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 line_start..line_start + line_len,
             ) {
                 Some(ll) => {
-                    if let Ok(granted) = out.claim_whole(ll) {
+                    if let Ok(granted) = out.claim_whole(&ll) {
                         granted.push_visible(spans);
                     }
                 }

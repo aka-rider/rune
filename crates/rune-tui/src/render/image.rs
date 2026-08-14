@@ -50,13 +50,13 @@ pub const INFO_CARD_ROWS: usize = 4;
 pub fn row_cells(
     app: &App,
     doc: &Document,
-    image_ref: ImageRowRef,
+    image_ref: &ImageRowRef,
     width: u16,
 ) -> Option<Vec<Cell>> {
-    match &image_ref.target {
-        None => Some(doc_image_row_cells(app, doc, &image_ref, width)),
-        Some(target) => embed_row_cells(app, doc, target, &image_ref, width),
-    }
+    image_ref.target.as_ref().map_or_else(
+        || Some(doc_image_row_cells(app, doc, image_ref, width)),
+        |target| embed_row_cells(app, doc, target, image_ref, width),
+    )
 }
 
 /// A whole `DocumentKind::Image` document's row (plan WP4.S10/S11, extended

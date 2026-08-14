@@ -124,7 +124,7 @@ fn disk_no_temp_residue_excl_path() {
 
     let entries: Vec<_> = fs::read_dir(&tmp)
         .expect("read dir ok")
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
 
@@ -161,7 +161,7 @@ fn disk_no_temp_residue_swap_path() {
 
     let entries: Vec<_> = fs::read_dir(&tmp)
         .expect("read dir ok")
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
 
@@ -304,7 +304,7 @@ fn disk_regression_preexisting_temp_no_longer_blocks_a_new_save() {
     let prefix = format!(".doc.md.rune-tmp-{}-", pid);
     let leftover_new_style: Vec<_> = fs::read_dir(&tmp)
         .expect("read dir")
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|n| n.starts_with(&prefix))
         .collect();

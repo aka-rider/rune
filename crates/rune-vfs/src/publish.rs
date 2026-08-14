@@ -69,10 +69,9 @@ fn finish_over_existing<V: Vfs + ?Sized>(
     let Ok(displaced_bytes) = vfs.read(temp) else {
         return Ok(ForceOutcome::Committed(published));
     };
-    let displaced_sighted = match vfs.stat(temp) {
-        Ok(stat) => Sighted::Confirmed(stat),
-        Err(_) => Sighted::Unconfirmed(None),
-    };
+    let displaced_sighted = vfs
+        .stat(temp)
+        .map_or(Sighted::Unconfirmed(None), Sighted::Confirmed);
     let displaced = Sighting {
         etag: etag_of(&displaced_bytes),
         sighted: displaced_sighted,

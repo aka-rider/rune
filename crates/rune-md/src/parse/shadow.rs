@@ -33,14 +33,11 @@ pub fn parse_shadow(content: &str) -> Cow<'_, str> {
     if !content.bytes().any(|b| b == b'\t' || b == b'\r') {
         return Cow::Borrowed(content);
     }
-    match rebuild(content) {
-        // Every byte written is ASCII, so the decode cannot fail; the
-        // fallback is what keeps this function panic-free anyway.
-        Some(shadow) => {
-            Cow::Owned(String::from_utf8(shadow).unwrap_or_else(|_| content.to_owned()))
-        }
-        None => Cow::Borrowed(content),
-    }
+    // Every byte written is ASCII, so the decode cannot fail; the
+    // fallback is what keeps this function panic-free anyway.
+    rebuild(content).map_or(Cow::Borrowed(content), |shadow| {
+        Cow::Owned(String::from_utf8(shadow).unwrap_or_else(|_| content.to_owned()))
+    })
 }
 
 /// A 0-based offset into `parse_shadow`'s copy of one line, back to a
@@ -64,7 +61,7 @@ pub(crate) fn real_offset_in_line(
         }
         shadow_len += byte.shadow_width;
     });
-    real.unwrap_or(region.real_len + shadow_offset.saturating_sub(region.shadow_len))
+    real.unwrap_or_else(|| region.real_len + shadow_offset.saturating_sub(region.shadow_len))
 }
 
 #[derive(Clone, Copy)]

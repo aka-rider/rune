@@ -48,33 +48,25 @@ fn encode_action(out: &mut String, action: &Action) {
             let mods = encode_mouse_mods(*m);
             let _ = writeln!(out, " {kind} {} {} {mods}", m.column, m.row);
         }
-        Action::Type(s) => {
+        Action::Type(s) | Action::Paste(s) | Action::ClipboardReply(s) => {
             out.push(' ');
             out.push_str(&escape(s));
             out.push('\n');
         }
-        Action::Paste(s) => {
-            out.push(' ');
-            out.push_str(&escape(s));
+        Action::OpenFileSearch
+        | Action::ConfirmTimeout
+        | Action::Deliver
+        | Action::FailNextSave => {
             out.push('\n');
         }
-        Action::OpenFileSearch => out.push('\n'),
         Action::Resize(w, h) => {
             let _ = writeln!(out, " {w} {h}");
         }
-        Action::ClipboardReply(s) => {
-            out.push(' ');
-            out.push_str(&escape(s));
-            out.push('\n');
-        }
-        Action::ConfirmTimeout => out.push('\n'),
         Action::StaleConfirmTimeout(generation) => {
             out.push(' ');
             out.push_str(&generation.to_string());
             out.push('\n');
         }
-        Action::Deliver => out.push('\n'),
-        Action::FailNextSave => out.push('\n'),
         Action::DirLoaded {
             entries,
             cause,
@@ -109,9 +101,7 @@ fn encode_action(out: &mut String, action: &Action) {
                 let _ = writeln!(out, " {start} {end} {scope}");
             }
         }
-        Action::DivergeDisk => out.push('\n'),
-        Action::DeliverDb => out.push('\n'),
-        Action::DeliverDbAll => out.push('\n'),
+        Action::DivergeDisk | Action::DeliverDb | Action::DeliverDbAll => out.push('\n'),
         Action::HighlightTree {
             version,
             fixture,
@@ -211,5 +201,5 @@ fn escape_char(c: char) -> String {
 }
 
 fn escape(s: &str) -> String {
-    s.chars().flat_map(|c| c.escape_default()).collect()
+    s.chars().flat_map(char::escape_default).collect()
 }

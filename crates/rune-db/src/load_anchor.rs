@@ -208,9 +208,9 @@ pub(crate) fn anchor_first_load(
     conn: &mut Connection,
     ctx: &LoadContext<'_>,
     content: &str,
-    inherited: Inherited,
+    inherited: &Inherited,
 ) -> Result<AnchorOutcome, Error> {
-    if let Inherited::Diverged { draft, baseline } = &inherited
+    if let Inherited::Diverged { draft, baseline } = inherited
         && let Some(outcome) = anchor_diverged(conn, ctx, draft, baseline)?
     {
         return Ok(outcome);
@@ -223,7 +223,7 @@ pub(crate) fn anchor_first_load(
     // above closes applies equally here.
     retry::with_retry(conn, |tx| {
         anchor_on_disk_tx(tx, ctx, content, ctx.disk_hash)?;
-        match &inherited {
+        match inherited {
             Inherited::Bridged { draft } | Inherited::Diverged { draft, .. } => {
                 let bridge_seq = bridge_edit_tx(tx, ctx, content, draft)?;
                 Ok(AnchorOutcome {
@@ -330,7 +330,7 @@ mod tests {
             &mut conn,
             &ctx,
             disk_content,
-            Inherited::Diverged {
+            &Inherited::Diverged {
                 draft: draft.to_string(),
                 baseline: Box::new(baseline),
             },

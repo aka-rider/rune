@@ -159,7 +159,10 @@ pub fn replace_allowed(app: &App) -> bool {
     let Some(doc_id) = collision_doc(app) else {
         return false;
     };
-    app.db.is_some() && app.doc(doc_id).is_some_and(|d| d.is_store_bound())
+    app.db.is_some()
+        && app
+            .doc(doc_id)
+            .is_some_and(super::document::Document::is_store_bound)
 }
 
 fn collision_doc(app: &App) -> Option<DocumentId> {
@@ -361,16 +364,14 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
             let name = display_name(&to);
-            let text = match displaced.size {
-                Some(size) => format!(
-                    "replaced {name} \u{2014} its {size} bytes were preserved in the recovery store"
-                ),
-                None => {
+            let text = displaced.size.map_or_else(
+                || format!("replaced {name} \u{2014} its bytes were preserved in the recovery store"),
+                |size| {
                     format!(
-                        "replaced {name} \u{2014} its bytes were preserved in the recovery store"
+                        "replaced {name} \u{2014} its {size} bytes were preserved in the recovery store"
                     )
-                }
-            };
+                },
+            );
             messages::info(app, text);
         }
         Ok(RenameOutcome::Collided { seen }) => {
@@ -511,7 +512,7 @@ pub fn replace_confirmed(app: &mut App) {
         Err(e) => {
             app.rename = RenameState::Idle;
             guard::clear_guard(app);
-            crate::materialize_ack::on_store_failure(app, e.to_string());
+            crate::materialize_ack::on_store_failure(app, &e.to_string());
         }
     }
 }

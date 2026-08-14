@@ -285,7 +285,7 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
             cid(1),
         ),
     ];
-    commit_edit_batch(&mut app, id, infos, cursors_before, EditKind::Other);
+    commit_edit_batch(&mut app, id, infos, &cursors_before, EditKind::Other);
 
     let doc = app.doc(id).expect("doc");
     assert_eq!(doc.buffer.content(), "b", "the real edit must still apply");

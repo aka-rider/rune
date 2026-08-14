@@ -59,7 +59,7 @@ pub(crate) fn per_line_edits(
         }
     }
 
-    let _ = commit_edit_batch(app, id, infos, cursors_before, EditKind::Other);
+    let _ = commit_edit_batch(app, id, infos, &cursors_before, EditKind::Other);
 }
 
 /// Indents the line under each cursor by one tab.

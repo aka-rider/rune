@@ -248,7 +248,7 @@ pub(crate) fn concealed_ranges(wrap: &WrapSnapshot) -> Vec<Range<usize>> {
         .iter()
         .flat_map(|seg| seg.spans.iter())
         .filter(|span| span.is_rendered())
-        .map(|span| span.range())
+        .map(rune_syntax::SyntaxSpan::range)
         .collect();
     ranges.sort_by_key(|r| r.start);
 

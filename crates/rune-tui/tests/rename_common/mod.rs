@@ -384,7 +384,8 @@ pub fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Db(evt), &mut effects);
     assert!(
-        app.doc(id).is_some_and(|d| d.is_store_bound()),
+        app.doc(id)
+            .is_some_and(rune_tui::document::Document::is_store_bound),
         "the CreateScratch ack must bind the draft"
     );
 
