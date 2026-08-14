@@ -48,7 +48,10 @@ pub fn merge_hunks(ancestor: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
 /// only to pick which verbatim input to return; diffy does not
 /// renormalize non-conflicting content.
 fn classify_clean(ours: &[u8], theirs: &[u8], merged: &[u8]) -> Hunk {
-    if merged == ours || ours == theirs {
+    if ours == theirs {
+        return Hunk::Clean(ours.to_vec());
+    }
+    if merged == ours {
         Hunk::Clean(ours.to_vec())
     } else if merged == theirs {
         Hunk::Clean(theirs.to_vec())
@@ -170,6 +173,10 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+fn slice_or_empty(bytes: &[u8], range: Range<usize>) -> Vec<u8> {
+    bytes.get(range).unwrap_or(&[]).to_vec()
+}
+
 /// Anchors one conflict section into `input` starting no earlier than
 /// `search_from`, advancing the cursor so later blocks search forward only
 /// (matches diff3's document-ordered, non-overlapping sections).
@@ -198,31 +205,49 @@ fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<Ra
     (end == input.len()).then_some(start..end)
 }
 
-/// `ours` and `theirs` are two different documents' byte streams — a
-/// `Range<usize>` meant for one silently anchors into the other if the two
-/// arguments are ever transposed, so each gets its own file-local type.
-struct OursRange(Range<usize>);
-struct TheirsRange(Range<usize>);
+struct OursSpan<'a> {
+    bytes: &'a [u8],
+    range: Range<usize>,
+}
+
+struct TheirsSpan<'a> {
+    bytes: &'a [u8],
+    range: Range<usize>,
+}
 
 /// Pushes the clean region between the last resolved position and the
 /// upcoming conflict, unless both sides are empty there.
 fn push_clean_region(
     hunks: &mut Vec<Hunk>,
-    ours: &[u8],
-    theirs: &[u8],
-    ours_range: OursRange,
-    theirs_range: TheirsRange,
+    ours: OursSpan,
+    theirs: TheirsSpan,
     merged_clean: &[u8],
 ) {
-    let ours_clean = ours.get(ours_range.0).unwrap_or(&[]);
-    let theirs_clean = theirs.get(theirs_range.0).unwrap_or(&[]);
+    let ours_clean = slice_or_empty(ours.bytes, ours.range);
+    let theirs_clean = slice_or_empty(theirs.bytes, theirs.range);
     if !ours_clean.is_empty() || !theirs_clean.is_empty() {
         hunks.push(classify_clean_region(
-            ours_clean,
-            theirs_clean,
+            &ours_clean,
+            &theirs_clean,
             merged_clean,
         ));
     }
+}
+
+fn find_resync(
+    ours: &[u8],
+    theirs: &[u8],
+    ours_pos: usize,
+    theirs_pos: usize,
+    conflicts: &[(Vec<u8>, Diff3Block)],
+    from: usize,
+) -> Option<(usize, Range<usize>, Range<usize>)> {
+    (from..conflicts.len()).find_map(|j| {
+        let (_, next) = conflicts.get(j)?;
+        let o = anchor_section(ours, ours_pos, &next.ours)?;
+        let t = anchor_section(theirs, theirs_pos, &next.theirs)?;
+        Some((j, o, t))
+    })
 }
 
 /// Maps diff3 output boundaries back to verbatim ours/theirs bytes,
@@ -264,47 +289,50 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
         if let (Some(o), Some(t)) = (ours_range, theirs_range) {
             push_clean_region(
                 &mut hunks,
-                ours,
-                theirs,
-                OursRange(ours_pos..o.start),
-                TheirsRange(theirs_pos..t.start),
+                OursSpan {
+                    bytes: ours,
+                    range: ours_pos..o.start,
+                },
+                TheirsSpan {
+                    bytes: theirs,
+                    range: theirs_pos..t.start,
+                },
                 clean_before,
             );
+            let ours_end = o.end;
+            let theirs_end = t.end;
             hunks.push(Hunk::Conflict {
-                ours: ours.get(o.clone()).unwrap_or(&[]).to_vec(),
-                theirs: theirs.get(t.clone()).unwrap_or(&[]).to_vec(),
+                ours: slice_or_empty(ours, o),
+                theirs: slice_or_empty(theirs, t),
             });
-            ours_pos = o.end;
-            theirs_pos = t.end;
+            ours_pos = ours_end;
+            theirs_pos = theirs_end;
             i += 1;
             continue;
         }
 
-        let resync = ((i + 1)..parsed.conflicts.len()).find_map(|j| {
-            let (_, next) = parsed.conflicts.get(j)?;
-            let o = anchor_section(ours, ours_pos, &next.ours)?;
-            let t = anchor_section(theirs, theirs_pos, &next.theirs)?;
-            Some((j, o, t))
-        });
+        let resync = find_resync(ours, theirs, ours_pos, theirs_pos, &parsed.conflicts, i + 1);
 
         match resync {
             Some((j, o, t)) => {
                 hunks.push(Hunk::Conflict {
-                    ours: ours.get(ours_pos..o.start).unwrap_or(&[]).to_vec(),
-                    theirs: theirs.get(theirs_pos..t.start).unwrap_or(&[]).to_vec(),
+                    ours: slice_or_empty(ours, ours_pos..o.start),
+                    theirs: slice_or_empty(theirs, theirs_pos..t.start),
                 });
+                let ours_end = o.end;
+                let theirs_end = t.end;
                 hunks.push(Hunk::Conflict {
-                    ours: ours.get(o.clone()).unwrap_or(&[]).to_vec(),
-                    theirs: theirs.get(t.clone()).unwrap_or(&[]).to_vec(),
+                    ours: slice_or_empty(ours, o),
+                    theirs: slice_or_empty(theirs, t),
                 });
-                ours_pos = o.end;
-                theirs_pos = t.end;
+                ours_pos = ours_end;
+                theirs_pos = theirs_end;
                 i = j + 1;
             }
             None => {
                 hunks.push(Hunk::Conflict {
-                    ours: ours.get(ours_pos..).unwrap_or(&[]).to_vec(),
-                    theirs: theirs.get(theirs_pos..).unwrap_or(&[]).to_vec(),
+                    ours: slice_or_empty(ours, ours_pos..ours.len()),
+                    theirs: slice_or_empty(theirs, theirs_pos..theirs.len()),
                 });
                 ours_pos = ours.len();
                 theirs_pos = theirs.len();
@@ -315,10 +343,14 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
 
     push_clean_region(
         &mut hunks,
-        ours,
-        theirs,
-        OursRange(ours_pos..ours.len()),
-        TheirsRange(theirs_pos..theirs.len()),
+        OursSpan {
+            bytes: ours,
+            range: ours_pos..ours.len(),
+        },
+        TheirsSpan {
+            bytes: theirs,
+            range: theirs_pos..theirs.len(),
+        },
         &parsed.trailing_clean,
     );
 
