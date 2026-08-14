@@ -77,7 +77,7 @@ pub struct LoadResult {
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
 /// `session_id`.
-pub fn has_history(
+pub(crate) fn has_history(
     tx: &Transaction<'_>,
     session_id: SessionId,
     doc_id: DocId,
@@ -99,7 +99,7 @@ pub fn has_history(
 /// display it. `liveness_check` is
 /// threaded in per-call (this `Store`'s injected liveness function) rather
 /// than read from shared state — `OpKind::Load` carries it.
-pub fn load(
+pub(crate) fn load(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     session_id: SessionId,

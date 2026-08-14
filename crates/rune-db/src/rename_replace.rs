@@ -52,7 +52,7 @@ use crate::rename::{RenameOutcome, capture_and_rebind};
 /// than an in-place bump (see `schema.rs`'s module doc). `'swap'`
 /// already means "bytes an atomic `exchange` displaced", which is literally
 /// the mechanism here.
-pub fn rename_replace(
+pub(crate) fn rename_replace(
     conn: &mut rusqlite::Connection,
     vfs: &dyn Vfs,
     ds: DocSession,

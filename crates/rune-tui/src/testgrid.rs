@@ -19,7 +19,6 @@
 //! breadcrumb.rs`'s `overlay` unit tests draw a sub-`Rect` directly,
 //! bypassing `render::draw`) — `draw`/`draw_with` cover those without
 //! reintroducing a tenth hand-rolled copy.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use ratatui::Frame;
 use ratatui::Terminal;
@@ -35,6 +34,7 @@ use crate::render;
 /// render something other than the whole `App` (a single component, into
 /// its own `Rect`) still goes through here rather than rolling its own
 /// terminal.
+#[allow(clippy::expect_used)]
 pub fn draw_with(w: u16, h: u16, f: impl FnOnce(&mut Frame)) -> RtBuffer {
     let backend = TestBackend::new(w, h);
     let mut terminal = Terminal::new(backend).expect("terminal construction");
@@ -74,6 +74,7 @@ pub fn row(app: &App, y: u16, w: u16, h: u16) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use rune_core::buffer::Buffer;

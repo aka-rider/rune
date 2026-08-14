@@ -77,35 +77,24 @@ mod writer;
 mod writer_lifecycle;
 mod writer_ops;
 
-pub use adopt::{adopt_equal, resolve_abandon, resolve_adopt};
-pub use bracket::{BracketedRead, bracketed_read, stat_facts_from};
+pub use bracket::stat_facts_from;
 pub use confirmation::Confirmation;
-pub use document::{DocRef, open_path, recent_paths};
 pub use error::Error;
 pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};
-pub use journal::{
-    EditRow, Step, append_edit, current_seq, edits_in_range, move_undo_pos, redo_peek, undo_peek,
-};
-pub use load::{LoadResult, has_history, load};
-pub use materialize::{
-    DocSession, MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget,
-    prepare_materialize, record_materialize_outcome,
-};
-pub use merge_prep::{AncestorRung, MergePrepOutcome, MergePrepResult};
-pub use merge_state::{MergeCloseState, MergeRowState, ResumableMerge};
+pub use journal::{append_edit, current_seq, move_undo_pos, redo_peek, undo_peek};
+pub use load::LoadResult;
+pub use materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
+pub use merge_prep::{MergePrepOutcome, MergePrepResult};
+pub use merge_state::MergeCloseState;
 pub use obs_origin::ObsOrigin;
-pub use observation::{Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
-pub use probe::probe;
-pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};
+pub use observation::{Observation, StatFacts, hash_bytes};
+pub use reader::{ReaderQuery, ReaderReply, ReaderRequestKind};
 pub use reaper::reap_dead_sessions;
 pub use rename::RenameOutcome;
-pub use rename_bind::rename_bind;
-pub use rename_replace::rename_replace;
-pub use retry::{Classification, classify as classify_retry};
 pub use schema::SCHEMA;
 pub use session::is_process_alive;
-pub use snapshot::{create_snapshot, recover_document};
-pub use store::{ClockFn, DEGRADED_WARNING, LivenessCheckFn, Store};
-pub use sync::{SyncKind, SyncState, Version, classify_sync, is_dirty, sync};
-pub use versioning::{SCHEMA_VERSION, db_file_name, production_db_path};
-pub use writer::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH, WriteOp, WriterHandle};
+pub use snapshot::recover_document;
+pub use store::{ClockFn, DEGRADED_WARNING, Store};
+pub use sync::{SyncKind, SyncState, Version};
+pub use versioning::{SCHEMA_VERSION, db_file_name};
+pub use writer::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};

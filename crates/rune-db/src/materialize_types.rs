@@ -16,7 +16,7 @@ use crate::sync::SyncKind;
 /// clippy's argument-count lint without an `#[allow]` (repo rule: no such
 /// allow outside test code).
 #[derive(Clone, Copy, Debug)]
-pub struct DocSession {
+pub(crate) struct DocSession {
     pub doc_id: DocId,
     pub session_id: SessionId,
 }

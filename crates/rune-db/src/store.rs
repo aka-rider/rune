@@ -40,7 +40,7 @@ pub type ClockFn = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 /// An injectable liveness check: `(pid, proc_started_at) -> still running?`.
 /// Production uses [`session::is_process_alive`]; tests simulate a dead
 /// session deterministically.
-pub type LivenessCheckFn = Arc<dyn Fn(i64, &str) -> bool + Send + Sync>;
+pub(crate) type LivenessCheckFn = Arc<dyn Fn(i64, &str) -> bool + Send + Sync>;
 
 /// The default synchronous busy-of-storage warning surfaced when the open
 /// ladder bottoms out at the in-memory fallback.
@@ -64,8 +64,8 @@ pub struct Store {
 
 impl Store {
     /// Runs the open ladder against `path` (a full file path — production
-    /// callers pass `versioning::production_db_path()`; tests pass a temp
-    /// path directly, so the same ladder logic is exercised either way).
+    /// callers resolve it under `$HOME`; tests pass a temp path directly,
+    /// so the same ladder logic is exercised either way).
     /// Returns the store plus a non-fatal degradation warning; the caller
     /// may surface the warning to the user but must not treat it as
     /// failure. `on_event` receives every writer-thread completion —
@@ -227,7 +227,7 @@ impl Store {
     /// Enqueues `kind` to the writer thread, returning the op id the
     /// eventual `DbEvent` will echo back. Never blocks — a wedged writer
     /// surfaces [`Error::WriterQueueFull`] immediately.
-    pub fn enqueue(&self, kind: OpKind) -> Result<u64, Error> {
+    pub(crate) fn enqueue(&self, kind: OpKind) -> Result<u64, Error> {
         let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
         self.writer.try_send(WriteOp { id, kind })?;
         Ok(id)

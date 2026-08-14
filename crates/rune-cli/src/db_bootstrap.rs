@@ -180,10 +180,9 @@ fn blocking_call(
 /// without recovery journaling for this launch (the user's words come
 /// before every other feature — losing the DB never damages a user file).
 ///
-/// `home` is threaded in rather than read from `$HOME` directly (unlike
-/// `rune_db::production_db_path`) so this whole path is exercisable
-/// against a temp directory in tests without touching the real machine's
-/// recovery store.
+/// `home` is threaded in rather than read from `$HOME` directly so this
+/// whole path is exercisable against a temp directory in tests without
+/// touching the real machine's recovery store.
 ///
 /// `sighting` is the SAME [`rune_vfs::Sighting`] the caller already took of
 /// `path` to build the initial buffer — threaded through to

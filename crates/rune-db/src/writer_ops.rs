@@ -34,20 +34,18 @@ pub enum LoadSource {
     Taken(rune_vfs::Sighting),
 }
 
-/// The write operations the writer thread knows how to execute.
-/// [`OpKind::Noop`] is a real op that exercises the full `BEGIN
-/// IMMEDIATE`-plus-retry chokepoint without any domain semantics; the
-/// journal/snapshot domain verbs sit alongside it — no table-level CRUD
-/// escapes this crate, each variant below is one hand-written transaction
-/// embodying its own invariant.
+/// The write operations the writer thread knows how to execute — no
+/// table-level CRUD escapes this crate, each variant below is one
+/// hand-written transaction embodying its own invariant.
 /// `session_id`/`now` are baked into each variant's payload
 /// by the `Store` convenience method that constructs it —
 /// `Store` is the one place that knows this process's session identity and
 /// injected clock; the writer thread itself stays a plain
 /// `Connection` executor with no identity of its own.
-pub enum OpKind {
+pub(crate) enum OpKind {
     /// Executes an empty `BEGIN IMMEDIATE` / `COMMIT` — proves the writer's
     /// execute-with-retry path end-to-end with no side effects.
+    #[cfg(test)]
     Noop,
     /// Test-only: blocks the writer thread until a signal arrives on the
     /// receiver, used to stall the writer deterministically for the

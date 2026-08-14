@@ -7,10 +7,6 @@ pub struct Region {
 }
 
 impl Region {
-    pub fn frame(&self) -> Rect {
-        self.frame
-    }
-
     pub fn rect(&self) -> Rect {
         self.rect
     }
@@ -26,10 +22,7 @@ impl Region {
         }
     }
 
-    pub fn whole(frame: Rect) -> Region {
-        Region { frame, rect: frame }
-    }
-
+    #[cfg(test)]
     pub fn sub(frame: Rect, x: u16, y: u16, width: u16, height: u16) -> Region {
         Self::clamped(frame, x, y, width, height)
     }
@@ -42,10 +35,12 @@ impl Region {
         Self::clamped(frame, frame.x, y, frame.width, height)
     }
 
+    #[cfg(test)]
     pub fn carve_left(frame: Rect, width: u16) -> Region {
         Self::clamped(frame, frame.x, frame.y, width, frame.height)
     }
 
+    #[cfg(test)]
     pub fn carve_right(frame: Rect, width: u16) -> Region {
         let width = width.min(frame.width);
         let x = frame.right().saturating_sub(width);

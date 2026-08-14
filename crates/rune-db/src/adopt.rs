@@ -111,7 +111,7 @@ pub(crate) fn record_adoption(
 /// ancestor-eligible, unlike the bare sighting it promotes), and
 /// `saved_obs` advances to it. The crash-between-swap-and-ack recovery
 /// path — never used for an ordinary divergence.
-pub fn adopt_equal(
+pub(crate) fn adopt_equal(
     conn: &mut Connection,
     session_id: SessionId,
     doc_id: DocId,
@@ -159,7 +159,7 @@ pub fn adopt_equal(
 /// new resolve row's `parent_b` is set to `obs` itself — the disk-side
 /// observation this resolution reconciled against — completing the
 /// two-parent join alongside `parent_a`'s prior `saved_obs` baseline.
-pub fn resolve_adopt(
+pub(crate) fn resolve_adopt(
     conn: &mut Connection,
     session_id: SessionId,
     doc_id: DocId,
@@ -196,7 +196,7 @@ pub fn resolve_adopt(
     )
 }
 
-pub fn resolve_abandon(
+pub(crate) fn resolve_abandon(
     conn: &mut Connection,
     session_id: SessionId,
     doc_id: DocId,

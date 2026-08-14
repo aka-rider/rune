@@ -49,7 +49,7 @@ use crate::sync::{self, SyncKind, SyncState, Version};
 /// to probe and degrades to a pure [`sync::sync`]. A target that has gone
 /// missing surfaces [`Error::NotFound`] — the workspace layer's
 /// deleted-guard trigger (WP5).
-pub fn probe(
+pub(crate) fn probe(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     session_id: SessionId,

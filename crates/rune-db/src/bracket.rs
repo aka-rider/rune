@@ -40,13 +40,13 @@ pub fn stat_facts_from(stat: Option<Stat>) -> StatFacts {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct BracketedRead {
+pub(crate) struct BracketedRead {
     pub data: Vec<u8>,
     pub stat: StatFacts,
     pub confirmed: bool,
 }
 
-pub fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
+pub(crate) fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
     match rune_vfs::get(vfs, path, None) {
         Ok(sighting) => Ok(BracketedRead {
             data: sighting.bytes,

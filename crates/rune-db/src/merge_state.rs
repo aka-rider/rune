@@ -8,7 +8,7 @@ use crate::inherit::is_session_alive;
 use crate::retry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MergeRowState {
+pub(crate) enum MergeRowState {
     Active,
     Completed,
     Abandoned,

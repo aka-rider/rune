@@ -172,14 +172,6 @@ fn collision_doc(app: &App) -> Option<DocumentId> {
     }
 }
 
-/// The destination the collision prompt is about, for the footer's label.
-pub fn collision_target(app: &App) -> Option<String> {
-    match &app.rename {
-        RenameState::Collision { to, .. } => Some(display_name(to)),
-        _ => None,
-    }
-}
-
 fn display_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
