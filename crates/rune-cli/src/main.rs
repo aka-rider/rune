@@ -167,7 +167,26 @@ fn bootstrap(
     cwd: PathBuf,
     home: Option<PathBuf>,
 ) -> Result<AppGuard, ExitCode> {
-    let launch = match cli::parse(args, &cwd) {
+    let launch = parse_launch(vfs.as_ref(), args, &cwd)?;
+    let (app, db_bootstrap) = open_launch(&vfs, &launch, home.as_deref())?;
+
+    // From here on, a panic unwinding through this function (or `launch`
+    // above it, before `catch_unwind`) still drains the writer thread —
+    // see `AppGuard`'s own doc.
+    let mut app = AppGuard(app);
+
+    let first_doc_id = wire_root_and_extra_files(&mut app, &cwd, home.as_deref(), &launch);
+    apply_db_bootstrap(&mut app, db_bootstrap, first_doc_id);
+
+    Ok(app)
+}
+
+fn parse_launch(
+    vfs: &(dyn Vfs + Send + Sync),
+    args: impl Iterator<Item = OsString>,
+    cwd: &Path,
+) -> Result<cli::Cli, ExitCode> {
+    let launch = match cli::parse(args, cwd) {
         Ok(CliAction::Version) => {
             println!("rune {}", env!("CARGO_PKG_VERSION"));
             return Err(ExitCode::SUCCESS);
@@ -180,117 +199,83 @@ fn bootstrap(
         Err(e) => return Err(open::usage_error(&e)),
     };
 
-    // `-w`'s existence/directory-ness check (`open::validate_work_dir`)
-    // goes through the injected `Vfs`, same as `workspaceroot::resolve`'s
-    // own `read_dir` walk below (WP7.S4) — only the earlier
-    // `env::current_dir()`/`$HOME` reads bypass it, since `Vfs` has no
-    // cwd/env concept of its own.
     if let Some(dir) = &launch.work_dir
-        && let Err(e) = open::validate_work_dir(vfs.as_ref(), dir)
+        && let Err(e) = open::validate_work_dir(vfs, dir)
     {
         return Err(open::usage_error(&e));
     }
 
-    let (app, db_bootstrap) = if let Some(path) = launch.files.first() {
-        // The SAME resolution chokepoint every other open path (every
-        // extra positional below, and the Explorer) already funnels
-        // through — `workspace::resolve` — so the first positional can
-        // never bind as an unresolved spelling that a later open of the
-        // identical underlying file (a symlink, a `..` segment, a
-        // duplicated absolute path) would fail to recognize as the same
-        // document (plan [rune-cli 2]). `open::open_first_positional`
-        // (plan WP4.S8) is what actually decides whether that resolved
-        // path opens as text or as a read-only image document. A resolve
-        // failure (an unreadable/missing ancestor, a symlink loop) is a
-        // load failure exactly like `load_sighting`'s own `Io` arm below —
-        // reported the same way, at the same exit code, rather than
-        // silently launching under the unnormalized spelling.
-        let path = match workspace::resolve(vfs.as_ref(), path) {
-            Ok(path) => path,
-            Err(e) => {
-                eprintln!("rune: cannot resolve {}: {e}", path.display());
-                return Err(ExitCode::from(exit_code::IO_ERR));
-            }
-        };
-        open::open_first_positional(&vfs, path, home.as_deref())?
-    } else {
-        // No positional files — open the default untitled document
-        // (`App::new_untitled`), genuinely recovery-backed (plan WP3):
-        // `open::open_untitled` opens/recovers its own scratch row through
-        // the SAME recovery store a file launch uses, rather than always
-        // starting with `db: None`.
-        open::open_untitled(&vfs, home.as_deref())
+    Ok(launch)
+}
+
+fn open_launch(
+    vfs: &Arc<dyn Vfs + Send + Sync>,
+    launch: &cli::Cli,
+    home: Option<&Path>,
+) -> Result<(App, db_bootstrap::DbBootstrap), ExitCode> {
+    let Some(path) = launch.files.first() else {
+        return Ok(open::open_untitled(vfs, home));
     };
+    let path = match workspace::resolve(vfs.as_ref(), path) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("rune: cannot resolve {}: {e}", path.display());
+            return Err(ExitCode::from(exit_code::IO_ERR));
+        }
+    };
+    open::open_first_positional(vfs, path, home)
+}
 
-    // From here on, a panic unwinding through this function (or `launch`
-    // above it, before `catch_unwind`) still drains the writer thread —
-    // see `AppGuard`'s own doc.
-    let mut app = AppGuard(app);
-
-    // `-w` wins outright; otherwise walk up from `cwd` (falling back to the
-    // first file's parent) for a `.git`/`.obsidian` marker. Every actual
-    // directory read during the walk goes through `app.vfs`.
+fn wire_root_and_extra_files(
+    app: &mut AppGuard,
+    cwd: &Path,
+    home: Option<&Path>,
+    launch: &cli::Cli,
+) -> rune_tui::document::DocumentId {
     let root = open::resolve_root(
         app.vfs.as_ref(),
-        &cwd,
-        home.as_deref(),
+        cwd,
+        home,
         launch.work_dir.as_deref(),
         launch.files.first().map(|p| p.as_path()),
     );
     app.set_root(root);
 
     let first_doc_id = app.active;
-    open::open_extra_files(&mut app, &launch.files, first_doc_id);
+    open::open_extra_files(app, &launch.files, first_doc_id);
+    first_doc_id
+}
 
-    app.db_banner = db_bootstrap.banner.clone();
-    if let Some(banner) = &db_bootstrap.banner {
-        rune_tui::messages::error(&mut app, banner.clone());
+fn apply_db_bootstrap(
+    app: &mut AppGuard,
+    db_bootstrap: db_bootstrap::DbBootstrap,
+    first_doc_id: rune_tui::document::DocumentId,
+) {
+    if let Some(banner) = db_bootstrap.banner.clone() {
+        rune_tui::messages::error(app, banner);
     }
-    // The DocDb half of the old combined AppDb (plan WP1 decision 5)
-    // installs on the initial document — App::new only wires up the
-    // app-wide store handle above.
+    app.db_banner = db_bootstrap.banner;
     if let Some(doc_db) = db_bootstrap.doc_db {
         let db_id = doc_db.db_id;
         app.active_doc_mut().bind_doc_db(doc_db);
-        // Joins `db_id`'s shared CAS baseline, seeded from this launch's own
-        // `Load`/scratch-row observation, exactly like every later
-        // `db_ack::handle_load_ack`/`handle_create_scratch_ack` does for a
-        // document opened mid-session.
         app.install_or_join_file_binding(db_id, db_bootstrap.expect_obs);
     }
-    // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s
-    // own doc comment) — set unconditionally, exactly like
-    // `db_ack::handle_load_ack` does for every later reload, so the ⌘S
-    // Guard/footer hint/merge machinery see this session's very first
-    // `Load` outcome too, not just subsequent ones.
     if let Some(sync_kind) = db_bootstrap.sync_kind {
         app.active_doc_mut().last_sync = Some(sync_kind);
     }
     if let Some(nlink) = db_bootstrap.nlink {
         app.active_doc_mut().nlink = Some(nlink);
-        rune_tui::db_ack::warn_hard_links(&mut app, nlink);
+        rune_tui::db_ack::warn_hard_links(app, nlink);
     }
     if let Some(recovered) = db_bootstrap.recovered_content {
-        // Adopts a dead session's inherited draft content through the same
-        // chokepoint `db::handle_load_ack` uses for every later per-document
-        // hydration (plan WP5.S2): the destructive-reset suspicion
-        // check, the synthetic bridge `Step` so post-restart undo reaches
-        // `disk_content` in one step, and a refusal surfaced rather than
-        // silently applied. The buffer here still holds exactly what
-        // `load_sighting` read off disk, so it IS `disk_content`.
         let disk_content = app.active_doc_mut().buffer.content().to_string();
         if let rune_tui::document::Hydration::Refused(reason) =
             app.active_doc_mut().hydrate(&disk_content, &recovered)
         {
-            rune_tui::messages::error(&mut app, format!("crash recovery: {reason}"));
+            rune_tui::messages::error(app, format!("crash recovery: {reason}"));
         }
-        // Dirty is a content comparison now (plan WP1) — `hydrate` no
-        // longer marks it itself, so every hydration site re-derives it
-        // explicitly.
         app.recompute_dirty(first_doc_id);
     }
-
-    Ok(app)
 }
 
 /// Extracts a human-readable message from a `catch_unwind` payload. `panic!`

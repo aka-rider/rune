@@ -80,6 +80,24 @@ struct OpenedStore {
     warning: Option<String>,
 }
 
+impl From<String> for DbBootstrap {
+    fn from(banner: String) -> Self {
+        DbBootstrap {
+            banner: Some(banner),
+            ..DbBootstrap::default()
+        }
+    }
+}
+
+impl From<String> for DbBootstrapUntitled {
+    fn from(banner: String) -> Self {
+        DbBootstrapUntitled {
+            banner: Some(banner),
+            ..DbBootstrapUntitled::default()
+        }
+    }
+}
+
 /// Runs the shared open ladder (`db_path_for` -> `DbBridge::bootstrap` ->
 /// `Store::open` -> `store.degraded()`) once, instead of writing it out per
 /// bootstrap shape. `Err` is the ready-to-use banner text, already carrying
@@ -186,12 +204,7 @@ pub(crate) fn bootstrap_db(
         warning: open_warning,
     } = match open_store(vfs, home) {
         Ok(opened) => opened,
-        Err(banner) => {
-            return DbBootstrap {
-                banner: Some(banner),
-                ..DbBootstrap::default()
-            };
-        }
+        Err(banner) => return banner.into(),
     };
 
     let load_outcome = blocking_call(&bridge, || store.load_sighted(path, sighting));
@@ -318,12 +331,7 @@ pub(crate) fn bootstrap_untitled_db(
         warning: open_warning,
     } = match open_store(vfs, home) {
         Ok(opened) => opened,
-        Err(banner) => {
-            return DbBootstrapUntitled {
-                banner: Some(banner),
-                ..DbBootstrapUntitled::default()
-            };
-        }
+        Err(banner) => return banner.into(),
     };
 
     // `exclude_id: 0` — this is a fresh launch; no document row this
@@ -429,12 +437,7 @@ pub(crate) fn bootstrap_new_file(
         warning: open_warning,
     } = match open_store(vfs, home) {
         Ok(opened) => opened,
-        Err(banner) => {
-            return DbBootstrap {
-                banner: Some(banner),
-                ..DbBootstrap::default()
-            };
-        }
+        Err(banner) => return banner.into(),
     };
 
     let db_id = match blocking_call(&bridge, || store.create_scratch()) {
@@ -484,12 +487,7 @@ pub(crate) fn bootstrap_store_only(
         warning: open_warning,
     } = match open_store(vfs, home) {
         Ok(opened) => opened,
-        Err(banner) => {
-            return DbBootstrap {
-                banner: Some(banner),
-                ..DbBootstrap::default()
-            };
-        }
+        Err(banner) => return banner.into(),
     };
 
     let db = Db::new(store, bridge, degraded_at_open);

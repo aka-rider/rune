@@ -454,7 +454,9 @@ pub fn toggle_help(app: &mut App, effects: &mut Effects) {
 // (500-line budget, WP5.S7's image-delete-on-close hook) — re-exported below so
 // every existing `workspace::` call site keeps working unchanged.
 pub(crate) mod close;
-pub use close::{close_now, new_untitled_document, next_untitled_name, request_close};
+pub use close::{
+    CloseOutcome, close_now, new_untitled_document, next_untitled_name, request_close,
+};
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]

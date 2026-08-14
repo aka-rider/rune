@@ -71,50 +71,71 @@ pub(crate) fn resolve_root(
 /// (`kind_for` via `rune_tui::document_support::is_image_path`) never reaches
 /// `load_sighting` at all — image bytes are never valid UTF-8 in general, and
 /// even a coincidentally UTF-8-clean image must still open read-only, not
-/// as editable text — so it's routed through the SAME dispatch every extra
-/// positional (and the Explorer) already uses, `workspace::open_path`, via
-/// a freshly built untitled `App` as an anchor (there is no buffer to
-/// pre-load for an image). That anchor's blank draft is closed once the
-/// image opens — it was never edited, so discarding it loses nothing, and
-/// a single-file image launch should show exactly the image, not the image
-/// plus an empty extra tab. Every other path keeps the ordinary text-load
-/// shape unchanged.
+/// as editable text — so [`open_first_image`] routes it through the SAME
+/// dispatch every extra positional (and the Explorer) already uses,
+/// `workspace::open_path`. Every other path keeps the ordinary text-load
+/// shape unchanged, in [`open_first_text`].
 pub(crate) fn open_first_positional(
     vfs: &Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     if rune_tui::document_support::is_image_path(&path) {
-        // An image-first launch still needs the session store —
-        // later markdown opens (Explorer, extra positionals) must not
-        // silently journal nothing for the whole session. The image
-        // document itself stays recovery-free either way (`workspace::
-        // open_path` binds no `DocDb` for an image), so this only affects
-        // documents opened AFTER this one.
-        let mut bootstrap = bootstrap_store_only(Arc::clone(vfs), home);
-        let mut app = App::new_untitled(Arc::clone(vfs), bootstrap.db.take());
-        let blank = app.active;
-        let opened = workspace::open_path(&mut app, &path);
-        if let Some(image_id) = opened
-            && image_id != blank
-        {
-            // A scratch sink: no runtime/terminal exists yet at this point
-            // in the CLI bootstrap, and the blank draft being
-            // closed here is never an image document, so `close_now`'s
-            // image-delete branch is a no-op on this path either
-            // way.
-            let _ =
-                workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
-        }
-        return Ok((
-            app,
-            DbBootstrap {
-                banner: bootstrap.banner,
-                ..DbBootstrap::default()
-            },
-        ));
+        Ok(open_first_image(vfs, &path, home))
+    } else {
+        open_first_text(vfs, path, home)
     }
+}
 
+/// An image-first launch still needs the session store —
+/// later markdown opens (Explorer, extra positionals) must not
+/// silently journal nothing for the whole session. The image
+/// document itself stays recovery-free either way (`workspace::
+/// open_path` binds no `DocDb` for an image), so this only affects
+/// documents opened AFTER this one. Opens through a freshly built
+/// untitled `App` as an anchor (there is no buffer to pre-load for an
+/// image); that anchor's blank draft is closed once the image opens — it
+/// was never edited, so discarding it loses nothing, and a single-file
+/// image launch should show exactly the image, not the image plus an
+/// empty extra tab.
+fn open_first_image(
+    vfs: &Arc<dyn Vfs + Send + Sync>,
+    path: &Path,
+    home: Option<&Path>,
+) -> (App, DbBootstrap) {
+    let mut bootstrap = bootstrap_store_only(Arc::clone(vfs), home);
+    let mut app = App::new_untitled(Arc::clone(vfs), bootstrap.db.take());
+    let blank = app.active;
+    let opened = workspace::open_path(&mut app, path);
+    if let Some(image_id) = opened
+        && image_id != blank
+    {
+        // A scratch sink: no runtime/terminal exists yet at this point
+        // in the CLI bootstrap, and the blank draft being
+        // closed here is never an image document, so `close_now`'s
+        // image-delete branch is a no-op on this path either
+        // way.
+        match workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default()) {
+            workspace::CloseOutcome::Closed => {}
+            workspace::CloseOutcome::Unknown => {
+                eprintln!("rune: internal error: failed to close the placeholder draft");
+            }
+        }
+    }
+    (
+        app,
+        DbBootstrap {
+            banner: bootstrap.banner,
+            ..DbBootstrap::default()
+        },
+    )
+}
+
+fn open_first_text(
+    vfs: &Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    home: Option<&Path>,
+) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     // One sighting decides both "does this path exist" and, if so, the
     // buffer's text — never a separate `vfs.stat` plus a separate read of
     // the same path, and `load_sighting` hands back text already validated
