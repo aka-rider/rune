@@ -47,7 +47,8 @@ use crate::retry;
 use crate::writer_lifecycle::{
     IDLE_TIMEOUT, fatal, run_idle_maintenance, run_shutdown_maintenance,
 };
-pub use crate::writer_ops::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH};
+pub(crate) use crate::writer_ops::OpKind;
+pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
 
 /// This writer thread's own record of one bound document's LOCAL
 /// undo-position numbering, scoped to THIS process's session (never shared
@@ -97,7 +98,7 @@ impl DocUndoState {
 }
 
 /// One write operation queued to the writer thread.
-pub struct WriteOp {
+pub(crate) struct WriteOp {
     /// Caller-assigned id, echoed back in the eventual [`DbEvent`] so the
     /// caller can correlate completion to request.
     pub id: u64,
@@ -108,7 +109,7 @@ pub struct WriteOp {
 /// `sender`/`thread` are `pub(crate)` so [`WriterHandle::shutdown`]
 /// (`writer_lifecycle.rs`) can destructure `self` — the shutdown sequence
 /// is writer-thread lifecycle housekeeping, not queue dispatch.
-pub struct WriterHandle {
+pub(crate) struct WriterHandle {
     pub(crate) sender: SyncSender<WriteOp>,
     pub(crate) thread: Option<thread::JoinHandle<()>>,
 }
@@ -241,6 +242,7 @@ fn execute_op(
     undo_state: &mut HashMap<DocId, DocUndoState>,
 ) -> Result<OpOutcome, Error> {
     match kind {
+        #[cfg(test)]
         OpKind::Noop => {
             retry::with_retry(conn, |_tx| Ok(()))?;
             Ok(OpOutcome::None)

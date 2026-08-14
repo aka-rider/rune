@@ -451,16 +451,11 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     },
 ];
 
-/// The canonical (non-alias) chord glyph for `cmd`, for chrome that names a
-/// command instead of iterating the table — the footer's `⌘S` hint, the
-/// breadcrumb's navigation controls. Rebinding a command moves its glyph
-/// everywhere at once; no chrome spells a chord out by hand.
-pub fn label_for(cmd: GlobalCommand) -> Option<String> {
-    canonical(cmd).map(Binding::label)
-}
-
-/// `label_for` paired with the command's own help text, for chrome that
-/// names a command as a whole key hint rather than a bare glyph.
+/// The canonical (non-alias) chord glyph for `cmd` paired with the
+/// command's own help text, for chrome that names a command instead of
+/// iterating the table — the footer's `⌘S` hint, the breadcrumb's
+/// navigation controls. Rebinding a command moves its glyph everywhere at
+/// once; no chrome spells a chord out by hand.
 pub fn hint_for(cmd: GlobalCommand) -> Option<(String, &'static str)> {
     canonical(cmd).map(|b| (b.label(), b.help))
 }

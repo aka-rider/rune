@@ -38,7 +38,7 @@ pub struct Step {
 
 /// One edit row tagged with the journal seq it was recorded at.
 #[derive(Clone, Debug, PartialEq)]
-pub struct EditRow {
+pub(crate) struct EditRow {
     pub seq: Seq,
     pub edits: Vec<AppliedEdit>,
 }
@@ -157,7 +157,7 @@ pub fn current_seq(
 /// `&Transaction` — callable from either the writer's own transaction (via
 /// `Transaction`'s `Deref<Target=Connection>` coercion) or a plain read
 /// connection.
-pub fn edits_in_range(
+pub(crate) fn edits_in_range(
     conn: &rusqlite::Connection,
     session_id: SessionId,
     doc_id: DocId,

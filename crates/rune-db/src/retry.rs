@@ -35,7 +35,7 @@ use crate::Error;
 
 /// How `retry::classify` interprets a failed op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Classification {
+pub(crate) enum Classification {
     /// Extended code 517 (`SQLITE_BUSY_SNAPSHOT`): roll back and restart the
     /// whole transaction.
     RestartTransaction,
@@ -47,7 +47,7 @@ pub enum Classification {
 }
 
 /// Classifies a failed SQLite operation per the module doc.
-pub fn classify(err: &rusqlite::Error) -> Classification {
+pub(crate) fn classify(err: &rusqlite::Error) -> Classification {
     const SQLITE_BUSY_SNAPSHOT: i32 = 517;
 
     if err.sqlite_extended_error_code() == Some(SQLITE_BUSY_SNAPSHOT) {

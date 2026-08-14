@@ -28,7 +28,7 @@ use crate::retry;
 /// path arrived at a different name than the row already on file (a
 /// detected rename).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DocRef {
+pub(crate) struct DocRef {
     pub id: DocId,
     pub renamed_from: Option<String>,
 }
@@ -47,7 +47,7 @@ fn stat_id(vfs: &dyn Vfs, path: &Path) -> Option<(i64, i64)> {
 /// Resolves the VFS document for a file that exists on disk. Must only be
 /// called after the file has been successfully read (so stat can obtain a
 /// real inode) — `load::load` satisfies this by reading before calling.
-pub fn open_path(
+pub(crate) fn open_path(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     path: &Path,
@@ -189,7 +189,7 @@ fn open_path_by_inode(
 /// recent` already relies on for its own MRU column. An evicted row
 /// (`path=''`) and a non-`'file'` `kind` (scratch/chat) are excluded: only
 /// a still-named, real file belongs in the finder's list.
-pub fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
+pub(crate) fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
     let mut stmt = conn.prepare(
         "SELECT path FROM documents WHERE path != '' AND kind = ?1 \
          ORDER BY last_seen_at DESC LIMIT ?2",

@@ -26,7 +26,7 @@ use crate::session::format_rfc3339_nanos;
 /// chains. `seq` should be the most recently returned seq from
 /// `journal::append_edit` so `recover_document` can find this snapshot as
 /// the closest anchor for any replay.
-pub fn create_snapshot(
+pub(crate) fn create_snapshot(
     tx: &Transaction<'_>,
     session_id: SessionId,
     now: SystemTime,

@@ -44,8 +44,9 @@ use crate::observation::{self, Observation, ObservationMeta, StatFacts};
 use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
 
+pub(crate) use crate::materialize_types::DocSession;
 pub use crate::materialize_types::{
-    DocSession, MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget,
+    MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget,
 };
 
 /// Step 1 (now caller-facing): fetches the decision data for an `Existing`
@@ -58,7 +59,7 @@ pub use crate::materialize_types::{
 /// even while every disk in the workspace is unreachable, and the caller's
 /// OWN subsequent disk work never depends on the writer thread being alive
 /// a moment longer than it takes to answer this one query).
-pub fn prepare_materialize(
+pub(crate) fn prepare_materialize(
     conn: &mut Connection,
     ds: DocSession,
     target: MaterializeTarget,
@@ -101,7 +102,7 @@ pub fn prepare_materialize(
 /// non-UTF-8 path is rejected loudly rather than mangled), the one place
 /// this module still needs a `Path` at all, and it never touches disk to
 /// produce it.
-pub fn record_materialize_outcome(
+pub(crate) fn record_materialize_outcome(
     conn: &mut Connection,
     ds: DocSession,
     resolved_path: &Path,

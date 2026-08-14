@@ -26,7 +26,7 @@ use crate::rename::{RenameOutcome, rebind};
 /// `from`. That degrades safely: the next ⌘S CASes against a path that no
 /// longer exists and refuses with `MatResult::Missing` rather than writing
 /// anywhere unexpected.
-pub fn rename_bind(
+pub(crate) fn rename_bind(
     conn: &mut rusqlite::Connection,
     vfs: &dyn Vfs,
     ds: DocSession,

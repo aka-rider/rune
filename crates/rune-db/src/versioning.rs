@@ -82,28 +82,6 @@ pub fn db_file_name(version: u32) -> String {
     format!("rune-v{version}.db")
 }
 
-/// The production database path:
-/// `$HOME/Library/Application Support/rune/rune-v{SCHEMA_VERSION}.db`
-/// (plan decision 1 — one global DB for every instance/workspace; built from
-/// `$HOME` since this is a macOS-only app with no `directories` dependency).
-///
-/// Returns `None` when `$HOME` isn't set — the caller (`store::open`'s
-/// production entry point) treats that exactly like any other open-ladder
-/// failure and falls back to the degraded in-memory store.
-pub fn production_db_path() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    if home.is_empty() {
-        return None;
-    }
-    Some(
-        std::path::PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("rune")
-            .join(db_file_name(SCHEMA_VERSION)),
-    )
-}
-
 /// How old (by filesystem mtime) an old-version `rune-v{M}.db` file must be
 /// before the GC will even consider it — the residual-race mitigation
 /// documented above (a stale binary launching against an already-idle file

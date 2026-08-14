@@ -145,14 +145,14 @@ pub struct StatFacts {
 /// Stats `path` through `vfs` and returns the resulting [`StatFacts`]. Pure —
 /// no DB access, so callers control exactly when this (disk I/O) runs
 /// relative to any open transaction.
-pub fn stat_identity(vfs: &dyn Vfs, path: &Path) -> StatFacts {
+pub(crate) fn stat_identity(vfs: &dyn Vfs, path: &Path) -> StatFacts {
     crate::bracket::stat_facts_from(vfs.stat(path).ok())
 }
 
 /// The non-stat facts describing what an observation records — bundled with
 /// [`StatFacts`] for the same argument-count reason.
 #[derive(Clone, Copy, Debug)]
-pub struct ObservationMeta<'a> {
+pub(crate) struct ObservationMeta<'a> {
     pub blob_hash: &'a str,
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible).

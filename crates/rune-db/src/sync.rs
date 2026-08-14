@@ -198,13 +198,6 @@ pub fn sync_with_theirs(
     })
 }
 
-/// Dirty ⟺ ours differs from ancestor (`BufferAhead` or `Diverged`) — NEVER
-/// `kind != Clean`, which would also flag `DiskAhead` (a pure external
-/// change with nothing of the user's unsaved) as phantom-dirty.
-pub fn is_dirty(kind: SyncKind) -> bool {
-    matches!(kind, SyncKind::BufferAhead | SyncKind::Diverged)
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
