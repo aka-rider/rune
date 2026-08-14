@@ -168,6 +168,31 @@ fn undo_with_empty_journal_is_a_no_op() {
 }
 
 #[test]
+fn undo_at_the_journal_start_posts_nothing_to_undo() {
+    let mut app = app_with("hello", 0);
+    let id = app.active;
+    undo(&mut app, id);
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some("nothing to undo"),
+        "undoing an empty journal must surface a status message"
+    );
+}
+
+#[test]
+fn redo_with_nothing_ahead_posts_nothing_to_redo() {
+    let mut app = app_with("hello", 5);
+    let id = app.active;
+    insert_char(&mut app, id, '!');
+    redo(&mut app, id);
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some("nothing to redo"),
+        "redoing with nothing ahead must surface a status message"
+    );
+}
+
+#[test]
 fn cjk_and_emoji_round_trip_byte_exact_through_undo() {
     let mut app = app_with("汉字 👩‍👩‍👧‍👦", 0);
     let id = app.active;
@@ -325,8 +350,8 @@ fn reading_view_blocks_undo_and_redo() {
     );
     assert_eq!(
         rune_tui::messages::newest_text(&app),
-        None,
-        "a reading-view undo refusal is silent, pinning pre-existing behavior"
+        ReadOnly::Reading.refusal_message(),
+        "a reading-view undo refusal must surface a status message"
     );
 
     redo(&mut app, id);
@@ -342,8 +367,8 @@ fn reading_view_blocks_undo_and_redo() {
     );
     assert_eq!(
         rune_tui::messages::newest_text(&app),
-        None,
-        "a reading-view redo refusal is silent, pinning pre-existing behavior"
+        ReadOnly::Reading.refusal_message(),
+        "a reading-view redo refusal must surface a status message"
     );
 }
 

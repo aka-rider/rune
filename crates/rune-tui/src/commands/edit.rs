@@ -262,8 +262,19 @@ pub fn undo(app: &mut App, id: DocumentId) {
     if app.refuse_if_preview(id) {
         return;
     }
-    let Some(doc) = app.doc(id) else { return };
-    if matches!(doc.read_only, ReadOnly::Reading) {
+    let Some(read_only) = app.doc(id).map(|doc| doc.read_only) else {
+        return;
+    };
+    if read_only == ReadOnly::Reading {
+        app.refuse_if_read_only(read_only);
+        return;
+    }
+
+    if app
+        .doc(id)
+        .is_some_and(|doc| doc.journal.undo_peek().is_none())
+    {
+        messages::info(app, "nothing to undo");
         return;
     }
 
@@ -314,8 +325,19 @@ pub fn redo(app: &mut App, id: DocumentId) {
     if app.refuse_if_preview(id) {
         return;
     }
-    let Some(doc) = app.doc(id) else { return };
-    if matches!(doc.read_only, ReadOnly::Reading) {
+    let Some(read_only) = app.doc(id).map(|doc| doc.read_only) else {
+        return;
+    };
+    if read_only == ReadOnly::Reading {
+        app.refuse_if_read_only(read_only);
+        return;
+    }
+
+    if app
+        .doc(id)
+        .is_some_and(|doc| doc.journal.redo_peek().is_none())
+    {
+        messages::info(app, "nothing to redo");
         return;
     }
 
