@@ -148,18 +148,19 @@ pub(super) fn decode_embed_cmd(
 /// waiting on anymore; (b) otherwise clear `in_flight` unconditionally, so
 /// a document can never wedge waiting on a decode that already returned;
 /// (c) a decode error becomes `ImageStatus::Failed`, the info card's own
-/// reason line; (d) success computes the fit-to-width footprint from the
-/// CURRENT pane width and cell geometry, stores it (feeding the producer
-/// via `Document::view`'s existing `image.cells` read), and — Kitty only —
-/// encodes and pushes a transmit escape into `effects.raw`, forcing a full
-/// redraw alongside it (plan WP6.S1/S6's reasoning: the reload command
-/// reaches this exact handler, and a reload's placeholder cells are
-/// typically byte-identical to what was already on screen — same id, same
+/// reason line; (d) a decode success computes the fit-to-width footprint
+/// from the CURRENT pane width and cell geometry, stores it (feeding the
+/// producer via `Document::view`'s existing `image.cells` read), and —
+/// Kitty only — encodes and pushes a transmit escape into `effects.raw`,
+/// forcing a full redraw alongside it (the reload command reaches this
+/// exact handler, and a reload's placeholder cells are typically
+/// byte-identical to what was already on screen — same id, same
 /// diacritics — so ratatui's own "only repaint changed cells" diffing
 /// cannot be trusted to notice the underlying pixels changed. Forcing it
 /// unconditionally on every successful transmit, not just a reload, costs
 /// nothing worse than one redundant `Terminal::clear` on the very first
-/// open, which had nothing to redraw over anyway).
+/// open, which had nothing to redraw over anyway); an encode failure lands
+/// the document in `ImageStatus::Failed` too, the same as a decode error.
 pub(crate) fn handle_image_decoded(
     app: &mut App,
     id: DocumentId,
@@ -208,14 +209,18 @@ pub(crate) fn handle_image_decoded(
         pane_width,
         cell,
     );
-    let raw = kitty
-        .then(|| rune_image::fit_and_encode(&decoded, img_id, cells.cols, cells.rows, cell).ok())
-        .flatten();
-    image.status = ImageStatus::Live { decoded, cells };
-    if let Some(bytes) = raw {
-        effects.raw.push(bytes.into_bytes());
-        effects.force_redraw |= was_live;
-    }
+    image.status = if kitty {
+        match rune_image::fit_and_encode(&decoded, img_id, cells.cols, cells.rows, cell) {
+            Ok(bytes) => {
+                effects.raw.push(bytes.into_bytes());
+                effects.force_redraw |= was_live;
+                ImageStatus::Live { decoded, cells }
+            }
+            Err(e) => ImageStatus::Failed(e.to_string()),
+        }
+    } else {
+        ImageStatus::Live { decoded, cells }
+    };
 }
 
 #[cfg(test)]
