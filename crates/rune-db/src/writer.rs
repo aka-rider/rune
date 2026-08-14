@@ -518,15 +518,18 @@ fn execute_op(
             crate::adopt::resolve_abandon(conn, session_id, doc_id)?;
             Ok(OpOutcome::None)
         }
-        OpKind::CreateScratch { now } => {
-            let id = crate::scratch::create_scratch(conn, now)?;
+        OpKind::CreateScratch { session_id, now } => {
+            let id = crate::scratch::create_scratch(conn, session_id, now)?;
             // A brand-new row, never bound before — local position `0`
             // starts at durable seq `0`, same as `Load`'s doc comment.
             undo_state.insert(id, DocUndoState::default());
             Ok(OpOutcome::ScratchDocId(id))
         }
-        OpKind::GcEmptyScratch { keep_id } => {
-            crate::scratch::gc_empty_scratch(conn, keep_id)?;
+        OpKind::GcEmptyScratch {
+            keep_id,
+            liveness_check,
+        } => {
+            crate::scratch::gc_empty_scratch(conn, keep_id, liveness_check.as_ref())?;
             Ok(OpOutcome::None)
         }
         OpKind::RecoverableScratch { exclude_id } => {

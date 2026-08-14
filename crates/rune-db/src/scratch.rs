@@ -12,49 +12,74 @@ use rusqlite::{Connection, params};
 
 use crate::Error;
 use crate::doc_kind::DocKind;
-use crate::ids::DocId;
+use crate::ids::{DocId, SessionId};
 use crate::inherit::{is_session_alive, most_recent_session_for_doc};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
-/// Inserts a brand-new, unbound scratch `documents` row and returns its id.
-/// inode/device are left NULL (never a literal 0 sentinel): a scratch
-/// document has no file identity at all. `schema.rs`'s `kind` CHECK already
-/// permits `'scratch'`, and both unique indexes are partial (`WHERE path !=
-/// ''`, `WHERE inode IS NOT NULL`), so many `path=''` rows are legal side by
-/// side.
-pub fn create_scratch(conn: &mut Connection, now: SystemTime) -> Result<DocId, Error> {
+pub fn create_scratch(
+    conn: &mut Connection,
+    session_id: SessionId,
+    now: SystemTime,
+) -> Result<DocId, Error> {
     let at = format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
         tx.execute(
             "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('',?1,?2,?2)",
             params![DocKind::Scratch.as_str(), at],
         )?;
-        Ok(DocId(tx.last_insert_rowid()))
+        let doc_id = DocId(tx.last_insert_rowid());
+        tx.execute(
+            "INSERT INTO session_documents(session_id, doc_id) VALUES(?1,?2)",
+            params![session_id, doc_id],
+        )?;
+        Ok(doc_id)
     })
 }
 
-/// Deletes unbound scratch rows carrying neither events nor snapshots —
-/// leftover empty drafts from prior sessions. `keep_id` is never deleted
-/// (the live untitled document this session is about to bind). Returns the
-/// number of rows removed.
-///
-/// Deliberately includes an `inode IS NULL` filter:
-/// `rebind.rs`/`document.rs` also blank `path` on eviction,
-/// and those orphaned BOUND rows retain a real inode. Without this filter
-/// this would delete evicted-but-bound rows too and cascade away their
-/// `observations` — the CAS-baseline material `sync`/`materialize` derive
-/// from — a data-loss bug, not a cosmetic one.
-pub fn gc_empty_scratch(conn: &mut Connection, keep_id: i64) -> Result<i64, Error> {
+pub fn gc_empty_scratch(
+    conn: &mut Connection,
+    keep_id: i64,
+    liveness_check: &dyn Fn(i64, &str) -> bool,
+) -> Result<i64, Error> {
     retry::with_retry(conn, |tx| {
-        let deleted = tx.execute(
-            "DELETE FROM documents \
-             WHERE path='' AND inode IS NULL AND id!=?1 \
-               AND id NOT IN (SELECT DISTINCT doc_id FROM events) \
-               AND id NOT IN (SELECT DISTINCT doc_id FROM snapshots)",
-            params![keep_id],
-        )?;
-        Ok(i64::try_from(deleted).unwrap_or(i64::MAX))
+        let candidates: Vec<i64> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM documents \
+                 WHERE path='' AND inode IS NULL AND id!=?1 \
+                   AND id NOT IN (SELECT DISTINCT doc_id FROM events) \
+                   AND id NOT IN (SELECT DISTINCT doc_id FROM snapshots) \
+                   AND id NOT IN (SELECT DISTINCT doc_id FROM observations) \
+                   AND id NOT IN (SELECT DISTINCT doc_id FROM merges)",
+            )?;
+            stmt.query_map(params![keep_id], |r| r.get(0))?
+                .collect::<Result<Vec<i64>, _>>()?
+        };
+
+        let mut deleted = 0i64;
+        for doc_id in candidates {
+            let claiming_sessions: Vec<SessionId> = {
+                let mut stmt = tx
+                    .prepare("SELECT DISTINCT session_id FROM session_documents WHERE doc_id=?1")?;
+                stmt.query_map(params![doc_id], |r| r.get::<_, i64>(0).map(SessionId))?
+                    .collect::<Result<Vec<SessionId>, _>>()?
+            };
+
+            let mut any_alive = false;
+            for claiming_session in claiming_sessions {
+                if is_session_alive(tx, liveness_check, claiming_session)? {
+                    any_alive = true;
+                    break;
+                }
+            }
+            if any_alive {
+                continue;
+            }
+
+            let rows = tx.execute("DELETE FROM documents WHERE id=?1", params![doc_id])?;
+            deleted += i64::try_from(rows).unwrap_or(i64::MAX);
+        }
+        Ok(deleted)
     })
 }
 
@@ -142,15 +167,13 @@ mod tests {
         }]
     }
 
-    /// End-to-end done-when gate: create a scratch, journal an edit under a
-    /// session, mark that session dead, and confirm `recoverable_scratch`
-    /// surfaces it while `reconstruct_scratch` yields the draft text.
     #[test]
     fn scratch_with_history_from_a_dead_session_is_recoverable_and_reconstructs() {
         let mut conn = open();
         let dead_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
-        let doc_id = create_scratch(&mut conn, SystemTime::now()).expect("create scratch");
+        let doc_id =
+            create_scratch(&mut conn, dead_session, SystemTime::now()).expect("create scratch");
 
         {
             let tx = conn.transaction().expect("tx");
@@ -167,8 +190,6 @@ mod tests {
             tx.commit().expect("commit");
         }
 
-        // A different, live session is the one calling — excludes its own
-        // (irrelevant) id, and never touched doc_id itself.
         let this_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("this session");
 
@@ -183,11 +204,14 @@ mod tests {
     #[test]
     fn empty_scratch_is_gc_d_but_the_kept_id_and_history_bearing_rows_survive() {
         let mut conn = open();
-        let keep_id = create_scratch(&mut conn, SystemTime::now()).expect("keep");
-        let empty_id = create_scratch(&mut conn, SystemTime::now()).expect("empty");
+        let owner_session =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("owner session");
+        let keep_id = create_scratch(&mut conn, owner_session, SystemTime::now()).expect("keep");
+        let empty_id = create_scratch(&mut conn, owner_session, SystemTime::now()).expect("empty");
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let with_history_id = create_scratch(&mut conn, SystemTime::now()).expect("with history");
+        let with_history_id =
+            create_scratch(&mut conn, session_id, SystemTime::now()).expect("with history");
         {
             let tx = conn.transaction().expect("tx");
             crate::journal::append_edit(
@@ -203,7 +227,7 @@ mod tests {
             tx.commit().expect("commit");
         }
 
-        let deleted = gc_empty_scratch(&mut conn, keep_id.0).expect("gc");
+        let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
         assert_eq!(deleted, 1, "only the truly empty scratch must be swept");
 
         let remaining_ids: Vec<i64> = conn
@@ -213,9 +237,62 @@ mod tests {
             .expect("query")
             .collect::<Result<Vec<i64>, _>>()
             .expect("collect");
-        assert!(remaining_ids.contains(&keep_id.0));
+        assert!(
+            remaining_ids.contains(&keep_id.0),
+            "keep_id survives regardless of its own owner's liveness"
+        );
         assert!(remaining_ids.contains(&with_history_id.0));
         assert!(!remaining_ids.contains(&empty_id.0));
+    }
+
+    #[test]
+    fn gc_spares_a_draft_claimed_by_a_live_session() {
+        let mut conn = open();
+        let live_session =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("live session");
+        let draft_id = create_scratch(&mut conn, live_session, SystemTime::now())
+            .expect("live session's draft");
+        let keep_id = create_scratch(&mut conn, live_session, SystemTime::now()).expect("keep");
+
+        let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_alive).expect("gc");
+        assert_eq!(
+            deleted, 0,
+            "a draft claimed by a still-running session must never be swept"
+        );
+
+        let still_present: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+                params![draft_id.0],
+                |r| r.get(0),
+            )
+            .expect("check draft row");
+        assert!(still_present);
+    }
+
+    #[test]
+    fn gc_sweeps_a_draft_whose_claiming_session_is_dead() {
+        let mut conn = open();
+        let dead_session =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
+        let draft_id = create_scratch(&mut conn, dead_session, SystemTime::now())
+            .expect("dead session's draft");
+        let keep_id = create_scratch(&mut conn, dead_session, SystemTime::now()).expect("keep");
+
+        let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
+        assert_eq!(deleted, 1);
+
+        let still_present: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+                params![draft_id.0],
+                |r| r.get(0),
+            )
+            .expect("check draft row");
+        assert!(
+            !still_present,
+            "a draft whose claiming session is confirmed dead must be swept"
+        );
     }
 
     /// The load-bearing filter: an evicted BOUND row (a real file whose path
@@ -256,8 +333,8 @@ mod tests {
             "an evicted bound row must never be offered as a recoverable draft"
         );
 
-        let keep_id = create_scratch(&mut conn, SystemTime::now()).expect("keep");
-        gc_empty_scratch(&mut conn, keep_id.0).expect("gc");
+        let keep_id = create_scratch(&mut conn, session_id, SystemTime::now()).expect("keep");
+        gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
         let still_present: bool = conn
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
@@ -278,7 +355,8 @@ mod tests {
         let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let doc_id = create_scratch(&mut conn, SystemTime::now()).expect("create scratch");
+        let doc_id =
+            create_scratch(&mut conn, session_id, SystemTime::now()).expect("create scratch");
         {
             let tx = conn.transaction().expect("tx");
             crate::journal::append_edit(
@@ -302,7 +380,10 @@ mod tests {
     #[test]
     fn reconstruct_scratch_finds_nothing_for_a_brand_new_scratch() {
         let mut conn = open();
-        let doc_id = create_scratch(&mut conn, SystemTime::now()).expect("create scratch");
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id =
+            create_scratch(&mut conn, session_id, SystemTime::now()).expect("create scratch");
         let reconstructed =
             reconstruct_scratch(&mut conn, &always_dead, doc_id).expect("reconstruct_scratch");
         assert_eq!(reconstructed, None);

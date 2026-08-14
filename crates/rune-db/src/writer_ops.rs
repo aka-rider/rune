@@ -238,10 +238,14 @@ pub enum OpKind {
     /// Quit-guard support: inserts a brand-new unbound scratch
     /// `documents` row. On success, the completion's `DbEvent::Ok.result`
     /// carries the new row's id.
-    CreateScratch { now: SystemTime },
-    /// See `scratch::gc_empty_scratch` for why this filter is
-    /// stricter.
-    GcEmptyScratch { keep_id: i64 },
+    CreateScratch {
+        session_id: SessionId,
+        now: SystemTime,
+    },
+    GcEmptyScratch {
+        keep_id: i64,
+        liveness_check: LivenessCheckFn,
+    },
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// candidate ids, newest first.
     RecoverableScratch { exclude_id: i64 },

@@ -335,7 +335,10 @@ impl Store {
     /// `DbEvent::Ok.result` (`OpOutcome::ScratchDocId`).
     pub fn create_scratch(&self) -> Result<u64, Error> {
         let now = self.now();
-        self.enqueue(OpKind::CreateScratch { now })
+        self.enqueue(OpKind::CreateScratch {
+            session_id: self.session_id,
+            now,
+        })
     }
 
     /// Enqueues a `GcEmptyScratch` op sweeping empty leftover scratch rows,
@@ -343,7 +346,11 @@ impl Store {
     /// `scratch::gc_empty_scratch`'s doc comment for the `inode IS NULL`
     /// filter this depends on.
     pub fn gc_empty_scratch(&self, keep_id: i64) -> Result<u64, Error> {
-        self.enqueue(OpKind::GcEmptyScratch { keep_id })
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::GcEmptyScratch {
+            keep_id,
+            liveness_check,
+        })
     }
 
     /// Enqueues a `RecoverableScratch` op — the candidate ids arrive
