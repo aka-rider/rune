@@ -74,6 +74,7 @@ mod store_ops;
 mod sync;
 mod versioning;
 mod writer;
+mod writer_exec;
 mod writer_lifecycle;
 mod writer_ops;
 
