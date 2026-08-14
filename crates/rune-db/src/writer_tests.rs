@@ -15,9 +15,10 @@ use std::time::SystemTime;
 use rune_core::buffer::AppliedEdit;
 
 fn open_ready_connection() -> Connection {
-    let conn = Connection::open_in_memory().expect("open in-memory connection");
-    crate::schema::apply(&conn).expect("apply schema");
-    conn
+    crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+        &crate::conn::memory_uri(),
+    ))
+    .expect("open in-memory connection")
 }
 
 fn test_vfs() -> Arc<dyn Vfs + Send + Sync> {

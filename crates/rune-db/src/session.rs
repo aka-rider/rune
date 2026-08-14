@@ -374,8 +374,10 @@ mod tests {
 
     #[test]
     fn establish_session_inserts_exactly_one_row_and_returns_its_id() {
-        let conn = Connection::open_in_memory().expect("open in-memory connection");
-        crate::schema::apply(&conn).expect("apply schema");
+        let conn = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open");
         let id = establish_session(&conn, SystemTime::now()).expect("establish session");
         assert_eq!(id, SessionId(1));
 

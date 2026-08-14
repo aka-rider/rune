@@ -108,9 +108,10 @@ mod tests {
     use std::time::SystemTime;
 
     fn open() -> Connection {
-        let conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open")
     }
 
     fn seed_doc(conn: &Connection) -> DocId {
@@ -135,12 +136,6 @@ mod tests {
         )
         .expect("seed session");
         SessionId(conn.last_insert_rowid())
-    }
-
-    fn open_fk() -> Connection {
-        let conn = open();
-        conn.pragma_update(None, "foreign_keys", "ON").expect("fk");
-        conn
     }
 
     fn seed_blob(conn: &Connection, hash: &str) {
@@ -419,7 +414,7 @@ mod tests {
 
     #[test]
     fn reaper_spares_the_sessions_row_of_a_dead_session_holding_only_a_merges_row() {
-        let mut conn = open_fk();
+        let mut conn = open();
         let session_old = seed_session(&conn, 111);
         let session_new = seed_session(&conn, 222);
         let doc_id = seed_doc(&conn);

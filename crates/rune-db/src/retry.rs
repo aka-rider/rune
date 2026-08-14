@@ -281,25 +281,14 @@ mod tests {
     /// contention.
     #[test]
     fn with_retry_succeeds_once_a_concurrent_write_lock_releases() {
-        let dir = std::env::temp_dir().join(format!(
-            "rune-db-retry-acquire-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let dir = crate::conn::test_temp_dir("retry-acquire");
         let path = dir.join("retry-acquire.db");
 
-        // Both connections apply schema (their own write transactions)
-        // BEFORE the blocker takes and holds its long-lived lock — schema
-        // application itself would otherwise contend on the very lock this
-        // test means to hold deliberately.
-        let mut conn = Connection::open(&path).expect("open contending connection");
-        crate::schema::apply(&conn).expect("schema");
-        let mut blocker = Connection::open(&path).expect("open blocker connection");
-        crate::schema::apply(&blocker).expect("schema");
+        let mut conn = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::File(&path))
+            .expect("open contending connection");
+        let mut blocker =
+            crate::conn::open_recovery_store(crate::conn::RecoveryTarget::File(&path))
+                .expect("open blocker connection");
 
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
@@ -339,8 +328,10 @@ mod tests {
 
     #[test]
     fn with_retry_commits_a_successful_op() {
-        let mut conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
+        let mut conn = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open");
         let now = crate::session::format_rfc3339_nanos(std::time::SystemTime::now());
         let id = with_retry(&mut conn, |tx| {
             tx.execute(
@@ -360,8 +351,10 @@ mod tests {
 
     #[test]
     fn with_retry_rolls_back_and_surfaces_a_non_retryable_error() {
-        let mut conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
+        let mut conn = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open");
         let result: Result<(), Error> = with_retry(&mut conn, |tx| {
             // kind is CHECK-constrained to a fixed set — this violates it.
             tx.execute(

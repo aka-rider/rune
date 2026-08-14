@@ -219,9 +219,10 @@ mod tests {
     use super::*;
 
     fn open_ready_connection() -> Connection {
-        let conn = Connection::open_in_memory().expect("open in-memory connection");
-        crate::schema::apply(&conn).expect("apply schema");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open in-memory connection")
     }
 
     fn test_vfs() -> Arc<dyn Vfs + Send + Sync> {
@@ -235,19 +236,11 @@ mod tests {
     /// connection can observe what the writer thread wrote.
     #[test]
     fn idle_timeout_sweeps_an_orphaned_blob() {
-        let dir = std::env::temp_dir().join(format!(
-            "rune-db-writer-idle-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let dir = crate::conn::test_temp_dir("writer-idle");
         let path = dir.join("idle-test.db");
 
-        let conn = Connection::open(&path).expect("open file db");
-        crate::schema::apply(&conn).expect("apply schema");
+        let conn = crate::conn::open_recovery_store(crate::conn::RecoveryTarget::File(&path))
+            .expect("open file db");
         let hash = crate::blob::put_blob(&conn, b"orphaned").expect("seed orphaned blob");
 
         let handle = spawn_with_idle_timeout(
@@ -261,7 +254,7 @@ mod tests {
         // the idle timer fires repeatedly every 20ms against an empty
         // queue, so the sweep should observe and delete the orphaned blob
         // well within the deadline.
-        let verify = Connection::open(&path).expect("verify connection");
+        let verify = crate::conn::open_raw(&path).expect("verify connection");
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let mut swept = false;
         while std::time::Instant::now() < deadline {
