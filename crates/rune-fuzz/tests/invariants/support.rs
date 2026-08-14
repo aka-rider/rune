@@ -137,6 +137,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         search_draft: None,
         read_only: rune_tui::document::ReadOnly::No,
         caret_visible: true,
+        reading_link_focus: None,
         cells: Vec::new(),
         row_meta: Vec::new(),
         highlight_spans: Vec::new(),

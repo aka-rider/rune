@@ -6,6 +6,7 @@ use rune_fuzz::invariant::{
     cell_no_eol, cell_offset, cell_order, cur_no_caret_hidden, sync_idempotent, table_row_width,
     table_synthetic_decorative,
 };
+use rune_syntax::element::ByteRange;
 
 use crate::support::{base_snapshot, cell, cell_w, meta, meta_unboxed, reversed_cell};
 
@@ -209,6 +210,26 @@ fn cur_no_caret_hidden_detects_a_reversed_cell_while_hidden() {
     snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
     let v = cur_no_caret_hidden(&snap)
         .expect("a REVERSED cell while caret_visible=false must trip CUR-NO-CARET-HIDDEN");
+    assert_eq!(v.id, "CUR-NO-CARET-HIDDEN");
+}
+
+#[test]
+fn cur_no_caret_hidden_accepts_the_focused_reading_link_while_hidden() {
+    let mut snap = base_snapshot("abc");
+    snap.caret_visible = false;
+    snap.reading_link_focus = Some(ByteRange::new(1, 3));
+    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    assert_eq!(cur_no_caret_hidden(&snap), None);
+}
+
+#[test]
+fn cur_no_caret_hidden_detects_a_reversed_cell_outside_the_focused_reading_link() {
+    let mut snap = base_snapshot("abc");
+    snap.caret_visible = false;
+    snap.reading_link_focus = Some(ByteRange::new(2, 3));
+    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    let v = cur_no_caret_hidden(&snap)
+        .expect("a REVERSED cell outside the focused reading link must trip CUR-NO-CARET-HIDDEN");
     assert_eq!(v.id, "CUR-NO-CARET-HIDDEN");
 }
 

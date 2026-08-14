@@ -14,6 +14,7 @@ use std::ops::Range;
 use ratatui::layout::Rect;
 use rune_core::coords::DisplayRow;
 use rune_core::cursor::Cursor;
+use rune_syntax::element::ByteRange;
 use rune_tui::app::App;
 use rune_tui::document::{DocumentId, ReadOnly};
 use rune_tui::focus::{self, FocusTarget};
@@ -94,6 +95,11 @@ pub struct Snapshot {
     /// `CUR-NO-CARET-HIDDEN` cannot pass by duplicating the very logic it is
     /// meant to police.
     pub caret_visible: bool,
+    /// `doc.reading_link_focus` — the byte range reading mode paints
+    /// REVERSED on the focused link. `CUR-NO-CARET-HIDDEN` needs it to tell
+    /// that intended highlight apart from a caret that leaked past the
+    /// visibility gate.
+    pub reading_link_focus: Option<ByteRange>,
     /// `render::build_rows(view, app)`. Empty when not sampled (G19: the
     /// display pipeline runs on every `sync_view()`, dominating debug-build
     /// runtime — later work packages sample this rather than paying for it
@@ -345,6 +351,7 @@ impl Snapshot {
             search_draft: app.search_draft().map(str::to_string),
             read_only: doc.read_only,
             caret_visible: doc.has_insertion_point(),
+            reading_link_focus: doc.reading_link_focus,
             cells,
             row_meta,
             highlight_spans,

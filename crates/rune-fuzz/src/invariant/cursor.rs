@@ -2,6 +2,7 @@
 //! `CUR-NO-CARET-HIDDEN`.
 
 use ratatui::style::Modifier;
+use rune_tui::render::Cell;
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
@@ -101,11 +102,13 @@ pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
 }
 
 /// `CUR-NO-CARET-HIDDEN` (L0, sampled per G19) — when `caret_visible` is
-/// false, NO rendered cell carries `Modifier::REVERSED`. Inside
-/// `Snapshot.cells` that modifier is set by exactly one thing,
-/// `render::overlay::place_caret` (title-bar chrome sets it too, but chrome
-/// is not in the editor cell grid), so a reversed cell in a hidden-caret
-/// snapshot is a caret that leaked past the gate.
+/// false, no rendered cell carries `Modifier::REVERSED` outside the
+/// focused reading link. Inside `Snapshot.cells` two things set that
+/// modifier: `render::overlay::place_caret` and
+/// `render::apply_reading_link_focus`, which paints the reading-mode link
+/// highlight over `reading_link_focus` (title-bar chrome sets it too, but
+/// chrome is not in the editor cell grid). A reversed cell outside that
+/// focused range is therefore a caret that leaked past the gate.
 ///
 /// Deliberately one-directional: the converse (caret visible => exactly one
 /// reversed cell per cursor) is NOT asserted, because a cursor scrolled
@@ -120,7 +123,9 @@ pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
     }
     for row in &snap.cells {
         for cell in row {
-            if cell.style.add_modifier.contains(Modifier::REVERSED) {
+            if cell.style.add_modifier.contains(Modifier::REVERSED)
+                && !reading_link_highlight(snap, cell)
+            {
                 return Some(Violation::new(
                     "CUR-NO-CARET-HIDDEN",
                     format!("a REVERSED cell rendered while caret_visible=false: cell={cell:?}"),
@@ -129,4 +134,14 @@ pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
         }
     }
     None
+}
+
+fn reading_link_highlight(snap: &Snapshot, cell: &Cell) -> bool {
+    let Some(focus) = snap.reading_link_focus else {
+        return false;
+    };
+    let Ok(offset) = usize::try_from(cell.buf_offset) else {
+        return false;
+    };
+    focus.contains(offset)
 }
