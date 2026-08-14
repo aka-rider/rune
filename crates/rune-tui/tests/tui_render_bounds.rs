@@ -66,16 +66,22 @@ fn blit_does_not_overpaint_past_the_right_edge_with_a_wide_glyph() {
     // pane border blit must never touch.
     let buf = testgrid::draw_with(4, 1, |frame| render::blit(&rows, area, frame));
 
-    assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("a"));
-    assert_eq!(buf.cell((1, 0)).map(|c| c.symbol()), Some("b"));
     assert_eq!(
-        buf.cell((2, 0)).map(|c| c.symbol()),
+        buf.cell((0, 0)).map(ratatui::buffer::Cell::symbol),
+        Some("a")
+    );
+    assert_eq!(
+        buf.cell((1, 0)).map(ratatui::buffer::Cell::symbol),
+        Some("b")
+    );
+    assert_eq!(
+        buf.cell((2, 0)).map(ratatui::buffer::Cell::symbol),
         Some(" "),
         "the wide glyph doesn't fit in the last column of a 3-wide area — \
          blit must substitute a blank cell rather than the glyph"
     );
     assert_eq!(
-        buf.cell((3, 0)).map(|c| c.symbol()),
+        buf.cell((3, 0)).map(ratatui::buffer::Cell::symbol),
         Some(" "),
         "column 3 is outside `area` entirely (the border column) and must \
          stay untouched/blank"

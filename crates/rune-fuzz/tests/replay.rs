@@ -59,7 +59,7 @@ fn replay_override() -> Option<Vec<PathBuf>> {
 fn collect_repro_scripts(dir: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()))
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .map(|entry| entry.path())
         .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "rune"))
         .collect();

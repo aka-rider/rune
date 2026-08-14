@@ -310,46 +310,46 @@ impl Session {
         }
     }
 
-    pub fn act(&mut self, action: Action) -> Option<&Violation> {
+    pub fn act(&mut self, action: &Action) -> Option<&Violation> {
         if let Phase::Live(prev) = &mut self.phase
             && self.outcome.violation.is_none()
             && !self.state.app.should_quit
         {
-            actions::apply(&mut self.state, prev, &mut self.outcome, &action);
+            actions::apply(&mut self.state, prev, &mut self.outcome, action);
         }
         self.outcome.violation.as_ref()
     }
 
     pub fn key(&mut self, key: KeyInput) -> Option<&Violation> {
-        self.act(Action::Key(key))
+        self.act(&Action::Key(key))
     }
 
     pub fn mouse(&mut self, input: rune_tui::pointer::MouseInput) -> Option<&Violation> {
-        self.act(Action::Mouse(input))
+        self.act(&Action::Mouse(input))
     }
 
     pub fn type_(&mut self, text: &str) -> Option<&Violation> {
-        self.act(Action::Type(text.to_string()))
+        self.act(&Action::Type(text.to_string()))
     }
 
     pub fn paste(&mut self, text: &str) -> Option<&Violation> {
-        self.act(Action::Paste(text.to_string()))
+        self.act(&Action::Paste(text.to_string()))
     }
 
     pub fn resize(&mut self, width: u16, height: u16) -> Option<&Violation> {
-        self.act(Action::Resize(width, height))
+        self.act(&Action::Resize(width, height))
     }
 
     pub fn deliver(&mut self) -> Option<&Violation> {
-        self.act(Action::Deliver)
+        self.act(&Action::Deliver)
     }
 
     pub fn deliver_db(&mut self) -> Option<&Violation> {
-        self.act(Action::DeliverDb)
+        self.act(&Action::DeliverDb)
     }
 
     pub fn deliver_db_all(&mut self) -> Option<&Violation> {
-        self.act(Action::DeliverDbAll)
+        self.act(&Action::DeliverDbAll)
     }
 
     pub fn snapshot(&mut self) -> Snapshot {

@@ -79,16 +79,17 @@ pub(crate) fn handle_materialize_ack_for_op(
     op_id: u64,
     mat: MatResult,
 ) {
-    if app.doc(id).and_then(|d| d.record_op()) != Some(op_id) {
+    if app.doc(id).and_then(super::document::Document::record_op) != Some(op_id) {
         return;
     }
-    handle_materialize_ack(app, id, mat);
+    handle_materialize_ack(app, id, &mat);
 }
 
 /// The disk-sourced facts [`record_outcome`] needs to call `rune-db`'s
 /// `materialize_record` — bundled so that function stays under clippy's
 /// argument-count lint without losing any of the "caller-captured, never
 /// re-derived" facts each field carries.
+#[derive(Clone, Copy)]
 struct RecordTarget<'a> {
     db_id: i64,
     seq: i64,
@@ -114,7 +115,7 @@ fn record_outcome(
         // (`published`); either way there is nothing left to record it
         // against, so finish exactly as a committed/refused ack would.
         if published {
-            handle_materialize_ack(app, id, MatResult::Committed { saved: None });
+            handle_materialize_ack(app, id, &MatResult::Committed { saved: None });
         } else {
             fail_materialize_locally(app, id, "save failed: recovery store unavailable");
         }
@@ -152,9 +153,9 @@ fn record_outcome(
                 // (resolving this document's `save` back to `Idle`) so the
                 // subsequent whole-store degrade doesn't also flag it as a
                 // failed save.
-                handle_materialize_ack(app, id, MatResult::Committed { saved: None });
+                handle_materialize_ack(app, id, &MatResult::Committed { saved: None });
             }
-            on_store_failure(app, e.to_string());
+            on_store_failure(app, &e.to_string());
         }
     }
 }
@@ -193,7 +194,7 @@ fn record_orphan_outcome(
 /// sweep is what makes a second save attempt for a `Publishing` document
 /// structurally impossible: `save_in_flight()` stays `true` the whole time,
 /// so `trigger_save` keeps refusing.
-pub(crate) fn on_store_failure(app: &mut App, error: String) {
+pub(crate) fn on_store_failure(app: &mut App, error: &str) {
     if let Some(db) = app.db.as_mut() {
         db.degraded = true;
     }
@@ -235,7 +236,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
         }
     }
     for id in resolved_committed {
-        handle_materialize_ack(app, id, MatResult::Committed { saved: None });
+        handle_materialize_ack(app, id, &MatResult::Committed { saved: None });
     }
     if abandoned_any {
         messages::error(app, format!("save failed: {error}"));
@@ -275,7 +276,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
         }
-        Err(e) => on_store_failure(app, e.to_string()),
+        Err(e) => on_store_failure(app, &e.to_string()),
     }
 }
 
@@ -301,5 +302,5 @@ pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
 /// that keeps reading the cache.
 pub(crate) fn is_dirty_now(app: &mut App, id: DocumentId) -> bool {
     recompute_dirty(app, id);
-    app.doc(id).is_some_and(|doc| doc.is_dirty())
+    app.doc(id).is_some_and(super::document::Document::is_dirty)
 }

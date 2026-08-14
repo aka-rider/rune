@@ -425,10 +425,10 @@ fn the_geometry_variant_and_build_rows_agree_on_cell_count_for_an_image_row() {
         .expect("an image row must exist");
 
     let width = doc.viewport.width;
-    let from_build_rows = rune_tui::render::image::row_cells(&app, doc, image_ref.clone(), width)
+    let from_build_rows = rune_tui::render::image::row_cells(&app, doc, &image_ref, width)
         .expect("a live, Kitty-capable row is Some")
         .len();
-    let from_geometry = rune_tui::render::image::row_cells(&app, doc, image_ref, width)
+    let from_geometry = rune_tui::render::image::row_cells(&app, doc, &image_ref, width)
         .expect("the same call must agree with itself")
         .len();
     assert_eq!(

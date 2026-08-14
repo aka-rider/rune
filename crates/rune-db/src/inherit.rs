@@ -83,10 +83,7 @@ pub(crate) enum Inherited {
 }
 
 fn unsaved_against(baseline: Option<&Observation>, draft: &str) -> bool {
-    match baseline {
-        None => true,
-        Some(b) => b.blob_hash.as_str() != observation::hash_bytes(draft.as_bytes()),
-    }
+    baseline.is_none_or(|b| b.blob_hash.as_str() != observation::hash_bytes(draft.as_bytes()))
 }
 
 /// Looks for a DIFFERENT, now-confirmed-dead session's unsaved content for
@@ -145,10 +142,7 @@ pub(crate) fn find_inheritable_draft(
             draft: recovered_draft,
             baseline: Box::new(baseline),
         }),
-        Some(_) => Ok(Inherited::Bridged {
-            draft: recovered_draft,
-        }),
-        None => Ok(Inherited::Bridged {
+        Some(_) | None => Ok(Inherited::Bridged {
             draft: recovered_draft,
         }),
     }

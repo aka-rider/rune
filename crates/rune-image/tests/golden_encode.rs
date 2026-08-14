@@ -93,10 +93,9 @@ fn split_apcs(seq: &str) -> Vec<Apc> {
         let body = &rest[..end];
         rest = &rest[end + OUTRO.len()..];
 
-        let (options, payload) = match body.find(';') {
-            Some(semi) => (&body[..semi], &body[semi + 1..]),
-            None => (body, ""),
-        };
+        let (options, payload) = body
+            .find(';')
+            .map_or((body, ""), |semi| (&body[..semi], &body[semi + 1..]));
         out.push(Apc {
             options: options.to_string(),
             payload: payload.to_string(),

@@ -61,7 +61,7 @@ pub(super) fn materialize_now(
     let Some(binding) = app.doc_file_binding(id) else {
         materialize_ack::on_store_failure(
             app,
-            format!("materialize: document {id:?} bound to db_id {db_id} has no file binding"),
+            &format!("materialize: document {id:?} bound to db_id {db_id} has no file binding"),
         );
         fall_back_to_direct(app, id, path, version, content, effects);
         return;
@@ -73,7 +73,7 @@ pub(super) fn materialize_now(
         (false, None) => {
             materialize_ack::on_store_failure(
                 app,
-                format!("materialize: document {id:?} bound to db_id {db_id} has no CAS baseline"),
+                &format!("materialize: document {id:?} bound to db_id {db_id} has no CAS baseline"),
             );
             fall_back_to_direct(app, id, path, version, content, effects);
             return;
@@ -112,7 +112,7 @@ pub(super) fn materialize_now(
             // `Preparing`, so `on_store_failure`'s sweep has nothing of
             // THIS attempt to abandon — the fallback below is the first
             // and only thing that arms `save_in_flight` for it.
-            materialize_ack::on_store_failure(app, e.to_string());
+            materialize_ack::on_store_failure(app, &e.to_string());
             fall_back_to_direct(app, id, path, version, content, effects);
         }
     }
@@ -202,7 +202,7 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
             // store is available. This document never entered `Preparing`,
             // so there is nothing of THIS attempt for `on_store_failure`'s
             // state-aware handling to touch.
-            materialize_ack::on_store_failure(app, e.to_string());
+            materialize_ack::on_store_failure(app, &e.to_string());
         }
     }
 }

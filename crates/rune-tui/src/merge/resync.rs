@@ -74,7 +74,7 @@ fn first_unresolved_from(blocks: &[Block], from: usize) -> Option<usize> {
 /// stored `Block` spans) the undo/redo call actually touched — `None` keeps
 /// every block's resolved-ness scan-derived, for callers with no such range
 /// to offer. See the module doc for why this scoping exists (review F1).
-pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::Range<usize>>) {
+pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<&std::ops::Range<usize>>) {
     if app.merge.doc() != Some(doc) {
         return;
     }
@@ -148,7 +148,7 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
     // wasn't in the range this journal jump actually touched — only the
     // affected range (or an absent one, meaning "trust the scan
     // everywhere") may downgrade a previously-resolved block back to open.
-    if let Some(range) = &affected {
+    if let Some(range) = affected {
         for (new, old) in new_blocks.iter_mut().zip(old_pairs.iter()) {
             if old.block.resolved
                 && !intersects(

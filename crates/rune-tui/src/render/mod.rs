@@ -77,7 +77,7 @@ pub fn build_rows(
             // through to the ordinary path so the row's own alt-text span
             // (the `Rendered` emit) shows instead.
             if let Some(image_ref) = row.image.clone()
-                && let Some(cells) = image::row_cells(app, doc, image_ref, viewport.width)
+                && let Some(cells) = image::row_cells(app, doc, &image_ref, viewport.width)
             {
                 return cells;
             }
@@ -115,10 +115,9 @@ pub fn build_rows(
     // `visible_byte_range` derives the same window the span overlay itself
     // scans, so the query never does work outside it. This is the whole
     // parse -> render seam — a fence and a whole file reach it identically.
-    let spans = match overlay::visible_byte_range(&rows) {
-        Some(range) => crate::highlight::visible_spans(doc, range),
-        None => Vec::new(),
-    };
+    let spans = overlay::visible_byte_range(&rows).map_or_else(Vec::new, |range| {
+        crate::highlight::visible_spans(doc, range)
+    });
     overlay::apply_highlight_spans(&mut rows, &spans, &app.theme);
 
     // The search bar's live match highlight: painted AFTER

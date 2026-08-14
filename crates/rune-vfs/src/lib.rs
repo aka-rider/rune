@@ -247,8 +247,8 @@ pub trait Vfs {
     fn save_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         let outcome = publish::put_force(self, path, bytes, None)?;
         let durable = match &outcome {
-            publish::ForceOutcome::Committed(published) => published.durable,
-            publish::ForceOutcome::Raced { published, .. } => published.durable,
+            publish::ForceOutcome::Committed(published)
+            | publish::ForceOutcome::Raced { published, .. } => published.durable,
         };
         if durable {
             return Ok(());
@@ -299,7 +299,7 @@ fn dir_rank(kind: FileKind) -> u8 {
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn temp_name(path: &Path) -> PathBuf {
-    let parent = path.parent().unwrap_or(Path::new("")).to_path_buf();
+    let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
     let basename = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())

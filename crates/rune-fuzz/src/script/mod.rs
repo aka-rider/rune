@@ -97,18 +97,18 @@ impl fmt::Display for ScriptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ScriptError::MissingContentLine => write!(f, "script has no `content` line"),
-            ScriptError::MalformedLine { line, reason } => write!(f, "line {line}: {reason}"),
+            ScriptError::MalformedLine { line, reason }
+            | ScriptError::InvalidEscape { line, reason }
+            | ScriptError::InvalidNumber { line, reason } => write!(f, "line {line}: {reason}"),
             ScriptError::UnknownKeyword { line, keyword } => {
                 write!(f, "line {line}: unknown action keyword {keyword:?}")
             }
-            ScriptError::InvalidEscape { line, reason } => write!(f, "line {line}: {reason}"),
             ScriptError::InvalidKeyCode { line, code } => {
                 write!(f, "line {line}: invalid key code {code:?}")
             }
             ScriptError::InvalidMods { line, mods } => {
                 write!(f, "line {line}: invalid mods field {mods:?}")
             }
-            ScriptError::InvalidNumber { line, reason } => write!(f, "line {line}: {reason}"),
             ScriptError::UndeliverableTypeChar { line, ch } => write!(
                 f,
                 "line {line}: `type` payload contains undeliverable control char {ch:?} \

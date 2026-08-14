@@ -30,16 +30,13 @@ use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
 pub fn stat_facts_from(stat: Option<Stat>) -> StatFacts {
-    match stat {
-        Some(st) => StatFacts {
-            size: Some(st.size as i64),
-            mtime: Some(format_rfc3339_nanos(st.mtime)),
-            inode: st.identity.inode.map(|v| v as i64),
-            device: st.identity.device.map(|v| v as i64),
-            nlink: st.nlink.map(|v| v as i64),
-        },
-        None => StatFacts::default(),
-    }
+    stat.map_or_else(StatFacts::default, |st| StatFacts {
+        size: Some(st.size as i64),
+        mtime: Some(format_rfc3339_nanos(st.mtime)),
+        inode: st.identity.inode.map(|v| v as i64),
+        device: st.identity.device.map(|v| v as i64),
+        nlink: st.nlink.map(|v| v as i64),
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]

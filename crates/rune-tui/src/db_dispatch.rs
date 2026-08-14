@@ -185,7 +185,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 crate::messages::error(app, text);
                 return;
             }
-            materialize_ack::on_store_failure(app, error);
+            materialize_ack::on_store_failure(app, &error);
         }
         DbEvent::Fatal { error } => {
             crate::rename::fail_all(app, error.clone(), effects);
@@ -195,7 +195,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // commit — the same outcome a `Fatal` tearing down that op's own
             // ack would have produced, just derived from the document's
             // current state rather than a side map of op ids.
-            materialize_ack::on_store_failure(app, error);
+            materialize_ack::on_store_failure(app, &error);
             // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
             // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`
             // all bail out once `db.degraded`), but does nothing about

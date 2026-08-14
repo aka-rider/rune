@@ -126,14 +126,20 @@ impl ManualClock {
 
     /// Advances this clock by `d` — the only way its `now()` ever changes.
     pub fn advance(&self, d: Duration) {
-        let mut elapsed = self.elapsed.lock().unwrap_or_else(|p| p.into_inner());
+        let mut elapsed = self
+            .elapsed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *elapsed += d;
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        let elapsed = self.elapsed.lock().unwrap_or_else(|p| p.into_inner());
+        let elapsed = self
+            .elapsed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.epoch + *elapsed
     }
 }

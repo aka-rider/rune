@@ -295,6 +295,7 @@ fn browse_needle(state: &super::SearchState) -> String {
 }
 
 /// Which way [`history_step`] walks the fuzzy-filtered MRU history.
+#[derive(Clone, Copy)]
 enum BrowseDir {
     /// ↑: one entry OLDER, clamping at the oldest match rather than
     /// wrapping — history browsing is a one-way walk back through time, not

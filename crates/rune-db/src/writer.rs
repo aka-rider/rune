@@ -157,7 +157,7 @@ pub(crate) fn spawn_with_idle_timeout(
     idle_timeout: Duration,
 ) -> WriterHandle {
     let (sender, receiver) = mpsc::sync_channel(QUEUE_DEPTH);
-    let thread = thread::spawn(move || writer_loop(conn, vfs, receiver, on_event, idle_timeout));
+    let thread = thread::spawn(move || writer_loop(conn, &vfs, &receiver, &on_event, idle_timeout));
     WriterHandle {
         sender,
         thread: Some(thread),
@@ -166,9 +166,9 @@ pub(crate) fn spawn_with_idle_timeout(
 
 fn writer_loop(
     mut conn: Connection,
-    vfs: Arc<dyn Vfs + Send + Sync>,
-    receiver: mpsc::Receiver<WriteOp>,
-    on_event: OnEvent,
+    vfs: &Arc<dyn Vfs + Send + Sync>,
+    receiver: &mpsc::Receiver<WriteOp>,
+    on_event: &OnEvent,
     idle_timeout: Duration,
 ) {
     // Owned by this thread alone, alongside `conn` — see `DocUndoState`'s
@@ -202,7 +202,7 @@ fn writer_loop(
                     }
                 }));
                 if delivered.is_err() {
-                    return fatal(receiver, on_event, format!("op {id}"));
+                    return fatal(receiver, on_event, &format!("op {id}"));
                 }
             }
             // A quiet period: opportunistic PASSIVE checkpoint
@@ -215,7 +215,7 @@ fn writer_loop(
                 let maintained =
                     panic::catch_unwind(AssertUnwindSafe(|| run_idle_maintenance(&mut conn)));
                 if maintained.is_err() {
-                    return fatal(receiver, on_event, "idle maintenance".to_string());
+                    return fatal(receiver, on_event, "idle maintenance");
                 }
             }
             // `WriterHandle::shutdown` dropped the sender after enqueueing

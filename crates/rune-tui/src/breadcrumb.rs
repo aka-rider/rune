@@ -381,7 +381,10 @@ mod tests {
         let buf = testgrid::draw_with(W, 3, |frame| {
             overlay(app, Rect::new(0, 0, W, 3), true, frame)
         });
-        let style = buf.cell((x, 2)).map(|c| c.style()).unwrap_or_default();
+        let style = buf
+            .cell((x, 2))
+            .map(ratatui::buffer::Cell::style)
+            .unwrap_or_default();
         assert_eq!(style.fg, expected.fg);
         assert_eq!(style.add_modifier, expected.add_modifier);
         assert_eq!(

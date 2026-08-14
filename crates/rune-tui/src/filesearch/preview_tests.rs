@@ -57,7 +57,7 @@ fn run_cmds(app: &mut App, effects: &mut Effects) {
             anchor,
         }) = cmd.run()
         {
-            crate::workspace::handle_file_opened(app, path, result, anchor, effects);
+            crate::workspace::handle_file_opened(app, &path, result, anchor, effects);
         }
     }
 }
@@ -169,7 +169,7 @@ fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
         anchor,
     }) = stale_cmd.run()
     {
-        crate::workspace::handle_file_opened(&mut app, path, result, anchor, &mut effects);
+        crate::workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
     }
     let shown_after_stale = app
         .explorer

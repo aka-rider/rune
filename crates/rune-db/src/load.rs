@@ -203,7 +203,7 @@ pub fn load_from_read(
             live_stat: &stat,
             now,
         };
-        let outcome = anchor_first_load(conn, &ctx, &content, inherited)?;
+        let outcome = anchor_first_load(conn, &ctx, &content, &inherited)?;
         recovered = outcome.recovered;
         bridge_seq = outcome.bridge_seq;
     } else if hash == observation::hash_bytes(recovered.as_bytes()) {
@@ -212,10 +212,7 @@ pub fn load_from_read(
         let cur = retry::with_retry(conn, |tx| {
             observation::saved_obs_for(tx, session_id, doc_id)
         })?;
-        let needs_heal = match &cur {
-            None => true,
-            Some(c) => c.blob_hash.as_str() != hash,
-        };
+        let needs_heal = cur.as_ref().is_none_or(|c| c.blob_hash.as_str() != hash);
         if needs_heal {
             adopt::record_adoption(
                 conn,

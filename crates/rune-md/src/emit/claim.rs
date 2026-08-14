@@ -182,7 +182,7 @@ impl<'a> EmitOut<'a> {
     /// what this returns. A producer whose own range arithmetic overlaps
     /// another producer's claim is a bug, not a legitimate outcome — unlike
     /// `claim_whole`, this asserts on that instead of returning a refusal.
-    pub(crate) fn claim_free(&mut self, ll: LineLocal) -> Granted<'_, 'a> {
+    pub(crate) fn claim_free(&mut self, ll: &LineLocal) -> Granted<'_, 'a> {
         let line = ll.line();
         let (start, end) = (ll.start(), ll.end());
         let pieces = self.unclaimed(line, start, end);
@@ -213,7 +213,7 @@ impl<'a> EmitOut<'a> {
     /// with nothing and is always granted. A non-empty range that is not
     /// entirely free is still a PRODUCER bug — the caller degrades
     /// gracefully, but the mismatch is asserted exactly like `claim_free`'s.
-    pub(crate) fn claim_whole(&mut self, ll: LineLocal) -> Result<Granted<'_, 'a>, Refused> {
+    pub(crate) fn claim_whole(&mut self, ll: &LineLocal) -> Result<Granted<'_, 'a>, Refused> {
         let line = ll.line();
         if ll.is_empty() {
             return Ok(Granted {
@@ -328,7 +328,7 @@ mod tests {
         );
 
         let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
-        let granted = out.claim_free(ll);
+        let granted = out.claim_free(&ll);
         drop(granted);
 
         assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
@@ -358,7 +358,7 @@ mod tests {
         );
 
         let ll = LineLocal::clip(0, 0..8, 4..4).unwrap();
-        let result = out.claim_whole(ll);
+        let result = out.claim_whole(&ll);
 
         assert!(result.is_ok());
     }
@@ -388,7 +388,7 @@ mod tests {
         );
 
         let ll = LineLocal::clip(0, 0..8, 0..8).unwrap();
-        let _ = out.claim_whole(ll);
+        let _ = out.claim_whole(&ll);
     }
 
     /// The producer-bug path above only proves the assert fires; this
@@ -417,7 +417,7 @@ mod tests {
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let ll = LineLocal::clip(0, 0..8, 0..8).unwrap();
-            out.claim_whole(ll).is_err()
+            out.claim_whole(&ll).is_err()
         }));
 
         assert!(result.is_err());
@@ -447,7 +447,7 @@ mod tests {
         );
 
         let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
-        let granted = out.claim_free(ll);
+        let granted = out.claim_free(&ll);
         granted.push_visible(Vec::new());
     }
 }

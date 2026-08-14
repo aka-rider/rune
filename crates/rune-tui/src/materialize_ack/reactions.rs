@@ -24,7 +24,9 @@ use committed::handle_committed_ack;
 /// mid-flight. Fails only `id`'s save — never the whole store — since the
 /// write's own failure carries no `rune-db` signal at all.
 pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: impl Into<String>) {
-    let pending_version = app.doc(id).and_then(|d| d.pending_save_version());
+    let pending_version = app
+        .doc(id)
+        .and_then(super::super::document::Document::pending_save_version);
     if let Some(doc) = app.doc_mut(id) {
         doc.abandon_save();
     }
@@ -86,7 +88,7 @@ fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
 /// the disk write physically succeeded but the DB-side bookkeeping that
 /// would have supplied `saved` was lost to a dead writer — see
 /// `record_outcome`'s doc comment.
-pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResult) {
+pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: &MatResult) {
     let Some(doc) = app.doc(id) else { return };
     // `MatResult` carries no version of its own — this peek is how the
     // chokepoint below correlates the ack against the SAME bytes
@@ -100,7 +102,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
 
     match mat {
         MatResult::Committed { saved } => {
-            handle_committed_ack(app, id, pending_version, saved, false);
+            handle_committed_ack(app, id, pending_version, saved.as_ref(), false);
         }
         MatResult::CommittedRaced { saved, .. } => {
             handle_committed_ack(app, id, pending_version, Some(saved), true);
@@ -190,13 +192,10 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
         let hand_off_safe = match workspace::resolve(app.vfs.as_ref(), &path) {
             Ok(resolved_path) => !app.documents.iter().any(|(other_id, other)| {
                 *other_id != id
-                    && match other.file_path.as_deref() {
-                        Some(p) => match workspace::resolve(app.vfs.as_ref(), p) {
-                            Ok(other_resolved) => other_resolved == resolved_path,
-                            Err(_) => true,
-                        },
-                        None => false,
-                    }
+                    && other.file_path.as_deref().is_some_and(|p| {
+                        workspace::resolve(app.vfs.as_ref(), p)
+                            .map_or(true, |other_resolved| other_resolved == resolved_path)
+                    })
             }),
             Err(_) => false,
         };
@@ -259,7 +258,11 @@ pub(crate) fn handle_save_done(
     result: Result<(), String>,
     durable: bool,
 ) {
-    if app.doc(id).and_then(|d| d.save_ticket()) != Some(ticket) {
+    if app
+        .doc(id)
+        .and_then(super::super::document::Document::save_ticket)
+        != Some(ticket)
+    {
         return;
     }
     let succeeded = result.is_ok();

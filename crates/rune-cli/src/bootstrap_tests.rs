@@ -99,22 +99,25 @@ fn launch_multi_file_enqueues_a_load_for_every_extra_tab() {
     let home = ScratchHome::new("multi-file");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![
             OsString::from("/vault/a.md"),
             OsString::from("/vault/b.md"),
             OsString::from("/vault/c.md"),
         ]
         .into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed");
 
     // The first file hydrates synchronously inside `bootstrap_db` and
     // is bound before `App::new` ever runs.
     assert_eq!(app.documents.len(), 3);
-    assert!(app.doc(app.active).is_some_and(|d| d.is_store_bound()));
+    assert!(
+        app.doc(app.active)
+            .is_some_and(rune_tui::document::Document::is_store_bound)
+    );
     // The other two open through `workspace::open_path`'s async path: each
     // one's `Load` must actually be enqueued and tracked, not silently
     // dropped the way a `Sink::Bootstrap`-less bridge used to swallow it —
@@ -135,14 +138,14 @@ fn launch_same_file_two_spellings_opens_one_document() {
     let home = ScratchHome::new("dedup");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![
             OsString::from("/vault/notes.md"),
             OsString::from("/vault/sub/../notes.md"),
         ]
         .into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed");
 
@@ -166,10 +169,10 @@ fn launch_of_a_hardlinked_positional_carries_the_fact_and_warns() {
     let home = ScratchHome::new("hardlink");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/notes.md")].into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed");
 
@@ -200,9 +203,9 @@ fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
     .expect("seed a (fake) png");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/x.png")].into_iter(),
-        PathBuf::from("/"),
+        Path::new("/"),
         None,
     )
     .expect("bootstrap should succeed for an image first positional");
@@ -212,7 +215,10 @@ fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
         1,
         "the blank untitled anchor must be closed once the image opens"
     );
-    assert!(app.doc(app.active).is_some_and(|d| d.is_read_only()));
+    assert!(
+        app.doc(app.active)
+            .is_some_and(rune_tui::document::Document::is_read_only)
+    );
     assert!(
         app.doc(app.active)
             .is_some_and(|d| d.file_path.as_deref() == Some(Path::new("/vault/x.png")))
@@ -230,10 +236,10 @@ fn launch_nonexistent_path_is_recovery_backed() {
     let home = ScratchHome::new("missing-path");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/missing.md")].into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed for a missing-path launch");
 
@@ -264,14 +270,14 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
     let home = ScratchHome::new("missing-multi");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![
             OsString::from("/vault/missing.md"),
             OsString::from("/vault/other.md"),
         ]
         .into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed");
 
@@ -340,10 +346,10 @@ fn launch_missing_first_positional_never_sweeps_another_sessions_empty_scratch_r
 
     let vfs = Mem::new();
     let _app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/missing.md")].into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed for a missing-path launch");
 
@@ -370,9 +376,9 @@ fn launch_nonexistent_path_without_home_still_banners() {
     let vfs = Mem::new();
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/missing.md")].into_iter(),
-        PathBuf::from("/"),
+        Path::new("/"),
         None,
     )
     .expect("bootstrap should succeed even with no recovery store");
@@ -395,9 +401,9 @@ fn launch_resolve_failing_first_positional_exits_with_the_io_error_code() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
     let result = bootstrap(
-        vfs,
+        &vfs,
         vec![OsString::from("/vault/unresolvable.md")].into_iter(),
-        PathBuf::from("/"),
+        Path::new("/"),
         None,
     );
 
@@ -416,9 +422,9 @@ fn launch_empty_positional_is_rejected_before_any_open() {
     let vfs = Mem::new();
 
     let result = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("")].into_iter(),
-        PathBuf::from("/"),
+        Path::new("/"),
         None,
     );
     assert!(
@@ -439,10 +445,10 @@ fn no_positional_launch_binds_both_the_app_db_and_a_doc_db() {
     let home = ScratchHome::new("untitled-doc-db");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         std::iter::empty(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed with no positional files");
 
@@ -451,7 +457,8 @@ fn no_positional_launch_binds_both_the_app_db_and_a_doc_db() {
         "the default untitled launch must have a live app-wide store"
     );
     assert!(
-        app.doc(app.active).is_some_and(|d| d.is_store_bound()),
+        app.doc(app.active)
+            .is_some_and(rune_tui::document::Document::is_store_bound),
         "the default document must be bound to its own scratch row"
     );
 }
@@ -528,10 +535,10 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     // so `reconstruct_scratch` must find it and recover the draft.
     let vfs = Mem::new();
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         std::iter::empty(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("second bootstrap should succeed");
 
@@ -557,10 +564,10 @@ fn launch_one_positional_reads_the_path_exactly_once() {
     let vfs: Arc<dyn Vfs + Send + Sync> = counting.clone();
 
     let app = bootstrap(
-        vfs,
+        &vfs,
         vec![OsString::from("/vault/a.md")].into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed");
 
@@ -586,10 +593,10 @@ fn launch_image_first_still_opens_the_session_store() {
     let home = ScratchHome::new("image-first-store");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/x.png")].into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed for an image first positional");
 
@@ -618,9 +625,9 @@ fn launch_image_first_with_an_unopenable_store_banners() {
     .expect("seed a (fake) png");
 
     let app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/x.png")].into_iter(),
-        PathBuf::from("/"),
+        Path::new("/"),
         None,
     )
     .expect("bootstrap should succeed even with no recovery store");
@@ -653,10 +660,10 @@ fn launch_image_first_then_opening_markdown_enqueues_journaling() {
     let home = ScratchHome::new("image-first-then-markdown");
 
     let mut app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![OsString::from("/vault/x.png")].into_iter(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed for an image first positional");
 

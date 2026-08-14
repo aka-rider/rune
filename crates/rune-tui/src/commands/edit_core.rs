@@ -72,7 +72,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
     mut infos: Vec<(Edit, CursorId)>,
-    cursors_before: CursorSet,
+    cursors_before: &CursorSet,
     kind: EditKind,
     cursors_after: impl FnOnce(&[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
 ) -> bool {
@@ -212,7 +212,7 @@ pub(crate) fn commit_edit_batch(
     app: &mut App,
     id: DocumentId,
     infos: Vec<(Edit, CursorId)>,
-    cursors_before: CursorSet,
+    cursors_before: &CursorSet,
     kind: EditKind,
 ) -> bool {
     apply_edit_batch_with_cursors(app, id, infos, cursors_before, kind, |applied, ids| {

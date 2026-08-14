@@ -174,10 +174,8 @@ pub fn is_process_alive(pid: i64, started_at: &str) -> bool {
     if started_at.is_empty() {
         return true; // this session never captured a start time to compare — fail toward alive
     }
-    match proc_started_at(pid) {
-        Some(current) => current == started_at,
-        None => true, // can't positively confirm identity right now — fail toward alive
-    }
+    // can't positively confirm identity right now — fail toward alive
+    proc_started_at(pid).is_none_or(|current| current == started_at)
 }
 
 /// Inserts a new `sessions` row for the CURRENT process and returns its id

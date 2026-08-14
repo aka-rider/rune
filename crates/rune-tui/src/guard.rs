@@ -291,7 +291,10 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
     if DIRTY_CLOSE_SAVE.answers(key) {
         clear_guard(app);
         let _ = save::trigger_save(app, doc, SaveMode::Normal, effects);
-        if app.doc(doc).is_some_and(|d| d.save_in_flight()) {
+        if app
+            .doc(doc)
+            .is_some_and(super::document::Document::save_in_flight)
+        {
             app.pending_close_on_save = Some(doc);
         }
     } else if DIRTY_CLOSE_DISCARD.answers(key) {
@@ -348,7 +351,10 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
     for id in docs {
         match save::trigger_save(app, id, SaveMode::Normal, effects) {
             SaveStart::InFlight => {
-                if let Some(version) = app.doc(id).and_then(|d| d.pending_save_version()) {
+                if let Some(version) = app
+                    .doc(id)
+                    .and_then(super::document::Document::pending_save_version)
+                {
                     pending.insert(id, version);
                 }
             }
@@ -403,7 +409,9 @@ fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effec
         // each leave the Guard up so the user's "save anyway" is never
         // silently dropped on the floor, and a repeat press once the
         // in-flight save has finished can still answer it.
-        let already_in_flight = app.doc(doc).is_some_and(|d| d.save_in_flight());
+        let already_in_flight = app
+            .doc(doc)
+            .is_some_and(super::document::Document::save_in_flight);
         let start = save::trigger_save(app, doc, SaveMode::Force, effects);
         if !already_in_flight && matches!(start, SaveStart::InFlight) {
             clear_guard(app);

@@ -52,10 +52,9 @@ fn human_session() {
             wal::arm(Path::new("artifacts"), &path, &content, &actions).unwrap_or_else(|e| {
                 panic!("wal::arm failed (environment fault, not a fuzz finding): {e}")
             });
-        match driver::run_catching_panic(&path, &content, &actions).violation {
-            None => Ok(()),
-            Some(v) => Err(TestCaseError::fail(v.to_string())),
-        }
+        driver::run_catching_panic(&path, &content, &actions)
+            .violation
+            .map_or(Ok(()), |v| Err(TestCaseError::fail(v.to_string())))
     });
 
     match outcome {

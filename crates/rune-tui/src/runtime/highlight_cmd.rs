@@ -65,6 +65,7 @@ pub(crate) const FIRST_PAINT_BUDGET: Duration = Duration::from_millis(20);
 ///
 /// Holds the pass's start rather than its deadline: `Instant + Duration`
 /// panics on overflow, and subtracting an elapsed span cannot.
+#[derive(Clone, Copy)]
 pub(crate) struct PassBudget {
     per_region: Duration,
     total: Duration,

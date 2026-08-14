@@ -235,7 +235,7 @@ fn resolve(area: Rect, app: &App) -> Resolved {
     let footer = chunks
         .get(1)
         .copied()
-        .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
+        .unwrap_or_else(|| Rect::new(area.x, area.y, area.width, 0));
 
     let (main_area, messages_area) = if messages::is_open(app) {
         let messages_h = messages::height(app, area.height);

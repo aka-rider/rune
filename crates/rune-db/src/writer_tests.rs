@@ -31,7 +31,7 @@ fn noop_op_round_trips_ok() {
     let on_event: OnEvent = Box::new(move |evt| {
         events_for_cb
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(evt);
     });
 
@@ -51,7 +51,9 @@ fn noop_op_round_trips_ok() {
     // the noop's own id rather than the events vec's exact length.
     handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
 
-    let events = events.lock().unwrap_or_else(|p| p.into_inner());
+    let events = events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert!(
         events.iter().any(|e| matches!(
             e,

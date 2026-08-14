@@ -39,7 +39,11 @@ pub(crate) fn handle_prepare_ack(
     prep: rune_db::MaterializePrep,
     effects: &mut Effects,
 ) {
-    if app.doc(id).and_then(|d| d.prep_op()) != Some(op_id) {
+    if app
+        .doc(id)
+        .and_then(super::super::document::Document::prep_op)
+        != Some(op_id)
+    {
         return;
     }
     let (prep_expect_hash, bound_path) = match prep {
@@ -50,7 +54,10 @@ pub(crate) fn handle_prepare_ack(
             sync,
         } => {
             if sync.is_disk_divergent()
-                && app.doc(id).and_then(|d| d.preparing_mode()) == Some(SaveMode::Normal)
+                && app
+                    .doc(id)
+                    .and_then(super::super::document::Document::preparing_mode)
+                    == Some(SaveMode::Normal)
             {
                 refuse_divergent_publish(app, id, sync);
                 return;
@@ -199,7 +206,7 @@ pub(crate) fn handle_materialize_vfs_done(
     ticket: SaveTicket,
     db_id: i64,
     seq: i64,
-    content: Arc<str>,
+    content: &Arc<str>,
     outcome: MaterializeVfsOutcome,
 ) {
     let live = app
@@ -208,14 +215,13 @@ pub(crate) fn handle_materialize_vfs_done(
     match outcome {
         MaterializeVfsOutcome::Missing => {
             if live {
-                handle_materialize_ack(app, id, MatResult::Missing);
+                handle_materialize_ack(app, id, &MatResult::Missing);
             }
         }
         MaterializeVfsOutcome::PathDisagreement => {
             super::on_store_failure(
                 app,
-                "materialize refused: caller-supplied path does not match the bound path"
-                    .to_string(),
+                "materialize refused: caller-supplied path does not match the bound path",
             );
         }
         MaterializeVfsOutcome::Error(e) => {
@@ -237,7 +243,7 @@ pub(crate) fn handle_materialize_vfs_done(
                     RecordTarget {
                         db_id,
                         seq,
-                        content: &content,
+                        content,
                         resolved_path: &resolved_path,
                     },
                     MaterializeOutcome::Conflict {
@@ -272,7 +278,7 @@ pub(crate) fn handle_materialize_vfs_done(
                     RecordTarget {
                         db_id,
                         seq,
-                        content: &content,
+                        content,
                         resolved_path: &resolved_path,
                     },
                     outcome,
@@ -308,7 +314,7 @@ pub(crate) fn handle_materialize_vfs_done(
                     RecordTarget {
                         db_id,
                         seq,
-                        content: &content,
+                        content,
                         resolved_path: &resolved_path,
                     },
                     outcome,

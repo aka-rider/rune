@@ -37,7 +37,7 @@ pub(crate) fn enqueue_rename(
                 Some(Ticket::Db(op_id))
             }
             Err(e) => {
-                crate::materialize_ack::on_store_failure(app, e.to_string());
+                crate::materialize_ack::on_store_failure(app, &e.to_string());
                 None
             }
         };
@@ -150,10 +150,10 @@ fn create_cmd(
                 to: path.clone(),
                 durable,
             }),
-            Ok(rune_vfs::PutOutcome::Conflict { current }) => match current.sighted.stat() {
-                Some(seen) => Ok(RenameOutcome::Collided { seen }),
-                None => Err("target already exists".to_string()),
-            },
+            Ok(rune_vfs::PutOutcome::Conflict { current }) => current.sighted.stat().map_or_else(
+                || Err("target already exists".to_string()),
+                |seen| Ok(RenameOutcome::Collided { seen }),
+            ),
             Ok(_) => Err("create failed: unexpected publish outcome".to_string()),
             Err(e) => Err(e.to_string()),
         };

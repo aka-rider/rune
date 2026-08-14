@@ -38,10 +38,7 @@ pub fn resolve(
         // tree-sitter language, a vault indexer) then cannot smuggle a
         // `javascript:`/`file://` target through to it, however it builds
         // its `Target`s.
-        Target::Url(u) => match is_external(u) {
-            Some(approved) => Destination::Url(approved),
-            None => Destination::Unresolved,
-        },
+        Target::Url(u) => is_external(u).map_or(Destination::Unresolved, Destination::Url),
         // The caller handles same-document anchors without touching the
         // filesystem.
         Target::SameDoc(_) => Destination::Unresolved,

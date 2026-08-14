@@ -49,7 +49,11 @@ fn row_is_truncated(content: &str, line_range: ByteRange, cells: &[TableCellM]) 
         .map_or(line_range.start, |c| c.range.end)
         .clamp(line_range.start, line_range.end);
     let tail = content.get(last_end..line_range.end).unwrap_or("");
-    let after_pipe = tail.trim().strip_prefix('|').unwrap_or(tail.trim()).trim();
+    let after_pipe = tail
+        .trim()
+        .strip_prefix('|')
+        .unwrap_or_else(|| tail.trim())
+        .trim();
     !after_pipe.is_empty()
 }
 

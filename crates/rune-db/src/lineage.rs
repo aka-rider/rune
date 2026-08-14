@@ -57,10 +57,9 @@ pub fn common_ancestor(
         .query_row(&sql, params![a, b], |r| r.get(0))
         .optional()?
         .flatten();
-    match found {
-        Some(id) => observation::get_observation(tx, id).map(Some),
-        None => Ok(None),
-    }
+    found.map_or(Ok(None), |id| {
+        observation::get_observation(tx, id).map(Some)
+    })
 }
 
 #[cfg(test)]

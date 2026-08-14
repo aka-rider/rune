@@ -101,7 +101,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             content,
             outcome,
         } => materialize_ack::handle_materialize_vfs_done(
-            app, id, ticket, db_id, seq, content, outcome,
+            app, id, ticket, db_id, seq, &content, outcome,
         ),
         Msg::DirLoaded {
             root,
@@ -116,12 +116,12 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             generation,
             path,
             result,
-        } => crate::trash::handle_trash_done(app, generation, path, result, effects),
+        } => crate::trash::handle_trash_done(app, generation, &path, result, effects),
         Msg::FileOpened {
             path,
             result,
             anchor,
-        } => crate::workspace::handle_file_opened(app, path, result, anchor, effects),
+        } => crate::workspace::handle_file_opened(app, &path, result, anchor, effects),
         Msg::Highlighted {
             doc,
             version,

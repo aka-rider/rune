@@ -117,7 +117,10 @@ pub(crate) fn trigger_save(
     if app.refuse_if_preview(id) {
         return SaveStart::Refused;
     }
-    if app.doc(id).is_some_and(|d| d.save_in_flight()) {
+    if app
+        .doc(id)
+        .is_some_and(super::document::Document::save_in_flight)
+    {
         messages::warn(app, "a save is already in progress");
         return SaveStart::InFlight;
     }

@@ -84,7 +84,7 @@ fn per_cursor_selection_edits(
         infos.push((edit, c.id));
     }
 
-    let _ = commit_edit_batch(app, id, infos, cursors_before, kind);
+    let _ = commit_edit_batch(app, id, infos, &cursors_before, kind);
 }
 
 /// Generalized to arbitrary text so it doubles as the selection-replacing
@@ -306,7 +306,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
                     app.nav_history
                         .shift(id, ae.start, ae.insert.len(), ae.deleted.len());
                 }
-                resync_after_journal_jump(app, id, affected);
+                resync_after_journal_jump(app, id, affected.as_ref());
             }
             Err(e) => {
                 messages::error(app, format!("undo failed: {e}"));
@@ -369,7 +369,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
                     app.nav_history
                         .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
                 }
-                resync_after_journal_jump(app, id, affected);
+                resync_after_journal_jump(app, id, affected.as_ref());
             }
             Err(e) => {
                 messages::error(app, format!("redo failed: {e}"));
@@ -415,7 +415,7 @@ fn affected_delete_range(edits: &[AppliedEdit]) -> Option<std::ops::Range<usize>
 fn resync_after_journal_jump(
     app: &mut App,
     id: DocumentId,
-    affected: Option<std::ops::Range<usize>>,
+    affected: Option<&std::ops::Range<usize>>,
 ) {
     if merge_active_on(app, id) {
         crate::merge::resync(app, id, affected);

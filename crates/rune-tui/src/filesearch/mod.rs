@@ -204,10 +204,8 @@ fn candidate_by<'a>(
     walk: &'a [Candidate],
     idx: usize,
 ) -> Option<&'a Candidate> {
-    match idx.checked_sub(recents.len()) {
-        None => recents.get(idx),
-        Some(walk_idx) => walk.get(walk_idx),
-    }
+    idx.checked_sub(recents.len())
+        .map_or_else(|| recents.get(idx), |walk_idx| walk.get(walk_idx))
 }
 
 pub(crate) fn candidate_at(state: &FileSearchState, idx: usize) -> Option<&Candidate> {
@@ -449,8 +447,8 @@ fn display_relative(root: &Path, path: &Path) -> String {
     if root.as_os_str().is_empty() {
         return path.display().to_string();
     }
-    match path.strip_prefix(root) {
-        Ok(rel) => rel.display().to_string(),
-        Err(_) => path.display().to_string(),
-    }
+    path.strip_prefix(root).map_or_else(
+        |_| path.display().to_string(),
+        |rel| rel.display().to_string(),
+    )
 }

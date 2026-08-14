@@ -124,7 +124,7 @@ fn doc_row_ref(row: usize, width: usize) -> ImageRowRef {
 fn row_cells_center_the_requested_line() {
     let app = app_with_image_doc(true, ImageStatus::Pending);
     let doc = app.doc(app.active).expect("doc");
-    let cells = row_cells(&app, doc, doc_row_ref(0, 0), 20).expect("doc-image row is always Some");
+    let cells = row_cells(&app, doc, &doc_row_ref(0, 0), 20).expect("doc-image row is always Some");
     assert_eq!(cells.len(), 20);
     let text: String = cells.iter().map(|c| c.text.as_str()).collect();
     assert!(text.contains("x.png"));
@@ -137,7 +137,8 @@ fn row_cells_center_the_requested_line() {
 fn row_past_the_card_content_is_blank() {
     let app = app_with_image_doc(true, ImageStatus::Pending);
     let doc = app.doc(app.active).expect("doc");
-    let cells = row_cells(&app, doc, doc_row_ref(99, 0), 10).expect("doc-image row is always Some");
+    let cells =
+        row_cells(&app, doc, &doc_row_ref(99, 0), 10).expect("doc-image row is always Some");
     assert!(cells.iter().all(|c| c.text == " "));
 }
 
@@ -172,7 +173,7 @@ fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_i
             },
         );
     let doc = app.doc(app.active).expect("doc");
-    let cells = row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20)
+    let cells = row_cells(&app, doc, &embed_row_ref(0, 8, "x.png"), 20)
         .expect("a live, Kitty-capable embed row is Some");
     assert_eq!(cells.len(), 20);
     assert_eq!(cells[0].text, " ", "one blank left-margin cell first");
@@ -187,14 +188,14 @@ fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_i
 fn an_embed_with_kitty_unavailable_falls_through_to_alt_text() {
     let app = app_with_kitty(false);
     let doc = app.doc(app.active).expect("doc");
-    assert!(row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20).is_none());
+    assert!(row_cells(&app, doc, &embed_row_ref(0, 8, "x.png"), 20).is_none());
 }
 
 #[test]
 fn an_embed_not_yet_live_reserves_blank_cells() {
     let app = app_with_kitty(true);
     let doc = app.doc(app.active).expect("doc");
-    let cells = row_cells(&app, doc, embed_row_ref(0, 8, "untracked.png"), 20)
+    let cells = row_cells(&app, doc, &embed_row_ref(0, 8, "untracked.png"), 20)
         .expect("Kitty-capable, not-yet-live embed row still reserves blanks");
     assert!(cells.iter().all(|c| c.text == " "));
 }

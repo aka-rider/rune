@@ -318,7 +318,7 @@ mod tests {
                 anchor,
             }) = cmd.run()
             {
-                crate::workspace::handle_file_opened(&mut app, path, result, anchor, &mut effects);
+                crate::workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
             }
         }
 

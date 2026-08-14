@@ -57,7 +57,7 @@ pub fn catching_panic<T>(f: impl FnOnce() -> T) -> Result<T, Violation> {
         Ok(value) => Ok(value),
         Err(payload) => Err(Violation::panicked(
             downcast_panic(payload),
-            LAST_SITE.with(|slot| slot.take()),
+            LAST_SITE.with(std::cell::RefCell::take),
         )),
     }
 }
@@ -69,10 +69,9 @@ fn downcast_panic(payload: Box<dyn Any + Send>) -> String {
         Ok(s) => return (*s).to_string(),
         Err(payload) => payload,
     };
-    match payload.downcast::<String>() {
-        Ok(s) => *s,
-        Err(_) => "<unknown panic value>".to_string(),
-    }
+    payload
+        .downcast::<String>()
+        .map_or_else(|_| "<unknown panic value>".to_string(), |s| *s)
 }
 
 #[cfg(test)]

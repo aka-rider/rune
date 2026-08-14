@@ -80,7 +80,7 @@ fn a_resolve_failure_on_the_racers_own_path_keeps_the_plain_refusal() {
     handle_materialize_ack(
         &mut app,
         id,
-        MatResult::Refused {
+        &MatResult::Refused {
             fresh: racer_observation(row_id),
         },
     );
@@ -113,7 +113,7 @@ fn a_resolvable_racer_path_hands_off_to_a_load() {
     handle_materialize_ack(
         &mut app,
         id,
-        MatResult::Refused {
+        &MatResult::Refused {
             fresh: racer_observation(row_id),
         },
     );
@@ -154,7 +154,7 @@ fn committed_save_warns_once_for_a_hardlinked_document_then_stops() {
     let id = app.active;
     app.doc_mut(id).unwrap().nlink = Some(2);
 
-    handle_materialize_ack(&mut app, id, committed_result(Some(1)));
+    handle_materialize_ack(&mut app, id, &committed_result(Some(1)));
 
     assert_eq!(
         messages::newest_text(&app),
@@ -165,7 +165,7 @@ fn committed_save_warns_once_for_a_hardlinked_document_then_stops() {
     assert_eq!(app.doc(id).unwrap().nlink, Some(1));
 
     let posts_before_second_save = messages::posts(&app);
-    handle_materialize_ack(&mut app, id, committed_result(Some(1)));
+    handle_materialize_ack(&mut app, id, &committed_result(Some(1)));
 
     assert_eq!(
         messages::posts(&app),

@@ -422,7 +422,7 @@ fn build_inline<'a>(
 fn link_url_range(range: ByteRange, text: &[Inline], url: &str, content_len: usize) -> ByteRange {
     let text_close = text
         .last()
-        .map_or(range.start.saturating_add(1), |c| c.range().end);
+        .map_or_else(|| range.start.saturating_add(1), |c| c.range().end);
     let url_start = text_close.saturating_add(2).min(range.end).min(content_len);
     let url_end = url_start
         .saturating_add(url.len())
@@ -458,13 +458,12 @@ fn wikilink_label_range(content: &str, range: ByteRange) -> ByteRange {
     let inner_start = range.start.saturating_add(2).min(range.end);
     let label_end = range.end.saturating_sub(2).max(inner_start);
     let inner = content.get(inner_start..label_end).unwrap_or("");
-    let label_start = match inner.find('|') {
-        Some(pipe_offset) => inner_start
+    let label_start = inner.find('|').map_or(inner_start, |pipe_offset| {
+        inner_start
             .saturating_add(pipe_offset)
             .saturating_add(1)
-            .min(label_end),
-        None => inner_start,
-    };
+            .min(label_end)
+    });
     ByteRange::new(label_start, label_end).clamp(content.len())
 }
 

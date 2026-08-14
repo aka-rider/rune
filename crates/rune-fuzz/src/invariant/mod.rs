@@ -113,10 +113,9 @@ impl Violation {
 impl fmt::Display for Violation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.id, self.message)?;
-        match &self.site {
-            Some(site) => write!(f, "\n  panicked at {}", site.location),
-            None => Ok(()),
-        }
+        self.site.as_ref().map_or(Ok(()), |site| {
+            write!(f, "\n  panicked at {}", site.location)
+        })
     }
 }
 
@@ -128,10 +127,8 @@ pub fn trunc(s: &str, n: usize) -> String {
         return s.to_string();
     }
     let end = s.floor_char_boundary(n);
-    match s.get(..end) {
-        Some(head) => format!("{head}…"),
-        None => s.to_string(),
-    }
+    s.get(..end)
+        .map_or_else(|| s.to_string(), |head| format!("{head}…"))
 }
 
 /// Runs every per-step checker this crate can express purely over

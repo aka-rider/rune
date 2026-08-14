@@ -69,10 +69,10 @@ fn load(
 fn candidate(path: PathBuf, root: &Path) -> Candidate {
     let in_tree = !root.as_os_str().is_empty() && path.starts_with(root);
     let display = if in_tree {
-        match path.strip_prefix(root) {
-            Ok(rel) => rel.display().to_string(),
-            Err(_) => path.display().to_string(),
-        }
+        path.strip_prefix(root).map_or_else(
+            |_| path.display().to_string(),
+            |rel| rel.display().to_string(),
+        )
     } else {
         path.display().to_string()
     };

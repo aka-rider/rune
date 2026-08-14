@@ -130,7 +130,7 @@ pub(crate) fn push_span_split_by_line(
 ) {
     for_each_line_slice(content, starts, range, |ll| {
         let line = ll.line();
-        let granted = out.claim_free(ll);
+        let granted = out.claim_free(&ll);
         let spans: Vec<SyntaxSpan> = granted
             .pieces()
             .iter()
@@ -189,7 +189,7 @@ fn build_line_span(
 /// asserted on instead of double-counted.
 pub(crate) fn hide_range(content: &str, starts: &[usize], range: ByteRange, out: &mut EmitOut) {
     for_each_line_slice(content, starts, range, |ll| {
-        out.claim_free(ll).record_hidden();
+        out.claim_free(&ll).record_hidden();
     });
 }
 

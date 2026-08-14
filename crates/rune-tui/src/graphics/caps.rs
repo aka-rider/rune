@@ -125,7 +125,7 @@ mod tests {
 
     impl EnvSource for FakeEnv {
         fn var(&self, key: &str) -> Option<String> {
-            self.0.get(key).map(|v| v.to_string())
+            self.0.get(key).map(std::string::ToString::to_string)
         }
     }
 

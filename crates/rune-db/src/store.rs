@@ -185,7 +185,10 @@ impl Store {
 
     /// Replaces the store's clock. Used in deterministic tests.
     pub fn set_clock(&self, clock: ClockFn) {
-        *self.clock.lock().unwrap_or_else(|p| p.into_inner()) = clock;
+        *self
+            .clock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = clock;
     }
 
     /// Replaces how this store decides whether a different session's
@@ -246,7 +249,10 @@ impl Store {
 
     /// A fresh sample of this store's injected clock.
     pub(crate) fn now(&self) -> SystemTime {
-        (self.clock.lock().unwrap_or_else(|p| p.into_inner()))()
+        (self
+            .clock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))()
     }
 
     /// The reader handle, for display/immutable reads dispatched from a

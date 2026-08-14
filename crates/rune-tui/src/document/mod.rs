@@ -335,7 +335,10 @@ impl Document {
     /// answers `false` here, matching the no-op `reload_embeds` performs on
     /// it.
     pub fn has_reloadable_graphics(&self) -> bool {
-        self.image().is_some() || self.embeds().is_some_and(|e| e.has_wedged())
+        self.image().is_some()
+            || self
+                .embeds()
+                .is_some_and(super::graphics::EmbedSet::has_wedged)
     }
 
     /// Whether a save is currently running for this document — derived

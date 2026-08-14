@@ -76,7 +76,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
             app.db_ops
                 .insert(op_id, PendingOp::merge_prep(id, generation));
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }
 
@@ -246,7 +246,7 @@ fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
 }
 

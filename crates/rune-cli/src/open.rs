@@ -59,10 +59,10 @@ pub(crate) fn resolve_root(
     work_dir: Option<&Path>,
     first_file: Option<&Path>,
 ) -> PathBuf {
-    match work_dir {
-        Some(dir) => dir.to_path_buf(),
-        None => workspaceroot::resolve(vfs, cwd, home, first_file),
-    }
+    work_dir.map_or_else(
+        || workspaceroot::resolve(vfs, cwd, home, first_file),
+        Path::to_path_buf,
+    )
 }
 
 /// Resolves and opens the first positional, building the `(App,
@@ -187,7 +187,7 @@ pub(crate) fn open_untitled(
     let mut docs = bootstrap.scratch_docs.into_iter();
     if let Some(first) = docs.next() {
         let active = app.active;
-        adopt_scratch_doc(&mut app, active, first);
+        adopt_scratch_doc(&mut app, active, &first);
     }
     for extra in docs {
         let id = app.open_document(rune_core::buffer::Buffer::new(""));
@@ -195,7 +195,7 @@ pub(crate) fn open_untitled(
         if let Some(doc) = app.doc_mut(id) {
             doc.display_name = Some(name);
         }
-        adopt_scratch_doc(&mut app, id, extra);
+        adopt_scratch_doc(&mut app, id, &extra);
     }
 
     (
@@ -215,7 +215,7 @@ pub(crate) fn open_untitled(
 /// load`'s `recovered_content`). `bind_new` is always `true`: a scratch
 /// document — recovered or freshly minted — has never been bound to a real
 /// file, so its NEXT save must still go through the create-only path.
-fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
+fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: &ScratchDoc) {
     if let Some(doc) = app.doc_mut(id) {
         doc.bind_doc_db(rune_tui::db::DocDb::new(
             scratch.db_id,
@@ -279,7 +279,7 @@ mod tests {
         adopt_scratch_doc(
             &mut app,
             id,
-            ScratchDoc {
+            &ScratchDoc {
                 db_id: 1,
                 content: "recovered draft text".to_string(),
             },

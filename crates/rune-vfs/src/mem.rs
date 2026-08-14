@@ -103,7 +103,10 @@ impl Mem {
     /// how many non-matching calls happen first) and is then cleared.
     pub fn fail_next(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_next({op:?}) triggered"));
-        let mut guard = self.fail_next.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self
+            .fail_next
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((op, err));
     }
 
@@ -121,7 +124,10 @@ impl Mem {
     /// way). See the field doc on `Mem::fail_after`.
     pub fn fail_after(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_after({op:?}) triggered"));
-        let mut guard = self.fail_after.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self
+            .fail_after
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((op, err));
     }
 
@@ -129,7 +135,10 @@ impl Mem {
     /// error. Otherwise leaves any differently-targeted armed failure
     /// untouched and returns `Ok`.
     fn take_failure(&self, op: OpKind) -> io::Result<()> {
-        let mut guard = self.fail_next.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self
+            .fail_next
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match guard.as_ref() {
             Some((armed, _)) if *armed == op => {}
             _ => return Ok(()),
@@ -144,7 +153,10 @@ impl Mem {
     /// it as `published_not_durable` since every current caller of this
     /// (`exchange`/`rename_excl`) is a publish primitive.
     fn take_after_failure(&self, op: OpKind, context: impl Into<String>) -> Option<io::Error> {
-        let mut guard = self.fail_after.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self
+            .fail_after
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match guard.as_ref() {
             Some((armed, _)) if *armed == op => {}
             _ => return None,
@@ -155,7 +167,9 @@ impl Mem {
     }
 
     fn lock_state(&self) -> MutexGuard<'_, MemState> {
-        self.state.lock().unwrap_or_else(|p| p.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Test/debug introspection only: every path currently stored,
@@ -196,7 +210,7 @@ impl Mem {
         let mut guard = self
             .mutate_after_stat
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((path.to_path_buf(), bytes));
     }
 
@@ -209,7 +223,10 @@ impl Mem {
     /// [`crate::mem`]'s bracket-retry ceiling must degrade to unconfirmed
     /// against.
     pub fn set_churning(&self, path: &Path, churning: bool) {
-        let mut guard = self.churning.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self
+            .churning
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if churning {
             guard.insert(path.to_path_buf());
         } else {
@@ -241,7 +258,7 @@ impl Mem {
         let is_churning = self
             .churning
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(path);
         if is_churning {
             let tick = self.lock_state().tick;
@@ -252,7 +269,7 @@ impl Mem {
             let mut guard = self
                 .mutate_after_stat
                 .lock()
-                .unwrap_or_else(|p| p.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match guard.as_ref() {
                 Some((armed_path, _)) if armed_path == path => guard.take(),
                 _ => None,
@@ -306,7 +323,7 @@ impl Mem {
         let mut guard = self
             .resolve_failures
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.insert(lexically_normalize(path));
     }
 }
@@ -403,6 +420,7 @@ impl Vfs for Mem {
                 kind: FileKind::File,
             },
         );
+        drop(state);
         Ok(temp)
     }
 
@@ -485,6 +503,7 @@ impl Vfs for Mem {
         if state.files.remove(path).is_none() {
             return Err(not_found(path, "remove"));
         }
+        drop(state);
         Ok(())
     }
 
@@ -494,6 +513,7 @@ impl Vfs for Mem {
         if state.files.remove(path).is_none() {
             return Err(not_found(path, "trash"));
         }
+        drop(state);
         Ok(())
     }
 
@@ -525,8 +545,11 @@ impl Vfs for Mem {
         // No exact file at `path` — `Mem` has no directory nodes, so a
         // directory is synthesized: `path` is a directory iff some stored
         // key sits strictly below it.
-        let state = self.lock_state();
-        let is_synthetic_dir = state.files.keys().any(|key| sits_strictly_below(key, path));
+        let is_synthetic_dir = self
+            .lock_state()
+            .files
+            .keys()
+            .any(|key| sits_strictly_below(key, path));
         if is_synthetic_dir {
             return Ok(Stat {
                 size: 0,
@@ -552,13 +575,14 @@ impl Vfs for Mem {
         let failing = self
             .resolve_failures
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if failing.contains(&normalized) {
             return Err(io::Error::other(format!(
                 "fail_resolve({}) triggered",
                 normalized.display()
             )));
         }
+        drop(failing);
         Ok(normalized)
     }
 
@@ -626,6 +650,7 @@ impl Vfs for Mem {
         if !path_exists {
             return Err(not_found(path, "read_dir"));
         }
+        drop(state);
         let mut entries: Vec<DirEntry> = by_name
             .into_iter()
             .map(|(name, (kind, path))| DirEntry { name, path, kind })

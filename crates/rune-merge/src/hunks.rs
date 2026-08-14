@@ -77,10 +77,9 @@ fn next_line(b: &[u8]) -> (&[u8], &[u8]) {
     if b.is_empty() {
         return (b, b);
     }
-    match b.iter().position(|&c| c == b'\n') {
-        Some(i) => b.split_at(i + 1),
-        None => (b, &[]),
-    }
+    b.iter()
+        .position(|&c| c == b'\n')
+        .map_or((b, &[] as &[u8]), |i| b.split_at(i + 1))
 }
 
 fn trim_end_crlf(line: &[u8]) -> &[u8] {
@@ -366,7 +365,7 @@ pub fn merge_hunks_no_ancestor(ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
     let mut ours_buf = Vec::new();
     let mut theirs_buf = Vec::new();
 
-    for line in patch.hunks().iter().flat_map(|h| h.lines()) {
+    for line in patch.hunks().iter().flat_map(diffy::Hunk::lines) {
         match line {
             diffy::Line::Context(bytes) => {
                 flush_no_ancestor_conflict(&mut hunks, &mut ours_buf, &mut theirs_buf);

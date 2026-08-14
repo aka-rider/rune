@@ -81,7 +81,7 @@ fn panicked_result(violation: Violation, content: &str) -> RunResult {
 pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     let mut session = Session::open(path, content);
     for action in actions {
-        if session.act(action.clone()).is_some() {
+        if session.act(action).is_some() {
             break;
         }
     }

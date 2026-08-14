@@ -148,10 +148,10 @@ fn render_frame(cells: &[Vec<Cell>]) -> String {
 /// rendered as the literal `<never saved>`, never an empty byte string,
 /// so a report can't be misread as "saved empty content".
 fn render_disk(disk: Option<&[u8]>) -> String {
-    match disk {
-        Some(bytes) => format!("{:?}", String::from_utf8_lossy(bytes)),
-        None => "<never saved>".to_string(),
-    }
+    disk.map_or_else(
+        || "<never saved>".to_string(),
+        |bytes| format!("{:?}", String::from_utf8_lossy(bytes)),
+    )
 }
 
 fn render_raw(raw: &[Vec<u8>]) -> String {
