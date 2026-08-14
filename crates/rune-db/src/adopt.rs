@@ -196,17 +196,6 @@ pub fn resolve_adopt(
     )
 }
 
-/// Reverses the resolve observation a merge/discard adoption
-/// (`resolve_adopt`) or a heal-adopt created — the Esc-abort-out-of-the-
-/// merge-resolver counterpart. Reads `doc_id`'s CURRENT `saved_obs`
-/// (expected to be the resolve/adoption observation being unwound), deletes
-/// that row (the blob is kept — history is never destroyed, only the fact
-/// that it was "agreed" is retracted), and restores `saved_obs` to EXACTLY
-/// what it superseded. Refuses (surfaced error) if the current `saved_obs`
-/// is not itself an `origin='resolve'` row — abandon unwinds a RESOLUTION
-/// and nothing else; deleting a genuine `'save'`/`'load'` baseline would
-/// destroy real observation history. A doc with no `saved_obs` at all is a
-/// safe no-op.
 pub fn resolve_abandon(
     conn: &mut Connection,
     session_id: SessionId,
@@ -237,13 +226,25 @@ pub fn resolve_abandon(
             )));
         }
 
-        // Move saved_obs OFF the row being deleted FIRST — it carries a FK
-        // to observations(id), so deleting first would violate that FK.
         tx.execute(
             "UPDATE session_documents SET saved_obs=?1 WHERE session_id=?2 AND doc_id=?3",
             params![parent_a, session_id, doc_id],
         )?;
-        tx.execute("DELETE FROM observations WHERE id=?1", params![current])?;
+
+        let still_referenced: bool = tx.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM session_documents WHERE saved_obs=?1
+                 UNION ALL
+                 SELECT 1 FROM observations WHERE parent_a=?1 OR parent_b=?1
+                 UNION ALL
+                 SELECT 1 FROM merges WHERE base_obs=?1 OR theirs_obs=?1
+             )",
+            params![current],
+            |r| r.get(0),
+        )?;
+        if !still_referenced {
+            tx.execute("DELETE FROM observations WHERE id=?1", params![current])?;
+        }
         Ok(())
     })
 }
@@ -256,6 +257,12 @@ mod tests {
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
         crate::schema::apply(&conn).expect("schema");
+        conn
+    }
+
+    fn open_with_fk_enforced() -> Connection {
+        let conn = open();
+        conn.pragma_update(None, "foreign_keys", "ON").expect("fk");
         conn
     }
 
@@ -370,6 +377,136 @@ mod tests {
 
         let err = resolve_abandon(&mut conn, session_id, doc_id).expect_err("must refuse");
         assert!(matches!(err, Error::Invalid(_)));
+    }
+
+    #[test]
+    fn resolve_abandon_survives_a_later_observation_chained_to_it() {
+        let mut conn = open_with_fk_enforced();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id = seed_doc(&conn);
+        let hash_1 = seed_blob(&conn, "content 1");
+
+        let first = record_adoption(
+            &mut conn,
+            doc_id,
+            session_id,
+            ObservationMeta {
+                blob_hash: &hash_1,
+                seq: Some(1),
+                origin: ObsOrigin::Save,
+                confirmed: Confirmation::Unclassified,
+            },
+            &test_stat(),
+            SystemTime::now(),
+            None,
+        )
+        .expect("first adoption");
+
+        let resolved = adopt_equal(
+            &mut conn,
+            session_id,
+            doc_id,
+            first.id,
+            2,
+            SystemTime::now(),
+        )
+        .expect("adopt_equal");
+
+        conn.execute(
+            "INSERT INTO observations(doc_id, session_id, blob_hash, seq, origin, parent_a, at) \
+             VALUES(?1,?2,?3,?4,'probe',?5,'x')",
+            params![doc_id, session_id, hash_1, 3, resolved.id],
+        )
+        .expect("seed chained observation");
+
+        resolve_abandon(&mut conn, session_id, doc_id).expect("resolve_abandon");
+
+        let current: Option<ObsId> = conn
+            .query_row(
+                "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+                params![session_id, doc_id],
+                |r| r.get(0),
+            )
+            .expect("read saved_obs");
+        assert_eq!(current, Some(first.id));
+
+        let survives: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations WHERE id=?1",
+                params![resolved.id],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            survives, 1,
+            "a still-referenced resolve row must survive as a lineage ancestor"
+        );
+    }
+
+    #[test]
+    fn resolve_abandon_survives_a_merges_row_referencing_it() {
+        let mut conn = open_with_fk_enforced();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id = seed_doc(&conn);
+        let hash_1 = seed_blob(&conn, "content 1");
+
+        let first = record_adoption(
+            &mut conn,
+            doc_id,
+            session_id,
+            ObservationMeta {
+                blob_hash: &hash_1,
+                seq: Some(1),
+                origin: ObsOrigin::Save,
+                confirmed: Confirmation::Unclassified,
+            },
+            &test_stat(),
+            SystemTime::now(),
+            None,
+        )
+        .expect("first adoption");
+
+        let resolved = adopt_equal(
+            &mut conn,
+            session_id,
+            doc_id,
+            first.id,
+            2,
+            SystemTime::now(),
+        )
+        .expect("adopt_equal");
+
+        conn.execute(
+            "INSERT INTO merges(doc_id, session_id, base_obs, theirs_obs, marker_hash, blocks, state, created_at) \
+             VALUES(?1,?2,?3,?3,?4,'[]','active','x')",
+            params![doc_id, session_id, resolved.id, hash_1],
+        )
+        .expect("seed merges row");
+
+        resolve_abandon(&mut conn, session_id, doc_id).expect("resolve_abandon");
+
+        let current: Option<ObsId> = conn
+            .query_row(
+                "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+                params![session_id, doc_id],
+                |r| r.get(0),
+            )
+            .expect("read saved_obs");
+        assert_eq!(current, Some(first.id));
+
+        let survives: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations WHERE id=?1",
+                params![resolved.id],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            survives, 1,
+            "a resolve row referenced by a merges row must survive"
+        );
     }
 
     #[test]
