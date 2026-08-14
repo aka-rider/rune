@@ -84,7 +84,11 @@ impl WrapMap {
         // The only path an hr's `LineDecor` (no visible spans of its own)
         // ever takes — module docs, WP3.S3 — so decor must attach here too,
         // not just in `wrap_line`'s greedy loop below.
-        let seg_decor = decor::attach(line.decor.as_ref(), true, self.width as usize);
+        let seg_decor = decor::attach(
+            line.decor.as_ref(),
+            decor::SegmentPosition::First,
+            self.width as usize,
+        );
         segments.push(WrapSegment {
             spans: line.spans.clone(),
             model_line: line_idx,
@@ -111,27 +115,12 @@ impl WrapMap {
         }
         let width = self.width as usize;
 
-        // (span index, start offset, end offset) in the concatenated line
-        // text.
-        let mut span_refs: Vec<(usize, usize, usize)> = Vec::with_capacity(line.spans.len());
-        let mut text = String::new();
-        for (i, s) in line.spans.iter().enumerate() {
-            let start = text.len();
-            let span_text = s.text(content);
-            text.push_str(span_text);
-            span_refs.push((i, start, start + span_text.len()));
-        }
+        let (text, bounds) = query::spans_text_and_bounds(content, &line.spans);
 
         if text.is_empty() {
             self.push_whole_line(line_idx, line, segments);
             return;
         }
-
-        // Same coordinate space as `span_refs`' end offsets — the boundary
-        // list `next_grapheme` clamps cluster reads to, so this loop's width
-        // sum can never silently disagree with the row the renderer
-        // actually builds cells for (this function's own docs).
-        let bounds: Vec<usize> = span_refs.iter().map(|&(_, _, end)| end).collect();
 
         // How much of `width` the greedy breaker below actually has to lay
         // content out in — reduced when `line.decor` reserves cells for
@@ -180,8 +169,13 @@ impl WrapMap {
             // above guarantees it), so the loop always progresses.
             let seg_end = (start_col + byte_len).min(text.len());
 
-            let seg_spans = slice_spans(content, &line.spans, &span_refs, seg_start, seg_end);
-            let seg_decor = decor::attach(line.decor.as_ref(), seg_index == 0, width);
+            let seg_spans = slice_spans(content, &line.spans, &bounds, seg_start, seg_end);
+            let position = if seg_index == 0 {
+                decor::SegmentPosition::First
+            } else {
+                decor::SegmentPosition::Continuation
+            };
+            let seg_decor = decor::attach(line.decor.as_ref(), position, width);
             segments.push(WrapSegment {
                 spans: seg_spans,
                 model_line: line_idx,
@@ -209,17 +203,22 @@ impl WrapMap {
 fn slice_spans(
     content: &str,
     spans: &[SyntaxSpan],
-    span_refs: &[(usize, usize, usize)],
+    bounds: &[usize],
     seg_start: usize,
     seg_end: usize,
 ) -> Vec<SyntaxSpan> {
     let mut result = Vec::new();
-    // `span_refs` is built by one forward pass over the line's spans (this
-    // module's `wrap_line`), so both offsets rise monotonically — the first
+    // `bounds` is built by one forward pass over the line's spans (this
+    // module's `wrap_line`), so end offsets rise monotonically — the first
     // span able to reach `seg_start` is found by binary search, and once a
     // span starts at or past `seg_end` every later one does too.
-    let first = span_refs.partition_point(|&(_, _, end_off)| end_off <= seg_start);
-    for &(idx, start_off, _) in span_refs.get(first..).unwrap_or_default() {
+    let first = bounds.partition_point(|&end_off| end_off <= seg_start);
+    for idx in first..spans.len() {
+        let start_off = idx
+            .checked_sub(1)
+            .and_then(|prev| bounds.get(prev))
+            .copied()
+            .unwrap_or(0);
         if start_off >= seg_end {
             break;
         }
