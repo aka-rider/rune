@@ -208,9 +208,10 @@ mod tests {
     use std::time::Duration;
 
     fn open() -> Connection {
-        let conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open")
     }
 
     #[test]

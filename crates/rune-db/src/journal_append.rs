@@ -100,9 +100,10 @@ mod tests {
     use crate::journal::{current_seq, move_undo_pos, redo_peek, undo_peek};
 
     fn open() -> Connection {
-        let conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open")
     }
 
     fn insert_test_document(tx: &Transaction<'_>) -> DocId {

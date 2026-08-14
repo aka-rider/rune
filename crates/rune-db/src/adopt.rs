@@ -255,15 +255,10 @@ mod tests {
     use super::*;
 
     fn open() -> Connection {
-        let conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
-        conn
-    }
-
-    fn open_with_fk_enforced() -> Connection {
-        let conn = open();
-        conn.pragma_update(None, "foreign_keys", "ON").expect("fk");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open")
     }
 
     fn seed_doc(conn: &Connection) -> DocId {
@@ -381,7 +376,7 @@ mod tests {
 
     #[test]
     fn resolve_abandon_survives_a_later_observation_chained_to_it() {
-        let mut conn = open_with_fk_enforced();
+        let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
         let doc_id = seed_doc(&conn);
@@ -446,7 +441,7 @@ mod tests {
 
     #[test]
     fn resolve_abandon_survives_a_merges_row_referencing_it() {
-        let mut conn = open_with_fk_enforced();
+        let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
         let doc_id = seed_doc(&conn);

@@ -167,9 +167,10 @@ mod tests {
     use crate::obs_origin::ObsOrigin;
 
     fn open() -> Connection {
-        let conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open")
     }
 
     fn always_dead(_pid: i64, _started_at: &str) -> bool {
