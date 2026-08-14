@@ -19,6 +19,13 @@ use crate::decor::LineDecor;
 use crate::scope::ScopeId;
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Which of a `DecorPiece`'s `first`/`cont` strings a segment resolves to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentPosition {
+    First,
+    Continuation,
+}
+
 /// One rendered decoration piece, already resolved to whichever of a
 /// `DecorPiece`'s `first`/`cont` strings applies to the segment it rides on,
 /// and — for a rule line only — already clamped to the width that was
@@ -65,17 +72,21 @@ pub fn content_budget(decor: Option<&LineDecor>, width: usize) -> usize {
 
 /// Resolve a line's decor into the `SegDecor` a given segment carries, or
 /// `None` if there is no decor, or the decor doesn't fit and isn't the
-/// rule exemption. `is_first_segment` selects each piece's `first` string
+/// rule exemption. `position` selects each piece's `first` string
 /// (segment 0 of the line) versus its `cont` string (every later segment —
 /// a wrapped continuation row).
-pub fn attach(decor: Option<&LineDecor>, is_first_segment: bool, width: usize) -> Option<SegDecor> {
+pub fn attach(
+    decor: Option<&LineDecor>,
+    position: SegmentPosition,
+    width: usize,
+) -> Option<SegDecor> {
     let decor = decor?;
     if decor.pieces.is_empty() {
         return None;
     }
 
     if decor.is_rule {
-        return Some(clamp_to_width(decor, is_first_segment, width));
+        return Some(clamp_to_width(decor, position, width));
     }
 
     let decor_cells = decor.cells();
@@ -87,10 +98,9 @@ pub fn attach(decor: Option<&LineDecor>, is_first_segment: bool, width: usize) -
         .pieces
         .iter()
         .map(|p| SegDecorPiece {
-            text: if is_first_segment {
-                p.first.clone()
-            } else {
-                p.cont.clone()
+            text: match position {
+                SegmentPosition::First => p.first.clone(),
+                SegmentPosition::Continuation => p.cont.clone(),
             },
             scope: p.scope,
         })
@@ -104,7 +114,7 @@ pub fn attach(decor: Option<&LineDecor>, is_first_segment: bool, width: usize) -
 /// The rule-exemption path: renders every piece's chosen string, clamping
 /// (never dropping) whatever doesn't fit in `width` cells — grapheme by
 /// grapheme, so a clamp can never land mid-cluster.
-fn clamp_to_width(decor: &LineDecor, is_first_segment: bool, width: usize) -> SegDecor {
+fn clamp_to_width(decor: &LineDecor, position: SegmentPosition, width: usize) -> SegDecor {
     let mut remaining = width;
     let mut pieces = Vec::new();
     let mut total = 0usize;
@@ -112,10 +122,9 @@ fn clamp_to_width(decor: &LineDecor, is_first_segment: bool, width: usize) -> Se
         if remaining == 0 {
             break;
         }
-        let raw = if is_first_segment {
-            &piece.first
-        } else {
-            &piece.cont
+        let raw = match position {
+            SegmentPosition::First => &piece.first,
+            SegmentPosition::Continuation => &piece.cont,
         };
         let (clamped, used) = clamp_text_to_cells(raw, remaining);
         if used > 0 {
@@ -166,7 +175,7 @@ mod tests {
     #[test]
     fn no_decor_reserves_no_budget_and_attaches_nothing() {
         assert_eq!(content_budget(None, 80), 80);
-        assert_eq!(attach(None, true, 80), None);
+        assert_eq!(attach(None, SegmentPosition::First, 80), None);
     }
 
     #[test]
@@ -180,10 +189,10 @@ mod tests {
             is_rule: false,
         };
         assert_eq!(content_budget(Some(&decor), 10), 8);
-        let seg0 = attach(Some(&decor), true, 10).unwrap();
+        let seg0 = attach(Some(&decor), SegmentPosition::First, 10).unwrap();
         assert_eq!(seg0.cells, 2);
         assert_eq!(seg0.pieces[0].text, "\u{2022} ");
-        let cont = attach(Some(&decor), false, 10).unwrap();
+        let cont = attach(Some(&decor), SegmentPosition::Continuation, 10).unwrap();
         assert_eq!(cont.pieces[0].text, "  ");
     }
 
@@ -198,7 +207,7 @@ mod tests {
             is_rule: false,
         };
         assert_eq!(content_budget(Some(&decor), 10), 10);
-        assert_eq!(attach(Some(&decor), true, 10), None);
+        assert_eq!(attach(Some(&decor), SegmentPosition::First, 10), None);
     }
 
     #[test]
@@ -213,7 +222,7 @@ mod tests {
         };
         // A rule never reserves content budget (it has no competing spans).
         assert_eq!(content_budget(Some(&decor), 10), 10);
-        let seg = attach(Some(&decor), true, 10).unwrap();
+        let seg = attach(Some(&decor), SegmentPosition::First, 10).unwrap();
         assert_eq!(seg.cells, 10);
         assert_eq!(seg.pieces[0].text.chars().count(), 10);
     }
@@ -228,7 +237,7 @@ mod tests {
             }],
             is_rule: true,
         };
-        let seg = attach(Some(&decor), true, 0).unwrap();
+        let seg = attach(Some(&decor), SegmentPosition::First, 0).unwrap();
         assert_eq!(seg.cells, 0);
         assert!(seg.pieces.is_empty());
     }

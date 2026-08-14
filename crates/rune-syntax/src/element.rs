@@ -66,7 +66,7 @@ impl RevealSm {
 /// children `ForceRevealed` (an open bold span reveals its nested link as a
 /// unit); `Decide` means "consult your own policy" — only ever handed out by
 /// the document root when focused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RevealGrant {
     Decide,
     ForceRevealed,
@@ -135,7 +135,7 @@ impl ByteRange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineLocal {
     line: usize,
-    range: Range<usize>,
+    range: ByteRange,
 }
 
 impl LineLocal {
@@ -143,7 +143,10 @@ impl LineLocal {
         if range.start > range.end || range.start < bounds.start || range.end > bounds.end {
             return None;
         }
-        Some(LineLocal { line, range })
+        Some(LineLocal {
+            line,
+            range: ByteRange::new(range.start, range.end),
+        })
     }
 
     pub fn line(&self) -> usize {
@@ -151,7 +154,7 @@ impl LineLocal {
     }
 
     pub fn range(&self) -> Range<usize> {
-        self.range.clone()
+        self.range.start..self.range.end
     }
 
     pub fn start(&self) -> usize {
@@ -251,11 +254,11 @@ impl<'a> InheritCtx<'a> {
     /// revealed parent forces its descendants revealed (nesting reveals as a
     /// unit); an already-forced grant from further up always wins.
     pub fn child(&self, own: RevealState) -> InheritCtx<'a> {
-        let grant = match (self.grant, own) {
-            (RevealGrant::ForceRendered, _) => RevealGrant::ForceRendered,
-            (_, RevealState::Revealed) => RevealGrant::ForceRevealed,
-            (g, RevealState::Rendered) => g,
+        let own_grant = match own {
+            RevealState::Revealed => RevealGrant::ForceRevealed,
+            RevealState::Rendered => self.grant,
         };
+        let grant = self.grant.max(own_grant);
         InheritCtx { grant, ..*self }
     }
 }

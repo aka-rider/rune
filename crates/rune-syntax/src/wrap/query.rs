@@ -36,7 +36,7 @@ pub(super) fn span_visible_len(span: &SyntaxSpan) -> usize {
 /// `next_grapheme` so these walkers draw cluster boundaries
 /// at the exact same byte positions the row's actual `Cell`s do — see that
 /// function's docs for why a bare concatenated-string walk would disagree.
-fn spans_text_and_bounds(content: &str, spans: &[SyntaxSpan]) -> (String, Vec<usize>) {
+pub(super) fn spans_text_and_bounds(content: &str, spans: &[SyntaxSpan]) -> (String, Vec<usize>) {
     let mut text = String::new();
     let mut bounds = Vec::with_capacity(spans.len());
     for sp in spans {
