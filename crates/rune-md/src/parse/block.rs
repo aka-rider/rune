@@ -65,6 +65,18 @@ impl ClassifyBlock for NodeValue {
     }
 }
 
+/// The parse-wide facts `build_heading`/`build_code_block` both need,
+/// bundled so they stay under clippy's too-many-arguments lint without an
+/// `#[allow]` (repo rule: none outside test code) — the same
+/// "bundle instead of allow" shape `rune-db`'s `LoadContext` already uses.
+#[derive(Clone, Copy)]
+struct BlockCtx<'c, 'p> {
+    content: &'c str,
+    starts: &'c [usize],
+    hint: &'c ScanHint<'p>,
+    line: usize,
+}
+
 pub(super) fn build_blocks<'a>(
     content: &str,
     starts: &[usize],
@@ -98,79 +110,19 @@ fn build_block<'a>(
     let line = super::line_at(starts, range.start);
 
     let kind = { node.data.borrow().value.clone_kind_tag() };
+    let ctx = BlockCtx {
+        content,
+        starts,
+        hint,
+        line,
+    };
     match kind {
         BlockKind::Paragraph => {
             let inlines = super::inline::build_inlines(content, starts, node, hint);
             Some(Block::Paragraph(ParagraphM { range, inlines }))
         }
         BlockKind::Heading { level, setext } => {
-            let marker_end = node
-                .first_child()
-                .map_or(range.end, |c| node_range(content, starts, c).start)
-                .max(range.start)
-                .min(range.end);
-            let marker = ByteRange::new(range.start, marker_end);
-            let inlines = super::inline::build_inlines(content, starts, node, hint);
-
-            // MAJOR fix (verification round 4): a setext heading's own
-            // `range` spans BOTH its text line and its "==="/"---"
-            // underline — feeding that whole multi-line span straight
-            // into the generic per-physical-line splitter (as the
-            // Revealed emit path used to) re-claims a REPEATING container
-            // prefix (a blockquote's "> ") on the underline's own
-            // continuation line, on top of whatever the blockquote's own
-            // marker scan already (and correctly) claims there — the
-            // exact "fence-inside-container" class `CodeFenceM` was
-            // already fixed for. An ATX heading is always single-line
-            // (`comrak_last_line == comrak_first_line`), so this is a
-            // no-op `vec![range]`; only a setext heading needs the
-            // per-line, `hint`-aware breakdown — first line trusts
-            // `range.start` (a block's own sourcepos-derived first-line
-            // start is always reliable, the same assumption
-            // `CodeFenceM::fence_open` relies on), every CONTINUATION
-            // line uses `hint.start_for_line` to skip a repeating
-            // container prefix comrak's sourcepos alone can't be trusted
-            // to exclude.
-            //
-            // Built via `per_line_content`, which iterates and clamps by
-            // `starts` — a setext heading's own two "lines" (text +
-            // underline) are always exactly two entries in `content_lines`
-            // regardless of how many lines this node itself spans. `line`
-            // (buffer-derived, stored on `HeadingM` for the cursor-reveal
-            // decide policy) stays a separate field for that one purpose.
-            let content_lines = super::per_line_content(content, starts, range, hint);
-
-            // A setext heading's underline is always its LAST content line
-            // — its text may itself span several lines (`Foo\nBar\n---`),
-            // so `content_lines[1]` would be wrong for that shape.
-            //
-            // Widened past its own content-only start to `hint`'s own
-            // `concealment_baseline`: a depth without an independent
-            // concealment claim of its own (a list item's fixed
-            // continuation width, unlike a blockquote's per-line
-            // `BlockquoteMarkerM`) has nothing else that will ever hide
-            // its prefix on this row, so the underline's own hide must
-            // reach back and cover it.
-            let underline =
-                underline_of_setext_heading(setext, &content_lines, &inlines).map(|u| {
-                    let underline_line = super::line_at(starts, u.start);
-                    let baseline = hint.concealment_baseline(starts, underline_line);
-                    ByteRange::new(baseline, u.end)
-                });
-            let last_line = last_line_of(starts, range);
-
-            Some(Block::Heading(HeadingM {
-                sm: RevealSm::new(RevealState::Rendered),
-                level,
-                line,
-                last_line,
-                range,
-                setext,
-                marker,
-                underline,
-                inlines,
-                content_lines,
-            }))
+            Some(build_heading(&ctx, node, range, level, setext))
         }
         BlockKind::BlockQuote => {
             let markers = blockquote_markers(content, starts, range, hint);
@@ -199,91 +151,8 @@ fn build_block<'a>(
             fenced,
             info,
             closed,
-        } => {
-            if !fenced {
-                // Comrak reports `range.start` past this block's own
-                // leading indentation (see `sourcepos_to_range`'s docs) —
-                // `width` recovers exactly how much that is, so every
-                // CONTINUATION line strips the same fixed amount instead of
-                // trusting its raw physical start.
-                let baseline = hint.start_for_line(starts, line);
-                let width = range.start.saturating_sub(baseline);
-                let marker_ends =
-                    super::indent::fixed_indent_ends(content, starts, range, width, hint);
-                let local_hint = ScanHint::Nested {
-                    marker_ends,
-                    conceals_own_prefix: false,
-                    parent: hint,
-                };
-                let content_lines = super::per_line_content(content, starts, range, &local_hint);
-                return Some(Block::Verbatim(VerbatimM {
-                    sm: RevealSm::new(RevealState::Revealed),
-                    range,
-                    // Verbatim like every other passthrough, but tagged as
-                    // code so the code-region collection can find it: an
-                    // indented code block is code, an unrecognized node is
-                    // not, and `Unknown` alone could not tell them apart.
-                    kind: VerbatimKind::IndentedCode,
-                    content_lines,
-                }));
-            }
-            // `first_line`/`last_line` stay BUFFER-derived — they're
-            // stored on `CodeFenceM` and read ONLY by the cursor-reveal
-            // decide policy (`cursors.any_in_lines`, comparing against the
-            // cursor's own buffer row).
-            let first_line = line;
-            let last_line = last_line_of(starts, range);
-
-            // BLOCKER 3 fix (prior round): `last_line > first_line` alone is
-            // NOT "a closing fence exists" — every fence is unterminated
-            // while being typed (open fence + content, no closing ``` yet),
-            // and that shape also has `last_line > first_line`. comrak
-            // already tells us whether a real closing fence was matched
-            // (`NodeCodeBlock::closed`); trust it instead of inferring from
-            // line span. Unclosed -> no `fence_close`, and every byte after
-            // the opening fence line through the end of the block is live
-            // content (never silently concealed as if it were a fence).
-            let lines = super::delimited::split(content, starts, range, hint, closed);
-
-            Some(Block::CodeFence(CodeFenceM {
-                sm: RevealSm::new(RevealState::Rendered),
-                range,
-                first_line,
-                last_line,
-                language: info,
-                fence_open: lines.open,
-                fence_close: lines.close,
-                content_lines: lines.content_lines,
-            }))
-        }
-        BlockKind::ThematicBreak => {
-            // CLASS B fix (verification round 5): a thematic break is
-            // ALWAYS exactly one line by CommonMark's own grammar (three
-            // or more matching "-"/"_"/"*" chars, nothing else) — but
-            // comrak's reported sourcepos for one immediately followed by
-            // an EMPTY blockquote continuation line ("> ---\n>") extends
-            // THROUGH that next line's own "> " marker (verified
-            // empirically: for "> ---\n>", `range` came out `[2,7)` =
-            // "---\n>", not just "---" = `[2,5)`). The blockquote's own
-            // marker scan independently (and correctly) claims that same
-            // trailing "> " byte, so pushing the HR's un-clamped `range`
-            // whole doubles it up — a hidden-side double-claim: the
-            // marker is BOTH counted hidden (by the blockquote's own
-            // scan) and swept into the HR's own hidden/visible range.
-            // Clamping to the HR's own single line makes "a thematic
-            // break's range never crosses a line boundary" a structural
-            // guarantee, the same shape as `ListItemM`'s marker clamp.
-            let comrak_line = super::line_at(starts, range.start);
-            let clamped_end = line_end_at(content.len(), starts, comrak_line)
-                .min(range.end)
-                .max(range.start);
-            let range = ByteRange::new(range.start, clamped_end).clamp(content.len());
-            Some(Block::ThematicBreak(HrM {
-                sm: RevealSm::new(RevealState::Rendered),
-                line,
-                range,
-            }))
-        }
+        } => Some(build_code_block(&ctx, range, fenced, info, closed)),
+        BlockKind::ThematicBreak => Some(build_thematic_break(content, starts, range, line)),
         BlockKind::List => {
             let ordered = matches!(
                 node.data.borrow().value,
@@ -338,6 +207,185 @@ fn build_block<'a>(
             content_lines: super::per_line_content(content, starts, range, hint),
         })),
     }
+}
+
+fn build_heading<'a>(
+    ctx: &BlockCtx,
+    node: &'a AstNode<'a>,
+    range: ByteRange,
+    level: u8,
+    setext: bool,
+) -> Block {
+    let BlockCtx {
+        content,
+        starts,
+        hint,
+        line,
+    } = *ctx;
+    let marker_end = node
+        .first_child()
+        .map_or(range.end, |c| node_range(content, starts, c).start)
+        .max(range.start)
+        .min(range.end);
+    let marker = ByteRange::new(range.start, marker_end);
+    let inlines = super::inline::build_inlines(content, starts, node, hint);
+
+    // MAJOR fix (verification round 4): a setext heading's own
+    // `range` spans BOTH its text line and its "==="/"---"
+    // underline — feeding that whole multi-line span straight
+    // into the generic per-physical-line splitter (as the
+    // Revealed emit path used to) re-claims a REPEATING container
+    // prefix (a blockquote's "> ") on the underline's own
+    // continuation line, on top of whatever the blockquote's own
+    // marker scan already (and correctly) claims there — the
+    // exact "fence-inside-container" class `CodeFenceM` was
+    // already fixed for. An ATX heading is always single-line
+    // (`comrak_last_line == comrak_first_line`), so this is a
+    // no-op `vec![range]`; only a setext heading needs the
+    // per-line, `hint`-aware breakdown — first line trusts
+    // `range.start` (a block's own sourcepos-derived first-line
+    // start is always reliable, the same assumption
+    // `CodeFenceM::fence_open` relies on), every CONTINUATION
+    // line uses `hint.start_for_line` to skip a repeating
+    // container prefix comrak's sourcepos alone can't be trusted
+    // to exclude.
+    //
+    // Built via `per_line_content`, which iterates and clamps by
+    // `starts` — a setext heading's own two "lines" (text +
+    // underline) are always exactly two entries in `content_lines`
+    // regardless of how many lines this node itself spans. `line`
+    // (buffer-derived, stored on `HeadingM` for the cursor-reveal
+    // decide policy) stays a separate field for that one purpose.
+    let content_lines = super::per_line_content(content, starts, range, hint);
+
+    // A setext heading's underline is always its LAST content line
+    // — its text may itself span several lines (`Foo\nBar\n---`),
+    // so `content_lines[1]` would be wrong for that shape.
+    //
+    // Widened past its own content-only start to `hint`'s own
+    // `concealment_baseline`: a depth without an independent
+    // concealment claim of its own (a list item's fixed
+    // continuation width, unlike a blockquote's per-line
+    // `BlockquoteMarkerM`) has nothing else that will ever hide
+    // its prefix on this row, so the underline's own hide must
+    // reach back and cover it.
+    let underline = underline_of_setext_heading(setext, &content_lines, &inlines).map(|u| {
+        let underline_line = super::line_at(starts, u.start);
+        let baseline = hint.concealment_baseline(starts, underline_line);
+        ByteRange::new(baseline, u.end)
+    });
+    let last_line = last_line_of(starts, range);
+
+    Block::Heading(HeadingM {
+        sm: RevealSm::new(RevealState::Rendered),
+        level,
+        line,
+        last_line,
+        range,
+        setext,
+        marker,
+        underline,
+        inlines,
+        content_lines,
+    })
+}
+
+fn build_code_block(
+    ctx: &BlockCtx,
+    range: ByteRange,
+    fenced: bool,
+    info: String,
+    closed: bool,
+) -> Block {
+    let BlockCtx {
+        content,
+        starts,
+        hint,
+        line,
+    } = *ctx;
+    if !fenced {
+        // Comrak reports `range.start` past this block's own
+        // leading indentation (see `sourcepos_to_range`'s docs) —
+        // `width` recovers exactly how much that is, so every
+        // CONTINUATION line strips the same fixed amount instead of
+        // trusting its raw physical start.
+        let baseline = hint.start_for_line(starts, line);
+        let width = range.start.saturating_sub(baseline);
+        let marker_ends = super::indent::fixed_indent_ends(content, starts, range, width, hint);
+        let local_hint = ScanHint::Nested {
+            marker_ends,
+            conceals_own_prefix: false,
+            parent: hint,
+        };
+        let content_lines = super::per_line_content(content, starts, range, &local_hint);
+        return Block::Verbatim(VerbatimM {
+            sm: RevealSm::new(RevealState::Revealed),
+            range,
+            // Verbatim like every other passthrough, but tagged as
+            // code so the code-region collection can find it: an
+            // indented code block is code, an unrecognized node is
+            // not, and `Unknown` alone could not tell them apart.
+            kind: VerbatimKind::IndentedCode,
+            content_lines,
+        });
+    }
+    // `first_line`/`last_line` stay BUFFER-derived — they're
+    // stored on `CodeFenceM` and read ONLY by the cursor-reveal
+    // decide policy (`cursors.any_in_lines`, comparing against the
+    // cursor's own buffer row).
+    let first_line = line;
+    let last_line = last_line_of(starts, range);
+
+    // BLOCKER 3 fix (prior round): `last_line > first_line` alone is
+    // NOT "a closing fence exists" — every fence is unterminated
+    // while being typed (open fence + content, no closing ``` yet),
+    // and that shape also has `last_line > first_line`. comrak
+    // already tells us whether a real closing fence was matched
+    // (`NodeCodeBlock::closed`); trust it instead of inferring from
+    // line span. Unclosed -> no `fence_close`, and every byte after
+    // the opening fence line through the end of the block is live
+    // content (never silently concealed as if it were a fence).
+    let lines = super::delimited::split(content, starts, range, hint, closed);
+
+    Block::CodeFence(CodeFenceM {
+        sm: RevealSm::new(RevealState::Rendered),
+        range,
+        first_line,
+        last_line,
+        language: info,
+        fence_open: lines.open,
+        fence_close: lines.close,
+        content_lines: lines.content_lines,
+    })
+}
+
+fn build_thematic_break(content: &str, starts: &[usize], range: ByteRange, line: usize) -> Block {
+    // CLASS B fix (verification round 5): a thematic break is
+    // ALWAYS exactly one line by CommonMark's own grammar (three
+    // or more matching "-"/"_"/"*" chars, nothing else) — but
+    // comrak's reported sourcepos for one immediately followed by
+    // an EMPTY blockquote continuation line ("> ---\n>") extends
+    // THROUGH that next line's own "> " marker (verified
+    // empirically: for "> ---\n>", `range` came out `[2,7)` =
+    // "---\n>", not just "---" = `[2,5)`). The blockquote's own
+    // marker scan independently (and correctly) claims that same
+    // trailing "> " byte, so pushing the HR's un-clamped `range`
+    // whole doubles it up — a hidden-side double-claim: the
+    // marker is BOTH counted hidden (by the blockquote's own
+    // scan) and swept into the HR's own hidden/visible range.
+    // Clamping to the HR's own single line makes "a thematic
+    // break's range never crosses a line boundary" a structural
+    // guarantee, the same shape as `ListItemM`'s marker clamp.
+    let comrak_line = super::line_at(starts, range.start);
+    let clamped_end = line_end_at(content.len(), starts, comrak_line)
+        .min(range.end)
+        .max(range.start);
+    let range = ByteRange::new(range.start, clamped_end).clamp(content.len());
+    Block::ThematicBreak(HrM {
+        sm: RevealSm::new(RevealState::Rendered),
+        line,
+        range,
+    })
 }
 
 fn build_list_items<'a>(
