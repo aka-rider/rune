@@ -18,12 +18,12 @@ rune-tui = { path = "../rune-tui" }
 rune-vfs = { path = "../rune-vfs" }
 
 [dev-dependencies]
-# Test-only, direct sqlite access (plan WP3): simulating a genuinely dead
-# prior session in `a_dead_sessions_untitled_draft_is_recovered_on_the_next_
-# launch` needs to stamp the `sessions` row through a raw connection —
-# `rune-db` deliberately exposes no such escape hatch from its own public
-# API (decision 11: "no table-level CRUD escapes the crate").
-rusqlite = { workspace = true }
+# Unifies in `test-support` (`open_raw_connection_at_path_for_test`) for
+# every test/dev target only — the same double-listing trick `rune-tui`
+# uses on its own `rune-db` entry: simulating a genuinely dead prior
+# session in `a_dead_sessions_untitled_draft_is_recovered_on_the_next_
+# launch` needs to stamp the `sessions` row through a raw connection.
+rune-db = { path = "../rune-db", features = ["test-support"] }
 rune-vfs = { path = "../rune-vfs", features = ["fault-injection"] }
 
 [lints]

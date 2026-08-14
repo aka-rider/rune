@@ -75,7 +75,8 @@ fn a_second_bare_launch_never_disables_recovery_for_the_first_sessions_fresh_dra
         other => panic!("expected Ok from GcEmptyScratch, got {other:?}"),
     }
 
-    let raw = rusqlite::Connection::open(&db_path).expect("open db file directly");
+    let raw =
+        rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
     let doc_a_present: bool = raw
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",

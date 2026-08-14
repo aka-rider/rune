@@ -84,7 +84,7 @@ pub use confirmation::Confirmation;
 #[cfg(feature = "test-support")]
 pub use conn::{
     fresh_memory_uri_for_test, open_raw_connection_at_path_for_test,
-    open_recovery_store_at_path_for_test,
+    open_recovery_store_at_path_for_test, open_recovery_store_in_memory_for_test,
 };
 pub use error::Error;
 pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};

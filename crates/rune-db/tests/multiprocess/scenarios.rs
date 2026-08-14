@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use rusqlite::{Connection, params};
+use rusqlite::params;
 
 use rune_core::buffer::AppliedEdit;
 use rune_db::{DbEvent, OnEvent, Store};
@@ -57,7 +57,8 @@ fn four_children_append_storm_one_doc_each_all_ack_ok_with_exact_event_counts() 
         );
     }
 
-    let verify = Connection::open(&path).expect("open verify connection");
+    let verify =
+        rune_db::open_raw_connection_at_path_for_test(&path).expect("open verify connection");
     for doc_id in &doc_ids {
         let n: i64 = verify
             .query_row(
@@ -120,7 +121,8 @@ fn two_children_race_store_open_on_a_fresh_path_apply_schema_once_both_get_sessi
         );
     }
 
-    let verify = Connection::open(&path).expect("open verify connection");
+    let verify =
+        rune_db::open_raw_connection_at_path_for_test(&path).expect("open verify connection");
     let integrity: String = verify
         .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .expect("integrity check");
@@ -224,7 +226,8 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     // it with the KILLED session's own id replays exactly its own committed
     // events, which is exactly the content the child had journaled before
     // being killed.
-    let mut verify = Connection::open(&path).expect("verify connection");
+    let mut verify =
+        rune_db::open_raw_connection_at_path_for_test(&path).expect("verify connection");
     let recovered = {
         let tx = verify.transaction().expect("tx");
         let content =
@@ -274,7 +277,8 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     // `is_process_alive` naturally reports it dead — no test override
     // needed. The reaper only reclaims a dead session once it is no longer
     // the most-recent toucher, which the append above just ensured.
-    let mut reap_conn = Connection::open(&path).expect("reap connection");
+    let mut reap_conn =
+        rune_db::open_recovery_store_at_path_for_test(&path).expect("reap connection");
     rune_db::reap_dead_sessions(&mut reap_conn, &rune_db::is_process_alive, None).expect("reap");
 
     let killed_events_after_reap: i64 = reap_conn
@@ -417,7 +421,8 @@ fn reopen_after_external_atomic_swap_bridges_the_dead_sessions_own_draft() {
     let sync_kind = std::fs::read_to_string(&sync_marker).expect("read sync marker");
     assert_eq!(sync_kind.trim(), "Diverged");
 
-    let verify = Connection::open(&path).expect("open verify connection");
+    let verify =
+        rune_db::open_raw_connection_at_path_for_test(&path).expect("open verify connection");
     let doc_rows: i64 = verify
         .query_row(
             "SELECT COUNT(*) FROM documents WHERE id=?1",
@@ -488,7 +493,8 @@ fn gc_contention_never_drops_a_write_or_leaves_a_dangling_blob_reference() {
     // A concurrent sweep must never delete a blob a surviving
     // snapshot/observation row still references — every reference must
     // resolve.
-    let verify = Connection::open(&path).expect("open verify connection");
+    let verify =
+        rune_db::open_raw_connection_at_path_for_test(&path).expect("open verify connection");
     let dangling: i64 = verify
         .query_row(
             "SELECT COUNT(*) FROM ( \
