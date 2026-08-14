@@ -3,12 +3,12 @@
 //! chokepoint (`row_spans`/`extra_row_spans`); see its own docs.
 
 pub mod layout;
-pub mod pivot;
-pub mod render;
+pub(crate) mod pivot;
+pub(crate) mod render;
 mod tiling;
-pub mod wrapped;
+pub(crate) mod wrapped;
 
-pub use tiling::{extra_row_spans, row_spans};
+pub(crate) use tiling::{extra_row_spans, row_spans};
 
 use rune_syntax::ScopeId;
 
@@ -23,7 +23,7 @@ use rune_syntax::ScopeId;
 /// OWN uniform `ScopeId` (the third element of its `runs` tuples) and each
 /// char's `buf` (to build `cell_map`).
 #[derive(Clone, Copy, Debug)]
-pub struct CellSrc {
-    pub buf: Option<u32>,
-    pub scope: ScopeId,
+pub(crate) struct CellSrc {
+    pub(crate) buf: Option<u32>,
+    pub(crate) scope: ScopeId,
 }

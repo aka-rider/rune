@@ -63,7 +63,7 @@ pub(crate) fn cell_display_width(cell: &RenderedCell) -> usize {
 /// the longest atomic (never-broken) unit any row's cell contains — which
 /// Wrapped layout's selector and column-shrinking both need, and
 /// Grid never reads.
-pub fn col_widths<'a>(
+pub(crate) fn col_widths<'a>(
     rows: impl IntoIterator<Item = &'a [RenderedCell]>,
     n_cols: usize,
 ) -> (Vec<usize>, Vec<usize>) {
@@ -189,7 +189,7 @@ fn push_padded_content(
 /// (the row's own header/body scope) — DIFFERENT scopes, so a bar and its
 /// adjacent padding space never merge into one run even though they sit
 /// next to each other.
-pub fn grid_row(
+pub(crate) fn grid_row(
     widths: &[usize],
     aligns: &[TableAlign],
     cells: &[RenderedCell],
@@ -234,7 +234,7 @@ pub fn grid_row(
 /// (`Top`/`Bottom`, `┌┬┐`/`└┴┘`) a later package (`DisplaySnapshot`'s
 /// synthesised rows) synthesises around the whole table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BorderKind {
+pub(crate) enum BorderKind {
     Top,
     Bottom,
     Middle,
@@ -247,7 +247,7 @@ pub enum BorderKind {
 /// `CellSrc`; callers that DO need that (`separator_row`, replacing the
 /// source delimiter LINE and therefore needing a byte-tiled span) wrap this
 /// string's chars in `buf = None` themselves.
-pub fn border_row(widths: &[usize], kind: BorderKind) -> String {
+pub(crate) fn border_row(widths: &[usize], kind: BorderKind) -> String {
     let (left, mid, right) = match kind {
         BorderKind::Top => ('┌', '┬', '┐'),
         BorderKind::Bottom => ('└', '┴', '┘'),
@@ -269,7 +269,7 @@ pub fn border_row(widths: &[usize], kind: BorderKind) -> String {
 /// — one run, every char decorative (`buf = None`) and scoped
 /// `markup.table.separator` (distinct from a content row's
 /// `markup.table.border`, Gotcha/plan WP2.S6).
-pub fn separator_row(widths: &[usize]) -> Vec<(String, Vec<CellSrc>, ScopeId)> {
+pub(crate) fn separator_row(widths: &[usize]) -> Vec<(String, Vec<CellSrc>, ScopeId)> {
     let text = border_row(widths, BorderKind::Middle);
     let scope = style::table_separator_scope();
     let src: Vec<CellSrc> = text.chars().map(|_| CellSrc { buf: None, scope }).collect();
@@ -359,7 +359,7 @@ pub fn choose(widths: &[usize], min_widths: &[usize], avail: usize) -> TableLayo
 /// "stretch" demand (how much more it wants beyond its floor, never
 /// exceeding its natural width), giving any rounding remainder to the
 /// single widest column.
-pub fn constrain_widths(
+pub(crate) fn constrain_widths(
     widths: &[usize],
     min_widths: &[usize],
     content_budget: usize,

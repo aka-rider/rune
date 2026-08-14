@@ -4,6 +4,21 @@
 //! calls this module instead of keeping its own copy (Ground rule 3: "reuse
 //! that conversion"). `block.rs`/`inline.rs` hold the AST -> `Block`/
 //! `Inline` construction; this file holds the primitives they're built on.
+//!
+//! Comrak-quirk workarounds, one line each — the function compensating for
+//! the quirk, not merely documenting it:
+//! - frontmatter's own line count desyncing the rest of the document's
+//!   sourcepos: `frontmatter_extension_is_safe`, `frontmatter.rs`.
+//! - a WikiLink embedding a raw newline desyncing comrak's line counter for
+//!   the rest of a paragraph: `build_inlines`, `inline.rs`.
+//! - a multi-line code span's reported end column landing on a neighbouring
+//!   line: `trailing_backtick_run`, `inline.rs`.
+//! - a thematic break's sourcepos overrunning an empty blockquote
+//!   continuation line: `build_thematic_break`, `block.rs`.
+//! - a residual inline `Text` node left over a setext underline:
+//!   `underline_of_setext_heading`, `block.rs`.
+//! - comrak's own `within_brackets` guard suppressing `![[...]]` as a
+//!   WikiLink node: `wikilink_role`, `catalogue.rs`.
 
 mod block;
 mod blockquote;
@@ -271,44 +286,6 @@ impl ScanHint<'_> {
     }
 }
 
-/// True unless comrak's frontmatter extension has desynced its OWN
-/// internal line count on this specific document (verification round 5
-/// CLASS A fallout, found by the widened fuzz alphabet — NOT part of the
-/// reviewer's original CLASS A/B reports). Verified empirically: comrak's
-/// frontmatter extension appears to search for its closing `"---"`
-/// delimiter using `\n`-only line splitting internally, but then reports
-/// `Sourcepos` through the OUTER, CR/LF/CRLF-aware line counter that the
-/// REST of comrak's block parser keeps counting from afterward — the
-/// same "one internal scan, a DIFFERENT reported line basis" shape as
-/// round 4's wikilink-extension desync, but with a DOCUMENT-WIDE blast
-/// radius here (frontmatter parsing runs first, so every later block's
-/// sourcepos comes out wrong too) rather than one paragraph's siblings.
-/// Detected by the one cheap, reliable signal available: a genuine
-/// frontmatter block's own (correctly converted) range always ends on a
-/// closing `"---"` line; if it doesn't, comrak's internal state for the
-/// rest of this document can't be trusted at all. `parse()` reacts by
-/// re-parsing the WHOLE document with the extension turned off — the
-/// `"---...---"` blob degrades to ordinary paragraphs/thematic breaks
-/// (unknown syntax degrades to visible raw text, never lost), which
-/// this crate's other producers are already proven safe against.
-fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) -> bool {
-    let arena = Arena::new();
-    let opts = options();
-    let root = parse_document(&arena, shadow, &opts);
-    match root.first_child() {
-        Some(first)
-            if matches!(
-                first.data.borrow().value,
-                comrak::nodes::NodeValue::FrontMatter(_)
-            ) =>
-        {
-            let range = node_range(content, starts, first);
-            frontmatter::is_valid_frontmatter_close(content, range)
-        }
-        _ => true,
-    }
-}
-
 /// Parse `content` into the top-level `Block` tree. This is the ONLY entry
 /// point `DocMachine::sync_content` calls — every downstream module reaches
 /// comrak through here. Comrak itself only ever sees `shadow`
@@ -318,7 +295,7 @@ fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) 
 pub fn parse(content: &str) -> Vec<Block> {
     let shadow = parse_shadow(content);
     let starts = line_starts(content);
-    let opts = if frontmatter_extension_is_safe(content, &shadow, &starts) {
+    let opts = if frontmatter::frontmatter_extension_is_safe(content, &shadow, &starts) {
         options()
     } else {
         options_without_frontmatter()
@@ -458,6 +435,18 @@ mod tests {
             panic!("expected frontmatter, got {:?}", blocks[0]);
         };
         assert_eq!(fm.sm.state(), RevealState::Revealed);
+    }
+
+    #[test]
+    fn a_document_without_a_frontmatter_opener_parses_identically() {
+        let content = "# heading\n\nbody text\n";
+        assert!(!frontmatter::shadow_may_open_frontmatter(&parse_shadow(
+            content
+        )));
+        let blocks = parse(content);
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[0], Block::Heading(_)));
+        assert!(matches!(blocks[1], Block::Paragraph(_)));
     }
 
     #[test]
