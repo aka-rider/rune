@@ -8,9 +8,10 @@ use rune_core::buffer::AppliedEdit;
 use rune_vfs::Mem;
 
 fn open() -> Connection {
-    let conn = Connection::open_in_memory().expect("open");
-    crate::schema::apply(&conn).expect("schema");
-    conn
+    crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+        &crate::conn::memory_uri(),
+    ))
+    .expect("open")
 }
 
 fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
