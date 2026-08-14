@@ -24,6 +24,18 @@ mod lineindex;
 use lineindex::LineStarts;
 pub use lineindex::line_starts;
 
+pub(crate) fn check_char_boundary(content: &str, offset: usize) -> Result<(), BufferError> {
+    if content.is_char_boundary(offset) {
+        Ok(())
+    } else {
+        Err(BufferError::SplitsRune { offset })
+    }
+}
+
+pub(crate) fn snap_char_boundary(content: &str, offset: usize) -> usize {
+    content.floor_char_boundary(offset)
+}
+
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {
@@ -188,16 +200,9 @@ impl Buffer {
     /// the range is valid. Surfaces `apply_edits`' error instead of
     /// silently returning the receiver unchanged — a caller that ignores
     /// the rejection can no longer mistake "nothing happened" for success.
-    /// Swaps a reversed `start`/`end` before building the edit: this
-    /// method's actual callers (`insert`/`delete`, and arbitrary start/end
-    /// from tests) rely on a reversed range being normalized rather than
-    /// rejected as out-of-bounds.
+    /// A reversed `start`/`end` is rejected by `apply_edits` as
+    /// `OutOfBounds`, same as any other malformed range.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> Result<Buffer, BufferError> {
-        let (start, end) = if start > end {
-            (end, start)
-        } else {
-            (start, end)
-        };
         let edit = Edit {
             start,
             end,
@@ -216,26 +221,31 @@ impl Buffer {
             return Ok((self.clone(), Vec::new()));
         }
 
-        if !is_sorted_descending_non_overlapping(edits) {
-            return Err(BufferError::EditsNotSortedOrOverlapping);
+        validate_edit_batch(&self.content, edits)?;
+
+        let (new_content, applied) = self.build_edited_content(edits)?;
+
+        if let Some(start) = duplicate_applied_start(&applied) {
+            return Err(BufferError::DuplicateEditStart { start });
         }
 
+        let new_line_starts = self.update_line_starts(edits);
+
+        Ok((
+            Buffer {
+                content: new_content,
+                line_starts: new_line_starts,
+                version: self.version + 1,
+            },
+            applied,
+        ))
+    }
+
+    fn build_edited_content(
+        &self,
+        edits: &[Edit],
+    ) -> Result<(String, Vec<AppliedEdit>), BufferError> {
         let len = self.content.len();
-        for e in edits {
-            if e.end > len || e.start > e.end {
-                return Err(BufferError::OutOfBounds {
-                    start: e.start,
-                    end: e.end,
-                    len,
-                });
-            }
-            if !self.content.is_char_boundary(e.start) {
-                return Err(BufferError::SplitsRune { offset: e.start });
-            }
-            if !self.content.is_char_boundary(e.end) {
-                return Err(BufferError::SplitsRune { offset: e.end });
-            }
-        }
 
         let net_change: isize = edits
             .iter()
@@ -302,21 +312,28 @@ impl Buffer {
             })?;
         new_content.push_str(tail);
 
-        if let Some(start) = duplicate_applied_start(&applied) {
-            return Err(BufferError::DuplicateEditStart { start });
-        }
-
-        let new_line_starts = self.update_line_starts(edits);
-
-        Ok((
-            Buffer {
-                content: new_content,
-                line_starts: new_line_starts,
-                version: self.version + 1,
-            },
-            applied,
-        ))
+        Ok((new_content, applied))
     }
+}
+
+fn validate_edit_batch(content: &str, edits: &[Edit]) -> Result<(), BufferError> {
+    if !is_sorted_descending_non_overlapping(edits) {
+        return Err(BufferError::EditsNotSortedOrOverlapping);
+    }
+
+    let len = content.len();
+    for e in edits {
+        if e.end > len || e.start > e.end {
+            return Err(BufferError::OutOfBounds {
+                start: e.start,
+                end: e.end,
+                len,
+            });
+        }
+        check_char_boundary(content, e.start)?;
+        check_char_boundary(content, e.end)?;
+    }
+    Ok(())
 }
 
 /// The one place `insert_len - deleted_len` is computed — how many bytes a

@@ -35,7 +35,7 @@ impl LineStarts {
     }
 
     fn line_at(&self, offset: usize) -> usize {
-        self.subsequent.partition_point(|&s| s <= offset)
+        line_index_of(&self.subsequent, offset)
     }
 }
 
@@ -103,7 +103,7 @@ impl Buffer {
         // mid-UTF-8 when replayed against a line holding wide characters.
         // Snapping here rather than at each call site is what makes an
         // out-of-boundary cursor unrepresentable instead of merely unlikely.
-        self.content.floor_char_boundary(offset)
+        super::snap_char_boundary(&self.content, offset)
     }
 
     /// An incremental `line_starts` rebuild scanning `edits` right-to-left
@@ -162,8 +162,11 @@ fn find_line(starts: &[usize], offset: usize) -> usize {
     if starts.is_empty() {
         return 0;
     }
-    let idx = starts.partition_point(|&s| s <= offset);
-    idx.saturating_sub(1)
+    line_index_of(starts.get(1..).unwrap_or(&[]), offset)
+}
+
+fn line_index_of(subsequent_starts: &[usize], offset: usize) -> usize {
+    subsequent_starts.partition_point(|&s| s <= offset)
 }
 
 #[cfg(test)]
