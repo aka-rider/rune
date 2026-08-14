@@ -147,9 +147,43 @@ fn travelling_back_and_forward_from_the_explorer_pane_records_nothing() {
         "travel must never record a departure of its own, not even while a \
          preview is live for it to promote"
     );
+    assert_eq!(
+        app.nav_history.len(),
+        entries_before,
+        "travel from a live preview must add no entry"
+    );
+}
+
+#[test]
+fn a_live_explorer_preview_never_becomes_a_place_travel_can_land_on() {
+    let mem = explorer_common::seeded_vfs();
+    let mut app = browsing_app(&mem);
+    arrow_to(&mut app, "b.md");
+    press_and_settle(&mut app, plain(KeyCode::Enter));
+
+    focus_explorer(&mut app);
+    arrow_to(&mut app, "sub");
+    press_and_settle(&mut app, plain(KeyCode::Enter));
+    arrow_to(&mut app, "c.md");
     assert!(
-        app.nav_history.len() <= entries_before + 1,
-        "the only entry travel may add is the live place it left"
+        app.active_doc().is_preview(),
+        "a live preview to travel over"
+    );
+    let preview = app.active;
+
+    press(&mut app, back_key());
+    press(&mut app, forward_key());
+
+    assert!(
+        app.nav_history
+            .places()
+            .iter()
+            .all(|place| place.doc != preview),
+        "a preview must never be recorded as a place"
+    );
+    assert!(
+        !app.active_doc().is_preview(),
+        "travel must never land on a preview"
     );
 }
 

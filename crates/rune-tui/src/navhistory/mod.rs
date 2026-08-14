@@ -91,11 +91,13 @@ impl NavHistory {
         self.places.push(place);
     }
 
-    pub fn back(&mut self, live: Place) -> Option<Place> {
+    pub fn back(&mut self, live: Option<Place>) -> Option<Place> {
         if !self.can_back() {
             return None;
         }
-        if self.current == self.places.len() {
+        if self.current == self.places.len()
+            && let Some(live) = live
+        {
             self.push_live(live);
         }
         self.current -= 1;

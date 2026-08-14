@@ -5,7 +5,7 @@ use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
 
 const NAV_JUMP_LINES: usize = 10;
 
-fn eligible(app: &App, id: DocumentId) -> bool {
+pub(super) fn eligible(app: &App, id: DocumentId) -> bool {
     match app.doc(id) {
         Some(doc) if doc.is_preview() => false,
         Some(_) => app.help_doc != Some(id),

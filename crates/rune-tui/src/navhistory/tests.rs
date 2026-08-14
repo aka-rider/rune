@@ -71,7 +71,7 @@ fn first_back_pushes_the_live_place_so_a_following_forward_returns_to_it() {
     history.push(place(d, 0), false);
     let live = place(d, 50);
 
-    let went_to = history.back(live.clone());
+    let went_to = history.back(Some(live.clone()));
 
     assert_eq!(went_to, Some(place(d, 0)));
     assert_eq!(history.current, 0);
@@ -95,10 +95,23 @@ fn forward_at_the_tip_returns_none() {
 fn back_at_index_zero_returns_none_and_does_not_touch_the_live_place() {
     let mut history = NavHistory::default();
 
-    let result = history.back(place(doc(1), 50));
+    let result = history.back(Some(place(doc(1), 50)));
 
     assert_eq!(result, None);
     assert!(history.places.is_empty());
+}
+
+#[test]
+fn back_with_no_live_place_does_not_push_one() {
+    let d = doc(1);
+    let mut history = NavHistory::default();
+    history.push(place(d, 0), false);
+
+    let went_to = history.back(None);
+
+    assert_eq!(went_to, Some(place(d, 0)));
+    assert_eq!(history.places, vec![place(d, 0)]);
+    assert!(!history.can_forward());
 }
 
 #[test]
