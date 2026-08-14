@@ -1,47 +1,9 @@
-//! The `rune-db` schema, **minus `drafts`** (plan
-//! decision 13 — there is no chat/drafts consumer yet; adding the
-//! table now would lock in a scoping decision that belongs to that future
-//! feature instead).
-//!
-//! This crate versions by **filename** (`versioning.rs`, plan decision 2)
-//! rather than migrating a schema in place: a schema-shape change ships as
-//! a new `rune-v{N}.db`, leaving the old file and its journal untouched, so
-//! `SCHEMA` here only ever needs to describe a single, frozen shape applied
-//! once to a brand-new file. `PRAGMA user_version` is still stamped as a
-//! sanity check, but the filename — not this pragma — is the real version
-//! (`versioning.rs`).
-//!
-//! One narrow exception to "frozen shape": a nullable column added to an
-//! existing table, with no change to any other column or table, is safe to
-//! land in place under the SAME filename — a concurrently running older
-//! binary keeps working unmodified (its inserts simply omit the new column
-//! and get `NULL`; its named-column reads never see it). That is not the
-//! partial/legacy-shape hazard filename versioning exists to avoid, so it
-//! never bumps [`crate::versioning::SCHEMA_VERSION`]. Anything else —
-//! rewriting, renaming, retyping, or dropping an existing column or table,
-//! or any change an old binary could observe as a broken assumption — still
-//! requires a real version bump, and that bump must also work out what it
-//! means for the old file: a concurrently running old binary going on using
-//! it as normal, and the eventual GC (`versioning.rs`) that reclaims
-//! abandoned old-version files once every session referencing them is dead.
-//!
-//! Table-by-table rationale (inode/device NULL-not-zero, `observations`'s
-//! deliberately cascade-free session FK, `session_documents` holding
-//! per-session undo position and CAS baseline, etc.) is documented inline
-//! as comments below.
+use std::collections::HashSet;
 
 use rusqlite::Connection;
 
 use crate::Error;
 
-/// The canonical, complete schema for a fresh database. Applied once, in a
-/// single batch, to either a brand-new file or a freshly-created in-memory
-/// database — this crate never patches a partial/legacy shape in place
-/// (there is no migration path; see the module doc). A nullable column added
-/// to an already-existing table under this same, unbumped version — the
-/// module doc's carve-out — lands directly in `SCHEMA` above; no additive
-/// upgrade machinery is needed for a filename this crate itself has always
-/// used unmodified.
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
 	id           INTEGER PRIMARY KEY,
@@ -208,18 +170,235 @@ CREATE TABLE IF NOT EXISTS search_history (
 );
 "#;
 
-/// Applies `SCHEMA` to `conn` and stamps `PRAGMA user_version` with
-/// [`crate::versioning::SCHEMA_VERSION`] — the ONE constant this crate's
-/// version number is. Not the real version (the filename is, per
-/// `versioning.rs`) — a defensive marker so a future reader that opens a
-/// `rune-v{N}.db` file directly (e.g. `sqlite3` on the CLI) can tell schema
-/// shape apart from an empty file at a glance, and so the pragma can never
-/// drift out of sync with the filename it's supposed to echo. Idempotent
-/// (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` throughout) —
-/// safe to call on every open, not just first creation.
 pub fn apply(conn: &Connection) -> Result<(), Error> {
     conn.execute_batch(SCHEMA)?;
+    reconcile_additive_columns(conn)?;
     conn.pragma_update(None, "user_version", crate::versioning::SCHEMA_VERSION)?;
+    Ok(())
+}
+
+struct ColumnShape {
+    name: String,
+    decl_type: String,
+    not_null: bool,
+    default_value: Option<String>,
+}
+
+fn canonical_table_names(canonical: &Connection) -> Result<Vec<String>, Error> {
+    let mut stmt = canonical.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn table_columns(conn: &Connection, table: &str) -> Result<Vec<ColumnShape>, Error> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ColumnShape {
+            name: row.get(1)?,
+            decl_type: row.get(2)?,
+            not_null: row.get::<_, i64>(3)? != 0,
+            default_value: row.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+struct ForeignKeyShape {
+    ref_table: String,
+    ref_column: Option<String>,
+    on_delete: String,
+    on_update: String,
+}
+
+fn foreign_key_for_column(
+    canonical: &Connection,
+    table: &str,
+    column_name: &str,
+) -> Result<Option<ForeignKeyShape>, Error> {
+    let mut stmt = canonical.prepare(&format!("PRAGMA foreign_key_list({table})"))?;
+    let mut by_group: std::collections::HashMap<i64, Vec<ForeignKeyShape>> =
+        std::collections::HashMap::new();
+    let rows = stmt.query_map([], |row| {
+        let group_id: i64 = row.get(0)?;
+        let ref_table: String = row.get(2)?;
+        let from_column: String = row.get(3)?;
+        let ref_column: Option<String> = row.get(4)?;
+        let on_update: String = row.get(5)?;
+        let on_delete: String = row.get(6)?;
+        Ok((
+            group_id,
+            from_column,
+            ForeignKeyShape {
+                ref_table,
+                ref_column,
+                on_delete,
+                on_update,
+            },
+        ))
+    })?;
+    for row in rows {
+        let (group_id, from_column, shape) = row?;
+        if from_column == column_name {
+            by_group.entry(group_id).or_default().push(shape);
+        }
+    }
+    match by_group.into_values().next() {
+        None => Ok(None),
+        Some(mut group) if group.len() == 1 => Ok(Some(group.remove(0))),
+        Some(_) => Err(Error::Invalid(format!(
+            "{table}.{column_name} is missing from an existing file and its foreign key is composite; this is not an additive change, bump SCHEMA_VERSION instead"
+        ))),
+    }
+}
+
+fn table_create_sql(conn: &Connection, table: &str) -> Result<String, Error> {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |row| row.get(0),
+    )
+    .map_err(Error::from)
+}
+
+fn strip_sql_line_comments(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '-' && chars.peek() == Some(&'-') {
+            for rest in chars.by_ref() {
+                if rest == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn column_source_segment(create_sql: &str, column_name: &str) -> Option<String> {
+    let create_sql = strip_sql_line_comments(create_sql);
+    let open = create_sql.find('(')?;
+    let close = create_sql.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let body = &create_sql[open + 1..close];
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    let mut segments = Vec::new();
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                segments.push(&body[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    segments.push(&body[start..]);
+    segments
+        .into_iter()
+        .map(str::trim)
+        .find(|segment| {
+            segment
+                .split(char::is_whitespace)
+                .next()
+                .is_some_and(|token| token.eq_ignore_ascii_case(column_name))
+        })
+        .map(str::to_string)
+}
+
+fn column_carries_an_unreproducible_constraint(segment: &str) -> bool {
+    let upper = segment.to_ascii_uppercase();
+    upper.contains("CHECK")
+        || upper.contains("UNIQUE")
+        || upper.contains("COLLATE")
+        || upper.contains("GENERATED")
+}
+
+fn add_column(
+    conn: &Connection,
+    table: &str,
+    column: &ColumnShape,
+    foreign_key: Option<&ForeignKeyShape>,
+) -> Result<(), Error> {
+    let mut ddl = format!(
+        "ALTER TABLE {table} ADD COLUMN {} {}",
+        column.name, column.decl_type
+    );
+    if column.not_null {
+        ddl.push_str(" NOT NULL");
+    }
+    if let Some(default_value) = &column.default_value {
+        ddl.push_str(" DEFAULT ");
+        ddl.push_str(default_value);
+    }
+    if let Some(fk) = foreign_key {
+        ddl.push_str(" REFERENCES ");
+        ddl.push_str(&fk.ref_table);
+        if let Some(ref_column) = &fk.ref_column {
+            ddl.push('(');
+            ddl.push_str(ref_column);
+            ddl.push(')');
+        }
+        if fk.on_delete != "NO ACTION" {
+            ddl.push_str(" ON DELETE ");
+            ddl.push_str(&fk.on_delete);
+        }
+        if fk.on_update != "NO ACTION" {
+            ddl.push_str(" ON UPDATE ");
+            ddl.push_str(&fk.on_update);
+        }
+    }
+    conn.execute_batch(&ddl)?;
+    Ok(())
+}
+
+fn reconcile_additive_columns(conn: &Connection) -> Result<(), Error> {
+    let canonical = Connection::open_in_memory()?;
+    canonical.execute_batch(SCHEMA)?;
+
+    for table in canonical_table_names(&canonical)? {
+        let existing: HashSet<String> = table_columns(conn, &table)?
+            .into_iter()
+            .map(|column| column.name)
+            .collect();
+        let create_sql = table_create_sql(&canonical, &table)?;
+
+        for column in table_columns(&canonical, &table)? {
+            if existing.contains(&column.name) {
+                continue;
+            }
+            if column.not_null && column.default_value.is_none() {
+                return Err(Error::Invalid(format!(
+                    "{table}.{} is a NOT NULL column with no default missing from an existing file; this is not an additive change, bump SCHEMA_VERSION instead",
+                    column.name
+                )));
+            }
+            let source_segment =
+                column_source_segment(&create_sql, &column.name).ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "{table}.{} is missing from an existing file and its own definition could not be located in the canonical schema text; this is not a safe additive change, bump SCHEMA_VERSION instead",
+                        column.name
+                    ))
+                })?;
+            if column_carries_an_unreproducible_constraint(&source_segment) {
+                return Err(Error::Invalid(format!(
+                    "{table}.{} is missing from an existing file and carries a constraint an ALTER TABLE ADD COLUMN cannot faithfully reproduce; this is not an additive change, bump SCHEMA_VERSION instead",
+                    column.name
+                )));
+            }
+            let foreign_key = foreign_key_for_column(&canonical, &table, &column.name)?;
+            add_column(conn, &table, &column, foreign_key.as_ref())?;
+        }
+    }
     Ok(())
 }
 
@@ -334,5 +513,233 @@ mod tests {
             Confirmation::Unconfirmed
         );
         tx.commit().expect("commit");
+    }
+
+    const OBSERVATIONS_BEFORE_CONFIRMED_COLUMN: &str = r#"
+    CREATE TABLE IF NOT EXISTS documents (
+        id           INTEGER PRIMARY KEY,
+        path         TEXT    NOT NULL DEFAULT '',
+        inode        INTEGER,
+        device       INTEGER,
+        kind         TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
+        created_at   TEXT    NOT NULL,
+        last_seen_at TEXT    NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS blobs (
+        hash    TEXT PRIMARY KEY,
+        content BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+        id              INTEGER PRIMARY KEY,
+        pid             INTEGER NOT NULL,
+        proc_started_at TEXT    NOT NULL,
+        opened_at       TEXT    NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS observations (
+        id         INTEGER PRIMARY KEY,
+        doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        session_id INTEGER NOT NULL REFERENCES sessions(id),
+        blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
+        seq        INTEGER,
+        size       INTEGER,
+        mtime      TEXT,
+        inode      INTEGER,
+        device     INTEGER,
+        nlink      INTEGER,
+        origin     TEXT    NOT NULL CHECK(origin IN ('load','save','watch','probe','resolve','swap')),
+        parent_a   INTEGER REFERENCES observations(id),
+        parent_b   INTEGER REFERENCES observations(id),
+        at         TEXT    NOT NULL
+    );
+    "#;
+
+    #[test]
+    fn additive_column_lands_in_place_old_rows_read_null_and_a_second_apply_is_a_noop() {
+        let conn = Connection::open_in_memory().expect("open");
+        conn.execute_batch(OBSERVATIONS_BEFORE_CONFIRMED_COLUMN)
+            .expect("apply the pre-existing shape");
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES (1, 'x', 'x')",
+            [],
+        )
+        .expect("seed session");
+        let session_id = conn.last_insert_rowid();
+        conn.execute("INSERT INTO blobs(hash, content) VALUES ('h', x'00')", [])
+            .expect("seed blob");
+        conn.execute(
+            "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at) VALUES (?1, ?2, 'h', 'probe', 'x')",
+            rusqlite::params![doc_id, session_id],
+        )
+        .expect("seed a row written before the confirmed column existed");
+
+        apply(&conn).expect("apply reconciles the missing column");
+
+        let read_confirmed = |conn: &Connection| -> Option<i64> {
+            conn.query_row(
+                "SELECT confirmed FROM observations WHERE doc_id = ?1",
+                [doc_id],
+                |row| row.get(0),
+            )
+            .expect("read back confirmed")
+        };
+        assert_eq!(read_confirmed(&conn), None);
+
+        apply(&conn).expect("a second apply against an already-reconciled file is a no-op");
+        assert_eq!(read_confirmed(&conn), None);
+    }
+
+    const OBSERVATIONS_MISSING_REQUIRED_ORIGIN_COLUMN: &str = r#"
+    CREATE TABLE IF NOT EXISTS observations (
+        id         INTEGER PRIMARY KEY,
+        doc_id     INTEGER NOT NULL,
+        session_id INTEGER NOT NULL,
+        blob_hash  TEXT    NOT NULL,
+        seq        INTEGER,
+        size       INTEGER,
+        mtime      TEXT,
+        inode      INTEGER,
+        device     INTEGER,
+        nlink      INTEGER,
+        parent_a   INTEGER,
+        parent_b   INTEGER,
+        at         TEXT    NOT NULL
+    );
+    "#;
+
+    #[test]
+    fn missing_not_null_column_without_a_default_is_refused_not_silently_added() {
+        let conn = Connection::open_in_memory().expect("open");
+        conn.execute_batch(OBSERVATIONS_MISSING_REQUIRED_ORIGIN_COLUMN)
+            .expect("apply the shape missing a required column");
+
+        let err =
+            apply(&conn).expect_err("a NOT NULL column with no default is not an additive change");
+        let message = err.to_string();
+        assert!(message.contains("observations"));
+        assert!(message.contains("origin"));
+    }
+
+    const OBSERVATIONS_BEFORE_PARENT_A_COLUMN: &str = r#"
+    CREATE TABLE IF NOT EXISTS documents (
+        id           INTEGER PRIMARY KEY,
+        path         TEXT    NOT NULL DEFAULT '',
+        inode        INTEGER,
+        device       INTEGER,
+        kind         TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
+        created_at   TEXT    NOT NULL,
+        last_seen_at TEXT    NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS blobs (
+        hash    TEXT PRIMARY KEY,
+        content BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+        id              INTEGER PRIMARY KEY,
+        pid             INTEGER NOT NULL,
+        proc_started_at TEXT    NOT NULL,
+        opened_at       TEXT    NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS observations (
+        id         INTEGER PRIMARY KEY,
+        doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        session_id INTEGER NOT NULL REFERENCES sessions(id),
+        blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
+        seq        INTEGER,
+        size       INTEGER,
+        mtime      TEXT,
+        inode      INTEGER,
+        device     INTEGER,
+        nlink      INTEGER,
+        origin     TEXT    NOT NULL CHECK(origin IN ('load','save','watch','probe','resolve','swap')),
+        parent_b   INTEGER REFERENCES observations(id),
+        at         TEXT    NOT NULL,
+        confirmed  INTEGER
+    );
+    "#;
+
+    #[test]
+    fn additive_column_carrying_a_foreign_key_enforces_it_after_reconciliation() {
+        let conn = Connection::open_in_memory().expect("open");
+        conn.execute_batch(OBSERVATIONS_BEFORE_PARENT_A_COLUMN)
+            .expect("apply the shape missing parent_a");
+        conn.pragma_update(None, "foreign_keys", true)
+            .expect("enable foreign key enforcement");
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES (1, 'x', 'x')",
+            [],
+        )
+        .expect("seed session");
+        let session_id = conn.last_insert_rowid();
+        conn.execute("INSERT INTO blobs(hash, content) VALUES ('h', x'00')", [])
+            .expect("seed blob");
+
+        apply(&conn).expect("apply adds parent_a with its foreign key intact");
+
+        let result = conn.execute(
+            "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at, parent_a) VALUES (?1, ?2, 'h', 'probe', 'x', 999999)",
+            rusqlite::params![doc_id, session_id],
+        );
+        assert!(
+            result.is_err(),
+            "a parent_a value with no matching observations row must be rejected by the foreign key the reconciled column carries, not silently accepted"
+        );
+    }
+
+    #[test]
+    fn column_source_segment_finds_only_the_named_columns_own_definition() {
+        let create_sql = "CREATE TABLE t (a INTEGER, b TEXT NOT NULL, c INTEGER CHECK(c > 0))";
+        assert_eq!(
+            column_source_segment(create_sql, "b").as_deref(),
+            Some("b TEXT NOT NULL")
+        );
+        assert_eq!(
+            column_source_segment(create_sql, "c").as_deref(),
+            Some("c INTEGER CHECK(c > 0)")
+        );
+        assert_eq!(column_source_segment(create_sql, "missing"), None);
+    }
+
+    #[test]
+    fn a_check_constraint_on_the_column_is_flagged_as_unreproducible() {
+        assert!(column_carries_an_unreproducible_constraint(
+            "c INTEGER CHECK(c > 0)"
+        ));
+        assert!(!column_carries_an_unreproducible_constraint("c INTEGER"));
+    }
+
+    #[test]
+    fn column_source_segment_ignores_a_comma_sitting_inside_a_line_comment() {
+        let create_sql =
+            "CREATE TABLE t (a INTEGER, -- a comment, with a comma of its own\n b TEXT NOT NULL)";
+        assert_eq!(
+            column_source_segment(create_sql, "b").as_deref(),
+            Some("b TEXT NOT NULL")
+        );
+    }
+
+    #[test]
+    fn column_source_segment_locates_parent_a_in_the_real_schema_past_its_comment_block() {
+        let canonical = Connection::open_in_memory().expect("open");
+        canonical.execute_batch(SCHEMA).expect("apply real schema");
+        let create_sql =
+            table_create_sql(&canonical, "observations").expect("read real create sql");
+
+        let segment = column_source_segment(&create_sql, "parent_a").expect(
+            "parent_a's own definition must be found despite the comment block above it containing commas",
+        );
+
+        assert_eq!(segment, "parent_a INTEGER REFERENCES observations(id)");
     }
 }

@@ -26,7 +26,8 @@ Prefer a Tolerable halt — a surfaced error that keeps the buffer — over any 
 - Bytes a write displaces are captured as a durable blob before anything discards them.
 - Unsaved work goes to the recovery store, never to the user's file.
 - Losing the database must never damage the user's file — it is an observer beside the file, never inside it.
-- SQL statements bind values as parameters, never build them with `format!` or string concatenation; PRAGMA is the sole exception, since SQLite cannot bind it — a PRAGMA's input is a closed enum, never an open string.
+- SQL statements bind values as parameters, never build them with `format!` or string concatenation; PRAGMA is the sole exception, since SQLite cannot bind it — a PRAGMA's input is a closed enum, never an open string. A table or column identifier is the other exception, for the same reason SQLite gives no way to bind one: permitted only when every interpolated identifier is read back from the canonical schema this crate builds in-process, never taken from caller input or from content already sitting in the database.
+- rune-db versions its schema by filename (`rune-vN.db`), never by migrating a shape in place: a shape change ships as a new file, leaving the old file and its journal untouched for a still-running old binary, and for the old-version GC to reclaim once every session referencing it is dead. Every `rune-v*.db` this crate ever produces, past and future, must satisfy `SELECT pid, proc_started_at FROM sessions` — the GC's only green light to delete a stale file — so the `sessions` table and its `pid`/`proc_started_at` columns may gain siblings but must never be renamed, retyped, or dropped. The one shape change that lands in place under the same filename, without a version bump, is a nullable column added to an existing table: an older binary's inserts simply omit it and get `NULL`, and its named-column reads are unaffected.
 
 ## 3. Bytes
 

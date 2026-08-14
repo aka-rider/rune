@@ -1,77 +1,8 @@
-//! Schema versioning by **filename**, never by migration (plan decision 2).
-//!
-//! A schema-shape change bumps [`SCHEMA_VERSION`] and ships as a new
-//! `rune-v{N}.db`; the previous binary's file is left untouched, and a
-//! stale binary launched later goes on using its own version's file
-//! undisturbed. Filename versioning replaces an in-place
-//! drop-on-version-mismatch migration (deleting and recreating the file
-//! when the schema shape changes) — old journals survive an upgrade, and
-//! an old-version GC (WP6) can reclaim genuinely abandoned files later
-//! without ever racing a binary that's still using them (see the plan's
-//! Risks section, "Old-version GC vs a concurrently launching old
-//! binary").
-//!
-//! # The frozen liveness contract
-//!
-//! **Every `rune-v*.db` this crate ever produces — past, present, and
-//! future — must satisfy the query**
-//!
-//! ```sql
-//! SELECT pid, proc_started_at FROM sessions
-//! ```
-//!
-//! The old-version GC (WP6) runs exactly this query, read-only, against
-//! every `rune-v{M}.db` (`M` < current) it finds before touching the file:
-//! success and "every session dead" together are its ONLY green light to
-//! delete a stale file. A schema change is free to add columns or tables,
-//! but the `sessions` table and its `pid`/`proc_started_at` columns may
-//! never be renamed, retyped, or dropped — doing so would make every GC
-//! implementation from that version onward unable to tell a live old-binary
-//! session apart from a dead one, and "on ANY error leave the file and log"
-//! (the GC's own safety rule, WP6.S3) means the practical failure mode is
-//! merely a leaked file, not data loss — but it is still a contract worth
-//! keeping deliberately, not by accident.
-//!
-//! # The additive-column exception
-//!
-//! Not every schema change needs a new filename. Adding a NULLABLE column
-//! to an EXISTING table, with no other change, is safe to apply in place
-//! under the CURRENT filename — it lands directly in `SCHEMA`, no upgrade
-//! machinery involved: an
-//! older, still-running binary that doesn't know the column exists inserts
-//! rows that simply omit it (SQLite fills `NULL`), and its own
-//! named-column reads are unaffected either way — it stays fully
-//! functional, sharing the file with a newer binary that does use the
-//! column, for as long as both are alive. This does NOT apply to
-//! rewriting, renaming, retyping, or dropping any existing column or
-//! table, or anything else an old binary's existing INSERTs/SELECTs could
-//! observe as a broken assumption — those still bump [`SCHEMA_VERSION`]
-//! exactly as before. And a version bump, whenever one does happen, must
-//! still work out old-binary coexistence and the GC's eventual reclaiming
-//! of the file it leaves behind — the additive-column exception does not
-//! change that.
-//!
-//! # Residual risk (plan Risks, R3, accepted)
-//!
-//! Between an old binary opening `rune-v{M}.db` and inserting its session
-//! row, a concurrently starting new binary's GC could observe "no live
-//! sessions" and delete the file. WP6's mitigations (mtime > 1 hour, exact
-//! filename match, frozen-contract query must succeed) narrow this to a
-//! window that requires launching a stale binary against an already-stale
-//! (>1h idle) file at the exact moment a newer binary's GC runs — not a
-//! supported flow. If hit, the old instance falls back to the degraded
-//! `:memory:` open-ladder rung; no user file is ever touched.
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::diag::background_note;
 
-/// The current schema version. Bump on any shape change — new table, index,
-/// or constraint, or any rewritten/renamed/retyped/dropped column — and
-/// never in place. The one exception is a nullable column added to an
-/// existing table, which lands in place without a bump; see the module
-/// doc's additive-column exception.
 pub const SCHEMA_VERSION: u32 = 2;
 
 /// The filename `rune-v{SCHEMA_VERSION}.db` uses, isolated so tests and the
