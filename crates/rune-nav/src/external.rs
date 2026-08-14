@@ -11,15 +11,21 @@
 /// that reaches `/usr/bin/open` are the same value.
 pub fn is_external(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    let lowered = trimmed.to_ascii_lowercase();
-    if lowered.starts_with("http://")
-        || lowered.starts_with("https://")
-        || lowered.starts_with("mailto:")
+    if starts_with_ignore_ascii_case(trimmed, "http://")
+        || starts_with_ignore_ascii_case(trimmed, "https://")
+        || starts_with_ignore_ascii_case(trimmed, "mailto:")
     {
         Some(trimmed.to_string())
     } else {
         None
     }
+}
+
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    haystack
+        .as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
 }
 
 #[cfg(test)]

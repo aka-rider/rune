@@ -5,24 +5,61 @@
 /// after ASCII-lowercasing and collapsing every run of ASCII whitespace to
 /// a single space, trimmed both ends.
 pub fn anchor_matches(anchor_name: &str, def_name: &str) -> bool {
-    normalize_anchor(anchor_name) == normalize_anchor(def_name)
+    normalize_anchor(anchor_name).eq(normalize_anchor(def_name))
 }
 
-fn normalize_anchor(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+fn normalize_anchor(s: &str) -> impl Iterator<Item = char> + '_ {
     let mut pending_space = false;
-    for c in s.chars() {
+    let mut started = false;
+    s.chars().flat_map(move |c| {
         if c.is_ascii_whitespace() {
             pending_space = true;
-            continue;
+            return NormalizedChars::none();
         }
-        if pending_space && !out.is_empty() {
-            out.push(' ');
-        }
+        let emit_space = pending_space && started;
         pending_space = false;
-        out.push(c.to_ascii_lowercase());
+        started = true;
+        if emit_space {
+            NormalizedChars::two(' ', c.to_ascii_lowercase())
+        } else {
+            NormalizedChars::one(c.to_ascii_lowercase())
+        }
+    })
+}
+
+enum NormalizedChars {
+    Empty,
+    One(char),
+    Two(char, char),
+}
+
+impl NormalizedChars {
+    fn none() -> Self {
+        Self::Empty
     }
-    out
+
+    fn one(c: char) -> Self {
+        Self::One(c)
+    }
+
+    fn two(a: char, b: char) -> Self {
+        Self::Two(a, b)
+    }
+}
+
+impl Iterator for NormalizedChars {
+    type Item = char;
+
+    fn next(&mut self) -> Option<char> {
+        match std::mem::replace(self, Self::Empty) {
+            Self::Empty => None,
+            Self::One(a) => Some(a),
+            Self::Two(a, b) => {
+                *self = Self::One(b);
+                Some(a)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

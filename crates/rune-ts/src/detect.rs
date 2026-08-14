@@ -7,6 +7,7 @@
 //! only through that same function — never a language name of its own
 //! invention.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use rune_syntax::LangId;
@@ -99,6 +100,23 @@ fn cap_and_lower(line: &str) -> String {
     line.get(..end).unwrap_or("").to_lowercase()
 }
 
+const MODELINE_MARKERS: [&str; 3] = ["vim:", "vi:", "ex:"];
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn looks_like_modeline(line: &str) -> bool {
+    line.contains("-*-")
+        || MODELINE_MARKERS
+            .iter()
+            .any(|marker| contains_ignore_ascii_case(line, marker))
+}
+
 /// Maps an extracted modeline value to a `Detected`, falling through to
 /// `None` when it names neither markdown nor a known grammar.
 fn map_modeline_value(value: &str) -> Option<Detected> {
@@ -109,31 +127,36 @@ fn map_modeline_value(value: &str) -> Option<Detected> {
     lang::resolve(value).map(Detected::Lang)
 }
 
+fn vim_ft_value(line: &str, after_marker: usize) -> Option<Detected> {
+    let remainder = line.get(after_marker..)?;
+    let token = remainder
+        .split([':', ' ', '\t'])
+        .find(|tok| tok.starts_with("ft=") || tok.starts_with("filetype="))?;
+    let value = token.split_once('=').map_or("", |(_, v)| v);
+    map_modeline_value(value)
+}
+
 /// Tries the vim/vi/ex `ft=`/`filetype=` modeline form on one lowercased,
 /// already-capped line.
 fn try_vim_form(line: &str) -> Option<Detected> {
     let bytes = line.as_bytes();
-    for marker in ["vim:", "vi:", "ex:"] {
+    for marker in MODELINE_MARKERS {
         let mut search_from = 0usize;
         while let Some(rel) = line.get(search_from..).and_then(|s| s.find(marker)) {
             let idx = search_from + rel;
+            search_from = idx + marker.len();
+
             let preceded_ok = idx == 0
                 || bytes
                     .get(idx.wrapping_sub(1))
                     .is_some_and(u8::is_ascii_whitespace);
-            if preceded_ok {
-                let remainder = line.get(idx + marker.len()..).unwrap_or("");
-                let token = remainder
-                    .split([':', ' ', '\t'])
-                    .find(|tok| tok.starts_with("ft=") || tok.starts_with("filetype="));
-                if let Some(tok) = token {
-                    let value = tok.split_once('=').map_or("", |(_, v)| v);
-                    if let Some(detected) = map_modeline_value(value) {
-                        return Some(detected);
-                    }
-                }
+            if !preceded_ok {
+                continue;
             }
-            search_from = idx + marker.len();
+
+            if let Some(detected) = vim_ft_value(line, idx + marker.len()) {
+                return Some(detected);
+            }
         }
     }
     None
@@ -177,11 +200,15 @@ fn safe_tail(content: &str) -> &str {
 fn from_modeline(content: &str) -> Option<Detected> {
     let head = content.lines().take(HEAD_LINES);
     let tail_slice = safe_tail(content);
-    let tail_lines: Vec<&str> = tail_slice.lines().collect();
-    let tail_start = tail_lines.len().saturating_sub(HEAD_LINES);
-    let tail = tail_lines.get(tail_start..).into_iter().flatten().copied();
+    let tail_line_count = tail_slice.lines().count();
+    let tail = tail_slice
+        .lines()
+        .skip(tail_line_count.saturating_sub(HEAD_LINES));
 
     for line in head.chain(tail) {
+        if !looks_like_modeline(line) {
+            continue;
+        }
         let capped = cap_and_lower(line);
         if let Some(detected) = try_vim_form(&capped).or_else(|| try_emacs_form(&capped)) {
             return Some(detected);
@@ -213,13 +240,16 @@ fn from_extension(path: &Path) -> Option<Detected> {
 /// Reduces a shebang interpreter path to a bare, lowercased, unversioned
 /// basename — `/usr/bin/python3.11` and `python3.11` alike become
 /// `python`.
-fn interpreter_basename(token: &str) -> Option<String> {
-    let base = token.rsplit('/').next().unwrap_or(token).to_lowercase();
+fn interpreter_basename(token: &str) -> Option<Cow<'_, str>> {
+    let base = token.rsplit('/').next().unwrap_or(token);
     let trimmed = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
     if trimmed.is_empty() {
-        None
+        return None;
+    }
+    if trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
+        Some(Cow::Owned(trimmed.to_lowercase()))
     } else {
-        Some(trimmed.to_string())
+        Some(Cow::Borrowed(trimmed))
     }
 }
 
@@ -251,8 +281,8 @@ fn from_shebang(content: &str) -> Option<Detected> {
     let name = interpreter_basename(interpreter)?;
     let canonical = INTERPRETERS
         .iter()
-        .find(|(key, _)| *key == name)
-        .map_or(name.as_str(), |(_, value)| *value);
+        .find(|(key, _)| *key == name.as_ref())
+        .map_or(name.as_ref(), |(_, value)| *value);
     lang::resolve(canonical).map(Detected::Lang)
 }
 
