@@ -367,6 +367,62 @@ fn launch_missing_first_positional_never_sweeps_another_sessions_empty_scratch_r
     );
 }
 
+#[test]
+fn bare_launch_never_sweeps_another_sessions_empty_scratch_row() {
+    let home = ScratchHome::new("bare-launch-no-gc");
+    let db_path = home
+        .0
+        .join("Library")
+        .join("Application Support")
+        .join("rune")
+        .join(rune_db::db_file_name(rune_db::SCHEMA_VERSION));
+
+    let other_sessions_row_id = {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let bridge = rune_tui::db::DbBridge::bootstrap();
+        let (store, _warning) = rune_db::Store::open(&db_path, Arc::clone(&vfs), bridge.on_event())
+            .expect("open store");
+
+        let create_op = store.create_scratch().expect("enqueue create_scratch");
+        let db_id = match bridge.wait_for_bootstrap_event(|evt| match evt {
+            rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == create_op,
+            rune_db::DbEvent::Fatal { .. } => true,
+        }) {
+            rune_db::DbEvent::Ok {
+                result: rune_db::OpOutcome::ScratchDocId(id),
+                ..
+            } => id.0,
+            other => panic!("expected a CreateScratch ack, got {other:?}"),
+        };
+
+        store.shutdown();
+        db_id
+    };
+
+    let vfs = Mem::new();
+    let _app = bootstrap(
+        Arc::new(vfs),
+        std::iter::empty(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed for a no-positional launch");
+
+    let raw = rusqlite::Connection::open(&db_path).expect("open db file directly");
+    let still_present: bool = raw
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            [other_sessions_row_id],
+            |r| r.get(0),
+        )
+        .expect("check the other session's row");
+    assert!(
+        still_present,
+        "bootstrap_untitled_db must never sweep another still-running session's \
+         empty scratch row"
+    );
+}
+
 /// Removing `launch_nonexistent_path_sets_a_banner` must not delete the
 /// honest degraded signal for the case that actually has no store to bind
 /// to: `home: None` short-circuits `open_store` to the `$HOME`-unset arm
