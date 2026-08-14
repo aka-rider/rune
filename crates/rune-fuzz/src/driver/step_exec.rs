@@ -9,7 +9,7 @@
 use rune_tui::app::{self, App};
 use rune_tui::db::DbBridge;
 use rune_tui::keymap::{self, KeyInput};
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
 use rune_vfs::Vfs;
 
 use crate::action::{HighlightVersion, highlight_spans_from_raw};
@@ -202,6 +202,43 @@ pub(super) fn discharge_pending_trash(state: &mut State) -> Option<(Msg, MsgTag)
     Some((msg, MsgTag::TrashDone))
 }
 
+/// Arms `state.pending_save` with a just-produced `CmdKind::Save`, or
+/// records `SAVE-SINGLE-FLIGHT` and stops the session (G9: at most one
+/// save `Cmd` may ever be outstanding — silently overwriting a still-
+/// pending one would drop the first save's `Cmd` on the floor, never
+/// delivered, `SAVE-CLEAN-MATCHES-DISK` never even sampling it, CODE-
+/// REVIEW.md rune-fuzz finding 3). Returns `true` when the session must
+/// stop.
+fn arm_save_cmd(state: &mut State, prev: &Snapshot, outcome: &mut Outcome, cmd: Cmd) -> bool {
+    if state.pending_save.is_some() {
+        outcome.violation = Some(Violation::new(
+            "SAVE-SINGLE-FLIGHT",
+            "a second save Cmd arrived while one was already pending \
+                      (G9: at most one save Cmd may ever be outstanding)"
+                .to_string(),
+        ));
+        outcome.final_snapshot = Some(prev.clone());
+        outcome.final_ctx = None;
+        return true;
+    }
+    // Snapshot EVERY open document's content now, at the instant
+    // the `Cmd` is constructed — never just `prev.content` (the
+    // ACTIVE document's `Snapshot`): `trigger_save` can be called
+    // with an id other than `app.active` (a Guard modal's `s`
+    // hotkey saves its own prompt's document), so the only
+    // reliable way to recover "what bytes was this Cmd actually
+    // built with" is to have all candidates on hand and pick the
+    // right one once the ack names its `id`.
+    let per_doc_bytes = state
+        .app
+        .documents
+        .iter()
+        .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
+        .collect();
+    state.pending_save = Some((cmd, per_doc_bytes));
+    false
+}
+
 /// Delivers one message through `update`, captures the resulting `Snapshot`
 /// and `StepCtx`, checks every invariant, and records a violation (if any)
 /// into `outcome`. Returns `true` when the session must stop.
@@ -251,32 +288,9 @@ pub(super) fn step_and_check(
         // deferred/dropped classification, forever.
         match cmd.kind() {
             CmdKind::Save => {
-                if state.pending_save.is_some() {
-                    outcome.violation = Some(Violation::new(
-                        "SAVE-SINGLE-FLIGHT",
-                        "a second save Cmd arrived while one was already pending \
-                                  (G9: at most one save Cmd may ever be outstanding)"
-                            .to_string(),
-                    ));
-                    outcome.final_snapshot = Some(prev.clone());
-                    outcome.final_ctx = None;
+                if arm_save_cmd(state, prev, outcome, cmd) {
                     return true;
                 }
-                // Snapshot EVERY open document's content now, at the instant
-                // the `Cmd` is constructed — never just `prev.content` (the
-                // ACTIVE document's `Snapshot`): `trigger_save` can be called
-                // with an id other than `app.active` (a Guard modal's `s`
-                // hotkey saves its own prompt's document), so the only
-                // reliable way to recover "what bytes was this Cmd actually
-                // built with" is to have all candidates on hand and pick the
-                // right one once the ack names its `id`.
-                let per_doc_bytes = state
-                    .app
-                    .documents
-                    .iter()
-                    .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
-                    .collect();
-                state.pending_save = Some((cmd, per_doc_bytes));
             }
             CmdKind::Rename => {
                 // Structurally at most one at a time (`rename::begin`

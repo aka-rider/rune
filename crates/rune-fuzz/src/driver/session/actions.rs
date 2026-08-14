@@ -20,12 +20,7 @@ use super::{Outcome, State};
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
-pub(super) fn apply(
-    state: &mut State,
-    prev: &mut Snapshot,
-    outcome: &mut Outcome,
-    action: &Action,
-) {
+pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome, action: Action) {
     match action {
         Action::FailNextSave => {
             state.mem.fail_next_save(io::ErrorKind::PermissionDenied);
@@ -33,7 +28,7 @@ pub(super) fn apply(
         Action::AdvanceClock(millis) => {
             state
                 .manual_clock
-                .advance(std::time::Duration::from_millis(*millis));
+                .advance(std::time::Duration::from_millis(millis));
         }
         Action::DivergeDisk => {
             diverge_disk(state, prev, outcome);
@@ -60,12 +55,8 @@ pub(super) fn apply(
             // `pending_quit` already cleared entirely, or after a
             // DIFFERENT generation re-armed it, is exactly the
             // production race this variant exists to exercise.
-            let msg = Msg::ConfirmTimeout {
-                generation: *generation,
-            };
-            let tag = MsgTag::ConfirmTimeout {
-                generation: *generation,
-            };
+            let msg = Msg::ConfirmTimeout { generation };
+            let tag = MsgTag::ConfirmTimeout { generation };
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::Deliver => {
@@ -84,11 +75,11 @@ pub(super) fn apply(
             }
         }
         Action::Key(k) => {
-            let (msg, tag) = key_step(*k);
+            let (msg, tag) = key_step(k);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::Mouse(m) => {
-            let (msg, tag) = mouse_step(*m);
+            let (msg, tag) = mouse_step(m);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::OpenFileSearch => {
@@ -97,11 +88,11 @@ pub(super) fn apply(
         }
         Action::Paste(s) => {
             let tag = MsgTag::Paste(s.clone());
-            step_and_check(state, prev, Msg::Paste(s.clone()), tag, None, outcome);
+            step_and_check(state, prev, Msg::Paste(s), tag, None, outcome);
         }
         Action::Resize(w, h) => {
-            let tag = MsgTag::Resize(*w, *h);
-            step_and_check(state, prev, Msg::Resize(*w, *h), tag, None, outcome);
+            let tag = MsgTag::Resize(w, h);
+            step_and_check(state, prev, Msg::Resize(w, h), tag, None, outcome);
         }
         Action::ClipboardReply(s) => {
             // `PasteTarget::Document(state.app.active)` matches this
@@ -116,10 +107,7 @@ pub(super) fn apply(
                 text: s.clone(),
                 target,
             };
-            let msg = Msg::ClipboardRead {
-                text: s.clone(),
-                target,
-            };
+            let msg = Msg::ClipboardRead { text: s, target };
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::DirLoaded {
@@ -129,14 +117,14 @@ pub(super) fn apply(
         } => {
             let msg = Msg::DirLoaded {
                 root: PathBuf::from(FUZZ_DIR_ROOT),
-                entries: entries.clone(),
-                cause: *cause,
-                generation: *generation,
+                entries,
+                cause,
+                generation,
             };
             step_and_check(state, prev, msg, MsgTag::DirLoaded, None, outcome);
         }
         Action::Highlight { version, spans } => {
-            let (msg, tag) = highlight_step(state, *version, spans);
+            let (msg, tag) = highlight_step(state, version, &spans);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::HighlightTree {
@@ -144,7 +132,7 @@ pub(super) fn apply(
             fixture,
             base,
         } => {
-            let (msg, tag) = highlight_tree_step(state, *version, *fixture, *base);
+            let (msg, tag) = highlight_tree_step(state, version, fixture, base);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::Type(s) => {

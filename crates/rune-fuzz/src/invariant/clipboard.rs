@@ -100,14 +100,6 @@ fn filesearch_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> O
     )
 }
 
-fn floor_char_boundary(s: &str, idx: usize) -> usize {
-    let mut idx = idx.min(s.len());
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
-}
-
 fn title_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
     let sanitized: String = first_line(text)
         .chars()
@@ -135,8 +127,12 @@ fn title_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option
         (cursor.position, cursor.position)
     };
     let window = &prev.title_window;
-    let start = floor_char_boundary(&prev.title_text, raw_start.clamp(window.start, window.end));
-    let end = floor_char_boundary(&prev.title_text, raw_end.clamp(window.start, window.end));
+    let start = prev
+        .title_text
+        .floor_char_boundary(raw_start.clamp(window.start, window.end));
+    let end = prev
+        .title_text
+        .floor_char_boundary(raw_end.clamp(window.start, window.end));
     if start > end || end > prev.title_text.len() {
         return None; // a malformed field cursor is CUR-BOUNDS's job to report
     }

@@ -167,6 +167,18 @@ fn tabs_inner_rect(app: &App) -> Rect {
     rune_tui::layout::geometry(area, app).tabs_inner
 }
 
+/// The seeded-session inputs `Session::boot` threads through to whichever
+/// of `live_session`/`panicked_session` handles `open_seed_document`'s
+/// outcome — bundled so passing them along stays under clippy's argument
+/// limit.
+struct Seed {
+    mem: Arc<Mem>,
+    path: PathBuf,
+    content: String,
+    bridge: Arc<DbBridge>,
+    manual_clock: Arc<rune_tui::pointer::ManualClock>,
+}
+
 fn new_state(
     app: App,
     mem: Arc<Mem>,
@@ -224,6 +236,110 @@ impl Session {
         Session::boot(mem, path, content, bridge, Some(db))
     }
 
+    /// Builds the `App` this session drives, with the real wall clock
+    /// (`App::new`'s default) swapped for a `ManualClock` before any
+    /// mouse action exists (WP14.S2, CODE-REVIEW.md rune-fuzz finding 17)
+    /// — a driver that only swapped it in later would have already spent
+    /// real wall-clock time, and replay would silently stop reproducing
+    /// the moment a click sequence straddled a click-window boundary at
+    /// real, non-reproducible speed.
+    fn new_app(
+        vfs: Arc<dyn Vfs + Send + Sync>,
+        db: Option<rune_tui::db::Db>,
+    ) -> (App, Arc<rune_tui::pointer::ManualClock>) {
+        let mut app = App::new(Buffer::new(""), None, vfs, db);
+        let manual_clock = Arc::new(rune_tui::pointer::ManualClock::new());
+        app.clock = Arc::clone(&manual_clock) as Arc<dyn rune_tui::pointer::Clock + Send + Sync>;
+        (app, manual_clock)
+    }
+
+    /// Opens the session's seeded document the same way a real launch or
+    /// Explorer selection would — through `workspace::open_path`, so a
+    /// wired store hydrates it (`db_enqueue::load_document`) exactly as
+    /// production does, rather than the driver hand-assembling a
+    /// `Document` that was never routed through the store at all. Falls
+    /// back to the untitled draft only if the open itself refused (never
+    /// observed with this driver's own `Mem`-backed content, but
+    /// `open_path` is fallible in general).
+    fn open_seed_document(
+        app: &mut App,
+        path: &std::path::Path,
+        draft_doc: DocumentId,
+        bridge: &DbBridge,
+    ) -> DocumentId {
+        let seed_doc = workspace::open_path(app, path).unwrap_or(draft_doc);
+        drain_all_pending_setup(app, bridge);
+
+        app.active = seed_doc;
+        app.active_doc_mut().focused = true;
+        // Seeds through the same geometry chokepoint `Msg::Resize` uses
+        // (plan WP3.S9, gotcha 9) rather than a bare `viewport.set_size` —
+        // since WP3, `App::relayout` (called from `sync_view` below)
+        // overrides the viewport whenever `frame_width != 0`, so a driver
+        // that only set the viewport directly would have it silently
+        // overwritten on the very first `sync_view` call.
+        app.frame_width = 80;
+        app.frame_height = 24;
+        app.relayout();
+        app.sync_view();
+        seed_doc
+    }
+
+    fn live_session(app: App, seed: Seed, seed_doc: DocumentId, draft_doc: DocumentId) -> Session {
+        let mut state = new_state(
+            app,
+            seed.mem,
+            seed.path,
+            seed_doc,
+            draft_doc,
+            seed.bridge,
+            seed.manual_clock,
+        );
+        let prev = Snapshot::capture(&mut state.app, false);
+        let outcome = Outcome {
+            violation: None,
+            final_snapshot: None,
+            final_ctx: None,
+            merge_activated: prev.merge_active,
+        };
+        Session {
+            state,
+            content: seed.content,
+            outcome,
+            phase: Phase::Live(Box::new(prev)),
+        }
+    }
+
+    fn panicked_session(
+        mut app: App,
+        seed: Seed,
+        draft_doc: DocumentId,
+        violation: Violation,
+    ) -> Session {
+        if let Some(db) = app.db.take() {
+            db.shutdown();
+        }
+        Session {
+            state: new_state(
+                app,
+                seed.mem,
+                seed.path,
+                draft_doc,
+                draft_doc,
+                seed.bridge,
+                seed.manual_clock,
+            ),
+            content: seed.content,
+            outcome: Outcome {
+                violation: Some(violation),
+                final_snapshot: None,
+                final_ctx: None,
+                merge_activated: false,
+            },
+            phase: Phase::SetupPanicked,
+        }
+    }
+
     fn boot(
         mem: Arc<Mem>,
         path: PathBuf,
@@ -232,81 +348,24 @@ impl Session {
         db: Option<rune_tui::db::Db>,
     ) -> Session {
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
-        let mut app = App::new(Buffer::new(""), None, Arc::clone(&vfs), db);
-        // WP14.S2 (CODE-REVIEW.md rune-fuzz finding 17): `App::new`'s default
-        // `clock` is the real wall clock (`SystemClock`) — harmless today only
-        // because this driver never delivers `Msg::Mouse`, so `PointerState`'s
-        // multi-click window never actually reads it. Swapped for `ManualClock`
-        // (already `pub`, built for exactly this) BEFORE any mouse action
-        // exists, so a future `Action::Mouse` never has to retrofit determinism
-        // onto a driver that spent real wall-clock time all along — replay
-        // would silently stop reproducing the moment a click sequence
-        // straddled a click-window boundary at real, non-reproducible speed.
-        let manual_clock = Arc::new(rune_tui::pointer::ManualClock::new());
-        app.clock = Arc::clone(&manual_clock) as Arc<dyn rune_tui::pointer::Clock + Send + Sync>;
+        let (mut app, manual_clock) = Session::new_app(vfs, db);
         let draft_doc = app.active;
 
-        // The session opens its seeded document the same way a real launch or
-        // Explorer selection would — through `workspace::open_path`, so a
-        // wired store hydrates it (`db_enqueue::load_document`) exactly as
-        // production does, rather than the driver hand-assembling a `Document`
-        // that was never routed through the store at all. Falls back to the
-        // untitled draft only if the open itself refused (never observed with
-        // this driver's own `Mem`-backed content, but `open_path` is fallible
-        // in general). Setup already reaches the display pipeline, so it runs
-        // under the same panic guard every later step gets.
+        // Setup already reaches the display pipeline, so it runs under the
+        // same panic guard every later step gets.
         let setup = guard::catching_panic(|| {
-            let seed_doc = workspace::open_path(&mut app, &path).unwrap_or(draft_doc);
-            drain_all_pending_setup(&mut app, &bridge);
-
-            app.active = seed_doc;
-            app.active_doc_mut().focused = true;
-            // Seeds through the same geometry chokepoint `Msg::Resize` uses
-            // (plan WP3.S9, gotcha 9) rather than a bare `viewport.set_size` —
-            // since WP3, `App::relayout` (called from `sync_view` below)
-            // overrides the viewport whenever `frame_width != 0`, so a driver
-            // that only set the viewport directly would have it silently
-            // overwritten on the very first `sync_view` call.
-            app.frame_width = 80;
-            app.frame_height = 24;
-            app.relayout();
-            app.sync_view();
-            seed_doc
+            Session::open_seed_document(&mut app, &path, draft_doc, &bridge)
         });
+        let seed = Seed {
+            mem,
+            path,
+            content,
+            bridge,
+            manual_clock,
+        };
         match setup {
-            Ok(seed_doc) => {
-                let mut state =
-                    new_state(app, mem, path, seed_doc, draft_doc, bridge, manual_clock);
-                let prev = Snapshot::capture(&mut state.app, false);
-                let outcome = Outcome {
-                    violation: None,
-                    final_snapshot: None,
-                    final_ctx: None,
-                    merge_activated: prev.merge_active,
-                };
-                Session {
-                    state,
-                    content,
-                    outcome,
-                    phase: Phase::Live(Box::new(prev)),
-                }
-            }
-            Err(violation) => {
-                if let Some(db) = app.db.take() {
-                    db.shutdown();
-                }
-                Session {
-                    state: new_state(app, mem, path, draft_doc, draft_doc, bridge, manual_clock),
-                    content,
-                    outcome: Outcome {
-                        violation: Some(violation),
-                        final_snapshot: None,
-                        final_ctx: None,
-                        merge_activated: false,
-                    },
-                    phase: Phase::SetupPanicked,
-                }
-            }
+            Ok(seed_doc) => Session::live_session(app, seed, seed_doc, draft_doc),
+            Err(violation) => Session::panicked_session(app, seed, draft_doc, violation),
         }
     }
 
@@ -315,7 +374,7 @@ impl Session {
             && self.outcome.violation.is_none()
             && !self.state.app.should_quit
         {
-            actions::apply(&mut self.state, prev, &mut self.outcome, &action);
+            actions::apply(&mut self.state, prev, &mut self.outcome, action);
         }
         self.outcome.violation.as_ref()
     }

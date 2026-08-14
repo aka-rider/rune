@@ -310,23 +310,17 @@ impl DivergentSaveTracker {
                 );
             }
         }
-        let resolved: Vec<DocumentId> = self
-            .attempts
-            .keys()
-            .copied()
-            .filter(|&doc| !save_in_flight(next, doc))
-            .collect();
         let mut violation = None;
-        for doc in resolved {
-            let Some(attempt) = self.attempts.remove(&doc) else {
-                continue;
-            };
+        self.attempts.retain(|&doc, attempt| {
+            if save_in_flight(next, doc) {
+                return true;
+            }
             let committed = saved_version(next, doc) > saved_version(prev, doc);
             let Some(verdict_step) = attempt.divergent_verdict_step else {
-                continue;
+                return false;
             };
             if attempt.forced || !committed || violation.is_some() {
-                continue;
+                return false;
             }
             violation = Some(Violation::new(
                 "SAVE-AGREES-WITH-DIVERGENCE",
@@ -337,7 +331,8 @@ impl DivergentSaveTracker {
                     ctx.step, ctx.msg
                 ),
             ));
-        }
+            false
+        });
         violation
     }
 }
