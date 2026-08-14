@@ -36,7 +36,8 @@
 //!
 //! Not every schema change needs a new filename. Adding a NULLABLE column
 //! to an EXISTING table, with no other change, is safe to apply in place
-//! under the CURRENT filename (`schema.rs`'s `ensure_additive_columns`): an
+//! under the CURRENT filename — it lands directly in `SCHEMA`, no upgrade
+//! machinery involved: an
 //! older, still-running binary that doesn't know the column exists inserts
 //! rows that simply omit it (SQLite fills `NULL`), and its own
 //! named-column reads are unaffected either way — it stays fully
