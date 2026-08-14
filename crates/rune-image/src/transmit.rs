@@ -33,6 +33,11 @@ const MAX_CHUNK_SIZE: usize = 4096;
 const APC_INTRO: &str = "\x1b_G";
 const APC_OUTRO: &str = "\x1b\\";
 
+const QUIET_QUERY: &str = "q=2";
+const CONTINUATION_FLAG: &str = "m=1";
+const CONTINUATION_OPTIONS: &str = "q=2,m=1";
+const FINAL_CHUNK_OPTIONS: &str = "q=2,m=0";
+
 /// PNG-encodes `img`, base64s it, and frames it as one or more Kitty
 /// transmit-and-put APC escapes addressed to Unicode virtual placement
 /// (`U=1`) at `cols` x `rows` terminal cells. See the module docs for the
@@ -65,37 +70,29 @@ pub fn encode_transmit(
 /// synthetic payload rather than having to locate a real image whose PNG
 /// encoding happens to land on it.
 fn frame_transmit(payload: &str, id: u32, cols: usize, rows: usize) -> String {
-    let full_options = format!("f=100,q=2,i={id},U=1,c={cols},r={rows},a=T");
-    // Chunk the base64 text directly. `split_at_checked` yields `None`
-    // rather than panicking on a non-char-boundary split, so the chunk
-    // boundary is safe by construction instead of by argument — base64 is
-    // pure ASCII, so every boundary is in fact a char boundary, but nothing
-    // here has to rely on that being true.
+    let full_options = format!("f=100,{QUIET_QUERY},i={id},U=1,c={cols},r={rows},a=T");
     let mut remaining = payload;
     let mut out = String::new();
     let mut wrote_full_chunk = false;
     let mut is_first = true;
 
     while let Some((chunk, rest)) = remaining.split_at_checked(MAX_CHUNK_SIZE) {
-        let options = if is_first {
-            format!("{full_options},m=1")
+        if is_first {
+            out.push_str(&frame(
+                &format!("{full_options},{CONTINUATION_FLAG}"),
+                chunk,
+            ));
+            is_first = false;
         } else {
-            "q=2,m=1".to_string()
-        };
-        out.push_str(&frame(&options, chunk));
-        is_first = false;
+            out.push_str(&frame(CONTINUATION_OPTIONS, chunk));
+        }
         wrote_full_chunk = true;
         remaining = rest;
     }
 
     if wrote_full_chunk {
-        // The trailing "last chunk" after the loop: whatever remained
-        // (possibly empty, on an exact multiple) goes out under `q=2,m=0`.
-        out.push_str(&frame("q=2,m=0", remaining));
+        out.push_str(&frame(FINAL_CHUNK_OPTIONS, remaining));
     } else {
-        // The loop never completed a full read: the whole (short or
-        // empty) payload goes out as one chunk under the full option set,
-        // with no `m=` key at all.
         out.push_str(&frame(&full_options, remaining));
     }
     out
@@ -151,13 +148,17 @@ pub fn fit_and_encode(
 /// Returns an APC sequence that deletes the image with the given ID and
 /// frees its data from the terminal.
 pub fn encode_delete(id: u32) -> String {
-    format!("{APC_INTRO}q=2,i={id},d=I,a=d{APC_OUTRO}")
+    delete_apc(&format!("{QUIET_QUERY},i={id},d=I,a=d"))
 }
 
 /// Returns an APC sequence that deletes all images and frees their data
 /// from the terminal.
 pub fn encode_delete_all() -> String {
-    format!("{APC_INTRO}q=2,d=A,a=d{APC_OUTRO}")
+    delete_apc(&format!("{QUIET_QUERY},d=A,a=d"))
+}
+
+fn delete_apc(options: &str) -> String {
+    format!("{APC_INTRO}{options}{APC_OUTRO}")
 }
 
 #[cfg(test)]
