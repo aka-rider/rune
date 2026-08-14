@@ -401,10 +401,10 @@ fn bare_launch_never_sweeps_another_sessions_empty_scratch_row() {
 
     let vfs = Mem::new();
     let _app = bootstrap(
-        Arc::new(vfs),
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         std::iter::empty(),
-        PathBuf::from("/"),
-        Some(home.0.clone()),
+        Path::new("/"),
+        Some(&home.0),
     )
     .expect("bootstrap should succeed for a no-positional launch");
 
