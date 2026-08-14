@@ -90,7 +90,22 @@ pub fn hash_bytes(data: &[u8]) -> String {
     crate::blob::hex_sha256(data)
 }
 
-const OBS_COLUMNS: &str = "id, doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, parent_a, parent_b, at, confirmed";
+macro_rules! obs_columns {
+    () => {
+        "id, doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, parent_a, parent_b, at, confirmed"
+    };
+}
+
+const OBS_SELECT_PREFIX: &str = concat!("SELECT ", obs_columns!(), " FROM observations");
+
+const SELECT_OBSERVATION_BY_ID: &str =
+    concat!("SELECT ", obs_columns!(), " FROM observations WHERE id=?1");
+
+const SELECT_NEWEST_OBSERVATION: &str = concat!(
+    "SELECT ",
+    obs_columns!(),
+    " FROM observations WHERE doc_id=?1 ORDER BY id DESC LIMIT 1"
+);
 
 fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
     Ok(Observation {
@@ -310,13 +325,9 @@ pub(crate) fn observe_from_stat_tx(
 /// decision-input read — must run inside the deciding `BEGIN IMMEDIATE` tx
 /// (plan decision 8), never on the read-only reader connection.
 pub fn get_observation(tx: &Transaction<'_>, id: ObsId) -> Result<Observation, Error> {
-    tx.query_row(
-        &format!("SELECT {OBS_COLUMNS} FROM observations WHERE id=?1"),
-        params![id],
-        scan_observation,
-    )
-    .optional()?
-    .ok_or_else(|| Error::NotFound(format!("observation {id}")))
+    tx.query_row(SELECT_OBSERVATION_BY_ID, params![id], scan_observation)
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("observation {id}")))
 }
 
 /// `doc_id`'s newest recorded observation, by id, ANY origin, ANY session —
@@ -327,13 +338,9 @@ pub fn newest_observation(
     tx: &Transaction<'_>,
     doc_id: DocId,
 ) -> Result<Option<Observation>, Error> {
-    tx.query_row(
-        &format!("SELECT {OBS_COLUMNS} FROM observations WHERE doc_id=?1 ORDER BY id DESC LIMIT 1"),
-        params![doc_id],
-        scan_observation,
-    )
-    .optional()
-    .map_err(Error::from)
+    tx.query_row(SELECT_NEWEST_OBSERVATION, params![doc_id], scan_observation)
+        .optional()
+        .map_err(Error::from)
 }
 
 /// Derives the 3-way-merge ancestor for `doc_id` AT journal position `pos`,
@@ -362,7 +369,7 @@ pub fn ancestor_at(
     let resolve = ObsOrigin::Resolve.as_str();
     tx.query_row(
         &format!(
-            "SELECT {OBS_COLUMNS} FROM observations \
+            "{OBS_SELECT_PREFIX} \
              WHERE doc_id=?1 AND session_id=?2 AND origin IN ({eligible}) \
                AND seq IS NOT NULL AND seq <= ?3 AND (?4 IS NULL OR id != ?4 OR seq < ?3 OR origin = '{resolve}') \
              ORDER BY seq DESC, id DESC LIMIT 1"

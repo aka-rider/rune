@@ -172,13 +172,12 @@ pub fn edits_in_range(
         Ok((r.get::<_, Seq>(0)?, r.get::<_, String>(1)?))
     })?;
 
-    let mut result = Vec::new();
-    for row in rows {
+    rows.map(|row| {
         let (seq, edits_json) = row?;
         let edits = edits_from_json(&edits_json)?;
-        result.push(EditRow { seq, edits });
-    }
-    Ok(result)
+        Ok(EditRow { seq, edits })
+    })
+    .collect::<Result<Vec<_>, Error>>()
 }
 
 #[cfg(test)]

@@ -156,12 +156,13 @@ fn active_rows_newest_first(
     tx: &Transaction<'_>,
     doc_id: DocId,
 ) -> Result<Vec<(i64, SessionId)>, Error> {
-    let mut stmt = tx.prepare(&format!(
-        "SELECT id, session_id FROM merges WHERE doc_id=?1 AND state='{}' ORDER BY id DESC",
-        MergeRowState::Active.as_str()
-    ))?;
+    let mut stmt = tx.prepare(
+        "SELECT id, session_id FROM merges WHERE doc_id=?1 AND state=?2 ORDER BY id DESC",
+    )?;
     let rows = stmt
-        .query_map(params![doc_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map(params![doc_id, MergeRowState::Active.as_str()], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
         .collect::<Result<Vec<(i64, SessionId)>, rusqlite::Error>>()?;
     Ok(rows)
 }

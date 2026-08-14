@@ -174,15 +174,8 @@ pub fn load_from_read(
     let content = String::from_utf8(data)
         .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
 
-    let mut recovered = content.clone();
     let mut bridge_seq = None;
-    if has_hist {
-        recovered = retry::with_retry(conn, |tx| {
-            crate::snapshot::recover_document(tx, session_id, doc_id)
-        })?;
-    }
-
-    if !has_hist {
+    let recovered = if !has_hist {
         // Cross-session crash recovery (v10, B2/R2) — MUST run before this
         // session writes anything of its own for doc_id, else it would
         // immediately find itself as "the most recent session". First-ever
@@ -204,54 +197,60 @@ pub fn load_from_read(
             now,
         };
         let outcome = anchor_first_load(conn, &ctx, &content, inherited)?;
-        recovered = outcome.recovered;
         bridge_seq = outcome.bridge_seq;
-    } else if hash == observation::hash_bytes(recovered.as_bytes()) {
-        // Reload, hash-equality: heal-adopt only when there is something to
-        // heal (an ordinary clean tab switch also lands here).
-        let cur = retry::with_retry(conn, |tx| {
-            observation::saved_obs_for(tx, session_id, doc_id)
-        })?;
-        let needs_heal = match &cur {
-            None => true,
-            Some(c) => c.blob_hash.as_str() != hash,
-        };
-        if needs_heal {
-            adopt::record_adoption(
-                conn,
-                doc_id,
-                session_id,
-                observation::ObservationMeta {
-                    blob_hash: &hash,
-                    seq: Some(load_seq.0),
-                    origin: ObsOrigin::Resolve,
-                    confirmed: Confirmation::from_bracket(disk_confirmed),
-                },
-                &stat,
-                now,
-                None,
-            )?;
-        }
+        outcome.recovered
     } else {
-        // Reload, hashes differ: a bare, uncorrelated sighting — saved_obs
-        // stays exactly where it was.
-        let at = crate::session::format_rfc3339_nanos(now);
-        retry::with_retry(conn, |tx| {
-            observation::record_observation(
-                tx,
-                doc_id,
-                session_id,
-                observation::ObservationMeta {
-                    blob_hash: &hash,
-                    seq: None,
-                    origin: ObsOrigin::Load,
-                    confirmed: Confirmation::from_bracket(disk_confirmed),
-                },
-                &stat,
-                &at,
-            )
+        let recovered = retry::with_retry(conn, |tx| {
+            crate::snapshot::recover_document(tx, session_id, doc_id)
         })?;
-    }
+        if hash == observation::hash_bytes(recovered.as_bytes()) {
+            // Reload, hash-equality: heal-adopt only when there is something to
+            // heal (an ordinary clean tab switch also lands here).
+            let cur = retry::with_retry(conn, |tx| {
+                observation::saved_obs_for(tx, session_id, doc_id)
+            })?;
+            let needs_heal = match &cur {
+                None => true,
+                Some(c) => c.blob_hash.as_str() != hash,
+            };
+            if needs_heal {
+                adopt::record_adoption(
+                    conn,
+                    doc_id,
+                    session_id,
+                    observation::ObservationMeta {
+                        blob_hash: &hash,
+                        seq: Some(load_seq.0),
+                        origin: ObsOrigin::Resolve,
+                        confirmed: Confirmation::from_bracket(disk_confirmed),
+                    },
+                    &stat,
+                    now,
+                    None,
+                )?;
+            }
+        } else {
+            // Reload, hashes differ: a bare, uncorrelated sighting — saved_obs
+            // stays exactly where it was.
+            let at = crate::session::format_rfc3339_nanos(now);
+            retry::with_retry(conn, |tx| {
+                observation::record_observation(
+                    tx,
+                    doc_id,
+                    session_id,
+                    observation::ObservationMeta {
+                        blob_hash: &hash,
+                        seq: None,
+                        origin: ObsOrigin::Load,
+                        confirmed: Confirmation::from_bracket(disk_confirmed),
+                    },
+                    &stat,
+                    &at,
+                )
+            })?;
+        }
+        recovered
+    };
 
     let recovered_hash = observation::hash_bytes(recovered.as_bytes());
     let resumable_merge = retry::with_retry(conn, |tx| {

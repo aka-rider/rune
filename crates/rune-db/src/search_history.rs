@@ -32,11 +32,7 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
     let mut stmt =
         conn.prepare("SELECT query FROM search_history ORDER BY last_used_at DESC LIMIT ?1")?;
     let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
-    Ok(result)
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 #[cfg(test)]

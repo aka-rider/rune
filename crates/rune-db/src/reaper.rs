@@ -41,11 +41,7 @@ pub fn reap_dead_sessions(
     let candidates: Vec<(SessionId, i64, String, String)> = {
         let mut stmt = conn.prepare("SELECT id, pid, proc_started_at, opened_at FROM sessions")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
-        let mut v = Vec::new();
-        for row in rows {
-            v.push(row?);
-        }
-        v
+        rows.collect::<Result<Vec<_>, _>>()?
     };
 
     for (id, pid, started_at, opened_at) in candidates {
@@ -88,11 +84,7 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bo
              )",
         )?;
         let rows = stmt.query_map(params![session_id], |r| r.get(0))?;
-        let mut v = Vec::new();
-        for row in rows {
-            v.push(row?);
-        }
-        v
+        rows.collect::<Result<Vec<_>, _>>()?
     };
 
     for doc_id in doc_ids {

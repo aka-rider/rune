@@ -20,12 +20,13 @@ Prefer a Tolerable halt — a surfaced error that keeps the buffer — over any 
 
 ## 2. I/O
 
-- All disk access for user files goes through the one injected `Vfs`, constructed once in `main` and threaded everywhere; rune-db's own database sidecar file is the sole exception.
+- All disk access for user files goes through the one injected `Vfs`, constructed once in `main` and threaded everywhere; rune-db's own database sidecar file is the sole exception — `Vfs` sits above rune-db, so routing rune-db's own private files through it would be circular. The chokepoint governs user documents, not rune-db's storage of itself.
 - User content reaches disk only through a durable temp write followed by exactly one atomic publish (exchange/rename); nothing else writes the destination.
 - A durability failure discovered after the publish already took effect is physical success — report it as such, and never remove the temp that still holds the displaced bytes.
 - Bytes a write displaces are captured as a durable blob before anything discards them.
 - Unsaved work goes to the recovery store, never to the user's file.
 - Losing the database must never damage the user's file — it is an observer beside the file, never inside it.
+- SQL statements bind values as parameters, never build them with `format!` or string concatenation; PRAGMA is the sole exception, since SQLite cannot bind it — a PRAGMA's input is a closed enum, never an open string.
 
 ## 3. Bytes
 
