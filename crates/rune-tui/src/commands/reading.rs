@@ -12,8 +12,8 @@
 
 use crate::app::App;
 use crate::document::ReadOnly;
+use crate::focus::{self, FocusTarget};
 use crate::messages;
-use crate::pane::Pane;
 
 /// Toggles the active document's `ReadOnly` state between `No` and
 /// `Reading`. `Always`/`Preview` are left untouched with a status message —
@@ -27,7 +27,7 @@ pub fn toggle(app: &mut App) {
     // refusal with a status message: `⌃P` firing from another pane is not
     // user-initiated intent to toggle THIS document, the same precondition
     // `app.rs::refocus_title` treats silently rather than as a refusal.
-    if app.focus() != Pane::Editor {
+    if focus::target(app) != FocusTarget::Editor {
         return;
     }
     // Review fix F9: while the merge resolver is `Active` ON the active
@@ -59,6 +59,7 @@ pub fn toggle(app: &mut App) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::pane::Pane;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -118,6 +119,24 @@ mod tests {
             "expected the merge refusal status, got {:?}",
             crate::messages::newest_text(&app)
         );
+    }
+
+    #[test]
+    fn toggle_refuses_while_the_file_finder_owns_focus_at_a_narrow_frame() {
+        let mut app = app();
+        app.frame_width = 5;
+        app.frame_height = 5;
+        let mut effects = crate::runtime::Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        assert_eq!(app.focus(), Pane::Editor);
+        assert_eq!(
+            crate::focus::target(&app),
+            crate::focus::FocusTarget::FileSearch
+        );
+
+        toggle(&mut app);
+
+        assert_eq!(app.active_doc().read_only, ReadOnly::No);
     }
 
     #[test]

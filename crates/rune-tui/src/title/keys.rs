@@ -33,6 +33,7 @@ use crate::app::App;
 use crate::clipboard::pbpaste_cmd;
 use crate::commands::clipboard::write_to_clipboard_or_report;
 use crate::document::DocumentId;
+use crate::focus::{self, FocusTarget};
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::pane::Pane;
 use crate::rename;
@@ -145,7 +146,7 @@ fn copy_range_text(app: &App) -> String {
 /// something `is_valid_name` would refuse anyway. A sanitized result that
 /// comes out empty is a no-op rather than an insert of nothing.
 pub fn paste(app: &mut App, doc: DocumentId, text: &str) {
-    if app.focus() != Pane::Title || app.active != doc {
+    if focus::target(app) != FocusTarget::Title || app.active != doc {
         return;
     }
     let sanitized = sanitize_name_input(text);
