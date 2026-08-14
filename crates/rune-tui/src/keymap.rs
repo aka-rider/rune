@@ -149,7 +149,7 @@ impl QuitKey {
 /// paths (Enter, Escape, printable fallthrough — plan: "Hardcoded fast
 /// paths outside the resolver") handle everything this function doesn't.
 /// The quit chords are the one exception kept outside the table: they are
-/// identity-bearing (`QuitKey`, threaded through `App::pending_quit`) in a
+/// identity-bearing (`QuitKey`, threaded through `App::quit`) in a
 /// way a plain `Command` isn't, so `QuitKey::from_key` stays the single
 /// source of truth for them, same as before.
 pub fn resolve(key: KeyInput) -> Option<Command> {

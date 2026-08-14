@@ -99,7 +99,7 @@ fn mode(app: &App) -> Mode<'_> {
 /// switching tabs away from that document must not leave its stale hint
 /// showing over whatever document is active now.
 fn chord_hint(app: &App) -> Option<String> {
-    if app.pending_quit.is_some() {
+    if matches!(app.quit, crate::app::QuitNegotiation::ConfirmArmed(..)) {
         return Some(quit_hint(app).to_string());
     }
     if app
@@ -303,7 +303,10 @@ mod tests {
     fn pending_quit_shows_the_quit_hint_over_the_degraded_banner() {
         let mut app = app_with("hello");
         app.db_banner = Some("recovery disabled: boom".to_string());
-        app.pending_quit = Some((QuitKey::CtrlC, 0));
+        app.quit = crate::app::QuitNegotiation::ConfirmArmed(
+            QuitKey::CtrlC,
+            crate::generation::Generation::ZERO,
+        );
         assert_eq!(footer_text(&app), "press again to quit");
     }
 
@@ -374,7 +377,7 @@ mod tests {
         let mut app = app_with("hello");
         let doc_a = app.active;
         let doc_b = app.open_document(Buffer::new("world"));
-        app.pending_save_confirm = Some((doc_a, 0));
+        app.pending_save_confirm = Some((doc_a, crate::generation::Generation::ZERO));
 
         assert_eq!(app.active, doc_a);
         assert!(

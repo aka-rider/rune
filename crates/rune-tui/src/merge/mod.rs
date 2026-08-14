@@ -66,8 +66,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
 
     match db.store.merge_prep(rune_db::DocId(db_id)) {
         Ok(op_id) => {
-            let generation = app.next_merge_gen;
-            app.next_merge_gen = app.next_merge_gen.wrapping_add(1);
+            let generation = app.next_merge_gen.mint();
             app.merge = MergeState::Pending {
                 doc: id,
                 generation,

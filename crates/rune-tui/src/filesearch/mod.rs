@@ -68,7 +68,7 @@ pub struct ResultRow {
 pub struct FileSearchState {
     pub query: String,
     pub nav: listnav::List,
-    pub generation: u64,
+    pub generation: crate::generation::Generation,
     pub return_to: DocumentId,
     /// The workspace walk's own root, resolved once at [`open`] (A4's own
     /// ladder: `app.root` when non-empty, else `explorer::initial_root`)
@@ -107,8 +107,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     crate::search::close(app);
     crate::explorer_search::clear_search(app);
     let return_to = app.active;
-    app.next_filesearch_gen = app.next_filesearch_gen.wrapping_add(1);
-    let generation = app.next_filesearch_gen;
+    let generation = app.next_filesearch_gen.mint();
     let root = resolve_root(app);
     app.open_filesearch(FileSearchState {
         query: String::new(),
@@ -248,7 +247,7 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
 /// MRU-ordered by `recent_paths`' own `last_seen_at DESC`.
 pub(crate) fn handle_recents_loaded(
     app: &mut App,
-    generation: u64,
+    generation: crate::generation::Generation,
     result: Result<Vec<Candidate>, String>,
     effects: &mut Effects,
 ) {
@@ -395,7 +394,7 @@ fn list_all(state: &mut FileSearchState) {
 /// `mru_rank`, stays the sole entry for it.
 pub(crate) fn handle_scanned(
     app: &mut App,
-    generation: u64,
+    generation: crate::generation::Generation,
     result: Result<walk::ScanResult, String>,
     effects: &mut Effects,
 ) {

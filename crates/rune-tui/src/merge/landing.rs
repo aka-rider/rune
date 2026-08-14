@@ -31,7 +31,7 @@ const UTF8_REFUSAL: &str = "merge unavailable — the file on disk is not valid 
 pub(crate) fn handle_merge_prep_ack(
     app: &mut App,
     doc: DocumentId,
-    merge_gen: Option<u32>,
+    merge_gen: Option<crate::generation::Generation>,
     prep: MergePrepResult,
     _effects: &mut Effects,
 ) {
@@ -368,7 +368,7 @@ mod tests {
         let doc = app.active;
         app.merge = MergeState::Pending {
             doc,
-            generation: 0,
+            generation: crate::generation::Generation::ZERO,
             intent: MergeIntent::Merge,
         };
 
@@ -389,7 +389,13 @@ mod tests {
         };
 
         let mut effects = Effects::default();
-        handle_merge_prep_ack(&mut app, doc, Some(0), prep, &mut effects);
+        handle_merge_prep_ack(
+            &mut app,
+            doc,
+            Some(crate::generation::Generation::ZERO),
+            prep,
+            &mut effects,
+        );
 
         assert_eq!(app.merge, MergeState::Inactive);
         assert!(
@@ -430,7 +436,7 @@ mod tests {
         let doc = app.active;
         app.merge = MergeState::Pending {
             doc,
-            generation: 0,
+            generation: crate::generation::Generation::ZERO,
             intent: MergeIntent::Merge,
         };
 
@@ -438,7 +444,7 @@ mod tests {
         handle_merge_prep_ack(
             &mut app,
             doc,
-            Some(0),
+            Some(crate::generation::Generation::ZERO),
             diverged_prep(
                 b"shared-start\ntheirs-only\nshared-end\n",
                 rune_db::ObsId::new(3).expect("nonzero"),
@@ -479,7 +485,7 @@ mod tests {
         let doc = app.active;
         app.merge = MergeState::Pending {
             doc,
-            generation: 0,
+            generation: crate::generation::Generation::ZERO,
             intent: MergeIntent::Merge,
         };
         let prep = MergePrepResult {
@@ -499,7 +505,13 @@ mod tests {
         };
 
         let mut effects = Effects::default();
-        handle_merge_prep_ack(&mut app, doc, Some(0), prep, &mut effects);
+        handle_merge_prep_ack(
+            &mut app,
+            doc,
+            Some(crate::generation::Generation::ZERO),
+            prep,
+            &mut effects,
+        );
 
         assert_eq!(app.merge, MergeState::Inactive);
         assert_eq!(app.doc(doc).unwrap().last_sync, Some(SyncKind::Clean));
@@ -538,7 +550,7 @@ mod tests {
         app.install_or_join_file_binding(1, Some(rune_db::ObsId::new(7).expect("nonzero")));
         app.merge = MergeState::Pending {
             doc,
-            generation: 0,
+            generation: crate::generation::Generation::ZERO,
             intent: MergeIntent::Merge,
         };
 
@@ -546,7 +558,7 @@ mod tests {
         handle_merge_prep_ack(
             &mut app,
             doc,
-            Some(0),
+            Some(crate::generation::Generation::ZERO),
             diverged_prep(b"disk\n", rune_db::ObsId::new(9).expect("nonzero")),
             &mut effects,
         );

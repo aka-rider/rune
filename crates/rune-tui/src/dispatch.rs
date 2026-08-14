@@ -13,7 +13,7 @@ use crate::commands::{
 };
 use crate::document::DocumentId;
 use crate::highlight::HighlightReply;
-use crate::keymap::{self, Command, Extend, KeyCode, KeyInput, Mods, Motion, QuitKey};
+use crate::keymap::{self, Command, Extend, KeyCode, KeyInput, Motion, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg, PasteTarget};
@@ -64,10 +64,10 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             durable,
         } => materialize_ack::handle_save_done(app, id, ticket, version, result, durable),
         Msg::ConfirmTimeout { generation } => {
-            if let Some((_, pending_gen)) = app.pending_quit
+            if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
                 && pending_gen == generation
             {
-                app.pending_quit = None;
+                app.quit = crate::app::QuitNegotiation::Idle;
             }
             // A stale generation (the user already quit-confirmed or
             // re-armed with a new chord since) is ignored.
@@ -366,29 +366,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         return keymap::KeyOutcome::Consumed;
     }
 
-    // Hardcoded fast paths outside the resolver: Enter (mod 0) -> newline;
-    // Escape -> collapse selection. Neither is a resolver-bound chord (plan
-    // Context, "Keymap").
-    if key.code == KeyCode::Enter && key.mods == Mods::NONE {
-        if app.active_doc().is_read_only() {
-            navigate::follow(app, effects);
-        } else {
-            edit::newline(app, app.active);
-        }
-        return keymap::KeyOutcome::Consumed;
-    }
-    if key.code == KeyCode::Escape && key.mods == Mods::NONE {
-        // The cascade — multi-cursor, then selection, then leave to the
-        // Explorer: `nav::escape` collapses whichever of the first two it
-        // finds and reports `Unconsumed` only once neither applies, which
-        // is this fast path's own cue to hand focus to the Explorer instead
-        // — unfolding the left column if it's collapsed, and landing the
-        // cursor on the active document's file (`pane::
-        // show_and_focus_explorer_on_active_file`, shared with `^B`'s show
-        // branch).
-        if nav::escape(app.active_doc_mut()) == nav::EscapeOutcome::Unconsumed {
-            pane::show_and_focus_explorer_on_active_file(app, effects);
-        }
+    if crate::editor_fast_path::hardcoded_fast_path(app, key, effects) {
         return keymap::KeyOutcome::Consumed;
     }
 

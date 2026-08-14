@@ -25,7 +25,7 @@ use crate::filesearch::walk;
 pub(crate) fn filesearch_scan_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     root: PathBuf,
-    generation: u64,
+    generation: crate::generation::Generation,
 ) -> Cmd {
     Cmd::read_dir(move || {
         let result = match vfs.stat(&root) {

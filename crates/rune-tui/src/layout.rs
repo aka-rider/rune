@@ -11,6 +11,7 @@ use rune_core::assert_invariant;
 
 use crate::app::App;
 use crate::focus::LayoutMode;
+use crate::layout_column;
 use crate::messages;
 use crate::region::Region;
 use crate::split::{PaneLimits, Split};
@@ -177,49 +178,6 @@ struct Resolved {
     mode: LayoutMode,
 }
 
-/// Splits one already-sized left-column block into its Explorer/divider/Tabs
-/// sections — shared by the ordinary `Split` column and the narrow-frame
-/// full-width `ExplorerOnly` column below, so the two can never diverge on
-/// how a block of a given size divides. The trailing `bool` is `false` only
-/// when NEITHER section fits even alone (`Split::allot`'s `(None, None)`
-/// arm) — the caller's cue to give up on the column entirely rather than
-/// show a border around nothing.
-fn carve_column(left_area: Rect, app: &App) -> (Rect, Option<Rect>, Rect, bool) {
-    let zero = Rect::new(0, 0, 0, 0);
-    let inner = left_area.inner(Margin::new(1, 1));
-    let budget = explorer_budget(left_area);
-    let (explorer_h, tabs_h) =
-        app.splits
-            .explorer
-            .allot(budget, explorer_fallback(left_area), TABS_LIMITS);
-
-    match (explorer_h, tabs_h) {
-        (Some(explorer_h), Some(tabs_h)) => {
-            let explorer_inner = Region::carve_top(inner, explorer_h).rect();
-            let divider = Region::row(inner, inner.y.saturating_add(explorer_h), 1).rect();
-            let tabs_inner = Region::row(inner, divider.y.saturating_add(1), tabs_h).rect();
-            (explorer_inner, Some(divider), tabs_inner, true)
-        }
-        (None, Some(_)) => {
-            // The Explorer collapsed: the divider still labels the section
-            // and sits at the very top of the inner rect, with the tab rows
-            // filling everything below it.
-            let divider = Region::row(inner, inner.y, 1).rect();
-            let tabs_inner = Region::carve_bottom(inner, inner.height.saturating_sub(1)).rect();
-            (zero, Some(divider), tabs_inner, true)
-        }
-        (Some(_), None) => {
-            // The tab rows collapsed: no divider at all, so the row
-            // `explorer_budget` reserved for it comes back to the Explorer
-            // — it takes the WHOLE inner height, not the `budget`-sized
-            // number `allot` returned above (that number is measured
-            // against `budget`, one row short of `inner.height`).
-            (inner, None, zero, true)
-        }
-        (None, None) => (zero, None, zero, false),
-    }
-}
-
 /// The ONE function in this module that decides what's painted this frame:
 /// `LayoutMode::resolve` and `geometry` below both read it, so they can
 /// never silently disagree about visibility. Pure — `&App` only, no
@@ -251,8 +209,6 @@ fn resolve(area: Rect, app: &App) -> Resolved {
         (main_area, None)
     };
 
-    let zero = Rect::new(0, 0, 0, 0);
-
     // A frame too narrow to fit BOTH the column's floor and the center's
     // floor side by side must still show the column if the user asked for
     // it — flipping to a full-width `ExplorerOnly` rather than silently
@@ -264,121 +220,14 @@ fn resolve(area: Rect, app: &App) -> Resolved {
     // won't fit).
     let split_fits = main_area.width >= MIN_LEFT_PANE_W.saturating_add(MIN_CENTER_W);
 
-    let (left_block, explorer_inner, tabs_divider, tabs_inner, center, mode) =
-        if app.filesearch().is_some() && split_fits {
-            // The finder forces the left column visible at its own width,
-            // regardless of `app.splits.left.is_shown()` — visibility and
-            // size are decided here, once, exactly like every other case
-            // this function already handles; `app.splits` is never written.
-            // Below `split_fits`, the finder falls through to the narrow-
-            // frame handling below, unchanged.
-            let cap = main_area.width.saturating_sub(MIN_CENTER_W);
-            let filesearch_fits = main_area.width >= FILESEARCH_MIN_W.saturating_add(MIN_CENTER_W);
-            let left_w = if filesearch_fits {
-                app.splits
-                    .left
-                    .size_hint(DEFAULT_LEFT_PANE_W)
-                    .max(FILESEARCH_MIN_W)
-                    .min(cap)
-            } else {
-                cap
-            };
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(left_w), Constraint::Min(0)])
-                .split(main_area);
-            let left_area = cols.first().copied().unwrap_or(main_area);
-            let center = cols.get(1).copied().unwrap_or(main_area);
-
-            let (explorer_inner, tabs_divider, tabs_inner, fits) = carve_column(left_area, app);
-            if fits {
-                let mode = LayoutMode::Split {
-                    explorer: explorer_inner.height > 0,
-                    tabs: tabs_inner.height > 0,
-                };
-                (
-                    Some(left_area),
-                    explorer_inner,
-                    tabs_divider,
-                    tabs_inner,
-                    center,
-                    mode,
-                )
-            } else {
-                (None, zero, None, zero, main_area, LayoutMode::EditorOnly)
-            }
-        } else if (app.splits.left.is_shown() || app.filesearch().is_some()) && !split_fits {
-            // The finder falls through to this same narrow-frame branch as
-            // an already-shown column: below `split_fits` there is no room
-            // to paint the column beside a center pane, so — same as the
-            // ordinary Explorer case — the column becomes the whole frame
-            // rather than being dropped. Without this, a finder opened on
-            // a frame narrower than `split_fits` would paint nothing at
-            // all while still consuming every keystroke.
-            let (explorer_inner, tabs_divider, tabs_inner, fits) = carve_column(main_area, app);
-            if fits {
-                // No `center` at all: the column IS the frame this mode.
-                let center = Rect::new(
-                    main_area.x.saturating_add(main_area.width),
-                    main_area.y,
-                    0,
-                    main_area.height,
-                );
-                (
-                    Some(main_area),
-                    explorer_inner,
-                    tabs_divider,
-                    tabs_inner,
-                    center,
-                    LayoutMode::ExplorerOnly,
-                )
-            } else {
-                // The column can't show anything even at full width (a
-                // frame too SHORT, not just too narrow) — give up on it
-                // exactly like the ordinary Split path's own `(None, None)`
-                // arm does.
-                (None, zero, None, zero, main_area, LayoutMode::EditorOnly)
-            }
-        } else {
-            let (left_w, _trail) =
-                app.splits
-                    .left
-                    .allot(main_area.width, DEFAULT_LEFT_PANE_W, CENTER_LIMITS);
-            match left_w {
-                None => (None, zero, None, zero, main_area, LayoutMode::EditorOnly),
-                Some(left_w) => {
-                    let cols = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Length(left_w), Constraint::Min(0)])
-                        .split(main_area);
-                    let left_area = cols.first().copied().unwrap_or(main_area);
-                    let center = cols.get(1).copied().unwrap_or(main_area);
-
-                    let (explorer_inner, tabs_divider, tabs_inner, fits) =
-                        carve_column(left_area, app);
-                    if fits {
-                        let mode = LayoutMode::Split {
-                            explorer: explorer_inner.height > 0,
-                            tabs: tabs_inner.height > 0,
-                        };
-                        (
-                            Some(left_area),
-                            explorer_inner,
-                            tabs_divider,
-                            tabs_inner,
-                            center,
-                            mode,
-                        )
-                    } else {
-                        // Neither section fits even alone: the column
-                        // yields the space entirely rather than showing a
-                        // border around nothing, and `center` reclaims the
-                        // width the column would otherwise have reserved.
-                        (None, zero, None, zero, main_area, LayoutMode::EditorOnly)
-                    }
-                }
-            }
-        };
+    let layout_column::ColumnResolution {
+        left_block,
+        explorer_inner,
+        tabs_divider,
+        tabs_inner,
+        center,
+        mode,
+    } = layout_column::resolve_column(main_area, split_fits, app);
 
     Resolved {
         footer,

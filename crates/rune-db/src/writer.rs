@@ -43,10 +43,8 @@ use crate::Error;
 #[cfg(test)]
 use crate::ids::SessionId;
 use crate::ids::{DocId, Seq};
-use crate::retry;
-use crate::writer_lifecycle::{
-    IDLE_TIMEOUT, fatal, run_idle_maintenance, run_shutdown_maintenance,
-};
+use crate::writer_exec as exec;
+use crate::writer_lifecycle::{IDLE_TIMEOUT, fatal, run_idle_maintenance};
 pub(crate) use crate::writer_ops::OpKind;
 pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
 
@@ -65,9 +63,9 @@ pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
 /// has round-tripped — is what makes `OpKind::MoveUndoPos`'s resolution
 /// exact instead of a guess at an in-flight ack.
 #[derive(Default)]
-struct DocUndoState {
-    base_seq: Seq,
-    local_seq: Vec<Seq>,
+pub(crate) struct DocUndoState {
+    pub(crate) base_seq: Seq,
+    pub(crate) local_seq: Vec<Seq>,
 }
 
 impl DocUndoState {
@@ -78,7 +76,7 @@ impl DocUndoState {
     /// actually run, both of which are invariant violations the writer's
     /// single FIFO queue should make unreachable (see `OpKind::MoveUndoPos`'s
     /// doc comment) — never silently approximated.
-    fn resolve(&self, local_pos: i64) -> Option<Seq> {
+    pub(crate) fn resolve(&self, local_pos: i64) -> Option<Seq> {
         if local_pos == 0 {
             return Some(self.base_seq);
         }
@@ -86,7 +84,7 @@ impl DocUndoState {
         self.local_seq.get(idx).copied()
     }
 
-    fn push_seq(&mut self, doc_id: DocId, seq: Seq) {
+    pub(crate) fn push_seq(&mut self, doc_id: DocId, seq: Seq) {
         assert_invariant!(self.local_seq.last().is_none_or(|&last| seq > last), || {
             format!(
                 "append_edit doc {doc_id}: seq {seq} did not advance past local_seq.last() {:?}",
@@ -243,26 +241,15 @@ fn execute_op(
 ) -> Result<OpOutcome, Error> {
     match kind {
         #[cfg(test)]
-        OpKind::Noop => {
-            retry::with_retry(conn, |_tx| Ok(()))?;
-            Ok(OpOutcome::None)
-        }
+        OpKind::Noop => exec::noop(conn),
         #[cfg(test)]
-        OpKind::TestBlock(rx) => {
-            let _ = rx.recv();
-            Ok(OpOutcome::None)
-        }
-        // Test-only, deliberate — see the variant's doc comment. `panic!`
-        // is denied workspace-wide EXCEPT in test code; this arm only ever
-        // compiles under `cfg(test)`, i.e. never into the production
-        // binary.
-        #[cfg(test)]
-        #[allow(clippy::panic)]
-        OpKind::PanicForTest => panic!("intentional test panic (writer panic-guard test)"),
+        OpKind::TestBlock(_) | OpKind::PanicForTest => execute_test_op(kind),
         // Intercepted in `writer_loop` before this function is ever called
         // — see the variant's doc comment.
         #[cfg(feature = "test-support")]
         OpKind::KillWriterForTest => Ok(OpOutcome::None),
+
+        // Edit ops.
         OpKind::AppendEdit {
             session_id,
             now,
@@ -270,79 +257,41 @@ fn execute_op(
             edits,
             cursors_before,
             cursors_after,
-        } => {
-            let seq = retry::with_retry(conn, |tx| {
-                crate::journal::append_edit(
-                    tx,
-                    session_id,
-                    now,
-                    doc_id,
-                    &edits,
-                    &cursors_before,
-                    &cursors_after,
-                )
-            })?;
-            // A real edit batch (never empty — see `db_enqueue::append_edit`'s
-            // caller) always lands a genuine row, so `seq` is always > 0
-            // here; recording it extends this doc's local-position mapping
-            // by exactly one entry, matching the ONE local `Journal::push`
-            // this `AppendEdit` replicates. With coalescing gone, every
-            // `append_edit` call lands a fresh row, so `seq` is now always
-            // strictly greater than the previous entry — a violation would
-            // mean the journal grew a coalescing path again without
-            // updating this mapping.
-            let state = undo_state.entry(doc_id).or_default();
-            state.push_seq(doc_id, seq);
-            Ok(OpOutcome::Seq(seq))
-        }
+        } => exec::append_edit(
+            conn,
+            undo_state,
+            exec::AppendEditArgs {
+                session_id,
+                now,
+                doc_id,
+                edits,
+                cursors_before,
+                cursors_after,
+            },
+        ),
         OpKind::MoveUndoPos {
             session_id,
             doc_id,
             local_pos,
-        } => {
-            let target_seq = undo_state
-                .get(&doc_id)
-                .and_then(|state| state.resolve(local_pos))
-                .ok_or_else(|| {
-                    Error::NotFound(format!(
-                        "move_undo_pos: doc {doc_id} has no durable seq for local position {local_pos}"
-                    ))
-                })?;
-            retry::with_retry(conn, |tx| {
-                crate::journal::move_undo_pos(tx, session_id, doc_id, target_seq)
-            })?;
-            Ok(OpOutcome::None)
-        }
+        } => exec::move_undo_pos(conn, undo_state, session_id, doc_id, local_pos),
         OpKind::CreateSnapshot {
             session_id,
             now,
             doc_id,
             content,
-        } => {
-            let row_id = retry::with_retry(conn, |tx| {
-                // Resolved fresh, inside the same transaction as the insert
-                // — see `OpKind::CreateSnapshot`'s own doc comment.
-                let seq = crate::journal::current_seq(tx, session_id, doc_id)?;
-                crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, seq)
-            })?;
-            Ok(OpOutcome::SnapshotRowId(row_id))
-        }
+        } => exec::create_snapshot(conn, session_id, now, doc_id, content),
+
+        // Sync/merge ops.
         OpKind::Probe {
             session_id,
             doc_id,
             now,
-        } => {
-            let state = crate::probe::probe(conn, vfs, session_id, doc_id, now)?;
-            Ok(OpOutcome::Sync(Box::new(state)))
-        }
+        } => exec::probe(conn, vfs, session_id, doc_id, now),
         OpKind::MergePrep {
             session_id,
             doc_id,
             now,
-        } => {
-            let result = crate::merge_prep::merge_prep(conn, vfs, session_id, doc_id, now)?;
-            Ok(OpOutcome::MergePrep(Box::new(result)))
-        }
+        } => exec::merge_prep(conn, vfs, session_id, doc_id, now),
         OpKind::MergeOpen {
             session_id,
             liveness_check,
@@ -352,59 +301,45 @@ fn execute_op(
             marker_content,
             blocks_json,
             now,
-        } => {
-            crate::merge_state::merge_open(
-                conn,
-                liveness_check.as_ref(),
-                crate::merge_state::MergeOpenArgs {
-                    doc_id,
-                    session_id,
-                    base_obs,
-                    theirs_obs,
-                    marker_content: &marker_content,
-                    blocks_json: &blocks_json,
-                },
+        } => exec::merge_open(
+            conn,
+            exec::MergeOpenArgs {
+                session_id,
+                liveness_check,
+                doc_id,
+                base_obs,
+                theirs_obs,
+                marker_content,
+                blocks_json,
                 now,
-            )?;
-            Ok(OpOutcome::None)
-        }
+            },
+        ),
         OpKind::MergeProgress {
             session_id,
             liveness_check,
             doc_id,
             marker_content,
             blocks_json,
-        } => {
-            crate::merge_state::merge_progress(
-                conn,
-                liveness_check.as_ref(),
-                doc_id,
-                session_id,
-                &marker_content,
-                &blocks_json,
-            )?;
-            Ok(OpOutcome::None)
-        }
+        } => exec::merge_progress(
+            conn,
+            &liveness_check,
+            doc_id,
+            session_id,
+            &marker_content,
+            &blocks_json,
+        ),
         OpKind::MergeClose {
             session_id,
             doc_id,
             state,
-        } => {
-            crate::merge_state::merge_close(conn, doc_id, session_id, state)?;
-            Ok(OpOutcome::None)
-        }
+        } => exec::merge_close(conn, session_id, doc_id, state),
+
+        // Materialize/rename ops.
         OpKind::MaterializePrepare {
             session_id,
             doc_id,
             target,
-        } => {
-            let prep = crate::materialize::prepare_materialize(
-                conn,
-                crate::materialize::DocSession { doc_id, session_id },
-                target,
-            )?;
-            Ok(OpOutcome::MaterializePrep(Box::new(prep)))
-        }
+        } => exec::materialize_prepare(conn, session_id, doc_id, target),
         OpKind::MaterializeRecord {
             session_id,
             doc_id,
@@ -412,34 +347,14 @@ fn execute_op(
             seq,
             now,
             outcome,
-        } => {
-            let result = crate::materialize::record_materialize_outcome(
-                conn,
-                crate::materialize::DocSession { doc_id, session_id },
-                &resolved_path,
-                seq,
-                now,
-                outcome,
-            )?;
-            Ok(OpOutcome::Materialize(Box::new(result)))
-        }
+        } => exec::materialize_record(conn, session_id, doc_id, resolved_path, seq, now, outcome),
         OpKind::RenameFile {
             session_id,
             doc_id,
             from,
             to,
             now,
-        } => {
-            let outcome = crate::rename_bind::rename_bind(
-                conn,
-                vfs,
-                crate::materialize::DocSession { doc_id, session_id },
-                &from,
-                &to,
-                now,
-            )?;
-            Ok(OpOutcome::Rename(Box::new(outcome)))
-        }
+        } => exec::rename_file(conn, vfs, session_id, doc_id, from, to, now),
         OpKind::RenameReplace {
             session_id,
             doc_id,
@@ -447,116 +362,82 @@ fn execute_op(
             to,
             seen,
             now,
-        } => {
-            let outcome = crate::rename_replace::rename_replace(
-                conn,
-                vfs,
-                crate::materialize::DocSession { doc_id, session_id },
-                &from,
-                &to,
+        } => exec::rename_replace(
+            conn,
+            vfs,
+            exec::RenameReplaceArgs {
+                session_id,
+                doc_id,
+                from,
+                to,
                 seen,
                 now,
-            )?;
-            Ok(OpOutcome::Rename(Box::new(outcome)))
-        }
+            },
+        ),
+
+        // Document-lifecycle ops.
         OpKind::Load {
             session_id,
             liveness_check,
             path,
             now,
             source,
-        } => {
-            let result = match source {
-                crate::writer_ops::LoadSource::Fresh => {
-                    crate::load::load(conn, vfs, session_id, liveness_check.as_ref(), &path, now)?
-                }
-                crate::writer_ops::LoadSource::Taken(sighting) => {
-                    let read = crate::bracket::BracketedRead {
-                        data: sighting.bytes,
-                        stat: crate::bracket::stat_facts_from(sighting.sighted.stat()),
-                        confirmed: sighting.sighted.is_confirmed(),
-                    };
-                    crate::load::load_from_read(
-                        conn,
-                        vfs,
-                        session_id,
-                        liveness_check.as_ref(),
-                        &path,
-                        read,
-                        now,
-                    )?
-                }
-            };
-            // A fresh binding — this document's LOCAL undo-journal position
-            // `0` (no local pushes yet this binding) durably predates
-            // `bridge_seq` if this load journaled a cross-session
-            // inheritance bridge edit, else it predates whatever this
-            // session already found at `doc_id` (0 for a genuinely fresh
-            // document). Replaces, never merges with, any stale entry a
-            // PRIOR binding of this same `doc_id` left behind (a close then
-            // reopen within one process resets local position numbering
-            // right along with it).
-            undo_state.insert(
-                result.doc_id,
-                DocUndoState {
-                    base_seq: result.bridge_seq.unwrap_or(Seq(0)),
-                    local_seq: Vec::new(),
-                },
-            );
-            Ok(OpOutcome::Load(Box::new(result)))
-        }
+        } => exec::load(
+            conn,
+            vfs,
+            undo_state,
+            exec::LoadArgs {
+                session_id,
+                liveness_check,
+                path,
+                now,
+                source,
+            },
+        ),
         OpKind::ResolveAdopt {
             session_id,
             doc_id,
             obs,
             edit_seq,
             now,
-        } => {
-            let observation =
-                crate::adopt::resolve_adopt(conn, session_id, doc_id, obs, edit_seq, now)?;
-            Ok(OpOutcome::Observation(Box::new(observation)))
-        }
+        } => exec::resolve_adopt(conn, session_id, doc_id, obs, edit_seq, now),
         OpKind::ResolveAbandon { session_id, doc_id } => {
-            crate::adopt::resolve_abandon(conn, session_id, doc_id)?;
-            Ok(OpOutcome::None)
+            exec::resolve_abandon(conn, session_id, doc_id)
         }
         OpKind::CreateScratch { session_id, now } => {
-            let id = crate::scratch::create_scratch(conn, session_id, now)?;
-            // A brand-new row, never bound before — local position `0`
-            // starts at durable seq `0`, same as `Load`'s doc comment.
-            undo_state.insert(id, DocUndoState::default());
-            Ok(OpOutcome::ScratchDocId(id))
+            exec::create_scratch(conn, undo_state, session_id, now)
         }
         OpKind::GcEmptyScratch {
             keep_id,
             liveness_check,
-        } => {
-            crate::scratch::gc_empty_scratch(conn, keep_id, liveness_check.as_ref())?;
-            Ok(OpOutcome::None)
-        }
-        OpKind::RecoverableScratch { exclude_id } => {
-            let ids = crate::scratch::recoverable_scratch(conn, exclude_id)?;
-            Ok(OpOutcome::Ids(ids))
-        }
+        } => exec::gc_empty_scratch(conn, keep_id, &liveness_check),
+        OpKind::RecoverableScratch { exclude_id } => exec::recoverable_scratch(conn, exclude_id),
         OpKind::ReconstructScratch {
             liveness_check,
             doc_id,
-        } => {
-            let content =
-                crate::scratch::reconstruct_scratch(conn, liveness_check.as_ref(), doc_id)?;
-            Ok(OpOutcome::Reconstructed(content))
-        }
-        OpKind::TouchSearchQuery { query, now } => {
-            retry::with_retry(conn, |tx| crate::search_history::touch(tx, &query, now))?;
-            Ok(OpOutcome::None)
-        }
+        } => exec::reconstruct_scratch(conn, &liveness_check, doc_id),
+        OpKind::TouchSearchQuery { query, now } => exec::touch_search_query(conn, &query, now),
         OpKind::Shutdown {
             session_id,
             liveness_check,
-        } => {
-            run_shutdown_maintenance(conn, session_id, liveness_check.as_ref());
+        } => exec::shutdown(conn, session_id, &liveness_check),
+    }
+}
+
+/// The `#[cfg(test)]`-only arms, moved out of the production match body
+/// above: `TestBlock` rendezvous-blocks the writer thread for the bounded-
+/// queue-overflow test; `PanicForTest` deliberately unwinds, proving the
+/// writer loop's panic guard survives a REAL panic from op execution.
+#[cfg(test)]
+#[allow(clippy::panic)]
+fn execute_test_op(kind: OpKind) -> Result<OpOutcome, Error> {
+    match kind {
+        OpKind::TestBlock(rx) => {
+            let _ = rx.recv();
             Ok(OpOutcome::None)
         }
+        OpKind::PanicForTest => panic!("intentional test panic (writer panic-guard test)"),
+        _ => Ok(OpOutcome::None),
     }
 }
 

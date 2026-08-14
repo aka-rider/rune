@@ -62,9 +62,9 @@ pub struct DocumentId(pub(crate) NonZeroU64);
 /// One open editing pane's complete state: buffer,
 /// cursors, the root display machine, the viewport onto it, file identity,
 /// save/dirty bookkeeping, and this doc's own recovery-store handle.
-/// `pending_quit`/`messages`/`db_banner`/`should_quit` stay on `App`
+/// `quit`/`messages`/`db_banner`/`should_quit` stay on `App`
 /// (app-wide, not per-document); `pending_save_confirm` also stays on `App`
-/// but is doc-tagged (`Option<(DocumentId, u32)>`) so a tab switch can't
+/// but is doc-tagged (`Option<(DocumentId, Generation)>`) so a tab switch can't
 /// misapply an armed confirm gate.
 pub struct Document {
     pub buffer: Buffer,

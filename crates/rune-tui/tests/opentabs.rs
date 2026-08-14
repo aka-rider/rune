@@ -14,6 +14,7 @@ mod opentabs_common;
 
 use rune_tui::app;
 use rune_tui::commands::edit;
+use rune_tui::generation::Generation;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
@@ -228,7 +229,7 @@ fn discard_closes_and_activates_the_neighbor() {
     // (review fix: `close_now` must sweep it, not just `pending_close_on_
     // save`) — must not survive the close as a dangling reference to a
     // document that no longer exists.
-    session.app_mut().pending_save_confirm = Some((second, 0));
+    session.app_mut().pending_save_confirm = Some((second, Generation::ZERO));
 
     let mut effects = Effects::default();
     app::update(
