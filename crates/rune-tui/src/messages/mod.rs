@@ -24,6 +24,7 @@ use crate::commands::clipboard::{extract_copy_text, write_to_clipboard_or_report
 use crate::commands::mouse::{WHEEL_ROWS, extend_drag_cursor, place_click_cursor};
 use crate::commands::mouse_hit::hit_test;
 use crate::document::{Document, ReadOnly};
+use crate::focus::{self, FocusTarget};
 use crate::keymap::{Command, KeyCode, KeyInput};
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
@@ -422,7 +423,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
 pub fn should_arm_auto_collapse(app: &App) -> bool {
     app.messages.open
         && app.messages.armed.is_none()
-        && app.focus() != Pane::Messages
+        && focus::target(app) != FocusTarget::Messages
         && !app.messages.doc.cursors.primary().has_selection()
         && !matches!(newest(app), Some(m) if m.severity == Severity::Error)
 }

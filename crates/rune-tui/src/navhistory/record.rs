@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::document::DocumentId;
+use crate::focus::{self, FocusTarget};
 
 use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
 
@@ -61,7 +62,7 @@ pub fn record_edit(app: &mut App, id: DocumentId, offset: usize) {
 /// the active document otherwise.
 pub fn departure_origin(app: &App) -> Option<DocumentId> {
     let browsing =
-        app.focus() == crate::pane::Pane::Explorer || app.explorer.preview == Some(app.active);
+        focus::target(app) == FocusTarget::Explorer || app.explorer.preview == Some(app.active);
     if browsing {
         app.explorer.browsing_origin
     } else {

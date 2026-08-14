@@ -72,7 +72,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     // all — so dropping the hint there drops it exactly where the chord
     // is dead. A `ReadOnly::Reading` document may hold bytes typed before
     // the toggle and keeps a live, working `⌘S`, so it keeps the hint.
-    if app.focus() == Pane::Editor
+    if focus::target(app) == FocusTarget::Editor
         && !matches!(
             app.active_doc().read_only,
             ReadOnly::Always | ReadOnly::Preview

@@ -4,6 +4,7 @@
 //! how they are reached from the rest of the crate changes.
 
 use crate::app::App;
+use crate::focus::{self, FocusTarget};
 use crate::pane::Pane;
 
 impl App {
@@ -78,7 +79,9 @@ impl App {
         crate::messages::sync(self, width, frame_height);
         self.relayout();
         let engaged = self.focus() == Pane::Editor && self.guard.is_none();
-        let focused = engaged && self.search().is_none();
+        let focused = focus::target(self) == FocusTarget::Editor
+            && self.guard.is_none()
+            && self.search().is_none();
         self.active_doc_mut().focused = focused;
         self.active_doc_mut().reveal_engaged = engaged;
         // Mirrors `App::icon_tier` (the one startup-decided tier)
