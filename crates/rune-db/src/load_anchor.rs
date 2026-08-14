@@ -248,9 +248,10 @@ mod tests {
     use crate::observation::Observation;
 
     fn open() -> Connection {
-        let conn = Connection::open_in_memory().expect("open");
-        crate::schema::apply(&conn).expect("schema");
-        conn
+        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
+            &crate::conn::memory_uri(),
+        ))
+        .expect("open")
     }
 
     fn seed_doc(conn: &Connection) -> DocId {
