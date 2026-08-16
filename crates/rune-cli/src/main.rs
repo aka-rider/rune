@@ -178,7 +178,29 @@ fn bootstrap(
     let first_doc_id = wire_root_and_extra_files(&mut app, cwd, home, &launch);
     apply_db_bootstrap(&mut app, db_bootstrap, first_doc_id);
 
+    if let Some((left, _)) = &launch.diff {
+        install_diff_left(&mut app, vfs.as_ref(), left)?;
+    }
+
     Ok(app)
+}
+
+fn install_diff_left(app: &mut AppGuard, vfs: &dyn Vfs, left: &Path) -> Result<(), ExitCode> {
+    let bytes = open::read_diff_left(vfs, left)?;
+    let left_name = left.file_name().map_or_else(
+        || left.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    match rune_tui::diff_view::install(app, bytes, left_name) {
+        Ok(()) => Ok(()),
+        Err(rune_tui::diff_view::DiffInstallError::InvalidUtf8) => {
+            eprintln!(
+                "rune: {} is not valid UTF-8 — refusing to open",
+                left.display()
+            );
+            Err(ExitCode::from(exit_code::DATA_ERR))
+        }
+    }
 }
 
 fn parse_launch(
@@ -208,12 +230,20 @@ fn parse_launch(
     Ok(launch)
 }
 
+fn diff_right_path(launch: &cli::Cli) -> Option<&Path> {
+    launch
+        .diff
+        .as_ref()
+        .map(|(_, right)| right.as_path())
+        .or_else(|| launch.files.first().map(PathBuf::as_path))
+}
+
 fn open_launch(
     vfs: &Arc<dyn Vfs + Send + Sync>,
     launch: &cli::Cli,
     home: Option<&Path>,
 ) -> Result<(App, db_bootstrap::DbBootstrap), ExitCode> {
-    let Some(path) = launch.files.first() else {
+    let Some(path) = diff_right_path(launch) else {
         return Ok(open::open_untitled(vfs, home));
     };
     let path = match workspace::resolve(vfs.as_ref(), path) {
@@ -237,7 +267,7 @@ fn wire_root_and_extra_files(
         cwd,
         home,
         launch.work_dir.as_deref(),
-        launch.files.first().map(std::path::PathBuf::as_path),
+        diff_right_path(launch),
     );
     app.set_root(root);
 

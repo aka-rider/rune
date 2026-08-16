@@ -42,6 +42,13 @@ impl App {
         let geo = crate::layout::geometry(area, self);
         let (w, h) = (geo.editor.width.max(1), geo.editor.height.max(1));
         self.active_doc_mut().viewport.set_size(w, h);
+        if let Some(diff_left) = geo.diff_left
+            && let Some(diff) = self.diff.as_mut()
+        {
+            diff.left
+                .viewport
+                .set_size(diff_left.width.max(1), diff_left.height.max(1));
+        }
     }
 
     /// Re-runs the display pipeline for the ACTIVE document and caches the
@@ -93,6 +100,7 @@ impl App {
         self.active_doc_mut().icons = icons;
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
+        crate::diff_view::sync(self);
         // A no-op with the bar closed; with it open, recomputes the match
         // set when the active document or its buffer version has drifted
         // since the last recompute (a tab switch, an undo/redo, an

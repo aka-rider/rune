@@ -30,7 +30,8 @@ pub mod search;
 pub mod title;
 
 use ratatui::Frame;
-use ratatui::widgets::{Block, BorderType};
+use ratatui::layout::Rect;
+use ratatui::widgets::{Block, BorderType, Borders};
 
 use rune_md::element::doc::ViewSnapshots;
 
@@ -214,6 +215,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
         search::draw(app, bar_area, frame);
     }
 
+    if let Some(diff_left) = geo.diff_left {
+        draw_diff_left(app, diff_left, frame);
+    }
+
     if let Some(view) = &app.active_doc().view {
         let mut rows = build_rows(app, app.active_doc(), Some(app.active), view);
         // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
@@ -257,6 +262,23 @@ pub fn draw(app: &App, frame: &mut Frame) {
 /// regardless of how large the document is; the message pane (`runtime::
 /// bootstrap`'s own call into `messages::info`) is the on-screen indicator
 /// that the real content is still being prepared.
+fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
+    let Some(diff) = app.diff.as_ref() else {
+        return;
+    };
+    if let Some(view) = diff.left.view.as_ref() {
+        let rows = build_rows(app, &diff.left, None, view);
+        blit(&rows, area, frame);
+    }
+    let divider = Rect::new(area.right(), area.y, 1, area.height);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::LEFT)
+            .border_style(app.theme.chrome.inactive_border),
+        divider,
+    );
+}
+
 fn draw_pending(doc: &Document, area: ratatui::layout::Rect, frame: &mut Frame) {
     let lines: Vec<ratatui::text::Line> = doc
         .buffer
