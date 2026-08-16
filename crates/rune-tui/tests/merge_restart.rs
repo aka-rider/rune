@@ -72,7 +72,7 @@ fn enter_two_conflict_merge_at(db_path: &Path, mem: &Arc<Mem>) -> (Session, Docu
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db_all().is_none());
     assert!(
-        matches!(&session.app().merge, MergeState::Active { pairs, .. } if pairs.len() == 2),
+        matches!(&session.app().merge, MergeState::Active { session, .. } if session.conflicts.len() == 2),
         "fixture must enter a two-conflict merge, got {:?}",
         session.app().merge
     );
@@ -118,16 +118,28 @@ fn merge_resumes_after_restart() {
     let mut session_b = restart_session(&db_path, &mem);
     let doc_b = session_b.app().active;
 
-    let MergeState::Active { pairs, doc, .. } = &session_b.app().merge else {
+    let MergeState::Active {
+        session: merge,
+        doc,
+    } = &session_b.app().merge
+    else {
         panic!(
             "expected the merge to resume Active, got {:?}",
             session_b.app().merge
         );
     };
     assert_eq!(*doc, doc_b);
-    assert_eq!(pairs.len(), 2, "both blocks travel across the restart");
     assert_eq!(
-        pairs.iter().filter(|p| !p.block.resolved).count(),
+        merge.conflicts.len(),
+        2,
+        "both blocks travel across the restart"
+    );
+    assert_eq!(
+        merge
+            .conflicts
+            .iter()
+            .filter(|p| !p.block.resolution.is_resolved())
+            .count(),
         1,
         "exactly the unresolved block survives as unresolved"
     );
@@ -312,8 +324,8 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
     assert!(
         matches!(
             &app_b.merge,
-            MergeState::Active { pairs, doc, .. }
-                if *doc == doc_b && pairs.iter().filter(|p| !p.block.resolved).count() == 2
+            MergeState::Active { session: merge, doc }
+                if *doc == doc_b && merge.conflicts.iter().filter(|p| !p.block.resolution.is_resolved()).count() == 2
         ),
         "the full load must re-enter the still-active merge, got {:?}",
         app_b.merge

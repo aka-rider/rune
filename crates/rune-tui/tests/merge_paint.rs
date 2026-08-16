@@ -17,6 +17,7 @@ use rune_fuzz::Session;
 use rune_merge::Hunk;
 use rune_tui::app::App;
 use rune_tui::merge::frame::build_marker_buffer;
+use rune_tui::merge::session::MergeSession;
 use rune_tui::merge::state::MergeState;
 use rune_tui::testgrid;
 
@@ -61,7 +62,7 @@ fn cell_bg(buf: &RtBuffer, x: u16, y: u16) -> Option<ratatui::style::Color> {
 /// separated by a clean line — built through the real `build_marker_buffer`
 /// so the byte offsets `merge::paint` consumes are the real deterministic
 /// framing, not a hand-typed fixture that could drift from `frame_block`.
-fn two_block_fixture() -> (String, Vec<rune_tui::merge::state::ConflictBlock>) {
+fn two_block_fixture() -> (String, Vec<rune_tui::merge::session::ConflictBlock>) {
     let hunks = vec![
         Hunk::Conflict {
             ours: b"mine one".to_vec(),
@@ -82,10 +83,12 @@ fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
     let session = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
-            pairs: pairs.clone(),
-            cur: 0,
-            saved_display_name: None,
-            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            session: MergeSession {
+                conflicts: pairs.clone(),
+                cur: 0,
+                saved_display_name: None,
+                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            },
         };
     });
     let app = session.app();
@@ -126,14 +129,16 @@ fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
 #[test]
 fn a_resolved_blocks_region_carries_no_merge_background() {
     let (buffer, mut pairs) = two_block_fixture();
-    pairs[0].block.resolved = true;
+    pairs[0].block.resolution = rune_tui::merge::session::Resolution::KeptOurs;
     let session = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
-            pairs: pairs.clone(),
-            cur: 1,
-            saved_display_name: None,
-            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            session: MergeSession {
+                conflicts: pairs.clone(),
+                cur: 1,
+                saved_display_name: None,
+                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            },
         };
     });
     let app = session.app();
@@ -161,10 +166,12 @@ fn the_current_blocks_marker_carries_a_distinct_cue() {
     let session = sized_app_with_merge(&buffer, |app| {
         app.merge = MergeState::Active {
             doc: app.active,
-            pairs: pairs.clone(),
-            cur: 0,
-            saved_display_name: None,
-            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            session: MergeSession {
+                conflicts: pairs.clone(),
+                cur: 0,
+                saved_display_name: None,
+                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            },
         };
     });
     let app = session.app();

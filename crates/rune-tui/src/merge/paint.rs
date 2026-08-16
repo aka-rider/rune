@@ -15,7 +15,8 @@
 
 use ratatui::style::Modifier;
 
-use super::state::{Block, Conflict, MergeState};
+use super::session::{Block, Conflict};
+use super::state::MergeState;
 use crate::document::DocumentId;
 use crate::render::{Cell, paint_range};
 use crate::theme::Theme;
@@ -40,20 +41,17 @@ pub(crate) fn paint(
     active_doc: DocumentId,
     theme: &Theme,
 ) {
-    let MergeState::Active {
-        doc, pairs, cur, ..
-    } = state
-    else {
+    let MergeState::Active { doc, session } = state else {
         return;
     };
     if *doc != active_doc {
         return;
     }
-    for (k, pair) in pairs.iter().enumerate() {
-        if pair.block.resolved {
+    for (k, pair) in session.conflicts.iter().enumerate() {
+        if pair.block.resolution.is_resolved() {
             continue;
         }
-        paint_block(rows, &pair.block, &pair.conflict, k == *cur, theme);
+        paint_block(rows, &pair.block, &pair.conflict, k == session.cur, theme);
     }
 }
 
@@ -136,10 +134,12 @@ mod tests {
         let id = doc_id();
         let state = MergeState::Active {
             doc: id,
-            pairs,
-            cur: 0,
-            saved_display_name: None,
-            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            session: crate::merge::session::MergeSession {
+                conflicts: pairs,
+                cur: 0,
+                saved_display_name: None,
+                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            },
         };
 
         paint(&mut rows, &state, id, &theme);
@@ -169,15 +169,17 @@ mod tests {
             theirs: b"yours".to_vec(),
         }];
         let (buffer, mut pairs) = build_marker_buffer(&hunks).unwrap();
-        pairs[0].block.resolved = true;
+        pairs[0].block.resolution = crate::merge::session::Resolution::KeptOurs;
         let mut rows = rows_for(&buffer);
         let id = doc_id();
         let state = MergeState::Active {
             doc: id,
-            pairs,
-            cur: 0,
-            saved_display_name: None,
-            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            session: crate::merge::session::MergeSession {
+                conflicts: pairs,
+                cur: 0,
+                saved_display_name: None,
+                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            },
         };
 
         paint(&mut rows, &state, id, &theme);
@@ -209,10 +211,12 @@ mod tests {
         let id = doc_id();
         let state = MergeState::Active {
             doc: id,
-            pairs: pairs.clone(),
-            cur: 0,
-            saved_display_name: None,
-            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            session: crate::merge::session::MergeSession {
+                conflicts: pairs.clone(),
+                cur: 0,
+                saved_display_name: None,
+                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+            },
         };
 
         paint(&mut rows, &state, id, &theme);

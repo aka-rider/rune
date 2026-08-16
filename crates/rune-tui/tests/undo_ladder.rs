@@ -212,10 +212,12 @@ fn merge_active_consumes_exactly_one_step_per_press() {
 
     app.merge = MergeState::Active {
         doc: id,
-        pairs: Vec::new(),
-        cur: 0,
-        saved_display_name: None,
-        theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+        session: rune_tui::merge::MergeSession {
+            conflicts: Vec::new(),
+            cur: 0,
+            saved_display_name: None,
+            theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+        },
     };
 
     edit::undo(&mut app, id);

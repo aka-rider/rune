@@ -1,11 +1,3 @@
-//! Hunk resolution (plan WP4.S2): `[`/`]` navigation over unresolved
-//! blocks and the O/T/B accept path. Every accepted side is ONE ordinary
-//! journaled edit through `commit_edit_batch` — undo/redo over merge
-//! decisions needs no machinery beyond the journal itself (decision 1).
-//! Block spans are the mutable "where is it now" projection over the
-//! immutable `Conflict` list; an accept collapses one span and shifts every
-//! later span by the byte delta.
-
 use rune_core::buffer::Edit;
 use rune_core::cursor::CursorId;
 use rune_core::undo::EditKind;
@@ -16,12 +8,9 @@ use crate::commands::nav_scroll;
 use crate::document::DocumentId;
 use crate::messages;
 
-use super::state::{Block, ConflictBlock, MergeState};
+use super::session::{Block, ConflictBlock, Resolution};
+use super::state::MergeState;
 
-/// Which side an accept keeps. `Both` keeps the two bodies, ours first,
-/// with no marker lines — an ordinary journaled edit exactly like the
-/// single-sided accepts. "Decide later" remains available by exiting
-/// merge mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
     Ours,
@@ -29,38 +18,27 @@ pub(crate) enum Choice {
     Both,
 }
 
-/// `[`/`]` (plan WP4.S1): move `cur` to the nearest unresolved block in
-/// `dir`, wrapping around and skipping resolved blocks. With only one
-/// unresolved block left the wrap lands back on it — navigation never
-/// strands `cur` on a resolved block.
 pub(crate) fn nav(app: &mut App, dir: isize) {
-    let MergeState::Active {
-        doc, pairs, cur, ..
-    } = &mut app.merge
-    else {
+    let MergeState::Active { doc, session } = &mut app.merge else {
         return;
     };
     let doc = *doc;
-    let blocks: Vec<Block> = pairs.iter().map(|p| p.block.clone()).collect();
-    let Some(next) = next_unresolved(&blocks, *cur, dir) else {
+    let Some(next) = session.next_unresolved(dir) else {
         return;
     };
-    *cur = next;
+    session.cur = next;
+    let blocks: Vec<Block> = session.conflicts.iter().map(|p| p.block.clone()).collect();
     land_on(app, doc, &blocks, next);
 }
 
-/// O/T/B (plan WP4.S2). On an edit refusal (`commit_edit_batch` returning
-/// `false`) the block stays unresolved and the user is told — never marked
-/// resolved against an edit that never applied.
 pub(crate) fn accept(app: &mut App, choice: Choice) {
-    let MergeState::Active {
-        doc, pairs, cur, ..
-    } = &app.merge
-    else {
+    let MergeState::Active { doc, session } = &app.merge else {
         return;
     };
-    let (doc, cur) = (*doc, *cur);
-    let Some(pair) = pairs.get(cur) else { return };
+    let (doc, cur) = (*doc, session.cur);
+    let Some(pair) = session.conflicts.get(cur) else {
+        return;
+    };
     let block = pair.block.clone();
     let text = match choice {
         Choice::Ours => pair.conflict.ours.clone(),
@@ -90,20 +68,20 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
     }
     let new_len = text.len();
 
-    let MergeState::Active {
-        pairs,
-        cur: cur_slot,
-        ..
-    } = &mut app.merge
-    else {
+    let MergeState::Active { session, .. } = &mut app.merge else {
         return;
     };
     let old_len = block.range.end - block.range.start;
-    if let Some(p) = pairs.get_mut(cur) {
+    let resolution = match choice {
+        Choice::Ours => Resolution::KeptOurs,
+        Choice::Theirs => Resolution::TookTheirs,
+        Choice::Both => Resolution::HandEdited,
+    };
+    if let Some(p) = session.conflicts.get_mut(cur) {
         p.block.range.end = p.block.range.start + new_len;
-        p.block.resolved = true;
     }
-    if let Some(later) = pairs.get_mut(cur + 1..) {
+    session.resolve(cur, resolution);
+    if let Some(later) = session.conflicts.get_mut(cur + 1..) {
         for p in later {
             if new_len >= old_len {
                 p.block.range.start += new_len - old_len;
@@ -114,12 +92,12 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
             }
         }
     }
-    let blocks: Vec<Block> = pairs.iter().map(|p| p.block.clone()).collect();
-    let next = next_unresolved(&blocks, cur, 1);
+    let blocks: Vec<Block> = session.conflicts.iter().map(|p| p.block.clone()).collect();
+    let next = session.next_unresolved(1);
     if let Some(n) = next {
-        *cur_slot = n;
+        session.cur = n;
     }
-    let pairs_snapshot: Vec<ConflictBlock> = pairs.clone();
+    let pairs_snapshot: Vec<ConflictBlock> = session.conflicts.clone();
 
     let marker_content = app
         .doc(doc)
@@ -128,36 +106,21 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
     super::persist::enqueue_merge_progress(app, doc, &marker_content, &pairs_snapshot);
 
     let Some(next) = next else {
-        // Decision 13: resolving the last hunk leaves merge mode
-        // immediately — `exit_in_place` reports "merge complete".
         super::exit_in_place(app);
         return;
     };
     land_on(app, doc, &blocks, next);
 }
 
-/// The nearest unresolved index from `from` in `dir`, wrapping; `None` only
-/// when every block is resolved. Scans `from` itself last, so with a single
-/// unresolved block left both directions land back on it.
-fn next_unresolved(blocks: &[Block], from: usize, dir: isize) -> Option<usize> {
-    let n = blocks.len();
-    if n == 0 {
-        return None;
-    }
-    (1..=n)
-        .map(|i| {
-            let signed = from as isize + dir * i as isize;
-            signed.rem_euclid(n as isize) as usize
-        })
-        .find(|idx| blocks.get(*idx).is_some_and(|b| !b.resolved))
-}
-
 fn position_status(blocks: &[Block], cur: usize) -> String {
-    let unresolved = blocks.iter().filter(|b| !b.resolved).count();
+    let unresolved = blocks
+        .iter()
+        .filter(|b| !b.resolution.is_resolved())
+        .count();
     let ordinal = blocks
         .iter()
         .take(cur + 1)
-        .filter(|b| !b.resolved)
+        .filter(|b| !b.resolution.is_resolved())
         .count()
         .max(1);
     format!("conflict {ordinal}/{unresolved} — [O]urs [T]heirs [B]oth")

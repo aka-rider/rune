@@ -19,6 +19,7 @@ use crate::messages;
 use crate::runtime::Effects;
 
 use super::frame::build_marker_buffer;
+use super::session::MergeSession;
 use super::state::MergeIntent;
 use super::state::MergeState;
 
@@ -199,10 +200,12 @@ pub(crate) fn handle_merge_prep_ack(
     );
     app.merge = MergeState::Active {
         doc,
-        pairs,
-        cur: 0,
-        saved_display_name,
-        theirs_obs,
+        session: MergeSession {
+            conflicts: pairs,
+            cur: 0,
+            saved_display_name,
+            theirs_obs,
+        },
     };
     if let Some(d) = app.doc_mut(doc) {
         nav_scroll::scroll_to_byte_offset(d, first_start);
@@ -457,11 +460,11 @@ mod tests {
             "expected the absent-ancestor notice, got {:?}",
             messages::log_text(&app)
         );
-        let MergeState::Active { pairs, .. } = &app.merge else {
+        let MergeState::Active { session, .. } = &app.merge else {
             panic!("expected an Active merge, got {:?}", app.merge);
         };
         assert_eq!(
-            pairs.len(),
+            session.conflicts.len(),
             1,
             "expected exactly one localized conflict, not a whole-file collapse"
         );
