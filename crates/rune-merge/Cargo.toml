@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 diffy = "0.5"
+similar = { workspace = true }
 
 [lints]
 workspace = true

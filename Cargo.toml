@@ -41,6 +41,7 @@ rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 trash = "5.2"
 nucleo-matcher = "0.3.1"
 ignore = "0.4"
+similar = { version = "3.1", features = ["text", "inline", "unicode"] }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

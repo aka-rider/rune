@@ -8,6 +8,8 @@
 //! exactly. [`merge_hunks_no_ancestor`] handles the case where no ancestor
 //! is known, via a direct line diff between `ours` and `theirs`.
 
+mod align;
 mod hunks;
 
+pub use align::{AlignmentMap, IntralineSpans, LineSpans, Region, RegionKind, align, intraline};
 pub use hunks::{Hunk, merge_hunks, merge_hunks_no_ancestor};
