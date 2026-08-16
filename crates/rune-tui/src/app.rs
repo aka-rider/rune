@@ -148,6 +148,7 @@ pub struct App {
     /// `pub(crate)`: `merge::begin` is the sole minter of new generations,
     /// mirroring `next_rename_gen` above.
     pub(crate) next_merge_gen: crate::generation::GenCounter,
+    pub diff: Option<crate::diff_view::DiffView>,
     /// This session's recovery store — this is the app-wide half,
     /// shared by every open document; each document's own binding lives
     /// in its `Document::db: Option<DocDb>`. `None` only when no store
@@ -374,6 +375,7 @@ impl App {
             next_rename_gen: crate::generation::GenCounter::default(),
             merge: crate::merge::MergeState::default(),
             next_merge_gen: crate::generation::GenCounter::default(),
+            diff: None,
             db,
             db_ops: HashMap::new(),
             file_bindings: HashMap::new(),

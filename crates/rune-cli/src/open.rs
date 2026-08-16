@@ -269,6 +269,23 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: &ScratchDoc) {
 /// aborting startup — a log has no single-slot limit, so a later failure
 /// never silently overwrites an earlier one; every failure across the
 /// whole batch gets its own entry.
+pub(crate) fn read_diff_left(
+    vfs: &dyn Vfs,
+    path: &Path,
+) -> Result<Vec<u8>, std::process::ExitCode> {
+    match vfs.read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("rune: {} not found", path.display());
+            Err(std::process::ExitCode::from(exit_code::IO_ERR))
+        }
+        Err(e) => {
+            eprintln!("rune: failed to read {}: {e}", path.display());
+            Err(std::process::ExitCode::from(exit_code::IO_ERR))
+        }
+    }
+}
+
 pub(crate) fn open_extra_files(app: &mut AppGuard, files: &[PathBuf], first_doc_id: DocumentId) {
     for extra in files.iter().skip(1) {
         workspace::open_path(app, extra);

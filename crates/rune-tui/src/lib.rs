@@ -13,6 +13,7 @@ pub mod db;
 pub mod db_ack;
 mod db_dispatch;
 pub mod db_enqueue;
+pub mod diff_view;
 mod dispatch;
 pub mod document;
 pub(crate) mod document_map;

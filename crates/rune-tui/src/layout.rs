@@ -32,6 +32,8 @@ pub const MIN_CENTER_W: u16 = 24;
 /// prior width the moment the finder closes.
 pub const FILESEARCH_MIN_W: u16 = 48;
 
+pub const DIFF_MIN_PANE_W: u16 = 40;
+
 /// Inner rows, not block rows: the sections share one border, so these are
 /// measured on the block's inner rect. The Explorer spends one row on a
 /// header, so its floor leaves a header plus two entries.
@@ -126,6 +128,7 @@ pub struct Geometry {
     /// pane has room to spare it (a content area one row tall keeps that
     /// row for the title instead; the bar simply doesn't fit that frame).
     pub search_bar: Option<Rect>,
+    pub diff_left: Option<Rect>,
     pub editor: Rect,
     /// The area left after the footer and the messages pane (if open) are
     /// carved out — the height the left column is allotted from.
@@ -308,6 +311,15 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let editor_y = 1u16.saturating_add(u16::from(search_bar.is_some()));
     let editor = Region::carve_bottom(content, content.height.saturating_sub(editor_y)).rect();
 
+    let diff_left = diff_left_rect(editor, app);
+    let editor = match diff_left {
+        Some(left) => {
+            let x = left.right().saturating_add(1);
+            Rect::new(x, editor.y, editor.right().saturating_sub(x), editor.height)
+        }
+        None => editor,
+    };
+
     // The defect class this guards against: "a frame column nobody owns" —
     // a gap between a pane's rect and its neighbour that no `Block` border
     // and no content actually paints, invisible to any containment/overlap
@@ -328,10 +340,12 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
             area.right()
         )
     });
+    let editor_left_bound = diff_left.map_or(center.x.saturating_add(1), |left| {
+        left.right().saturating_add(1)
+    });
     if center_bordered {
         assert_invariant!(
-            editor.right().saturating_add(1) == center.right()
-                && editor.x == center.x.saturating_add(1),
+            editor.right().saturating_add(1) == center.right() && editor.x == editor_left_bound,
             || {
                 format!(
                     "editor {editor:?} is not inset exactly one column inside bordered center {center:?}"
@@ -355,10 +369,27 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         center_bordered,
         title,
         search_bar,
+        diff_left,
         editor,
         main: main_area,
         left_splitter,
     }
+}
+
+fn diff_left_rect(editor: Rect, app: &App) -> Option<Rect> {
+    let diff = app.diff.as_ref()?;
+    if diff.right != app.active {
+        return None;
+    }
+    if editor.width < DIFF_MIN_PANE_W.saturating_mul(2).saturating_add(1) {
+        return None;
+    }
+    Some(Rect::new(
+        editor.x,
+        editor.y,
+        DIFF_MIN_PANE_W,
+        editor.height,
+    ))
 }
 
 #[cfg(test)]
