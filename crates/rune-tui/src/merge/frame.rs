@@ -4,7 +4,7 @@
 
 use rune_merge::Hunk;
 
-use super::state::{Block, Conflict, ConflictBlock};
+use super::session::{Block, Conflict, ConflictBlock, Resolution};
 
 /// The `[B4]` UTF-8 refusal: at least one hunk's bytes are not valid UTF-8.
 /// A unit-shaped error — the caller has exactly one thing to do with
@@ -47,7 +47,7 @@ pub fn build_marker_buffer(hunks: &[Hunk]) -> Result<(String, Vec<ConflictBlock>
                 pairs.push(ConflictBlock {
                     block: Block {
                         range: start..end,
-                        resolved: false,
+                        resolution: Resolution::Unresolved,
                     },
                     conflict: Conflict { ours, theirs },
                 });

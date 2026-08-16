@@ -11,13 +11,15 @@ pub(crate) mod paint;
 mod persist;
 mod resolve;
 pub(crate) mod resync;
+pub mod session;
 pub mod state;
 
 pub use keys::{MERGE_BINDINGS, MergeCommand};
 pub(crate) use landing::handle_merge_prep_ack;
 pub(crate) use persist::resume_from_store;
 pub(crate) use resync::resync;
-pub use state::{Block, Conflict, ConflictBlock, MergeIntent, MergeState};
+pub use session::{Block, Conflict, ConflictBlock, MergeSession, Resolution};
+pub use state::{MergeIntent, MergeState};
 
 use rune_db::SyncKind;
 
@@ -94,20 +96,13 @@ pub(crate) fn exit_in_place(app: &mut App) {
     if !matches!(app.merge, MergeState::Active { .. }) {
         return;
     }
-    let MergeState::Active {
-        doc,
-        pairs,
-        saved_display_name,
-        theirs_obs,
-        ..
-    } = std::mem::take(&mut app.merge)
-    else {
+    let MergeState::Active { doc, session } = std::mem::take(&mut app.merge) else {
         return;
     };
-    let unresolved = pairs.iter().filter(|p| !p.block.resolved).count();
+    let unresolved = session.unresolved_count();
     if unresolved == 0 {
         if let Some(d) = app.doc_mut(doc) {
-            d.display_name = saved_display_name;
+            d.display_name = session.saved_display_name;
         }
         // A completed merge leaves the buffer strictly ahead
         // of the disk bytes it just reconciled with — recording that
@@ -119,7 +114,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // Completion is the terminal success: only NOW has the user
         // genuinely reconciled the buffer with the disk bytes the merge
         // read, so only now does the save-CAS baseline advance to them.
-        landing::advance_expect_obs(app, doc, theirs_obs);
+        landing::advance_expect_obs(app, doc, session.theirs_obs);
         persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Completed);
         messages::info(app, "merge complete — \u{2318}S to save");
     } else {
@@ -136,7 +131,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         abandon_active(
             app,
             doc,
-            saved_display_name,
+            session.saved_display_name,
             format!("merge closed — {unresolved} unresolved marker block(s) remain"),
         );
     }
@@ -179,22 +174,19 @@ pub(crate) fn retract_active_on_convergence(
     }
     let nothing_resolved_yet = matches!(
         &app.merge,
-        MergeState::Active { doc: d, pairs, .. }
-            if *d == doc && pairs.iter().all(|p| !p.block.resolved)
+        MergeState::Active { doc: d, session }
+            if *d == doc && session.unresolved_count() == session.conflicts.len()
     );
     if !nothing_resolved_yet {
         return;
     }
-    let MergeState::Active {
-        saved_display_name, ..
-    } = std::mem::take(&mut app.merge)
-    else {
+    let MergeState::Active { session, .. } = std::mem::take(&mut app.merge) else {
         return;
     };
     abandon_active(
         app,
         doc,
-        saved_display_name,
+        session.saved_display_name,
         "disk settled — nothing left to merge",
     );
 }
@@ -337,19 +329,21 @@ mod tests {
     fn active_with_blocks(doc: crate::document::DocumentId, blocks: Vec<Block>) -> MergeState {
         MergeState::Active {
             doc,
-            pairs: blocks
-                .into_iter()
-                .map(|block| ConflictBlock {
-                    conflict: Conflict {
-                        ours: "ours".to_string(),
-                        theirs: "theirs".to_string(),
-                    },
-                    block,
-                })
-                .collect(),
-            cur: 0,
-            saved_display_name: Some("saved-name".to_string()),
-            theirs_obs: rune_db::ObsId::new(7).expect("nonzero"),
+            session: MergeSession {
+                conflicts: blocks
+                    .into_iter()
+                    .map(|block| ConflictBlock {
+                        conflict: Conflict {
+                            ours: "ours".to_string(),
+                            theirs: "theirs".to_string(),
+                        },
+                        block,
+                    })
+                    .collect(),
+                cur: 0,
+                saved_display_name: Some("saved-name".to_string()),
+                theirs_obs: rune_db::ObsId::new(7).expect("nonzero"),
+            },
         }
     }
 
@@ -363,7 +357,7 @@ mod tests {
             doc,
             vec![Block {
                 range: 0..5,
-                resolved: false,
+                resolution: Resolution::Unresolved,
             }],
         );
 
@@ -384,11 +378,11 @@ mod tests {
             vec![
                 Block {
                     range: 0..5,
-                    resolved: true,
+                    resolution: Resolution::TookTheirs,
                 },
                 Block {
                     range: 5..9,
-                    resolved: false,
+                    resolution: Resolution::Unresolved,
                 },
             ],
         );
@@ -413,7 +407,7 @@ mod tests {
             doc,
             vec![Block {
                 range: 0..5,
-                resolved: false,
+                resolution: Resolution::Unresolved,
             }],
         );
 
@@ -440,7 +434,7 @@ mod tests {
             doc,
             vec![Block {
                 range: 0..5,
-                resolved: false,
+                resolution: Resolution::Unresolved,
             }],
         );
         let other = app.open_document(Buffer::new("other"));

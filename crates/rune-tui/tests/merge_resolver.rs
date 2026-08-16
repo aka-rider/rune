@@ -61,19 +61,23 @@ fn enter_two_conflict_merge() -> (Session, DocumentId) {
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
 
-    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("expected an active resolver, got {:?}", session.app().merge);
     };
-    assert_eq!(pairs.len(), 2, "fixture must produce exactly two conflicts");
-    assert_eq!(*cur, 0);
+    assert_eq!(
+        merge.conflicts.len(),
+        2,
+        "fixture must produce exactly two conflicts"
+    );
+    assert_eq!(merge.cur, 0);
     (session, doc_id)
 }
 
 fn current_block(app: &App) -> usize {
-    let MergeState::Active { cur, .. } = &app.merge else {
+    let MergeState::Active { session: merge, .. } = &app.merge else {
         panic!("resolver not active");
     };
-    *cur
+    merge.cur
 }
 
 #[test]
@@ -167,11 +171,11 @@ fn both_strips_markers_and_keeps_both_sides_as_one_edit() {
         "B keeps ours then theirs with no marker lines: {:?}",
         doc.buffer.content()
     );
-    let MergeState::Active { pairs, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resolver still active after resolving 1 of 2");
     };
-    assert!(pairs[0].block.resolved);
-    assert!(!pairs[1].block.resolved);
+    assert!(merge.conflicts[0].block.resolution.is_resolved());
+    assert!(!merge.conflicts[1].block.resolution.is_resolved());
     assert_eq!(
         session
             .app()

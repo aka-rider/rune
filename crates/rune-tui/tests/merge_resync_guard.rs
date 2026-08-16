@@ -61,11 +61,15 @@ fn enter_three_conflict_merge() -> (Session, DocumentId) {
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
 
-    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("expected an active resolver, got {:?}", session.app().merge);
     };
-    assert_eq!(pairs.len(), 3, "fixture must produce three conflicts");
-    assert_eq!(*cur, 0);
+    assert_eq!(
+        merge.conflicts.len(),
+        3,
+        "fixture must produce three conflicts"
+    );
+    assert_eq!(merge.cur, 0);
     (session, doc_id)
 }
 
@@ -81,11 +85,15 @@ fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
     assert!(session.key(ch('o')).is_none()); // block 0 -> resolved, cur -> 1
     let pos_after_first_accept = session.app().doc(doc_id).unwrap().journal.pos();
     assert!(session.key(ch('t')).is_none()); // block 1 -> resolved, cur -> 2
-    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resolver must still be active — one conflict (block 2) remains");
     };
-    assert!(pairs[0].block.resolved && pairs[1].block.resolved && !pairs[2].block.resolved);
-    assert_eq!(*cur, 2);
+    assert!(
+        merge.conflicts[0].block.resolution.is_resolved()
+            && merge.conflicts[1].block.resolution.is_resolved()
+            && !merge.conflicts[2].block.resolution.is_resolved()
+    );
+    assert_eq!(merge.cur, 2);
 
     rune_tui::commands::edit::undo(session.app_mut(), doc_id);
     assert_eq!(
@@ -94,16 +102,16 @@ fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
         "undo must reverse exactly the second accept's one journal step"
     );
 
-    let MergeState::Active { pairs, cur, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resync must leave the resolver active");
     };
     assert!(
-        !pairs[1].block.resolved,
+        !merge.conflicts[1].block.resolution.is_resolved(),
         "the just-undone block must be unresolved again"
     );
-    assert_eq!(*cur, 1, "cur must land back on the reopened hunk");
+    assert_eq!(merge.cur, 1, "cur must land back on the reopened hunk");
     assert!(
-        pairs[0].block.resolved,
+        merge.conflicts[0].block.resolution.is_resolved(),
         "the OTHER accept must be untouched"
     );
 }
@@ -120,10 +128,14 @@ fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
     assert!(session.key(ch('b')).is_none()); // block 0 -> resolved, one journal step
     let pos_before_ours = session.app().doc(doc_id).unwrap().journal.pos();
     assert!(session.key(ch('o')).is_none()); // block 1 -> resolved, one journal step
-    let MergeState::Active { pairs, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resolver must still be active — block 2 remains");
     };
-    assert!(pairs[0].block.resolved && pairs[1].block.resolved && !pairs[2].block.resolved);
+    assert!(
+        merge.conflicts[0].block.resolution.is_resolved()
+            && merge.conflicts[1].block.resolution.is_resolved()
+            && !merge.conflicts[2].block.resolution.is_resolved()
+    );
 
     rune_tui::commands::edit::undo(session.app_mut(), doc_id);
     assert_eq!(
@@ -132,15 +144,15 @@ fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
         "undo must reverse exactly the ours-accept's one journal step"
     );
 
-    let MergeState::Active { pairs, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resync must leave the resolver active — block 2 is still unresolved");
     };
     assert!(
-        !pairs[1].block.resolved,
+        !merge.conflicts[1].block.resolution.is_resolved(),
         "the just-undone ours-accepted block must be unresolved again"
     );
     assert!(
-        pairs[0].block.resolved,
+        merge.conflicts[0].block.resolution.is_resolved(),
         "the untouched B-resolved block must stay resolved — this is review finding F1"
     );
 }
@@ -155,10 +167,14 @@ fn undo_after_ours_then_both_reopens_only_the_both_block() {
     assert!(session.key(ch('o')).is_none()); // block 0 -> resolved, one journal step
     let pos_before_both = session.app().doc(doc_id).unwrap().journal.pos();
     assert!(session.key(ch('b')).is_none()); // block 1 -> resolved, one journal step
-    let MergeState::Active { pairs, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resolver must still be active — block 2 remains");
     };
-    assert!(pairs[0].block.resolved && pairs[1].block.resolved && !pairs[2].block.resolved);
+    assert!(
+        merge.conflicts[0].block.resolution.is_resolved()
+            && merge.conflicts[1].block.resolution.is_resolved()
+            && !merge.conflicts[2].block.resolution.is_resolved()
+    );
 
     rune_tui::commands::edit::undo(session.app_mut(), doc_id);
     assert_eq!(
@@ -167,11 +183,11 @@ fn undo_after_ours_then_both_reopens_only_the_both_block() {
         "undo must reverse exactly the both-accept's one journal step"
     );
 
-    let MergeState::Active { pairs, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("resync must leave the resolver active — block 2 is still unresolved");
     };
     assert!(
-        !pairs[1].block.resolved,
+        !merge.conflicts[1].block.resolution.is_resolved(),
         "the just-undone both-accepted block must be unresolved again"
     );
     assert!(
@@ -187,7 +203,7 @@ fn undo_after_ours_then_both_reopens_only_the_both_block() {
         "the undone block's framed markers must return"
     );
     assert!(
-        pairs[0].block.resolved,
+        merge.conflicts[0].block.resolution.is_resolved(),
         "the earlier ours accept must be untouched"
     );
 }
@@ -229,11 +245,11 @@ fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
 
-    let MergeState::Active { pairs, .. } = &session.app().merge else {
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
         panic!("expected an active resolver, got {:?}", session.app().merge);
     };
     assert_eq!(
-        pairs.len(),
+        merge.conflicts.len(),
         1,
         "the quoted marker prose is INSIDE ours — one real conflict"
     );
