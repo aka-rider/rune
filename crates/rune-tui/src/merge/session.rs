@@ -47,6 +47,7 @@ pub struct MergeSession {
     pub cur: usize,
     pub saved_display_name: Option<String>,
     pub theirs_obs: ObsId,
+    pub install_pos: usize,
 }
 
 impl MergeSession {
@@ -116,6 +117,7 @@ mod tests {
             cur: 0,
             saved_display_name: None,
             theirs_obs: ObsId::new(1).expect("nonzero"),
+            install_pos: 0,
         };
         assert_eq!(session.unresolved_count(), 1);
     }
@@ -130,6 +132,7 @@ mod tests {
             cur: 0,
             saved_display_name: None,
             theirs_obs: ObsId::new(1).expect("nonzero"),
+            install_pos: 0,
         };
         session.resolve(1, Resolution::TookTheirs);
         assert_eq!(
@@ -153,6 +156,7 @@ mod tests {
             cur: 0,
             saved_display_name: None,
             theirs_obs: ObsId::new(1).expect("nonzero"),
+            install_pos: 0,
         };
         assert_eq!(session.next_unresolved(1), Some(1));
         assert_eq!(session.next_unresolved(-1), Some(1));
@@ -168,6 +172,7 @@ mod tests {
             cur: 0,
             saved_display_name: None,
             theirs_obs: ObsId::new(1).expect("nonzero"),
+            install_pos: 0,
         };
         assert_eq!(session.next_unresolved(1), None);
     }

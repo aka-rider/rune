@@ -10,12 +10,14 @@ mod merge_common;
 use rune_db::SyncKind;
 use rune_fuzz::Session;
 use rune_tui::document::DocumentId;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::{MergeState, Resolution};
 use rune_tui::workspace;
 
 use merge_common::{
-    bare, ch, ctrl, external_write, reprobe, sup, take_ours, take_theirs, untitled_draft,
+    bare, ch, ctrl, external_write, reprobe, save_expecting_refusal, sup, take_ours, take_theirs,
+    untitled_draft,
 };
 
 const ANCESTOR: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n";
@@ -91,7 +93,7 @@ fn undo_after_two_takes_reopens_the_last_taken_hunk() {
     assert_eq!(resolution_of(&session, 2), Resolution::Unresolved);
     assert_eq!(cur_of(&session), 2);
 
-    rune_tui::commands::edit::undo(session.app_mut(), doc_id);
+    assert!(session.key(sup('z')).is_none());
     assert_eq!(
         session.app().doc(doc_id).unwrap().journal.pos(),
         pos_after_first_take,
@@ -125,7 +127,7 @@ fn a_flag_only_kept_ours_survives_an_unrelated_undo() {
     assert!(session.key(take_theirs()).is_none());
     assert_eq!(resolution_of(&session, 1), Resolution::TookTheirs);
 
-    rune_tui::commands::edit::undo(session.app_mut(), doc_id);
+    assert!(session.key(sup('z')).is_none());
     assert_eq!(
         session.app().doc(doc_id).unwrap().journal.pos(),
         pos_before_take,
@@ -180,6 +182,130 @@ fn undo_and_redo_round_trip_a_take_byte_for_byte() {
         "redo must reapply the take byte-for-byte"
     );
     assert_eq!(resolution_of(&session, 0), Resolution::TookTheirs);
+}
+
+const PRE_MERGE: &str = "Xone\ntwo\nthree\nfour\nXfive\nsix\nseven\neight\nXnine\n";
+
+#[test]
+fn undo_across_the_install_abandons_the_merge_and_keeps_the_save_gate() {
+    let (mut session, doc_id) = enter_three_conflict_merge();
+    let db_id = session.app().doc(doc_id).unwrap().doc_db().unwrap().db_id;
+    let baseline = session.app().file_binding(db_id).unwrap().expect_obs;
+
+    assert!(session.key(sup('z')).is_none());
+    assert!(session.deliver_db_all().is_none());
+
+    assert_eq!(
+        session.app().merge,
+        MergeState::Inactive,
+        "unwinding the install must retire the merge"
+    );
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        PRE_MERGE,
+        "the undo must land on the pre-merge bytes"
+    );
+    let log = rune_tui::messages::log_text(session.app());
+    assert!(
+        !log.contains("merge complete"),
+        "an unwound install is never a completion, log: {log:?}"
+    );
+    assert!(
+        log.contains("merge closed"),
+        "the auto-exit must be visible, log: {log:?}"
+    );
+    assert_eq!(
+        session.app().file_binding(db_id).unwrap().expect_obs,
+        baseline,
+        "the save-CAS baseline must not advance on an unwound install"
+    );
+    assert!(
+        session
+            .app()
+            .doc(doc_id)
+            .unwrap()
+            .last_sync
+            .is_some_and(SyncKind::is_disk_divergent),
+        "the document is still truthfully diverged"
+    );
+
+    save_expecting_refusal(&mut session);
+    let Some(prompt) = &session.app().guard else {
+        panic!(
+            "expected the disk-conflict Guard, not a silent overwrite, log: {:?}",
+            rune_tui::messages::log_text(session.app())
+        );
+    };
+    assert_eq!(prompt.doc, doc_id);
+    assert!(matches!(prompt.kind, GuardKind::DiskConflict));
+    assert_eq!(
+        session
+            .app()
+            .vfs
+            .read(std::path::Path::new("/doc.md"))
+            .unwrap(),
+        THEIRS,
+        "the refused save must leave the external bytes on disk untouched"
+    );
+}
+
+#[test]
+fn redo_after_an_install_unwind_does_not_resurrect_a_phantom_session() {
+    let (mut session, doc_id) = enter_three_conflict_merge();
+    let working_form = session
+        .app()
+        .doc(doc_id)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
+
+    assert!(session.key(sup('z')).is_none());
+    assert!(session.deliver_db_all().is_none());
+    assert_eq!(session.app().merge, MergeState::Inactive);
+
+    assert!(session.key(ctrl('y')).is_none());
+    assert!(session.deliver_db_all().is_none());
+
+    assert_eq!(
+        session.app().merge,
+        MergeState::Inactive,
+        "redo must not resurrect a session the unwind retired"
+    );
+    assert!(
+        session.app().diff.is_none(),
+        "no pane view may come back without a live session"
+    );
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        working_form,
+        "redo still restores the working-form bytes as an ordinary edit"
+    );
+}
+
+#[test]
+fn hand_edit_resolving_the_last_conflict_posts_a_gate_open_status() {
+    let (mut session, _doc_id) = enter_three_conflict_merge();
+
+    assert!(session.key(take_theirs()).is_none());
+    assert!(session.key(take_theirs()).is_none());
+    assert_eq!(resolution_of(&session, 2), Resolution::Unresolved);
+
+    assert!(session.key(bare(KeyCode::Right)).is_none());
+    assert!(session.key(ch('Q')).is_none());
+
+    assert_eq!(resolution_of(&session, 2), Resolution::HandEdited);
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
+        panic!("a hand edit must never auto-complete the merge");
+    };
+    assert_eq!(merge.unresolved_count(), 0);
+    assert!(
+        rune_tui::messages::newest_text(session.app())
+            .unwrap_or_default()
+            .contains("all conflicts resolved"),
+        "the gate opening silently is invisible, log: {:?}",
+        rune_tui::messages::log_text(session.app())
+    );
 }
 
 #[test]

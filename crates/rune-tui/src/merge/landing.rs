@@ -157,6 +157,7 @@ pub(crate) fn handle_merge_prep_ack(
         messages::error(app, "merge failed — the document could not be updated");
         return;
     }
+    let install_pos = app.doc(doc).map_or(0, |d| d.journal.pos());
     let adopted = enqueue_resolve_adopt(app, doc, theirs_obs);
 
     if pairs.is_empty() {
@@ -210,6 +211,7 @@ pub(crate) fn handle_merge_prep_ack(
             cur,
             saved_display_name,
             theirs_obs,
+            install_pos,
         },
     };
     messages::info(
@@ -359,7 +361,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
 /// Deliberately does NOT advance `DocDb::expect_obs`: recording the
 /// adoption happens at resolver ENTRY, before the user has resolved
 /// anything, and advancing the save-CAS baseline that early would let an
-/// Esc-out ⌘S silently publish a conflict-marker working form over the
+/// Esc-out ⌘S silently publish a half-resolved working form over the
 /// external disk bytes. The baseline advances only at a TERMINAL success —
 /// the caller's Discard/clean-merge arms, or `exit_in_place` on completion.
 fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> bool {

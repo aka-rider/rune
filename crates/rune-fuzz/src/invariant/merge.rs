@@ -364,3 +364,37 @@ pub fn merge_title_cleared(next: &Snapshot) -> Option<Violation> {
     }
     None
 }
+
+/// `MERGE-UNDO-NEVER-COMPLETES` (issue #106) — a step that moves the
+/// journal BACKWARD may retire an `Active` merge (the working form itself
+/// was unwound), but it may never present that retirement as a completion:
+/// re-classifying the document reconciled (`BufferAhead`/`Clean`) on the
+/// same step is `exit_in_place`'s terminal-success arm firing on an undo,
+/// which also advances the save-CAS baseline toward a buffer the user never
+/// resolved. Completion stays a user act; an undo only ever abandons.
+pub fn merge_undo_never_completes(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
+    if !prev.merge_active || next.merge_active {
+        return None;
+    }
+    if prev.merge_doc != Some(prev.active) || next.active != prev.active {
+        return None;
+    }
+    if next.journal_pos >= prev.journal_pos {
+        return None;
+    }
+    let reclassified_reconciled = matches!(
+        next.active_last_sync,
+        Some(SyncKind::BufferAhead) | Some(SyncKind::Clean)
+    ) && next.active_last_sync != prev.active_last_sync;
+    if !reclassified_reconciled {
+        return None;
+    }
+    Some(Violation::new(
+        "MERGE-UNDO-NEVER-COMPLETES",
+        format!(
+            "{:?}'s merge retired as reconciled ({:?}) on a journal-backward step \
+             ({} -> {}) — an undo completed a merge the user never resolved",
+            prev.active, next.active_last_sync, prev.journal_pos, next.journal_pos
+        ),
+    ))
+}

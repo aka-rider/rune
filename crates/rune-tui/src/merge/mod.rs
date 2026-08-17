@@ -1,9 +1,3 @@
-//! Merge mode (plan "merge-user-s-changes-with-idempotent-octopus", WP3):
-//! entry (`begin`), the `MergePrep` ack landing (`landing`), and the
-//! Esc-exit-in-place chokepoint (`exit_in_place`). The resolver's own keys/
-//! navigation/accept (WP4), painting (WP5), and resync/auto-exit/guard
-//! (WP6) are later work packages layered on the state this module owns.
-
 mod landing;
 mod persist;
 pub(crate) mod ranges;
@@ -119,7 +113,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
         // quit auto-exit) retracts the entry-time resolve observation:
         // without this, the resolve row at the journal head makes the very
-        // next probe classify the marker-filled buffer as reconciled —
+        // next probe classify the unresolved working form as reconciled —
         // retiring every divergence affordance and making `begin` refuse
         // with "no divergence to merge" while the conflict is anything but
         // resolved. Abandoning restores the pre-merge baseline so the
@@ -288,7 +282,7 @@ pub(crate) fn auto_exit(app: &mut App) {
 /// the guards' [S] answers, the quit fan-out) hits it structurally rather
 /// than each call site remembering to ask. One rule, no content sniffing:
 /// after exit or full resolution the document is ordinary dirty text and
-/// saves normally, markers included.
+/// saves normally.
 pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -> bool {
     let MergeState::Active { doc, .. } = &app.merge else {
         return false;
@@ -350,6 +344,7 @@ mod tests {
                 cur: 0,
                 saved_display_name: Some("saved-name".to_string()),
                 theirs_obs: rune_db::ObsId::new(7).expect("nonzero"),
+                install_pos: 0,
             },
         }
     }

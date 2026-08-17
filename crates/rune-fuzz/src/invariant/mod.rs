@@ -64,7 +64,7 @@ pub use cursor::{cur_bounds, cur_id, cur_no_caret_hidden, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use merge::{
     DivergentSaveTracker, RedivergenceTracker, merge_doc_active, merge_key_feedback,
-    merge_save_blocked, merge_title_cleared,
+    merge_save_blocked, merge_title_cleared, merge_undo_never_completes,
 };
 pub use nav::nav_bounds;
 pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
@@ -169,5 +169,6 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| merge_save_blocked(prev, next, ctx))
         .or_else(|| merge_key_feedback(prev, next, ctx))
         .or_else(|| merge_title_cleared(next))
+        .or_else(|| merge_undo_never_completes(prev, next))
         .or_else(|| nav_bounds(next))
 }

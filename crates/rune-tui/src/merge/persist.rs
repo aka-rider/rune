@@ -141,6 +141,7 @@ pub(crate) fn resume_from_store(
     };
     let Some(document) = app.doc(doc) else { return };
     let buffer_len = document.buffer.content().len();
+    let install_pos = document.journal.pos();
     let well_formed = payload.blocks.len() == payload.conflicts.len()
         && payload
             .blocks
@@ -180,6 +181,7 @@ pub(crate) fn resume_from_store(
             cur,
             saved_display_name,
             theirs_obs,
+            install_pos,
         },
     };
     if let Some(d) = app.doc_mut(doc) {

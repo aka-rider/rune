@@ -4,9 +4,12 @@ use rune_core::buffer::AppliedEdit;
 
 use crate::app::App;
 use crate::document::DocumentId;
+use crate::messages;
 
 use super::session::{BlockOrigin, Resolution};
 use super::state::MergeState;
+
+const GATE_OPEN_STATUS: &str = "all conflicts resolved — ^M or Esc completes the merge";
 
 pub(crate) struct Delta {
     start: usize,
@@ -79,11 +82,15 @@ pub(crate) fn remap_after_edit_batch(app: &mut App, id: DocumentId, applied: &[A
     if *doc != id {
         return;
     }
+    let unresolved_before = session.unresolved_count();
     let deltas = forward_deltas(applied);
     for pair in &mut session.conflicts {
         if remap(&mut pair.block.range, &deltas) {
             pair.block.resolution = Resolution::HandEdited;
         }
+    }
+    if unresolved_before > 0 && session.unresolved_count() == 0 {
+        messages::info(app, GATE_OPEN_STATUS);
     }
 }
 
@@ -91,13 +98,27 @@ pub(crate) fn rederive_after_jump(app: &mut App, id: DocumentId, deltas: &[Delta
     if app.merge.doc() != Some(id) {
         return;
     }
-    let content = app
-        .doc(id)
-        .map(|d| d.buffer.content().to_string())
-        .unwrap_or_default();
+    let Some(document) = app.doc(id) else {
+        return;
+    };
+    let journal_pos = document.journal.pos();
+    let content = document.buffer.content().to_string();
     let MergeState::Active { session, .. } = &mut app.merge else {
         return;
     };
+    if journal_pos < session.install_pos {
+        let MergeState::Active { session, .. } = std::mem::take(&mut app.merge) else {
+            return;
+        };
+        super::abandon_active(
+            app,
+            id,
+            session.saved_display_name,
+            "merge closed — undo removed the merged text; ^M to merge again",
+        );
+        return;
+    }
+    let unresolved_before = session.unresolved_count();
     let mut reopened = None;
     for (idx, pair) in session.conflicts.iter_mut().enumerate() {
         let was_resolved = pair.block.resolution.is_resolved();
@@ -106,16 +127,14 @@ pub(crate) fn rederive_after_jump(app: &mut App, id: DocumentId, deltas: &[Delta
         }
         pair.block.range.end = pair.block.range.end.min(content.len());
         pair.block.range.start = pair.block.range.start.min(pair.block.range.end);
-        let bytes = content.get(pair.block.range.clone());
-        pair.block.resolution = if bytes == Some(pair.conflict.theirs.as_str()) {
-            Resolution::TookTheirs
-        } else if bytes == Some(pair.conflict.ours.as_str()) {
-            match pair.origin {
+        pair.block.resolution = match content.get(pair.block.range.clone()) {
+            None => Resolution::Unresolved,
+            Some(bytes) if bytes == pair.conflict.theirs => Resolution::TookTheirs,
+            Some(bytes) if bytes == pair.conflict.ours => match pair.origin {
                 BlockOrigin::Conflict => Resolution::Unresolved,
                 BlockOrigin::AutoApplied => Resolution::KeptOurs,
-            }
-        } else {
-            Resolution::HandEdited
+            },
+            Some(_) => Resolution::HandEdited,
         };
         if was_resolved && !pair.block.resolution.is_resolved() && reopened.is_none() {
             reopened = Some(idx);
@@ -134,7 +153,7 @@ pub(crate) fn rederive_after_jump(app: &mut App, id: DocumentId, deltas: &[Delta
             .position(|p| !p.block.resolution.is_resolved())
             .unwrap_or(session.cur);
     }
-    if session.unresolved_count() == 0 {
-        super::exit_in_place(app);
+    if unresolved_before > 0 && session.unresolved_count() == 0 {
+        messages::info(app, GATE_OPEN_STATUS);
     }
 }

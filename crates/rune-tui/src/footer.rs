@@ -237,6 +237,7 @@ mod tests {
                 cur: 0,
                 saved_display_name: None,
                 theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
+                install_pos: 0,
             },
         };
 
