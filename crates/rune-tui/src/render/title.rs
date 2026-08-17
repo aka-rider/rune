@@ -59,6 +59,11 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
+pub fn draw_left(name: &str, area: Rect, theme: &Theme, frame: &mut Frame) {
+    let spans = build_spans(name, ext_split(name), false, None, theme);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 /// Builds the styled spans for `name`. `always_bright` is true only when
 /// the title is focused AND its extension gate is unlocked — every other
 /// case dims everything from `split` onward. `selection` is

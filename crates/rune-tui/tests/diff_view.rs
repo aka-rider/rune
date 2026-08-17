@@ -6,7 +6,6 @@
 )]
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use rune_core::buffer::Buffer;
 use rune_merge::RegionKind;
@@ -14,7 +13,7 @@ use rune_tui::app::{self, App};
 use rune_tui::diff_view;
 use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::pointer::{Clock, MouseButton, MouseInput, MouseKind};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::testgrid;
 use rune_vfs::Mem;
@@ -367,21 +366,6 @@ fn undo_of_an_edit_restores_the_previous_alignment() {
     );
 }
 
-#[derive(Debug)]
-struct PastClock(Instant);
-
-impl Clock for PastClock {
-    fn now(&self) -> Instant {
-        self.0
-    }
-}
-
-fn far_past_instant() -> Instant {
-    Instant::now()
-        .checked_sub(Duration::from_secs(3600))
-        .unwrap_or_else(Instant::now)
-}
-
 #[test]
 fn a_one_word_change_is_emphasized_on_exactly_that_word_in_both_panes() {
     let app = app_with_diff(
@@ -420,58 +404,6 @@ fn a_one_word_change_is_emphasized_on_exactly_that_word_in_both_panes() {
         .cell((cat_col, left_row as u16))
         .and_then(|c| c.style().bg);
     assert_eq!(cat_bg, app.theme.chrome.diff_word_theirs.bg);
-}
-
-fn heavily_reworded_line(prefix: &str) -> String {
-    let mut line = String::new();
-    for i in 0..5_000 {
-        if i > 0 {
-            line.push(' ');
-        }
-        if i % 3 == 0 {
-            line.push_str(prefix);
-            line.push_str(&i.to_string());
-        } else {
-            line.push_str("word");
-            line.push_str(&i.to_string());
-        }
-    }
-    line
-}
-
-#[test]
-fn an_already_elapsed_deadline_degrades_to_whole_line_emphasis() {
-    let right_text = format!("same\n{}\nsame2", heavily_reworded_line("right"));
-    let left_text = format!("same\n{}\nsame2", heavily_reworded_line("left"));
-
-    let mut app = app_with_diff(&right_text, &left_text, WIDE_ENOUGH);
-    app.clock = Arc::new(PastClock(far_past_instant()));
-    app.sync_view();
-
-    let diff = app.diff.as_ref().expect("diff active");
-    let region = diff
-        .alignment
-        .regions
-        .iter()
-        .find(|r| r.kind == RegionKind::Changed)
-        .expect("the reworded line is a changed region");
-
-    let (_, expected_left) = diff_view::rows::region_text(&left_text, region.left_lines.clone());
-    let (_, expected_right) = diff_view::rows::region_text(&right_text, region.right_lines.clone());
-
-    let left_covered: usize = diff.intraline_left.iter().map(|r| r.end - r.start).sum();
-    let right_covered: usize = diff.intraline_right.iter().map(|r| r.end - r.start).sum();
-
-    assert_eq!(
-        left_covered,
-        expected_left.len(),
-        "an elapsed deadline must degrade to whole-line emphasis on the left pane"
-    );
-    assert_eq!(
-        right_covered,
-        expected_right.len(),
-        "an elapsed deadline must degrade to whole-line emphasis on the right pane"
-    );
 }
 
 #[test]
@@ -646,4 +578,65 @@ fn click_in_the_left_pane_moves_the_right_pane_caret_to_the_aligned_line() {
     let right_content = app.active_doc().buffer.content().to_string();
     let expected = right_content.find("\nc").expect("c present in fileB") + 1;
     assert_eq!(app.active_doc().cursors.primary().position, expected);
+}
+
+#[test]
+fn closing_the_right_document_tears_down_the_diff_view() {
+    let mut app = app_with_diff("hi", "hi", WIDE_ENOUGH);
+    let right = app.active;
+    assert!(app.diff.is_some());
+
+    let mut effects = Effects::default();
+    let _ = rune_tui::workspace::close_now(&mut app, right, &mut effects);
+
+    assert!(
+        app.diff.is_none(),
+        "the diff view must not outlive the right document it was tracking"
+    );
+
+    let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+    assert!(
+        !grid.iter().any(|row| row.contains("hi")),
+        "the left pane must not still be painted after the diff view is torn down"
+    );
+}
+
+#[test]
+fn a_left_pane_with_no_parsed_view_yet_blanks_instead_of_leaking_the_prior_frame() {
+    let mut app = app_with_diff("rightmarker", "leftmarker", WIDE_ENOUGH);
+    let backend = ratatui::backend::TestBackend::new(WIDE_ENOUGH, HEIGHT);
+    let mut terminal = ratatui::Terminal::new(backend).expect("construct terminal");
+
+    terminal
+        .draw(|frame| rune_tui::render::draw(&app, frame))
+        .expect("draw frame 1");
+    let painted = row_strings(terminal.backend().buffer(), WIDE_ENOUGH, HEIGHT);
+    assert!(
+        painted.iter().any(|row| row.contains("leftmarker")),
+        "the left pane must render its text once parsed"
+    );
+
+    app.diff.as_mut().expect("diff active").left.view = None;
+    terminal
+        .draw(|frame| rune_tui::render::draw(&app, frame))
+        .expect("draw frame 2");
+    let after = row_strings(terminal.backend().buffer(), WIDE_ENOUGH, HEIGHT);
+    assert!(
+        !after.iter().any(|row| row.contains("leftmarker")),
+        "an unparsed left pane must blank its rect, not leak the prior frame's text"
+    );
+}
+
+fn row_strings(buf: &ratatui::buffer::Buffer, w: u16, h: u16) -> Vec<String> {
+    (0..h)
+        .map(|y| {
+            let mut s = String::new();
+            for x in 0..w {
+                if let Some(cell) = buf.cell((x, y)) {
+                    s.push_str(cell.symbol());
+                }
+            }
+            s
+        })
+        .collect()
 }

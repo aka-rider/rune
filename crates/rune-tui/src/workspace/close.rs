@@ -148,6 +148,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if app.merge.doc() == Some(id) {
         crate::merge::auto_exit(app);
     }
+    crate::diff_view::teardown(app, id);
     if app.graphics.kitty
         && let Some(image) = app.doc(id).and_then(|d| d.image())
     {

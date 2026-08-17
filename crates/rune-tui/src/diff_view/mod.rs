@@ -21,7 +21,6 @@ pub enum DiffInstallError {
 
 pub struct DiffView {
     pub left: Document,
-    pub left_name: String,
     pub right: DocumentId,
     pub hunk_cur: usize,
     pub alignment: AlignmentMap,
@@ -49,11 +48,10 @@ pub(crate) fn install_text(app: &mut App, right: DocumentId, text: String, left_
     let mut left = Document::new(Buffer::new(&text));
     left.read_only = ReadOnly::Always;
     left.focused = false;
-    left.display_name = Some(left_name.clone());
+    left.display_name = Some(left_name);
     let alignment = rune_merge::align(left.buffer.content(), &right_content);
     app.diff = Some(DiffView {
         left,
-        left_name,
         right,
         hunk_cur: 0,
         alignment,

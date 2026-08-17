@@ -117,37 +117,6 @@ pub(crate) fn intercept(app: &mut App, key: KeyInput) -> bool {
     true
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScrollKey {
-    LineUp,
-    LineDown,
-    PageUp,
-    PageDown,
-    Top,
-    Bottom,
-}
-
-pub fn viewport_scroll(key: KeyInput) -> Option<ScrollKey> {
-    const SHIFT: Mods = Mods {
-        shift: true,
-        alt: false,
-        ctrl: false,
-        sup: false,
-    };
-    if key.mods != Mods::NONE && key.mods != SHIFT {
-        return None;
-    }
-    match key.code {
-        KeyCode::Up => Some(ScrollKey::LineUp),
-        KeyCode::Down => Some(ScrollKey::LineDown),
-        KeyCode::PageUp => Some(ScrollKey::PageUp),
-        KeyCode::PageDown => Some(ScrollKey::PageDown),
-        KeyCode::Home => Some(ScrollKey::Top),
-        KeyCode::End => Some(ScrollKey::Bottom),
-        _ => None,
-    }
-}
-
 fn hunk_indices(diff: &DiffView) -> Vec<usize> {
     diff.alignment
         .regions
@@ -209,22 +178,43 @@ fn move_hunk(app: &mut App, dir: isize) {
     messages::info(app, format!("hunk {ordinal}/{total}"));
 }
 
-fn current_hunk_replacement(app: &App) -> Option<(DocumentId, Range<usize>, String)> {
-    let diff = app.diff.as_ref()?;
-    let region_idx = current_hunk_index(diff)?;
-    let region = diff.alignment.regions.get(region_idx)?;
+enum HunkReplacement {
+    None,
+    RangeInvalid,
+    Some(DocumentId, Range<usize>, String),
+}
+
+fn current_hunk_replacement(app: &App) -> HunkReplacement {
+    let Some(diff) = app.diff.as_ref() else {
+        return HunkReplacement::None;
+    };
+    let Some(region_idx) = current_hunk_index(diff) else {
+        return HunkReplacement::None;
+    };
+    let Some(region) = diff.alignment.regions.get(region_idx) else {
+        return HunkReplacement::None;
+    };
     let right_lines = region.right_lines.clone();
     let left_lines = region.left_lines.clone();
     let left_start = line_offset(&diff.left.buffer, left_lines.start);
     let left_end = line_offset(&diff.left.buffer, left_lines.end);
-    let insert = diff.left.buffer.content()[left_start..left_end].to_string();
-    Some((diff.right, right_lines, insert))
+    let Some(insert) = diff.left.buffer.content().get(left_start..left_end) else {
+        return HunkReplacement::RangeInvalid;
+    };
+    HunkReplacement::Some(diff.right, right_lines, insert.to_string())
 }
 
 fn take_theirs(app: &mut App) {
-    let Some((right, right_lines, insert)) = current_hunk_replacement(app) else {
-        messages::info(app, "no hunk to take");
-        return;
+    let (right, right_lines, insert) = match current_hunk_replacement(app) {
+        HunkReplacement::None => {
+            messages::info(app, "no hunk to take");
+            return;
+        }
+        HunkReplacement::RangeInvalid => {
+            messages::error(app, "merge: the hunk range no longer matches the pane text");
+            return;
+        }
+        HunkReplacement::Some(right, right_lines, insert) => (right, right_lines, insert),
     };
     let Some(right_doc) = app.doc(right) else {
         return;
@@ -281,54 +271,6 @@ mod tests {
                 claimants.is_empty(),
                 "GLOBAL_BINDINGS would shadow diff key {key:?}: {claimants:?}"
             );
-        }
-    }
-
-    #[test]
-    fn only_bare_and_shift_arrows_are_viewport_scrolls() {
-        const SHIFT: Mods = Mods {
-            shift: true,
-            alt: false,
-            ctrl: false,
-            sup: false,
-        };
-        const ALT: Mods = Mods {
-            shift: false,
-            alt: true,
-            ctrl: false,
-            sup: false,
-        };
-        const ALT_SUP: Mods = Mods {
-            shift: false,
-            alt: true,
-            ctrl: false,
-            sup: true,
-        };
-        const SHIFT_ALT: Mods = Mods {
-            shift: true,
-            alt: true,
-            ctrl: false,
-            sup: false,
-        };
-        let cases = [
-            (KeyCode::Up, Mods::NONE, Some(ScrollKey::LineUp)),
-            (KeyCode::Up, SHIFT, Some(ScrollKey::LineUp)),
-            (KeyCode::Down, Mods::NONE, Some(ScrollKey::LineDown)),
-            (KeyCode::Down, SHIFT, Some(ScrollKey::LineDown)),
-            (KeyCode::PageUp, Mods::NONE, Some(ScrollKey::PageUp)),
-            (KeyCode::PageDown, Mods::NONE, Some(ScrollKey::PageDown)),
-            (KeyCode::Home, Mods::NONE, Some(ScrollKey::Top)),
-            (KeyCode::End, Mods::NONE, Some(ScrollKey::Bottom)),
-            (KeyCode::Up, ALT_SUP, None),
-            (KeyCode::Down, ALT_SUP, None),
-            (KeyCode::Up, SHIFT_ALT, None),
-            (KeyCode::Up, SUP, None),
-            (KeyCode::Up, ALT, None),
-            (KeyCode::Up, CTRL, None),
-        ];
-        for (code, mods, want) in cases {
-            let got = viewport_scroll(KeyInput { code, mods });
-            assert_eq!(got, want, "code={code:?} mods={mods:?}");
         }
     }
 }

@@ -13,12 +13,12 @@ use rune_db::SyncKind;
 use rune_fuzz::Session;
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
-use rune_tui::keymap::KeyCode;
+use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::merge::{MergeState, Resolution};
 
 use merge_common::{
-    bare, ch, ctrl, external_write, next_hunk, prev_hunk, reprobe, sup, take_ours, take_theirs,
-    untitled_draft,
+    bare, ch, chord, ctrl, external_write, next_hunk, prev_hunk, reprobe, sup, take_ours,
+    take_theirs, untitled_draft,
 };
 
 const ANCESTOR: &str = "one\ntwo\nthree\nfour\nfive\n";
@@ -385,5 +385,85 @@ fn help_lists_the_diff_view_bindings() {
     assert!(
         !help.contains("## Merge"),
         "the marker-era merge section must be gone: {help}"
+    );
+}
+
+#[test]
+fn merge_active_arrow_chords_never_silently_scroll_or_swallow_input() {
+    let (mut session, doc_id) = enter_two_conflict_merge();
+
+    // The first unresolved conflict lands the caret on line 0, where
+    // `AddCursorAbove` is a legitimate no-op — move down first through
+    // ordinary (unchorded) motion so the alt-sup case below has a real
+    // line above it to add onto.
+    assert!(session.key(bare(KeyCode::Down)).is_none());
+    assert!(session.key(bare(KeyCode::Down)).is_none());
+
+    let content_before = session
+        .app()
+        .doc(doc_id)
+        .unwrap()
+        .buffer
+        .content()
+        .to_string();
+    let scroll_before = session.app().doc(doc_id).unwrap().viewport.scroll_row;
+    let cursors_before = session.app().doc(doc_id).unwrap().cursors.len();
+
+    let alt_sup = Mods {
+        shift: false,
+        alt: true,
+        ctrl: false,
+        sup: true,
+    };
+    let bare_sup = Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    };
+
+    assert!(session.key(chord(KeyCode::Up, alt_sup)).is_none());
+    let after_alt_up = session.app().doc(doc_id).unwrap();
+    assert_eq!(
+        after_alt_up.buffer.content(),
+        content_before,
+        "\u{2325}\u{2318}\u{2191} must not edit the buffer"
+    );
+    assert_eq!(
+        after_alt_up.viewport.scroll_row, scroll_before,
+        "\u{2325}\u{2318}\u{2191} must not silently scroll the viewport"
+    );
+    assert!(
+        after_alt_up.cursors.len() > cursors_before,
+        "\u{2325}\u{2318}\u{2191} must fall through to a real, visible AddCursorAbove, not a swallowed no-op"
+    );
+
+    assert!(session.key(chord(KeyCode::Up, bare_sup)).is_none());
+    let after_bare = session.app().doc(doc_id).unwrap();
+    assert_eq!(
+        after_bare.buffer.content(),
+        content_before,
+        "bare \u{2318}\u{2191} must not edit the buffer"
+    );
+    assert_eq!(
+        after_bare.viewport.scroll_row, scroll_before,
+        "bare \u{2318}\u{2191} must not silently scroll the viewport"
+    );
+
+    let MergeState::Active { session: merge, .. } = &session.app().merge else {
+        panic!(
+            "the resolver must still be active, got {:?}",
+            session.app().merge
+        );
+    };
+    assert_eq!(merge.cur, 0, "the current hunk must be untouched");
+    assert_eq!(
+        merge
+            .conflicts
+            .iter()
+            .filter(|p| !p.block.resolution.is_resolved())
+            .count(),
+        2,
+        "no chord may have silently resolved a hunk"
     );
 }

@@ -187,7 +187,14 @@ pub(crate) fn take_theirs(app: &mut App) {
         }
         _ => return,
     };
-    if block_bytes(app, doc, idx).as_deref() == Some(theirs.as_str()) {
+    let Some(current_bytes) = block_bytes(app, doc, idx) else {
+        messages::error(
+            app,
+            "merge: the hunk range no longer matches the buffer — left unresolved",
+        );
+        return;
+    };
+    if current_bytes == theirs {
         if resolution.is_resolved() {
             messages::info(app, "already disk's version");
         } else {
@@ -225,7 +232,14 @@ pub(crate) fn take_ours(app: &mut App) {
         }
         _ => return,
     };
-    if block_bytes(app, doc, idx).as_deref() == Some(ours.as_str()) {
+    let Some(current_bytes) = block_bytes(app, doc, idx) else {
+        messages::error(
+            app,
+            "merge: the hunk range no longer matches the buffer — left unresolved",
+        );
+        return;
+    };
+    if current_bytes == ours {
         match origin {
             BlockOrigin::Conflict => {
                 if resolution == Resolution::KeptOurs {

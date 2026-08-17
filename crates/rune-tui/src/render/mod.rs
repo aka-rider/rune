@@ -56,10 +56,9 @@ pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 /// NOT the same space. `viewport.scroll_row` is a DISPLAY row index —
 /// `Document::scroll_to_cursor` is its single writer and converts through
 /// `DisplaySnapshot::wrap_to_display` before ever assigning it (see that
-/// function's docs). Merge mode's ours/theirs/marker overlay is NOT painted
-/// here — it is the active editor document's own content, so `render::draw`
-/// applies it itself, at the one call site that actually knows `doc` is the
-/// active document.
+/// function's docs). The diff/merge pane's background and intraline
+/// highlighting are NOT painted here — `render::draw` applies those itself,
+/// at the one call site that actually knows `doc` is the active document.
 pub fn build_rows(
     app: &App,
     doc: &Document,
@@ -210,7 +209,26 @@ pub fn draw(app: &App, frame: &mut Frame) {
     }
 
     if let Some(title_area) = geo.title {
-        title::draw(app, title_area, frame);
+        match geo.diff_left {
+            Some(diff_left) => {
+                let left_title = Rect::new(title_area.x, title_area.y, diff_left.width, 1);
+                let right_x = geo.editor.x;
+                let right_title = Rect::new(
+                    right_x,
+                    title_area.y,
+                    title_area.right().saturating_sub(right_x),
+                    1,
+                );
+                let left_name = app
+                    .diff
+                    .as_ref()
+                    .map_or("", |d| d.left.file_name())
+                    .to_string();
+                title::draw_left(&left_name, left_title, &app.theme, frame);
+                title::draw(app, right_title, frame);
+            }
+            None => title::draw(app, title_area, frame),
+        }
     }
 
     if let Some(bar_area) = geo.search_bar {
@@ -335,6 +353,8 @@ fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
             app.theme.chrome.diff_word_theirs,
         );
         blit(&rows, area, frame);
+    } else {
+        blit(&blank_rows(area.width, area.height), area, frame);
     }
     let divider = Rect::new(area.right(), area.y, 1, area.height);
     frame.render_widget(
@@ -343,6 +363,18 @@ fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
             .border_style(app.theme.chrome.inactive_border),
         divider,
     );
+}
+
+fn blank_rows(width: u16, height: u16) -> Vec<Vec<Cell>> {
+    let blank = Cell {
+        text: " ".into(),
+        width: 1,
+        style: ratatui::style::Style::default(),
+        buf_offset: -1,
+    };
+    (0..height)
+        .map(|_| vec![blank.clone(); width as usize])
+        .collect()
 }
 
 fn draw_pending(doc: &Document, area: ratatui::layout::Rect, frame: &mut Frame) {

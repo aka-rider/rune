@@ -681,4 +681,22 @@ pub(super) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
             sup: true,
         },
     },
+    KeyInput {
+        code: KeyCode::Char('j'),
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: true,
+        },
+    },
+    KeyInput {
+        code: KeyCode::Char('k'),
+        mods: Mods {
+            shift: false,
+            alt: false,
+            ctrl: true,
+            sup: false,
+        },
+    },
 ];

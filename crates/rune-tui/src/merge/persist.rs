@@ -69,7 +69,7 @@ pub(super) fn enqueue_merge_open(
     doc: DocumentId,
     base_obs: Option<ObsId>,
     theirs_obs: ObsId,
-    marker_content: &str,
+    content: &str,
     pairs: &[ConflictBlock],
 ) {
     let Some(json) = blocks_json(pairs) else {
@@ -77,20 +77,14 @@ pub(super) fn enqueue_merge_open(
         return;
     };
     enqueue(app, doc, |store, db_id| {
-        store.merge_open(
-            rune_db::DocId(db_id),
-            base_obs,
-            theirs_obs,
-            marker_content,
-            &json,
-        )
+        store.merge_open(rune_db::DocId(db_id), base_obs, theirs_obs, content, &json)
     });
 }
 
 pub(super) fn enqueue_merge_progress(
     app: &mut App,
     doc: DocumentId,
-    marker_content: &str,
+    content: &str,
     pairs: &[ConflictBlock],
 ) {
     let Some(json) = blocks_json(pairs) else {
@@ -98,7 +92,7 @@ pub(super) fn enqueue_merge_progress(
         return;
     };
     enqueue(app, doc, |store, db_id| {
-        store.merge_progress(rune_db::DocId(db_id), marker_content, &json)
+        store.merge_progress(rune_db::DocId(db_id), content, &json)
     });
 }
 
@@ -135,18 +129,26 @@ pub(crate) fn resume_from_store(
     theirs_obs: ObsId,
 ) {
     const UNREADABLE: &str = "merge not resumed — stored merge state could not be read";
+    if let MergeState::Active {
+        doc: active_doc, ..
+    } = &app.merge
+        && *active_doc != doc
+    {
+        messages::error(
+            app,
+            "merge not resumed — another document's merge is already active",
+        );
+        return;
+    }
     let Ok(payload) = serde_json::from_str::<BlocksPayload>(blocks_json) else {
         messages::error(app, UNREADABLE);
         return;
     };
     let Some(document) = app.doc(doc) else { return };
     let buffer_len = document.buffer.content().len();
-    let well_formed = payload.blocks.len() == payload.conflicts.len()
-        && payload
-            .blocks
-            .iter()
-            .all(|b| b.start <= b.end && b.end <= buffer_len);
-    if !well_formed {
+    if payload.blocks.len() != payload.conflicts.len()
+        || !ranges_well_formed(&payload.blocks, buffer_len)
+    {
         messages::error(app, UNREADABLE);
         return;
     }
@@ -161,8 +163,12 @@ pub(crate) fn resume_from_store(
         return;
     }
 
-    let marker_content = document.buffer.content().to_string();
-    enqueue_merge_progress(app, doc, &marker_content, &pairs);
+    let content = document.buffer.content().to_string();
+    let Some(theirs_text) = reconstruct_theirs(&content, &pairs) else {
+        messages::error(app, UNREADABLE);
+        return;
+    };
+    enqueue_merge_progress(app, doc, &content, &pairs);
 
     let saved_display_name = super::install_resolver_display_name(app, doc);
 
@@ -171,7 +177,6 @@ pub(crate) fn resume_from_store(
         .position(|p| !p.block.resolution.is_resolved())
         .unwrap_or(0);
     let target = pairs.get(cur).map_or(0, |p| p.block.range.start);
-    let theirs_text = reconstruct_theirs(&marker_content, &pairs);
     crate::diff_view::install_text(app, doc, theirs_text, "disk".to_string());
     app.merge = MergeState::Active {
         doc,
@@ -189,21 +194,34 @@ pub(crate) fn resume_from_store(
     messages::info(app, format!("merge resumed — {unresolved} conflict(s)"));
 }
 
-fn reconstruct_theirs(content: &str, pairs: &[ConflictBlock]) -> String {
+fn ranges_well_formed(blocks: &[PersistedBlock], buffer_len: usize) -> bool {
+    let mut sorted: Vec<&PersistedBlock> = blocks.iter().collect();
+    sorted.sort_by_key(|b| b.start);
+    let mut prev_end = 0usize;
+    for b in sorted {
+        if b.start > b.end || b.end > buffer_len || b.start < prev_end {
+            return false;
+        }
+        prev_end = b.end;
+    }
+    true
+}
+
+fn reconstruct_theirs(content: &str, pairs: &[ConflictBlock]) -> Option<String> {
     let mut ordered: Vec<&ConflictBlock> = pairs.iter().collect();
     ordered.sort_by_key(|p| p.block.range.start);
     let mut out = String::new();
     let mut at = 0usize;
     for pair in ordered {
         if pair.block.range.start < at {
-            continue;
+            return None;
         }
-        out.push_str(content.get(at..pair.block.range.start).unwrap_or_default());
+        out.push_str(content.get(at..pair.block.range.start)?);
         out.push_str(&pair.conflict.theirs);
         at = pair.block.range.end;
     }
-    out.push_str(content.get(at..).unwrap_or_default());
-    out
+    out.push_str(content.get(at..)?);
+    Some(out)
 }
 
 #[cfg(test)]
@@ -370,5 +388,64 @@ mod tests {
         let content = "x".repeat(40);
         let expected = format!("{}yours{}b", &content[..5], &content[20..30]);
         assert_eq!(diff.left.buffer.content(), expected);
+    }
+
+    #[test]
+    fn resume_refuses_to_clobber_an_active_merge_on_another_document() {
+        let mut app = app_with(&"x".repeat(40));
+        let doc = app.active;
+        let other = app.open_document(Buffer::new("other"));
+        let other_state = MergeState::Active {
+            doc: other,
+            session: MergeSession {
+                conflicts: Vec::new(),
+                cur: 0,
+                saved_display_name: Some("other-name".to_string()),
+                theirs_obs: ObsId::new(9).expect("nonzero"),
+            },
+        };
+        app.merge = other_state.clone();
+
+        resume_from_store(
+            &mut app,
+            doc,
+            WP2_SHAPE_BLOCKS_JSON,
+            ObsId::new(1).expect("nonzero"),
+        );
+
+        assert_eq!(app.merge, other_state);
+        assert!(app.diff.is_none());
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("merge not resumed — another document's merge is already active")
+        );
+    }
+
+    #[test]
+    fn resume_rejects_overlapping_ranges_as_malformed() {
+        let mut app = app_with(&"x".repeat(40));
+        let doc = app.active;
+        let overlapping = r#"{"blocks":[{"start":5,"end":20,"resolved":false},{"start":10,"end":15,"resolved":false}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
+
+        resume_from_store(&mut app, doc, overlapping, ObsId::new(1).expect("nonzero"));
+
+        assert_eq!(app.merge, MergeState::Inactive);
+        assert!(app.diff.is_none());
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("merge not resumed — stored merge state could not be read")
+        );
+    }
+
+    #[test]
+    fn resume_rejects_duplicate_ranges_as_malformed() {
+        let mut app = app_with(&"x".repeat(40));
+        let doc = app.active;
+        let duplicate = r#"{"blocks":[{"start":5,"end":20,"resolved":false},{"start":5,"end":20,"resolved":false}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
+
+        resume_from_store(&mut app, doc, duplicate, ObsId::new(1).expect("nonzero"));
+
+        assert_eq!(app.merge, MergeState::Inactive);
+        assert!(app.diff.is_none());
     }
 }
