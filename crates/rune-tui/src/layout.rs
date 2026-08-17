@@ -33,6 +33,10 @@ pub const MIN_CENTER_W: u16 = 24;
 pub const FILESEARCH_MIN_W: u16 = 48;
 
 pub const DIFF_MIN_PANE_W: u16 = 40;
+pub const DIFF_LIMITS: PaneLimits = PaneLimits {
+    min: DIFF_MIN_PANE_W,
+    collapsible: false,
+};
 
 /// Inner rows, not block rows: the sections share one border, so these are
 /// measured on the block's inner rect. The Explorer spends one row on a
@@ -68,6 +72,11 @@ pub struct Splits {
     /// The Explorer's height inside the column's inner rect; the tab rows
     /// take what is left after the one-row divider.
     pub explorer: Split,
+    /// The side-by-side diff view's left-pane width; the editable right
+    /// pane takes what is left after the one-column divider. Always shown —
+    /// the diff pane's own presence is decided by `diff_left_rect`, never
+    /// by this `Split`'s `shown` flag.
+    pub diff: Split,
 }
 
 impl Default for Splits {
@@ -75,6 +84,7 @@ impl Default for Splits {
         Splits {
             left: Split::new(LEFT_LIMITS, false),
             explorer: Split::new(EXPLORER_LIMITS, true),
+            diff: Split::new(DIFF_LIMITS, true),
         }
     }
 }
@@ -138,6 +148,11 @@ pub struct Geometry {
     /// `None` when the column isn't showing. The VERTICAL grab band needs
     /// no field of its own — it is exactly `tabs_divider`.
     pub left_splitter: Option<Rect>,
+    /// The two-cell-wide band the user grabs to resize the diff view's
+    /// panes, straddling the one-column divider `draw_diff_left` paints at
+    /// `diff_left`'s right edge. `None` whenever `diff_left` is — the diff
+    /// view is inactive, or folded to full width.
+    pub diff_splitter: Option<Rect>,
 }
 
 impl Geometry {
@@ -315,6 +330,10 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let editor = Region::carve_bottom(content, content.height.saturating_sub(editor_y)).rect();
 
     let diff_left = diff_left_rect(editor, app);
+    let diff_splitter = diff_left.map(|left| {
+        let x = left.right().saturating_sub(1);
+        crate::region::Region::band_within(editor, x, 2).rect()
+    });
     let editor = match diff_left {
         Some(left) => {
             let x = left.right().saturating_add(1);
@@ -376,6 +395,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         editor,
         main: main_area,
         left_splitter,
+        diff_splitter,
     }
 }
 
@@ -387,10 +407,13 @@ fn diff_left_rect(editor: Rect, app: &App) -> Option<Rect> {
     if editor.width < DIFF_MIN_PANE_W.saturating_mul(2).saturating_add(1) {
         return None;
     }
+    let available = editor.width.saturating_sub(1);
+    let fallback = available / 2;
+    let (left_w, _) = app.splits.diff.allot(available, fallback, DIFF_LIMITS);
     Some(Rect::new(
         editor.x,
         editor.y,
-        DIFF_MIN_PANE_W,
+        left_w.unwrap_or(fallback),
         editor.height,
     ))
 }

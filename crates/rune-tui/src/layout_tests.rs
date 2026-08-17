@@ -234,6 +234,12 @@ fn assert_geometry_within(geo: &Geometry, frame: Rect) {
     if let Some(r) = geo.left_splitter {
         rects.push(("left_splitter", r));
     }
+    if let Some(r) = geo.diff_left {
+        rects.push(("diff_left", r));
+    }
+    if let Some(r) = geo.diff_splitter {
+        rects.push(("diff_splitter", r));
+    }
     for (name, rect) in rects {
         assert!(
             within(rect, frame),

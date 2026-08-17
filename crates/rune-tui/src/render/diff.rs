@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 
 use rune_merge::{AlignmentMap, Region, RegionKind};
 use rune_syntax::wrap::WrapSnapshot;
@@ -80,12 +80,11 @@ fn mark_virtual(row: &mut [Cell], theirs_bg: Style) {
 }
 
 fn filler_row(width: u16) -> Vec<Cell> {
-    let style = Style::default().add_modifier(Modifier::DIM);
     (0..width)
         .map(|_| Cell {
-            text: "╌".into(),
+            text: " ".into(),
             width: 1,
-            style,
+            style: Style::default(),
             buf_offset: -1,
         })
         .collect()

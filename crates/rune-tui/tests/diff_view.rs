@@ -196,8 +196,8 @@ fn install_refuses_invalid_utf8() {
     assert!(app.diff.is_none());
 }
 
-fn char_slice(row: &str, width: usize) -> String {
-    row.chars().take(width).collect()
+fn char_slice_from(row: &str, start: usize, width: usize) -> String {
+    row.chars().skip(start).take(width).collect()
 }
 
 fn col_of(row: &str, needle: &str) -> u16 {
@@ -214,19 +214,32 @@ fn col_of_right_pane(row: &str, needle: &str) -> u16 {
 fn right_pane_insertion_shows_a_left_filler_row_at_the_aligned_position() {
     let app = app_with_diff("a\nb\nX\nc", "a\nb\nc", WIDE_ENOUGH);
     let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+    let geo =
+        rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, WIDE_ENOUGH, HEIGHT), &app);
+    let diff_left = geo.diff_left.expect("diff pane visible at this width");
 
     let x_row = grid
         .iter()
         .position(|row| row.contains('X'))
         .expect("the inserted right-only line renders");
-    let left_half = char_slice(&grid[x_row], 40);
+    let left_half = char_slice_from(&grid[x_row], diff_left.x as usize, diff_left.width as usize);
     assert!(
-        left_half.contains('╌'),
-        "the left pane must show a filler row aligned with the right-only insertion: {left_half:?}"
+        left_half.trim().is_empty(),
+        "the left pane must show a blank filler row aligned with the right-only insertion: {left_half:?}"
     );
-    assert!(!left_half.contains('a'));
-    assert!(!left_half.contains('b'));
-    assert!(!left_half.contains('c'));
+}
+
+#[test]
+fn default_split_is_even() {
+    let app = app_with_diff("a\nb\nc", "a\nb\nc", 160);
+    let geo = rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, 160, HEIGHT), &app);
+    let diff_left = geo.diff_left.expect("diff pane visible at this width");
+    let right_width = geo.editor.width;
+    assert!(
+        diff_left.width.abs_diff(right_width) <= 1,
+        "left {} and right {right_width} must differ by at most 1 column",
+        diff_left.width
+    );
 }
 
 #[test]
@@ -625,6 +638,152 @@ fn a_left_pane_with_no_parsed_view_yet_blanks_instead_of_leaking_the_prior_frame
         !after.iter().any(|row| row.contains("leftmarker")),
         "an unparsed left pane must blank its rect, not leak the prior frame's text"
     );
+}
+
+fn send(app: &mut App, kind: MouseKind, col: u16, row: u16) {
+    let mut effects = Effects::default();
+    app::update(
+        app,
+        Msg::Mouse(MouseInput {
+            kind,
+            column: col,
+            row,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        }),
+        &mut effects,
+    );
+    app.sync_view();
+}
+
+fn geo(app: &App, width: u16) -> rune_tui::layout::Geometry {
+    rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, width, HEIGHT), app)
+}
+
+const WIDE: u16 = 160;
+
+#[test]
+fn dragging_the_diff_splitter_right_widens_the_left_pane() {
+    let mut app = app_with_diff("a\nb\nc", "a\nb\nc", WIDE);
+    let splitter = geo(&app, WIDE)
+        .diff_splitter
+        .expect("diff pane visible at this width");
+    let before = geo(&app, WIDE).diff_left.expect("diff pane visible");
+    let before_left_w = before.width;
+    let before_right_w = geo(&app, WIDE).editor.width;
+
+    send(
+        &mut app,
+        MouseKind::Down(MouseButton::Left),
+        splitter.x,
+        splitter.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Drag(MouseButton::Left),
+        splitter.x + 10,
+        splitter.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Up(MouseButton::Left),
+        splitter.x + 10,
+        splitter.y,
+    );
+
+    let after_left_w = geo(&app, WIDE).diff_left.expect("still shown").width;
+    let after_right_w = geo(&app, WIDE).editor.width;
+    assert_eq!(after_left_w, before_left_w + 10);
+    assert_eq!(after_right_w, before_right_w - 10);
+}
+
+#[test]
+fn dragging_the_diff_splitter_far_left_clamps_to_the_pane_floor() {
+    let mut app = app_with_diff("a\nb\nc", "a\nb\nc", WIDE_ENOUGH);
+    let splitter = geo(&app, WIDE_ENOUGH)
+        .diff_splitter
+        .expect("diff pane visible at this width");
+
+    send(
+        &mut app,
+        MouseKind::Down(MouseButton::Left),
+        splitter.x,
+        splitter.y,
+    );
+    send(&mut app, MouseKind::Drag(MouseButton::Left), 0, splitter.y);
+    send(&mut app, MouseKind::Up(MouseButton::Left), 0, splitter.y);
+
+    let after = geo(&app, WIDE_ENOUGH)
+        .diff_left
+        .expect("non-collapsible, still shown");
+    assert_eq!(after.width, rune_tui::layout::DIFF_MIN_PANE_W);
+}
+
+#[test]
+fn dragging_the_diff_splitter_then_folding_and_restoring_reapplies_without_panic() {
+    let mut app = app_with_diff("a\nb\nc", "a\nb\nc", WIDE_ENOUGH);
+    let splitter = geo(&app, WIDE_ENOUGH)
+        .diff_splitter
+        .expect("diff pane visible at this width");
+
+    send(
+        &mut app,
+        MouseKind::Down(MouseButton::Left),
+        splitter.x,
+        splitter.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Drag(MouseButton::Left),
+        splitter.x + 5,
+        splitter.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Up(MouseButton::Left),
+        splitter.x + 5,
+        splitter.y,
+    );
+    let dragged_w = geo(&app, WIDE_ENOUGH).diff_left.expect("still shown").width;
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Resize(TOO_NARROW, HEIGHT), &mut effects);
+    app.sync_view();
+    assert!(geo(&app, TOO_NARROW).diff_left.is_none(), "must fold");
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Resize(WIDE_ENOUGH, HEIGHT), &mut effects);
+    app.sync_view();
+    let restored_w = geo(&app, WIDE_ENOUGH)
+        .diff_left
+        .expect("widening back restores the side-by-side pane")
+        .width;
+    assert_eq!(restored_w, dragged_w);
+}
+
+#[test]
+fn a_drag_starting_outside_the_diff_band_still_selects_text() {
+    let mut app = app_with_diff("a\nb\nc", "a\nb\nc", WIDE_ENOUGH);
+    let editor = geo(&app, WIDE_ENOUGH).editor;
+
+    send(
+        &mut app,
+        MouseKind::Down(MouseButton::Left),
+        editor.x,
+        editor.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Drag(MouseButton::Left),
+        editor.x + 1,
+        editor.y,
+    );
+
+    assert!(matches!(
+        app.pointer.drag,
+        Some(rune_tui::pointer::Drag::Text { .. })
+    ));
 }
 
 fn row_strings(buf: &ratatui::buffer::Buffer, w: u16, h: u16) -> Vec<String> {

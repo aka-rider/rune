@@ -1,9 +1,10 @@
-//! Splitter drag gestures: hit-testing the two grab bands `layout::geometry`
-//! exposes (the left column's own border band, and the `Open` divider row
-//! already drawn between the Explorer and the tab rows) and moving the
-//! corresponding `Split` while a drag is latched. Every offset here is
-//! total — a pointer that has wandered off every rect, or a terminal too
-//! small to show either band, must clamp rather than panic or truncate.
+//! Splitter drag gestures: hit-testing the three grab bands `layout::geometry`
+//! exposes (the left column's own border band, the `Open` divider row
+//! already drawn between the Explorer and the tab rows, and the diff
+//! view's own pane divider) and moving the corresponding `Split` while a
+//! drag is latched. Every offset here is total — a pointer that has
+//! wandered off every rect, or a terminal too small to show any band, must
+//! clamp rather than panic or truncate.
 
 use ratatui::layout::Rect;
 
@@ -38,6 +39,17 @@ fn clamp_u16(v: i32) -> u16 {
 pub fn begin(app: &mut App, input: MouseInput) -> bool {
     let area = Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = layout::geometry(area, app);
+
+    if let (Some(left), Some(splitter)) = (geo.diff_left, geo.diff_splitter)
+        && contains(splitter, input.column, input.row)
+    {
+        let grab_delta = left.width as i32 - (input.column as i32 - left.x as i32 + 1);
+        app.pointer.drag = Some(Drag::Splitter {
+            which: Splitter::DiffPanes,
+            grab_delta,
+        });
+        return true;
+    }
 
     // Both grab bands only exist while the column itself is shown, but
     // `Geometry`'s type doesn't tie `left_block` to `tabs_divider`/
@@ -110,6 +122,13 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
             app.splits
                 .explorer
                 .request(clamp_u16(input.row as i32 - inner_top as i32 + grab_delta));
+        }
+        Splitter::DiffPanes => {
+            if let Some(left) = geo.diff_left {
+                app.splits.diff.request(clamp_u16(
+                    input.column as i32 - left.x as i32 + 1 + grab_delta,
+                ));
+            }
         }
     }
 

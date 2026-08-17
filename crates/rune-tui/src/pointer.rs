@@ -164,6 +164,7 @@ fn chebyshev(c1: u16, r1: u16, c2: u16, r2: u16) -> i32 {
 pub enum Splitter {
     LeftColumn,
     ExplorerTabs,
+    DiffPanes,
 }
 
 /// The in-flight drag. Text selection and splitter dragging are mutually
