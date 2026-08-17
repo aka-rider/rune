@@ -4,3 +4,4 @@ crates/.claude/
 .scratch/
 .DS_Store
 .claude/worktrees
+scripts/demo/.devbox/
