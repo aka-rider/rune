@@ -196,19 +196,6 @@ fn coalesce_touching_edits(infos: Vec<(Edit, CursorId)>) -> Vec<(Edit, CursorId)
     rune_core::undo::coalesce_touching_deletes(infos, CursorId::min)
 }
 
-/// The generic per-cursor rule every command except `edit_lines_move::
-/// move_line_up`/`down` uses: each surviving cursor lands at its own
-/// edit's `AppliedEdit::end` (`start + insert.len()`, already in POST-edit
-/// coordinates per `buffer.rs`'s own docs) — using it directly is simpler
-/// than re-deriving cursor positions via a separate shift-accumulation
-/// pass, and can never disagree with what `Buffer::apply_edits` actually
-/// did, since it comes from the same call. `pub(crate)` so both `edit`'s per-cursor
-/// commands and `edit_lines::per_line_edits` (indent/outdent/delete-line/
-/// clone-line, whose post-edit cursor also lands at each edit's own end —
-/// see that module's doc comment) share it rather than re-implementing
-/// the same rule twice.
-/// Returns whether the batch actually applied — see
-/// `apply_edit_batch_with_cursors`'s own doc comment (plan WP3.S2).
 pub(crate) fn commit_edit_batch(
     app: &mut App,
     id: DocumentId,

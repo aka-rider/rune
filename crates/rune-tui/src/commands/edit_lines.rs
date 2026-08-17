@@ -1,34 +1,15 @@
-//! Line-oriented editing commands (plan WP9.S6, a 500-line budget split out
-//! of `edit.rs`, which was 802 lines before WP9 added anything). Implements
-//! indent/outdent and delete-line commands (plan WP9.S2). Line duplication
-//! and reordering (clone-line-up/down, move-line-up/down) live in the
-//! sibling `edit_lines_move` module (this file was already over the
-//! 500-line budget); that module reaches back into this one for the shared
-//! `per_line_edits` driver.
-//!
-//! `per_line_edits` below (indent/outdent/delete-line/clone-line) shares
-//! `edit_core::commit_edit_batch`'s generic "each surviving cursor lands
-//! at its own edit's `AppliedEdit::end`" rule, since `AppliedEdit::end` is
-//! `start + insert.len()` in the same post-shift coordinates
-//! `Buffer::apply_edits` already produces. Only `move_line_up`/`down` is a
-//! genuine exception: they hand-place the single resulting cursor at a
-//! COLUMN within the moved line, not at the edit's end — so those two call
-//! `edit_core::apply_edit_batch_with_cursors` directly with that custom
-//! rule instead of going through `commit_edit_batch`.
-
 use std::collections::HashSet;
 
 use rune_core::buffer::{Buffer, Edit};
-use rune_core::cursor::CursorId;
+use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 
 use crate::app::App;
-use crate::commands::edit_core::commit_edit_batch;
+use crate::commands::edit_core::{apply_edit_batch_with_cursors, commit_edit_batch};
 use crate::document::DocumentId;
 
-/// `dedupe=true` (indent,
-/// outdent, delete-line) skips a line an earlier cursor in this same batch
-/// already produced an edit for — two cursors on one line must not
+/// `dedupe=true` (delete-line) skips a line an earlier cursor in this same
+/// batch already produced an edit for — two cursors on one line must not
 /// double-edit it. `dedupe=false` (clone-line-up/down, in the sibling
 /// `edit_lines_move` module) lets every cursor clone independently even
 /// when several cursors share a line.
@@ -62,9 +43,91 @@ pub(crate) fn per_line_edits(
     let _ = commit_edit_batch(app, id, infos, &cursors_before, EditKind::Other);
 }
 
-/// Indents the line under each cursor by one tab.
+fn selected_lines(c: &Cursor, buf: &Buffer) -> std::ops::RangeInclusive<usize> {
+    let first = buf.offset_to_line_col(c.selection_start()).line;
+    let mut last = buf.offset_to_line_col(c.selection_end()).line;
+    if last > first && buf.line_start(last) == Some(c.selection_end()) {
+        last -= 1;
+    }
+    first..=last
+}
+
+struct LineShift {
+    start: usize,
+    removed: usize,
+    inserted: usize,
+}
+
+fn shift_through(offset: usize, shifts: &[LineShift]) -> usize {
+    let mut out = offset;
+    for s in shifts {
+        if offset <= s.start {
+            break;
+        }
+        if offset < s.start.saturating_add(s.removed) {
+            out = out.saturating_sub(offset.saturating_sub(s.start));
+            break;
+        }
+        out = out.saturating_sub(s.removed).saturating_add(s.inserted);
+    }
+    out
+}
+
+fn per_selected_line_edits(
+    app: &mut App,
+    id: DocumentId,
+    build: impl Fn(usize, &Buffer) -> Option<Edit>,
+) {
+    let Some(doc) = app.doc(id) else { return };
+    let cursors_before = doc.cursors.clone();
+    let before = cursors_before.all().to_vec();
+
+    let mut infos: Vec<(Edit, CursorId)> = Vec::new();
+    let mut seen: HashSet<usize> = HashSet::new();
+    for c in &before {
+        let Some(doc) = app.doc(id) else { return };
+        for line in selected_lines(c, &doc.buffer) {
+            if !seen.insert(line) {
+                continue;
+            }
+            if let Some(edit) = build(line, &doc.buffer) {
+                infos.push((edit, c.id));
+            }
+        }
+    }
+
+    let mut shifts: Vec<LineShift> = infos
+        .iter()
+        .map(|(e, _)| LineShift {
+            start: e.start,
+            removed: e.end.saturating_sub(e.start),
+            inserted: e.insert.len(),
+        })
+        .collect();
+    shifts.sort_by_key(|s| s.start);
+
+    let _ = apply_edit_batch_with_cursors(
+        app,
+        id,
+        infos,
+        &cursors_before,
+        EditKind::Other,
+        move |_, _| {
+            before
+                .iter()
+                .map(|c| Cursor {
+                    position: shift_through(c.position, &shifts),
+                    anchor: shift_through(c.anchor, &shifts),
+                    desired_col: 0,
+                    id: c.id,
+                })
+                .collect()
+        },
+    );
+}
+
 pub fn indent(app: &mut App, id: DocumentId) {
-    per_line_edits(app, id, true, |line, buf| {
+    per_selected_line_edits(app, id, |line, buf| {
         let line_start = buf.line_start(line)?;
         Some(Edit {
             start: line_start,
@@ -74,10 +137,8 @@ pub fn indent(app: &mut App, id: DocumentId) {
     });
 }
 
-/// Outdents (Shift+Tab): removes up to one leading tab, or up to 4 leading
-/// spaces if the line starts with at least 4 of them.
 pub fn outdent(app: &mut App, id: DocumentId) {
-    per_line_edits(app, id, true, dedent_edit_for_line);
+    per_selected_line_edits(app, id, dedent_edit_for_line);
 }
 
 fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
@@ -159,7 +220,8 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
 mod tests {
     use super::*;
     use crate::commands::edit::undo;
-    use rune_core::cursor::CursorSet;
+    use crate::commands::test_support::selecting;
+    use rune_core::cursor::{CursorSet, CursorSpec};
     use rune_vfs::Mem;
     use std::sync::Arc;
 
@@ -177,6 +239,99 @@ mod tests {
         let id = app.active;
         indent(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
+    }
+
+    #[test]
+    fn tab_indents_every_line_the_selection_touches() {
+        let mut app = app_with("a\nb\nc", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 5);
+        indent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "\ta\n\tb\n\tc");
+    }
+
+    #[test]
+    fn a_selection_ending_at_column_zero_does_not_indent_that_line() {
+        let mut app = app_with("a\nb\nc", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 4);
+        indent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "\ta\n\tb\nc");
+    }
+
+    #[test]
+    fn the_selection_still_covers_the_same_lines_after_indent() {
+        let mut app = app_with("a\nb", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 3);
+        indent(&mut app, id);
+        let primary = app.doc(id).unwrap().cursors.primary();
+        assert_eq!((primary.anchor, primary.position), (0, 5));
+    }
+
+    #[test]
+    fn indent_keeps_the_caret_column_when_there_is_no_selection() {
+        let mut app = app_with("hello", 2);
+        let id = app.active;
+        indent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 3);
+    }
+
+    #[test]
+    fn outdent_dedents_every_selected_line() {
+        let mut app = app_with("\ta\n\tb", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 5);
+        outdent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb");
+    }
+
+    #[test]
+    fn outdent_puts_a_caret_inside_removed_indentation_at_the_line_start() {
+        let mut app = app_with("\thello", 1);
+        let id = app.active;
+        outdent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 0);
+    }
+
+    #[test]
+    fn outdent_over_a_selection_with_no_indentation_is_a_no_op() {
+        let mut app = app_with("a\nb", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 3);
+        outdent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+        let primary = app.doc(id).unwrap().cursors.primary();
+        assert_eq!((primary.anchor, primary.position), (0, 3));
+    }
+
+    #[test]
+    fn indenting_a_selection_is_one_undo_step() {
+        let mut app = app_with("a\nb\nc", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 5);
+        let steps_before = app.doc(id).unwrap().journal.len();
+        indent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().journal.len(), steps_before + 1);
+        undo(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb\nc");
+    }
+
+    #[test]
+    fn two_cursors_on_one_line_still_indent_it_once() {
+        let mut app = app_with("ab", 0);
+        let id = app.active;
+        let doc = app.doc_mut(id).unwrap();
+        doc.cursors = doc.cursors.clone().add(CursorSpec {
+            position: 2,
+            anchor: 2,
+            desired_col: 0,
+        });
+        indent(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "\tab");
     }
 
     #[test]

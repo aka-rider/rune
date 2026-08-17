@@ -2,10 +2,9 @@
 //! `edit_lines` module (that module was already over the 500-line
 //! budget). Implements clone-line-up/down and move-line-up/down commands
 //! (plan WP9.S2). `clone_line_up`/`clone_line_down` reuse `edit_lines`'s
-//! `per_line_edits` (via `pub(crate)`); `move_line_up`/`move_line_down` are
-//! the genuine exception noted there — they hand-place the resulting
-//! cursor at a column instead of the edit's end, so those two call
-//! `edit_core::apply_edit_batch_with_cursors` directly.
+//! `per_line_edits` (via `pub(crate)`); `move_line_up`/`move_line_down`
+//! hand-place the resulting cursor at a column instead of the edit's end,
+//! so those two call `edit_core::apply_edit_batch_with_cursors` directly.
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::Cursor;

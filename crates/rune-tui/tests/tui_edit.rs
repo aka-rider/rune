@@ -389,6 +389,23 @@ fn tab_indents_the_current_line_shift_tab_outdents_it() {
     assert_eq!(app.active_doc_mut().buffer.content(), "hello");
 }
 
+#[test]
+fn tab_indents_every_line_of_a_shift_selected_block_and_keeps_the_selection() {
+    let mut app = app_for("one\ntwo\nthree", 0);
+    press(&mut app, KeyCode::Down, SHIFT);
+    press(&mut app, KeyCode::Down, SHIFT);
+    press(&mut app, KeyCode::End, SHIFT);
+    press(&mut app, KeyCode::Tab, Mods::NONE);
+    assert_eq!(
+        app.active_doc_mut().buffer.content(),
+        "\tone\n\ttwo\n\tthree"
+    );
+    assert!(app.active_doc_mut().cursors.primary().has_selection());
+
+    press(&mut app, KeyCode::Tab, SHIFT);
+    assert_eq!(app.active_doc_mut().buffer.content(), "one\ntwo\nthree");
+}
+
 // ---- Undo/redo (WP7) ----
 
 #[test]
