@@ -404,6 +404,7 @@ mod tests {
                 cur: 0,
                 saved_display_name: Some("other-name".to_string()),
                 theirs_obs: ObsId::new(9).expect("nonzero"),
+                install_pos: 0,
             },
         };
         app.merge = other_state.clone();
