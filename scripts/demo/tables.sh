@@ -8,7 +8,8 @@ keys 1 Enter
 keys 1 -l '| Explorer | ready |'
 keys 1 Enter
 keys 1 Enter
-keys 2 Up
-keys 2 Up
-keys 2 Down
+keys 1 Down
+keys 1 Down
+keys 1 Down
+keys 3 Down
 keys 2 C-s

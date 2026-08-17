@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export TERM="${TERM:-xterm-256color}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT="${DEMO_OUT:-$HOME/artifacts/rune}"
@@ -123,6 +125,37 @@ wait_for_ready() {
   return 1
 }
 
+wait_for_input() {
+  local recorder_pid="$1" log="$2" attempt
+  for attempt in $(seq 1 50); do
+    recorder_alive_or_die "$recorder_pid" "$log"
+    if [ "$(tmux -L "$SOCKET" display-message -p '#{pane_in_mode}' 2>/dev/null)" = "1" ]; then
+      tmux -L "$SOCKET" send-keys -X cancel 2>/dev/null || true
+    fi
+    timeout 2 tmux -L "$SOCKET" send-keys -- Down 2>/dev/null || true
+    sleep 0.2
+    if capture_pane | grep -qF "Ln " && ! capture_pane | grep -qF "Ln 1,"; then
+      rewind_to_top
+      return 0
+    fi
+  done
+  echo "error: editor ignored input after $attempt attempts" >&2
+  return 1
+}
+
+rewind_to_top() {
+  local attempt
+  for attempt in $(seq 1 50); do
+    if capture_pane | grep -qF "Ln 1,"; then
+      return 0
+    fi
+    timeout 2 tmux -L "$SOCKET" send-keys -- Up 2>/dev/null || true
+    sleep 0.2
+  done
+  echo "error: caret did not return to line 1 after $attempt attempts" >&2
+  return 1
+}
+
 end_session() {
   tmux -L "$SOCKET" send-keys -- C-c 2>/dev/null || true
   local attempt text
@@ -176,7 +209,8 @@ record() {
   local cast="$OUT/$feature.cast"
   local rec_log="$OUT/$feature.rec.log"
   local rec_cmd
-  printf -v rec_cmd 'tmux -L %q new-session -x 100 -y 30 -- %q %q' \
+  printf -v rec_cmd 'tmux -f %q -L %q new-session -x 100 -y 30 -- %q %q' \
+    "$SCRIPT_DIR/tmux.conf" \
     "$SOCKET" "$BINARY" "$WORKSPACE/$ENTRY_FILE"
   asciinema rec --headless --overwrite --window-size 100x30 --idle-time-limit 2 \
     --command "$rec_cmd" "$cast" 2>"$rec_log" &
@@ -184,6 +218,7 @@ record() {
 
   wait_for_session "$recorder_pid" "$rec_log"
   wait_for_ready "$recorder_pid" "$rec_log"
+  wait_for_input "$recorder_pid" "$rec_log"
 
   # shellcheck source=/dev/null
   source "$feature_script"
