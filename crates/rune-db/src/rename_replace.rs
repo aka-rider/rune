@@ -70,8 +70,16 @@ pub(crate) fn rename_replace(
     }
 
     // 2. The atomic publish. Both files still exist afterwards,
-    //    with their contents swapped.
-    vfs.exchange(from, to).map_err(Error::Io)?;
+    //    with their contents swapped. `published_not_durable` means the
+    //    swap physically took effect but its durability could not be
+    //    confirmed — still a success, never a failure: the temp naming
+    //    `from` still holds the displaced bytes, and step 3 reads them
+    //    exactly as it would on a fully durable swap.
+    let durable = match vfs.exchange(from, to) {
+        Ok(()) => true,
+        Err(e) if rune_vfs::published_not_durable(&e) => false,
+        Err(e) => return Err(Error::Io(e)),
+    };
 
     // 3. The displaced bytes are now at `from`. Read them AFTER the swap.
     let displaced_bytes = vfs.read(from).map_err(|e| {
@@ -100,10 +108,14 @@ pub(crate) fn rename_replace(
 
     // 5. The only lossy step in the design, strictly after the transaction
     //    committed. A failure here is disk hygiene, not data safety: the
-    //    blob is already durable.
-    let _ = vfs.remove(from);
+    //    blob is already durable. Skipped when the swap's own durability is
+    //    unconfirmed — `from` may still be the sole holder of the displaced
+    //    bytes' physical copy, and must not be discarded.
+    if durable {
+        let _ = vfs.remove(from);
+    }
 
-    Ok(RenameOutcome::Replaced { displaced })
+    Ok(RenameOutcome::Replaced { displaced, durable })
 }
 
 #[cfg(test)]
@@ -199,7 +211,7 @@ mod tests {
         )
         .expect("rename_replace");
 
-        let RenameOutcome::Replaced { displaced } = out else {
+        let RenameOutcome::Replaced { displaced, .. } = out else {
             panic!("expected Replaced, got {out:?}");
         };
         assert_eq!(displaced.doc_id, f.ds.doc_id, "captured under OUR doc");
@@ -241,7 +253,7 @@ mod tests {
         )
         .expect("non-utf8 displaced bytes must not hard-error");
 
-        let RenameOutcome::Replaced { displaced } = out else {
+        let RenameOutcome::Replaced { displaced, .. } = out else {
             panic!("expected Replaced, got {out:?}");
         };
         let blob = retry::with_retry(&mut f.conn, |tx| {
@@ -355,6 +367,54 @@ mod tests {
         assert_eq!(f.vfs.read(Path::new("/b.md")).expect("b"), b"ours");
     }
 
+    /// A `published_not_durable` `exchange` failure — the swap physically
+    /// took effect but its durability could not be confirmed — must still
+    /// be reported as `Replaced`, not surfaced as an error: the displaced
+    /// bytes are captured into the blob store exactly as on a fully durable
+    /// swap, `durable` comes back `false`, and `from` (the swap's own
+    /// "temp", still holding the displaced bytes) is left on disk rather
+    /// than unlinked.
+    #[test]
+    fn rename_replace_reports_success_with_durable_false_on_an_unconfirmed_exchange() {
+        let mut f = fixture(b"ours");
+        publish(&f.vfs, Path::new("/b.md"), b"theirs");
+        let seen = f.vfs.stat(Path::new("/b.md")).expect("stat b");
+        f.vfs.fail_after(VfsOp::Exchange, io::ErrorKind::Other);
+
+        let out = rename_replace(
+            &mut f.conn,
+            &f.vfs,
+            f.ds,
+            Path::new("/a.md"),
+            Path::new("/b.md"),
+            seen,
+            SystemTime::now(),
+        )
+        .expect("an unconfirmed-durability publish must not fail the replace");
+
+        let RenameOutcome::Replaced { displaced, durable } = out else {
+            panic!("expected Replaced, got {out:?}");
+        };
+        assert!(
+            !durable,
+            "unconfirmed exchange durability must report false"
+        );
+
+        let blob = retry::with_retry(&mut f.conn, |tx| {
+            crate::blob::get_blob(tx, displaced.blob_hash.as_str())
+        })
+        .expect("displaced bytes durably stored despite unconfirmed exchange durability");
+        assert_eq!(blob, b"theirs");
+
+        assert_eq!(f.vfs.read(Path::new("/b.md")).expect("read to"), b"ours");
+        assert_eq!(
+            f.vfs.read(Path::new("/a.md")).expect("from kept"),
+            b"theirs",
+            "from must not be removed when the swap's own durability is unconfirmed"
+        );
+        assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");
+    }
+
     /// The final unlink is disk hygiene, not data safety: it runs after
     /// both commits, so its failure downgrades to a leftover file.
     #[test]
@@ -375,7 +435,7 @@ mod tests {
         )
         .expect("a failed unlink must not fail the replace");
 
-        let RenameOutcome::Replaced { displaced } = out else {
+        let RenameOutcome::Replaced { displaced, .. } = out else {
             panic!("expected Replaced, got {out:?}");
         };
         let blob = retry::with_retry(&mut f.conn, |tx| {

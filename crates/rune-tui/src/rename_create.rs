@@ -70,6 +70,9 @@ pub(crate) fn rename_cmd(
     Cmd::rename(move || {
         let result = match vfs.rename_excl(&from, &to) {
             Ok(()) => Ok(RenameOutcome::Renamed { to, durable: true }),
+            Err(e) if rune_vfs::published_not_durable(&e) => {
+                Ok(RenameOutcome::Renamed { to, durable: false })
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match vfs.stat(&to) {
                 Ok(seen) => Ok(RenameOutcome::Collided { seen }),
                 Err(e) => Err(e.to_string()),

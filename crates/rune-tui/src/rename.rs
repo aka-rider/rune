@@ -353,7 +353,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                 messages::warn(app, crate::materialize_ack::DURABILITY_UNCONFIRMED_WARNING);
             }
         }
-        Ok(RenameOutcome::Replaced { displaced }) => {
+        Ok(RenameOutcome::Replaced { displaced, durable }) => {
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
             let name = display_name(&to);
@@ -366,6 +366,9 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                 },
             );
             messages::info(app, text);
+            if !durable {
+                messages::warn(app, crate::materialize_ack::DURABILITY_UNCONFIRMED_WARNING);
+            }
         }
         Ok(RenameOutcome::Collided { seen }) => {
             // An empty `from` means this was a draft CREATE, not a rename:
