@@ -11,5 +11,7 @@
 mod align;
 mod hunks;
 
-pub use align::{AlignmentMap, IntralineSpans, LineSpans, Region, RegionKind, align, intraline};
+pub use align::{
+    AlignmentMap, IntralineSpans, LineSpans, Region, RegionKind, align, intraline, line_starts,
+};
 pub use hunks::{Hunk, merge_hunks, merge_hunks_no_ancestor};

@@ -1,0 +1,11 @@
+content 
+paste line1\r\nline2
+key pageup ----
+key end ----
+type hello world
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:y s--u
+key char:m --c-

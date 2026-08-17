@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use rune_merge::{RegionKind, align, intraline};
+use rune_merge::{RegionKind, align, intraline, line_starts};
 
 #[test]
 fn identical_inputs_are_one_same_region() {
@@ -99,6 +99,25 @@ fn elapsed_deadline_degrades_to_whole_line_emphasis() {
     assert_eq!(spans.right.len(), 1);
     let right_covered: usize = spans.right[0].ranges.iter().map(|r| r.end - r.start).sum();
     assert_eq!(right_covered, right.len());
+}
+
+#[test]
+fn line_starts_treats_a_lone_cr_as_its_own_line_boundary() {
+    let text = "a\rb\r\nc\nd";
+    assert_eq!(line_starts(text), vec![0, 2, 5, 7]);
+}
+
+#[test]
+fn line_starts_agrees_with_similar_s_own_line_count_across_a_lone_cr() {
+    let left = "line1\rline2\nline3\n";
+    let right = "line1\rCHANGED\nline3\n";
+    let map = align(left, right);
+    let left_lines = line_starts(left).len();
+    let right_lines = line_starts(right).len();
+    for region in &map.regions {
+        assert!(region.left_lines.end <= left_lines);
+        assert!(region.right_lines.end <= right_lines);
+    }
 }
 
 #[test]

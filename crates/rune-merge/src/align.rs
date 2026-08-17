@@ -23,6 +23,30 @@ pub struct AlignmentMap {
     pub regions: Vec<Region>,
 }
 
+pub fn line_starts(text: &str) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut start = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((idx, c)) = chars.next() {
+        if c == '\r' {
+            starts.push(start);
+            if chars.peek().is_some_and(|&(_, next)| next == '\n') {
+                chars.next();
+                start = idx + 2;
+            } else {
+                start = idx + 1;
+            }
+        } else if c == '\n' {
+            starts.push(start);
+            start = idx + 1;
+        }
+    }
+    if start < text.len() {
+        starts.push(start);
+    }
+    starts
+}
+
 pub fn align(left: &str, right: &str) -> AlignmentMap {
     let diff = TextDiff::from_lines(left, right);
     let regions = diff

@@ -483,7 +483,8 @@ fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
 }
 
 /// `DivergeDisk`, `DeliverDbAll` (the probe ack), `^M`, `DeliverDbAll` (the
-/// `MergePrep` ack), then exactly ONE of `MERGE_RESOLVE_KEYS`, then a
+/// `MergePrep` ack), then exactly ONE of `MERGE_RESOLVE_KEYS`
+/// (`DiffCommand::TakeTheirs`/`TakeOurs`), then a
 /// second `^M`: this sequence is what
 /// actually carries a session from `Inactive` all the way to `MergeState::
 /// Active` and back out again — `DivergeDisk` reclassifies the seeded
@@ -497,14 +498,13 @@ fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
 /// `MergePrep` op in the oldest-first queue — a single `DeliverDb` at
 /// either checkpoint isn't guaranteed to be THIS sequence's own ack.
 ///
-/// Exactly ONE resolve key, not 1-3: this generator's own seed content is
+/// Exactly ONE verb key, not both: this generator's own seed content is
 /// small enough that a diverged session typically produces a SINGLE
-/// conflict block, and `merge::resolve::nav`'s own docs ("both directions
-/// land back on it" with one block left) mean a SECOND `[`/`]` press in
-/// that shape is a genuine, informationless repeat — same cursor, same
-/// scroll, same status, correctly caught by `MERGE-KEY-FEEDBACK` as "no
-/// observable trace" even though nothing is actually wrong. One resolve
-/// key still exercises the whole alphabet (`[`/`]`/`o`/`t`/`b`) across
+/// conflict, and both `TakeTheirs` and `TakeOurs` resolve it on their own
+/// (`merge::verbs::take_theirs`/`take_ours`), so a second press in that
+/// shape either repeats the same resolution or toggles a flag-only state —
+/// still an observable trace either way, correctly distinguished by
+/// `MERGE-KEY-FEEDBACK`. One verb key still exercises both chords across
 /// proptest's own sampling, without staking this cluster's `Active`-
 /// reachability guarantee on a specific hunk shape.
 ///

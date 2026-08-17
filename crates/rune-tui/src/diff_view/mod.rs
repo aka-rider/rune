@@ -79,12 +79,7 @@ fn append_global_ranges(
     base: usize,
     lines: &[rune_merge::LineSpans],
 ) {
-    let mut line_starts = Vec::new();
-    let mut offset = 0usize;
-    for segment in text.split_inclusive('\n') {
-        line_starts.push(offset);
-        offset += segment.len();
-    }
+    let line_starts = rune_merge::line_starts(text);
     for span in lines {
         let Some(&line_start) = line_starts.get(span.line) else {
             assert_invariant!(false, || {
