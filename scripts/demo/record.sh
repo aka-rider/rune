@@ -157,27 +157,15 @@ rewind_to_top() {
 }
 
 end_session() {
-  tmux -L "$SOCKET" send-keys -- C-c 2>/dev/null || true
-  local attempt text
+  local recorder_pid="$1"
+  kill -TERM "$recorder_pid" 2>/dev/null || true
+  local attempt
   for attempt in $(seq 1 25); do
-    text="$(capture_pane)"
-    if grep -qF "press again to quit" <<<"$text"; then
-      tmux -L "$SOCKET" send-keys -- C-c 2>/dev/null || true
-      break
-    fi
-    if grep -qF "unsaved changes in" <<<"$text"; then
-      tmux -L "$SOCKET" send-keys -- d 2>/dev/null || true
+    if ! kill -0 "$recorder_pid" 2>/dev/null; then
       break
     fi
     sleep 0.2
   done
-  for attempt in $(seq 1 25); do
-    if ! tmux -L "$SOCKET" has-session 2>/dev/null; then
-      return 0
-    fi
-    sleep 0.2
-  done
-  echo "session still alive after $attempt polls, killing server" >&2
   tmux -L "$SOCKET" kill-server 2>/dev/null || true
 }
 
@@ -223,8 +211,8 @@ record() {
   # shellcheck source=/dev/null
   source "$feature_script"
 
-  end_session
-  wait "$recorder_pid"
+  end_session "$recorder_pid"
+  wait "$recorder_pid" || true
 
   "$ASG" "$cast" "$OUT/$feature.svg" --window --fps 15
   agg "$cast" "$OUT/$feature.gif"
