@@ -30,12 +30,6 @@ pub fn toggle(app: &mut App) {
     if focus::target(app) != FocusTarget::Editor {
         return;
     }
-    // Review fix F9: while the merge resolver is `Active` ON the active
-    // document, a `Reading` document makes `[O]urs`/`[T]heirs` fail
-    // confusingly (`merge/keys.rs::intercept` still swallows the chords,
-    // but the working form can no longer be edited to reflect them) — the
-    // same "finish the merge first" refusal shape as the ⌘S gate
-    // (`merge::refuses_save`).
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
         messages::warn(app, "finish or close the merge first");
         return;
@@ -94,9 +88,6 @@ mod tests {
         );
     }
 
-    /// Review fix F9: `^P` while the merge resolver is `Active` ON the
-    /// active document must refuse — a `Reading` document would leave
-    /// `[O]urs`/`[T]heirs` unable to touch the working form.
     #[test]
     fn toggle_refuses_while_the_merge_resolver_is_active_on_the_active_document() {
         let mut app = app();

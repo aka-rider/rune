@@ -146,10 +146,9 @@ pub(crate) fn trigger_save(
     // Structural, not per-call-site: EVERY save entry point (⌘S, the
     // DirtyClose/DirtyQuit guards' [S], the quit fan-out, DiskConflict's
     // [S]ave anyway) funnels through this ladder, so an active resolver
-    // with unresolved blocks can never publish a half-resolved
-    // conflict-marker working form over the user's file no matter which
-    // chord asked for the save. `refuses_save` posts its own count-carrying
-    // status.
+    // with unresolved blocks can never publish a half-resolved working
+    // form over the user's file no matter which chord asked for the save.
+    // `refuses_save` posts its own count-carrying status.
     if crate::merge::refuses_save(app, id) {
         return SaveStart::Refused;
     }

@@ -12,7 +12,7 @@ use rune_fuzz::Session;
 use rune_tui::document::DocumentId;
 use rune_tui::merge::MergeState;
 
-use merge_common::{ch, ctrl, external_write, reprobe, untitled_draft};
+use merge_common::{ch, ctrl, external_write, reprobe, sup, untitled_draft};
 
 fn open_hello() -> (Session, DocumentId, DocumentId) {
     let session = Session::open("/doc.md", "hello");
@@ -89,7 +89,7 @@ fn merge_on_a_diverged_document_installs_the_merged_result_as_one_journal_step()
         "merge entry must push exactly one new journal step"
     );
 
-    rune_tui::commands::edit::undo(session.app_mut(), doc_id);
+    assert!(session.key(sup('z')).is_none());
     assert_eq!(
         session.app().doc(doc_id).unwrap().buffer.content(),
         pre_merge_bytes,
