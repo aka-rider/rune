@@ -128,6 +128,36 @@ fn end_to_end_cmd_route_rename() {
     );
 }
 
+/// A rename whose publish took effect but whose durability confirmation
+/// failed is still a success — the file moves and the tab/title update —
+/// and the unconfirmed durability is WARNED about, never swallowed.
+#[test]
+fn a_durability_unconfirmed_rename_succeeds_and_warns() {
+    let (mut session, mem) = unbound_session();
+
+    commit_name(&mut session, "b");
+    mem.fail_after(rune_vfs::OpKind::RenameExcl, std::io::ErrorKind::Other);
+    assert!(session.deliver().is_none());
+
+    assert_eq!(session.app().rename, RenameState::Idle);
+    assert_eq!(
+        rename_common::active_path(session.app()).as_deref(),
+        Some(Path::new("/root/b.md")),
+        "the rename must still land despite unconfirmed durability"
+    );
+    assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"a content");
+    assert!(
+        mem.read(Path::new(DOC_PATH)).is_err(),
+        "the old name must be gone"
+    );
+    assert!(
+        rune_tui::messages::newest_text(session.app())
+            .is_some_and(|m| m.contains("durability unconfirmed")),
+        "the unconfirmed durability must be warned about, got {:?}",
+        rune_tui::messages::newest_text(session.app())
+    );
+}
+
 /// A `rename_excl` I/O failure posts an error message, leaves `file_path`
 /// alone, and returns the machine to `Idle`.
 #[test]

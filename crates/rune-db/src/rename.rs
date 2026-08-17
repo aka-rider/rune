@@ -83,7 +83,12 @@ pub enum RenameOutcome {
     /// The replace committed. `displaced` is the observation of the bytes
     /// that used to live at the destination, already durably captured as a
     /// blob — `displaced.blob_hash` retrieves them via `get_blob`.
-    Replaced { displaced: Observation },
+    /// `durable: false` means the swap took effect but its durability
+    /// confirmation failed — still a success, surfaced as a warning.
+    Replaced {
+        displaced: Observation,
+        durable: bool,
+    },
     /// The destination no longer matches the `seen` the user consented to,
     /// so the replace was abandoned before touching anything. `fresh` is
     /// what the destination looks like now.

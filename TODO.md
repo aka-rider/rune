@@ -34,12 +34,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: re-anchor this session's own journal to the new disk content before returning it — a bridge edit (or a fresh anchor snapshot) the way `load_anchor::anchor_first_load` does for the cross-session case — never swap the returned string alone.
 - **Done when**: a same-session reopen after an external rewrite reflects the new disk content AND this session's own journal reconstruction agrees with it (the assertion `dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees` pins for the cross-session case has a same-session equivalent that passes).
 
-### `published_not_durable` honored at only 1 of 4 publish sites
-- **Where**: contract at `crates/rune-vfs/src/lib.rs:88`; honored at `crates/rune-tui/src/save/materialize.rs:294`; ignored at `crates/rune-db/src/rename_replace.rs:72`, `crates/rune-db/src/rename_bind.rs:35-40`, `crates/rune-tui/src/rename_create.rs:158`
-- **Wrong**: the predicate means the swap/rename already took effect and callers must never remove the temp (sole surviving copy of displaced bytes). Three call sites propagate the raw `io::Error` (or a stringified generic arm) without checking it, so a physically-successful rename can be reported as failed while UI/DB state disagrees with disk.
-- **Instead**: every publish site branches on `published_not_durable` before deciding what to do with the temp, same as `materialize.rs`.
-- **Done when**: all four sites branch on the predicate identically.
-
 ## Architecture
 
 ### TABLE-ROW-WIDTH lives twice, at two genuinely different layers

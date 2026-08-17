@@ -34,18 +34,20 @@ pub(crate) fn rename_bind(
     to: &Path,
     now: SystemTime,
 ) -> Result<RenameOutcome, Error> {
-    if let Err(e) = vfs.rename_excl(from, to) {
-        if e.kind() == io::ErrorKind::AlreadyExists {
+    let durable = match vfs.rename_excl(from, to) {
+        Ok(()) => true,
+        Err(e) if rune_vfs::published_not_durable(&e) => false,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             let seen = vfs.stat(to).map_err(Error::Io)?;
             return Ok(RenameOutcome::Collided { seen });
         }
-        return Err(Error::Io(e));
-    }
+        Err(e) => return Err(Error::Io(e)),
+    };
 
     rebind(conn, vfs, ds, to, now)?;
     Ok(RenameOutcome::Renamed {
         to: to.to_path_buf(),
-        durable: true,
+        durable,
     })
 }
 
@@ -194,6 +196,38 @@ mod tests {
         assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"theirs");
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/a.md");
         assert_eq!(obs_count(&f.conn), obs_before);
+    }
+
+    /// A `published_not_durable` `rename_excl` failure — the move physically
+    /// took effect but its durability could not be confirmed — must still
+    /// be reported as `Renamed`, not surfaced as an error: the row is
+    /// rebound exactly as on a fully durable rename, and `durable` comes
+    /// back `false`.
+    #[test]
+    fn rename_bind_reports_success_with_durable_false_on_an_unconfirmed_rename() {
+        let mut f = fixture(b"hello");
+        f.vfs.fail_after(VfsOp::RenameExcl, io::ErrorKind::Other);
+
+        let out = rename_bind(
+            &mut f.conn,
+            &f.vfs,
+            f.ds,
+            Path::new("/a.md"),
+            Path::new("/b.md"),
+            SystemTime::now(),
+        )
+        .expect("an unconfirmed-durability publish must not fail the rename");
+
+        assert_eq!(
+            out,
+            RenameOutcome::Renamed {
+                to: PathBuf::from("/b.md"),
+                durable: false,
+            }
+        );
+        assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"hello");
+        assert!(gone(&f.vfs, Path::new("/a.md")), "from must be gone");
+        assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");
     }
 
     /// A genuine `rename_excl` failure surfaces as an error with both paths
