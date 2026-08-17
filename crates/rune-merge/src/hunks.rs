@@ -38,9 +38,47 @@ pub enum Hunk {
 /// anchoring failure widens only the affected conflict rather than losing
 /// data or discarding localization elsewhere in the file.
 pub fn merge_hunks(ancestor: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
-    match MergeOptions::new().merge_bytes(ancestor, ours, theirs) {
+    let marker_len = conflict_marker_length(ancestor, ours, theirs);
+    let mut opts = MergeOptions::new();
+    opts.set_conflict_marker_length(marker_len);
+    match opts.merge_bytes(ancestor, ours, theirs) {
         Ok(merged) => vec![classify_clean(ours, theirs, &merged)],
-        Err(conflict_bytes) => parse_hunks(ours, theirs, &conflict_bytes),
+        Err(conflict_bytes) => parse_hunks(ours, theirs, &conflict_bytes, marker_len),
+    }
+}
+
+const DEFAULT_CONFLICT_MARKER_LENGTH: usize = 7;
+
+/// A conflict marker line collides with a document line that happens to
+/// start with a run of the same repeated character diffy uses for markers
+/// (`<`, `|`, `=`, `>`). Widening diffy's marker length past the longest
+/// such run in any of the three inputs makes every marker diffy emits
+/// longer than anything the document itself could produce, so line-prefix
+/// matching against the rendered diff3 output can no longer confuse the
+/// two.
+fn conflict_marker_length(ancestor: &[u8], ours: &[u8], theirs: &[u8]) -> usize {
+    let longest = [ancestor, ours, theirs]
+        .into_iter()
+        .map(longest_marker_like_run)
+        .max()
+        .unwrap_or(0);
+    (longest + 1).max(DEFAULT_CONFLICT_MARKER_LENGTH)
+}
+
+fn longest_marker_like_run(bytes: &[u8]) -> usize {
+    bytes
+        .split(|&b| b == b'\n')
+        .map(leading_repeated_run_len)
+        .max()
+        .unwrap_or(0)
+}
+
+fn leading_repeated_run_len(line: &[u8]) -> usize {
+    match line.first() {
+        Some(&marker) if matches!(marker, b'<' | b'|' | b'=' | b'>') => {
+            line.iter().take_while(|&&b| b == marker).count()
+        }
+        _ => 0,
     }
 }
 
@@ -91,20 +129,26 @@ fn trim_end_crlf(line: &[u8]) -> &[u8] {
         .unwrap_or(line)
 }
 
-fn is_ours_marker(line: &[u8]) -> bool {
-    line.starts_with(b"<<<<<<<")
+fn starts_with_repeated(line: &[u8], marker: u8, marker_len: usize) -> bool {
+    line.get(..marker_len)
+        .is_some_and(|run| run.iter().all(|&b| b == marker))
 }
 
-fn is_ancestor_marker(line: &[u8]) -> bool {
-    line.starts_with(b"|||||||")
+fn is_ours_marker(line: &[u8], marker_len: usize) -> bool {
+    starts_with_repeated(line, b'<', marker_len)
 }
 
-fn is_sep_marker(line: &[u8]) -> bool {
-    trim_end_crlf(line) == b"======="
+fn is_ancestor_marker(line: &[u8], marker_len: usize) -> bool {
+    starts_with_repeated(line, b'|', marker_len)
 }
 
-fn is_theirs_marker(line: &[u8]) -> bool {
-    line.starts_with(b">>>>>>>")
+fn is_sep_marker(line: &[u8], marker_len: usize) -> bool {
+    let trimmed = trim_end_crlf(line);
+    trimmed.len() == marker_len && trimmed.iter().all(|&b| b == b'=')
+}
+
+fn is_theirs_marker(line: &[u8], marker_len: usize) -> bool {
+    starts_with_repeated(line, b'>', marker_len)
 }
 
 /// The result of splitting diffy's diff3 output into alternating clean
@@ -117,7 +161,7 @@ struct Diff3Parse {
     trailing_clean: Vec<u8>,
 }
 
-fn parse_diff3(output: &[u8]) -> Diff3Parse {
+fn parse_diff3(output: &[u8], marker_len: usize) -> Diff3Parse {
     let mut conflicts = Vec::new();
     let mut current_clean = Vec::new();
     let mut remaining = output;
@@ -126,7 +170,7 @@ fn parse_diff3(output: &[u8]) -> Diff3Parse {
         let (line, rest) = next_line(remaining);
         remaining = rest;
 
-        if !is_ours_marker(line) {
+        if !is_ours_marker(line, marker_len) {
             current_clean.extend_from_slice(line);
             continue;
         }
@@ -138,15 +182,15 @@ fn parse_diff3(output: &[u8]) -> Diff3Parse {
         while !remaining.is_empty() {
             let (cline, crest) = next_line(remaining);
             remaining = crest;
-            if is_ancestor_marker(cline) {
+            if is_ancestor_marker(cline, marker_len) {
                 section = Section::Ancestor;
                 continue;
             }
-            if is_sep_marker(cline) {
+            if is_sep_marker(cline, marker_len) {
                 section = Section::Theirs;
                 continue;
             }
-            if is_theirs_marker(cline) {
+            if is_theirs_marker(cline, marker_len) {
                 break;
             }
             match section {
@@ -263,8 +307,8 @@ fn find_resync(
 /// individually localized becomes one conflict spanning exactly that run,
 /// leaving every other boundary in the file untouched. If nothing further
 /// ever anchors, the widened conflict runs to the end of both inputs.
-fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
-    let parsed = parse_diff3(diff3_output);
+fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8], marker_len: usize) -> Vec<Hunk> {
+    let parsed = parse_diff3(diff3_output, marker_len);
 
     if parsed.conflicts.is_empty() {
         return vec![Hunk::Conflict {
@@ -502,6 +546,44 @@ mod tests {
     }
 
     #[test]
+    fn marker_shaped_document_content_segments_correctly() {
+        let marker_block = "<<<<<<<\n|||||||\n=======\n>>>>>>>\n";
+        let ancestor = format!("{marker_block}before\nshared\nafter\n");
+        let ours = format!("{marker_block}before\nours-change\nafter\n");
+        let theirs = format!("{marker_block}before\ntheirs-change\nafter\n");
+
+        let hunks = merge_hunks(ancestor.as_bytes(), ours.as_bytes(), theirs.as_bytes());
+
+        assert_eq!(
+            hunks,
+            vec![
+                Hunk::Clean(format!("{marker_block}before\n").into_bytes()),
+                Hunk::Conflict {
+                    ours: b"ours-change\n".to_vec(),
+                    theirs: b"theirs-change\n".to_vec(),
+                },
+                Hunk::Clean(b"after\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn conflict_marker_length_picks_max_run_across_all_inputs() {
+        let ancestor = b"|||||||||\nrest\n";
+        let ours = b"hello\n";
+        let theirs = b"<<<<<<<<\nworld\n";
+        assert_eq!(conflict_marker_length(ancestor, ours, theirs), 10);
+    }
+
+    #[test]
+    fn conflict_marker_length_defaults_to_seven_without_marker_like_content() {
+        let ancestor = b"hello\n";
+        let ours = b"world\n";
+        let theirs = b"there\n";
+        assert_eq!(conflict_marker_length(ancestor, ours, theirs), 7);
+    }
+
+    #[test]
     fn crlf_preserved_in_ours() {
         let ancestor = b"line1\r\nancestor\r\nline3\r\n";
         let ours = b"line1\r\nours-changed\r\nline3\r\n";
@@ -645,7 +727,7 @@ mod tests {
     #[test]
     fn parse_diff3_no_conflict_markers() {
         let output = b"line1\nline2\n";
-        let parsed = parse_diff3(output);
+        let parsed = parse_diff3(output, 7);
         assert_eq!(parsed.conflicts.len(), 0);
         assert_eq!(parsed.trailing_clean, output);
     }
@@ -675,7 +757,7 @@ mod tests {
     fn parse_diff3_conflict_sections() {
         let output =
             b"<<<<<<< ours\nours-line\n||||||| ancestor\nanc-line\n=======\ntheirs-line\n>>>>>>> theirs\n";
-        let parsed = parse_diff3(output);
+        let parsed = parse_diff3(output, 7);
         assert_eq!(parsed.conflicts.len(), 1);
         let (clean_before, block) = &parsed.conflicts[0];
         assert_eq!(block.ours, b"ours-line\n");
@@ -703,7 +785,7 @@ shared\n\
 <<<<<<< ours\nCCCC\n||||||| ancestor\nanc2\n=======\nYYYY\n>>>>>>> theirs\n\
 DDDD\n";
 
-        let hunks = parse_hunks(ours, theirs, diff3_output);
+        let hunks = parse_hunks(ours, theirs, diff3_output, 7);
 
         assert_eq!(
             hunks,

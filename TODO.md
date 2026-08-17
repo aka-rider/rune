@@ -9,12 +9,11 @@ entry is deleted in the same commit that fixes it.
 
 ## Data-safety
 
-### rune-merge scrapes diffy's rendered conflict markers
-- **Where**: `crates/rune-merge/src/hunks.rs:41` (`merge_bytes` call), `crates/rune-merge/src/hunks.rs:111-192` (`parse_diff3`, `find_subslice`, `anchor_section`)
-- **Wrong**: `parse_diff3` re-parses diffy's rendered `<<<<<<<`/`=======`/`>>>>>>>` output by line-prefix matching, and `anchor_section` re-anchors each section by first-occurrence substring search. A document already containing marker-shaped lines can mis-segment (bytes reassigned across Clean/Conflict hunks) or mis-anchor on repeated lines — both silent, on a data-destructive path.
-- **Instead**: get structured hunks instead of parsing display form; at minimum scan inputs for the longest marker run and call `set_conflict_marker_length` so collision is unrepresentable, and anchor by consumed-byte accounting, not content search.
-- **Done when**: conflict segmentation no longer depends on parsing diffy's rendered text, or marker-length collision is provably unrepresentable and anchoring is position-accounted.
-- **Update 2026-08-07 (WP-D)**: a real anchor failure (diffy's diff3 marker text newline-terminates a section's final line even when the source input has no trailing newline there) was root-caused and fixed with a bounded trailing-newline retry, and a failed anchor now widens only its own run of conflicts instead of collapsing the whole file (see `parse_hunks`). The repeated-marker-line collision risk this entry originally raised is untouched by that fix and remains open.
+### rune-merge re-anchors conflict sections by content search, not position accounting
+- **Where**: `crates/rune-merge/src/hunks.rs` (`anchor_section`, `find_subslice`)
+- **Wrong**: `anchor_section` re-anchors each diff3 section by first-occurrence substring search in `ours`/`theirs`; a section whose bytes repeat earlier in the input can anchor at the wrong occurrence — silent, on a data-destructive path. (The marker-collision half of this entry is fixed: marker length is now scanned from the inputs and always exceeds any marker-shaped document line, so segmentation collision is unrepresentable; a failed anchor already widens only its own conflict run.)
+- **Instead**: anchor by consumed-byte accounting, or obtain structured hunks without parsing rendered text.
+- **Done when**: anchoring is position-accounted rather than content-searched.
 
 ### A malformed backtick run before a link corrupts its own close delimiter
 - **Where**: `crates/rune-md/src/parse/inline.rs`'s `trailing_backtick_run` (the `InlineKind::Code` arm's close-delimiter finder); surfaced through `crates/rune-md/src/emit/mod.rs`'s `claim_visible` (the "visible claim overlaps N already-claimed byte(s)" assert) and pinned as a `cargo test -p rune-md --test conceal_roundtrip_proptest` proptest minimal case: `content = "plain text\n  leading indent\na\r```\na\r```\n[](url)"`.
