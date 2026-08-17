@@ -171,7 +171,7 @@ end_session() {
 
 trim_cast_tail() {
   local cast="$1"
-  awk '/\[terminated\]|\[exited\]/ { exit } { print }' "$cast" >"$cast.trimmed"
+  awk 'index($0, "[?1049l") || /\[terminated\]|\[exited\]/ { exit } { print }' "$cast" >"$cast.trimmed"
   mv "$cast.trimmed" "$cast"
 }
 
