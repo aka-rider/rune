@@ -10,10 +10,11 @@ use crate::Error;
 #[cfg(test)]
 use crate::ids::Seq;
 use crate::ids::{BlobHash, DocId, ObsId, SessionId};
+use crate::obs_origin::ObsOrigin;
 use crate::observation;
 
 #[cfg(test)]
-use crate::{confirmation::Confirmation, obs_origin::ObsOrigin};
+use crate::confirmation::Confirmation;
 
 /// A comparable fact for the Sync/Probe three-way comparison: a content
 /// hash, optionally correlated to the [`crate::observation::Observation`]
@@ -106,25 +107,26 @@ pub fn classify_sync(
 /// showed them is still a change: an external revert to bytes rune once
 /// published hides itself exactly like any other external rewrite, and the
 /// hash coincidence must not make it invisible.
-fn theirs_is_our_newest_publish(
+fn theirs_is_this_sessions_newest_publish(
     tx: &Transaction<'_>,
+    session_id: SessionId,
     doc_id: DocId,
     theirs: Option<&Version>,
 ) -> Result<bool, Error> {
     let Some(theirs) = theirs else {
         return Ok(false);
     };
-    let newest_publish: Option<String> = tx
+    let newest_publish: Option<(String, SessionId)> = tx
         .query_row(
-            &format!(
-                "SELECT blob_hash FROM observations WHERE doc_id=?1 AND origin='{}' ORDER BY id DESC LIMIT 1",
-                crate::obs_origin::ObsOrigin::Save.as_str()
-            ),
-            params![doc_id],
-            |r| r.get(0),
+            "SELECT blob_hash, session_id FROM observations WHERE doc_id=?1 AND origin=?2 ORDER BY id DESC LIMIT 1",
+            params![doc_id, ObsOrigin::Save],
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    Ok(newest_publish.as_deref() == Some(theirs.hash.as_str()))
+    Ok(matches!(
+        newest_publish,
+        Some((hash, publisher)) if hash == theirs.hash.as_str() && publisher == session_id
+    ))
 }
 
 fn buffer_unwound_past(
@@ -186,7 +188,9 @@ pub fn sync_with_theirs(
         kind = SyncKind::Diverged;
     }
 
-    if kind.is_disk_divergent() && theirs_is_our_newest_publish(tx, doc_id, theirs.as_ref())? {
+    if kind.is_disk_divergent()
+        && theirs_is_this_sessions_newest_publish(tx, session_id, doc_id, theirs.as_ref())?
+    {
         kind = SyncKind::BufferAhead;
     }
 
@@ -353,12 +357,8 @@ mod tests {
         sync(tx, session_id, doc_id).expect("sync").kind
     }
 
-    /// A user cannot conflict with their own changes: bytes ANOTHER rune
-    /// session published are still rune's own hand, so rediscovering them on
-    /// disk while this session has unsaved edits is an ordinary unsaved
-    /// edit — never an invitation to merge against our own content.
     #[test]
-    fn a_fresh_sighting_of_another_sessions_save_is_buffer_ahead() {
+    fn anothers_sessions_newest_save_is_a_real_divergence() {
         let mut conn = open();
         let publisher =
             crate::session::establish_session(&conn, SystemTime::now()).expect("publisher session");
@@ -378,10 +378,31 @@ mod tests {
         );
         external_write(&tx, session_id, doc_id, "base-theirs", "rediscovery");
 
+        let kind = verdict(&tx, session_id, doc_id);
+        assert!(
+            kind.is_disk_divergent(),
+            "another session's save is a real divergence, not an authorization to overwrite, got {kind:?}"
+        );
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    fn our_own_sessions_newest_save_is_buffer_ahead() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("this session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        open_document(&tx, session_id, doc_id, "base");
+        type_text(&tx, session_id, doc_id, "-mine");
+        publish_save(&tx, session_id, doc_id, "base-theirs", "our own save");
+        external_write(&tx, session_id, doc_id, "base-theirs", "rediscovery");
+
         assert_eq!(
             verdict(&tx, session_id, doc_id),
             SyncKind::BufferAhead,
-            "bytes any rune session published are ours to overwrite"
+            "bytes THIS session published are ours to overwrite"
         );
         tx.commit().expect("commit");
     }

@@ -323,6 +323,97 @@ pub(crate) fn reload_diverged() {
     std::process::exit(0);
 }
 
+pub(crate) fn save_and_die() {
+    use rune_vfs::{Etag, PutCondition, PutOutcome, Vfs};
+
+    let path = db_path();
+    let doc_path = PathBuf::from(env_var("RUNE_DB_DOC_PATH"));
+    let doc_id_marker = PathBuf::from(env_var("RUNE_DB_DOC_ID_MARKER"));
+    let insert = env_var("RUNE_DB_INSERT");
+
+    let (tx, rx) = mpsc::channel::<DbEvent>();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    let store = open_store(&path, on_event);
+
+    let id = store.load(&doc_path).expect("enqueue load");
+    let load_result = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::Load(result),
+        }) if got == id => *result,
+        other => panic!("expected load ack, got {other:?}"),
+    };
+    let doc_id = load_result.doc_id;
+    let expect = load_result
+        .saved_obs
+        .expect("a fresh load must adopt a save-CAS baseline");
+
+    let edit = AppliedEdit {
+        start: 0,
+        end: 0,
+        deleted: String::new(),
+        insert: insert.clone(),
+    };
+    let id = store
+        .append_edit(doc_id, &[edit], &[], &[])
+        .expect("enqueue append");
+    let seq = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::Seq(seq),
+        }) if got == id => seq,
+        other => panic!("expected append ack, got {other:?}"),
+    };
+
+    let id = store
+        .materialize_prepare(doc_id, rune_db::MaterializeTarget::Existing { expect })
+        .expect("enqueue materialize prepare");
+    let prep = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::MaterializePrep(prep),
+        }) if got == id => *prep,
+        other => panic!("expected materialize-prepare ack, got {other:?}"),
+    };
+    let rune_db::MaterializePrep::Overwrite { expect_hash, .. } = prep else {
+        panic!("expected an Overwrite prep for an already-loaded document");
+    };
+
+    let content = format!("{insert}{}", load_result.disk_content);
+    let resolved = rune_vfs::Disk.resolve(&doc_path).expect("resolve doc path");
+    let etag = Etag::from_stored(expect_hash.as_str()).expect("parse expect etag");
+    let outcome = rune_vfs::put(
+        &rune_vfs::Disk,
+        &resolved,
+        content.as_bytes(),
+        PutCondition::IfMatch(etag),
+    )
+    .expect("publish this session's save");
+    let PutOutcome::Committed { sighted, .. } = outcome else {
+        panic!("expected a clean commit against a freshly-loaded baseline, got {outcome:?}");
+    };
+
+    let id = store
+        .materialize_record(
+            doc_id,
+            &resolved,
+            seq.0,
+            rune_db::MaterializeOutcome::Committed {
+                data: content.into_bytes(),
+                stat: rune_db::stat_facts_from(sighted.stat()),
+                confirmed: sighted.is_confirmed(),
+            },
+        )
+        .expect("enqueue materialize record");
+    expect_ok(&rx, id);
+
+    std::fs::write(&doc_id_marker, doc_id.to_string()).expect("write doc id marker");
+    store.shutdown();
+    std::process::exit(0);
+}
+
 /// Role (f): the sibling of [`gc_editor`] — repeatedly opens and closes
 /// its OWN `Store` against the same shared path. Every `Store::open`
 /// runs a best-effort startup blob sweep (`store.rs`'s doc: "One

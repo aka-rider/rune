@@ -436,6 +436,108 @@ fn reopen_after_external_atomic_swap_bridges_the_dead_sessions_own_draft() {
 }
 
 // ---------------------------------------------------------------------
+// Scenario (h): a second rune instance's real save is a real divergence
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_second_processs_real_save_is_a_real_divergence_for_merge_prep() {
+    let dir = temp_dir("second-instance-save");
+    let path = dir.join("rune-v1.db");
+    let doc_path = dir.join("doc.md");
+    std::fs::write(&doc_path, b"one\n").expect("seed doc file");
+
+    let (tx, rx) = mpsc::channel::<DbEvent>();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    let (store, warning) =
+        Store::open(&path, Arc::new(rune_vfs::Disk), on_event).expect("open session A's store");
+    assert!(warning.is_none());
+
+    let id = store.load(&doc_path).expect("enqueue session A's load");
+    let doc_id = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::Load(result),
+        }) if got == id => result.doc_id,
+        other => panic!("expected session A's load ack, got {other:?}"),
+    };
+
+    let edit = AppliedEdit {
+        start: 0,
+        end: 0,
+        deleted: String::new(),
+        insert: "A ".to_string(),
+    };
+    let id = store
+        .append_edit(doc_id, &[edit], &[], &[])
+        .expect("enqueue session A's edit");
+    match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::Seq(_),
+        }) if got == id => {}
+        other => panic!("expected session A's append ack, got {other:?}"),
+    }
+
+    let doc_id_marker = dir.join("doc-id");
+    let child = spawn_helper(
+        "save_and_die",
+        &[
+            ("RUNE_DB_PATH", path.display().to_string()),
+            ("RUNE_DB_DOC_PATH", doc_path.display().to_string()),
+            ("RUNE_DB_DOC_ID_MARKER", doc_id_marker.display().to_string()),
+            ("RUNE_DB_INSERT", "B ".to_string()),
+        ],
+    );
+    let output = child.wait_with_output().expect("wait for child B");
+    assert!(
+        output.status.success(),
+        "save_and_die child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let child_doc_id: i64 = std::fs::read_to_string(&doc_id_marker)
+        .expect("read child doc id marker")
+        .trim()
+        .parse()
+        .expect("parse child doc id");
+    assert_eq!(
+        child_doc_id, doc_id.0,
+        "both processes must resolve the same document row for the same path"
+    );
+
+    let id = store
+        .merge_prep(doc_id)
+        .expect("enqueue session A's merge_prep");
+    let prep = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::MergePrep(prep),
+        }) if got == id => *prep,
+        other => panic!("expected session A's merge_prep ack, got {other:?}"),
+    };
+
+    assert!(
+        prep.sync.kind.is_disk_divergent(),
+        "session A's own unsaved edit plus session B's real cross-process save must classify \
+         disk-divergent, got {:?}",
+        prep.sync.kind
+    );
+    let rune_db::MergePrepOutcome::Ready { theirs, .. } = prep.outcome else {
+        panic!("expected Ready, got {:?}", prep.outcome);
+    };
+    let (_, theirs_bytes) = theirs.expect("theirs must be present");
+    assert_eq!(
+        theirs_bytes,
+        b"B one\n".to_vec(),
+        "theirs must be session B's own real save, not session A's own baseline"
+    );
+
+    store.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------
 // Scenario (e): sweep_unreferenced_blobs under real cross-process
 // contention ([rune-db 8])
 // ---------------------------------------------------------------------
