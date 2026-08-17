@@ -58,6 +58,29 @@ fn sum_heights(heights: &[usize], lines: Range<usize>) -> usize {
     lines.map(|i| heights.get(i).copied().unwrap_or(1)).sum()
 }
 
+pub fn line_byte_range(content: &str, lines: Range<usize>) -> Range<usize> {
+    let mut offset = 0usize;
+    let mut start = content.len();
+    for (idx, line) in content.split_inclusive('\n').enumerate() {
+        if idx == lines.start {
+            start = offset;
+        }
+        if idx == lines.end {
+            return start..offset;
+        }
+        offset += line.len();
+    }
+    start..content.len()
+}
+
+pub fn region_text(content: &str, lines: Range<usize>) -> (usize, String) {
+    let range = line_byte_range(content, lines);
+    (
+        range.start,
+        content.get(range).unwrap_or_default().to_string(),
+    )
+}
+
 pub fn layout_rows(
     alignment: &AlignmentMap,
     left_heights: &[usize],

@@ -95,6 +95,8 @@ pub struct ChromeStyles {
     /// the two, so "where you are" (cursor) stays visually louder than
     /// "what you're editing" (active document).
     pub row_active_bg: Style,
+    pub diff_word_ours: Style,
+    pub diff_word_theirs: Style,
 }
 
 /// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
@@ -146,6 +148,8 @@ impl Theme {
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
             row_cursor_bg: Style::new().bg(c(p.surface2)),
             row_active_bg: Style::new().bg(c(p.surface0)),
+            diff_word_ours: Style::new().bg(c(blend(p.surface0, p.green, 0.6))),
+            diff_word_theirs: Style::new().bg(c(blend(p.surface0, p.red, 0.6))),
         };
 
         let table = scope_table();

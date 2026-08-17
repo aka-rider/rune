@@ -6,12 +6,15 @@
 )]
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rune_core::buffer::Buffer;
+use rune_merge::RegionKind;
 use rune_tui::app::{self, App};
 use rune_tui::diff_view;
 use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pointer::Clock;
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::testgrid;
 use rune_vfs::Mem;
@@ -128,6 +131,11 @@ fn col_of(row: &str, needle: &str) -> u16 {
     row[..byte_idx].chars().count() as u16
 }
 
+fn col_of_right_pane(row: &str, needle: &str) -> u16 {
+    let byte_idx = row.rfind(needle).expect("needle present in row");
+    row[..byte_idx].chars().count() as u16
+}
+
 #[test]
 fn right_pane_insertion_shows_a_left_filler_row_at_the_aligned_position() {
     let app = app_with_diff("a\nb\nX\nc", "a\nb\nc", WIDE_ENOUGH);
@@ -149,7 +157,11 @@ fn right_pane_insertion_shows_a_left_filler_row_at_the_aligned_position() {
 
 #[test]
 fn changed_regions_carry_the_correct_per_side_backgrounds() {
-    let app = app_with_diff("same\nNEW\nsame2", "same\nOLD\nsame2", WIDE_ENOUGH);
+    let app = app_with_diff(
+        "same\nthe NEW word\nsame2",
+        "same\nthe OLD word\nsame2",
+        WIDE_ENOUGH,
+    );
     let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
     let buf = testgrid::draw(&app, WIDE_ENOUGH, HEIGHT);
 
@@ -157,7 +169,7 @@ fn changed_regions_carry_the_correct_per_side_backgrounds() {
         .iter()
         .position(|row| row.contains("OLD"))
         .expect("the left changed line renders");
-    let old_col = col_of(&grid[old_row], "OLD");
+    let old_col = col_of(&grid[old_row], "word");
     let old_bg = buf
         .cell((old_col, old_row as u16))
         .and_then(|c| c.style().bg);
@@ -167,7 +179,7 @@ fn changed_regions_carry_the_correct_per_side_backgrounds() {
         .iter()
         .position(|row| row.contains("NEW"))
         .expect("the right changed line renders");
-    let new_col = col_of(&grid[new_row], "NEW");
+    let new_col = col_of_right_pane(&grid[new_row], "word");
     let new_bg = buf
         .cell((new_col, new_row as u16))
         .and_then(|c| c.style().bg);
@@ -176,7 +188,7 @@ fn changed_regions_carry_the_correct_per_side_backgrounds() {
 
 #[test]
 fn an_edit_recomputes_alignment_within_the_same_settle_pass() {
-    let mut app = app_with_diff("a\nb", "a\nb", WIDE_ENOUGH);
+    let mut app = app_with_diff("a same\nb", "a same\nb", WIDE_ENOUGH);
     let mut effects = Effects::default();
 
     app::update(&mut app, Msg::Key(key('!')), &mut effects);
@@ -188,7 +200,7 @@ fn an_edit_recomputes_alignment_within_the_same_settle_pass() {
         .iter()
         .position(|row| row.contains("!a"))
         .expect("the edited line renders");
-    let col = col_of(&grid[row], "!");
+    let col = col_of_right_pane(&grid[row], "same");
     let bg = buf.cell((col, row as u16)).and_then(|c| c.style().bg);
     assert_eq!(
         bg, app.theme.chrome.merge_ours_bg.bg,
@@ -277,5 +289,141 @@ fn undo_of_an_edit_restores_the_previous_alignment() {
     assert_ne!(
         bg, app.theme.chrome.merge_ours_bg.bg,
         "undo must recompute alignment back to Same, clearing the changed background"
+    );
+}
+
+#[derive(Debug)]
+struct PastClock(Instant);
+
+impl Clock for PastClock {
+    fn now(&self) -> Instant {
+        self.0
+    }
+}
+
+fn far_past_instant() -> Instant {
+    Instant::now()
+        .checked_sub(Duration::from_secs(3600))
+        .unwrap_or_else(Instant::now)
+}
+
+#[test]
+fn a_one_word_change_is_emphasized_on_exactly_that_word_in_both_panes() {
+    let app = app_with_diff(
+        "same\nthe dog sat\nsame2",
+        "same\nthe cat sat\nsame2",
+        WIDE_ENOUGH,
+    );
+    let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+    let buf = testgrid::draw(&app, WIDE_ENOUGH, HEIGHT);
+
+    let right_row = grid
+        .iter()
+        .position(|row| row.contains("dog"))
+        .expect("the changed right line renders");
+    let dog_col = col_of(&grid[right_row], "dog");
+    let dog_bg = buf
+        .cell((dog_col, right_row as u16))
+        .and_then(|c| c.style().bg);
+    assert_eq!(dog_bg, app.theme.chrome.diff_word_ours.bg);
+
+    let sat_col = col_of_right_pane(&grid[right_row], "sat");
+    let sat_bg = buf
+        .cell((sat_col, right_row as u16))
+        .and_then(|c| c.style().bg);
+    assert_eq!(
+        sat_bg, app.theme.chrome.merge_ours_bg.bg,
+        "an unchanged word in the same region must carry the region background, not the word emphasis"
+    );
+
+    let left_row = grid
+        .iter()
+        .position(|row| row.contains("cat"))
+        .expect("the changed left line renders");
+    let cat_col = col_of(&grid[left_row], "cat");
+    let cat_bg = buf
+        .cell((cat_col, left_row as u16))
+        .and_then(|c| c.style().bg);
+    assert_eq!(cat_bg, app.theme.chrome.diff_word_theirs.bg);
+}
+
+fn heavily_reworded_line(prefix: &str) -> String {
+    let mut line = String::new();
+    for i in 0..5_000 {
+        if i > 0 {
+            line.push(' ');
+        }
+        if i % 3 == 0 {
+            line.push_str(prefix);
+            line.push_str(&i.to_string());
+        } else {
+            line.push_str("word");
+            line.push_str(&i.to_string());
+        }
+    }
+    line
+}
+
+#[test]
+fn an_already_elapsed_deadline_degrades_to_whole_line_emphasis() {
+    let right_text = format!("same\n{}\nsame2", heavily_reworded_line("right"));
+    let left_text = format!("same\n{}\nsame2", heavily_reworded_line("left"));
+
+    let mut app = app_with_diff(&right_text, &left_text, WIDE_ENOUGH);
+    app.clock = Arc::new(PastClock(far_past_instant()));
+    app.sync_view();
+
+    let diff = app.diff.as_ref().expect("diff active");
+    let region = diff
+        .alignment
+        .regions
+        .iter()
+        .find(|r| r.kind == RegionKind::Changed)
+        .expect("the reworded line is a changed region");
+
+    let (_, expected_left) = diff_view::rows::region_text(&left_text, region.left_lines.clone());
+    let (_, expected_right) = diff_view::rows::region_text(&right_text, region.right_lines.clone());
+
+    let left_covered: usize = diff.intraline_left.iter().map(|r| r.end - r.start).sum();
+    let right_covered: usize = diff.intraline_right.iter().map(|r| r.end - r.start).sum();
+
+    assert_eq!(
+        left_covered,
+        expected_left.len(),
+        "an elapsed deadline must degrade to whole-line emphasis on the left pane"
+    );
+    assert_eq!(
+        right_covered,
+        expected_right.len(),
+        "an elapsed deadline must degrade to whole-line emphasis on the right pane"
+    );
+}
+
+#[test]
+fn regions_outside_the_visible_row_range_are_not_computed() {
+    let mut right_lines: Vec<String> = (0..60).map(|i| format!("line {i}")).collect();
+    let mut left_lines = right_lines.clone();
+    right_lines[50] = "line fifty changed".to_string();
+    left_lines[50] = "line fifty original".to_string();
+    let right_text = right_lines.join("\n");
+    let left_text = left_lines.join("\n");
+
+    let app = app_with_diff(&right_text, &left_text, WIDE_ENOUGH);
+    let diff = app.diff.as_ref().expect("diff active");
+
+    assert!(
+        diff.alignment
+            .regions
+            .iter()
+            .any(|r| r.kind == RegionKind::Changed),
+        "the off-screen line must still produce a Changed region"
+    );
+    assert!(
+        diff.intraline_left.is_empty(),
+        "an off-screen region must not have its intraline spans computed"
+    );
+    assert!(
+        diff.intraline_right.is_empty(),
+        "an off-screen region must not have its intraline spans computed"
     );
 }

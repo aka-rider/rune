@@ -244,6 +244,11 @@ pub fn draw(app: &App, frame: &mut Frame) {
                 |k| matches!(k, RegionKind::Changed | RegionKind::RightOnly),
                 app.theme.chrome.merge_ours_bg,
             );
+            diff::paint_intraline(
+                &mut rows,
+                &diff_view.intraline_right,
+                app.theme.chrome.diff_word_ours,
+            );
         }
         // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
         // every overlay `build_rows` already applied — the working form's
@@ -313,6 +318,11 @@ fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
             |r| r.left_lines.clone(),
             |k| matches!(k, RegionKind::Changed | RegionKind::LeftOnly),
             app.theme.chrome.merge_theirs_bg,
+        );
+        diff::paint_intraline(
+            &mut rows,
+            &diff_view.intraline_left,
+            app.theme.chrome.diff_word_theirs,
         );
         blit(&rows, area, frame);
     }

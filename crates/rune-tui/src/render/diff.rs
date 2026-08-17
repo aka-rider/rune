@@ -69,7 +69,7 @@ pub(super) fn paint_backgrounds(
         if !include(region.kind) {
             continue;
         }
-        let range = line_byte_range(content, side_lines(region));
+        let range = rows::line_byte_range(content, side_lines(region));
         if range.start >= visible.end || range.end <= visible.start {
             continue;
         }
@@ -77,17 +77,8 @@ pub(super) fn paint_backgrounds(
     }
 }
 
-fn line_byte_range(content: &str, lines: Range<usize>) -> Range<usize> {
-    let mut offset = 0usize;
-    let mut start = content.len();
-    for (idx, line) in content.split_inclusive('\n').enumerate() {
-        if idx == lines.start {
-            start = offset;
-        }
-        if idx == lines.end {
-            return start..offset;
-        }
-        offset += line.len();
+pub(super) fn paint_intraline(rows: &mut [Vec<Cell>], ranges: &[Range<usize>], style: Style) {
+    for range in ranges {
+        paint_range(rows, range.clone(), style);
     }
-    start..content.len()
 }
