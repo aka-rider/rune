@@ -20,8 +20,9 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 39 invariants total, one domain per file:
-//! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
+//! 40 invariants total, one domain per file:
+//! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
+//!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
 //! - `pane` — `PANE-NO-BLEED`, `LAYOUT-FITS`, `LAYOUT-TILES`
@@ -60,7 +61,7 @@ mod wrap;
 
 pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
-pub use cursor::{cur_bounds, cur_id, cur_no_caret_hidden, cur_order};
+pub use cursor::{cur_bounds, cur_cell_sync, cur_id, cur_no_caret_hidden, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use merge::{
     DivergentSaveTracker, RedivergenceTracker, merge_doc_active, merge_key_feedback,
@@ -143,6 +144,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| cur_order(next))
         .or_else(|| cur_id(next))
         .or_else(|| cur_no_caret_hidden(next))
+        .or_else(|| cur_cell_sync(next))
         .or_else(|| buf_line_index(next))
         .or_else(|| version_monotone(prev, next))
         .or_else(|| cell_offset(next))

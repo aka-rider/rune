@@ -3,12 +3,14 @@
 //! `TABLE-SYNTHETIC-DECORATIVE`.
 
 use rune_fuzz::invariant::{
-    cell_no_eol, cell_offset, cell_order, cur_no_caret_hidden, sync_idempotent, table_row_width,
-    table_synthetic_decorative,
+    cell_no_eol, cell_offset, cell_order, cur_cell_sync, cur_no_caret_hidden, sync_idempotent,
+    table_row_width, table_synthetic_decorative,
 };
 use rune_syntax::element::ByteRange;
 
-use crate::support::{base_snapshot, cell, cell_w, meta, meta_unboxed, reversed_cell};
+use crate::support::{
+    base_snapshot, cell, cell_w, collapsed_cursor, meta, meta_unboxed, reversed_cell,
+};
 
 // ---------------------------------------------------------------------
 // SYNC-IDEMPOTENT
@@ -247,4 +249,64 @@ fn cur_no_caret_hidden_accepts_no_reversed_cells_while_hidden() {
     snap.caret_visible = false;
     snap.cells = vec![vec![cell('a', 0), cell('b', 1)]];
     assert_eq!(cur_no_caret_hidden(&snap), None);
+}
+
+// ---------------------------------------------------------------------
+// CUR-CELL-SYNC
+// ---------------------------------------------------------------------
+
+#[test]
+fn cur_cell_sync_accepts_the_caret_on_its_own_logical_byte() {
+    let mut snap = base_snapshot("abc");
+    snap.cursors = vec![collapsed_cursor(1, 0)];
+    snap.caret_visible = true;
+    snap.cells = vec![vec![reversed_cell('a', 0), cell('b', 1), cell('c', 2)]];
+    assert_eq!(cur_cell_sync(&snap), None);
+}
+
+#[test]
+fn cur_cell_sync_detects_the_caret_painted_on_a_different_offset() {
+    let mut snap = base_snapshot("abc");
+    snap.cursors = vec![collapsed_cursor(1, 0)];
+    snap.caret_visible = true;
+    // Position 0 is rendered plainly, but the caret's REVERSED landed on
+    // offset 1 instead — exactly the two-width-walk divergence this
+    // invariant exists to catch.
+    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1), cell('c', 2)]];
+    let v = cur_cell_sync(&snap)
+        .expect("a caret painted off the cursor's own position must trip CUR-CELL-SYNC");
+    assert_eq!(v.id, "CUR-CELL-SYNC");
+}
+
+#[test]
+fn cur_cell_sync_skips_a_position_no_cell_claims() {
+    let mut snap = base_snapshot("abc");
+    // Position 5 is out of this row's rendered window entirely — a
+    // concealed run's interior or a cursor scrolled off-viewport, neither
+    // of which any cell can claim.
+    snap.cursors = vec![collapsed_cursor(1, 5)];
+    snap.caret_visible = true;
+    snap.cells = vec![vec![cell('a', 0), cell('b', 1), cell('c', 2)]];
+    assert_eq!(cur_cell_sync(&snap), None);
+}
+
+#[test]
+fn cur_cell_sync_skips_while_caret_invisible() {
+    let mut snap = base_snapshot("abc");
+    snap.cursors = vec![collapsed_cursor(1, 0)];
+    snap.caret_visible = false;
+    snap.cells = vec![vec![cell('a', 0), cell('b', 1), cell('c', 2)]];
+    assert_eq!(cur_cell_sync(&snap), None);
+}
+
+#[test]
+fn cur_cell_sync_accepts_two_cursors_collapsed_onto_one_visible_cell() {
+    let mut snap = base_snapshot("abc");
+    // Cursor 2 sits inside a concealed run (position 1, claimed by no
+    // cell) and visually collapses onto cursor 1's own rendered byte —
+    // only cursor 1's own position needs a matching caret cell.
+    snap.cursors = vec![collapsed_cursor(1, 0), collapsed_cursor(2, 1)];
+    snap.caret_visible = true;
+    snap.cells = vec![vec![reversed_cell('a', 0), cell('c', 2)]];
+    assert_eq!(cur_cell_sync(&snap), None);
 }

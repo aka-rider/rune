@@ -1,5 +1,5 @@
 //! Cursor invariants (WP3): `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`,
-//! `CUR-NO-CARET-HIDDEN`.
+//! `CUR-NO-CARET-HIDDEN`, `CUR-CELL-SYNC`.
 
 use ratatui::style::Modifier;
 use rune_tui::render::Cell;
@@ -131,6 +131,57 @@ pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
                     format!("a REVERSED cell rendered while caret_visible=false: cell={cell:?}"),
                 ));
             }
+        }
+    }
+    None
+}
+
+/// `CUR-CELL-SYNC` (L0, sampled per G19) — whenever a cursor's own logical
+/// `position` is itself a byte some cell in `cells` claims (real, on-screen,
+/// unconcealed), one of the REVERSED cells at that exact `buf_offset` must
+/// be the caret `place_caret` painted for it: `render::segment_cells` and
+/// `wrap::query::visual_col` are two separate width walks over the same
+/// row, and this pins that they still agree on where the caret lands,
+/// catching the class where they diverge and the caret paints onto a cell
+/// whose `buf_offset` is not the cursor's own `position`.
+///
+/// When `position` is not claimed by any cell in `cells` at all — clamped
+/// inside a concealed run (`syntax::buffer_to_syntax`'s `clamp_col`
+/// redirects to `clamp_to` instead), scrolled outside the viewport, or a
+/// second cursor collapsed onto the same visible cell as a first one — there
+/// is no cell this cursor's own position could legitimately land on, so
+/// nothing is asserted for it; the same carve-out `CUR-NO-CARET-HIDDEN`
+/// already documents for a caret that is legitimately never painted.
+///
+/// Active-document-switch-safe: L0, one `Snapshot`'s own `cursors`/`cells`.
+pub fn cur_cell_sync(snap: &Snapshot) -> Option<Violation> {
+    if !snap.caret_visible {
+        return None;
+    }
+    for cursor in &snap.cursors {
+        let target = cursor.position as i64;
+        let position_rendered = snap
+            .cells
+            .iter()
+            .flatten()
+            .any(|cell| cell.buf_offset == target);
+        if !position_rendered {
+            continue;
+        }
+        let painted_correctly = snap.cells.iter().flatten().any(|cell| {
+            cell.buf_offset == target
+                && cell.style.add_modifier.contains(Modifier::REVERSED)
+                && !reading_link_highlight(snap, cell)
+        });
+        if !painted_correctly {
+            return Some(Violation::new(
+                "CUR-CELL-SYNC",
+                format!(
+                    "cursor id={} position={} is a rendered byte but no caret-styled cell \
+                     carries that buf_offset",
+                    cursor.id, cursor.position
+                ),
+            ));
         }
     }
     None
