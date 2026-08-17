@@ -125,35 +125,10 @@ wait_for_ready() {
   return 1
 }
 
-wait_for_input() {
-  local recorder_pid="$1" log="$2" attempt
-  for attempt in $(seq 1 50); do
-    recorder_alive_or_die "$recorder_pid" "$log"
-    if [ "$(tmux -L "$SOCKET" display-message -p '#{pane_in_mode}' 2>/dev/null)" = "1" ]; then
-      tmux -L "$SOCKET" send-keys -X cancel 2>/dev/null || true
-    fi
-    timeout 2 tmux -L "$SOCKET" send-keys -- Down 2>/dev/null || true
-    sleep 0.2
-    if capture_pane | grep -qF "Ln " && ! capture_pane | grep -qF "Ln 1,"; then
-      rewind_to_top
-      return 0
-    fi
-  done
-  echo "error: editor ignored input after $attempt attempts" >&2
-  return 1
-}
-
-rewind_to_top() {
-  local attempt
-  for attempt in $(seq 1 50); do
-    if capture_pane | grep -qF "Ln 1,"; then
-      return 0
-    fi
-    timeout 2 tmux -L "$SOCKET" send-keys -- Up 2>/dev/null || true
-    sleep 0.2
-  done
-  echo "error: caret did not return to line 1 after $attempt attempts" >&2
-  return 1
+cancel_copy_mode() {
+  if [ "$(tmux -L "$SOCKET" display-message -p '#{pane_in_mode}' 2>/dev/null)" = "1" ]; then
+    tmux -L "$SOCKET" send-keys -X cancel 2>/dev/null || true
+  fi
 }
 
 end_session() {
@@ -212,7 +187,7 @@ record() {
 
   wait_for_session "$recorder_pid" "$rec_log"
   wait_for_ready "$recorder_pid" "$rec_log"
-  wait_for_input "$recorder_pid" "$rec_log"
+  cancel_copy_mode
 
   # shellcheck source=/dev/null
   source "$feature_script"
