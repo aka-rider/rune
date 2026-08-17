@@ -67,21 +67,96 @@ fn wide_enough_renders_file_a_left_of_file_b() {
 }
 
 #[test]
-fn narrow_width_hides_the_left_pane_and_editor_spans_the_center() {
+fn narrow_width_folds_the_left_pane_below_the_right_document() {
     let app = app_with_diff("rightmarker", "leftmarker", TOO_NARROW);
     let grid = testgrid::grid(&app, TOO_NARROW, HEIGHT);
     let joined = grid.join("\n");
 
     assert!(joined.contains("rightmarker"), "fileB must still render");
+
+    let right_row = grid
+        .iter()
+        .position(|row| row.contains("rightmarker"))
+        .expect("fileB's text must render somewhere on screen");
+    let left_row = grid
+        .iter()
+        .position(|row| row.contains("leftmarker"))
+        .expect("fileA's text must fold in as a virtual row when the panes can't sit side by side");
     assert!(
-        !joined.contains("leftmarker"),
-        "fileA must not render when the center is too narrow for both panes"
+        left_row > right_row,
+        "the virtual theirs row must render below its region's right rows: right at {right_row}, left at {left_row}"
     );
+
     assert_eq!(
         rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, TOO_NARROW, HEIGHT), &app)
             .diff_left,
         None
     );
+}
+
+#[test]
+fn typing_while_folded_edits_the_buffer_at_correct_offsets() {
+    let mut app = app_with_diff("a\nb\nc", "a\nX\nc", TOO_NARROW);
+    let mut effects = Effects::default();
+
+    app::update(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Down,
+            mods: Mods::NONE,
+        }),
+        &mut effects,
+    );
+    app::update(&mut app, Msg::Key(key('!')), &mut effects);
+    app.sync_view();
+
+    assert_eq!(app.active_doc().buffer.content(), "a\n!b\nc");
+}
+
+#[test]
+fn resize_round_trip_preserves_buffer_hunk_cursor_and_focus() {
+    use rune_tui::pane::Pane;
+
+    let mut app = app_with_diff("a\nb\nc", "a\nX\nc", WIDE_ENOUGH);
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('j')), &mut effects);
+    app.sync_view();
+
+    let content_before = app.active_doc().buffer.content().to_string();
+    let hunk_before = app.diff.as_ref().expect("diff active").hunk_cur;
+    assert_eq!(app.focus(), Pane::Editor);
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Resize(TOO_NARROW, HEIGHT), &mut effects);
+    app.sync_view();
+    assert_eq!(
+        rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, TOO_NARROW, HEIGHT), &app)
+            .diff_left,
+        None,
+        "the narrow resize must fold"
+    );
+    assert_eq!(app.active_doc().buffer.content(), content_before);
+    assert_eq!(
+        app.diff.as_ref().expect("diff active").hunk_cur,
+        hunk_before
+    );
+    assert_eq!(app.focus(), Pane::Editor);
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Resize(WIDE_ENOUGH, HEIGHT), &mut effects);
+    app.sync_view();
+    assert!(
+        rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, WIDE_ENOUGH, HEIGHT), &app)
+            .diff_left
+            .is_some(),
+        "widening back must restore the side-by-side pane"
+    );
+    assert_eq!(app.active_doc().buffer.content(), content_before);
+    assert_eq!(
+        app.diff.as_ref().expect("diff active").hunk_cur,
+        hunk_before
+    );
+    assert_eq!(app.focus(), Pane::Editor);
 }
 
 #[test]

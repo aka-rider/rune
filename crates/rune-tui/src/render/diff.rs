@@ -6,7 +6,7 @@ use rune_merge::{AlignmentMap, Region, RegionKind};
 use rune_syntax::wrap::WrapSnapshot;
 
 use crate::diff_view::DiffView;
-use crate::diff_view::rows::{self, RowLayout, RowSlot, Side};
+use crate::diff_view::rows::{self, FoldSlot, RowLayout, RowSlot, Side};
 
 use super::cell::{Cell, paint_range};
 use super::overlay;
@@ -40,6 +40,43 @@ pub(super) fn augment(
             RowSlot::Filler => filler_row(width),
         })
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn augment_fold(
+    right_rows: &[Vec<Cell>],
+    left_rows: &[Vec<Cell>],
+    layout: &RowLayout,
+    right_native_scroll: usize,
+    left_native_scroll: usize,
+    theirs_bg: Style,
+    height: u16,
+    width: u16,
+) -> Vec<Vec<Cell>> {
+    let plan = rows::plan_fold(layout, right_native_scroll, height as usize);
+    plan.iter()
+        .map(|slot| match slot {
+            FoldSlot::Right(idx) => right_rows
+                .get(idx - right_native_scroll)
+                .cloned()
+                .unwrap_or_else(|| filler_row(width)),
+            FoldSlot::LeftVirtual(idx) => {
+                let mut row = left_rows
+                    .get(idx - left_native_scroll)
+                    .cloned()
+                    .unwrap_or_else(|| filler_row(width));
+                mark_virtual(&mut row, theirs_bg);
+                row
+            }
+        })
+        .collect()
+}
+
+fn mark_virtual(row: &mut [Cell], theirs_bg: Style) {
+    for cell in row.iter_mut() {
+        cell.buf_offset = -1;
+        cell.style = cell.style.patch(theirs_bg);
+    }
 }
 
 fn filler_row(width: u16) -> Vec<Cell> {

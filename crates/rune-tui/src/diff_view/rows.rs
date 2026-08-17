@@ -195,6 +195,41 @@ pub fn plan_side(
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldSlot {
+    Right(usize),
+    LeftVirtual(usize),
+}
+
+pub fn plan_fold(layout: &RowLayout, right_native_start: usize, height: usize) -> Vec<FoldSlot> {
+    let Some((mut region_idx, mut right_offset)) = locate(layout, Side::Right, right_native_start)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(height);
+    let mut left_offset = 0usize;
+    while out.len() < height {
+        let Some(region) = layout.regions.get(region_idx) else {
+            break;
+        };
+        let show_left = matches!(region.kind, RegionKind::Changed | RegionKind::LeftOnly);
+        if right_offset < region.right_rows {
+            out.push(FoldSlot::Right(region.right_start + right_offset));
+            right_offset += 1;
+            continue;
+        }
+        if show_left && left_offset < region.left_rows {
+            out.push(FoldSlot::LeftVirtual(region.left_start + left_offset));
+            left_offset += 1;
+            continue;
+        }
+        region_idx += 1;
+        right_offset = 0;
+        left_offset = 0;
+    }
+    out
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
@@ -318,5 +353,98 @@ mod tests {
         let heights = line_heights(&wrap);
         assert_eq!(heights.len(), 3);
         assert_eq!(heights[0], 1);
+    }
+
+    #[test]
+    fn changed_region_folds_left_lines_below_right_lines() {
+        let alignment = AlignmentMap {
+            regions: vec![
+                region(RegionKind::Same, 0..1, 0..1),
+                region(RegionKind::Changed, 1..2, 1..2),
+                region(RegionKind::Same, 2..3, 2..3),
+            ],
+        };
+        let left_heights = vec![1, 1, 1];
+        let right_heights = vec![1, 1, 1];
+        let layout = layout_rows(&alignment, &left_heights, &right_heights);
+
+        let plan = plan_fold(&layout, 0, 4);
+        assert_eq!(
+            plan,
+            vec![
+                FoldSlot::Right(0),
+                FoldSlot::Right(1),
+                FoldSlot::LeftVirtual(1),
+                FoldSlot::Right(2),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_mid_document_left_only_region_folds_in_between_its_neighbours() {
+        let alignment = AlignmentMap {
+            regions: vec![
+                region(RegionKind::Same, 0..1, 0..1),
+                region(RegionKind::LeftOnly, 1..3, 1..1),
+                region(RegionKind::Same, 3..4, 1..2),
+            ],
+        };
+        let left_heights = vec![1, 1, 1, 1];
+        let right_heights = vec![1, 1];
+        let layout = layout_rows(&alignment, &left_heights, &right_heights);
+
+        let plan = plan_fold(&layout, 0, 4);
+        assert_eq!(
+            plan,
+            vec![
+                FoldSlot::Right(0),
+                FoldSlot::LeftVirtual(1),
+                FoldSlot::LeftVirtual(2),
+                FoldSlot::Right(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn same_and_right_only_regions_never_show_a_left_virtual_row() {
+        let alignment = AlignmentMap {
+            regions: vec![
+                region(RegionKind::Same, 0..1, 0..1),
+                region(RegionKind::RightOnly, 1..1, 1..2),
+            ],
+        };
+        let left_heights = vec![1];
+        let right_heights = vec![1, 1];
+        let layout = layout_rows(&alignment, &left_heights, &right_heights);
+
+        let plan = plan_fold(&layout, 0, 2);
+        assert_eq!(plan, vec![FoldSlot::Right(0), FoldSlot::Right(1)]);
+    }
+
+    #[test]
+    fn plan_fold_starts_mid_region_from_the_right_native_scroll() {
+        let alignment = AlignmentMap {
+            regions: vec![region(RegionKind::Changed, 0..1, 0..1)],
+        };
+        let left_heights = vec![1];
+        let right_heights = vec![3];
+        let layout = layout_rows(&alignment, &left_heights, &right_heights);
+
+        let plan = plan_fold(&layout, 1, 3);
+        assert_eq!(
+            plan,
+            vec![
+                FoldSlot::Right(1),
+                FoldSlot::Right(2),
+                FoldSlot::LeftVirtual(0),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_layout_folds_to_no_rows() {
+        let alignment = AlignmentMap { regions: vec![] };
+        let layout = layout_rows(&alignment, &[], &[]);
+        assert_eq!(plan_fold(&layout, 0, 5), Vec::new());
     }
 }

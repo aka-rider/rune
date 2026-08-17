@@ -227,15 +227,35 @@ pub fn draw(app: &App, frame: &mut Frame) {
             && diff_view.right == app.active
         {
             let layout = diff::layout(diff_view, &view.wrap);
-            let scroll = app.active_doc().viewport.scroll_row.0;
-            rows = diff::augment(
-                &rows,
-                &layout,
-                crate::diff_view::rows::Side::Right,
-                scroll,
-                geo.editor.height,
-                geo.editor.width,
-            );
+            let right_scroll = app.active_doc().viewport.scroll_row.0;
+            rows = if geo.diff_left.is_some() {
+                diff::augment(
+                    &rows,
+                    &layout,
+                    crate::diff_view::rows::Side::Right,
+                    right_scroll,
+                    geo.editor.height,
+                    geo.editor.width,
+                )
+            } else {
+                let left_scroll = diff_view.left.viewport.scroll_row.0;
+                let left_rows = diff_view
+                    .left
+                    .view
+                    .as_ref()
+                    .map(|v| build_rows(app, &diff_view.left, None, v))
+                    .unwrap_or_default();
+                diff::augment_fold(
+                    &rows,
+                    &left_rows,
+                    &layout,
+                    right_scroll,
+                    left_scroll,
+                    app.theme.chrome.merge_theirs_bg,
+                    geo.editor.height,
+                    geo.editor.width,
+                )
+            };
             diff::paint_backgrounds(
                 &mut rows,
                 &diff_view.alignment,

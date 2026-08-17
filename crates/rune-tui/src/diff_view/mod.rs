@@ -118,6 +118,8 @@ pub fn sync(app: &mut App) {
         .map(|v| rows::line_heights(&v.wrap))
         .unwrap_or_default();
     let deadline = Some(app.clock.now() + INTRALINE_BUDGET);
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let folded = crate::layout::geometry(area, app).diff_left.is_none();
 
     let Some(diff) = app.diff.as_mut() else {
         return;
@@ -137,8 +139,19 @@ pub fn sync(app: &mut App) {
         .map(|v| rows::line_heights(&v.wrap))
         .unwrap_or_default();
     let layout = rows::layout_rows(&diff.alignment, &left_heights, &right_heights);
-    diff.left.viewport.scroll_row =
-        DisplayRow(rows::left_row_for_right_row(&layout, right_scroll.0));
+    diff.left.viewport.scroll_row = if folded {
+        let plan = rows::plan_fold(&layout, right_scroll.0, right_height);
+        let left_scroll = plan
+            .iter()
+            .find_map(|slot| match slot {
+                rows::FoldSlot::LeftVirtual(idx) => Some(*idx),
+                rows::FoldSlot::Right(_) => None,
+            })
+            .unwrap_or(0);
+        DisplayRow(left_scroll)
+    } else {
+        DisplayRow(rows::left_row_for_right_row(&layout, right_scroll.0))
+    };
 
     let total_rows = diff
         .left

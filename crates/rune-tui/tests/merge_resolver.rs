@@ -186,6 +186,47 @@ fn keep_ours_is_flag_only_and_take_theirs_is_one_journal_step() {
 }
 
 #[test]
+fn fold_mode_at_the_default_width_keeps_the_save_gate_and_take_theirs_working() {
+    let (mut session, doc_id) = enter_two_conflict_merge();
+
+    let geo = rune_tui::layout::geometry(
+        ratatui::layout::Rect::new(0, 0, session.app().frame_width, session.app().frame_height),
+        session.app(),
+    );
+    assert!(
+        geo.diff_left.is_none(),
+        "the session's default width must be narrow enough to fold"
+    );
+
+    assert!(session.key(take_theirs()).is_none());
+    assert_eq!(resolution_of(session.app(), 0), Resolution::TookTheirs);
+
+    assert!(session.key(sup('s')).is_none());
+    assert!(
+        rune_tui::messages::newest_text(session.app())
+            .unwrap_or_default()
+            .contains("conflict(s) to resolve"),
+        "one conflict is still unresolved, folded or not"
+    );
+
+    assert!(session.key(take_ours()).is_none());
+    assert_eq!(session.app().merge, MergeState::Inactive);
+
+    assert!(session.key(sup('s')).is_none());
+    assert!(
+        !rune_tui::messages::newest_text(session.app())
+            .unwrap_or_default()
+            .contains("conflict(s) to resolve"),
+        "after full resolution ⌘S must not be refused while folded, got {:?}",
+        rune_tui::messages::newest_text(session.app())
+    );
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "one disk\ntwo\nthree\nfour\nfiveZ\n"
+    );
+}
+
+#[test]
 fn save_is_refused_while_unresolved_and_allowed_after() {
     let (mut session, doc_id) = enter_two_conflict_merge();
 

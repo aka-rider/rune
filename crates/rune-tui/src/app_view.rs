@@ -42,12 +42,11 @@ impl App {
         let geo = crate::layout::geometry(area, self);
         let (w, h) = (geo.editor.width.max(1), geo.editor.height.max(1));
         self.active_doc_mut().viewport.set_size(w, h);
-        if let Some(diff_left) = geo.diff_left
-            && let Some(diff) = self.diff.as_mut()
-        {
-            diff.left
-                .viewport
-                .set_size(diff_left.width.max(1), diff_left.height.max(1));
+        if let Some(diff) = self.diff.as_mut() {
+            let (lw, lh) = geo.diff_left.map_or((w, h), |diff_left| {
+                (diff_left.width.max(1), diff_left.height.max(1))
+            });
+            diff.left.viewport.set_size(lw, lh);
         }
     }
 
