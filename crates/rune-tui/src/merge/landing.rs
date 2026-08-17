@@ -394,10 +394,16 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
 /// CAS expectation advances with it (the disk-conflict guard's
 /// [S]ave-anyway precedent): the invited ⌘S now passes against the file the
 /// merge just read, while a SECOND external write in between still
-/// hash-mismatches into a fresh conflict.
+/// hash-mismatches into a fresh conflict. The epoch bump retires every
+/// probe still in flight for this file: their verdicts were computed
+/// against the pre-reconciliation journal and would land a fabricated
+/// `Diverged` right after the adoption — the re-merge-prompt loop — so the
+/// `OpOutcome::Sync` ack handler drops them and re-probes the post-adoption
+/// world instead.
 pub(super) fn advance_expect_obs(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
     if let Some(binding) = app.doc_file_binding_mut(doc) {
         binding.expect_obs = Some(theirs_obs);
+        binding.baseline_epoch = binding.baseline_epoch.wrapping_add(1);
     }
 }
 

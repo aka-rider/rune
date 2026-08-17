@@ -1,5 +1,5 @@
 //! Integration tests for the shared save-CAS baseline: `expect_obs`/
-//! `pending_rebaseline_hash`/`save_epoch` are shared per `db_id`
+//! `pending_rebaseline_hash`/`baseline_epoch` are shared per `db_id`
 //! (`App::file_bindings`), not copied per `Document` — two `Document`s
 //! (tabs) bound to the SAME underlying file must see the one truth about
 //! what disk holds. Driven through `rune_fuzz::Session`, pulling shared
@@ -270,7 +270,7 @@ fn a_stale_probe_for_tab_b_issued_before_tab_as_save_is_dropped_by_the_epoch_ech
     deliver_op_unchecked(&mut session, record_op);
 
     assert_eq!(
-        session.app().file_binding(db_id).unwrap().save_epoch,
+        session.app().file_binding(db_id).unwrap().baseline_epoch,
         1,
         "test setup: tab A's committed save must have bumped the SHARED save epoch"
     );

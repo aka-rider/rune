@@ -96,7 +96,7 @@ fn stale_pre_save_probe_ack_never_overwrites_post_save_last_sync() {
 
     let db_id = session.app().doc(doc_id).unwrap().doc_db().unwrap().db_id;
     assert_eq!(
-        session.app().file_binding(db_id).unwrap().save_epoch,
+        session.app().file_binding(db_id).unwrap().baseline_epoch,
         1,
         "test setup: the committed save must have bumped the save epoch"
     );
@@ -212,7 +212,7 @@ fn probe_without_an_intervening_save_still_classifies_normally() {
     );
     let db_id = session.app().doc(doc_id).unwrap().doc_db().unwrap().db_id;
     assert_eq!(
-        session.app().file_binding(db_id).unwrap().save_epoch,
+        session.app().file_binding(db_id).unwrap().baseline_epoch,
         0,
         "test setup: no save has happened yet"
     );

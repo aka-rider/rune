@@ -236,6 +236,9 @@ fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
     match db.store.resolve_abandon(rune_db::DocId(db_id)) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
+            if let Some(binding) = app.doc_file_binding_mut(doc) {
+                binding.baseline_epoch = binding.baseline_epoch.wrapping_add(1);
+            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }

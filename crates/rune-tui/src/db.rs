@@ -175,13 +175,15 @@ pub struct PendingOp {
     /// stacking redundant ones on every rapid tab switch would grow the
     /// store unboundedly for no new information).
     pub is_probe: bool,
-    /// `Some(save_epoch)` iff this op is a `Probe` — the issuing document's
-    /// `DocDb::save_epoch` at enqueue time. The `OpOutcome::Sync` ack
-    /// handler compares this against `DocDb::save_epoch` as it stands when
-    /// the reply lands: a materialize publishing in between means the disk
-    /// this probe read is no longer the current one, and the reply is
-    /// dropped rather than trusted — the same generation-echo shape
-    /// `merge_gen` below uses, scoped to one document's own save lineage
+    /// `Some(baseline_epoch)` iff this op is a `Probe` — the issuing
+    /// document's `FileBinding::baseline_epoch` at enqueue time. The
+    /// `OpOutcome::Sync` ack handler compares this against
+    /// `FileBinding::baseline_epoch` as it stands when the reply lands: a
+    /// baseline rewrite in between (a materialize publish, a merge's
+    /// terminal adoption, an abandon's retraction) means the verdict this
+    /// probe computed no longer describes the current world, and the reply
+    /// is dropped rather than trusted — the same generation-echo shape
+    /// `merge_gen` below uses, scoped to one file's own baseline lineage
     /// instead of a single app-wide counter.
     pub probe_epoch: Option<u32>,
     /// `Some(generation)` iff this op is a `MergePrep` (plan WP3.S1/S5) — the
@@ -238,12 +240,12 @@ impl PendingOp {
         }
     }
 
-    pub fn probe(doc: DocumentId, save_epoch: u32) -> PendingOp {
+    pub fn probe(doc: DocumentId, baseline_epoch: u32) -> PendingOp {
         PendingOp {
             doc,
             issued_version: None,
             is_probe: true,
-            probe_epoch: Some(save_epoch),
+            probe_epoch: Some(baseline_epoch),
             merge_gen: None,
             binding_only: false,
             doc_scoped: true,
@@ -321,7 +323,7 @@ impl Db {
 /// id (`db_id`, formerly `doc_id` — renamed so it can't be confused with
 /// `DocumentId`, the in-process tab identity) and the async-replica
 /// bookkeeping reconciling the LOCAL journal against the DURABLE one. The
-/// CAS baseline itself — `expect_obs`/`pending_rebaseline_hash`/`save_epoch`
+/// CAS baseline itself — `expect_obs`/`pending_rebaseline_hash`/`baseline_epoch`
 /// — lives on [`FileBinding`], shared by every `Document` bound to the same
 /// `db_id`, never copied here: two tabs opened onto the SAME underlying file
 /// must see the one truth about what disk holds, or one tab's own save
@@ -412,17 +414,22 @@ pub struct FileBinding {
     /// normally — this is never a license to adopt someone else's bytes.
     /// Cleared the moment a real observation lands again.
     pub pending_rebaseline_hash: Option<String>,
-    /// This process's save epoch for `db_id` — bumped exactly once, inside
-    /// `materialize_ack::handle_materialize_ack`'s committed branch, the
-    /// moment ANY document bound to `db_id` gets a publish's
-    /// `MaterializeRecord` ack. A `Probe` records this value onto its own
-    /// `PendingOp` at issue time (`PendingOp::probe_epoch`'s own doc
-    /// comment); the ack handler drops a reply whose recorded epoch no
-    /// longer matches, since a publish landing in between — from ANY tab on
-    /// this file — means the disk the probe read is stale. Shared exactly
-    /// because the disk fact it echoes is a fact about the FILE, not about
-    /// whichever tab happened to trigger the publish.
-    pub save_epoch: u32,
+    /// This process's baseline epoch for `db_id` — bumped whenever the
+    /// session itself rewrites the file's reconciliation baseline: a
+    /// publish's `MaterializeRecord` ack (`materialize_ack::
+    /// handle_materialize_ack`'s committed branch), a merge attempt's
+    /// terminal success (`merge::landing::advance_expect_obs` — a Discard
+    /// or no-conflict install, or a completed resolution), and an abandoned
+    /// merge's resolve retraction (`merge::enqueue_resolve_abandon`). A
+    /// `Probe` records this value onto its own `PendingOp` at issue time
+    /// (`PendingOp::probe_epoch`'s own doc comment); the ack handler drops
+    /// a reply whose recorded epoch no longer matches, since a baseline
+    /// rewrite landing in between — from ANY tab on this file — means the
+    /// verdict the probe computed is stale, and re-probes so the fresh
+    /// verdict is read from the post-rewrite world. Shared exactly because
+    /// the baseline it echoes is a fact about the FILE, not about whichever
+    /// tab happened to rewrite it.
+    pub baseline_epoch: u32,
     /// Set by `db_enqueue::probe` when a probe was skipped because a save
     /// was in flight — for ANY document bound to `db_id` — at the moment it
     /// was asked for; that save's publish invalidates whatever the disk
@@ -441,7 +448,7 @@ impl FileBinding {
         FileBinding {
             expect_obs,
             pending_rebaseline_hash: None,
-            save_epoch: 0,
+            baseline_epoch: 0,
             pending_probe: false,
         }
     }

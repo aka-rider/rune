@@ -45,7 +45,7 @@ pub(super) fn handle_committed_ack(
         // describing a disk that no longer exists; bumping the epoch
         // here is what makes `db_dispatch`'s `OpOutcome::Sync` arm drop
         // such a stale reply instead of trusting it.
-        binding.save_epoch = binding.save_epoch.wrapping_add(1);
+        binding.baseline_epoch = binding.baseline_epoch.wrapping_add(1);
     }
     if let Some(saved) = saved
         && let Some(binding) = app.doc_file_binding_mut(id)

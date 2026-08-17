@@ -83,13 +83,15 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             };
             let current_epoch = app
                 .doc_file_binding(pending.doc)
-                .map(|binding| binding.save_epoch);
+                .map(|binding| binding.baseline_epoch);
             if pending.probe_epoch != current_epoch {
-                // Stale: a materialize publish landed between this probe's
-                // issue and its own ack — by ANY document sharing this
-                // file's `db_id`, not only the one that issued the probe —
-                // so the disk fact it carries no longer describes the
-                // current world, and it is dropped rather than trusted
+                // Stale: a baseline rewrite (a materialize publish, a
+                // merge's terminal adoption, an abandon's retraction)
+                // landed between this probe's issue and its own ack — by
+                // ANY document sharing this file's `db_id`, not only the
+                // one that issued the probe — so the verdict it carries no
+                // longer describes the current world, and it is dropped
+                // rather than trusted
                 // (mirrors the `MergePrep` ticket check below). A fresh
                 // probe replaces it so `last_sync` doesn't stall until an
                 // unrelated event happens to probe again.
@@ -249,7 +251,7 @@ mod tests {
     }
 
     /// A probe ack whose `probe_epoch` no longer matches the
-    /// binding's current `save_epoch` — a publish landed while the probe was
+    /// binding's current `baseline_epoch` — a publish landed while the probe was
     /// in flight — must re-issue a fresh probe rather than drop the ack and
     /// leave `last_sync` stuck at whatever it read before.
     #[test]
@@ -277,7 +279,9 @@ mod tests {
             Some(0)
         );
 
-        app.file_binding_mut(1).expect("binding exists").save_epoch = 1;
+        app.file_binding_mut(1)
+            .expect("binding exists")
+            .baseline_epoch = 1;
 
         let mut effects = crate::runtime::Effects::default();
         crate::app::update(

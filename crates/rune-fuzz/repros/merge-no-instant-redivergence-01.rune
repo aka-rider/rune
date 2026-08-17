@@ -1,0 +1,13 @@
+content 
+key char:v ---u
+clip hello world
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:j s--u
+key char:m --c-
+key char:s ---u
+deliver-db-all
+type hello world
+key char:z ---u

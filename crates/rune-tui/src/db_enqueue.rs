@@ -274,11 +274,12 @@ pub fn probe(app: &mut App, id: DocumentId) {
     {
         return;
     }
-    let save_epoch = app.file_binding(db_id).map_or(0, |b| b.save_epoch);
+    let baseline_epoch = app.file_binding(db_id).map_or(0, |b| b.baseline_epoch);
     let Some(db) = app.db.as_ref() else { return };
     match db.store.probe(rune_db::DocId(db_id)) {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::probe(id, save_epoch));
+            app.db_ops
+                .insert(op_id, PendingOp::probe(id, baseline_epoch));
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
