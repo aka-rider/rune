@@ -203,9 +203,9 @@ record() {
   local cast="$OUT/$feature.cast"
   local rec_log="$OUT/$feature.rec.log"
   local rec_cmd
-  printf -v rec_cmd 'tmux -f %q -L %q new-session -x 100 -y 30 -- %q %q' \
+  printf -v rec_cmd 'tmux -f %q -L %q new-session -x 100 -y 30 -- env HOME=%q %q %q' \
     "$SCRIPT_DIR/tmux.conf" \
-    "$SOCKET" "$BINARY" "$WORKSPACE/$ENTRY_FILE"
+    "$SOCKET" "$WORKSPACE" "$BINARY" "$WORKSPACE/$ENTRY_FILE"
   asciinema rec --headless --overwrite --window-size 100x30 --idle-time-limit 2 \
     --command "$rec_cmd" "$cast" 2>"$rec_log" &
   local recorder_pid=$!
