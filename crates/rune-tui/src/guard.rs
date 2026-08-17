@@ -129,7 +129,7 @@ pub enum GuardKind {
     RenameCollision {
         target: String,
     },
-    /// The save-time CAS conflict: `doc`'s ⌘S found the disk bytes no
+    /// The save-time CAS conflict: `doc`'s ^S found the disk bytes no
     /// longer match what it last read. Save-anyway from here is a
     /// force-save, not a CAS retry — it bypasses the comparison entirely
     /// rather than re-running it against a fresher baseline, so a disk that
@@ -342,7 +342,7 @@ fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// one the user is now staring at a sentence about. So the fan-out stops
 /// dead the moment an iteration arms the slot for `id`: the surviving status
 /// (`save.rs`'s degraded arm, which names `id`) stays true, and the obvious
-/// next keystroke — ⌘S again — is answered by the confirm gate that is
+/// next keystroke — ^S again — is answered by the confirm gate that is
 /// actually armed. Any documents further down the list simply get their
 /// turn on the next quit attempt, once this one is resolved.
 fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
@@ -705,7 +705,7 @@ mod tests {
     /// The DiskConflict Guard's save-anyway is already the user's
     /// explicit last-resort consent — on a degraded store it must reach the
     /// materialize dance on the FIRST press, never arm the two-press
-    /// confirm gate the way an ordinary `⌘S` does.
+    /// confirm gate the way an ordinary `^S` does.
     #[test]
     fn force_save_single_press_when_degraded() {
         let mut app = store_bound_app(true);

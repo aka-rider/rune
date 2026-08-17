@@ -36,7 +36,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
     // A save's multi-hop materialize dance is still in flight for this
     // document: a `MergePrep` enqueued now could land AFTER the save's
     // commit ack and rebase `DocDb::expect_obs` backwards to the pre-save
-    // disk observation, making the very next ⌘S CAS-refuse against a file
+    // disk observation, making the very next ^S CAS-refuse against a file
     // the session itself just wrote. `save_in_flight` spans the whole dance
     // — trigger through the same ack that advances `expect_obs` — unlike
     // any single pending-op entry, so it is the one check with no window.
@@ -112,7 +112,8 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // read, so only now does the save-CAS baseline advance to them.
         landing::advance_expect_obs(app, doc, session.theirs_obs);
         persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Completed);
-        messages::info(app, "merge complete — \u{2318}S to save");
+        let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
+        messages::info(app, format!("merge complete — {save_key} to save"));
     } else {
         // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
         // quit auto-exit) retracts the entry-time resolve observation:
@@ -123,7 +124,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         // resolved. Abandoning restores the pre-merge baseline so the
         // document classifies `Diverged` again and `^M` re-enters a real
         // merge. The save-CAS baseline was never advanced on this path,
-        // so a ⌘S still CAS-refuses into the disk-conflict guard.
+        // so a ^S still CAS-refuses into the disk-conflict guard.
         abandon_active(
             app,
             doc,
@@ -285,7 +286,7 @@ pub(crate) fn auto_exit(app: &mut App) {
 /// the document being saved with unresolved blocks remaining, saving is
 /// refused with the count — a reflexive save mid-merge must not publish a
 /// half-resolved working form with zero friction. A rung in
-/// `save::trigger_save`'s refusal ladder, so every save entry point (⌘S,
+/// `save::trigger_save`'s refusal ladder, so every save entry point (^S,
 /// the guards' [S] answers, the quit fan-out) hits it structurally rather
 /// than each call site remembering to ask. One rule, no content sniffing:
 /// after exit or full resolution the document is ordinary dirty text and

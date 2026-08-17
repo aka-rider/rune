@@ -428,7 +428,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
 }
 
 /// Binds `doc_id` to its new path. Dirty state and `saved_version` are
-/// deliberately **unchanged**: only two acts touch the destination (⌘S,
+/// deliberately **unchanged**: only two acts touch the destination (^S,
 /// save-on-close) and a rename is neither, so a dirty document renames
 /// and stays dirty. History keys off inode+device, which `renamex_np`
 /// preserves, so nothing is orphaned.

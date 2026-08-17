@@ -39,7 +39,7 @@ pub use keys::{handle_key, on_blur};
 
 /// The extension a pathless draft seeds with: an empty stem plus the
 /// extension every rune document gets, so a draft reads as immediately
-/// editable and ⌘S still creates a `.md` file even if the user never
+/// editable and ^S still creates a `.md` file even if the user never
 /// touches the extension. Used only by [`name_for`]'s draft fallback — a
 /// typed name is never re-appended with this once it reaches `rename.rs`
 /// (decision 10: the rename target is the typed name, verbatim).

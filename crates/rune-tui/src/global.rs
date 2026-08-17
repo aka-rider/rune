@@ -143,10 +143,11 @@ const SUP: Mods = Mods {
 /// guaranteed to arrive — both are bound regardless, since a different
 /// terminal may pass the ⌘ form through.
 ///
-/// `Save` and the two quit chords are the SAME combos `resolve`/
-/// `QuitKey::from_key` already bind — moving their resolution to the global
-/// pipeline stage changes only WHEN they're seen (before, not after, a
-/// pane's own keymap), not which chord activates them. `KeyPattern`'s
+/// `Save`'s `⌘S` form and the two quit chords overlap combos the later
+/// tables (`EDITOR_BINDINGS`, `QuitKey::from_key`) also bind — resolving
+/// them here changes only WHEN they're seen (before, not after, a
+/// pane's own keymap), not which chord activates them. `^S` has no
+/// later-table counterpart: this table is its only home. `KeyPattern`'s
 /// exact-modifier match narrows `resolve_char`'s `'s' if m.sup && !m.ctrl`
 /// guard (which also tolerated shift/alt held) to the one precise combo
 /// below — the loosely-matched variants were never a documented,
@@ -203,10 +204,16 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         alias: false,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('s'), SUP),
+        key: KeyPattern::new(KeyCode::Char('s'), CTRL),
         cmd: GlobalCommand::Save,
         help: "save",
         alias: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('s'), SUP),
+        cmd: GlobalCommand::Save,
+        help: "save",
+        alias: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::F1, Mods::NONE),
@@ -453,11 +460,15 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
 
 /// The canonical (non-alias) chord glyph for `cmd` paired with the
 /// command's own help text, for chrome that names a command instead of
-/// iterating the table — the footer's `⌘S` hint, the breadcrumb's
+/// iterating the table — the footer's `^S` hint, the breadcrumb's
 /// navigation controls. Rebinding a command moves its glyph everywhere at
 /// once; no chrome spells a chord out by hand.
 pub fn hint_for(cmd: GlobalCommand) -> Option<(String, &'static str)> {
     canonical(cmd).map(|b| (b.label(), b.help))
+}
+
+pub(crate) fn label_for(cmd: GlobalCommand) -> String {
+    hint_for(cmd).map(|(label, _)| label).unwrap_or_default()
 }
 
 fn canonical(cmd: GlobalCommand) -> Option<&'static Binding<GlobalCommand>> {
@@ -646,6 +657,32 @@ mod tests {
             mods: CTRL,
         };
         assert_unclaimed_by_any_pane_table(&[ctrl_m]);
+    }
+
+    /// `^S` only — the `⌘S` form deliberately coexists with
+    /// `EDITOR_BINDINGS`' own `SAVE` row, so only the ctrl form needs
+    /// checking here.
+    #[test]
+    fn global_s_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_s = KeyInput {
+            code: KeyCode::Char('s'),
+            mods: CTRL,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_s]);
+    }
+
+    /// `label_for` returns an empty string when a command has no canonical
+    /// row — this pins that `Save` always has one, labelled `^S`, so the
+    /// footer/message chrome that names the save chord can never render
+    /// blank.
+    #[test]
+    fn save_has_a_canonical_row_labelled_ctrl_s() {
+        assert_eq!(
+            hint_for(GlobalCommand::Save),
+            Some(("^S".to_string(), "save"))
+        );
     }
 
     #[test]

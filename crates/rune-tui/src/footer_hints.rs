@@ -32,12 +32,12 @@ fn labeled<C: Copy + 'static>(binding: &Binding<C>, buf: &mut String) -> String 
 /// superseding WP2.S6/S7's blind `GLOBAL_BINDINGS` iteration): a
 /// priority-ordered `(label, help, active)` list —
 ///
-/// 1. `⌘S save` — only in the Editor, and only when the active document
+/// 1. `^S save` — only in the Editor, and only when the active document
 ///    isn't `ReadOnly::Always` (plan WP6: that variant can never be
 ///    saved); styled active only when the document is dirty (assumption
 ///    A2: for every document where it's PRESENT it's never removed, so
 ///    the row never jumps there).
-/// 2. Every remaining non-alias `GLOBAL_BINDINGS` entry except `⌘S` (already
+/// 2. Every remaining non-alias `GLOBAL_BINDINGS` entry except `^S` (already
 ///    placed at step 1, with its own dirty-state styling) — help and quit
 ///    are always-available actions, so they get a stable position ahead of
 ///    the pane-specific table below rather than being the first thing width
@@ -71,7 +71,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     // the error-banner document is never inserted into `app.documents` at
     // all — so dropping the hint there drops it exactly where the chord
     // is dead. A `ReadOnly::Reading` document may hold bytes typed before
-    // the toggle and keeps a live, working `⌘S`, so it keeps the hint.
+    // the toggle and keeps a live, working `^S`, so it keeps the hint.
     if focus::target(app) == FocusTarget::Editor
         && !matches!(
             app.active_doc().read_only,
@@ -313,7 +313,7 @@ mod tests {
     }
 
     /// Plan WP6.S6 — the span-level regression guard for assumption A2: the
-    /// `⌘S` label span carries `theme.chrome.footer_key_inactive` on a
+    /// `^S` label span carries `theme.chrome.footer_key_inactive` on a
     /// clean document and `theme.chrome.footer_key` once an edit makes it
     /// dirty.
     #[test]
@@ -405,7 +405,7 @@ mod tests {
     }
 
     /// Plan WP6 — a `ReadOnly::Reading` document may hold bytes typed
-    /// before the toggle and keeps a live `⌘S`, so the hint stays.
+    /// before the toggle and keeps a live `^S`, so the hint stays.
     #[test]
     fn default_hint_entries_keep_save_for_a_read_only_reading_document() {
         let save_label = GLOBAL_BINDINGS

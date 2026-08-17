@@ -62,7 +62,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
 
     // ONE hoisted gate, deliberately before the match:
     // a global chord pressed while the title is focused commits the typed
-    // name FIRST, so ⌘S can never save under the old name and the edit is
+    // name FIRST, so ^S can never save under the old name and the edit is
     // never silently discarded. A no-op when the title isn't focused. NEVER
     // an early return: a refused commit leaves focus on the title with the
     // reason already in the footer, but every arm below must stay reachable

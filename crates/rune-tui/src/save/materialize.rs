@@ -107,8 +107,8 @@ pub(super) fn materialize_now(
             // (same signal `on_store_failure` always raised on an
             // enqueue-time error) AND fall back to the uncoordinated
             // direct-vfs write, exactly like a document with no store
-            // binding at all: "press ⌘S again to save anyway" must
-            // actually save ([rune-db 1]). This document never entered
+            // binding at all — save-anyway must actually save
+            // ([rune-db 1]). This document never entered
             // `Preparing`, so `on_store_failure`'s sweep has nothing of
             // THIS attempt to abandon — the fallback below is the first
             // and only thing that arms `save_in_flight` for it.
@@ -142,7 +142,7 @@ fn fall_back_to_direct(
 /// `trigger_save` cannot be reused here: it reads `doc.file_path`, which is
 /// exactly what a draft does not have yet. And the document is deliberately
 /// NOT bound to `path` up front — a `rename_excl` that loses the race must
-/// leave the draft untitled, or a later ⌘S would overwrite the winner.
+/// leave the draft untitled, or a later ^S would overwrite the winner.
 /// `handle_materialize_ack` performs the bind once the
 /// write actually commits.
 pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {

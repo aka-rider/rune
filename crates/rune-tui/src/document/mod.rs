@@ -106,7 +106,7 @@ pub struct Document {
     /// `Reading` is different: it is a toggle the user reaches and leaves
     /// with the same chord (⌃P), so undo/redo are blocked there while the
     /// toggle is on. The two chords diverge deliberately: in `Reading`,
-    /// ⌘S still materializes bytes already typed, while ⌘Z (which would
+    /// ^S still materializes bytes already typed, while ⌘Z (which would
     /// change them) does not — saving protects what the user wrote, undo
     /// rewrites it.
     pub read_only: ReadOnly,
@@ -233,7 +233,7 @@ pub struct Document {
 /// mode (`Reading`) can be told apart from a document with no editable form
 /// at all (`Always`), and both from a transient, not-yet-committed one
 /// (`Preview`): a toggle must not make the Help tab editable, and the
-/// undo/redo guard and the `⌘S` footer hint each branch on the variants
+/// undo/redo guard and the `^S` footer hint each branch on the variants
 /// differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadOnly {
@@ -288,7 +288,7 @@ impl Document {
     /// `true` only for `ReadOnly::Preview`. `App::refuse_if_preview` is the
     /// one place that checks this rather than the generic `App::
     /// refuse_if_read_only`: that one also refuses `ReadOnly::Reading`,
-    /// which save must NOT (⌘S still materializes bytes already typed in
+    /// which save must NOT (^S still materializes bytes already typed in
     /// reading view) and close must NOT (closing a reading-view document is
     /// ordinary).
     pub fn is_preview(&self) -> bool {
@@ -538,7 +538,7 @@ impl Document {
     /// The path an in-flight `bind_new` CREATE (`save::bind_new_now`) is
     /// trying to claim, or `None` outside that shape — deliberately not
     /// `file_path`: a create that loses the no-clobber race must leave the
-    /// draft untitled, or a later ⌘S would overwrite the winner.
+    /// draft untitled, or a later ^S would overwrite the winner.
     pub fn bind_target(&self) -> Option<&PathBuf> {
         self.save.bind_target()
     }

@@ -106,7 +106,8 @@ fn chord_hint(app: &App) -> Option<String> {
         .pending_save_confirm
         .is_some_and(|(cid, _)| cid == app.active)
     {
-        return Some("press \u{2318}S again to save anyway".to_string());
+        let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
+        return Some(format!("press {save_key} again to save anyway"));
     }
     None
 }
@@ -370,6 +371,16 @@ mod tests {
                 "expected the sync marker beside the position readout for {last_sync:?}: {row:?}"
             );
         }
+    }
+
+    /// The rendered confirm hint names the actual save chord — the glyph
+    /// comes from `GLOBAL_BINDINGS`' canonical `Save` row, so a rebind
+    /// moves it here without this text ever going blank.
+    #[test]
+    fn save_confirm_hint_names_the_save_chord() {
+        let mut app = app_with("hello");
+        app.pending_save_confirm = Some((app.active, crate::generation::Generation::ZERO));
+        assert_eq!(footer_text(&app), "press ^S again to save anyway");
     }
 
     /// `pending_save_confirm` is doc-tagged (plan WP1 decision 3): a chord

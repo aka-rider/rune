@@ -361,7 +361,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
 /// Deliberately does NOT advance `DocDb::expect_obs`: recording the
 /// adoption happens at resolver ENTRY, before the user has resolved
 /// anything, and advancing the save-CAS baseline that early would let an
-/// Esc-out ⌘S silently publish a half-resolved working form over the
+/// Esc-out ^S silently publish a half-resolved working form over the
 /// external disk bytes. The baseline advances only at a TERMINAL success —
 /// the caller's Discard/clean-merge arms, or `exit_in_place` on completion.
 fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> bool {
@@ -392,7 +392,7 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> b
 /// The terminal-success half of the adoption: the buffer is now genuinely
 /// reconciled with `theirs_obs`'s bytes — the current disk content — so the
 /// CAS expectation advances with it (the disk-conflict guard's
-/// [S]ave-anyway precedent): the invited ⌘S now passes against the file the
+/// [S]ave-anyway precedent): the invited ^S now passes against the file the
 /// merge just read, while a SECOND external write in between still
 /// hash-mismatches into a fresh conflict. The epoch bump retires every
 /// probe still in flight for this file: their verdicts were computed

@@ -71,6 +71,18 @@ fn global_bindings_cover_quit_focus_save_and_help() {
         Some(GlobalCommand::Save)
     );
 
+    let ctrl_s = key(
+        KeyCode::Char('s'),
+        Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    );
+    assert_eq!(
+        resolve_in(GLOBAL_BINDINGS, ctrl_s),
+        Some(GlobalCommand::Save)
+    );
+
     let ctrl_d = key(
         KeyCode::Char('d'),
         Mods {

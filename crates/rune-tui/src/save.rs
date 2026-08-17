@@ -131,7 +131,7 @@ pub(crate) fn trigger_save(
     // between republishes the edited content at the OLD path — resurrecting
     // the file the rename is in the middle of moving away from, and leaving
     // the new name holding stale bytes. Refused rather than queued: the ack
-    // is one message away, and ⌘S again after it lands does the right thing
+    // is one message away, and ^S again after it lands does the right thing
     // against the right path.
     if app.rename.in_flight() {
         // `error`, not `warn`: nothing was written, and unlike the
@@ -143,7 +143,7 @@ pub(crate) fn trigger_save(
         messages::error(app, "can't save while a rename is in flight");
         return SaveStart::Refused;
     }
-    // Structural, not per-call-site: EVERY save entry point (⌘S, the
+    // Structural, not per-call-site: EVERY save entry point (^S, the
     // DirtyClose/DirtyQuit guards' [S], the quit fan-out, DiskConflict's
     // [S]ave anyway) funnels through this ladder, so an active resolver
     // with unresolved blocks can never publish a half-resolved working
@@ -166,7 +166,7 @@ pub(crate) fn trigger_save(
     let version = doc.buffer.version();
     let Some(path) = doc.file_path.clone() else {
         // A pathless draft (including the default untitled document a
-        // no-arg launch opens) has nothing to save yet — ⌘S here means
+        // no-arg launch opens) has nothing to save yet — ^S here means
         // "name it", so route it into the same "pathless draft is a
         // CREATE" flow `rename::begin` already implements
         // (`rename.rs` -> `bind_new`): focus the title field so the
@@ -235,9 +235,10 @@ pub(crate) fn trigger_save(
         // document here is what makes the surviving sentence true no matter
         // which caller reaches it.
         let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
+        let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
         messages::error(
             app,
-            format!("recovery disabled for {name} \u{2014} press \u{2318}S again to save anyway"),
+            format!("recovery disabled for {name} \u{2014} press {save_key} again to save anyway"),
         );
         effects.cmds.push(save_confirm_timeout_cmd(generation));
         return SaveStart::Refused;

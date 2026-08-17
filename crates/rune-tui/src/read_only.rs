@@ -27,7 +27,7 @@ impl App {
     /// committed preview, doing nothing otherwise. `save::trigger_save` and
     /// `workspace::request_close` both call this instead of the generic
     /// check, because that one also refuses `ReadOnly::Reading` — and
-    /// unlike rename, both save (⌘S still materializes bytes already typed
+    /// unlike rename, both save (^S still materializes bytes already typed
     /// in reading view) and close (closing a reading-view document is
     /// ordinary) must keep working there. A preview has no chord that
     /// leaves it the way ⌃P leaves reading view, so it alone is refused by
