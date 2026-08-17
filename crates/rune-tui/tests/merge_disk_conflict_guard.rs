@@ -12,6 +12,7 @@
 
 mod merge_common;
 
+use rune_db::SyncKind;
 use rune_fuzz::Session;
 use rune_tui::document::DocumentId;
 use rune_tui::footer;
@@ -107,6 +108,24 @@ fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
     assert!(
         refused_at < cancelled_at,
         "the save refusal must precede the cancellation ack in the log, got {log:?}"
+    );
+}
+
+#[test]
+fn disk_conflict_guard_merge_answer_that_begin_refuses_keeps_the_guard_visible() {
+    let (mut session, doc_id) = enter_disk_conflict_guard(b"disk changed");
+    session.app_mut().doc_mut(doc_id).unwrap().last_sync = Some(SyncKind::Clean);
+
+    assert!(session.key(ch('m')).is_none());
+
+    assert!(
+        session.app().guard.is_some(),
+        "a refused begin must leave the disk-conflict Guard visible"
+    );
+    assert_eq!(session.app().merge, MergeState::Inactive);
+    assert_eq!(
+        rune_tui::messages::newest_text(session.app()),
+        Some("no divergence to merge")
     );
 }
 

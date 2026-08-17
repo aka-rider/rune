@@ -157,6 +157,47 @@ fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
 }
 
 #[test]
+fn a_second_ctrl_m_while_pending_does_not_clobber_the_ticket() {
+    let (mut session, doc_id, draft_id) = open_hello();
+    assert!(session.key(ch('!')).is_none());
+    assert!(session.deliver_db().is_none());
+
+    external_write(session.app().vfs.as_ref(), b"disk changed this");
+    reprobe(&mut session, draft_id, doc_id);
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().last_sync,
+        Some(SyncKind::Diverged)
+    );
+
+    assert!(session.key(ctrl('m')).is_none());
+    assert!(matches!(session.app().merge, MergeState::Pending { .. }));
+    assert_eq!(session.app().db_ops.len(), 1);
+
+    assert!(session.key(ctrl('m')).is_none());
+    assert!(
+        matches!(session.app().merge, MergeState::Pending { .. }),
+        "the second press must not clobber the still-outstanding ticket, got {:?}",
+        session.app().merge
+    );
+    assert_eq!(
+        session.app().db_ops.len(),
+        1,
+        "the second press must not enqueue a second MergePrep"
+    );
+    assert_eq!(
+        rune_tui::messages::newest_text(session.app()),
+        Some("merge already preparing")
+    );
+
+    assert!(session.deliver_db().is_none());
+    assert!(
+        matches!(session.app().merge, MergeState::Active { .. }),
+        "the FIRST attempt's ack must still land, got {:?}",
+        session.app().merge
+    );
+}
+
+#[test]
 fn merge_with_no_divergence_hint_refuses_without_enqueueing() {
     let (mut session, doc_id, _draft_id) = open_hello();
     assert_eq!(

@@ -29,6 +29,10 @@ use crate::runtime::Effects;
 pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) {
     let id = app.active;
     let Some(doc) = app.doc(id) else { return };
+    if matches!(&app.merge, MergeState::Pending { doc: d, .. } if *d == id) {
+        messages::warn(app, "merge already preparing");
+        return;
+    }
     // A save's multi-hop materialize dance is still in flight for this
     // document: a `MergePrep` enqueued now could land AFTER the save's
     // commit ack and rebase `DocDb::expect_obs` backwards to the pre-save

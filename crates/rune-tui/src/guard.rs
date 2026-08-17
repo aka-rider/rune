@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::app::{App, QuitIntent};
 use crate::document::DocumentId;
 use crate::keymap::{KeyCode, KeyInput};
-use crate::merge::MergeIntent;
+use crate::merge::{MergeIntent, MergeState};
 use crate::messages;
 use crate::runtime::Effects;
 use crate::save::{self, SaveMode, SaveStart};
@@ -417,17 +417,23 @@ fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effec
             clear_guard(app);
         }
     } else if DISK_CONFLICT_DISCARD.answers(key) {
-        clear_guard(app);
         if app.active != doc {
             workspace::switch_to(app, doc);
         }
         crate::merge::begin(app, MergeIntent::Discard, effects);
+        clear_guard_if_begin_started(app, doc);
     } else if DISK_CONFLICT_MERGE.answers(key) {
-        clear_guard(app);
         if app.active != doc {
             workspace::switch_to(app, doc);
         }
         crate::merge::begin(app, MergeIntent::Merge, effects);
+        clear_guard_if_begin_started(app, doc);
+    }
+}
+
+fn clear_guard_if_begin_started(app: &mut App, doc: DocumentId) {
+    if matches!(&app.merge, MergeState::Pending { doc: d, .. } if *d == doc) {
+        clear_guard(app);
     }
 }
 
