@@ -214,21 +214,6 @@ pub(crate) fn word_range_at(buf: &Buffer, offset: usize) -> (usize, usize) {
     (start, end)
 }
 
-/// Used both by movement
-/// (implicitly, via `handle_left`/`handle_right`'s `SelectionStart`/`End`)
-/// and by `commands::edit`'s selection-replacing edits.
-pub fn selection_end_inclusive(c: &Cursor, buf: &Buffer) -> usize {
-    let mut end = c.selection_end();
-    if c.reversed()
-        && end < buf.len()
-        && let Some((r, _)) = buf.rune_at(end)
-        && r != '\n'
-    {
-        end = next_rune_offset(buf, end);
-    }
-    end
-}
-
 /// Recomputes `desired_col`
 /// from the NEW position's visual column — every horizontal/line-start-end
 /// motion resets `desired_col` this way (only vertical row motion preserves
@@ -416,25 +401,43 @@ mod tests {
         assert_eq!(word_right_offset(&buf, "foo_bar ".len()), buf.len());
     }
 
-    #[test]
-    fn selection_end_inclusive_advances_past_reversed_anchor_unless_newline() {
-        let buf = Buffer::new("hello\nworld");
-        let reversed = Cursor {
-            position: 0,
-            anchor: 5,
+    fn doc_with(content: &str, anchor: usize, position: usize) -> Document {
+        let mut doc = Document::new(Buffer::new(content));
+        doc.cursors = CursorSet::new_from(&[Cursor {
+            position,
+            anchor,
             desired_col: 0,
             id: CursorId::FIRST,
-        };
-        // Anchor byte is '\n' at offset 5: must NOT advance past it.
-        assert_eq!(selection_end_inclusive(&reversed, &buf), 5);
+        }]);
+        doc.viewport.set_size(80, 23);
+        doc
+    }
 
-        let reversed2 = Cursor {
-            position: 0,
-            anchor: 4,
-            desired_col: 0,
-            id: CursorId::FIRST,
-        };
-        // Anchor byte is 'o' (not '\n'): advances one rune past it.
-        assert_eq!(selection_end_inclusive(&reversed2, &buf), 5);
+    #[test]
+    fn left_on_a_reversed_selection_collapses_to_its_low_edge() {
+        let mut doc = doc_with("hello world", 5, 2);
+        char_left(&mut doc, Extend::No);
+        assert_eq!(doc.cursors.primary().position, 2);
+    }
+
+    #[test]
+    fn left_on_a_forward_selection_collapses_to_its_low_edge() {
+        let mut doc = doc_with("hello world", 2, 5);
+        char_left(&mut doc, Extend::No);
+        assert_eq!(doc.cursors.primary().position, 2);
+    }
+
+    #[test]
+    fn right_on_a_reversed_selection_collapses_to_its_high_edge() {
+        let mut doc = doc_with("hello world", 5, 0);
+        char_right(&mut doc, Extend::No);
+        assert_eq!(doc.cursors.primary().position, 5);
+    }
+
+    #[test]
+    fn right_on_a_forward_selection_collapses_to_its_high_edge() {
+        let mut doc = doc_with("hello world", 0, 5);
+        char_right(&mut doc, Extend::No);
+        assert_eq!(doc.cursors.primary().position, 5);
     }
 }

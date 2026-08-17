@@ -22,7 +22,6 @@ use rune_core::cursor::{Cursor, CursorSet};
 use crate::app::App;
 use crate::clipboard::{OSC52_MAX_PAYLOAD_BYTES, osc52_copy, pbpaste_cmd};
 use crate::commands::edit;
-use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::document::DocumentId;
 use crate::messages;
@@ -72,8 +71,7 @@ pub(crate) fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
 
 fn copy_text_for_cursor(buf: &Buffer, c: &Cursor) -> String {
     if c.has_selection() {
-        let start = c.selection_start();
-        let end = nav::selection_end_inclusive(c, buf);
+        let (start, end) = c.selection_range();
         buf.slice(start, end).unwrap_or("").to_string()
     } else {
         copy_entire_line(buf, c.position)
@@ -181,8 +179,9 @@ pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Eff
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::commands::test_support::selecting;
     use rune_core::buffer::Buffer;
-    use rune_core::cursor::{Cursor, CursorSet};
+    use rune_core::cursor::CursorSet;
     use rune_vfs::Mem;
     use std::sync::Arc;
 
@@ -192,15 +191,6 @@ mod tests {
         app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
         app.doc_mut(id).unwrap().viewport.set_size(80, 23);
         app
-    }
-
-    fn selecting(app: &mut App, id: DocumentId, anchor: usize, position: usize) {
-        let primary = app.doc(id).unwrap().cursors.primary();
-        app.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[Cursor {
-            anchor,
-            position,
-            ..primary
-        }]);
     }
 
     fn expected_osc52(text: &str) -> Vec<u8> {
@@ -242,6 +232,17 @@ mod tests {
         copy(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("third")]);
+    }
+
+    #[test]
+    fn copy_of_a_reversed_selection_emits_exactly_the_highlighted_bytes() {
+        let mut app = app_with("hello world", 5);
+        let id = app.active;
+        selecting(&mut app, id, 5, 0);
+        let mut effects = Effects::default();
+        copy(&mut app, id, &mut effects);
+
+        assert_eq!(effects.raw, vec![expected_osc52("hello")]);
     }
 
     #[test]

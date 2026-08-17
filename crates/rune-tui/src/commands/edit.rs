@@ -65,8 +65,7 @@ fn per_cursor_selection_edits(
         let Some(doc) = app.doc(id) else { return };
         let buf = &doc.buffer;
         let edit = if c.has_selection() {
-            let start = c.selection_start();
-            let end = nav::selection_end_inclusive(c, buf);
+            let (start, end) = c.selection_range();
             Edit {
                 start,
                 end,
@@ -400,6 +399,7 @@ fn resync_after_journal_jump(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::commands::test_support::selecting;
     use rune_core::cursor::CursorSpec;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -410,6 +410,39 @@ mod tests {
         app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
         app.doc_mut(id).unwrap().viewport.set_size(80, 23);
         app
+    }
+
+    #[test]
+    fn backspace_on_a_reversed_selection_removes_exactly_the_highlighted_range() {
+        let mut app = app_with("hello world", 0);
+        let id = app.active;
+        selecting(&mut app, id, 5, 0);
+
+        delete_left(&mut app, id);
+
+        assert_eq!(app.doc(id).unwrap().buffer.content(), " world");
+    }
+
+    #[test]
+    fn typing_over_a_reversed_selection_replaces_exactly_the_highlighted_range() {
+        let mut app = app_with("hello world", 0);
+        let id = app.active;
+        selecting(&mut app, id, 5, 0);
+
+        insert_char(&mut app, id, 'x');
+
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "x world");
+    }
+
+    #[test]
+    fn typing_over_a_forward_selection_replaces_exactly_the_highlighted_range() {
+        let mut app = app_with("hello world", 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, 5);
+
+        insert_char(&mut app, id, 'x');
+
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "x world");
     }
 
     /// End-to-end regression for the illegal-edit-set hazard

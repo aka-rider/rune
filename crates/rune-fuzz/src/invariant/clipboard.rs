@@ -5,7 +5,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
 use rune_core::buffer::Buffer;
-use rune_tui::commands::nav;
 use rune_tui::focus::FocusTarget;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
@@ -162,9 +161,7 @@ fn document_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Opt
     let [cursor] = prev.cursors.as_slice() else {
         return None;
     };
-    let buf = Buffer::new(prev.content.clone());
-    let start = cursor.selection_start();
-    let end = nav::selection_end_inclusive(cursor, &buf);
+    let (start, end) = cursor.selection_range();
     if end > prev.content.len()
         || !prev.content.is_char_boundary(start)
         || !prev.content.is_char_boundary(end)
@@ -202,9 +199,8 @@ fn decode_osc52(bytes: &[u8]) -> Option<Vec<u8>> {
 /// `CLIP-OSC52` — a `Copy`/`Cut` over a
 /// non-empty selection must emit an OSC 52 raw chunk whose decoded payload
 /// byte-equals that selection's text, computed the same way
-/// `commands::clipboard::extract_copy_text` does (`selection_start()` ..
-/// `nav::selection_end_inclusive`, which nudges a REVERSED selection's end
-/// past its anchor unless that byte is a newline).
+/// `commands::clipboard::extract_copy_text` does: the plain half-open
+/// `selection_range()`.
 ///
 /// Active-document-switch-safe: reads only `prev` plus `ctx.raw` from the
 /// SAME step — there is no `next` to compare against, so a document switch
@@ -227,8 +223,8 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     // unfocused. The title is different: it resolves through this
     // SAME table (decision 3) and DOES copy on ⌘C, but its own name, taken
     // from the field's window (assumption A2), not from a document cursor's
-    // `nav::selection_end_inclusive` range — a convention this checker does
-    // not model. Either way, without this guard the checker would assert a
+    // `selection_range()` — a convention this checker does not model.
+    // Either way, without this guard the checker would assert a
     // payload the focused pane never produced. This is the same scoping
     // `pane_no_bleed` applies. (Latent since Explorer/Tabs focus existed;
     // the Up-at-editor-top-focuses-the-title gesture made it easy to
@@ -244,8 +240,7 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     }
 
     let buf = Buffer::new(prev.content.clone());
-    let start = cursor.selection_start();
-    let end = nav::selection_end_inclusive(cursor, &buf);
+    let (start, end) = cursor.selection_range();
     let expected = buf.slice(start, end)?;
     if expected.is_empty() {
         return None;

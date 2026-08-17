@@ -24,3 +24,5 @@ pub mod nav_scroll;
 pub mod reading;
 pub mod reading_nav;
 pub mod splitter;
+#[cfg(test)]
+pub(crate) mod test_support;

@@ -128,15 +128,9 @@ fn paste_verbatim_accepts_a_paste_over_a_selection() {
 
 #[test]
 fn paste_verbatim_accepts_a_paste_over_a_reversed_selection() {
-    // A REVERSED selection (position < anchor) nudges its replaced end one
-    // rune past the anchor unless that byte is a newline
-    // (`nav::selection_end_inclusive`) -- the same rule `clip_osc52` already
-    // accounts for, and every selection-consuming edit command shares it,
-    // not just Copy/Cut. Anchor sits on the space right after "hello", so
-    // the actual replaced range is "hello " (six bytes), not "hello" (five).
     let mut prev = base_snapshot("hello world");
-    prev.cursors = vec![selection_cursor(1, 5, 0)]; // reversed: position=0, anchor=5
-    let next = base_snapshot("byeworld");
+    prev.cursors = vec![selection_cursor(1, 5, 0)];
+    let next = base_snapshot("bye world");
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Paste("bye".to_string());
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
