@@ -169,6 +169,12 @@ end_session() {
   tmux -L "$SOCKET" kill-server 2>/dev/null || true
 }
 
+trim_cast_tail() {
+  local cast="$1"
+  awk '/\[terminated\]|\[exited\]/ { exit } { print }' "$cast" >"$cast.trimmed"
+  mv "$cast.trimmed" "$cast"
+}
+
 cleanup() {
   tmux -L "$SOCKET" kill-server 2>/dev/null || true
   if [ -n "$WORKSPACE" ]; then
@@ -213,6 +219,7 @@ record() {
 
   end_session "$recorder_pid"
   wait "$recorder_pid" || true
+  trim_cast_tail "$cast"
 
   "$ASG" "$cast" "$OUT/$feature.svg" --window --fps 15
   agg "$cast" "$OUT/$feature.gif"
