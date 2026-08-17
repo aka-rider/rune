@@ -654,33 +654,31 @@ pub(super) const MERGE_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `[`/`]` (`MergeCommand::PrevConflict`/`NextConflict`) and `o`/`t`/`b`
-/// (`MergeCommand::KeepOurs`/`KeepTheirs`/`KeepBoth`) — the resolver
-/// intercept's own alphabet. `cluster_merge` presses exactly one of these
-/// right after the working form installs, so it lands on a genuine resolver
-/// most of the time rather than always falling through to plain-char
-/// insertion; a session that never reaches `Active` (a `DiskAhead` clean
-/// fast path, a UTF-8 refusal, ...) still exercises the fallthrough itself,
-/// which is exactly `MERGE-KEY-FEEDBACK`'s other half.
+/// `⇧⌘Y`/`⇧⌘U` (`DiffCommand::TakeTheirs`/`TakeOurs`, `diff_view::keys::
+/// DIFF_BINDINGS`) — the pane verb layer's own conflict-resolving chords.
+/// `cluster_merge` presses exactly one of these right after the working
+/// form installs, so it lands on a genuine resolution most of the time
+/// rather than always falling through to plain-char insertion; a session
+/// that never reaches `Active` (a `DiskAhead` clean fast path, a UTF-8
+/// refusal, ...) still exercises the fallthrough itself, which is exactly
+/// `MERGE-KEY-FEEDBACK`'s other half.
 pub(super) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
     KeyInput {
-        code: KeyCode::Char('['),
-        mods: Mods::NONE,
+        code: KeyCode::Char('y'),
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: true,
+        },
     },
     KeyInput {
-        code: KeyCode::Char(']'),
-        mods: Mods::NONE,
-    },
-    KeyInput {
-        code: KeyCode::Char('o'),
-        mods: Mods::NONE,
-    },
-    KeyInput {
-        code: KeyCode::Char('t'),
-        mods: Mods::NONE,
-    },
-    KeyInput {
-        code: KeyCode::Char('b'),
-        mods: Mods::NONE,
+        code: KeyCode::Char('u'),
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: true,
+        },
     },
 ];
