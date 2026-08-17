@@ -96,16 +96,56 @@ pub(crate) fn intercept(app: &mut App, key: KeyInput) -> bool {
     if diff.right != app.active {
         return false;
     }
+    let merge_active = crate::merge::verbs::active_on(app, app.active);
+    if merge_active && key.code == KeyCode::Escape && key.mods == Mods::NONE {
+        crate::merge::exit_in_place(app);
+        return true;
+    }
     let Some(cmd) = resolve_in(DIFF_BINDINGS, key) else {
         return false;
     };
-    match cmd {
-        DiffCommand::NextHunk => move_hunk(app, 1),
-        DiffCommand::PrevHunk => move_hunk(app, -1),
-        DiffCommand::TakeTheirs => take_theirs(app),
-        DiffCommand::TakeOurs => take_ours(app),
+    match (cmd, merge_active) {
+        (DiffCommand::NextHunk, true) => crate::merge::verbs::nav(app, 1),
+        (DiffCommand::PrevHunk, true) => crate::merge::verbs::nav(app, -1),
+        (DiffCommand::TakeTheirs, true) => crate::merge::verbs::take_theirs(app),
+        (DiffCommand::TakeOurs, true) => crate::merge::verbs::take_ours(app),
+        (DiffCommand::NextHunk, false) => move_hunk(app, 1),
+        (DiffCommand::PrevHunk, false) => move_hunk(app, -1),
+        (DiffCommand::TakeTheirs, false) => take_theirs(app),
+        (DiffCommand::TakeOurs, false) => take_ours(app),
     }
     true
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollKey {
+    LineUp,
+    LineDown,
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+}
+
+pub fn viewport_scroll(key: KeyInput) -> Option<ScrollKey> {
+    const SHIFT: Mods = Mods {
+        shift: true,
+        alt: false,
+        ctrl: false,
+        sup: false,
+    };
+    if key.mods != Mods::NONE && key.mods != SHIFT {
+        return None;
+    }
+    match key.code {
+        KeyCode::Up => Some(ScrollKey::LineUp),
+        KeyCode::Down => Some(ScrollKey::LineDown),
+        KeyCode::PageUp => Some(ScrollKey::PageUp),
+        KeyCode::PageDown => Some(ScrollKey::PageDown),
+        KeyCode::Home => Some(ScrollKey::Top),
+        KeyCode::End => Some(ScrollKey::Bottom),
+        _ => None,
+    }
 }
 
 fn hunk_indices(diff: &DiffView) -> Vec<usize> {
@@ -241,6 +281,54 @@ mod tests {
                 claimants.is_empty(),
                 "GLOBAL_BINDINGS would shadow diff key {key:?}: {claimants:?}"
             );
+        }
+    }
+
+    #[test]
+    fn only_bare_and_shift_arrows_are_viewport_scrolls() {
+        const SHIFT: Mods = Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: false,
+        };
+        const ALT: Mods = Mods {
+            shift: false,
+            alt: true,
+            ctrl: false,
+            sup: false,
+        };
+        const ALT_SUP: Mods = Mods {
+            shift: false,
+            alt: true,
+            ctrl: false,
+            sup: true,
+        };
+        const SHIFT_ALT: Mods = Mods {
+            shift: true,
+            alt: true,
+            ctrl: false,
+            sup: false,
+        };
+        let cases = [
+            (KeyCode::Up, Mods::NONE, Some(ScrollKey::LineUp)),
+            (KeyCode::Up, SHIFT, Some(ScrollKey::LineUp)),
+            (KeyCode::Down, Mods::NONE, Some(ScrollKey::LineDown)),
+            (KeyCode::Down, SHIFT, Some(ScrollKey::LineDown)),
+            (KeyCode::PageUp, Mods::NONE, Some(ScrollKey::PageUp)),
+            (KeyCode::PageDown, Mods::NONE, Some(ScrollKey::PageDown)),
+            (KeyCode::Home, Mods::NONE, Some(ScrollKey::Top)),
+            (KeyCode::End, Mods::NONE, Some(ScrollKey::Bottom)),
+            (KeyCode::Up, ALT_SUP, None),
+            (KeyCode::Down, ALT_SUP, None),
+            (KeyCode::Up, SHIFT_ALT, None),
+            (KeyCode::Up, SUP, None),
+            (KeyCode::Up, ALT, None),
+            (KeyCode::Up, CTRL, None),
+        ];
+        for (code, mods, want) in cases {
+            let got = viewport_scroll(KeyInput { code, mods });
+            assert_eq!(got, want, "code={code:?} mods={mods:?}");
         }
     }
 }

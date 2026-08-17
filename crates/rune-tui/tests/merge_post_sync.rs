@@ -29,7 +29,7 @@ use rune_tui::testgrid;
 
 use merge_common::{
     bare, ch, ctrl, drain_materialize_round_trip_unchecked, external_write, reprobe, save_and_ack,
-    save_expecting_refusal, sup, untitled_draft,
+    save_expecting_refusal, sup, take_ours, take_theirs, untitled_draft,
 };
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched
@@ -81,14 +81,15 @@ fn open_two_conflict_diverged() -> (Session, DocumentId, DocumentId) {
     (session, doc_id, draft_id)
 }
 
-/// `^M`, resolves both conflicts (`O` then `T`), and delivers every ack the
-/// entry install and the accepts enqueued — a fully completed merge.
+/// `^M`, resolves both conflicts (keep-yours then take-disk), and delivers
+/// every ack the entry install and the resolutions enqueued — a fully
+/// completed merge.
 fn complete_by_resolving_all(session: &mut Session) {
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
     assert!(matches!(session.app().merge, MergeState::Active { .. }));
-    assert!(session.key(ch('o')).is_none());
-    assert!(session.key(ch('t')).is_none());
+    assert!(session.key(take_ours()).is_none());
+    assert!(session.key(take_theirs()).is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
     assert!(session.deliver_db_all().is_none());
 }
@@ -191,19 +192,19 @@ fn resolve_all_completion_retires_affordances_and_reprobe_stays_buffer_ahead() {
     );
 }
 
-/// The all-`[B]`oth completion pushes NO journal step after the install, so
+/// A flag-only completion pushes NO journal step after the install, so
 /// the resolve observation sits at exactly the journal head — the precise
 /// shape that used to make `ancestor_at` skip it and fabricate `Diverged`
 /// on the very next probe. It must classify `BufferAhead`.
 #[test]
-fn all_both_completion_reprobe_is_not_diverged() {
+fn flag_only_completion_reprobe_is_not_diverged() {
     let (mut session, doc_id, draft_id) = open_two_conflict_diverged();
 
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
     assert!(matches!(session.app().merge, MergeState::Active { .. }));
-    assert!(session.key(ch('b')).is_none());
-    assert!(session.key(ch('b')).is_none());
+    assert!(session.key(take_ours()).is_none());
+    assert!(session.key(take_ours()).is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
     assert_eq!(
         session.app().doc(doc_id).unwrap().last_sync,
@@ -297,18 +298,13 @@ fn escape_out_with_unresolved_blocks_restores_affordances_and_ctrl_m_retries() {
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
     assert!(matches!(session.app().merge, MergeState::Active { .. }));
-    assert!(session.key(ch('o')).is_none());
+    assert!(session.key(take_ours()).is_none());
     assert!(session.key(bare(KeyCode::Escape)).is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
-    assert!(
-        session
-            .app()
-            .doc(doc_id)
-            .unwrap()
-            .buffer
-            .content()
-            .contains("<<<<<<< editor\n"),
-        "the unresolved block's markers must remain after Esc-out"
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer.content(),
+        "Xone\ntwo\nthree\nfour\nfiveZ\n",
+        "Esc-out keeps the working form's bytes in place"
     );
     assert!(session.deliver_db_all().is_none());
 

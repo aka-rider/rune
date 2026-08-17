@@ -16,6 +16,12 @@ pub enum Resolution {
     HandEdited,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BlockOrigin {
+    Conflict,
+    AutoApplied,
+}
+
 impl Resolution {
     pub fn is_resolved(self) -> bool {
         !matches!(self, Resolution::Unresolved)
@@ -32,6 +38,7 @@ pub struct Block {
 pub struct ConflictBlock {
     pub conflict: Conflict,
     pub block: Block,
+    pub origin: BlockOrigin,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,6 +100,7 @@ mod tests {
                 range: 0..1,
                 resolution,
             },
+            origin: BlockOrigin::Conflict,
         }
     }
 

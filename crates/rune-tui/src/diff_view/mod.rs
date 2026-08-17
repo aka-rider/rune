@@ -36,24 +36,37 @@ pub fn install(
     left_name: String,
 ) -> Result<(), DiffInstallError> {
     let text = String::from_utf8(left_bytes).map_err(|_| DiffInstallError::InvalidUtf8)?;
-    let mut left = Document::new(Buffer::new(text));
+    install_text(app, app.active, text, left_name);
+    Ok(())
+}
+
+pub(crate) fn install_text(app: &mut App, right: DocumentId, text: String, left_name: String) {
+    let Some(right_doc) = app.doc(right) else {
+        return;
+    };
+    let right_content = right_doc.buffer.content().to_string();
+    let right_version = right_doc.buffer.version();
+    let mut left = Document::new(Buffer::new(&text));
     left.read_only = ReadOnly::Always;
     left.focused = false;
     left.display_name = Some(left_name.clone());
-    let right_content = app.active_doc().buffer.content().to_string();
     let alignment = rune_merge::align(left.buffer.content(), &right_content);
-    let right_version = app.active_doc().buffer.version();
     app.diff = Some(DiffView {
         left,
         left_name,
-        right: app.active,
+        right,
         hunk_cur: 0,
         alignment,
         intraline_left: Vec::new(),
         intraline_right: Vec::new(),
         right_version,
     });
-    Ok(())
+}
+
+pub(crate) fn teardown(app: &mut App, right: DocumentId) {
+    if app.diff.as_ref().is_some_and(|d| d.right == right) {
+        app.diff = None;
+    }
 }
 
 fn row_range_intersects(scroll: usize, height: usize, start: usize, len: usize) -> bool {

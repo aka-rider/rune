@@ -529,7 +529,7 @@ mod tests {
     /// pane table this crate has: every guard test below funnels through
     /// this ONE helper (instead of three near-identical copies each
     /// defining their own), so a table added here covers every
-    /// guard the next time this list grows, `MERGE_BINDINGS` included.
+    /// guard the next time this list grows.
     ///
     /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
     /// structural equality on `keys` — a pane row does not need to equal
@@ -555,7 +555,6 @@ mod tests {
         use crate::filesearch::keys::FILESEARCH_BINDINGS;
         use crate::keymap::editor_bindings::EDITOR_BINDINGS;
         use crate::keymap::vim::VIM_BINDINGS;
-        use crate::merge::keys::MERGE_BINDINGS;
         use crate::opentabs::TABS_BINDINGS;
 
         [
@@ -564,7 +563,6 @@ mod tests {
             claimants(TABS_BINDINGS, key),
             claimants(EXPLORER_BINDINGS, key),
             claimants(EXPLORER_SEARCH_BINDINGS, key),
-            claimants(MERGE_BINDINGS, key),
             claimants(FILESEARCH_BINDINGS, key),
         ]
         .concat()

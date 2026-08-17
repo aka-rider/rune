@@ -4,22 +4,19 @@
 //! navigation/accept (WP4), painting (WP5), and resync/auto-exit/guard
 //! (WP6) are later work packages layered on the state this module owns.
 
-pub mod frame;
-pub mod keys;
 mod landing;
-pub(crate) mod paint;
 mod persist;
-mod resolve;
-pub(crate) mod resync;
+pub(crate) mod ranges;
 pub mod session;
 pub mod state;
+pub(crate) mod verbs;
 
-pub use keys::{MERGE_BINDINGS, MergeCommand};
 pub(crate) use landing::handle_merge_prep_ack;
 pub(crate) use persist::resume_from_store;
-pub(crate) use resync::resync;
-pub use session::{Block, Conflict, ConflictBlock, MergeSession, Resolution};
+pub use session::{Block, BlockOrigin, Conflict, ConflictBlock, MergeSession, Resolution};
 pub use state::{MergeIntent, MergeState};
+
+pub(crate) const VERB_HINT: &str = "⇧⌘Y take disk · ⇧⌘U keep yours · ⇧⌘J/^K next/prev · Esc close";
 
 use rune_db::SyncKind;
 
@@ -99,6 +96,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
     let MergeState::Active { doc, session } = std::mem::take(&mut app.merge) else {
         return;
     };
+    crate::diff_view::teardown(app, doc);
     let unresolved = session.unresolved_count();
     if unresolved == 0 {
         if let Some(d) = app.doc_mut(doc) {
@@ -132,7 +130,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
             app,
             doc,
             session.saved_display_name,
-            format!("merge closed — {unresolved} unresolved marker block(s) remain"),
+            format!("merge closed — {unresolved} unresolved conflict(s) remain"),
         );
     }
 }
@@ -148,6 +146,7 @@ fn abandon_active(
     saved_display_name: Option<String>,
     message: impl Into<String>,
 ) {
+    crate::diff_view::teardown(app, doc);
     if let Some(d) = app.doc_mut(doc) {
         d.display_name = saved_display_name;
     }
@@ -175,7 +174,14 @@ pub(crate) fn retract_active_on_convergence(
     let nothing_resolved_yet = matches!(
         &app.merge,
         MergeState::Active { doc: d, session }
-            if *d == doc && session.unresolved_count() == session.conflicts.len()
+            if *d == doc && session.conflicts.iter().all(|c| match c.origin {
+                session::BlockOrigin::Conflict => {
+                    c.block.resolution == session::Resolution::Unresolved
+                }
+                session::BlockOrigin::AutoApplied => {
+                    c.block.resolution == session::Resolution::TookTheirs
+                }
+            })
     );
     if !nothing_resolved_yet {
         return;
@@ -296,7 +302,7 @@ pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -
     }
     messages::warn(
         app,
-        format!("{unresolved} conflict(s) to resolve — [O]urs [T]heirs [B]oth"),
+        format!("{unresolved} conflict(s) to resolve — {VERB_HINT}"),
     );
     true
 }
@@ -338,6 +344,7 @@ mod tests {
                             theirs: "theirs".to_string(),
                         },
                         block,
+                        origin: BlockOrigin::Conflict,
                     })
                     .collect(),
                 cur: 0,

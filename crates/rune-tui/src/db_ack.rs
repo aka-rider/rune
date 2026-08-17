@@ -76,6 +76,9 @@ pub fn handle_load_ack(
         return;
     }
 
+    if app.merge.doc() == Some(id) {
+        crate::merge::auto_exit(app);
+    }
     let hydration = {
         let Some(doc) = app.doc_mut(id) else { return };
         if issued_version == Some(doc.buffer.version()) {

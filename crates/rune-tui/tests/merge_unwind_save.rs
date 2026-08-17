@@ -27,15 +27,15 @@ use rune_tui::merge::MergeState;
 
 use merge_common::{
     bare, ch, ctrl, drain_materialize_round_trip, external_write, reprobe, save_and_ack,
-    save_expecting_refusal, sup, untitled_draft,
+    save_expecting_refusal, sup, take_ours, take_theirs, untitled_draft,
 };
 
 const ANCESTOR: &str = "one\ntwo\nthree\nfour\nfive\n";
 const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\n";
 /// The buffer `^M` is entered from: line 1 edited by the user, line 5 too.
 const BEFORE_MERGE: &str = "Xone\ntwo\nthree\nfour\nfiveZ\n";
-/// What resolving `[O]urs` then `[T]heirs` leaves in the buffer: the first
-/// block keeps the editor's own line, the second takes disk's.
+/// What keep-yours then take-disk leaves in the buffer: the first conflict
+/// keeps the editor's own line, the second takes disk's.
 const AFTER_MERGE: &str = "Xone\ntwo\nthree\nfour\nfive disk\n";
 
 struct Reconciled {
@@ -101,8 +101,8 @@ fn merged() -> Reconciled {
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
     assert!(matches!(session.app().merge, MergeState::Active { .. }));
-    assert!(session.key(ch('o')).is_none());
-    assert!(session.key(ch('t')).is_none());
+    assert!(session.key(take_ours()).is_none());
+    assert!(session.key(take_theirs()).is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
     assert!(session.deliver_db_all().is_none());
 

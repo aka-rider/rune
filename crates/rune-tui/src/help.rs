@@ -24,7 +24,6 @@ use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
 use crate::filesearch::keys::FILESEARCH_BINDINGS;
 use crate::keymap::editor_bindings::EDITOR_BINDINGS;
 use crate::keymap::{Binding, GLOBAL_BINDINGS};
-use crate::merge::MERGE_BINDINGS;
 use crate::opentabs::TABS_BINDINGS;
 
 /// Builds the whole Help document's markdown: a `# Help` heading, one
@@ -45,7 +44,6 @@ pub fn help_markdown() -> String {
     push_table_section(&mut out, "File Search", FILESEARCH_BINDINGS);
     push_table_section(&mut out, "Open Tabs", TABS_BINDINGS);
     push_table_section(&mut out, "Editor", EDITOR_BINDINGS);
-    push_table_section(&mut out, "Merge", MERGE_BINDINGS);
     push_table_section(&mut out, "Diff View", DIFF_BINDINGS);
     out
 }

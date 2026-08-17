@@ -122,6 +122,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
             // truth — this enqueue can never roll it back, only mark the
             // store degraded on failure (`db::append_edit`'s doc comment).
             db::append_edit(app, id, &applied, cursors_before.all(), &cursors_after);
+            crate::merge::ranges::remap_after_edit_batch(app, id, &applied);
             materialize_ack::recompute_dirty(app, id);
             for ae in applied.iter().rev() {
                 app.nav_history

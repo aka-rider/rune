@@ -55,6 +55,33 @@ pub fn chord(code: KeyCode, mods: Mods) -> KeyInput {
     KeyInput { code, mods }
 }
 
+pub fn sup_shift(c: char) -> KeyInput {
+    KeyInput {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            shift: true,
+            sup: true,
+            ..Mods::NONE
+        },
+    }
+}
+
+pub fn take_theirs() -> KeyInput {
+    sup_shift('y')
+}
+
+pub fn take_ours() -> KeyInput {
+    sup_shift('u')
+}
+
+pub fn next_hunk() -> KeyInput {
+    sup_shift('j')
+}
+
+pub fn prev_hunk() -> KeyInput {
+    ctrl('k')
+}
+
 /// The untitled draft `Session::open` leaves open alongside the seeded
 /// document — the switch-away target a reprobe needs.
 pub fn untitled_draft(app: &App, seed: DocumentId) -> DocumentId {

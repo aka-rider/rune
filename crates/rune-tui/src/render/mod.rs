@@ -250,16 +250,6 @@ pub fn draw(app: &App, frame: &mut Frame) {
                 app.theme.chrome.diff_word_ours,
             );
         }
-        // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
-        // every overlay `build_rows` already applied — the working form's
-        // markers and framed spans are merge mode's own content, not
-        // markdown or code to be highlighted underneath them. Painted here
-        // rather than inside `build_rows`: this is the one call site that
-        // actually knows `doc` is the active
-        // document, so a generic `build_rows` (the messages pane's own
-        // caller included) can never mistakenly paint a merge overlay onto
-        // some other document.
-        crate::merge::paint::paint(&mut rows, &app.merge, app.active, &app.theme);
         blit(&rows, geo.editor, frame);
     } else {
         draw_pending(app.active_doc(), geo.editor, frame);

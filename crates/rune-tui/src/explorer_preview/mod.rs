@@ -186,6 +186,9 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
     app.explorer.preview_failed = None;
     let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
         Some(id) => {
+            if app.merge.doc() == Some(id) {
+                crate::merge::auto_exit(app);
+            }
             let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
             let buffer = buffer.advance_past(floor);
             app.nav_history.drop_doc(id);

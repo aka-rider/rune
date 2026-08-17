@@ -35,11 +35,10 @@ pub(crate) fn merge_hint_spans(app: &App, unresolved: usize) -> Vec<Span<'static
     spans.extend(hint_row(
         app,
         [
-            ("O", "ours"),
-            ("T", "theirs"),
-            ("B", "both"),
-            ("[", "prev"),
-            ("]", "next"),
+            ("\u{21e7}\u{2318}Y", "take disk"),
+            ("\u{21e7}\u{2318}U", "keep yours"),
+            ("\u{21e7}\u{2318}J", "next"),
+            ("^K", "prev"),
         ],
     ));
     spans.push(Span::styled(
@@ -149,7 +148,7 @@ mod tests {
 
         assert_eq!(
             footer_text(&app),
-            "\u{2699} merge \u{2014} O ours  T theirs  B both  [ prev  ] next  · 0 left"
+            "\u{2699} merge \u{2014} \u{21e7}\u{2318}Y take disk  \u{21e7}\u{2318}U keep yours  \u{21e7}\u{2318}J next  ^K prev  · 0 left"
         );
     }
 

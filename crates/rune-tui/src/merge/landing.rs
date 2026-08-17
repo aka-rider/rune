@@ -12,14 +12,12 @@ use rune_db::{MergePrepOutcome, MergePrepResult, ObsId, SyncKind};
 
 use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
-use crate::commands::nav_scroll;
 use crate::db::PendingOp;
 use crate::document::DocumentId;
 use crate::messages;
 use crate::runtime::Effects;
 
-use super::frame::build_marker_buffer;
-use super::session::MergeSession;
+use super::session::{Block, BlockOrigin, Conflict, ConflictBlock, MergeSession, Resolution};
 use super::state::MergeIntent;
 use super::state::MergeState;
 
@@ -147,7 +145,7 @@ pub(crate) fn handle_merge_prep_ack(
             rune_merge::merge_hunks_no_ancestor(ours_text.as_bytes(), theirs_text.as_bytes())
         }
     };
-    let Ok((buffer_text, pairs)) = build_marker_buffer(&hunks) else {
+    let Ok((buffer_text, pane_theirs_text, mut pairs)) = build_pane_install(&hunks) else {
         app.merge = MergeState::Inactive;
         messages::error(app, UTF8_REFUSAL);
         return;
@@ -190,6 +188,12 @@ pub(crate) fn handle_merge_prep_ack(
     let saved_display_name = super::install_resolver_display_name(app, doc);
 
     let unresolved = pairs.len();
+    pairs.extend(auto_applied_entries(&ours_text, &buffer_text, &pairs));
+    pairs.sort_by_key(|p| p.block.range.start);
+    let cur = pairs
+        .iter()
+        .position(|p| !p.block.resolution.is_resolved())
+        .unwrap_or(0);
     super::persist::enqueue_merge_open(
         app,
         doc,
@@ -198,22 +202,94 @@ pub(crate) fn handle_merge_prep_ack(
         &buffer_text,
         &pairs,
     );
+    crate::diff_view::install_text(app, doc, pane_theirs_text, "disk".to_string());
     app.merge = MergeState::Active {
         doc,
         session: MergeSession {
             conflicts: pairs,
-            cur: 0,
+            cur,
             saved_display_name,
             theirs_obs,
         },
     };
-    if let Some(d) = app.doc_mut(doc) {
-        nav_scroll::scroll_to_byte_offset(d, first_start);
-    }
     messages::info(
         app,
-        format!("{unresolved} conflict(s) to resolve — [O]urs [T]heirs [B]oth"),
+        format!("{unresolved} conflict(s) to resolve — {}", super::VERB_HINT),
     );
+}
+
+struct MergeUtf8Error;
+
+fn build_pane_install(
+    hunks: &[rune_merge::Hunk],
+) -> Result<(String, String, Vec<ConflictBlock>), MergeUtf8Error> {
+    let mut merged = String::new();
+    let mut theirs_doc = String::new();
+    let mut pairs = Vec::new();
+    for hunk in hunks {
+        match hunk {
+            rune_merge::Hunk::Clean(bytes) => {
+                let text = std::str::from_utf8(bytes).map_err(|_| MergeUtf8Error)?;
+                merged.push_str(text);
+                theirs_doc.push_str(text);
+            }
+            rune_merge::Hunk::Conflict { ours, theirs } => {
+                let ours = std::str::from_utf8(ours).map_err(|_| MergeUtf8Error)?;
+                let theirs = std::str::from_utf8(theirs).map_err(|_| MergeUtf8Error)?;
+                let start = merged.len();
+                merged.push_str(ours);
+                theirs_doc.push_str(theirs);
+                pairs.push(ConflictBlock {
+                    conflict: Conflict {
+                        ours: ours.to_string(),
+                        theirs: theirs.to_string(),
+                    },
+                    block: Block {
+                        range: start..merged.len(),
+                        resolution: Resolution::Unresolved,
+                    },
+                    origin: BlockOrigin::Conflict,
+                });
+            }
+        }
+    }
+    Ok((merged, theirs_doc, pairs))
+}
+
+fn auto_applied_entries(
+    pre_merge: &str,
+    merged: &str,
+    conflicts: &[ConflictBlock],
+) -> Vec<ConflictBlock> {
+    use rune_merge::RegionKind;
+
+    let map = rune_merge::align(pre_merge, merged);
+    let mut entries = Vec::new();
+    for region in &map.regions {
+        if !matches!(region.kind, RegionKind::Changed | RegionKind::RightOnly) {
+            continue;
+        }
+        let range = crate::diff_view::rows::line_byte_range(merged, region.right_lines.clone());
+        let clashes = conflicts
+            .iter()
+            .any(|c| c.block.range.start < range.end && range.start < c.block.range.end);
+        if clashes {
+            continue;
+        }
+        let ours_range =
+            crate::diff_view::rows::line_byte_range(pre_merge, region.left_lines.clone());
+        let ours = pre_merge.get(ours_range).unwrap_or_default().to_string();
+        let theirs = merged.get(range.clone()).unwrap_or_default().to_string();
+        entries.push(ConflictBlock {
+            conflict: Conflict { ours, theirs },
+            block: Block {
+                range,
+                resolution: Resolution::TookTheirs,
+            },
+            origin: BlockOrigin::AutoApplied,
+        });
+    }
+    entries
 }
 
 /// The Discard path (plan Assumption A2, review fix F2): installs the fresh
@@ -346,7 +422,7 @@ mod tests {
     /// whatever the ancestor blob would (or wouldn't) have decoded to.
     #[test]
     fn discard_install_replaces_the_buffer_with_theirs_verbatim_and_never_touches_ancestor() {
-        let mut app = app_with("<<<<<<< editor\nours\n=======\ntheirs\n>>>>>>> disk\n");
+        let mut app = app_with("ours text the discard replaces\n");
         let doc = app.active;
 
         discard_install(

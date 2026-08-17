@@ -86,32 +86,17 @@ pub fn merge_save_blocked(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
     None
 }
 
-/// `MERGE-KEY-FEEDBACK` (the House Rule `merge/keys.rs` module docs name:
-/// "consuming with feedback, never silently") — the resolver owes feedback
-/// for every key it REFUSES.
+/// `MERGE-KEY-FEEDBACK` — the diff verb layer owes feedback for every key
+/// it OWNS while merge mode is active on the focused document: a
+/// `DIFF_BINDINGS` chord or the bare-Escape exit must always leave an
+/// observable trace. Every other key falls through to ordinary editor
+/// dispatch in the pane front-end (there is no total capture any more), so
+/// its silence conventions belong to the editor, not to merge mode.
 ///
-/// Scoped to `Pane::Editor` (plan `[R1]`): `merge/keys.rs::intercept`
-/// itself is scoped to the active document, but a key delivered while some
-/// OTHER pane (Explorer, Tabs, Title) is focused never reaches it at all —
-/// that key's feedback obligation belongs to whichever pane's own table
-/// resolves it, not to this invariant.
-///
-/// A bare or shift-only viewport key (`merge::keys::viewport_scroll`) is a
-/// scroll request the resolver honours rather than refuses, and a scroll
-/// that lands against the top or bottom of the working form is silent by
-/// universal editor convention — so that one case is exempt from the "left
-/// an observable trace" demand below, but ONLY when the merge document IS
-/// the active one: when merge is `Active` on some OTHER document, the key
-/// never reaches `intercept` at all, so a silent swallow there is still a
-/// genuine defect and stays a violation. Every other key dispatched while
-/// merge is `Active` and the Editor pane is focused must still leave an
-/// observable trace: it changed the buffer (content/version), the cursor
-/// set, the viewport scroll position, or merge state itself, or it set a
-/// status message. `merge/keys.rs::intercept` is the sole owner of every key
-/// in this state (it runs before the hardcoded Enter/Escape fast paths and
-/// the printable-insert fallthrough), so this pins that its own fallback
-/// arm — a `messages::warn(MERGE_KEY_HINT, ..)` post — is truly exhaustive
-/// over everything it doesn't otherwise resolve.
+/// Scoped to `Pane::Editor` (plan `[R1]`): a key delivered while some
+/// OTHER pane (Explorer, Tabs, Title) is focused never reaches the diff
+/// intercept at all — that key's feedback obligation belongs to whichever
+/// pane's own table resolves it, not to this invariant.
 pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if !prev.merge_active || prev.focus != Pane::Editor {
         return None;
@@ -119,9 +104,12 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
     let MsgTag::Key { input, .. } = &ctx.msg else {
         return None;
     };
-    if rune_tui::merge::keys::viewport_scroll(*input).is_some()
-        && prev.merge_doc == Some(prev.active)
-    {
+    let bare_escape = input.code == rune_tui::keymap::KeyCode::Escape
+        && input.mods == rune_tui::keymap::Mods::NONE;
+    let owned = bare_escape
+        || rune_tui::binding::resolve_in(rune_tui::diff_view::keys::DIFF_BINDINGS, *input)
+            .is_some();
+    if !owned || prev.merge_doc != Some(prev.active) {
         return None;
     }
     let buffer_changed = prev.content != next.content || prev.version != next.version;

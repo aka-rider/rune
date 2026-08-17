@@ -41,6 +41,22 @@ fn plain_key_ctx() -> rune_fuzz::step::StepCtx {
     ctx
 }
 
+fn verb_key_ctx() -> rune_fuzz::step::StepCtx {
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(
+            KeyCode::Char('y'),
+            Mods {
+                shift: true,
+                sup: true,
+                ..Mods::NONE
+            },
+        ),
+        command: None,
+    };
+    ctx
+}
+
 // ---------------------------------------------------------------------
 // MERGE-DOC-ACTIVE
 // ---------------------------------------------------------------------
@@ -156,14 +172,32 @@ fn merge_save_blocked_ignores_a_non_save_key() {
 // ---------------------------------------------------------------------
 
 #[test]
-fn merge_key_feedback_detects_a_silent_swallow() {
+fn merge_key_feedback_detects_a_silent_verb_chord() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
     let next = prev.clone(); // nothing at all changed
-    let ctx = plain_key_ctx();
+    let ctx = verb_key_ctx();
     let v = merge_key_feedback(&prev, &next, &ctx)
-        .expect("a key that changed nothing and set no status must trip MERGE-KEY-FEEDBACK");
+        .expect("a diff verb that changed nothing and set no status must trip MERGE-KEY-FEEDBACK");
+    assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
+}
+
+#[test]
+fn merge_key_feedback_detects_a_silent_bare_escape() {
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
+    let next = prev.clone();
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Escape, Mods::NONE),
+        command: None,
+    };
+    let v = merge_key_feedback(&prev, &next, &ctx)
+        .expect("a silent bare Escape mid-merge must trip MERGE-KEY-FEEDBACK");
     assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
 }
 
@@ -172,9 +206,10 @@ fn merge_key_feedback_accepts_a_status_change() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
     let mut next = prev.clone();
-    next.status = "merge: [O]urs [T]heirs [B]oth · [ ] navigate · Esc close".to_string();
-    let ctx = plain_key_ctx();
+    next.status = "conflict 1/2".to_string();
+    let ctx = verb_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
@@ -183,72 +218,59 @@ fn merge_key_feedback_accepts_a_scroll_change() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
     let mut next = prev.clone();
     next.scroll_row = DisplayRow(3);
-    let ctx = plain_key_ctx();
+    let ctx = verb_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
 #[test]
 fn merge_key_feedback_accepts_a_message_posted_with_identical_status() {
-    // Two consecutive unbound keys post the SAME hint text: `status`
+    // Two consecutive verb presses post the SAME hint text: `status`
     // (footer + newest-entry text) looks unchanged, but the log itself
     // grew by one entry — `message_posts` is the only field that tells the
     // two apart.
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
-    prev.status = "merge: [O]urs [T]heirs [B]oth · [ ] navigate · Esc close".to_string();
+    prev.merge_doc = Some(prev.active);
+    prev.status = "conflict 1/2".to_string();
     let mut next = prev.clone();
     next.message_posts = prev.message_posts + 1;
-    let ctx = plain_key_ctx();
+    let ctx = verb_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
 #[test]
 fn merge_key_feedback_detects_truly_identical_including_posts() {
-    // Same as the silent-swallow case above, but pinned specifically on
-    // `message_posts` also matching: this is the case the counter must
-    // NOT paper over — a checker that always treated "posts differ" as
-    // "feedback happened" without also requiring them to differ would
-    // lose its teeth entirely.
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
     prev.message_posts = 5;
     let mut next = prev.clone();
     next.message_posts = 5;
-    let ctx = plain_key_ctx();
+    let ctx = verb_key_ctx();
     let v = merge_key_feedback(&prev, &next, &ctx).expect(
         "identical message_posts alongside everything else must still trip MERGE-KEY-FEEDBACK",
     );
     assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
 }
 
-/// Issue #54: a bare `Up` is `viewport_scroll`'s own vocabulary — a scroll
-/// request the resolver honours, and a clamped scroll is silent by
-/// universal editor convention, so leaving every observable unchanged is
-/// exempt rather than a violation.
 #[test]
-fn merge_key_feedback_exempts_a_bare_scroll_key_on_the_active_merge_doc() {
+fn merge_key_feedback_exempts_an_unowned_key() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
     prev.merge_doc = Some(prev.active);
-    let next = prev.clone(); // clamped at the top: nothing observable moves
-    let mut ctx = base_ctx();
-    ctx.msg = MsgTag::Key {
-        input: key(KeyCode::Up, Mods::NONE),
-        command: None,
-    };
+    let next = prev.clone();
+    let ctx = plain_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
-/// A chord `viewport_scroll` refuses (`⌥⌘↑`, `AddCursorAbove`) is an
-/// ordinary editor command with no meaning mid-merge — it must still trip
-/// the invariant when left with no observable trace at all.
 #[test]
-fn merge_key_feedback_still_fires_on_a_modifier_arrow_chord() {
+fn merge_key_feedback_exempts_a_modifier_arrow_chord() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
@@ -266,32 +288,19 @@ fn merge_key_feedback_still_fires_on_a_modifier_arrow_chord() {
         ),
         command: None,
     };
-    let v = merge_key_feedback(&prev, &next, &ctx)
-        .expect("a refused modifier chord left with no trace must still trip MERGE-KEY-FEEDBACK");
-    assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
+    assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
-/// The exemption is scoped to the merge document actually being active: when
-/// merge is `Active` on some OTHER document, the key never reaches
-/// `intercept` at all, so a silent bare `Up` here is still a genuine defect.
 #[test]
-fn merge_key_feedback_still_fires_on_a_bare_scroll_key_when_merge_doc_is_not_active() {
+fn merge_key_feedback_exempts_a_verb_chord_when_merge_doc_is_not_active() {
     let doc = other_doc_id();
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Editor;
     prev.merge_doc = Some(doc); // NOT prev.active
     let next = prev.clone();
-    let mut ctx = base_ctx();
-    ctx.msg = MsgTag::Key {
-        input: key(KeyCode::Up, Mods::NONE),
-        command: None,
-    };
-    let v = merge_key_feedback(&prev, &next, &ctx).expect(
-        "a bare Up while merge is Active on a non-active document must still trip \
-         MERGE-KEY-FEEDBACK",
-    );
-    assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
+    let ctx = verb_key_ctx();
+    assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
 #[test]
@@ -299,8 +308,9 @@ fn merge_key_feedback_ignores_a_non_editor_focus() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.focus = Pane::Explorer;
+    prev.merge_doc = Some(prev.active);
     let next = prev.clone();
-    let ctx = plain_key_ctx();
+    let ctx = verb_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
@@ -308,7 +318,7 @@ fn merge_key_feedback_ignores_a_non_editor_focus() {
 fn merge_key_feedback_ignores_an_inactive_merge() {
     let prev = base_snapshot("abc"); // merge_active: false
     let next = prev.clone();
-    let ctx = plain_key_ctx();
+    let ctx = verb_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 

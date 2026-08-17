@@ -1,7 +1,3 @@
-//! Plan WP5 "Done when": a render test asserting ours-span cells carry
-//! `merge_ours_bg`, theirs-span `merge_theirs_bg`, marker lines
-//! `merge_marker_bg`; a resolved block's region carries none; the current
-//! block's cue differs from other unresolved blocks.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -9,199 +5,128 @@
     clippy::panic
 )]
 
-mod highlight_common;
+mod merge_common;
 
-use highlight_common::app_for;
-use ratatui::buffer::Buffer as RtBuffer;
+use rune_db::SyncKind;
 use rune_fuzz::Session;
-use rune_merge::Hunk;
-use rune_tui::app::App;
-use rune_tui::merge::frame::build_marker_buffer;
-use rune_tui::merge::session::MergeSession;
-use rune_tui::merge::state::MergeState;
+use rune_tui::document::DocumentId;
+use rune_tui::keymap::KeyCode;
+use rune_tui::merge::MergeState;
 use rune_tui::testgrid;
 
-const W: u16 = 40;
-const H: u16 = 20;
+use merge_common::{bare, ch, ctrl, external_write, reprobe, take_theirs, untitled_draft};
 
-fn draw(app: &App) -> RtBuffer {
-    testgrid::draw(app, W, H)
+const W: u16 = 83;
+const H: u16 = 24;
+
+const ANCESTOR: &str = "one\ntwo\nthree\nfour\nfive\n";
+const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\n";
+
+fn enter_two_conflict_merge() -> (Session, DocumentId) {
+    let mut session = Session::open("/doc.md", ANCESTOR);
+    let doc_id = session.app().active;
+    let draft_id = untitled_draft(session.app(), doc_id);
+
+    assert!(session.key(ch('X')).is_none());
+    for _ in 0..4 {
+        assert!(session.key(bare(KeyCode::Down)).is_none());
+    }
+    assert!(session.key(bare(KeyCode::End)).is_none());
+    assert!(session.key(ch('Z')).is_none());
+    assert!(session.deliver_db_all().is_none());
+
+    external_write(session.app().vfs.as_ref(), THEIRS);
+    reprobe(&mut session, draft_id, doc_id);
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().last_sync,
+        Some(SyncKind::Diverged)
+    );
+
+    assert!(session.key(ctrl('m')).is_none());
+    assert!(session.deliver_db().is_none());
+    assert!(matches!(session.app().merge, MergeState::Active { .. }));
+    assert!(session.resize(W, H).is_none());
+    (session, doc_id)
 }
 
-fn sized_app_with_merge(buffer: &str, mut install: impl FnMut(&mut App)) -> Session {
-    let mut session = app_for(buffer, "/x/notes.md");
-    let active = session.app().active;
-    session
-        .app_mut()
-        .doc_mut(active)
-        .expect("doc")
-        .viewport
-        .set_size(W, H);
-    install(session.app_mut());
-    session.app_mut().sync_view();
-    session
-}
-
-fn row_text(buf: &RtBuffer, y: u16) -> String {
-    (0..W)
-        .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
-        .collect()
-}
-
-fn row_containing(buf: &RtBuffer, needle: &str) -> u16 {
-    (0..H)
-        .find(|&y| row_text(buf, y).contains(needle))
+fn grid_row_with(grid: &[String], needle: &str) -> usize {
+    grid.iter()
+        .position(|row| row.contains(needle))
         .unwrap_or_else(|| panic!("no rendered row contains {needle:?}"))
 }
 
-fn cell_bg(buf: &RtBuffer, x: u16, y: u16) -> Option<ratatui::style::Color> {
-    buf.cell((x, y)).and_then(|c| c.style().bg)
+fn col_of(row: &str, needle: &str) -> u16 {
+    let byte_idx = row.find(needle).expect("needle present in row");
+    row[..byte_idx].chars().count() as u16
 }
 
-/// Two unresolved blocks (so a "current vs. other" comparison is possible)
-/// separated by a clean line — built through the real `build_marker_buffer`
-/// so the byte offsets `merge::paint` consumes are the real deterministic
-/// framing, not a hand-typed fixture that could drift from `frame_block`.
-fn two_block_fixture() -> (String, Vec<rune_tui::merge::session::ConflictBlock>) {
-    let hunks = vec![
-        Hunk::Conflict {
-            ours: b"mine one".to_vec(),
-            theirs: b"yours one".to_vec(),
-        },
-        Hunk::Clean(b"between\n".to_vec()),
-        Hunk::Conflict {
-            ours: b"mine two".to_vec(),
-            theirs: b"yours two".to_vec(),
-        },
-    ];
-    build_marker_buffer(&hunks).expect("valid utf8 fixture")
+fn col_of_right_pane(row: &str, needle: &str) -> u16 {
+    let byte_idx = row.rfind(needle).expect("needle present in row");
+    row[..byte_idx].chars().count() as u16
 }
 
 #[test]
-fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
-    let (buffer, pairs) = two_block_fixture();
-    let session = sized_app_with_merge(&buffer, |app| {
-        app.merge = MergeState::Active {
-            doc: app.active,
-            session: MergeSession {
-                conflicts: pairs.clone(),
-                cur: 0,
-                saved_display_name: None,
-                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
-            },
-        };
-    });
+fn conflict_regions_carry_theirs_bg_left_and_ours_bg_right() {
+    let (session, _doc) = enter_two_conflict_merge();
     let app = session.app();
-    let buf = draw(app);
+    let grid = testgrid::grid(app, W, H);
+    let buf = testgrid::draw(app, W, H);
 
-    let ours_row = row_containing(&buf, "mine one");
-    let theirs_row = row_containing(&buf, "yours one");
-    let marker_row = row_containing(&buf, "<<<<<<<");
-    let sep_row = row_containing(&buf, "=======");
+    let row = grid_row_with(&grid, "one disk");
+    assert!(
+        grid[row].contains("Xone"),
+        "the aligned ours line renders on the same visual row: {:?}",
+        grid[row]
+    );
 
-    let ours_col = row_text(&buf, ours_row).find("mine one").unwrap() as u16;
-    let theirs_col = row_text(&buf, theirs_row).find("yours one").unwrap() as u16;
-    let marker_col = row_text(&buf, marker_row).find('<').unwrap() as u16;
-    let sep_col = row_text(&buf, sep_row).find('=').unwrap() as u16;
+    let left_col = col_of(&grid[row], "one");
+    let left_bg = buf.cell((left_col, row as u16)).and_then(|c| c.style().bg);
+    assert!(
+        left_bg == app.theme.chrome.merge_theirs_bg.bg
+            || left_bg == app.theme.chrome.diff_word_theirs.bg,
+        "the left (disk) side of a conflict carries a theirs-side background, got {left_bg:?}"
+    );
 
-    assert_eq!(
-        cell_bg(&buf, ours_col, ours_row),
-        Some(app.theme.chrome.merge_ours_bg.bg.unwrap()),
-        "ours span must carry merge_ours_bg"
-    );
-    assert_eq!(
-        cell_bg(&buf, theirs_col, theirs_row),
-        Some(app.theme.chrome.merge_theirs_bg.bg.unwrap()),
-        "theirs span must carry merge_theirs_bg"
-    );
-    assert_eq!(
-        cell_bg(&buf, marker_col, marker_row),
-        Some(app.theme.chrome.merge_marker_bg.bg.unwrap()),
-        "the ours marker line must carry merge_marker_bg"
-    );
-    assert_eq!(
-        cell_bg(&buf, sep_col, sep_row),
-        Some(app.theme.chrome.merge_marker_bg.bg.unwrap()),
-        "the separator marker line must carry merge_marker_bg"
+    let right_col = col_of_right_pane(&grid[row], "one");
+    let right_bg = buf.cell((right_col, row as u16)).and_then(|c| c.style().bg);
+    assert!(
+        right_bg == app.theme.chrome.merge_ours_bg.bg
+            || right_bg == app.theme.chrome.diff_word_ours.bg,
+        "the right (ours) side of a conflict carries an ours-side background, got {right_bg:?}"
     );
 }
 
 #[test]
-fn a_resolved_blocks_region_carries_no_merge_background() {
-    let (buffer, mut pairs) = two_block_fixture();
-    pairs[0].block.resolution = rune_tui::merge::session::Resolution::KeptOurs;
-    let session = sized_app_with_merge(&buffer, |app| {
-        app.merge = MergeState::Active {
-            doc: app.active,
-            session: MergeSession {
-                conflicts: pairs.clone(),
-                cur: 1,
-                saved_display_name: None,
-                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
-            },
-        };
-    });
+fn a_taken_conflicts_region_loses_its_backgrounds() {
+    let (mut session, _doc) = enter_two_conflict_merge();
+
+    assert!(session.key(take_theirs()).is_none());
+    assert!(session.key(merge_common::prev_hunk()).is_none());
+
     let app = session.app();
-    let buf = draw(app);
+    let grid = testgrid::grid(app, W, H);
+    let buf = testgrid::draw(app, W, H);
 
-    let ours_row = row_containing(&buf, "mine one");
-    let ours_col = row_text(&buf, ours_row).find("mine one").unwrap() as u16;
+    let row = grid_row_with(&grid, "one disk");
+    let right_col = col_of_right_pane(&grid[row], "one disk");
+    let right_bg = buf.cell((right_col, row as u16)).and_then(|c| c.style().bg);
     assert_ne!(
-        cell_bg(&buf, ours_col, ours_row),
-        Some(app.theme.chrome.merge_ours_bg.bg.unwrap()),
-        "a resolved block's ours span must carry no merge background"
-    );
-    let marker_row = row_containing(&buf, "<<<<<<<");
-    let marker_col = row_text(&buf, marker_row).find('<').unwrap() as u16;
-    assert_ne!(
-        cell_bg(&buf, marker_col, marker_row),
-        Some(app.theme.chrome.merge_marker_bg.bg.unwrap()),
-        "a resolved block's marker line must carry no merge background"
-    );
-}
-
-#[test]
-fn the_current_blocks_marker_carries_a_distinct_cue() {
-    let (buffer, pairs) = two_block_fixture();
-    let session = sized_app_with_merge(&buffer, |app| {
-        app.merge = MergeState::Active {
-            doc: app.active,
-            session: MergeSession {
-                conflicts: pairs.clone(),
-                cur: 0,
-                saved_display_name: None,
-                theirs_obs: rune_db::ObsId::new(1).expect("nonzero"),
-            },
-        };
-    });
-    let app = session.app();
-    let buf = draw(app);
-
-    let markers: Vec<u16> = (0..H)
-        .filter(|&y| row_text(&buf, y).contains("<<<<<<<"))
-        .collect();
-    assert_eq!(
-        markers.len(),
-        2,
-        "fixture has two marker lines, one per block"
-    );
-    let col0 = row_text(&buf, markers[0]).find('<').unwrap() as u16;
-    let col1 = row_text(&buf, markers[1]).find('<').unwrap() as u16;
-    let current_marker = buf
-        .cell((col0, markers[0]))
-        .expect("current block's marker row");
-    let other_marker = buf
-        .cell((col1, markers[1]))
-        .expect("other block's marker row");
-
-    assert_eq!(
-        current_marker.style().bg,
-        other_marker.style().bg,
-        "both are still the same marker background colour"
+        right_bg, app.theme.chrome.merge_ours_bg.bg,
+        "a taken conflict's region is Same in the live diff and must carry no ours background"
     );
     assert_ne!(
-        current_marker.style().add_modifier,
-        other_marker.style().add_modifier,
-        "the current block's marker must carry a visibly distinct cue"
+        right_bg, app.theme.chrome.diff_word_ours.bg,
+        "a taken conflict's region must carry no intraline emphasis either"
+    );
+
+    let unresolved_row = grid_row_with(&grid, "five disk");
+    let left_col = col_of(&grid[unresolved_row], "five");
+    let left_bg = buf
+        .cell((left_col, unresolved_row as u16))
+        .and_then(|c| c.style().bg);
+    assert!(
+        left_bg == app.theme.chrome.merge_theirs_bg.bg
+            || left_bg == app.theme.chrome.diff_word_theirs.bg,
+        "the still-unresolved conflict keeps its theirs-side background, got {left_bg:?}"
     );
 }

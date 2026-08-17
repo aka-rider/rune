@@ -357,15 +357,6 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// reached only when `app.focus() == Pane::Editor`. `Save`/`QuitConfirm` stay
 /// reachable here too, though stage 2 above always intercepts those first.
 fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
-    // The merge resolver owns EVERY key while active on this document —
-    // checked before the hardcoded Enter/Escape fast paths and the
-    // printable-insert fallthrough below, or `o`/`t`/`b` would type into
-    // the working form and bare Esc would collapse the selection instead
-    // of closing the merge.
-    if crate::merge::keys::intercept(app, key) {
-        return keymap::KeyOutcome::Consumed;
-    }
-
     if crate::diff_view::keys::intercept(app, key) {
         return keymap::KeyOutcome::Consumed;
     }

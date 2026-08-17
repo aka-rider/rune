@@ -6,8 +6,7 @@ use crate::db::PendingOp;
 use crate::document::DocumentId;
 use crate::messages;
 
-use super::resolve::{block_start, scroll_doc};
-use super::session::{Block, Conflict, ConflictBlock, MergeSession, Resolution};
+use super::session::{Block, BlockOrigin, Conflict, ConflictBlock, MergeSession, Resolution};
 use super::state::MergeState;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -17,6 +16,8 @@ struct PersistedBlock {
     resolved: bool,
     #[serde(default)]
     resolution: Option<Resolution>,
+    #[serde(default)]
+    origin: Option<BlockOrigin>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,6 +34,7 @@ fn blocks_json(pairs: &[ConflictBlock]) -> Option<String> {
             end: p.block.range.end,
             resolved: p.block.resolution.is_resolved(),
             resolution: Some(p.block.resolution),
+            origin: Some(p.origin),
         })
         .collect();
     let conflicts = pairs.iter().map(|p| p.conflict.clone()).collect();
@@ -56,6 +58,7 @@ fn pairs_from_payload(payload: BlocksPayload) -> Vec<ConflictBlock> {
                     range: b.start..b.end,
                     resolution,
                 },
+                origin: b.origin.unwrap_or(BlockOrigin::Conflict),
             }
         })
         .collect()
@@ -163,12 +166,13 @@ pub(crate) fn resume_from_store(
 
     let saved_display_name = super::install_resolver_display_name(app, doc);
 
-    let blocks: Vec<Block> = pairs.iter().map(|p| p.block.clone()).collect();
-    let cur = blocks
+    let cur = pairs
         .iter()
-        .position(|b| !b.resolution.is_resolved())
+        .position(|p| !p.block.resolution.is_resolved())
         .unwrap_or(0);
-    let target = block_start(&blocks, cur);
+    let target = pairs.get(cur).map_or(0, |p| p.block.range.start);
+    let theirs_text = reconstruct_theirs(&marker_content, &pairs);
+    crate::diff_view::install_text(app, doc, theirs_text, "disk".to_string());
     app.merge = MergeState::Active {
         doc,
         session: MergeSession {
@@ -178,8 +182,28 @@ pub(crate) fn resume_from_store(
             theirs_obs,
         },
     };
-    scroll_doc(app, doc, target);
+    if let Some(d) = app.doc_mut(doc) {
+        let clamped = target.min(d.buffer.len());
+        d.cursors = rune_core::cursor::CursorSet::new(clamped);
+    }
     messages::info(app, format!("merge resumed — {unresolved} conflict(s)"));
+}
+
+fn reconstruct_theirs(content: &str, pairs: &[ConflictBlock]) -> String {
+    let mut ordered: Vec<&ConflictBlock> = pairs.iter().collect();
+    ordered.sort_by_key(|p| p.block.range.start);
+    let mut out = String::new();
+    let mut at = 0usize;
+    for pair in ordered {
+        if pair.block.range.start < at {
+            continue;
+        }
+        out.push_str(content.get(at..pair.block.range.start).unwrap_or_default());
+        out.push_str(&pair.conflict.theirs);
+        at = pair.block.range.end;
+    }
+    out.push_str(content.get(at..).unwrap_or_default());
+    out
 }
 
 #[cfg(test)]
@@ -224,6 +248,7 @@ mod tests {
                         range: 5..20,
                         resolution: Resolution::Unresolved,
                     },
+                    origin: BlockOrigin::Conflict,
                 },
                 ConflictBlock {
                     conflict: Conflict {
@@ -234,12 +259,47 @@ mod tests {
                         range: 30..40,
                         resolution: Resolution::HandEdited,
                     },
+                    origin: BlockOrigin::Conflict,
                 },
             ]
         );
     }
 
-    const POST_CHANGE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false,"resolution":"Unresolved"},{"start":30,"end":40,"resolved":true,"resolution":"TookTheirs"}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
+    const WP2_SHAPE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false,"resolution":"Unresolved"},{"start":30,"end":40,"resolved":true,"resolution":"TookTheirs"}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
+
+    #[test]
+    fn resume_decodes_a_resolution_bearing_row_without_origin_as_conflict_blocks() {
+        let mut app = app_with(&"x".repeat(40));
+        let doc = app.active;
+
+        resume_from_store(
+            &mut app,
+            doc,
+            WP2_SHAPE_BLOCKS_JSON,
+            ObsId::new(1).expect("nonzero"),
+        );
+
+        let MergeState::Active { session, .. } = &app.merge else {
+            panic!("expected an Active merge, got {:?}", app.merge);
+        };
+        assert_eq!(session.cur, 0);
+        assert!(
+            session
+                .conflicts
+                .iter()
+                .all(|p| p.origin == BlockOrigin::Conflict)
+        );
+        assert_eq!(
+            session.conflicts.first().map(|p| p.block.resolution),
+            Some(Resolution::Unresolved)
+        );
+        assert_eq!(
+            session.conflicts.get(1).map(|p| p.block.resolution),
+            Some(Resolution::TookTheirs)
+        );
+    }
+
+    const POST_CHANGE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false,"resolution":"Unresolved","origin":"Conflict"},{"start":30,"end":40,"resolved":true,"resolution":"TookTheirs","origin":"AutoApplied"}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
 
     #[test]
     fn resume_decodes_the_current_on_disk_shape_and_round_trips_the_written_json_exactly() {
@@ -269,6 +329,7 @@ mod tests {
                         range: 5..20,
                         resolution: Resolution::Unresolved,
                     },
+                    origin: BlockOrigin::Conflict,
                 },
                 ConflictBlock {
                     conflict: Conflict {
@@ -279,6 +340,7 @@ mod tests {
                         range: 30..40,
                         resolution: Resolution::TookTheirs,
                     },
+                    origin: BlockOrigin::AutoApplied,
                 },
             ]
         );
@@ -286,5 +348,27 @@ mod tests {
             blocks_json(&session.conflicts).expect("encodes"),
             POST_CHANGE_BLOCKS_JSON
         );
+    }
+
+    #[test]
+    fn resume_rebuilds_the_left_pane_from_the_buffer_and_stored_theirs() {
+        let mut app = app_with(&"x".repeat(40));
+        let doc = app.active;
+
+        resume_from_store(
+            &mut app,
+            doc,
+            WP2_SHAPE_BLOCKS_JSON,
+            ObsId::new(1).expect("nonzero"),
+        );
+
+        let diff = app
+            .diff
+            .as_ref()
+            .expect("resume must install the pane view");
+        assert_eq!(diff.right, doc);
+        let content = "x".repeat(40);
+        let expected = format!("{}yours{}b", &content[..5], &content[20..30]);
+        assert_eq!(diff.left.buffer.content(), expected);
     }
 }

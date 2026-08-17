@@ -118,8 +118,8 @@ mod tests {
         assert!(validate(crate::opentabs::TABS_BINDINGS).is_ok());
         assert!(validate(crate::explorer_keys::EXPLORER_BINDINGS).is_ok());
         assert!(validate(crate::explorer_search::EXPLORER_SEARCH_BINDINGS).is_ok());
-        assert!(validate(crate::merge::keys::MERGE_BINDINGS).is_ok());
         assert!(validate(crate::filesearch::keys::FILESEARCH_BINDINGS).is_ok());
+        assert!(validate(crate::diff_view::keys::DIFF_BINDINGS).is_ok());
     }
 
     #[test]

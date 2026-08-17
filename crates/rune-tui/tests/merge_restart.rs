@@ -31,7 +31,9 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::db_wiring_common::{publish, restarted_store_at, store_at, temp_db_dir};
-use merge_common::{bare, ch, ctrl, external_write, reprobe, untitled_draft};
+use merge_common::{
+    bare, ch, ctrl, external_write, reprobe, take_ours, take_theirs, untitled_draft,
+};
 
 const ANCESTOR: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
 const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\n";
@@ -107,7 +109,7 @@ fn merge_resumes_after_restart() {
     publish(mem.as_ref(), Path::new("/doc.md"), ANCESTOR);
 
     let (mut session_a, _doc_a) = enter_two_conflict_merge_at(&db_path, &mem);
-    assert!(session_a.key(ch('o')).is_none());
+    assert!(session_a.key(take_ours()).is_none());
     assert!(
         matches!(&session_a.app().merge, MergeState::Active { .. }),
         "one of two resolved keeps the resolver active"
@@ -154,16 +156,13 @@ fn merge_resumes_after_restart() {
         rune_tui::messages::log_text(session_b.app())
     );
     assert_eq!(
-        session_b
-            .app()
-            .doc(doc_b)
-            .unwrap()
-            .buffer
-            .content()
-            .matches("<<<<<<<")
-            .count(),
-        1,
-        "the working form re-hydrates with the one unresolved framed block"
+        session_b.app().doc(doc_b).unwrap().buffer.content(),
+        "Xone\ntwo\nthree\nfour\nfiveZ\n",
+        "the working form re-hydrates byte-for-byte, markers-free"
+    );
+    assert!(
+        session_b.app().diff.is_some(),
+        "the resumed merge re-installs the pane view"
     );
     assert!(
         session_b
@@ -175,22 +174,17 @@ fn merge_resumes_after_restart() {
         "the resolver's title returns with the resumed merge"
     );
 
-    assert!(session_b.key(ch('t')).is_none());
+    assert!(session_b.key(take_theirs()).is_none());
     assert!(session_b.deliver_db_all().is_none());
     assert_eq!(
         session_b.app().merge,
         MergeState::Inactive,
         "resolving the survivor completes the resumed merge"
     );
-    assert!(
-        !session_b
-            .app()
-            .doc(doc_b)
-            .unwrap()
-            .buffer
-            .content()
-            .contains("<<<<<<<"),
-        "no marker bytes remain after completion"
+    assert_eq!(
+        session_b.app().doc(doc_b).unwrap().buffer.content(),
+        "Xone\ntwo\nthree\nfour\nfive disk\n",
+        "the survivor's take-disk lands in the buffer"
     );
     shutdown(session_b);
 }
@@ -242,9 +236,9 @@ fn journaled_edit_past_the_install_abandons_the_merge_on_restart() {
         .buffer
         .content()
         .to_string();
-    assert!(
-        content.starts_with("STRAY ") && content.contains("<<<<<<< editor\n"),
-        "the recovered draft keeps its markers as plain text: {content:?}"
+    assert_eq!(
+        content, "STRAY Xone\ntwo\nthree\nfour\nfiveZ\n",
+        "the recovered draft keeps the journaled bytes as plain text"
     );
 
     // The row was flipped to abandoned: a second full load must not

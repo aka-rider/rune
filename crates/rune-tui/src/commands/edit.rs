@@ -292,7 +292,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
         };
         let edits: Vec<AppliedEdit> = step.edits.clone();
         let cursors_before: Vec<Cursor> = step.cursors_before.clone();
-        let affected = affected_range(&edits);
+        let deltas = crate::merge::ranges::inverse_deltas(&edits);
 
         match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
             Ok(new_buf) => {
@@ -306,7 +306,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
                     app.nav_history
                         .shift(id, ae.start, ae.insert.len(), ae.deleted.len());
                 }
-                resync_after_journal_jump(app, id, affected.as_ref());
+                resync_after_journal_jump(app, id, &deltas);
             }
             Err(e) => {
                 messages::error(app, format!("undo failed: {e}"));
@@ -355,7 +355,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
         };
         let edits: Vec<AppliedEdit> = step.edits.clone();
         let cursors_after: Vec<Cursor> = step.cursors_after.clone();
-        let affected = affected_delete_range(&edits);
+        let deltas = crate::merge::ranges::forward_deltas(&edits);
 
         match rune_core::undo::reapply(&doc.buffer, &edits) {
             Ok(new_buf) => {
@@ -369,7 +369,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
                     app.nav_history
                         .shift(id, ae.start, ae.deleted.len(), ae.insert.len());
                 }
-                resync_after_journal_jump(app, id, affected.as_ref());
+                resync_after_journal_jump(app, id, &deltas);
             }
             Err(e) => {
                 messages::error(app, format!("redo failed: {e}"));
@@ -384,41 +384,13 @@ pub fn redo(app: &mut App, id: DocumentId) {
     }
 }
 
-/// The union of every edit's POST-edit `[start, end)` span (plan review
-/// F1) — the CURRENT buffer's own touched range immediately before an
-/// undo overwrites it. `None` for an empty step (never reachable through a
-/// real journal push, but total rather than assuming).
-fn affected_range(edits: &[AppliedEdit]) -> Option<std::ops::Range<usize>> {
-    let start = edits.iter().map(|e| e.start).min()?;
-    let end = edits.iter().map(|e| e.end).max()?;
-    Some(start..end)
-}
-
-/// The union of every edit's PRE-edit delete range — `[start, start +
-/// deleted.len())`, the same range `rune_core::undo::reapply` computes
-/// internally per edit (plan review F1). `None` for an empty step.
-fn affected_delete_range(edits: &[AppliedEdit]) -> Option<std::ops::Range<usize>> {
-    let start = edits.iter().map(|e| e.start).min()?;
-    let end = edits.iter().map(|e| e.start + e.deleted.len()).max()?;
-    Some(start..end)
-}
-
-/// Plan WP6.S1/S2: every undo/redo that actually applied re-derives the
-/// resolver's block spans (`merge::resync`) when `id`'s merge attempt is
-/// `Active` — a journal jump bypasses the resolver's own keys entirely, so
-/// without this its `Block`/`Conflict` bookkeeping would silently drift from
-/// the buffer it now describes. When merge is NOT active, the jump may have
-/// unwound PAST a previously-adopted resolution (`rune-db`'s undo-unwind
-/// override upgrades `DiskAhead` back to `Diverged` in that case) — a fresh
-/// probe re-lights the footer's disk-changed hint so the user is offered
-/// `^M` again rather than the hint staying stale.
 fn resync_after_journal_jump(
     app: &mut App,
     id: DocumentId,
-    affected: Option<&std::ops::Range<usize>>,
+    deltas: &[crate::merge::ranges::Delta],
 ) {
     if merge_active_on(app, id) {
-        crate::merge::resync(app, id, affected);
+        crate::merge::ranges::rederive_after_jump(app, id, deltas);
     } else {
         crate::db_enqueue::probe(app, id);
     }

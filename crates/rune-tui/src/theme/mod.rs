@@ -69,14 +69,12 @@ pub struct ChromeStyles {
     /// uncovered. The render module's code-background pass is its one
     /// consumer.
     pub code_bg: Color,
-    /// Backgrounds for one unresolved merge block's ours span, theirs span,
-    /// and marker lines (`merge::paint` is the only consumer).
-    /// Catppuccin-tinted rather than raw ANSI green/red/grey, muted against
-    /// `surface0` the same way `code_bg` sits at full `surface0` rather
-    /// than a saturated hue.
+    /// Region backgrounds for the diff/merge pane view's ours (right) and
+    /// theirs (left) sides. Catppuccin-tinted rather than raw ANSI
+    /// green/red, muted against `surface0` the same way `code_bg` sits at
+    /// full `surface0` rather than a saturated hue.
     pub merge_ours_bg: Style,
     pub merge_theirs_bg: Style,
-    pub merge_marker_bg: Style,
     /// The in-file search bar's match highlight. Its own
     /// field rather than reusing `selection_bg`: a match and a live text
     /// selection can both be on screen at once and must read as visually
@@ -144,7 +142,6 @@ impl Theme {
             code_bg: c(p.surface0),
             merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
-            merge_marker_bg: Style::new().bg(c(p.surface1)),
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
             row_cursor_bg: Style::new().bg(c(p.surface2)),
             row_active_bg: Style::new().bg(c(p.surface0)),
