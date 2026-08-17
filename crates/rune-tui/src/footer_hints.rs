@@ -130,7 +130,20 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             }
             entries.push(("\u{23ce}".to_string(), "rename", true));
         }
-        Pane::Editor => {}
+        Pane::Editor => {
+            if app
+                .diff
+                .as_ref()
+                .is_some_and(|diff| diff.right == app.active)
+            {
+                entries.extend(
+                    crate::diff_view::keys::DIFF_BINDINGS
+                        .iter()
+                        .filter(|b| !b.alias)
+                        .map(|b| (labeled(b, &mut label_buf), b.help, true)),
+                );
+            }
+        }
         // The messages pane's own keys render through `footer::Mode::
         // Messages` instead — `mode()` returns that variant before
         // `DefaultHints` is ever reached while this pane holds
@@ -510,6 +523,24 @@ mod tests {
         assert!(
             !entries.iter().any(|(_, help, _)| *help == "up dir"),
             "the Explorer's own hint must not leak in while the finder is open: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn diff_view_hints_show_only_while_a_diff_view_is_active_on_the_focused_document() {
+        let mut app = app_with("right text");
+        let entries = default_hint_entries(&app);
+        assert!(
+            !entries.iter().any(|(_, help, _)| *help == "next hunk"),
+            "no diff hint before a diff view exists: {entries:?}"
+        );
+
+        crate::diff_view::install(&mut app, b"left text".to_vec(), "fileA.md".to_string())
+            .expect("fixture is valid UTF-8");
+        let entries = default_hint_entries(&app);
+        assert!(
+            entries.iter().any(|(_, help, _)| *help == "next hunk"),
+            "expected a diff hint once the diff view is active: {entries:?}"
         );
     }
 }

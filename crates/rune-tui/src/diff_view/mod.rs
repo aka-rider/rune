@@ -9,6 +9,7 @@ use rune_merge::{AlignmentMap, RegionKind};
 use crate::app::App;
 use crate::document::{Document, DocumentId, ReadOnly};
 
+pub mod keys;
 pub mod rows;
 
 const INTRALINE_BUDGET: Duration = Duration::from_millis(4);

@@ -366,6 +366,10 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         return keymap::KeyOutcome::Consumed;
     }
 
+    if crate::diff_view::keys::intercept(app, key) {
+        return keymap::KeyOutcome::Consumed;
+    }
+
     if crate::editor_fast_path::hardcoded_fast_path(app, key, effects) {
         return keymap::KeyOutcome::Consumed;
     }
