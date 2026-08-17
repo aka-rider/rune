@@ -1,4 +1,5 @@
-//! Darwin-specific disk-backed `Vfs` using `renamex_np` for atomic publish.
+//! Disk-backed `Vfs` for Darwin and Linux, using a flagged atomic rename
+//! (`renamex_np` on Darwin, `renameat2` on Linux) for atomic publish.
 
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name};
 
-/// Disk-backed `Vfs` on Darwin. Uses `renamex_np` for crash-safe atomic
+/// Disk-backed `Vfs`. Uses a flagged atomic rename syscall for crash-safe
 /// publish; stateless (no synchronization needed).
 #[derive(Clone, Copy, Default)]
 pub struct Disk;
@@ -33,7 +34,8 @@ impl Disk {
     /// The only `unsafe` block in this crate. Wraps the Darwin
     /// `renamex_np` syscall to atomically exchange or create files with
     /// proper crash-safety semantics.
-    fn renamex_np(src: &Path, dst: &Path, flags: libc::c_uint) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    fn flagged_rename(src: &Path, dst: &Path, flags: libc::c_uint) -> io::Result<()> {
         let src_c = CString::new(src.as_os_str().as_bytes())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let dst_c = CString::new(dst.as_os_str().as_bytes())
@@ -46,13 +48,38 @@ impl Disk {
         }
     }
 
+    /// The only `unsafe` block in this crate. Wraps the Linux `renameat2`
+    /// syscall to atomically exchange or create files with proper
+    /// crash-safety semantics.
+    #[cfg(target_os = "linux")]
+    fn flagged_rename(src: &Path, dst: &Path, flags: libc::c_uint) -> io::Result<()> {
+        let src_c = CString::new(src.as_os_str().as_bytes())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let dst_c = CString::new(dst.as_os_str().as_bytes())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let ret = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                src_c.as_ptr(),
+                libc::AT_FDCWD,
+                dst_c.as_ptr(),
+                flags,
+            )
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
     /// Shared shape behind [`Vfs::exchange`]/[`Vfs::rename_excl`]: both are
-    /// `renamex_np` under a different flag, followed by a parent-directory
-    /// fsync — they differ only in the flag and the label their
-    /// error messages report. `label` reads as `"{label} {src} -> {dst}:
-    /// ..."`.
+    /// a flagged atomic rename under a different flag, followed by a
+    /// parent-directory fsync — they differ only in the flag and the label
+    /// their error messages report. `label` reads as `"{label} {src} ->
+    /// {dst}: ..."`.
     fn publish(src: &Path, dst: &Path, flags: libc::c_uint, label: &str) -> io::Result<()> {
-        Self::renamex_np(src, dst, flags).map_err(|e| {
+        Self::flagged_rename(src, dst, flags).map_err(|e| {
             crate::wrap_io(e, format!("{label} {} -> {}", src.display(), dst.display()))
         })?;
         Self::fsync_dir(&Self::parent_to_fsync(dst)).map_err(|e| {
@@ -117,17 +144,18 @@ impl Vfs for Disk {
     }
 
     fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
-        Self::publish(a, b, libc::RENAME_SWAP, "exchange")
+        Self::publish(a, b, swap_flag(), "exchange")
     }
 
     fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
-        Self::publish(old, new, libc::RENAME_EXCL, "renameexcl")
+        Self::publish(old, new, excl_flag(), "renameexcl")
     }
 
     fn remove(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path).map_err(|e| crate::wrap_io(e, format!("remove {}", path.display())))
     }
 
+    #[cfg(target_os = "macos")]
     fn trash(&self, path: &Path) -> io::Result<()> {
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
@@ -139,6 +167,11 @@ impl Vfs for Disk {
         ctx.set_delete_method(DeleteMethod::NsFileManager);
         ctx.delete(path)
             .map_err(|e| io::Error::other(describe_trash_error(&e)))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn trash(&self, path: &Path) -> io::Result<()> {
+        trash::delete(path).map_err(|e| io::Error::other(describe_trash_error(&e)))
     }
 
     fn stat(&self, path: &Path) -> io::Result<Stat> {
@@ -227,6 +260,26 @@ impl Vfs for Disk {
         sort_dir_entries(&mut entries);
         Ok(entries)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn swap_flag() -> libc::c_uint {
+    libc::RENAME_SWAP
+}
+
+#[cfg(target_os = "macos")]
+fn excl_flag() -> libc::c_uint {
+    libc::RENAME_EXCL
+}
+
+#[cfg(target_os = "linux")]
+fn swap_flag() -> libc::c_uint {
+    libc::RENAME_EXCHANGE
+}
+
+#[cfg(target_os = "linux")]
+fn excl_flag() -> libc::c_uint {
+    libc::RENAME_NOREPLACE
 }
 
 /// `trash::Error`'s `Display` is a raw `Debug` dump — map the variants a

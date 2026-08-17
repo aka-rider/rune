@@ -28,8 +28,9 @@
 //! (`tests/multiprocess.rs`) that exercise all of it against real, separate
 //! OS processes.
 //!
-//! Darwin-only, matching the rest of this workspace (`CLAUDE.md`): no
-//! portability shims, no `!darwin` build tags.
+//! Darwin and Linux: `session.rs` reads process-liveness identity through a
+//! platform-gated primitive (`sysctl` on Darwin, `/proc` on Linux) behind
+//! the same `proc_started_at`/`boot_time` signatures.
 
 mod adopt;
 mod blob;

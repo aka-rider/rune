@@ -1,5 +1,4 @@
-//! Process identity and liveness. Darwin-only (`CLAUDE.md`: no portability
-//! shims).
+//! Process identity and liveness. Darwin and Linux.
 //!
 //! A `sessions` row is this process's own identity for every journaled edit
 //! and recorded observation it will ever produce: two
@@ -9,6 +8,7 @@
 //! — is what lets a LATER session tell "pid still running MY writer" apart
 //! from "pid recycled to an unrelated process since".
 
+#[cfg(target_os = "macos")]
 use std::ffi::c_int;
 use std::time::{Duration, SystemTime};
 
@@ -22,6 +22,7 @@ use crate::ids::SessionId;
 /// Refuses a buffer too short to hold one, and a negative `sec` or `usec` —
 /// a negative timeval is never a real timestamp, so it is treated the same
 /// as any other malformed read: `None`, never a positive claim.
+#[cfg(target_os = "macos")]
 fn parse_timeval(buf: &[u8]) -> Option<(i64, i32)> {
     let sec = i64::from_ne_bytes(buf.get(0..8)?.try_into().ok()?);
     let usec = i32::from_ne_bytes(buf.get(8..12)?.try_into().ok()?);
@@ -47,6 +48,7 @@ fn parse_timeval(buf: &[u8]) -> Option<(i64, i32)> {
 /// first field — offset 0 of the buffer `sysctl` fills. Reading just those
 /// 12 bytes avoids having to replicate the rest of the struct's layout
 /// (dozens of fields this crate never needs).
+#[cfg(target_os = "macos")]
 fn proc_started_at(pid: i32) -> Option<String> {
     let mut mib: [c_int; 4] = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
     let mut len: usize = 0;
@@ -89,11 +91,30 @@ fn proc_started_at(pid: i32) -> Option<String> {
     Some(format!("{sec}.{usec:06}"))
 }
 
+/// Reads `pid`'s start time from `/proc/<pid>/stat` field 22 (`starttime`,
+/// in clock ticks since boot) — the Linux equivalent of Darwin's `sysctl`
+/// `kinfo_proc` read. Returns `None` on any failure, including "no such
+/// process": existence is decided separately and portably by
+/// [`process_exists`] (`kill(pid, 0)`); this function is only ever consulted
+/// once existence is already established, purely to detect pid reuse.
+///
+/// `comm` (field 2) is user-controlled and may itself contain spaces or
+/// parentheses, so the fields are located by splitting after the LAST `)`
+/// in the line rather than by a fixed-column split.
+#[cfg(target_os = "linux")]
+fn proc_started_at(pid: i32) -> Option<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_comm = stat.rsplit_once(')')?.1;
+    let starttime = after_comm.split_whitespace().nth(19)?;
+    starttime.parse::<u64>().ok().map(|t| t.to_string())
+}
+
 /// Reads the system boot time via `sysctl(CTL_KERN, KERN_BOOTTIME)` — the
 /// same 12-byte `timeval` read as [`proc_started_at`], but for a fixed
 /// `mib` whose buffer size is known up front (no probe/fetch dance). Returns
 /// `None` on any failure; callers that compare against it must fail toward
 /// treating the compared fact as unresolved, never as a positive claim.
+#[cfg(target_os = "macos")]
 pub(crate) fn boot_time() -> Option<SystemTime> {
     let mut mib: [c_int; 2] = [libc::CTL_KERN, libc::KERN_BOOTTIME];
     let mut buf = [0u8; std::mem::size_of::<libc::timeval>()];
@@ -113,6 +134,19 @@ pub(crate) fn boot_time() -> Option<SystemTime> {
     }
     let (sec, usec) = parse_timeval(&buf)?;
     Some(SystemTime::UNIX_EPOCH + Duration::new(sec as u64, usec as u32 * 1_000))
+}
+
+/// Reads the system boot time from `/proc/stat`'s `btime` line (seconds
+/// since epoch) — the Linux equivalent of Darwin's `sysctl` `KERN_BOOTTIME`
+/// read. Returns `None` on any failure; callers that compare against it must
+/// fail toward treating the compared fact as unresolved, never as a
+/// positive claim.
+#[cfg(target_os = "linux")]
+pub(crate) fn boot_time() -> Option<SystemTime> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    let line = stat.lines().find(|line| line.starts_with("btime "))?;
+    let secs: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
 }
 
 /// The result of [`process_exists`] — three genuinely distinct outcomes, not

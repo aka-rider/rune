@@ -7,9 +7,9 @@
 //! displaced bytes before they're discarded — see the module docs on
 //! `Vfs::save_atomic` below.
 //!
-//! Two implementations: `Disk` (production, Darwin `renamex_np` atomic
-//! publish) and `Mem` (fully in-memory, for tests and — eventually — the
-//! session fuzzer).
+//! Two implementations: `Disk` (production, flagged atomic rename —
+//! `renamex_np` on Darwin, `renameat2` on Linux) and `Mem` (fully
+//! in-memory, for tests and — eventually — the session fuzzer).
 
 mod disk;
 mod etag;
@@ -193,16 +193,19 @@ pub trait Vfs {
     fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf>;
 
     /// Atomically swap the contents of `a` and `b` (both must already
-    /// exist; same volume). Disk: `renamex_np(RENAME_SWAP)` + parent fsync
-    /// — a single kernel operation, so neither path is ever unlinked; that's
-    /// the durability guarantee for the publish. Mem: swaps the two
-    /// entries' file objects between keys (inodes travel with content).
+    /// exist; same volume). Disk: a flagged atomic rename (`renamex_np`
+    /// `RENAME_SWAP` on Darwin, `renameat2` `RENAME_EXCHANGE` on Linux) +
+    /// parent fsync — a single kernel operation, so neither path is ever
+    /// unlinked; that's the durability guarantee for the publish. Mem:
+    /// swaps the two entries' file objects between keys (inodes travel with
+    /// content).
     fn exchange(&self, a: &Path, b: &Path) -> io::Result<()>;
 
     /// Atomically rename `old` to `new`, failing with an error wrapping
     /// `io::ErrorKind::AlreadyExists` if `new` already exists — no clobber:
     /// atomic publish via `RenameExcl` leaves no window for a silent
-    /// overwrite. Disk: `renamex_np(RENAME_EXCL)` + parent fsync.
+    /// overwrite. Disk: a flagged atomic rename (`renamex_np` `RENAME_EXCL`
+    /// on Darwin, `renameat2` `RENAME_NOREPLACE` on Linux) + parent fsync.
     fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()>;
 
     /// Delete a single file. Not `Trash` — internal temps must never shell

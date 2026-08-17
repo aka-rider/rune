@@ -3,7 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rune_vfs::{Disk, FileKind, Mem, Vfs};
+use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
 // ============================================================================
@@ -77,11 +79,14 @@ fn disk_stat_reports_a_fifo_as_other() {
     fs::create_dir_all(&tmp).expect("create temp dir");
     let fifo = tmp.join("pipe");
 
-    let made = std::process::Command::new("/usr/bin/mkfifo")
-        .arg(&fifo)
-        .status()
-        .expect("run mkfifo");
-    assert!(made.success(), "mkfifo should succeed");
+    let fifo_c = CString::new(fifo.as_os_str().as_bytes()).expect("fifo path has no NUL");
+    let made = unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) };
+    assert_eq!(
+        made,
+        0,
+        "mkfifo should succeed: {}",
+        std::io::Error::last_os_error()
+    );
 
     let stat = Disk.stat(&fifo).expect("stat fifo should succeed");
     assert_eq!(
