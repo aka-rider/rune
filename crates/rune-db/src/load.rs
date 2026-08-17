@@ -24,7 +24,7 @@ use crate::confirmation::Confirmation;
 use crate::document::{self, DocRef};
 use crate::ids::{DocId, ObsId, Seq, SessionId};
 use crate::inherit::find_inheritable_draft;
-use crate::load_anchor::{LoadContext, anchor_first_load};
+use crate::load_anchor::{LoadContext, anchor_first_load, reanchor_clean_reload_tx};
 use crate::obs_origin::ObsOrigin;
 use crate::observation;
 use crate::retry;
@@ -203,7 +203,8 @@ pub fn load_from_read(
         let recovered = retry::with_retry(conn, |tx| {
             crate::snapshot::recover_document(tx, session_id, doc_id)
         })?;
-        if hash == observation::hash_bytes(recovered.as_bytes()) {
+        let recovered_hash = observation::hash_bytes(recovered.as_bytes());
+        if hash == recovered_hash {
             // Reload, hash-equality: heal-adopt only when there is something to
             // heal (an ordinary clean tab switch also lands here).
             let cur = retry::with_retry(conn, |tx| {
@@ -226,27 +227,53 @@ pub fn load_from_read(
                     None,
                 )?;
             }
+            recovered
         } else {
-            // Reload, hashes differ: a bare, uncorrelated sighting — saved_obs
-            // stays exactly where it was.
-            let at = crate::session::format_rfc3339_nanos(now);
-            retry::with_retry(conn, |tx| {
-                observation::record_observation(
-                    tx,
-                    doc_id,
-                    session_id,
-                    observation::ObservationMeta {
-                        blob_hash: &hash,
-                        seq: None,
-                        origin: ObsOrigin::Load,
-                        confirmed: Confirmation::from_bracket(disk_confirmed),
-                    },
-                    &stat,
-                    &at,
-                )
+            // Reload, hashes differ: this session's own last-adopted baseline
+            // decides whether disk moved out from under an untouched buffer
+            // (adopt it cleanly) or out from under real unsaved edits (leave
+            // them alone and just record the sighting).
+            let baseline = retry::with_retry(conn, |tx| {
+                observation::saved_obs_for(tx, session_id, doc_id)
             })?;
+            let no_unsaved_edits = baseline
+                .as_ref()
+                .is_some_and(|b| b.blob_hash.as_str() == recovered_hash);
+            if no_unsaved_edits {
+                let ctx = LoadContext {
+                    session_id,
+                    doc_id,
+                    load_seq,
+                    disk_hash: &hash,
+                    disk_confirmed,
+                    live_stat: &stat,
+                    now,
+                };
+                let outcome = reanchor_clean_reload_tx(conn, &ctx, &recovered, &content)?;
+                bridge_seq = outcome.bridge_seq;
+                outcome.recovered
+            } else {
+                // A bare, uncorrelated sighting — saved_obs stays exactly
+                // where it was, and the unsaved edits stay in the buffer.
+                let at = crate::session::format_rfc3339_nanos(now);
+                retry::with_retry(conn, |tx| {
+                    observation::record_observation(
+                        tx,
+                        doc_id,
+                        session_id,
+                        observation::ObservationMeta {
+                            blob_hash: &hash,
+                            seq: None,
+                            origin: ObsOrigin::Load,
+                            confirmed: Confirmation::from_bracket(disk_confirmed),
+                        },
+                        &stat,
+                        &at,
+                    )
+                })?;
+                recovered
+            }
         }
-        recovered
     };
 
     let recovered_hash = observation::hash_bytes(recovered.as_bytes());
@@ -277,3 +304,7 @@ pub fn load_from_read(
 #[cfg(test)]
 #[path = "load_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "load_reopen_tests.rs"]
+mod reopen_tests;

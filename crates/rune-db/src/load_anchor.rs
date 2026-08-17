@@ -200,6 +200,44 @@ fn anchor_diverged(
     })
 }
 
+/// The same-session counterpart to [`anchor_first_load`]'s cross-session
+/// bridge: `load`'s `has_history` branch calls this when this session's own
+/// journal reconstruction (`from`) already agrees with its last-adopted
+/// baseline (nothing of its own left unsaved) but disk content (`to`) has
+/// moved on since — some other tool rewrote the file. Bridges the journal
+/// from `from` to `to` and adopts `to` as the new baseline, correlated to
+/// the bridge edit's own seq (the only journal position at which the
+/// reconstruction actually equals `to`), both inside ONE transaction, so the
+/// returned buffer and the journal that reconstructs it never disagree.
+pub(crate) fn reanchor_clean_reload_tx(
+    conn: &mut Connection,
+    ctx: &LoadContext<'_>,
+    from: &str,
+    to: &str,
+) -> Result<AnchorOutcome, Error> {
+    retry::with_retry(conn, |tx| {
+        let bridge_seq = bridge_edit_tx(tx, ctx, from, to)?;
+        adopt::record_adoption_tx(
+            tx,
+            ctx.doc_id,
+            ctx.session_id,
+            observation::ObservationMeta {
+                blob_hash: ctx.disk_hash,
+                seq: Some(bridge_seq.0),
+                origin: ObsOrigin::Load,
+                confirmed: Confirmation::from_bracket(ctx.disk_confirmed),
+            },
+            ctx.live_stat,
+            &crate::session::format_rfc3339_nanos(ctx.now),
+            None,
+        )?;
+        Ok(AnchorOutcome {
+            recovered: to.to_string(),
+            bridge_seq: Some(bridge_seq),
+        })
+    })
+}
+
 /// The full body of `load`'s `!has_history` branch: anchors this session's
 /// recovery snapshot/adoption and, when `inherited` carries a dead
 /// session's draft, bridges to it — on `H0` for [`Inherited::Diverged`],
