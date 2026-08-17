@@ -119,6 +119,10 @@ impl ByteRange {
         offset >= self.start && offset < self.end
     }
 
+    pub fn touches(&self, offset: usize) -> bool {
+        offset >= self.start && offset <= self.end
+    }
+
     /// Clamp this range into `[0, len]`, keeping `start <= end`. Every range
     /// derived from comrak sourcepos or line arithmetic funnels through this
     /// before being stored on an element — the chokepoint that keeps
@@ -191,8 +195,8 @@ impl CursorProbe {
         self.points.iter().any(|p| p.line == line)
     }
 
-    pub fn any_in(&self, r: ByteRange) -> bool {
-        self.offsets.iter().any(|&o| r.contains(o))
+    pub fn touches(&self, r: ByteRange) -> bool {
+        self.offsets.iter().any(|&o| r.touches(o))
     }
 
     pub fn any_in_lines(&self, first: usize, last: usize) -> bool {
@@ -324,6 +328,23 @@ mod tests {
         };
         let child = ctx.child(RevealState::Rendered);
         assert_eq!(child.grant, RevealGrant::Decide);
+    }
+
+    #[test]
+    fn cursor_probe_touches_includes_both_edges() {
+        let buf = Buffer::new("0123456789");
+        let range = ByteRange::new(3, 7);
+        let at_start = CursorSet::new(3);
+        let at_end = CursorSet::new(7);
+        let past_end = CursorSet::new(8);
+        assert!(CursorProbe::new(&buf, &at_start).touches(range));
+        assert!(CursorProbe::new(&buf, &at_end).touches(range));
+        assert!(!CursorProbe::new(&buf, &past_end).touches(range));
+    }
+
+    #[test]
+    fn byte_range_touches_a_zero_length_range_at_its_own_offset() {
+        assert!(ByteRange::new(3, 3).touches(3));
     }
 
     #[test]

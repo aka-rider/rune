@@ -40,7 +40,7 @@ pub enum EmphasisKind {
     Strike,
 }
 
-/// Decide policy: `cursors.any_in(range)` — the OUTER token range, so
+/// Decide policy: `cursors.touches(range)` — the OUTER token range, so
 /// nesting reveals as a unit via `ctx.child` (the reveal-policy table).
 #[derive(Clone, Debug)]
 pub struct EmphasisM {
@@ -69,7 +69,7 @@ pub struct EmphasisM {
 impl EmphasisM {
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
         let range = self.range;
-        let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
+        let want = ctx.grant.resolve(|| ctx.cursors.touches(range));
         let mut dirty = self.sm.transition(want);
         let child_ctx = ctx.child(self.sm.state());
         for c in &mut self.children {
@@ -144,7 +144,7 @@ impl InlineCodeM {
 
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
         let range = self.range;
-        let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
+        let want = ctx.grant.resolve(|| ctx.cursors.touches(range));
         self.sm.transition(want)
     }
 }
@@ -171,7 +171,7 @@ pub struct LinkM {
 impl LinkM {
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
         let range = self.range;
-        let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
+        let want = ctx.grant.resolve(|| ctx.cursors.touches(range));
         let mut dirty = self.sm.transition(want);
         let child_ctx = ctx.child(self.sm.state());
         for c in &mut self.text {
@@ -195,7 +195,7 @@ pub struct WikiLinkM {
 impl WikiLinkM {
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
         let range = self.range;
-        let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
+        let want = ctx.grant.resolve(|| ctx.cursors.touches(range));
         self.sm.transition(want)
     }
 }
@@ -240,7 +240,7 @@ pub struct ImageM {
 impl ImageM {
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
         let range = self.range;
-        let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
+        let want = ctx.grant.resolve(|| ctx.cursors.touches(range));
         self.sm.transition(want)
     }
 }

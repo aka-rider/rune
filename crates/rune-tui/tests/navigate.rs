@@ -364,3 +364,21 @@ fn an_embed_ref_is_never_followed() {
     );
     assert!(effects.cmds.is_empty());
 }
+
+#[test]
+fn a_caret_at_the_links_own_range_end_still_follows_it() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/url.md"), b"target body\n")
+        .expect("seed url.md");
+    let content = "[text](url)\n";
+    let mut app = app_with(&mem, "/root/a.md", content);
+    place_cursor(&mut app, "[text](url)".len());
+
+    press_and_open(&mut app, ctrl_enter());
+
+    assert_eq!(
+        app.active_doc().file_path.as_deref(),
+        Some(Path::new("/root/url.md")),
+        "a caret at the link's own range end must still resolve a Destination"
+    );
+}

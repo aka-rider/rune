@@ -163,11 +163,11 @@ fn the_same_line_with_kitty_disabled_renders_alt_text() {
 /// suppression.
 #[test]
 fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
-    let (mut app, id) = app_with_embed("![caption](x.png)\n");
+    let (mut app, id) = app_with_embed("![caption](x.png) \n");
     discover_and_decode(&mut app);
 
-    // Land the caret at the end of the first (and only) line — after the
-    // image's own syntax, before the trailing newline.
+    // Trailing whitespace-only text after the image still counts as
+    // standalone (does not disqualify the image row).
     let end_of_line = app
         .doc(id)
         .expect("doc")

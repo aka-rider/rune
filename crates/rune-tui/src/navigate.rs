@@ -69,14 +69,15 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
 }
 
 /// The followable link, if any, sitting under `offset` — a `Use { role:
-/// Link, .. }` whose `site` contains it. Never matches a `Def` or an
-/// `Embed`.
+/// Link, .. }` whose `site` touches it (edge-inclusive: a caret at the
+/// site's own end, where reveal already shows the raw markup, must still
+/// follow). Never matches a `Def` or an `Embed`.
 fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
     catalogue.iter().find_map(|r| match &r.kind {
         RefKind::Use {
             role: UseRole::Link,
             target,
-        } if r.site.contains(offset) => Some(target.clone()),
+        } if r.site.touches(offset) => Some(target.clone()),
         _ => None,
     })
 }
