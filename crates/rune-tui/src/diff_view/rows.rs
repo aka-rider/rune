@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use rune_core::buffer::Buffer;
-use rune_merge::{AlignmentMap, RegionKind};
+use rune_merge::{AlignmentMap, RegionKind, line_starts};
 use rune_syntax::wrap::WrapSnapshot;
 
 pub fn line_offset(buffer: &Buffer, line: usize) -> usize {
@@ -68,18 +68,10 @@ fn sum_heights(heights: &[usize], lines: Range<usize>) -> usize {
 }
 
 pub fn line_byte_range(content: &str, lines: Range<usize>) -> Range<usize> {
-    let mut offset = 0usize;
-    let mut start = content.len();
-    for (idx, line) in content.split_inclusive('\n').enumerate() {
-        if idx == lines.start {
-            start = offset;
-        }
-        if idx == lines.end {
-            return start..offset;
-        }
-        offset += line.len();
-    }
-    start..content.len()
+    let starts = line_starts(content);
+    let start = starts.get(lines.start).copied().unwrap_or(content.len());
+    let end = starts.get(lines.end).copied().unwrap_or(content.len());
+    start..end
 }
 
 pub fn region_text(content: &str, lines: Range<usize>) -> (usize, String) {
