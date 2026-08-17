@@ -1,7 +1,16 @@
 use std::ops::Range;
 
+use rune_core::buffer::Buffer;
 use rune_merge::{AlignmentMap, RegionKind};
 use rune_syntax::wrap::WrapSnapshot;
+
+pub fn line_offset(buffer: &Buffer, line: usize) -> usize {
+    if line >= buffer.line_count() {
+        buffer.len()
+    } else {
+        buffer.line_start(line).unwrap_or_else(|| buffer.len())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegionLayout {
@@ -97,6 +106,23 @@ pub fn left_row_for_right_row(layout: &RowLayout, right_row: usize) -> usize {
         }
     }
     layout.left_total.saturating_sub(1)
+}
+
+pub fn right_line_for_left_line(alignment: &AlignmentMap, left_line: usize) -> usize {
+    for region in &alignment.regions {
+        if region.left_lines.contains(&left_line) {
+            if region.right_lines.is_empty() {
+                return region.right_lines.start;
+            }
+            let offset = left_line - region.left_lines.start;
+            let idx = offset.min(region.right_lines.len().saturating_sub(1));
+            return region.right_lines.start + idx;
+        }
+    }
+    alignment
+        .regions
+        .last()
+        .map_or(0, |region| region.right_lines.end.saturating_sub(1))
 }
 
 fn locate(layout: &RowLayout, side: Side, native_row: usize) -> Option<(usize, usize)> {

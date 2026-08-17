@@ -5,6 +5,7 @@ use rune_merge::AlignmentMap;
 use crate::app::App;
 use crate::document::{Document, DocumentId, ReadOnly};
 
+pub mod keys;
 pub mod rows;
 
 #[derive(Debug, PartialEq, Eq)]

@@ -18,6 +18,7 @@
 //! table to reflect over — a hand-maintained key list may
 //! not exist.
 
+use crate::diff_view::keys::DIFF_BINDINGS;
 use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
 use crate::filesearch::keys::FILESEARCH_BINDINGS;
@@ -45,6 +46,7 @@ pub fn help_markdown() -> String {
     push_table_section(&mut out, "Open Tabs", TABS_BINDINGS);
     push_table_section(&mut out, "Editor", EDITOR_BINDINGS);
     push_table_section(&mut out, "Merge", MERGE_BINDINGS);
+    push_table_section(&mut out, "Diff View", DIFF_BINDINGS);
     out
 }
 
@@ -94,6 +96,7 @@ mod tests {
             "## File Search",
             "## Open Tabs",
             "## Editor",
+            "## Diff View",
         ] {
             assert!(md.contains(heading), "missing {heading:?} in:\n{md}");
         }

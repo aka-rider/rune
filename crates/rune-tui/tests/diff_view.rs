@@ -12,6 +12,7 @@ use rune_tui::app::{self, App};
 use rune_tui::diff_view;
 use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::testgrid;
 use rune_vfs::Mem;
@@ -38,6 +39,30 @@ fn key(c: char) -> KeyInput {
     KeyInput {
         code: KeyCode::Char(c),
         mods: Mods::NONE,
+    }
+}
+
+fn sup_shift(c: char) -> KeyInput {
+    KeyInput {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: true,
+        },
+    }
+}
+
+fn ctrl(c: char) -> KeyInput {
+    KeyInput {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            shift: false,
+            alt: false,
+            ctrl: true,
+            sup: false,
+        },
     }
 }
 
@@ -278,4 +303,126 @@ fn undo_of_an_edit_restores_the_previous_alignment() {
         bg, app.theme.chrome.merge_ours_bg.bg,
         "undo must recompute alignment back to Same, clearing the changed background"
     );
+}
+
+#[test]
+fn take_theirs_makes_the_region_same_and_undoes_in_one_step() {
+    let mut app = app_with_diff("same\nOLD\nsame2", "same\nNEW\nsame2", WIDE_ENOUGH);
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('y')), &mut effects);
+    app.sync_view();
+
+    assert_eq!(app.active_doc().buffer.content(), "same\nNEW\nsame2");
+    let regions = app
+        .diff
+        .as_ref()
+        .expect("diff active")
+        .alignment
+        .regions
+        .clone();
+    assert!(
+        regions
+            .iter()
+            .all(|region| region.kind == rune_merge::RegionKind::Same),
+        "the region must recompute to Same next frame: {regions:?}"
+    );
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(ctrl('z')), &mut effects);
+    app.sync_view();
+    assert_eq!(app.active_doc().buffer.content(), "same\nOLD\nsame2");
+}
+
+#[test]
+fn take_theirs_with_no_hunks_posts_a_status_instead_of_silently_doing_nothing() {
+    let mut app = app_with_diff("same", "same", WIDE_ENOUGH);
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('y')), &mut effects);
+
+    assert_eq!(app.active_doc().buffer.content(), "same");
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some("no hunk to take")
+    );
+}
+
+#[test]
+fn take_ours_always_reports_feedback_without_touching_the_buffer() {
+    let mut app = app_with_diff("same\nOLD\nsame2", "same\nNEW\nsame2", WIDE_ENOUGH);
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('u')), &mut effects);
+
+    assert_eq!(app.active_doc().buffer.content(), "same\nOLD\nsame2");
+    assert_eq!(rune_tui::messages::newest_text(&app), Some("already yours"));
+}
+
+#[test]
+fn hunk_navigation_wraps_and_reports_position() {
+    let mut app = app_with_diff("A\nsame\nB", "X\nsame\nY", WIDE_ENOUGH);
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('j')), &mut effects);
+    assert_eq!(app.diff.as_ref().expect("diff active").hunk_cur, 2);
+    assert_eq!(rune_tui::messages::newest_text(&app), Some("hunk 2/2"));
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('j')), &mut effects);
+    assert_eq!(app.diff.as_ref().expect("diff active").hunk_cur, 0);
+    assert_eq!(rune_tui::messages::newest_text(&app), Some("hunk 1/2"));
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(ctrl('k')), &mut effects);
+    assert_eq!(app.diff.as_ref().expect("diff active").hunk_cur, 2);
+    assert_eq!(rune_tui::messages::newest_text(&app), Some("hunk 2/2"));
+}
+
+#[test]
+fn diff_chords_are_ordinary_unbound_keys_when_no_diff_view_is_active() {
+    let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+    app.frame_width = WIDE_ENOUGH;
+    app.frame_height = HEIGHT;
+    app.sync_view();
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(sup_shift('j')), &mut effects);
+
+    assert_eq!(app.active_doc().buffer.content(), "hello");
+    assert!(app.diff.is_none());
+}
+
+#[test]
+fn a_bare_j_falls_through_to_ordinary_insertion_not_next_hunk() {
+    let mut app = app_with_diff("hi", "hi", WIDE_ENOUGH);
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(key('j')), &mut effects);
+    app.sync_view();
+    assert_eq!(app.active_doc().buffer.content(), "jhi");
+}
+
+#[test]
+fn click_in_the_left_pane_moves_the_right_pane_caret_to_the_aligned_line() {
+    let app = app_with_diff("a\nb\nX\nc\nd\ne", "a\nb\nc\nd\ne", WIDE_ENOUGH);
+    let geo =
+        rune_tui::layout::geometry(ratatui::layout::Rect::new(0, 0, WIDE_ENOUGH, HEIGHT), &app);
+    let diff_left = geo.diff_left.expect("diff pane visible at this width");
+    let mut app = app;
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Mouse(MouseInput {
+            kind: MouseKind::Down(MouseButton::Left),
+            column: diff_left.x,
+            row: diff_left.y + 2,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        }),
+        &mut effects,
+    );
+
+    let right_content = app.active_doc().buffer.content().to_string();
+    let expected = right_content.find("\nc").expect("c present in fileB") + 1;
+    assert_eq!(app.active_doc().cursors.primary().position, expected);
 }

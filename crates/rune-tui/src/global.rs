@@ -538,23 +538,25 @@ mod tests {
     /// any non-control `Char` under equal `Mods` without ever equaling a
     /// specific `KeyPattern`. Structural equality would stay green while
     /// that wildcard silently shadowed this exact chord at dispatch.
-    fn claimants_across_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
+    fn claimants<C: Copy + 'static>(
+        table: &[Binding<C>],
+        key: crate::keymap::KeyInput,
+    ) -> Vec<&'static str> {
+        table
+            .iter()
+            .filter(|b| b.key.matches(key))
+            .map(|b| b.help)
+            .collect()
+    }
+
+    fn claimants_across_established_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
         use crate::explorer_keys::EXPLORER_BINDINGS;
         use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
         use crate::filesearch::keys::FILESEARCH_BINDINGS;
-        use crate::keymap::KeyInput;
         use crate::keymap::editor_bindings::EDITOR_BINDINGS;
         use crate::keymap::vim::VIM_BINDINGS;
         use crate::merge::keys::MERGE_BINDINGS;
         use crate::opentabs::TABS_BINDINGS;
-
-        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
-            table
-                .iter()
-                .filter(|b| b.key.matches(key))
-                .map(|b| b.help)
-                .collect()
-        }
 
         [
             claimants(EDITOR_BINDINGS, key),
@@ -568,12 +570,54 @@ mod tests {
         .concat()
     }
 
+    fn claimants_across_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
+        use crate::diff_view::keys::DIFF_BINDINGS;
+
+        [
+            claimants_across_established_pane_tables(key),
+            claimants(DIFF_BINDINGS, key),
+        ]
+        .concat()
+    }
+
     fn assert_unclaimed_by_any_pane_table(keys: &[crate::keymap::KeyInput]) {
         for key in keys {
             let found = claimants_across_pane_tables(*key);
             assert!(
                 found.is_empty(),
                 "{key:?} is already bound in a pane table: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn diff_bindings_are_unclaimed_by_the_global_table_and_every_pane_table() {
+        use crate::binding::KeyMatch;
+        use crate::diff_view::keys::DIFF_BINDINGS;
+        use crate::keymap::KeyInput;
+
+        for binding in DIFF_BINDINGS {
+            let pattern = binding.key;
+            let key = match pattern.key {
+                KeyMatch::Code(code) => KeyInput {
+                    code,
+                    mods: pattern.mods,
+                },
+                KeyMatch::Printable => continue,
+            };
+            let global_claimants: Vec<&'static str> = GLOBAL_BINDINGS
+                .iter()
+                .filter(|b| b.key.matches(key))
+                .map(|b| b.help)
+                .collect();
+            assert!(
+                global_claimants.is_empty(),
+                "GLOBAL_BINDINGS would shadow diff key {key:?}: {global_claimants:?}"
+            );
+            let pane_claimants = claimants_across_established_pane_tables(key);
+            assert!(
+                pane_claimants.is_empty(),
+                "a pane table would shadow diff key {key:?}: {pane_claimants:?}"
             );
         }
     }

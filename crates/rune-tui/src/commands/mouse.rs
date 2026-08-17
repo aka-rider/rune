@@ -13,7 +13,8 @@ use crate::commands::nav::word_range_at;
 use crate::commands::nav_line::line_range_incl_newline;
 use crate::commands::nav_scroll;
 use crate::commands::splitter;
-use crate::document::Document;
+use crate::diff_view::rows::{line_offset, right_line_for_left_line};
+use crate::document::{Document, DocumentId};
 use crate::explorer_mouse;
 use crate::filesearch;
 use crate::messages;
@@ -101,6 +102,13 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
 
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = crate::layout::geometry(area, app);
+
+    if let (Some(diff_left), MouseKind::Down(MouseButton::Left)) = (geo.diff_left, input.kind)
+        && diff_left.contains(ratatui::layout::Position::new(input.column, input.row))
+    {
+        handle_diff_left_click(app, diff_left, input, effects);
+        return;
+    }
 
     match geo.pane_at(input.column, input.row) {
         Some(Pane::Messages) => messages::mouse(app, input, effects),
@@ -206,6 +214,34 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     } else {
         app.pointer.drag = None;
     }
+}
+
+fn handle_diff_left_click(
+    app: &mut App,
+    diff_left: ratatui::layout::Rect,
+    input: MouseInput,
+    effects: &mut Effects,
+) {
+    app.set_focus_pane(Pane::Editor, effects);
+    let col = input.column.saturating_sub(diff_left.x);
+    let row = input.row.saturating_sub(diff_left.y);
+    let Some((right, target_line)) = diff_left_click_target(app, row, col) else {
+        return;
+    };
+    let Some(doc) = app.doc_mut(right) else {
+        return;
+    };
+    let offset = line_offset(&doc.buffer, target_line);
+    doc.cursors = CursorSet::new(offset);
+    nav_scroll::scroll_to_byte_offset(doc, offset);
+}
+
+fn diff_left_click_target(app: &App, row: u16, col: u16) -> Option<(DocumentId, usize)> {
+    let diff = app.diff.as_ref()?;
+    let (offset, _) = hit_test(app, &diff.left, row, col)?;
+    let left_line = diff.left.buffer.offset_to_line_col(offset).line;
+    let right_line = right_line_for_left_line(&diff.alignment, left_line);
+    Some((diff.right, right_line))
 }
 
 pub(crate) fn select_range(doc: &mut Document, start: usize, end: usize) {

@@ -155,6 +155,9 @@ impl Geometry {
         if self.editor.contains(point) {
             return Some(crate::pane::Pane::Editor);
         }
+        if self.diff_left.is_some_and(|rect| rect.contains(point)) {
+            return Some(crate::pane::Pane::Editor);
+        }
         None
     }
 }
