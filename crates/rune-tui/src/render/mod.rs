@@ -22,6 +22,7 @@ mod blit;
 mod cell;
 mod code_bg;
 pub(crate) mod decor;
+mod diff;
 pub mod filesearch;
 pub mod image;
 mod overlay;
@@ -34,6 +35,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use rune_md::element::doc::ViewSnapshots;
+use rune_merge::RegionKind;
 
 use crate::app::App;
 use crate::document::{Document, DocumentId};
@@ -221,6 +223,28 @@ pub fn draw(app: &App, frame: &mut Frame) {
 
     if let Some(view) = &app.active_doc().view {
         let mut rows = build_rows(app, app.active_doc(), Some(app.active), view);
+        if let Some(diff_view) = app.diff.as_ref()
+            && diff_view.right == app.active
+        {
+            let layout = diff::layout(diff_view, &view.wrap);
+            let scroll = app.active_doc().viewport.scroll_row.0;
+            rows = diff::augment(
+                &rows,
+                &layout,
+                crate::diff_view::rows::Side::Right,
+                scroll,
+                geo.editor.height,
+                geo.editor.width,
+            );
+            diff::paint_backgrounds(
+                &mut rows,
+                &diff_view.alignment,
+                app.active_doc().buffer.content(),
+                |r| r.right_lines.clone(),
+                |k| matches!(k, RegionKind::Changed | RegionKind::RightOnly),
+                app.theme.chrome.merge_ours_bg,
+            );
+        }
         // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
         // every overlay `build_rows` already applied — the working form's
         // markers and framed spans are merge mode's own content, not
@@ -263,11 +287,33 @@ pub fn draw(app: &App, frame: &mut Frame) {
 /// bootstrap`'s own call into `messages::info`) is the on-screen indicator
 /// that the real content is still being prepared.
 fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
-    let Some(diff) = app.diff.as_ref() else {
+    let Some(diff_view) = app.diff.as_ref() else {
         return;
     };
-    if let Some(view) = diff.left.view.as_ref() {
-        let rows = build_rows(app, &diff.left, None, view);
+    let right_wrap = app
+        .doc(diff_view.right)
+        .and_then(|d| d.view.as_ref())
+        .map(|v| &v.wrap);
+    if let (Some(view), Some(right_wrap)) = (diff_view.left.view.as_ref(), right_wrap) {
+        let native_rows = build_rows(app, &diff_view.left, None, view);
+        let layout = diff::layout(diff_view, right_wrap);
+        let scroll = diff_view.left.viewport.scroll_row.0;
+        let mut rows = diff::augment(
+            &native_rows,
+            &layout,
+            crate::diff_view::rows::Side::Left,
+            scroll,
+            area.height,
+            area.width,
+        );
+        diff::paint_backgrounds(
+            &mut rows,
+            &diff_view.alignment,
+            diff_view.left.buffer.content(),
+            |r| r.left_lines.clone(),
+            |k| matches!(k, RegionKind::Changed | RegionKind::LeftOnly),
+            app.theme.chrome.merge_theirs_bg,
+        );
         blit(&rows, area, frame);
     }
     let divider = Rect::new(area.right(), area.y, 1, area.height);

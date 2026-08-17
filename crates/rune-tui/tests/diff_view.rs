@@ -119,19 +119,97 @@ fn install_refuses_invalid_utf8() {
     assert!(app.diff.is_none());
 }
 
+fn char_slice(row: &str, width: usize) -> String {
+    row.chars().take(width).collect()
+}
+
+fn col_of(row: &str, needle: &str) -> u16 {
+    let byte_idx = row.find(needle).expect("needle present in row");
+    row[..byte_idx].chars().count() as u16
+}
+
 #[test]
-fn left_pane_lockstep_scrolls_with_the_right_pane() {
-    let right_text = (0..200)
-        .map(|i| format!("right line {i}"))
+fn right_pane_insertion_shows_a_left_filler_row_at_the_aligned_position() {
+    let app = app_with_diff("a\nb\nX\nc", "a\nb\nc", WIDE_ENOUGH);
+    let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+
+    let x_row = grid
+        .iter()
+        .position(|row| row.contains('X'))
+        .expect("the inserted right-only line renders");
+    let left_half = char_slice(&grid[x_row], 40);
+    assert!(
+        left_half.contains('╌'),
+        "the left pane must show a filler row aligned with the right-only insertion: {left_half:?}"
+    );
+    assert!(!left_half.contains('a'));
+    assert!(!left_half.contains('b'));
+    assert!(!left_half.contains('c'));
+}
+
+#[test]
+fn changed_regions_carry_the_correct_per_side_backgrounds() {
+    let app = app_with_diff("same\nNEW\nsame2", "same\nOLD\nsame2", WIDE_ENOUGH);
+    let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+    let buf = testgrid::draw(&app, WIDE_ENOUGH, HEIGHT);
+
+    let old_row = grid
+        .iter()
+        .position(|row| row.contains("OLD"))
+        .expect("the left changed line renders");
+    let old_col = col_of(&grid[old_row], "OLD");
+    let old_bg = buf
+        .cell((old_col, old_row as u16))
+        .and_then(|c| c.style().bg);
+    assert_eq!(old_bg, app.theme.chrome.merge_theirs_bg.bg);
+
+    let new_row = grid
+        .iter()
+        .position(|row| row.contains("NEW"))
+        .expect("the right changed line renders");
+    let new_col = col_of(&grid[new_row], "NEW");
+    let new_bg = buf
+        .cell((new_col, new_row as u16))
+        .and_then(|c| c.style().bg);
+    assert_eq!(new_bg, app.theme.chrome.merge_ours_bg.bg);
+}
+
+#[test]
+fn an_edit_recomputes_alignment_within_the_same_settle_pass() {
+    let mut app = app_with_diff("a\nb", "a\nb", WIDE_ENOUGH);
+    let mut effects = Effects::default();
+
+    app::update(&mut app, Msg::Key(key('!')), &mut effects);
+    app.sync_view();
+
+    let buf = testgrid::draw(&app, WIDE_ENOUGH, HEIGHT);
+    let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+    let row = grid
+        .iter()
+        .position(|row| row.contains("!a"))
+        .expect("the edited line renders");
+    let col = col_of(&grid[row], "!");
+    let bg = buf.cell((col, row as u16)).and_then(|c| c.style().bg);
+    assert_eq!(
+        bg, app.theme.chrome.merge_ours_bg.bg,
+        "the very next frame after the edit must already carry the recomputed alignment"
+    );
+}
+
+#[test]
+fn scrolling_the_right_pane_scrolls_the_left_pane_to_the_aligned_row() {
+    let mut right_lines: Vec<String> = (0..50).map(|i| format!("line {i}")).collect();
+    right_lines.push("INSERTED".to_string());
+    right_lines.extend((50..100).map(|i| format!("line {i}")));
+    let right_text = right_lines.join("\n");
+    let left_text = (0..100)
+        .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let left_text = (0..200)
-        .map(|i| format!("left line {i}"))
-        .collect::<Vec<_>>()
-        .join("\n");
+
     let mut app = app_with_diff(&right_text, &left_text, WIDE_ENOUGH);
 
-    for _ in 0..50 {
+    for _ in 0..70 {
         let mut effects = Effects::default();
         app::update(
             &mut app,
@@ -144,15 +222,60 @@ fn left_pane_lockstep_scrolls_with_the_right_pane() {
     }
     app.sync_view();
 
-    let right_scroll = app.active_doc().viewport.scroll_row;
-    assert!(right_scroll.0 > 0, "the right pane must have scrolled");
+    let right_scroll = app.active_doc().viewport.scroll_row.0;
+    assert!(
+        right_scroll >= 51,
+        "the right pane must scroll past the inserted line"
+    );
+    let left_scroll = app
+        .diff
+        .as_ref()
+        .expect("diff active")
+        .left
+        .viewport
+        .scroll_row
+        .0;
     assert_eq!(
-        app.diff
-            .as_ref()
-            .expect("diff active")
-            .left
-            .viewport
-            .scroll_row,
-        right_scroll
+        left_scroll,
+        right_scroll - 1,
+        "the left pane must scroll to the row aligned with the right pane, not lockstep"
+    );
+}
+
+#[test]
+fn undo_of_an_edit_restores_the_previous_alignment() {
+    let mut app = app_with_diff("a\nb", "a\nb", WIDE_ENOUGH);
+    let mut effects = Effects::default();
+
+    app::update(&mut app, Msg::Key(key('!')), &mut effects);
+    app.sync_view();
+    assert_eq!(app.active_doc().buffer.content(), "!a\nb");
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('z'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut effects,
+    );
+    app.sync_view();
+    assert_eq!(app.active_doc().buffer.content(), "a\nb");
+
+    let buf = testgrid::draw(&app, WIDE_ENOUGH, HEIGHT);
+    let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);
+    let row = grid
+        .iter()
+        .position(|row| row.contains('a'))
+        .expect("the reverted line renders");
+    let col = col_of(&grid[row], "a");
+    let bg = buf.cell((col, row as u16)).and_then(|c| c.style().bg);
+    assert_ne!(
+        bg, app.theme.chrome.merge_ours_bg.bg,
+        "undo must recompute alignment back to Same, clearing the changed background"
     );
 }
