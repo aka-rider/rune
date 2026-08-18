@@ -194,6 +194,15 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         Just("> a\n> ---\n>".to_string()),
         Just("> ---\n>>".to_string()),
         Just("> t\n> ---".to_string()),
+        // The two comrak-sourcepos quirk shapes the emitter's claim assert
+        // once caught: a pair of bare-`\r`-adjacent backtick runs comrak
+        // lexes as ONE inline code span whose reported end column lands on
+        // the FOLLOWING backtick-less line (the link's own bytes), and a
+        // tab continuation line after an emoji-bearing blockquote nested in
+        // a list item, where comrak's tab-stop-expanded columns disagree
+        // with the line's own bytes.
+        Just("plain text\n  leading indent\na\r```\na\r```\n[](url)".to_string()),
+        Just("- >\u{1F44D}\n\tx\nc".to_string()),
         "[a-zA-Z0-9 ]{0,10}".prop_map(|s| s),
         // Verification-round BLOCKER shape: a block nested inside a
         // container (blockquote/nested-blockquote/list item).

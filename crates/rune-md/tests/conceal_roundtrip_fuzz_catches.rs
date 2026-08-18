@@ -101,6 +101,31 @@ fn minimal_tab_indented_blockquote_before_wide_text() {
     assert_no_duplicate_content_at("-\n\t>d\n\t你", &[0], 56);
 }
 
+/// comrak lexes the two bare-`\r`-adjacent backtick runs as ONE inline
+/// code span and reports its end column on the FOLLOWING line — the
+/// link's line, which carries no backtick at all — so a close delimiter
+/// computed from that column claimed the link's own bytes. Red until the
+/// close run was located by scanning forward for a run of exactly the
+/// recorded backtick count instead of trusting the reported end column.
+#[test]
+fn minimal_code_span_close_on_a_following_backtickless_line() {
+    assert_no_duplicate_content_at(
+        "plain text\n  leading indent\na\r```\na\r```\n[](url)",
+        &[0],
+        78,
+    );
+}
+
+/// comrak reports tab-stop-EXPANDED columns for a tab continuation line
+/// inside a list item wrapping an emoji-bearing blockquote, so a sibling
+/// text node's byte range came out shifted onto the next line's own
+/// byte. Red until comrak columns were resolved against the line's own
+/// bytes.
+#[test]
+fn minimal_tab_continuation_after_emoji_blockquote_in_list() {
+    assert_no_duplicate_content_at("- >\u{1F44D}\n\tx\nc", &[0], 78);
+}
+
 #[test]
 fn stale_lone_cr_before_atx_heading() {
     assert_no_duplicate_content_at(
