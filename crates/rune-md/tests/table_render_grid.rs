@@ -134,12 +134,13 @@ fn zwj_family_split_by_emphasis_and_cjk_row_widths_agree() {
     // emphasis, then a LONE `\u{200d}` immediately starts the emphasised
     // run): the renderer grapheme-segments each of those two runs
     // independently, so the ZWJ (no preceding char in its OWN run) can never
-    // join to `👨` — it stands as its own single-width cluster, then `👩` as
-    // a second, separate cluster (2 + 1 + 2 = 5 cells). Joined-text
-    // measurement instead re-fuses `👨` + the ZWJ + `👩` into ONE cluster
-    // across the run boundary (UAX #29 GB9/GB11 join a ZWJ unconditionally
-    // to whatever precedes it when the text is walked as one string) and
-    // undercounts to 2.
+    // join to `👨` — it stands as its own cluster, ratatui-matching
+    // zero-width (`grapheme_width`'s doc), then `👩` as a second, separate
+    // cluster (2 + 0 + 2 = 4 cells). Joined-text measurement instead
+    // re-fuses `👨` + the ZWJ + `👩` into ONE cluster across the run
+    // boundary (UAX #29 GB9/GB11 join a ZWJ unconditionally to whatever
+    // precedes it when the text is walked as one string) and undercounts to
+    // 2.
     let content = "| 👨*\u{200d}👩* | 世界 |\n| --- | --- |\n| x | y |\n";
     let (buf, doc) = synced(content, 0, false);
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
@@ -156,7 +157,7 @@ fn zwj_family_split_by_emphasis_and_cjk_row_widths_agree() {
     );
 
     let info = lines[0].table.as_ref().expect("rendered table row");
-    assert_eq!(info.col_widths[0], 5);
+    assert_eq!(info.col_widths[0], 4);
 }
 
 #[test]
@@ -177,7 +178,7 @@ fn two_zwj_family_emoji_split_by_emphasis_row_widths_agree() {
     );
 
     let info = lines[0].table.as_ref().expect("rendered table row");
-    assert_eq!(info.col_widths[0], 5);
+    assert_eq!(info.col_widths[0], 4);
 }
 
 /// Every rendered table line's span ranges must tile `[line_start,

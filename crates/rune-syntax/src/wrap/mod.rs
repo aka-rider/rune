@@ -475,17 +475,23 @@ mod tests {
         // Per-span segmentation (what the renderer actually builds): "a"
         // (width 1), then the SECOND span segmented on its own — its text
         // starts fresh, so the ZWJ has no preceding char to join to and
-        // stands as its own cluster (width 1) — then the emoji (width 2).
-        // Total: 1 + 1 + 2 = 4. A concatenated-then-segmented walk instead
-        // fuses "a" and the ZWJ into one cluster (UAX #29 GB9 joins a ZWJ
-        // to WHATEVER precedes it, unconditionally) and undercounts: 1 + 2
-        // = 3.
+        // stands as its own cluster (a LONE zero-width rune, ratatui-
+        // matching per `grapheme_width`'s doc: width 0) — then the emoji
+        // (width 2). Total: 1 + 0 + 2 = 3. A concatenated-then-segmented
+        // walk instead fuses "a" and the ZWJ into one cluster (UAX #29 GB9
+        // joins a ZWJ to WHATEVER precedes it, unconditionally) and
+        // OVERcounts here — the fused "a"+ZWJ cluster measures via
+        // `UnicodeWidthStr::width` (1) instead of "a" and the lone ZWJ
+        // being counted separately (1 + 0), so fusing and not fusing
+        // happen to agree on 1 for THIS pair; what fusing gets wrong is
+        // WHICH byte range the width belongs to, not the row total — the
+        // `byte_col_from_visual` round-trip below is what actually pins
+        // that a span boundary forces the break.
         let end = query::visual_col(content, &spans, content.len());
         assert_eq!(
-            end, 4,
-            "a span boundary must force a grapheme-cluster break even \
-             before a ZWJ — got {end}, which is what fusing \"a\" and the \
-             ZWJ into one cluster produces instead of keeping them separate"
+            end, 3,
+            "a span boundary must still force a grapheme-cluster break \
+             even before a now-zero-width ZWJ — got {end}"
         );
 
         // Round-trips: the byte offset for that same visual column is the

@@ -128,7 +128,13 @@ fn offset_at_ordinary(
     if let Some(seg) = view.wrap.segments().get(wrap_row.0) {
         for cell in render::segment_geometry(content, &seg.spans) {
             first_content_offset = first_content_offset.or(cell.buf_offset);
-            let width = cell.width.max(1) as usize;
+            let width = cell.width as usize;
+            // A width-0 cell (a lone zero-width rune, `grapheme_width`'s
+            // doc) occupies no screen column of its own — `acc + width ==
+            // acc`, and `col` can never be less than the `acc` every prior
+            // cell already advanced past, so the comparison below falls
+            // through to whatever cell actually owns that column instead,
+            // matching what a real terminal shows there.
             if (col as usize) < acc + width {
                 return if let Some(offset) = cell.buf_offset {
                     offset as usize

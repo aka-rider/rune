@@ -30,13 +30,24 @@ use super::Cell;
 /// `Cell`'s own `width` depends on that width actually AGREEING with what
 /// ratatui's own `CellWidth for str` derives for the same symbol —
 /// `rune_syntax::wrap::grapheme_width`'s doc comment states that as the
-/// chokepoint's own invariant (with one documented, narrow exception — a
-/// LONE zero-width rune clamped to a reserved width of 1, see that doc),
-/// and the `assert_invariant` call below enforces exactly
-/// that (narrowed the same way) at every cell this loop writes; a producer
-/// bug that lets the two drift apart in any OTHER way would corrupt the row
-/// exactly as the pre-fix MAX-rule divergence once did, so this is
-/// deliberately checked here too, not just at the width chokepoint itself.
+/// chokepoint's own invariant — and the `assert_invariant` call below
+/// enforces exactly that (with one narrow exception, that assert's own doc)
+/// at every cell this loop writes; a producer bug that lets the two drift
+/// apart in any OTHER way would corrupt the row exactly as the pre-fix
+/// MAX-rule divergence once did, so this is deliberately checked here too,
+/// not just at the width chokepoint itself.
+///
+/// A `Cell` at width 0 (a lone zero-width rune, `grapheme_width`'s doc)
+/// still gets written here — `target.set_symbol` — but `x` never advances
+/// past it, so whatever `Cell` comes next on the row writes into the SAME
+/// buffer column, overwriting it. That is the correct outcome, not a bug: a
+/// zero-width rune has no column of its own on a real terminal either, so
+/// the glyph a reader actually sees there is whichever `Cell` a real
+/// terminal would ALSO land on that column — the one right after it, if any
+/// — never the invisible rune itself. `render::overlay::place_caret`
+/// mirrors this same column-collapse when painting the caret, so the two
+/// stay in agreement about which `Cell` a shared column's REVERSED style
+/// ends up surviving on.
 pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
     let buf = frame.buffer_mut();
     let right = area.x.saturating_add(area.width);
@@ -55,20 +66,18 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                     let declared = usize::from(cell.width);
                     let ratatui_width = cell.text.cell_width() as usize;
                     declared == ratatui_width
-                        // Narrowed per `rune_syntax::wrap::grapheme_width`'s
-                        // own doc: a LONE rune ratatui derives width 0 for
-                        // (a bare combining mark, a stray ZWJ, a lone
-                        // variation selector, a lone zero-width space) is
-                        // deliberately clamped to a reserved width of 1 so
-                        // it keeps a reachable caret column — see
-                        // `control_aware_width`'s doc. Admitted here, and
-                        // only here: `declared == 1` (never a wide-cell
-                        // mismatch, so `blit`'s continuation-reset loop
-                        // above never runs for it) with `ratatui_width ==
-                        // 0` on a single-`char` symbol.
+                        // The ONE remaining narrow exception, scoped to
+                        // MULTI-rune clusters only: `grapheme_width`'s own
+                        // multi-rune floor (never zero, `CELL-OFFSET`'s
+                        // invariant) can still disagree with ratatui for a
+                        // pathological all-zero-width multi-char cluster —
+                        // a single-`char` lone rune no longer needs this,
+                        // since `control_aware_width` now returns ratatui's
+                        // own 0 for it directly (that case hits the plain
+                        // `declared == ratatui_width` branch above).
                         || (declared == 1
                             && ratatui_width == 0
-                            && cell.text.chars().count() == 1)
+                            && cell.text.chars().count() > 1)
                 },
                 || {
                     format!(
@@ -79,7 +88,7 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                     )
                 },
             );
-            let width = u16::from(cell.width.max(1));
+            let width = u16::from(cell.width);
             // A cell that *starts* inside `area` can still not
             // *fit* — a double-width glyph landing on the last column
             // would need a continuation cell past `right` that this loop
