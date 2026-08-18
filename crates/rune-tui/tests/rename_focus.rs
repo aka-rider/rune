@@ -1,8 +1,8 @@
-//! Rename "Done when" tests: the WP2 focus-loss-is-the-single-commit-
+//! Rename tests: the focus-loss-is-the-single-commit-
 //! chokepoint suite — the hoisted blur gate, the invalid-name veto, the
 //! Explorer/Tabs focus landings, the outgoing-vs-incoming-document
 //! ordering guard, and the close-while-renaming reseed/preserve pair —
-//! TODO.md's 500-line budget split of the original `rename.rs`, driven
+//! this is the 500-line-budget split of the original `rename.rs`, driven
 //! through `rune_fuzz::Session` wherever the flow is key-drivable. The
 //! bare-`App` stragglers each need something the session driver
 //! deliberately withholds: a `ReadDir`/`ReadFile` `Cmd` run by hand, a raw
@@ -54,7 +54,7 @@ fn tab_for(session: &rune_fuzz::Session, path: &str) -> (DocumentId, usize) {
     (id, index)
 }
 
-// ── WP2: focus loss is the single commit chokepoint ─────────────────────
+// ── Focus loss is the single commit chokepoint ─────────────────────
 
 /// Leaving the title for the Explorer (`^b`) must commit the pending rename
 /// exactly like Enter does — the hoisted blur gate at the top of
@@ -175,7 +175,7 @@ fn an_invalid_name_still_lets_the_user_quit_and_save() {
     assert!(session.app().should_quit, "^c^c must still be able to quit");
 }
 
-/// WP2.S8 did not strand focus: both the Explorer's `Enter`
+/// Rename did not strand focus: both the Explorer's `Enter`
 /// (`workspace::open_path`, wrapped by `explorer_keys::open_selected`) and
 /// the Tabs pane's `Enter` (`opentabs::handle_key`'s `Select` arm) still
 /// land focus on the Editor now that `switch_to` itself no longer writes
@@ -226,7 +226,7 @@ fn explorer_enter_and_tabs_enter_both_land_focus_on_the_editor() {
 
 /// Gotcha 6: `^1`-`^0` and `F1` fired from Explorer focus must land focus on
 /// the Editor too — the hoisted blur gate at `pane.rs` fires only for
-/// `Pane::Title`, so without WP2.S8's explicit `set_focus` in the
+/// `Pane::Title`, so without an explicit `set_focus` in the
 /// `TabSwitch`/`Help` arms, the document would switch while focus stayed
 /// stranded on the chrome list.
 #[test]
@@ -361,7 +361,7 @@ fn a_failed_explorer_open_leaves_focus_on_the_explorer() {
     );
 }
 
-/// The first half of WP2.S8c's guard: closing the active document reseeds
+/// The first half of the close-while-renaming guard: closing the active document reseeds
 /// the title from the document that becomes active in its place.
 #[test]
 fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
@@ -428,7 +428,7 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
     );
 }
 
-// ── WP4: the paste target travels with the request ──────────────────────
+// ── The paste target travels with the request ──────────────────────
 
 /// The latent bug decision 11 fixes: a `Msg::ClipboardRead` targeted at a
 /// specific document (captured when the paste was requested) must land on

@@ -1,5 +1,5 @@
 //! The save/ack/dirty-flow tests that used to live in `src/save.rs` (moved
-//! out in plan WP1.S5 to keep that file under the 500-line budget — every
+//! out to keep that file under the 500-line budget — every
 //! item exercised here — `App`, `update`, `Msg`, `Effects`, `keymap`
 //! types, `commands::edit::insert_char` — is already public, so this needs
 //! no crate-internal access `#[cfg(test)]` had).

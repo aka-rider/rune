@@ -45,7 +45,7 @@ fn ctrl(c: char) -> KeyInput {
 }
 
 /// `^w`, end to end through the real four-stage pipeline with the Tabs
-/// pane focused, now resolves at the GLOBAL pipeline stage (WP4's
+/// pane focused, resolves at the GLOBAL pipeline stage (
 /// `GlobalCommand::CloseFile`): it requests closing `app.active`, not
 /// whichever row the Tabs cursor happens to sit on — arming the Guard for
 /// a dirty active document exactly like calling `workspace::request_close`
@@ -78,7 +78,7 @@ fn ctrl_w_on_the_tabs_pane_requests_closing_the_active_document() {
     assert!(session.app().documents.contains_key(&second));
 }
 
-/// `^w` from the EDITOR pane (WP4) closes the active clean document
+/// `^w` from the EDITOR pane closes the active clean document
 /// straight away — no Guard, since there is nothing to lose.
 #[test]
 fn ctrl_w_from_editor_focus_closes_the_active_clean_document() {
@@ -109,7 +109,7 @@ fn ctrl_w_from_editor_focus_closes_the_active_clean_document() {
 }
 
 /// `^w` from the EDITOR pane on a DIRTY active document arms the Guard
-/// instead of discarding it outright (WP4) — the same data-safety gate
+/// instead of discarding it outright — the same data-safety gate
 /// `workspace::request_close` already gives every other close path.
 #[test]
 fn ctrl_w_from_editor_focus_on_a_dirty_document_arms_the_guard() {
@@ -137,7 +137,7 @@ fn ctrl_w_from_editor_focus_on_a_dirty_document_arms_the_guard() {
     );
 }
 
-/// `^1`, end to end through the real pipeline from the EDITOR pane (WP4),
+/// `^1`, end to end through the real pipeline from the EDITOR pane,
 /// jumps straight to the first tab.
 #[test]
 fn ctrl_1_switches_to_the_first_tab() {
@@ -155,7 +155,7 @@ fn ctrl_1_switches_to_the_first_tab() {
     assert_eq!(session.app().active, first);
 }
 
-/// `^0` is the TENTH tab (WP4) — matching what the tab strip itself prints
+/// `^0` is the TENTH tab — matching what the tab strip itself prints
 /// for the first ten tabs (`(idx + 1) % 10`).
 #[test]
 fn ctrl_0_switches_to_the_tenth_tab() {
@@ -180,7 +180,7 @@ fn ctrl_0_switches_to_the_tenth_tab() {
     assert_eq!(session.app().active, session.app().documents.order()[9]);
 }
 
-/// The routing proof (WP4): `^1` fired from EXPLORER focus still switches
+/// The routing proof: `^1` fired from EXPLORER focus still switches
 /// tabs. If `TabSwitch` were resolved by a pane-local table instead of
 /// `GLOBAL_BINDINGS`, this would fail — the Explorer pane has no such
 /// binding of its own.
@@ -203,7 +203,7 @@ fn ctrl_1_from_explorer_focus_switches_tabs() {
     assert_eq!(session.app().active, session.app().documents.order()[0]);
 }
 
-/// A digit chord past the number of open tabs is a silent no-op (WP4) —
+/// A digit chord past the number of open tabs is a silent no-op —
 /// no panic, no change of `app.active`.
 #[test]
 fn an_out_of_range_tab_digit_is_a_no_op() {

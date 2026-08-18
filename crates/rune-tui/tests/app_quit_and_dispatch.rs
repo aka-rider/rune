@@ -1,5 +1,5 @@
 //! `App`'s quit-confirm state machine and `Cmd` tagging (moved out of
-//! `app.rs` in plan WP1.S5 to keep that file under the 500-line budget —
+//! `app.rs` to keep that file under the 500-line budget —
 //! every item exercised here (`App`, `update`, `Msg`, `Effects`, `CmdKind`,
 //! `keymap` types) is already public, so this needs no crate-internal
 //! access `#[cfg(test)]` had).
@@ -216,9 +216,9 @@ fn printable_ascii_and_unicode_chars_are_still_insertable() {
 
 #[test]
 fn resize_sets_viewport_size_reserving_the_status_row() {
-    // Recomputed from `layout::geometry` (plan gotcha 12), not copied from
-    // pre-WP3 behavior: at 80x24 the footer takes row 23, leaving an
-    // 80x23 main/center area (no left pane); WP4's center border takes 2
+    // Recomputed from `layout::geometry`, not copied from a
+    // stale expectation: at 80x24 the footer takes row 23, leaving an
+    // 80x23 main/center area (no left pane); the center border takes 2
     // columns (78 wide) and 2 rows for its own top/bottom border, plus 1
     // more row for the title, leaving the editor at 78x20.
     let mut app = test_app();

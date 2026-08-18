@@ -1,4 +1,4 @@
-//! Issue #65: undoing back past a completed merge leaves a buffer that no
+//! Undoing back past a completed merge leaves a buffer that no
 //! longer descends from what is on disk, while the CAS baseline still
 //! matches those exact disk bytes — the one shape where the
 //! compare-and-swap agrees and only the store's own classification can tell

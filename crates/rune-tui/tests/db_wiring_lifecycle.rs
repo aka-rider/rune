@@ -1,4 +1,4 @@
-//! WP6 "Done when" integration tests for the rune-tui <-> rune-db wiring's
+//! Integration tests for the rune-tui <-> rune-db wiring's
 //! open/close op bookkeeping and the bootstrap-bridge handover, driven
 //! through `rune_fuzz::Session` wherever the flow is a real user flow.
 #![allow(
@@ -24,7 +24,7 @@ use rune_vfs::{Mem, Vfs};
 
 use db_wiring_common::{publish, temp_db_dir};
 
-/// Plan WP6.S6: opening an Explorer path enqueues exactly one `Load` op and
+/// Opening an Explorer path enqueues exactly one `Load` op and
 /// records it in `app.db_ops`, keyed to the newly opened document — not the
 /// already-open one.
 #[test]
@@ -57,7 +57,7 @@ fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
     );
 }
 
-/// Plan WP6 regression: closing a document with a `Load` op still in flight
+/// Regression: closing a document with a `Load` op still in flight
 /// must sweep its entire `PendingOp` — routing fact and issued-version fact
 /// together — out of `db_ops`, not just the routing half. Before the merge
 /// into one map, `workspace::close_now`'s sweep only touched the routing
@@ -91,7 +91,7 @@ fn closing_a_document_sweeps_its_pending_load_version() {
     );
 }
 
-/// Plan WP3.S1/S4's regression test: a two-file CLI launch opens BOTH extra
+/// Regression test: a two-file CLI launch opens BOTH extra
 /// documents (`workspace::open_path`, exactly as `rune-cli::main`'s
 /// extra-positional loop does) before `DbBridge::attach` ever runs — the
 /// same bridge is still in its `Bootstrap` sink for the whole window. Before

@@ -1,4 +1,4 @@
-//! WP4.S5: line-decoration render/caret/mouse coverage — the heading icon /
+//! Line-decoration render/caret/mouse coverage — the heading icon /
 //! list bullet / quote bar / hr rule prefix `render::decor` builds, the
 //! caret's decor-shifted `visual_col` (`render::overlay::apply_cursor_
 //! overlays`), and the mouse decor-cell fallback (`commands::mouse::
@@ -95,7 +95,7 @@ fn concealed_quote_row_shows_its_bar_decor() {
 }
 
 /// (c) A `---` thematic break renders as a full-width rule row — every cell
-/// decorative (plan WP3.S3's rule exemption: it always attaches, clamped to
+/// decorative (the rule exemption: it always attaches, clamped to
 /// the available width, since it has no competing content).
 #[test]
 fn thematic_break_renders_a_full_width_rule_row() {
@@ -119,7 +119,7 @@ fn thematic_break_renders_a_full_width_rule_row() {
 }
 
 /// (d) An ordered list item's decor carries the user's OWN marker text
-/// verbatim (plan WP2.S5: "ordered -> trimmed `content[item.marker]` +
+/// verbatim ("ordered -> trimmed `content[item.marker]` +
 /// space") rather than a synthesised bullet glyph.
 #[test]
 fn ordered_list_item_decor_shows_its_own_number() {
@@ -145,7 +145,7 @@ fn ordered_list_item_decor_shows_its_own_number() {
     );
 }
 
-/// (e) Clicking a decor cell (WP4.S4) places the caret at the line's own
+/// (e) Clicking a decor cell places the caret at the line's own
 /// content start — NOT document offset 0 (the old, untested `Some(0)`
 /// fallback the plan Gotchas call out as a bug: a click on a decorative
 /// cell used to silently jump to the document's very first byte).

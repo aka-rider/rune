@@ -1,4 +1,4 @@
-//! WP7 "Done when" tests: the Help virtual document — minted once, toggled
+//! Tests for the Help virtual document — minted once, toggled
 //! via `F1`, read-only, and rendered in the Open Tabs pane.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -39,7 +39,7 @@ fn frame_text(app: &App) -> String {
 }
 
 /// `F1` twice mints exactly one Help document — the second press must not
-/// duplicate it (plan WP7.S3: "press twice -> documents.len() grows by
+/// duplicate it ("press twice -> documents.len() grows by
 /// exactly 1 across both presses").
 #[test]
 fn f1_twice_creates_exactly_one_help_document() {

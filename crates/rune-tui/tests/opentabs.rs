@@ -1,4 +1,4 @@
-//! WP5 "Done when" tests: Open Tabs rendering/switching, and the close
+//! Tests for Open Tabs rendering/switching, and the close
 //! guard's three resolutions (`[S]ave`, `[D]iscard`, `Esc`), driven against
 //! a `Mem` vfs seeded with two files. The GLOBAL `^w`/`^1`-`^0` binding
 //! tests live in the sibling `opentabs_global.rs` (TODO.md's 500-line budget);
@@ -89,7 +89,7 @@ fn the_open_divider_row_precedes_the_tab_rows() {
     );
 }
 
-/// Enter on a cursor row switches the active document (plan WP5.S2) —
+/// Enter on a cursor row switches the active document —
 /// driven through `opentabs::handle_key` directly, the same style
 /// `tests/explorer.rs` already uses for its own pane-local assertions.
 #[test]
@@ -115,7 +115,7 @@ fn enter_switches_the_active_document() {
 }
 
 /// A dirty document's tab shows the `x` dirty marker; a clean one shows a
-/// blank in its place (plan WP5.S1). The row shape pins the fixed marker
+/// blank in its place. The row shape pins the fixed marker
 /// columns: pin, dirty, sync (blank here), separator, name.
 #[test]
 fn dirty_dot_appears_after_an_edit_to_the_active_document() {
@@ -257,8 +257,8 @@ fn discard_closes_and_activates_the_neighbor() {
 }
 
 /// `[S]ave` triggers a save, closing only once its `Msg::SaveDone` ack
-/// reports success — never before, and never on a failure (plan WP5.S3,
-/// mind Assumption A1: `db: None` documents take the `SaveDone` fallback
+/// reports success — never before, and never on a failure (mind: `db:
+/// None` documents take the `SaveDone` fallback
 /// path, exercised here since `open_seeded` builds an `App` with no store).
 #[test]
 fn save_then_close_waits_for_the_save_done_ack() {
@@ -419,7 +419,7 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
     );
 }
 
-/// Closing the last remaining document (plan WP0) mints a fresh untitled
+/// Closing the last remaining document mints a fresh untitled
 /// draft rather than refusing — the old refusal made the user open another
 /// document just to close the untitled one before they could leave.
 #[test]
@@ -492,10 +492,10 @@ fn closing_a_dirty_only_document_still_routes_through_the_guard() {
     );
 }
 
-/// A prior error message must never block a Guard from being raised (plan
-/// WP1: errors are a non-modal log entry now, orthogonal to the Guard slot
-/// — unlike the pre-WP1 modal error banner, which used to outrank and refuse a
-/// lower-priority Guard request).
+/// A prior error message must never block a Guard from being raised:
+/// errors are a non-modal log entry now, orthogonal to the Guard slot
+/// — unlike a past modal error banner, which used to outrank and refuse a
+/// lower-priority Guard request.
 #[test]
 fn an_error_message_never_blocks_a_guard_from_being_raised() {
     let mut session = open_seeded();

@@ -1,4 +1,4 @@
-//! WP6/WP7 done-when: movement, selection, editing, and undo/redo driven
+//! Movement, selection, editing, and undo/redo driven
 //! through the real `app::update` (headless — `TestBackend` + `Mem` vfs
 //! only, no wall-clock sleeps, no real terminal — mirrors `tests/tui_render.rs`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -82,7 +82,7 @@ fn full_text(buf: &RtBuffer) -> String {
     s
 }
 
-// ---- Movement matrix (WP6) ----
+// ---- Movement matrix ----
 
 #[test]
 fn char_right_then_left_returns_to_start() {
@@ -229,7 +229,7 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
     app.sync_view();
 
     // Resizing the FRAME to 7 columns (not 5): the center pane's border
-    // (plan WP4) eats 2 of those for its own left/right border cells,
+    // eats 2 of those for its own left/right border cells,
     // leaving the editor's wrap width at exactly 5 — the width this test
     // actually wants to drive the "Down wraps at column 5" behavior below.
     let mut effects = Effects::default();
@@ -293,7 +293,7 @@ fn scroll_row_does_not_move_until_the_batch_settles() {
     );
 }
 
-// ---- Reveal follows the cursor (WP6) ----
+// ---- Reveal follows the cursor ----
 
 #[test]
 fn moving_onto_a_heading_line_reveals_its_marker_moving_off_conceals_it() {
@@ -321,7 +321,7 @@ fn moving_onto_a_heading_line_reveals_its_marker_moving_off_conceals_it() {
     );
 }
 
-// ---- Editing (WP7) ----
+// ---- Editing ----
 
 #[test]
 fn typing_inserts_characters_in_order_and_moves_the_caret() {
@@ -406,7 +406,7 @@ fn tab_indents_every_line_of_a_shift_selected_block_and_keeps_the_selection() {
     assert_eq!(app.active_doc_mut().buffer.content(), "one\ntwo\nthree");
 }
 
-// ---- Undo/redo (WP7) ----
+// ---- Undo/redo ----
 
 #[test]
 fn undo_restores_byte_exact_content_and_redo_reapplies_it() {

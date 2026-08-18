@@ -1,5 +1,5 @@
 //! One shared way every integration test forces a document dirty through a
-//! REAL edit (plan WP1/finding 7: `saved_content` is `pub(crate)` now — only
+//! REAL edit (`saved_content` is `pub(crate)` — only
 //! `Document::finish_save_ok` may move the saved baseline — so an
 //! integration test, which builds as a separate crate, can no longer poke
 //! the field directly; it has to go through the same production path a
@@ -9,10 +9,10 @@
 //! `db_wiring_degraded.rs`, `rename_bind.rs`, and two of `save_flow.rs`'s
 //! tests pull this in via `mod dirty_common;`).
 //!
-//! Dirtiness is a content comparison against `saved_content` (plan WP1), and
+//! Dirtiness is a content comparison against `saved_content`, and
 //! `saved_content` is seeded from the buffer's OWN content at construction
 //! time — so any edit that round-trips back to the same final bytes is, by
-//! design, NOT dirty (that is the exact "edit-then-undo" fix WP1 landed).
+//! design, NOT dirty (that is the exact "edit-then-undo" fix this design landed).
 //! There is therefore no sequence of edits that leaves a document both
 //! dirty AND at its originally-constructed content; a caller that needs a
 //! SPECIFIC final content (e.g. a byte-exact save round trip) must

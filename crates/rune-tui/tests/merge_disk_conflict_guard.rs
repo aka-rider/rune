@@ -1,4 +1,4 @@
-//! WP6 "Done when" (4a-4d) integration tests for the ⌘S disk-conflict Guard
+//! Integration tests for the ⌘S disk-conflict Guard
 //! (plan `merge-user-s-changes-with-idempotent-octopus.md`). Split out of
 //! `merge_resync_guard.rs` to keep both files under the 500-line budget;
 //! driven through `rune_fuzz::Session`, pulling shared setup from
@@ -44,7 +44,7 @@ fn enter_disk_conflict_guard(disk_bytes: &[u8]) -> (Session, DocumentId) {
     (session, doc_id)
 }
 
-/// Plan WP6 "Done when" (4a): ⌘S on an externally-changed file raises the
+/// ⌘S on an externally-changed file raises the
 /// Guard.
 #[test]
 fn save_on_an_externally_changed_file_raises_the_disk_conflict_guard() {
@@ -56,7 +56,7 @@ fn save_on_an_externally_changed_file_raises_the_disk_conflict_guard() {
     assert!(matches!(prompt.kind, GuardKind::DiskConflict));
 }
 
-/// Plan WP6 "Done when" (4b): the Guard's `[M]erge` answer enters merge
+/// The Guard's `[M]erge` answer enters merge
 /// (`MergeState::Pending`).
 #[test]
 fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
@@ -69,7 +69,7 @@ fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
     ));
 }
 
-/// Plan WP6 "Done when" (4c): the Guard's `Esc` answer cancels touching
+/// The Guard's `Esc` answer cancels touching
 /// neither the buffer nor merge state. The message log never clears an
 /// earlier entry, so the save-refusal message that raised this very Guard
 /// stays in the log alongside the cancellation ack — but the footer itself
@@ -148,10 +148,10 @@ fn disk_conflict_guard_escape_then_ctrl_m_starts_a_merge_attempt() {
     ));
 }
 
-/// Plan WP6 "Done when" (4d): the Guard's `[D]iscard` answer makes the
+/// The Guard's `[D]iscard` answer makes the
 /// buffer equal the FRESH disk bytes in one undoable step, even when the
 /// disk changed AGAIN between the conflict's detection and pressing `D`
-/// (plan Assumption A2 — Discard shares `Merge`'s fresh `MergePrep`
+/// (Discard shares `Merge`'s fresh `MergePrep`
 /// pipeline rather than replaying the bytes seen at guard-raise time).
 #[test]
 fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {

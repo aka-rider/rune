@@ -1,4 +1,4 @@
-//! WP13.S5 (`rune-tui C 8`): `testgrid.rs`'s own module doc claims it is
+//! `testgrid.rs`'s own module doc claims it is
 //! "the one place left in the crate that constructs a `TestBackend`" — an
 //! invariant that had already silently rotted (`opentabs.rs`'s and
 //! `title.rs`'s own test modules each grew a second, hand-rolled copy of

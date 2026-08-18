@@ -1,4 +1,4 @@
-//! WP4.S6: `Document::bind_path` derives `DocumentKind` from a modeline, a
+//! `Document::bind_path` derives `DocumentKind` from a modeline, a
 //! whole filename, the extension, or a shebang — via `rune_ts::detect`,
 //! never `registry()` (plan `[B5]`) — and a code document renders its
 //! source verbatim (no comrak parse, no concealment at all), while a `.md`
@@ -104,7 +104,7 @@ fn no_path_stays_markdown() {
     assert_eq!(app.active_doc().kind, DocumentKind::Markdown);
 }
 
-/// Plan WP4.S6 Done-when: an image extension resolves to
+/// An image extension resolves to
 /// `DocumentKind::Image` via `Document::bind_path` — same chokepoint every
 /// other extension goes through.
 #[test]

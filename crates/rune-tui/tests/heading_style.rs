@@ -1,4 +1,4 @@
-//! WP1.S5: the concealed-heading styling fix (`markup.heading.N` reaching a
+//! The concealed-heading styling fix (`markup.heading.N` reaching a
 //! Rendered heading's own cells, not just a Revealed one's) pinned end to
 //! end through the real render pipeline. Lives in its own file because the
 //! main render test file is already over the 500-line budget; the small

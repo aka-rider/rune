@@ -1,6 +1,6 @@
-//! WP5 "Done when" integration tests for the rune-tui <-> rune-db wiring's
-//! degraded-store banner (plan decision 3) and its `super+s` confirm gate
-//! (plan WP5.S2/S6), driven through `rune_fuzz::Session`.
+//! Integration tests for the rune-tui <-> rune-db wiring's
+//! degraded-store banner and its `super+s` confirm gate,
+//! driven through `rune_fuzz::Session`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -39,10 +39,10 @@ fn ch(c: char) -> KeyInput {
     }
 }
 
-/// Plan WP5 "Done when": type -> kill the store writer via the test hook
+/// Type -> kill the store writer via the test hook
 /// (`Store::kill_writer_for_test`) -> the persistent degraded banner
 /// appears in `footer::footer_text`'s output, and the buffer's content is
-/// NEVER rolled back (plan decision 3: an enqueue-time failure only
+/// NEVER rolled back (an enqueue-time failure only
 /// degrades the store — it never touches the in-memory buffer/journal).
 #[test]
 fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
@@ -100,7 +100,7 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
         app.db.as_ref().is_some_and(|d| d.degraded),
         "the store must be marked degraded"
     );
-    // No rollback, ever (plan decision 3): the buffer must reflect EVERY
+    // No rollback, ever: the buffer must reflect EVERY
     // keystroke typed so far, regardless of exactly when the writer died
     // relative to these presses.
     assert_eq!(
@@ -110,12 +110,12 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
     );
 }
 
-/// Finding 5 / [rune-db 1] (WP7): a `MaterializePrepare` enqueue failure
+/// A `MaterializePrepare` enqueue failure
 /// (the store writer confirmed gone) must degrade the store and raise the
 /// sticky banner through the SAME `on_store_failure` chokepoint
 /// `append_edit`/`move_undo_pos` use — never a one-shot `SaveError` status
 /// that leaves `db.degraded` untouched. A dead writer must not ALSO make
-/// the save itself impossible — WP7's `materialize_now` falls back to the
+/// the save itself impossible — `materialize_now` falls back to the
 /// same uncoordinated direct-`vfs` `Cmd` a document with no store binding
 /// uses, and once that `Cmd` runs, the user's bytes are actually on disk —
 /// "press ⌘S again to save anyway" must actually save. Deterministically
@@ -196,7 +196,7 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     );
     assert!(
         app.active_doc().save_in_flight(),
-        "WP7: a dead writer must not also make the save itself impossible — the \
+        "a dead writer must not also make the save itself impossible — the \
          direct-vfs fallback Cmd is in flight, not silently skipped"
     );
 
@@ -219,11 +219,11 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     );
 }
 
-/// Plan WP5.S2/S6's confirm-gate state machine: `super+s` on a degraded
+/// The confirm-gate state machine: `super+s` on a degraded
 /// store only ARMS the gate (no `materialize` enqueued, `save_in_flight`
 /// stays false) the first time; a SECOND `super+s` consumes the gate and
 /// actually enqueues the save. The store starts healthy and is flipped
-/// degraded by hand — simulating a LATER store failure (plan decision 3),
+/// degraded by hand — simulating a LATER store failure,
 /// independent of the open ladder's own state, which is exactly what this
 /// gate must react to either way.
 #[test]

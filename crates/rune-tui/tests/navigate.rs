@@ -1,4 +1,4 @@
-//! WP5 "Done when" tests: following the link under the cursor via
+//! Tests for following the link under the cursor via
 //! ⌘Enter/^Enter and via a ctrl-click, same-document heading jumps,
 //! cross-document anchors, external URLs, and the broken-link/embed
 //! no-ops. Headless (`Mem` vfs, no real terminal), mirroring
@@ -111,7 +111,7 @@ fn click(app: &mut App, col: u16, row: u16, ctrl: bool) -> Effects {
 
 /// Runs every `ReadFile` `Cmd` `effects` carries inline and feeds its
 /// `Msg::FileOpened` reply straight back through `update` — models one
-/// whole runtime cycle for `workspace::open_path_async` (plan WP5.S6)
+/// whole runtime cycle for `workspace::open_path_async`
 /// without spawning a real thread. Panics on any OTHER `Cmd` kind: a test
 /// using this helper is asserting "this key opens a file", and a surprise
 /// second kind of `Cmd` would mean the assertion no longer describes what

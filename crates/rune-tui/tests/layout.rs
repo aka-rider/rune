@@ -1,4 +1,4 @@
-//! Pure unit tests on `layout::geometry` (plan WP3.S10) — no `Frame`, no
+//! Pure unit tests on `layout::geometry` — no `Frame`, no
 //! `TestBackend`; just `Rect` arithmetic against a bare `App`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -25,7 +25,7 @@ fn hidden_left_pane_at_120x34_gives_the_center_the_whole_main_area() {
     assert!(geo.left_block.is_none());
     assert!(geo.tabs_divider.is_none());
 
-    // Plan WP4.S1: the center pane is bordered (120x33 is well over the
+    // The center pane is bordered (120x33 is well over the
     // 3x3 floor), so `content` is `center.inner(Margin::new(1, 1))` —
     // title and editor both start one cell in from `center`'s own origin.
     assert!(geo.center_bordered);

@@ -1,5 +1,5 @@
 //! Copy, cut, and paste in the title — split out of `rename_bind.rs`
-//! (plan WP5, 500-line budget). Added by the clipboard package that grew
+//! (500-line budget). Added by the clipboard package that grew
 //! that file past the ceiling. Deliberately bare-`App`, not
 //! `rune_fuzz::Session`: every test here asserts on the raw OSC52 bytes in
 //! `Effects::raw` or injects a targeted `Msg::ClipboardRead`, and the
