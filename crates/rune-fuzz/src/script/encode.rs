@@ -172,7 +172,6 @@ fn encode_code(code: KeyCode) -> String {
         KeyCode::Enter => "enter".into(),
         KeyCode::Backspace => "backspace".into(),
         KeyCode::Tab => "tab".into(),
-        KeyCode::BackTab => "backtab".into(),
         KeyCode::Escape => "escape".into(),
         KeyCode::Left => "left".into(),
         KeyCode::Right => "right".into(),

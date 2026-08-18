@@ -390,6 +390,26 @@ fn tab_indents_the_current_line_shift_tab_outdents_it() {
 }
 
 #[test]
+fn a_termina_backtab_event_dedents_the_current_line() {
+    use termina::event::{KeyCode as TK, KeyEvent, KeyEventKind, KeyEventState, Modifiers as TM};
+
+    let mut app = app_for("\thello", 1);
+    let input = rune_tui::keymap::from_termina(KeyEvent {
+        code: TK::BackTab,
+        modifiers: TM::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    })
+    .unwrap();
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(input), &mut effects);
+    app.sync_view();
+
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
+}
+
+#[test]
 fn tab_indents_every_line_of_a_shift_selected_block_and_keeps_the_selection() {
     let mut app = app_for("one\ntwo\nthree", 0);
     press(&mut app, KeyCode::Down, SHIFT);

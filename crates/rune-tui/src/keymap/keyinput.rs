@@ -15,7 +15,6 @@ pub enum KeyCode {
     Enter,
     Backspace,
     Tab,
-    BackTab,
     Escape,
     Left,
     Right,
@@ -70,12 +69,14 @@ pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
         return None;
     }
 
+    let shift_tab = matches!(event.code, TK::BackTab);
+
     let code = match event.code {
         TK::Char(c) => KeyCode::Char(c),
         TK::Enter => KeyCode::Enter,
         TK::Backspace => KeyCode::Backspace,
         TK::Tab => KeyCode::Tab,
-        TK::BackTab => KeyCode::BackTab,
+        TK::BackTab => KeyCode::Tab,
         TK::Escape => KeyCode::Escape,
         TK::Left => KeyCode::Left,
         TK::Right => KeyCode::Right,
@@ -92,7 +93,7 @@ pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
 
     let m = event.modifiers;
     let mods = Mods {
-        shift: m.contains(TM::SHIFT),
+        shift: m.contains(TM::SHIFT) || shift_tab,
         alt: m.contains(TM::ALT),
         ctrl: m.contains(TM::CONTROL),
         sup: m.contains(TM::SUPER),

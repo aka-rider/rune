@@ -54,7 +54,7 @@ fn cluster_selection() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// 8 — 1-6 of {Backspace, Delete, Tab, BackTab}.
+/// 8 — 1-6 of {Backspace, Delete, Tab, Shift+Tab}.
 fn cluster_delete() -> impl Strategy<Value = Vec<Action>> {
     proptest::collection::vec(select(DELETE_KEYS), 1..=6)
         .prop_map(|keys| keys.into_iter().map(Action::Key).collect())

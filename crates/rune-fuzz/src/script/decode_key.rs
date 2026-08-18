@@ -70,7 +70,6 @@ fn parse_code(s: &str, line: usize) -> Result<KeyCode, ScriptError> {
         "enter" => KeyCode::Enter,
         "backspace" => KeyCode::Backspace,
         "tab" => KeyCode::Tab,
-        "backtab" => KeyCode::BackTab,
         "escape" => KeyCode::Escape,
         "left" => KeyCode::Left,
         "right" => KeyCode::Right,

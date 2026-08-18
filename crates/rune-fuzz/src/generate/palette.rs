@@ -296,8 +296,13 @@ pub(super) static DELETE_KEYS: &[KeyInput] = &[
         mods: Mods::NONE,
     },
     KeyInput {
-        code: KeyCode::BackTab,
-        mods: Mods::NONE,
+        code: KeyCode::Tab,
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: false,
+        },
     },
 ];
 

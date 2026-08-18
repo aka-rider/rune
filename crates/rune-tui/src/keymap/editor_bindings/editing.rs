@@ -94,13 +94,6 @@ pub(crate) const OUTDENT_SHIFT_TAB: Binding<Command> = Binding {
     alias: false,
 };
 
-pub(crate) const OUTDENT_BACKTAB: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::BackTab, NONE),
-    cmd: Command::Outdent,
-    help: "outdent",
-    alias: false,
-};
-
 pub(crate) const UNDO_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('z'), SUP),
     cmd: Command::Undo,

@@ -304,10 +304,29 @@ mod tests {
             )),
             Some(Command::Outdent)
         );
-        assert_eq!(
-            resolve(key(KeyCode::BackTab, Mods::NONE)),
-            Some(Command::Outdent)
-        );
+    }
+
+    #[test]
+    fn shift_tab_arrives_from_termina_as_backtab_and_resolves_to_outdent() {
+        use termina::event::{
+            KeyCode as TK, KeyEvent, KeyEventKind, KeyEventState, Modifiers as TM,
+        };
+
+        let shift = Mods {
+            shift: true,
+            ..Mods::NONE
+        };
+
+        for modifiers in [TM::SHIFT, TM::NONE] {
+            let input = from_termina(KeyEvent {
+                code: TK::BackTab,
+                modifiers,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            });
+            assert_eq!(input, Some(key(KeyCode::Tab, shift)));
+            assert_eq!(input.and_then(resolve), Some(Command::Outdent));
+        }
     }
 
     #[test]

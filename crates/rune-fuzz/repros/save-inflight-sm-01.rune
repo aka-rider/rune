@@ -72,7 +72,7 @@ key end -ac-
 key delete s--u
 key enter --cu
 key up -a-u
-key backtab sa-u
+key tab sa-u
 key left sac-
 key pageup -a--
 type \u{2764}\u{fe0f} heart FE0F \u{2764}\u{fe0f} heart FE0F ***bold*** _em_ `code`
@@ -89,4 +89,4 @@ key tab ----
 key tab ----
 key backspace ----
 key backspace ----
-key backtab ----
+key tab s---

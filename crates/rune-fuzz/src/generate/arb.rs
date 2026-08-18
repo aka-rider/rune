@@ -96,19 +96,15 @@ pub(super) fn arb_mouse_input() -> impl Strategy<Value = MouseInput> {
         })
 }
 
-/// Every one of the 16 `KeyCode` variants; `Char` draws an arbitrary
-/// `char`. 16 arms exceeds `prop_oneof!`'s 10-arm threshold (G16), so every
-/// arm is `.boxed()`. `F1` (`GlobalCommand::Help`) was the one omission
-/// (CODE-REVIEW.md rune-fuzz finding 9: a stale "15 variants" doc comment
-/// was true of the arms below but false of the enum, hiding that Help was
-/// structurally unreachable through this generator) — now included.
+/// Every one of the 15 `KeyCode` variants, `F1` included; `Char` draws an
+/// arbitrary `char`. 15 arms exceeds `prop_oneof!`'s 10-arm threshold, so
+/// every arm is `.boxed()`.
 pub(super) fn arb_any_keycode() -> impl Strategy<Value = KeyCode> {
     prop_oneof![
         any::<char>().prop_map(KeyCode::Char).boxed(),
         Just(KeyCode::Enter).boxed(),
         Just(KeyCode::Backspace).boxed(),
         Just(KeyCode::Tab).boxed(),
-        Just(KeyCode::BackTab).boxed(),
         Just(KeyCode::Escape).boxed(),
         Just(KeyCode::Left).boxed(),
         Just(KeyCode::Right).boxed(),

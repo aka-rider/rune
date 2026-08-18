@@ -141,7 +141,6 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     editing::DELETE_WORD_RIGHT,
     editing::INDENT,
     editing::OUTDENT_SHIFT_TAB,
-    editing::OUTDENT_BACKTAB,
     motion::WORD_LEFT_B,
     motion::WORD_RIGHT_F,
     selection::SELECT_ALL_CTRL,
