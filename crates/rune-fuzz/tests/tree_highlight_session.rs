@@ -108,7 +108,10 @@ fn deliver_tree(app: &mut App, version: u64, base: usize) {
     let msg = Msg::Highlighted {
         doc: app.active,
         version,
-        result: Some(highlight_tree_reply(FIXTURE_INDEX, base)),
+        result: rune_tui::highlight::PassOutcome::Replace(highlight_tree_reply(
+            FIXTURE_INDEX,
+            base,
+        )),
     };
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);

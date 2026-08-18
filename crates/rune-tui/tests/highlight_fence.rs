@@ -213,13 +213,16 @@ fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
     let Msg::Highlighted { result, .. } = &msg else {
         panic!("expected a Msg::Highlighted reply, got {msg:?}");
     };
-    let reply = result
-        .as_ref()
-        .expect("a pass with nothing to parse succeeds");
+    let rune_tui::highlight::PassOutcome::Replace(reply) = result else {
+        panic!("a pass with nothing to parse succeeds");
+    };
     assert_eq!(reply.regions.len(), 2, "both fences are still regions");
     for (i, region) in reply.regions.iter().enumerate() {
         assert!(
-            region.payload.is_none(),
+            matches!(
+                region.outcome,
+                rune_tui::highlight::RegionOutcome::CarryForward { .. }
+            ),
             "fence {i} was reparsed by an edit that never touched its text"
         );
     }

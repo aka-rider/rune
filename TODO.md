@@ -77,12 +77,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: generalize `SnapshotTimer` (single thread, Mutex+Condvar, rearm-to-earliest) to a keyed deadline map; bound the worker pool.
 - **Done when**: no `Cmd` does a bare `thread::sleep`, and `spawn_cmd` is bounded.
 
-### Multi-meaning `None`s in the highlight reply protocol
-- **Where**: `crates/rune-tui/src/runtime/mod.rs:187-190` (`Msg::Highlighted { result: Option<HighlightReply> }`), `crates/rune-tui/src/highlight/mod.rs:122` (`payload: Option<RegionPayload>`)
-- **Wrong**: `result: None` means "carry forward"; within a reply, per-region `payload: None` means "keep channels" while `Some(empty)` means "clear" — decoded by convention and comments, not the type.
-- **Instead**: an explicit `CarryForward`/`Replace` enum.
-- **Done when**: the reply protocol has no dual-meaning `None`.
-
 ### A generation counter's type doesn't say which feature it belongs to
 - **Where**: `crates/rune-tui/src/app.rs`'s `next_rename_gen: u32`, `next_merge_gen: u32`, `next_save_confirm_gen: u32`, `next_quit_gen: u32`, `trash_gen: u32`, `next_filesearch_gen: u64`, `next_search_history_gen: u64`; each is compared against a bare `generation: u32`/`generation: u64` field carried by its own `Msg` reply, for example in `crates/rune-tui/src/rename.rs`, `crates/rune-tui/src/merge/state.rs`, `crates/rune-tui/src/trash.rs`, and `crates/rune-tui/src/filesearch/mod.rs`.
 - **Wrong**: every counter and every `Msg` field that answers it share the same primitive type. Nothing stops a future edit from comparing one feature's counter against another feature's reply — reading `next_quit_gen` where `next_rename_gen` belongs, say — and the mistake still compiles. The "Nine hand-rolled generation counters" entry above already proposes consolidating these into one `Gen<T>` newtype; this entry names the specific hazard that consolidation must close, or it survives the merge: `T` has to be a type parameter distinct per feature (`Gen<Rename>`, `Gen<Merge>`, and so on), not just one shared `Gen` wrapping a plain integer.

@@ -14,7 +14,7 @@ use std::ops::Range;
 use rune_fuzz::Session;
 use rune_syntax::ScopeId;
 use rune_tui::app::{self, App};
-use rune_tui::highlight::{self, HighlightReply, RegionPayload, RegionResult};
+use rune_tui::highlight::{self, HighlightReply, RegionOutcome, RegionPayload, RegionResult};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::linemap::LineMap;
 use rune_tui::runtime::{Effects, Msg};
@@ -131,7 +131,10 @@ pub fn span_reply(spans: Vec<(Range<usize>, ScopeId)>) -> HighlightReply {
     HighlightReply {
         regions: vec![RegionResult {
             map: LineMap::default(),
-            payload: Some(RegionPayload::Spans(spans)),
+            outcome: RegionOutcome::Replace(RegionPayload::Spans {
+                source: String::new(),
+                spans,
+            }),
         }],
         truncated: false,
     }
