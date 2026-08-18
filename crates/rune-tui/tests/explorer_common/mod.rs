@@ -1,8 +1,8 @@
-//! Shared setup helpers for the WP4 Explorer "Done when" test suite, split
+//! Shared setup helpers for the Explorer test suite, split
 //! across `explorer_nav.rs` (cursor movement, opening files/directories,
 //! and the parent row) and `explorer_reload.rs` (the `resolve` fallback,
 //! refresh/stale-reply handling, `open_path` reactivation, and the lazy
-//! `ensure_loaded` load) — TODO.md's 500-line budget split of the original
+//! `ensure_loaded` load) — this is the 500-line-budget split of the original
 //! `explorer.rs`. Both consumers, plus `trash.rs`, pull this in via `mod
 //! explorer_common;` — integration test files are separate binaries, so
 //! this is the one place all three draw an identical fixture from, rather

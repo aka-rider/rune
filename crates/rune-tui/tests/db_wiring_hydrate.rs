@@ -1,4 +1,4 @@
-//! WP5/WP6 "Done when" integration tests for the rune-tui <-> rune-db
+//! Integration tests for the rune-tui <-> rune-db
 //! wiring's hydration paths: post-restart hydration/undo and `Load`-ack
 //! adoption into `Document`/`DocDb`, driven through `rune_fuzz::Session`.
 #![allow(
@@ -55,7 +55,7 @@ const BACKSPACE: KeyInput = KeyInput {
     mods: Mods::NONE,
 };
 
-/// Plan WP5 "Done when": edits journaled by one session -> a NEW `Store`
+/// Edits journaled by one session -> a NEW `Store`
 /// opened on the SAME db path (a simulated restart) hydrates the recovered
 /// content through the real `Load`-ack path, and undo reaches the pre-crash
 /// anchor.
@@ -154,7 +154,7 @@ fn load_ack_installs_document_db_as_some() {
     );
 }
 
-/// Data-safety guard (plan WP6.S3): an ack for a document the user kept
+/// Data-safety guard: an ack for a document the user kept
 /// typing into during the async round trip must NEVER clobber those
 /// keystrokes — the buffer bytes stay exactly as typed, even though the
 /// ack's own `recovered` content would otherwise differ from what's now on
@@ -252,7 +252,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
     );
 }
 
-/// Review fix (plan WP5.S2, [rune-tui A 3]): `handle_load_ack` must refuse
+/// `handle_load_ack` must refuse
 /// to adopt recovered content that would empty (or drastically shrink) a
 /// non-empty on-disk file — the destructive-async-reset suspicion check,
 /// run through the shared `Document::hydrate` chokepoint. Reached through a
@@ -310,7 +310,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
     );
     assert!(
         !app.doc(id).unwrap().is_store_bound(),
-        "issue #87: a document whose recovered content this session just \
+        "a document whose recovered content this session just \
          rejected must never keep journaling against that row"
     );
     assert!(

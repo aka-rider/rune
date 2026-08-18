@@ -1,6 +1,6 @@
-//! WP4 "Done when" tests: Explorer cursor movement and opening files/
+//! Tests for Explorer cursor movement and opening files/
 //! directories, driven against a `Mem` vfs seeded with files and nested
-//! directories — TODO.md's 500-line budget split of the original `explorer.rs`. The
+//! directories — this is the 500-line-budget split of the original `explorer.rs`. The
 //! `resolve` fallback, refresh/stale-reply handling, `open_path`
 //! reactivation, and the lazy `ensure_loaded` load live in the sibling
 //! `explorer_reload.rs`; both pull shared fixtures from `explorer_common`.
@@ -103,7 +103,7 @@ fn enter_on_a_file_opens_a_second_document_and_focuses_editor() {
     assert_eq!(session.app().active_doc().buffer.content(), "b content");
 }
 
-/// WP13.S1 (finding `rune-tui C 1`): a directory entry whose filename is
+/// A directory entry whose filename is
 /// not valid UTF-8 must still open the RIGHT file. `entry.name` is
 /// necessarily lossy (may collapse to U+FFFD), so if `open_selected`
 /// rejoined `root.join(&entry.name)` — the pre-fix code — it would target

@@ -1,4 +1,4 @@
-//! WP2 "Done when" integration tests for the sync-state plumbing: an
+//! Integration tests for the sync-state plumbing: an
 //! external disk edit reaches `Document::last_sync` through a `Probe` ack
 //! enqueued by `workspace::switch_to`, and the footer's passive
 //! `Mode::DiskChanged` hint tracks it. Driven through `rune_fuzz::Session`.
@@ -39,8 +39,8 @@ fn other_doc(app: &App, active: DocumentId) -> DocumentId {
         .expect("the untitled draft stays open alongside the seed")
 }
 
-/// Plan WP2 "Done when": open a document, edit the same file externally,
-/// switch tabs away and back (firing the WP2.S4 probe) — the footer must
+/// Open a document, edit the same file externally,
+/// switch tabs away and back (firing the switch-triggered probe) — the footer must
 /// show the `disk changed` hint. Restoring the original disk content and
 /// probing again must make the hint disappear (the probe's own auto-adopt,
 /// `probe.rs`'s doc comment).
@@ -64,7 +64,7 @@ fn external_disk_edit_surfaces_the_footer_hint_and_clears_on_restore() {
     // External edit: the file changes on disk, the buffer does not.
     external_write(session.app().vfs.as_ref(), b"hello world");
 
-    // Switch away and back — `workspace::switch_to`'s own WP2.S4 probe
+    // Switch away and back — `workspace::switch_to`'s own probe
     // enqueue only fires for the doc actually switched ONTO.
     workspace::switch_to(session.app_mut(), draft_id);
     workspace::switch_to(session.app_mut(), doc_id);
@@ -101,7 +101,7 @@ fn external_disk_edit_surfaces_the_footer_hint_and_clears_on_restore() {
     );
 }
 
-/// Plan WP2.S4's own regression: a document already carrying a probe in
+/// Regression: a document already carrying a probe in
 /// flight must not get a second one stacked on top of it by a rapid
 /// away-and-back switch.
 #[test]

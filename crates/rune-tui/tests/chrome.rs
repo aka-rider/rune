@@ -206,7 +206,7 @@ fn an_unfocused_tabs_pane_uses_the_subtle_divider_style() {
 }
 
 /// The editor pane's geometry is unchanged when the left column isn't
-/// shown — no left column, no borders, full-width editor (plan WP2.S5).
+/// shown — no left column, no borders, full-width editor.
 #[test]
 fn left_pane_hidden_by_default_leaves_editor_geometry_unchanged() {
     let app = app_for("hello");
@@ -263,7 +263,7 @@ fn ctrl_b_toggles_the_explorer_through_update() {
     assert!(row_text(&buf, 0, WIDTH).contains("Files"));
 }
 
-/// Plan WP6.S7/risk R3: with the Explorer focused (the contextual hints
+/// With the Explorer focused (the contextual hints
 /// that can now grow past `GLOBAL_BINDINGS`' old fixed set), `Ln n, Col n`
 /// must still be visible on the footer row at both a full-width (80) and a
 /// narrow (40) terminal — the priority truncation reserves room for it

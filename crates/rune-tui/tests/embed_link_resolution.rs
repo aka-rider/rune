@@ -1,9 +1,9 @@
-//! WP2: regression coverage for link/embed resolution's "one mechanism"
+//! Regression coverage for link/embed resolution's "one mechanism"
 //! requirement — a followable link and an image
 //! embed sharing the same raw target text must resolve through identical
 //! policy, and `sync_embeds`'s dedupe of same-target duplicates must be
 //! deterministic rather than keyed off arbitrary `HashMap` iteration order.
-//! Kept separate from `inline_embed.rs` (WP9's own file, already near the
+//! Kept separate from `inline_embed.rs` (already near the
 //! 500-line budget) rather than grown into it.
 #![allow(
     clippy::unwrap_used,
@@ -75,7 +75,7 @@ fn app_with_content(content: &str, seed_paths: &[&str]) -> (App, DocumentId) {
     (app, id)
 }
 
-/// WP2.S1/S3 regression guard: a followable link and an image embed
+/// Regression guard: a followable link and an image embed
 /// pointing at the same relative target must resolve to the same absolute
 /// path — the "one mechanism" requirement, so `navigate::follow`'s resolver
 /// and `sync_embeds`'s can never drift onto different policy again. Uses a
@@ -197,7 +197,7 @@ fn a_wiki_embed_target_with_no_extension_still_resolves() {
     );
 }
 
-/// WP2.S2 regression guard: `sync_embeds`'s dedupe used to key off an
+/// Regression guard: `sync_embeds`'s dedupe used to key off an
 /// arbitrary `HashMap` iteration order, so which of two same-target embeds
 /// survived (a markdown `![alt](x.png)` and a wikilink `![[x.png]]`) was
 /// random per run — sorting by line before dedupe fixes it. Looped 25 times

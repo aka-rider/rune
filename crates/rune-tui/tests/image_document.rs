@@ -1,12 +1,12 @@
-//! WP4: opening an image file as a read-only image document — the
+//! Opening an image file as a read-only image document — the
 //! producer's synthesized rows actually scroll, the save/highlight guards
 //! actually fire, and the info card renders on a non-Kitty terminal.
 //!
-//! WP5: the document actually renders pixels — the decode `Cmd`'s reply
+//! The document actually renders pixels — the decode `Cmd`'s reply
 //! drives `ImageStatus::Live`, real placeholder cells carry the allocated
 //! id as a 24-bit colour, the row count reserved matches the fit-to-width
 //! footprint, and scrolling clips through the SAME `visible_rows` chokepoint
-//! WP4 already proved for the info card.
+//! already proved for the info card.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::Path;
@@ -38,8 +38,8 @@ fn app_with_image() -> (App, rune_tui::document::DocumentId) {
 }
 
 /// Drives the real `Msg::ImageDecoded` reply for `id` against a freshly
-/// decoded `x.png` (plan WP5's own [rune-tui] "drive integration tests
-/// through the real update loop" rule) — the shared setup every WP5 test
+/// decoded `x.png` ("drive integration tests
+/// through the real update loop" rule) — the shared setup every test in this file
 /// below needs, factored out so each test states only what it's actually
 /// asserting.
 fn decode_x_png_via_update(app: &mut App, id: rune_tui::document::DocumentId) -> Effects {
@@ -64,7 +64,7 @@ fn decode_x_png_via_update(app: &mut App, id: rune_tui::document::DocumentId) ->
 }
 
 /// Opening an image path through `workspace::open_path` produces a
-/// read-only, DB-less `DocumentKind::Image` document (plan WP4 Done-when).
+/// read-only, DB-less `DocumentKind::Image` document.
 #[test]
 fn opening_an_image_path_yields_a_read_only_image_document() {
     let (app, id) = app_with_image();
@@ -103,7 +103,7 @@ fn a_known_reserved_row_count_is_visible_to_the_producer_and_scrollable() {
     assert_eq!(doc.viewport.scroll_row, DisplayRow(n - 1));
 }
 
-/// Plan WP4.S9: an image document's `file_path` is real, so without the
+/// An image document's `file_path` is real, so without the
 /// `trigger_save` guard a forced-dirty state (simulating a would-be dirty
 /// buffer) would reach the no-DB-binding fallback and push a `Save` `Cmd`
 /// that overwrites the image with the buffer's own (always empty) bytes.
@@ -187,7 +187,7 @@ fn switching_to_an_image_tab_dispatches_no_highlight_cmd() {
     );
 }
 
-/// Plan WP4.S10/Done-when: on a non-Kitty terminal the info card shows the
+/// On a non-Kitty terminal the info card shows the
 /// file name, its probed dimensions, and the no-graphics reason line.
 #[test]
 fn info_card_renders_on_a_non_kitty_terminal() {
@@ -211,7 +211,7 @@ fn info_card_renders_on_a_non_kitty_terminal() {
     );
 }
 
-/// Plan WP5 Done-when: a `testgrid::draw` frame with `graphics.kitty = true`
+/// A `testgrid::draw` frame with `graphics.kitty = true`
 /// carries a real placeholder cell — its symbol starts with the Kitty
 /// Unicode placeholder codepoint (`U+10EEEE`), and its `fg` is the
 /// `Color::Rgb` `rune_image::alloc_id` allocates for this fixture's
@@ -249,7 +249,7 @@ fn a_live_image_document_renders_a_placeholder_cell_with_the_allocated_id() {
     assert_eq!(fg, ratatui::style::Color::Rgb(r, g, b));
 }
 
-/// Plan WP5.S2 Done-when: a fixture of known pixel size (`x.png`, 64x48)
+/// A fixture of known pixel size (`x.png`, 64x48)
 /// reserves exactly the `ceil_div`-derived row count for an explicitly set
 /// `GraphicsCaps`, and `view.display.total_rows()` (the PRODUCER, not just
 /// the renderer) reports that same count.
@@ -273,8 +273,8 @@ fn a_decoded_fixture_reserves_the_fit_to_width_row_count() {
     assert_eq!(view.display.total_rows(), 3);
 }
 
-/// Plan WP5.S5: scrolling a `Live` image document clips correctly through
-/// the SAME `visible_rows` chokepoint the info card already proved in WP4
+/// Scrolling a `Live` image document clips correctly through
+/// the SAME `visible_rows` chokepoint the info card already proved
 /// — no new scroll axis, no new clamp. Forces a tall reserved footprint (a
 /// narrow pane, so the fit-to-width scale leaves many rows) and asserts the
 /// rendered frame only ever shows `height` rows' worth of placeholder rows
@@ -312,11 +312,11 @@ fn scrolling_a_live_image_document_clips_through_visible_rows() {
         doc.viewport.scroll_row,
         DisplayRow(total - 1),
         "scrolling a Live image document must clip to the last reserved row, \
-         exactly like WP4's info-card case"
+         exactly like the info-card case"
     );
 }
 
-/// Plan WP5 Done-when (decode-completion raw output): applying
+/// Applying
 /// `Msg::ImageDecoded` through the real `update` loop with Kitty enabled
 /// pushes a non-empty `effects.raw` whose first element starts with the
 /// Kitty APC intro; with Kitty disabled the same sequence produces no raw
@@ -341,7 +341,7 @@ fn the_decode_reply_transmits_only_when_kitty_is_enabled() {
     assert!(effects2.raw.is_empty());
 }
 
-/// Plan WP5.S7 Done-when, driven through the real `^w` key rather than
+/// Driven through the real `^w` key rather than
 /// calling `close_now` directly: closing an image document pushes
 /// `encode_delete(id)` into `effects.raw` when Kitty is available.
 #[test]
@@ -379,7 +379,7 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
     );
 }
 
-/// Plan WP6.S1/S2 Done-when, driven through the real `⌘R` key rather than
+/// Driven through the real `⌘R` key rather than
 /// calling `graphics::reload_image` directly: reloading a live image
 /// document re-emits a transmit escape into `effects.raw` and forces a
 /// redraw, under the exact same allocated id as the original open.

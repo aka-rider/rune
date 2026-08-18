@@ -1,8 +1,8 @@
-//! WP3: regression coverage for the exact reported bug — a document whose
+//! Regression coverage for a document whose
 //! own directory lies OUTSIDE `app.root`. Every fixture in
 //! `inline_embed.rs` and `embed_link_resolution.rs` places the document
 //! inside the root, which is
-//! exactly why the vault-containment check WP1 removed could break every
+//! exactly why removing the vault-containment check could break every
 //! relative reference in an out-of-root document without any existing test
 //! catching it. Kept as its own file rather than grown into either of
 //! those, both already near the 500-line budget.
@@ -84,10 +84,10 @@ fn discover_and_decode(app: &mut App) {
     app.sync_view();
 }
 
-/// WP3.S1: the exact reported scenario — `![[Do not try to DRY.png]]`
+/// The exact reported scenario — `![[Do not try to DRY.png]]`
 /// stripped to its essential shape (a bare-basename wiki embed, no
 /// directory component) in a document whose directory is outside
-/// `app.root`. Before WP1, `resolve_candidate` refused `doc_dir` itself
+/// `app.root`. Formerly, `resolve_candidate` refused `doc_dir` itself
 /// because `doc_dir` (`/elsewhere`) does not start with `root` (`/vault`),
 /// so `root` was the only base tried and the bare basename never resolved
 /// there either — the embed stayed `Failed`, never `Live`.
@@ -121,7 +121,7 @@ fn a_bare_basename_wiki_embed_in_an_out_of_root_document_reaches_live() {
     );
 }
 
-/// WP3.S2: the sibling case for link following — a relative link in the
+/// The sibling case for link following — a relative link in the
 /// same out-of-root document must resolve to `Destination::Location`
 /// rather than `Destination::Unresolved`. Driven through the real
 /// ⌘Enter-follow path (`navigate.rs`'s own style) rather than calling

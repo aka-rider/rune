@@ -1,7 +1,7 @@
-//! WP3 done-when: the DISPLAY-space table border synthesis
+//! The DISPLAY-space table border synthesis
 //! (`DisplaySnapshot::expand_tables`) reaching the real terminal render
 //! through the full `App` pipeline, plus the `Document::scroll_to_cursor`
-//! wrap<->display conversion regression (plan WP3.S5's first bullet: the
+//! wrap<->display conversion regression (the
 //! one miss that scrolls every table document wrong by the number of
 //! border rows above the cursor, and that no pre-existing test caught).
 //!
@@ -101,7 +101,7 @@ fn caret_row(buf: &RtBuffer, height: u16, width: u16) -> Option<u16> {
 const TWO_BODY_ROW_TABLE: &str =
     "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n";
 
-/// WP3 Done-when: the synthesised top/bottom borders around a table with
+/// The synthesised top/bottom borders around a table with
 /// an inter-row border between its two body rows actually reach the
 /// terminal grid at the rows the geometry predicts — a top border on the
 /// table's very first editor row, and (7 rows later: top, header,
@@ -144,7 +144,7 @@ fn table_then_many_lines(n: usize) -> String {
     s
 }
 
-/// The WP3.S5 regression: `Document::scroll_to_cursor` must convert the
+/// A regression: `Document::scroll_to_cursor` must convert the
 /// cursor's WRAP row through `DisplaySnapshot::wrap_to_display` before
 /// handing it to `Viewport::reconcile` (and convert the row `reconcile`
 /// hands back the other way before snapping the cursor) — miss either

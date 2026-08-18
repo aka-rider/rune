@@ -59,7 +59,7 @@ fn place_caret(session: &mut Session, offset: usize) {
 }
 
 /// Types one harmless character at the END of the active document's buffer
-/// (plan WP6.S5) through the real `app::update` chokepoint, bumping its
+/// through the real `app::update` chokepoint, bumping its
 /// buffer version so `App::update`'s own before/after gate schedules a
 /// highlight `Cmd` — mirrors how a real keystroke does it. Scheduling
 /// refreshes the block tree itself, so an edit BEFORE a fence is equally

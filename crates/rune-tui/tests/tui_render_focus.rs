@@ -1,6 +1,6 @@
-//! WP2 done-when: headless render assertions on a `TestBackend`,
+//! Headless render assertions on a `TestBackend`,
 //! using the `Mem` vfs — a table's box-drawn layout and the focus/read-only
-//! caret gate. TODO.md's 500-line budget split of the original `tui_render.rs`:
+//! caret gate. This is the 500-line-budget split of the original `tui_render.rs`:
 //! conceal/styling/status-line/Cell-grid checks live in
 //! `tui_render_basics.rs`, control-safe glyphs/tabs/graphemes in
 //! `tui_render_text.rs`, and degenerate backend sizes/`blit`'s own
@@ -43,7 +43,7 @@ fn extend_selection_to(session: &mut rune_fuzz::Session, target: usize) {
     }
 }
 
-/// WP2 Done-when: a table's Grid layout reaches the real terminal render
+/// A table's Grid layout reaches the real terminal render
 /// through the full `App` pipeline, not just `rune-md`'s own `emit` unit
 /// tests. Cursor sits in the trailing "tail" paragraph, well outside the
 /// table's own lines, so the table stays `Rendered` (box-drawn) rather than

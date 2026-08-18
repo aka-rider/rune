@@ -180,7 +180,7 @@ fn a_rename_io_failure_posts_an_error_message_and_changes_nothing() {
     assert_eq!(mem.read(Path::new(DOC_PATH)).unwrap(), b"a content");
 }
 
-/// Gotcha 1, re-checked under WP3: a failed rename returns the user to the
+/// Gotcha 1: a failed rename returns the user to the
 /// title holding the FULL typed name, extension included — never a name
 /// corrupted by re-stripping the stem — and the undo history built while
 /// typing survives (the field is never reseeded on a failure path).

@@ -1,5 +1,5 @@
-//! Rename refusal paths — split out of `rename_bind.rs` (plan WP5,
-//! 500-line budget), driven through `rune_fuzz::Session`. Every refusal
+//! Rename refusal paths — split out of `rename_bind.rs` (500-line
+//! budget), driven through `rune_fuzz::Session`. Every refusal
 //! here leaves the machine `Idle`, `file_path` unchanged, the buffer
 //! byte-identical, and — after draining every deferred `Cmd` and store op
 //! — the published file untouched (`rename_common::assert_refused`).

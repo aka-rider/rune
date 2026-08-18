@@ -1,4 +1,4 @@
-//! WP7 "Done when" tests for the reading-view plan
+//! Tests for the reading-view feature
 //! (`in-read-only-mode-markdown-serialized-spark.md`) — this file is what
 //! proves the originally reported bug is fixed: *"In read-only mode,
 //! markdown reading, there's no cursor but markdown elements still behave
@@ -101,7 +101,7 @@ fn send(app: &mut App, msg: Msg) {
 /// THE REGRESSION TEST. F1 opens the Help tab; the `## Global` table is the
 /// first table in `help_markdown()` (source line 5, `| Key | Action |`), so
 /// it sits on screen at `scroll_row == 0` with no scrolling needed. Before
-/// WP1, the root reveal grant keyed off `focused` alone, so a focused
+/// Formerly, the root reveal grant keyed off `focused` alone, so a focused
 /// read-only document (Help always is) still revealed raw markdown under
 /// its invisible cursor — this is the exact bug report: box borders
 /// replaced by a literal `| Key | Action |` source row.

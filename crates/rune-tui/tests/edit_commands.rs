@@ -1,5 +1,5 @@
 //! `commands::edit`'s per-cursor editing commands and undo/redo (moved out
-//! of `edit.rs` in plan WP9.S6 to keep that file under the 500-line
+//! of `edit.rs` to keep that file under the 500-line
 //! budget — every item exercised here (`App`, `commands::edit`'s `pub`
 //! functions, `CursorSet`) is already public, so this needs no
 //! crate-internal access `#[cfg(test)]` had; the same pattern
@@ -95,8 +95,7 @@ fn delete_word_left_at_buffer_start_is_a_no_op() {
 }
 
 /// Undo restores the buffer byte-for-byte — the property the fuzzer's
-/// `UNDO-TOTAL` invariant checks across a whole session (plan WP9
-/// Done-when).
+/// `UNDO-TOTAL` invariant checks across a whole session.
 #[test]
 fn delete_word_left_then_undo_restores_the_buffer() {
     let mut app = app_with("hello world", 11);
@@ -322,7 +321,7 @@ fn undo_and_redo_are_not_blocked_by_read_only() {
     );
 }
 
-/// The asymmetry `ReadOnly::Reading` draws (plan WP3): unlike `Always`
+/// The asymmetry `ReadOnly::Reading` draws: unlike `Always`
 /// (asserted above), a reading-view document blocks BOTH undo and redo —
 /// it is a view mode the user can leave with the same chord, not a
 /// document with no editable form at all. Neither the buffer nor

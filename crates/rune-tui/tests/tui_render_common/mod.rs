@@ -1,9 +1,9 @@
-//! Shared setup helpers for the WP5 done-when headless render suite,
+//! Shared setup helpers for the headless render suite,
 //! split across `tui_render_basics.rs` (conceal, styling, and the raw
 //! `Cell` grid), `tui_render_text.rs` (control-safe glyphs, tabs, and
 //! grapheme clusters), `tui_render_bounds.rs` (degenerate backend sizes
 //! and `blit`'s own edge clipping), and `tui_render_focus.rs` (tables and
-//! the focus/read-only caret gate) — TODO.md's 500-line budget split of the original
+//! the focus/read-only caret gate) — this is the 500-line-budget split of the original
 //! `tui_render.rs`. `tui_render_tables.rs` is a pre-existing sibling that
 //! already followed this naming. Every consumer pulls this in via
 //! `mod tui_render_common;` — integration test files are separate
@@ -23,18 +23,17 @@ use rune_tui::testgrid;
 pub const WIDTH: u16 = 80;
 pub const HEIGHT: u16 = 24;
 
-/// The editor's own first row within the full backend (plan WP6.S2: the
+/// The editor's own first row within the full backend: the
 /// center pane reserves a title row + a breadcrumb row above the editor
 /// whenever it's tall enough — `app_for`'s fixed HEIGHT always is). Tests
 /// that pin an assertion to a specific editor row use this rather than a
 /// bare literal `0`, so a future chrome-row change has one place to update.
-/// Stays `2` after WP4 (plan gotcha 10): row 0 is now the top border, row 1
-/// the title, row 2 the editor's first content row — same literal value,
-/// different provenance.
+/// Row 0 is the top border, row 1
+/// the title, row 2 the editor's first content row.
 pub const EDITOR_TOP_ROW: u16 = 2;
 
-/// The editor content's first COLUMN within the full backend (plan gotcha
-/// 10): WP4's center `Block::bordered()` puts a `│` at column 0, so the
+/// The editor content's first COLUMN within the full backend: the
+/// center `Block::bordered()` puts a `│` at column 0, so the
 /// editor's own column 0 (where `WrapSnapshot::visual_col` starts counting)
 /// is backend column 1, not 0. Any assertion comparing a backend column
 /// against a `visual_col`/wrap-relative column must offset by this.
@@ -65,7 +64,7 @@ fn place_caret(session: &mut Session, offset: usize) {
     }
 }
 
-/// `focused` no longer sets `Document::focused` directly (WP2: `App::
+/// `focused` no longer sets `Document::focused` directly (`App::
 /// sync_view` derives it from `app.focus` every call — see its doc
 /// comment) — an unfocused fixture instead moves `app.focus` off `Editor`
 /// so the SAME derivation the real app uses produces `focused == false`.

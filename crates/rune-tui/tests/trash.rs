@@ -1,4 +1,4 @@
-//! WP2.S8 "Done when" tests for `⌘⌫`/`^⌫` trash: the guard raise/cancel,
+//! Tests for `⌘⌫`/`^⌫` trash: the guard raise/cancel,
 //! every refusal (dirty, pathless, directory), the confirm's `Cmd`
 //! enqueue, `Msg::TrashDone`'s close/keep-open/error/stale-generation
 //! branches (including the async A4 dirty-at-reply and guard-at-reply

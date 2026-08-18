@@ -1,4 +1,4 @@
-//! Finding 2 regression (plan WP0/WP3's mid-session gap): a fresh untitled
+//! Finding 2 regression (a mid-session gap): a fresh untitled
 //! draft minted by `workspace::new_untitled_document` — either directly, or
 //! as `close_now`'s replacement for the last closed document — must
 //! register itself as its own scratch row in the recovery store when one is
@@ -102,8 +102,8 @@ fn new_untitled_document_with_a_degraded_store_leaves_db_none_and_enqueues_nothi
     );
 }
 
-/// `close_now`'s "closing the last document mints a replacement" path (plan
-/// WP0) must go through the SAME registration, not a second, forgotten copy
+/// `close_now`'s "closing the last document mints a replacement" path
+/// must go through the SAME registration, not a second, forgotten copy
 /// — closing every open document with a live store still ends with the
 /// fresh Untitled's own row bound once its ack lands.
 #[test]

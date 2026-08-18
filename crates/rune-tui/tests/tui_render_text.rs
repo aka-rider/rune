@@ -1,12 +1,12 @@
-//! WP5 done-when: headless render assertions on a `TestBackend`, using the
+//! Headless render assertions on a `TestBackend`, using the
 //! `Mem` vfs — control-safe glyphs, tab expansion, and grapheme-cluster
-//! cells. TODO.md's 500-line budget split of the original `tui_render.rs`: conceal/
+//! cells. This is the 500-line-budget split of the original `tui_render.rs`: conceal/
 //! styling/status-line/Cell-grid checks live in `tui_render_basics.rs`,
 //! degenerate backend sizes and `blit`'s own clipping in
 //! `tui_render_bounds.rs`, and tables/the focus caret gate in
 //! `tui_render_focus.rs`. The runtime loop itself is NOT exercised here
-//! (plan: "test the pure update/view paths headlessly; do NOT spawn real
-//! terminals in tests") — every test drives `App`/`render::draw` directly.
+//! (test the pure update/view paths headlessly; do NOT spawn real
+//! terminals in tests) — every test drives `App`/`render::draw` directly.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod tui_render_common;
@@ -393,8 +393,8 @@ fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
 }
 
 /// Guard for the ONE documented exception to the corpus-agreement test
-/// above (`rune_syntax::wrap::grapheme_width`'s doc, `blit`'s narrowed
-/// `assert_invariant`, `TODO/TODO.md`): a LONE (single-`char`) cluster that
+/// above (`rune_syntax::wrap::grapheme_width`'s doc and `blit`'s narrowed
+/// `assert_invariant`): a LONE (single-`char`) cluster that
 /// ratatui itself derives width 0 for — a bare combining mark with no base,
 /// a stray ZWJ, a lone variation selector, a lone zero-width space — is
 /// reserved at width 1 by `control_aware_width`'s clamp, not ratatui's 0,

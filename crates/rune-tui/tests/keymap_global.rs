@@ -1,4 +1,4 @@
-//! `resolve_in`/`KeyPattern`/`GLOBAL_BINDINGS` coverage (plan WP2.S7) — kept
+//! `resolve_in`/`KeyPattern`/`GLOBAL_BINDINGS` coverage — kept
 //! out-of-crate per `keymap.rs`'s own note: every item exercised here is
 //! already `pub`, and this keeps `keymap.rs` closer to the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used)]

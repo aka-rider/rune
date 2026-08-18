@@ -1,4 +1,4 @@
-//! WP5 done-when: headless render assertions on a `TestBackend`, using the
+//! Headless render assertions on a `TestBackend`, using the
 //! `Mem` vfs — the conceal-policy, styling, status-line, and raw `Cell`
 //! grid checks. TODO.md's 500-line budget split of the original `tui_render.rs`:
 //! control-safe glyphs/tabs/graphemes live in `tui_render_text.rs`,
@@ -89,8 +89,8 @@ fn bold_text_is_styled_bold() {
 
 /// The footer row renders on the last row and shows its default-mode
 /// content: a `GLOBAL_BINDINGS` hint on the left, `Ln n, Col n` on the
-/// right (plan WP2.S6 — the file-name/dirty-dot placeholder this test used
-/// to check for moved out of the footer; WP6's `title.rs` owns it next).
+/// right (the file-name/dirty-dot placeholder this test used
+/// to check for moved out of the footer; `title.rs` owns it now).
 #[test]
 fn status_line_present_on_last_row() {
     let session = app_for("hello\n", 0, true);
@@ -109,7 +109,7 @@ fn status_line_present_on_last_row() {
 /// `render::build_rows`' `Cell` grid: every visible char's `buf_offset`
 /// either matches a real position in the source text or is a documented
 /// synthetic cell — asserted directly on the `Cell` grid, not just the
-/// backend buffer's text (plan WP5.S3: "assertions on ... your Cell grid
+/// backend buffer's text ("assertions on ... your Cell grid
 /// (buf_offset mapping)").
 #[test]
 fn cell_grid_buf_offsets_map_back_into_the_source_text() {

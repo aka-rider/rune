@@ -1,6 +1,6 @@
-//! WP6.S2 done-when: `TestBackend` integration tests for the center pane's
+//! `TestBackend` integration tests for the center pane's
 //! title row and breadcrumb (`render::draw` delegates to `title::draw` and
-//! `breadcrumb::overlay` — plan WP6.S1/S2, reshaped by WP4: the title now
+//! `breadcrumb::overlay`): the title now
 //! lives at row 1 (row 0 is the center block's top border), and the
 //! breadcrumb is spliced onto the block's own bottom border row, not a
 //! separate reserved row). Mirrors `tests/chrome.rs`'s pattern: drive the
@@ -45,7 +45,7 @@ fn row_text_sized(app: &App, y: u16, width: u16, height: u16) -> String {
     testgrid::row(app, y, width, height)
 }
 
-/// Row 1 of the center pane (row 0 is now the top border, plan WP4) shows
+/// Row 1 of the center pane (row 0 is the top border) shows
 /// the active document's display name.
 #[test]
 fn title_row_shows_the_active_doc_name() {
@@ -58,7 +58,7 @@ fn title_row_shows_the_active_doc_name() {
 }
 
 /// A pathless (untitled) document's title row falls back to "[No Name]"
-/// (`Document::file_name`'s own default — WP1).
+/// (`Document::file_name`'s own default).
 #[test]
 fn title_row_shows_no_name_placeholder_when_pathless() {
     let app = app_for("hello", None);
@@ -86,7 +86,7 @@ fn title_row_shows_untitled_1_for_the_default_untitled_document() {
     );
 }
 
-/// WP3: focused, the title now shows the WHOLE file name, extension
+/// Focused, the title shows the WHOLE file name, extension
 /// included — before, the field held only the stem while editing, so a
 /// focused row never showed `.md` at all.
 #[test]
@@ -114,7 +114,7 @@ fn focused_title_row_shows_the_extension_too() {
 }
 
 /// The dirty dot appears on the title row after a real edit is driven
-/// through `app::update` (plan WP6.S2: "drive a real key Msg through
+/// through `app::update` ("drive a real key Msg through
 /// update"; the disappears-on-save case is deliberately NOT covered here —
 /// materializing a save is heavier machinery than this test needs).
 #[test]
@@ -147,7 +147,7 @@ fn dirty_dot_appears_after_an_edit() {
 
 /// The center block's bottom border row (`HEIGHT - 2`: `HEIGHT - 1` is the
 /// footer) carries the breadcrumb's path segments, spliced onto the
-/// border by `breadcrumb::overlay` (plan WP4.S4/S6) — no longer its own
+/// border by `breadcrumb::overlay` — no longer its own
 /// reserved row.
 #[test]
 fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
@@ -181,8 +181,8 @@ fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
 
 /// A pathless document's bottom border row is left exactly as
 /// `render::draw`'s `Block` already painted it — plain dash fill and
-/// corners, no path text spliced in (`breadcrumb::overlay`'s early return,
-/// plan WP4.S4: "renders nothing" for a pathless doc, but "nothing" now
+/// corners, no path text spliced in (`breadcrumb::overlay`'s early return
+/// "renders nothing" for a pathless doc, but "nothing" now
 /// means "don't touch the border row" rather than "leave a blank row").
 #[test]
 fn pathless_doc_has_no_breadcrumb_content() {
@@ -207,7 +207,7 @@ fn pathless_doc_has_no_breadcrumb_content() {
 }
 
 /// A center pane too short for even a 1-cell-per-side border
-/// (`center.height < 3` — plan WP4.S1) falls back to the UNBORDERED
+/// (`center.height < 3`) falls back to the UNBORDERED
 /// layout: no border glyphs anywhere in the frame, and — above all — no
 /// panic. The title still renders (its own gate is just `content.height
 /// >= 1`, independent of the border), just without a border around it.

@@ -1,4 +1,4 @@
-//! WP16 keystroke-latency performance guard: asserts the SYNCHRONOUS
+//! Keystroke-latency performance guard: asserts the SYNCHRONOUS
 //! per-keystroke cost — one `app::update` call plus the settle-step
 //! `App::sync_view` the real runtime loop runs once per message batch,
 //! never any spawned `Cmd`'s own off-thread work (a highlight parse, a
@@ -45,7 +45,7 @@ const VIEWPORT: (u16, u16) = (120, 40);
 
 /// A large (~5,000-line) Rust source fixture — `DocumentKind::Code("rust")`
 /// via its `.rs` path, so this exercises the SAME whole-document highlight-
-/// scheduling path (plan WP16.S2/S3) a large open code file would in
+/// scheduling path a large open code file would in
 /// practice, not just the markdown display pipeline `rune-md`'s own guard
 /// already covers.
 fn build_5k_line_rust_fixture() -> String {
@@ -79,7 +79,7 @@ fn type_one_char_at_end(app: &mut App, ch: char, effects: &mut Effects) {
 /// back to thread-per-keystroke spawns and unconditional full-pipeline
 /// rebuilds, not a tight budget) — `rune-md`'s own sibling guard uses a
 /// 100 ms bound for a single FULL pipeline run on a doc this size; this one
-/// must be far cheaper per keystroke since WP16 exists specifically to make
+/// must be far cheaper per keystroke since this guard exists specifically to make
 /// most of that pipeline a memoized no-op on an ordinary keystroke.
 const PER_KEYSTROKE_BUDGET: Duration = Duration::from_millis(20);
 const KEYSTROKES: usize = 100;

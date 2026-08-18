@@ -1,5 +1,5 @@
 //! The title's extension gate, and the field's own word-motion/selection/
-//! undo editing — split out of `rename_bind.rs` (plan WP5, 500-line
+//! undo editing — split out of `rename_bind.rs` (500-line
 //! budget), driven through `rune_fuzz::Session`. Both sections were added
 //! by the same extension-gate package that grew that file past the ceiling.
 

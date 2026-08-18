@@ -1,7 +1,7 @@
-//! WP9: inline image embeds inside an otherwise-editable markdown
+//! Inline image embeds inside an otherwise-editable markdown
 //! document — placement, caret protection, spawn/despawn, and the
 //! mtime-respawn retry rule. Driven through the real `app::update` loop
-//! per the plan's own rule ("drive integration tests through the real
+//! ("drive integration tests through the real
 //! update loop, with a fresh `Effects::default()` per message").
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -86,7 +86,7 @@ fn discover_and_decode(app: &mut App) {
     app.sync_view();
 }
 
-/// Plan WP9 Done-when: a standalone image line renders placeholder cells
+/// A standalone image line renders placeholder cells
 /// whose `fg` encodes the allocated id, once Kitty is enabled and the
 /// decode has landed.
 #[test]
@@ -124,7 +124,7 @@ fn a_standalone_image_line_renders_placeholder_cells_with_the_allocated_id() {
     assert_eq!(fg, ratatui::style::Color::Rgb(r, g, b));
 }
 
-/// Plan WP9 Done-when: the same line with Kitty disabled renders alt text
+/// The same line with Kitty disabled renders alt text
 /// instead — `sync_embeds` never spawns anything (gated on
 /// `app.graphics.kitty`), and `render::image::row_cells` returns `None`
 /// for the row, falling through to its ordinary alt-text span.
@@ -150,7 +150,7 @@ fn the_same_line_with_kitty_disabled_renders_alt_text() {
     );
 }
 
-/// Plan WP9.S2 Done-when: a caret sitting at the END of the image's own
+/// A caret sitting at the END of the image's own
 /// markdown syntax — past `range.end`, so the image stays `Rendered`
 /// rather than revealing to raw source, but still visually "on" the
 /// placeholder row via `visual_col` — must leave every placeholder cell's
@@ -237,7 +237,7 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
     assert!(saw_placeholder, "test setup: no placeholder cell rendered");
 }
 
-/// Plan WP9.S4 Done-when: moving the caret onto the embed line (revealing
+/// Moving the caret onto the embed line (revealing
 /// its raw source) must never despawn a live image; deleting the line
 /// entirely must.
 #[test]
@@ -316,7 +316,7 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     );
 }
 
-/// Plan WP9.S5 Done-when: `Failed` is sticky per `(path, mtime)` — an
+/// `Failed` is sticky per `(path, mtime)` — an
 /// unchanged mtime never respawns a failed embed; a genuine mtime change
 /// always does.
 #[test]
@@ -405,9 +405,9 @@ fn an_unchanged_mtime_after_a_failure_does_not_respawn_a_changed_mtime_does() {
     );
 }
 
-/// Plan WP9 Done-when: the geometry-only mouse hit-testing path and
+/// The geometry-only mouse hit-testing path and
 /// `build_rows` agree on cell count for an image row — both go through the
-/// SAME `render::image::row_cells` chokepoint (plan gotcha: "mirror the
+/// SAME `render::image::row_cells` chokepoint ("mirror the
 /// override into the geometry-only variant, or mouse coordinates will
 /// disagree with what is drawn").
 #[test]

@@ -1,4 +1,4 @@
-//! Plan WP2 "Done when" tests: quit is a correlated continuation, not a
+//! Quit is a correlated continuation, not a
 //! fire-and-forget prompt. Every scenario here is the reported wedge or one
 //! of its direct corollaries — a dirty, unpreserved document (no live
 //! recovery journal: `db: None`, or a store present but degraded) must
@@ -58,7 +58,7 @@ fn guard_kind(app: &App) -> Option<&GuardKind> {
 
 /// The exact reported wedge: a single dirty, unpreserved document (the
 /// default shape — no file argument, no recovery journal), `^C` raises the
-/// Guard, and `[D]iscard` must actually quit — the pre-WP2 bug answered
+/// Guard, and `[D]iscard` must actually quit — a past bug answered
 /// this by silently closing the document instead (defect 2, "the guard is
 /// impossible to exit from").
 #[test]
@@ -119,7 +119,7 @@ fn pathless_draft_guard_save_focuses_the_title_and_abandons_the_quit_intent() {
     );
 
     // The guard must not simply re-raise on the very next tick with nothing
-    // changed — the new fact WP2's fuzz invariant also checks.
+    // changed — the fuzz invariant also checks this.
     assert!(app.guard.is_none());
 }
 

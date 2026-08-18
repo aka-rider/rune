@@ -58,8 +58,8 @@ fn send(app: &mut App, kind: MouseKind, col: u16, row: u16) {
     app.sync_view();
 }
 
-/// `^b` — this tree's binding for "expose and focus the Explorer" (the
-/// plan calls it `FocusExplorer`; WP5 lands the rename separately).
+/// `^b` — this tree's binding for "expose and focus the Explorer" (also
+/// known elsewhere in the codebase as `FocusExplorer`).
 fn expose_explorer(app: &mut App) {
     let mut effects = Effects::default();
     app::update(
