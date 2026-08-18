@@ -314,10 +314,7 @@ pub(super) fn step_and_check(
                 // practice.
                 state.pending_trash = Some(cmd);
             }
-            CmdKind::QuitTimeout
-            | CmdKind::ClipboardRead
-            | CmdKind::SaveConfirmTimeout
-            | CmdKind::MessagesCollapseTimeout
+            CmdKind::ClipboardRead
             | CmdKind::OpenExternal
             | CmdKind::ReadDir
             | CmdKind::ReadFile
@@ -326,12 +323,15 @@ pub(super) fn step_and_check(
             | CmdKind::SearchHistory
             | CmdKind::BootstrapView => {
                 // Deliberately dropped, each for its own already-documented
-                // reason: the four timers/subprocess spawns
-                // (`QuitTimeout`/`ClipboardRead`/`SaveConfirmTimeout`/
-                // `MessagesCollapseTimeout`) sleep or fork and must never
-                // run inline in a headless driver; `OpenExternal` forks
-                // `/usr/bin/open` (reachable via a ctrl-click on a link) and
-                // must never fork here; `ReadDir`/`ReadFile`/`Highlight`/
+                // reason: `ClipboardRead` forks `/usr/bin/pbpaste` and must
+                // never run inline in a headless driver (the quit-confirm/
+                // save-confirm/messages-collapse timeouts are no longer
+                // `Cmd`s at all — they arm directly on `App::timers`, whose
+                // background thread this driver never `attach`es, so they
+                // never fire here either, same as when they were dropped
+                // `Cmd`s); `OpenExternal` forks `/usr/bin/open` (reachable
+                // via a ctrl-click on a link) and must never fork here;
+                // `ReadDir`/`ReadFile`/`Highlight`/
                 // `ImageDecode`/`SearchHistory`/`BootstrapView` are off-thread
                 // reads/parses this driver has no discharge path for yet
                 // (their results never reach `update`, so nothing they'd

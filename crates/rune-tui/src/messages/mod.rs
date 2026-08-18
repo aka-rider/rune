@@ -28,7 +28,7 @@ use crate::focus::{self, FocusTarget};
 use crate::keymap::{Command, KeyCode, KeyInput};
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::Effects;
 
 pub use render::draw;
 
@@ -446,15 +446,12 @@ pub fn is_armed(app: &App, generation: crate::generation::Generation) -> bool {
     app.messages.armed == Some(generation)
 }
 
-/// The pane's 5s auto-collapse timer, modelled on
-/// `save::save_confirm_timeout_cmd`/`pane::quit_confirm_timeout_cmd`: sleeps
-/// on its own dedicated `Cmd` thread, then hands back the generation it was
-/// armed with so a superseded timer is ignored on arrival.
-pub fn collapse_timeout_cmd(generation: crate::generation::Generation) -> Cmd {
-    Cmd::messages_collapse_timeout(move || {
-        std::thread::sleep(AUTO_COLLAPSE);
-        Some(Msg::MessagesCollapseTimeout { generation })
-    })
+/// Whether ANY auto-collapse timer is currently armed, regardless of its
+/// generation — for a caller (a test, mainly) that only needs to know
+/// whether `arm_auto_collapse` fired this settle, not which generation it
+/// minted.
+pub fn is_collapse_armed(app: &App) -> bool {
+    app.messages.armed.is_some()
 }
 
 /// The pane's own `Rect` this frame, or `None` while it's closed — every

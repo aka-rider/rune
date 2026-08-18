@@ -27,7 +27,7 @@ fn key(code: KeyCode, mods: Mods) -> KeyInput {
 }
 
 #[test]
-fn first_quit_press_arms_and_spawns_a_timer_cmd_without_quitting() {
+fn first_quit_press_arms_the_confirm_timer_without_quitting() {
     let mut app = test_app();
     let mut effects = Effects::default();
     let ctrl_c = key(
@@ -45,7 +45,9 @@ fn first_quit_press_arms_and_spawns_a_timer_cmd_without_quitting() {
         app.quit,
         QuitNegotiation::ConfirmArmed(QuitKey::CtrlC, Generation::ZERO)
     );
-    assert_eq!(effects.cmds.len(), 1);
+    // The quit-confirm timeout is armed directly on `App::timers`, not
+    // spawned as its own `Cmd` — no `Effects.cmds` entry for it.
+    assert_eq!(effects.cmds.len(), 0);
 }
 
 #[test]
@@ -255,8 +257,9 @@ fn every_cmd_is_tagged_with_its_kind() {
         )),
         &mut e2,
     );
-    assert_eq!(e2.cmds.len(), 1);
-    assert_eq!(e2.cmds[0].kind(), CmdKind::QuitTimeout);
+    // The quit-confirm timeout is armed directly on `App::timers`, not
+    // spawned as its own `Cmd`.
+    assert_eq!(e2.cmds.len(), 0);
 
     let mut e3 = Effects::default();
     clipboard::paste(&mut e3, PasteTarget::Document(app2.active));

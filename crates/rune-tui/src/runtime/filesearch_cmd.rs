@@ -1,6 +1,6 @@
 //! The fuzzy file finder's own workspace walk `Cmd` — split out of
 //! `runtime/mod.rs` (500-line budget), the same shape `highlight_cmd`/
-//! `md_fence`/`snapshot_timer` already use for a distinct concern with its
+//! `md_fence`/`timer` already use for a distinct concern with its
 //! own reason to exist as a file. `filesearch::open` is the sole caller.
 
 use std::path::PathBuf;

@@ -17,7 +17,7 @@ use rune_vfs::{PutCondition, PutOutcome, Vfs};
 use crate::app::App;
 use crate::document::{DocumentId, PublishParams};
 use crate::materialize_ack::{self, MaterializeVfsOutcome};
-use crate::runtime::Effects;
+use crate::runtime::{Effects, Msg, TimerKey};
 use crate::save::SaveMode;
 
 /// The snapshot-autosave debounce window (plan WP5.S6).
@@ -323,13 +323,11 @@ fn map_put_outcome(
 }
 
 /// Bumps `id`'s snapshot-autosave generation and (re)arms its 2s debounce
-/// deadline on `app`'s one rearmable timer thread (plan WP5.S6; plan
-/// WP16.S5 replaced the previous per-call `Cmd` spawn with
-/// `App::snapshot_timer` — see that type's own doc comment) — called
-/// once per message batch that mutated the ACTIVE
-/// document's journal, from `app::update`'s wrapper. No `Effects` involved
-/// any more: arming the timer is a direct, synchronous call, not I/O that
-/// needs a spawned thread of its own.
+/// deadline on `app`'s one rearmable timer thread (`App::timers` — see that
+/// type's own doc comment) — called once per message batch that mutated the
+/// ACTIVE document's journal, from `app::update`'s wrapper. No `Effects`
+/// involved any more: arming the timer is a direct, synchronous call, not
+/// I/O that needs a spawned thread of its own.
 pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
     if app.db.is_none() {
         return;
@@ -340,7 +338,11 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
     };
     doc_db.snapshot_generation = doc_db.snapshot_generation.wrapping_add(1);
     let generation = doc_db.snapshot_generation;
-    app.snapshot_timer.arm(id, generation, SNAPSHOT_DEBOUNCE);
+    app.timers.arm(
+        TimerKey::Snapshot(id),
+        SNAPSHOT_DEBOUNCE,
+        Msg::SnapshotDue { id, generation },
+    );
 }
 
 // Kept in a sibling file: this module's own vfs dance stays under the

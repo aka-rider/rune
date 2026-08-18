@@ -8,17 +8,9 @@ use super::Msg;
 pub enum CmdKind {
     /// `vfs.save_atomic` — the durable publish.
     Save,
-    /// The 2s quit-confirm timer. Sleeps; never run it inline.
-    QuitTimeout,
     /// `/usr/bin/pbpaste`. Spawns a subprocess and reads the live OS
     /// clipboard; never run it inline.
     ClipboardRead,
-    /// The 2s degraded-save confirm-gate timer. Sleeps;
-    /// never run it inline.
-    SaveConfirmTimeout,
-    /// The message pane's 5s auto-collapse timer. Sleeps; never
-    /// run it inline.
-    MessagesCollapseTimeout,
     /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a
     /// draft create) for the no-store route — the no-clobber atomic
     /// publish. Off-thread, never inline in `update`.
@@ -101,20 +93,8 @@ impl Cmd {
         Self::of(CmdKind::Save, run)
     }
 
-    pub fn quit_timeout(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
-        Self::of(CmdKind::QuitTimeout, run)
-    }
-
     pub fn clipboard_read(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
         Self::of(CmdKind::ClipboardRead, run)
-    }
-
-    pub fn save_confirm_timeout(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
-        Self::of(CmdKind::SaveConfirmTimeout, run)
-    }
-
-    pub fn messages_collapse_timeout(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
-        Self::of(CmdKind::MessagesCollapseTimeout, run)
     }
 
     pub fn rename(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {

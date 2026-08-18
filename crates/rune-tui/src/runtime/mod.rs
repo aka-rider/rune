@@ -2,10 +2,10 @@
 //! This module's `run` (main: recv -> drain
 //! `try_iter` -> `update` per message -> drain `Effects.raw` to the terminal
 //! -> spawn `Effects.cmds` -> draw once), the input reader spawned by `run`,
-//! one `std::thread` per `Cmd`, and `App::snapshot_timer`'s own single
+//! one `std::thread` per `Cmd`, and `App::timers`'s own single
 //! long-lived rearmable timer thread — the one background
-//! thread NOT spawned fresh per `Cmd`, since re-arming it is a plain state
-//! update rather than new off-thread work.
+//! thread NOT spawned fresh per `Cmd`, since (re)arming any of its four
+//! keyed deadlines is a plain state update rather than new off-thread work.
 //!
 //! `update` mutates `App` synchronously — synchronous state changes directly
 //! in `update`; a Cmd is exclusively for I/O that leaves the thread.
@@ -54,13 +54,12 @@ pub enum PasteTarget {
 }
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
-/// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
-/// `SaveConfirmTimeout`/`MessagesCollapseTimeout` originate from a spawned
-/// `Cmd`'s return value; `SnapshotDue` originates from `App::snapshot_timer`'s
-/// one long-lived rearmable timer thread, not a per-message
-/// spawned `Cmd`; `Db` originates from the `rune-db` writer thread via
-/// `db::DbBridge`; `Error`/`Quit` can be synthesized by
-/// `update` itself.
+/// input-reader thread; `ClipboardRead`/`SaveDone` originate from a spawned
+/// `Cmd`'s return value; `ConfirmTimeout`/`SaveConfirmTimeout`/
+/// `MessagesCollapseTimeout`/`SnapshotDue` all originate from `App::timers`'s
+/// one long-lived rearmable timer thread, not a per-message spawned `Cmd`;
+/// `Db` originates from the `rune-db` writer thread via `db::DbBridge`;
+/// `Error`/`Quit` can be synthesized by `update` itself.
 /// `SaveDone`/`SnapshotDue` carry a `DocumentId` so multi-
 /// document acks route back to the document that triggered them;
 /// `ConfirmTimeout`/`SaveConfirmTimeout`/`MessagesCollapseTimeout` stay
@@ -592,15 +591,16 @@ pub use highlight_cmd::{PARSE_BUDGET, PASS_BUDGET};
 // `highlight_cmd::run_regions`, never re-exported.
 mod md_fence;
 
-// The snapshot-autosave debounce's one rearmable timer thread —
-// split out for the same reason `highlight_cmd` was: a distinct
-// concern with its own `#[cfg(test)]` module, kept out of this file's own
-// 500-line budget.
-mod snapshot_timer;
-pub use snapshot_timer::SnapshotTimer;
+// The one rearmable timer thread shared by the snapshot-autosave debounce,
+// the degraded-save confirm gate, the quit-confirm window, and the message
+// pane's auto-collapse — split out for the same reason `highlight_cmd` was:
+// a distinct concern with its own `#[cfg(test)]` module, kept out of this
+// file's own 500-line budget.
+mod timer;
+pub use timer::{TimerKey, TimerService};
 
 // The fuzzy file finder's recents-load `Cmd` constructor — split out for
-// the same reason `highlight_cmd`/`snapshot_timer` were (500-line budget).
+// the same reason `highlight_cmd`/`timer` were (500-line budget).
 mod filesearch_recents_cmd;
 pub use filesearch_recents_cmd::load_filesearch_recents_cmd;
 // The fuzzy file finder's workspace-walk `Cmd` — split out for the same

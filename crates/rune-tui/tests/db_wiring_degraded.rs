@@ -11,8 +11,11 @@
 use std::path::Path;
 
 use rune_fuzz::Session;
+use rune_tui::app::update;
 use rune_tui::footer;
+use rune_tui::generation::Generation;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::runtime::{Effects, Msg};
 
 const END: KeyInput = KeyInput {
     code: KeyCode::End,
@@ -259,5 +262,57 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
     assert!(
         session.app().active_doc().save_in_flight(),
         "the second super+s must actually enqueue the materialize"
+    );
+}
+
+/// `super+s`'s confirm-gate arm (above) now arms its 2s timeout directly on
+/// `App::timers` rather than spawning its own `Cmd` — this covers the
+/// production `Msg` reaction on both sides of that timer's generation
+/// check: a stale `Msg::SaveConfirmTimeout` (a generation that isn't the
+/// one currently armed) must leave the gate standing, and the CURRENT
+/// generation must clear it, exactly like the real timer thread's eventual
+/// fire would.
+#[test]
+fn save_confirm_timeout_discards_a_stale_generation_and_fires_the_current_one() {
+    let mut session = Session::open("/doc.md", "hi");
+    session
+        .app_mut()
+        .db
+        .as_mut()
+        .expect("app has a store")
+        .degraded = true;
+
+    assert!(session.key(END).is_none());
+    assert!(session.type_("!").is_none());
+    assert!(session.key(SAVE).is_none());
+
+    let (id, generation) = session
+        .app()
+        .pending_save_confirm
+        .expect("the first super+s armed the confirm gate");
+
+    let mut effects = Effects::default();
+    update(
+        session.app_mut(),
+        Msg::SaveConfirmTimeout {
+            generation: Generation::from_raw(generation.raw() + 1),
+        },
+        &mut effects,
+    );
+    assert_eq!(
+        session.app().pending_save_confirm,
+        Some((id, generation)),
+        "a stale generation must never clear a still-current confirm gate"
+    );
+
+    let mut effects = Effects::default();
+    update(
+        session.app_mut(),
+        Msg::SaveConfirmTimeout { generation },
+        &mut effects,
+    );
+    assert!(
+        session.app().pending_save_confirm.is_none(),
+        "the current generation must clear the confirm gate"
     );
 }
