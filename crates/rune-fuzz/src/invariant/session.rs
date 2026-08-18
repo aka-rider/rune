@@ -4,15 +4,21 @@
 //! decision 7 `[fixes B3]`).
 
 use rune_tui::guard::GuardKind;
-use rune_tui::keymap::{Command, KeyCode, QuitKey};
+use rune_tui::keymap::{Command, GLOBAL_BINDINGS, GlobalCommand, KeyCode, QuitKey, resolve_in};
 
 use super::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `SAVE-INFLIGHT-SM` — `save_in_flight` goes false->true only on a
-/// `Command::Save` key OR a modal-captured `s`/`S` key while the dirty-close
-/// Guard is up, and true->false only on one of THREE legitimate
+/// `SAVE-INFLIGHT-SM` — `save_in_flight` goes false->true only on a save
+/// key OR a modal-captured `s`/`S` key while the dirty-close Guard is up,
+/// where "save key" covers BOTH stateless resolutions dispatch consults:
+/// `keymap::resolve`'s `Command::Save` (the tag's own `command`, the editor
+/// pane's stage-3 resolver) and the global chord table's `GlobalCommand::
+/// Save` rows (`^S`/`⌘S`), which `dispatch::handle_key` stage 2 fires
+/// before any pane resolver ever sees the key — `keymap::resolve` alone
+/// returns `None` for `^S`, so matching only the tag's `command` would
+/// mis-attribute every ordinary `^S` save as an unexplained arming, and true->false only on one of THREE legitimate
 /// completions (G9: at most one save `Cmd` is ever outstanding, so none of
 /// them can ever be ambiguous about which attempt it answers): the no-store
 /// fallback's own `SaveDone`; a store-backed save's caller-side `vfs` `Cmd`
@@ -58,6 +64,10 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
                 command: Some(Command::Save),
                 ..
             }
+        ) || matches!(
+            ctx.msg,
+            MsgTag::Key { input, .. }
+                if resolve_in(GLOBAL_BINDINGS, input) == Some(GlobalCommand::Save)
         );
         let armed_by_guard_save_key = prev.modal_open
             && matches!(
@@ -69,8 +79,9 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
             return Some(Violation::new(
                 "SAVE-INFLIGHT-SM",
                 format!(
-                    "save_in_flight went false->true on {:?}, not a Command::Save key \
-                     (and no modal was up for a Guard save key either)",
+                    "save_in_flight went false->true on {:?}, not a save key in either the \
+                     editor or the global chord table (and no modal was up for a Guard save \
+                     key either)",
                     ctx.msg
                 ),
             ));
