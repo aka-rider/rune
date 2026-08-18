@@ -38,7 +38,7 @@ pub fn append_edit(
     // `id` not (or no longer) live is a plain, correct no-op — see
     // `App::doc`'s docs.
     let Some(doc) = app.doc_mut(id) else { return };
-    if let Replica::Binding { pending } = &mut doc.replica {
+    if let Replica::Binding { pending, .. } = &mut doc.replica {
         pending.push(ReplicaStep::new(edits, cursors_before, cursors_after));
         return;
     }
@@ -62,6 +62,45 @@ fn append_edit_bound(
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
 ) {
+    flush_pending_rebase(app, id);
+    send_append(app, id, edits, cursors_before, cursors_after);
+}
+
+/// Journals `id`'s deferred re-base bridge, if one is still pending
+/// (`DocDb::pending_rebase`'s own doc comment) — called immediately before
+/// the first op whose meaning depends on the bound row reconstructing to
+/// the buffer: an `AppendEdit` ([`append_edit_bound`]), a durable undo
+/// move ([`move_undo_pos`]), a save (`save::materialize`). Ops that only
+/// READ the reconstruction (probe, merge prep) deliberately never flush:
+/// until the user commits content through this binding, a dead session's
+/// recovered-but-not-adopted draft must stay reconstructable.
+pub(crate) fn flush_pending_rebase(app: &mut App, id: DocumentId) {
+    let Some(step) = app
+        .doc_mut(id)
+        .and_then(crate::document::Document::doc_db_mut)
+        .and_then(|db| db.pending_rebase.take())
+    else {
+        return;
+    };
+    send_append(
+        app,
+        id,
+        &step.edits,
+        &step.cursors_before,
+        &step.cursors_after,
+    );
+}
+
+fn send_append(
+    app: &mut App,
+    id: DocumentId,
+    edits: &[AppliedEdit],
+    cursors_before: &[Cursor],
+    cursors_after: &[Cursor],
+) {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
+        return;
+    }
     let Some(doc) = app.doc(id) else { return };
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;
@@ -72,10 +111,21 @@ fn append_edit_bound(
         .append_edit(rune_db::DocId(db_id), edits, cursors_before, cursors_after);
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::new(id));
+            app.db_ops.insert(op_id, PendingOp::append(id));
+            if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.doc_db_mut()) {
+                doc_db.appends_sent += 1;
+            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
+}
+
+/// The one place a local journal count enters the writer's `i64` position
+/// arithmetic — a count past `i64::MAX` is unreachable for any real
+/// journal, and saturating there keeps the arithmetic total without a
+/// panic path.
+pub(crate) fn journal_i64(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 /// Replays every [`ReplicaStep`] a `Binding` window buffered, in order, as a
@@ -97,35 +147,86 @@ pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<Replica
 /// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
 /// locally — called immediately after `Journal::move_pos` at
 /// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
-/// position just committed (`Journal::move_pos`'s own argument), minus
-/// `DocDb::undo_base` — the local journal counts the synthetic bridge
-/// `Step` an adopting hydration pushes, but the writer thread's own
-/// local-position numbering does not (`DocDb::undo_base`'s own doc
-/// comment) — carried to the writer thread AS-IS from there, never further
+/// position just committed (`Journal::move_pos`'s own argument), mapped
+/// through `DocDb::undo_offset` into the writer thread's own numbering —
+/// carried to the writer thread AS-IS from there, never further
 /// resolved to a durable seq here: only the writer thread, which has
 /// already executed every `AppendEdit` this session enqueued ahead of this
 /// op, can resolve it exactly (see `rune_db::OpKind::MoveUndoPos`'s doc
-/// comment). This op is doc-scoped (`PendingOp::doc_scoped`): a resolution
-/// failure is a fact about ONE document's undo position, never a reason to
-/// degrade the whole store.
-pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
+/// comment). A position mapping outside the writer's own numbering —
+/// below `DocDb::undo_floor` (a state that predates a rebind's re-base
+/// bridge) or above `DocDb::appends_sent` (an entry the writer never ran)
+/// — cannot be sent as an exact position: mis-resolving it lands
+/// `current_seq` on another lineage's seq and recovery silently truncates
+/// or resurrects content. Such a move is journaled as a FORWARD re-base
+/// instead: one replace-all `AppendEdit` from `pre_content` (the buffer as
+/// it stood before this undo/redo committed, which is exactly what the
+/// durable replica reconstructs to) to the post-move buffer, after which
+/// the mapping re-anchors and later moves resolve exactly again. This op
+/// is doc-scoped (`PendingOp::doc_scoped`): a resolution failure is a fact
+/// about ONE document's undo position, never a reason to degrade the whole
+/// store.
+pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_content: &str) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
+    if app
+        .doc(id)
+        .and_then(crate::document::Document::doc_db)
+        .is_none()
+    {
+        return;
+    }
+    flush_pending_rebase(app, id);
     let Some(doc) = app.doc(id) else { return };
     let Some(doc_db) = doc.doc_db() else { return };
     let db_id = doc_db.db_id;
-    let resolved_pos = local_pos.saturating_sub(doc_db.undo_base as usize);
+    let resolved_pos = journal_i64(local_pos) - doc_db.undo_offset;
+    if resolved_pos < doc_db.undo_floor || resolved_pos > doc_db.appends_sent {
+        rebase_move(app, id, pre_content);
+        return;
+    }
     let Some(db) = app.db.as_ref() else { return };
-    let result = db
-        .store
-        .move_undo_pos(rune_db::DocId(db_id), resolved_pos as i64);
+    let result = db.store.move_undo_pos(rune_db::DocId(db_id), resolved_pos);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::move_undo_pos(id));
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
+}
+
+/// Journals an undo/redo the writer's numbering cannot express as one
+/// forward replace-all `AppendEdit` (`move_undo_pos`'s own doc comment),
+/// then re-anchors the mapping on the position the replica now sits at:
+/// every position at or above it resolves exactly from here on, and any
+/// later move back below lands here again.
+fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
+    let current = match app.doc(id) {
+        Some(doc) => doc.buffer.content().to_string(),
+        None => return,
+    };
+    if pre_content != current {
+        send_append(
+            app,
+            id,
+            &[AppliedEdit {
+                start: 0,
+                end: pre_content.len(),
+                deleted: pre_content.to_string(),
+                insert: current,
+            }],
+            &[],
+            &[],
+        );
+    }
+    let Some(doc) = app.doc_mut(id) else { return };
+    let pos = journal_i64(doc.journal.pos());
+    let Some(doc_db) = doc.doc_db_mut() else {
+        return;
+    };
+    doc_db.undo_offset = pos - doc_db.appends_sent;
+    doc_db.undo_floor = doc_db.appends_sent;
 }
 
 /// Enqueues a `Load` op hydrating `id` (already bound to `path`, an
@@ -217,6 +318,7 @@ fn load_document_inner(
                 && matches!(doc.replica, Replica::Detached)
             {
                 doc.replica = Replica::Binding {
+                    base: doc.buffer.content().to_string(),
                     pending: Vec::new(),
                 };
             }
@@ -308,6 +410,7 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
                 && matches!(doc.replica, Replica::Detached)
             {
                 doc.replica = Replica::Binding {
+                    base: doc.buffer.content().to_string(),
                     pending: Vec::new(),
                 };
             }

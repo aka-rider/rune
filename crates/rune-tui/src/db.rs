@@ -214,6 +214,11 @@ pub struct PendingOp {
     /// so the `DbEvent::Err` router posts a per-document error instead of
     /// sticky-degrading the whole store.
     pub doc_scoped: bool,
+    /// True iff this op is an `AppendEdit` — lets `db_ack::
+    /// bind_document_row` count the appends still in flight past a
+    /// same-row re-baseline `Load`, which are exactly the entries the
+    /// writer's restarted numbering already holds.
+    pub is_append: bool,
 }
 
 impl PendingOp {
@@ -226,6 +231,16 @@ impl PendingOp {
             merge_gen: None,
             binding_only: false,
             doc_scoped: false,
+            is_append: false,
+        }
+    }
+
+    /// An `AppendEdit` op — [`PendingOp::new`] with the append marker
+    /// `db_ack::bind_document_row` counts (`is_append`'s own doc comment).
+    pub fn append(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            is_append: true,
+            ..PendingOp::new(doc)
         }
     }
 
@@ -238,6 +253,7 @@ impl PendingOp {
             merge_gen: None,
             binding_only,
             doc_scoped: true,
+            is_append: false,
         }
     }
 
@@ -250,6 +266,7 @@ impl PendingOp {
             merge_gen: None,
             binding_only: false,
             doc_scoped: true,
+            is_append: false,
         }
     }
 
@@ -280,6 +297,7 @@ impl PendingOp {
             merge_gen: None,
             binding_only: false,
             doc_scoped: true,
+            is_append: false,
         }
     }
 
@@ -292,6 +310,7 @@ impl PendingOp {
             merge_gen: Some(generation),
             binding_only: false,
             doc_scoped: true,
+            is_append: false,
         }
     }
 }
@@ -367,15 +386,49 @@ pub struct DocDb {
     /// arriving with a stale generation means a later edit already
     /// superseded it, so it's ignored.
     pub snapshot_generation: u32,
-    /// 1 iff the local journal's position 1 is the synthetic bridge `Step`
-    /// an adopting hydration pushes directly onto it (`Document::hydrate`'s
-    /// own doc comment) — that push never reaches `db_enqueue::append_edit`,
-    /// so the writer thread's own local-position numbering (which counts
-    /// only `AppendEdit`s it actually ran) stays one behind the local
-    /// journal's from that point on. `db_enqueue::move_undo_pos` subtracts
-    /// this before sending a local position to the writer thread; every
-    /// other document (never adopted) keeps it 0.
-    pub undo_base: u8,
+    /// The writer thread numbers this binding's local undo positions by
+    /// the `AppendEdit`s it actually ran, starting over at every bind —
+    /// `writer position = local journal position - undo_offset`.
+    /// `db_ack`'s install computes this from what the two sides genuinely
+    /// disagree by: an adopting hydration's synthetic bridge `Step` lands
+    /// in the local journal but never reaches the writer (+1); a re-base
+    /// bridge the install itself enqueues reaches the writer but never the
+    /// local journal (-1); a hand-off rebind restarts the writer's
+    /// numbering under a journal that keeps counting (+pos).
+    pub(crate) undo_offset: i64,
+    /// The lowest writer position `undo_offset`'s mapping is valid for. A
+    /// local undo resolving below it names a buffer state the bound row's
+    /// journal cannot express — everything before a rebind's re-base
+    /// bridge — so `db_enqueue::move_undo_pos` must never send it as an
+    /// exact position (that mis-resolves into another lineage's seq and
+    /// truncates or resurrects journal rows); it journals a forward
+    /// re-base instead.
+    pub(crate) undo_floor: i64,
+    /// How many `AppendEdit`s this session has enqueued against this
+    /// binding since it was installed — the upper bound of the writer
+    /// positions that exist at all, maintained by `db_enqueue::send_append`
+    /// and seeded by `db_ack::bind_document_row` with the appends already
+    /// in flight when a same-row re-baseline restarted the writer's
+    /// numbering. A resolution above it names an entry the writer has
+    /// never run (a redo past a re-base), which — like one below
+    /// `undo_floor` — must be journaled as a forward re-base, never sent.
+    pub(crate) appends_sent: i64,
+    /// A re-base bridge `db_ack::bind_document_row` computed but has not
+    /// journaled yet: the replace-all step turning what the bound row
+    /// currently reconstructs to into the content this document's next
+    /// `AppendEdit`'s coordinates assume. Deferred rather than journaled at
+    /// bind time because journaling it rewrites the row's reconstruction —
+    /// a `binding_only` bind that is never edited must leave a dead
+    /// session's recovered draft (and its resumable merge) reconstructable.
+    /// The deferral is safe for the USER'S OWN words only because a
+    /// hand-off rebind's abandoned scratch row still holds every pre-rebind
+    /// keystroke as a recoverable draft — the buffer content the new row
+    /// cannot yet reconstruct is durably held by the old one until the
+    /// bridge lands. Flushed by `db_enqueue::flush_pending_rebase`
+    /// immediately before the first op whose meaning depends on the
+    /// reconstruction matching the buffer: an `AppendEdit`, a durable undo
+    /// move, a save, a snapshot.
+    pub(crate) pending_rebase: Option<crate::document::ReplicaStep>,
 }
 
 impl DocDb {
@@ -385,7 +438,10 @@ impl DocDb {
             bind_new,
             last_known_seq,
             snapshot_generation: 0,
-            undo_base: 0,
+            undo_offset: 0,
+            undo_floor: 0,
+            appends_sent: 0,
+            pending_rebase: None,
         }
     }
 

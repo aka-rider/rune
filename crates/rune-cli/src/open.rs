@@ -228,38 +228,12 @@ pub(crate) fn open_untitled(
     )
 }
 
-/// Binds `scratch.db_id` onto `id`'s `Document` and, when there is actually
-/// recovered text, adopts it through `Document::hydrate` — the suspicion
-/// check, the synthetic bridge `Step` so post-restart undo reaches
-/// the recovered text in one step, and a refusal surfaced as a status rather
-/// than silently applied (mirrors `bootstrap`'s own handling of `rune_db::
-/// load`'s `recovered_content`). `bind_new` is always `true`: a scratch
-/// document — recovered or freshly minted — has never been bound to a real
-/// file, so its NEXT save must still go through the create-only path.
+/// Binds `scratch.db_id` onto `id`'s `Document` and adopts any recovered
+/// text — delegated to `rune_tui::db_ack::adopt_scratch_doc`, the same
+/// chokepoint every store bind funnels through, so the launch-time path
+/// can never drift from the async-ack one.
 fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: &ScratchDoc) {
-    if let Some(doc) = app.doc_mut(id) {
-        doc.bind_doc_db(rune_tui::db::DocDb::new(
-            scratch.db_id,
-            true,
-            rune_db::Seq(0),
-        ));
-    }
-    app.install_or_join_file_binding(scratch.db_id, None);
-    if scratch.content.is_empty() {
-        return;
-    }
-    let Some(doc) = app.doc_mut(id) else { return };
-    let disk_content = doc.buffer.content().to_string();
-    if let rune_tui::document::Hydration::Refused(reason) =
-        doc.hydrate(&disk_content, &scratch.content)
-    {
-        rune_tui::messages::error(app, format!("crash recovery: {reason}"));
-    }
-    // Dirty is a content comparison — `hydrate` no longer
-    // marks it itself, so every hydration site re-derives it explicitly,
-    // same as `bootstrap`'s and `db_ack::handle_load_ack`'s own hydration
-    // sites.
-    app.recompute_dirty(id);
+    rune_tui::db_ack::adopt_scratch_doc(app, id, scratch.db_id, &scratch.content);
 }
 
 /// The first positional is already open (in `bootstrap`) and stays the

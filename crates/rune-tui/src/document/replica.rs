@@ -44,7 +44,13 @@ pub(crate) enum Replica {
     Detached,
     /// A `Load`/`CreateScratch` op is in flight; every edit committed in
     /// the meantime is buffered here rather than dropped, in commit order.
-    Binding { pending: Vec<ReplicaStep> },
+    /// `base` is the buffer content the window opened on — the content the
+    /// first buffered step's coordinates assume, which the install compares
+    /// against what the bound row's journal actually reconstructs to.
+    Binding {
+        base: String,
+        pending: Vec<ReplicaStep>,
+    },
     /// This document's row is installed; every edit reaches the store
     /// directly.
     Bound(DocDb),
@@ -69,14 +75,29 @@ impl Replica {
         }
     }
 
-    /// Takes whatever `Binding` window steps this replica buffered, leaving
-    /// it `Detached` — the shared first half of installing a fresh `DocDb`
-    /// once a `Load`/`CreateScratch` ack lands, before the caller replaces
-    /// it with `Bound`.
-    pub(crate) fn take_pending(&mut self) -> Vec<ReplicaStep> {
+    /// Takes whatever `Binding` window this replica buffered — its base
+    /// content and every step committed since — leaving it `Detached`: the
+    /// shared first half of installing a fresh `DocDb` once a `Load`/
+    /// `CreateScratch` ack lands, before the caller replaces it with
+    /// `Bound`. A `Detached` or `Bound` replica yields an empty window
+    /// (`base: None`, no steps).
+    pub(crate) fn take_window(&mut self) -> ReplicaWindow {
         match std::mem::replace(self, Replica::Detached) {
-            Replica::Binding { pending } => pending,
-            Replica::Detached | Replica::Bound(_) => Vec::new(),
+            Replica::Binding { base, pending } => ReplicaWindow {
+                base: Some(base),
+                pending,
+            },
+            Replica::Detached | Replica::Bound(_) => ReplicaWindow {
+                base: None,
+                pending: Vec::new(),
+            },
         }
     }
+}
+
+/// What [`Replica::take_window`] hands the install: the content the window
+/// opened on (when there was a window at all) and the steps it buffered.
+pub(crate) struct ReplicaWindow {
+    pub base: Option<String>,
+    pub pending: Vec<ReplicaStep>,
 }

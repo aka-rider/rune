@@ -360,18 +360,6 @@ impl Document {
         self.replica.doc_db_mut()
     }
 
-    /// Binds this document to `db` directly, `Bound`, dropping any
-    /// `Binding`-window pending steps — the synchronous bootstrap-time
-    /// counterpart to `db_ack::install_doc_db`'s async-ack install, for the
-    /// two call sites (`rune-cli`'s launch-time initial-document bind and
-    /// its scratch-draft adoption) that resolve their `DocDb` before the
-    /// runtime loop, and so its `Msg::Db` dispatch, even exists — there is
-    /// no in-flight op, and so no `Binding` window, to replay pending steps
-    /// out of.
-    pub fn bind_doc_db(&mut self, db: DocDb) {
-        self.replica = Replica::Bound(db);
-    }
-
     /// Whether this document's row is installed and every edit reaches the
     /// store directly — `false` for both `Detached` (no journal) and
     /// `Binding` (a journal is coming, but not installed yet).
