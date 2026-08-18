@@ -175,6 +175,12 @@ pub fn drain_materialize_round_trip_unchecked(session: &mut Session, doc: Docume
     }
 }
 
+/// The message log's post counter, for asserting a key press gave the user
+/// feedback (a new post) rather than swallowing the key silently.
+pub fn messages_posts(session: &Session) -> u64 {
+    rune_tui::messages::posts(session.app())
+}
+
 /// Overwrites `/doc.md`'s content in place, simulating an external editor.
 pub fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
     let path = std::path::Path::new("/doc.md");
