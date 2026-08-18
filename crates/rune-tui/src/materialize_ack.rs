@@ -277,6 +277,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
         return;
     };
     let content = doc.buffer.content().to_string();
+    crate::db_enqueue::flush_pending_rebase(app, id);
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.create_snapshot(rune_db::DocId(db_id), &content);
     match result {

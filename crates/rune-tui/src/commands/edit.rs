@@ -283,6 +283,10 @@ pub fn undo(app: &mut App, id: DocumentId) {
         ladder_press(app, id, Direction::Undo, undogroup::steps_for)
     };
 
+    let pre_content = app
+        .doc(id)
+        .map(|doc| doc.buffer.content().to_string())
+        .unwrap_or_default();
     let mut reached = None;
     for _ in 0..count {
         let Some(doc) = app.doc(id) else { break };
@@ -315,7 +319,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
     }
 
     if let Some(target) = reached {
-        db::move_undo_pos(app, id, target);
+        db::move_undo_pos(app, id, target, &pre_content);
         materialize_ack::recompute_dirty(app, id);
     }
 }
@@ -346,6 +350,10 @@ pub fn redo(app: &mut App, id: DocumentId) {
         ladder_press(app, id, Direction::Redo, undogroup::steps_for_redo)
     };
 
+    let pre_content = app
+        .doc(id)
+        .map(|doc| doc.buffer.content().to_string())
+        .unwrap_or_default();
     let mut reached = None;
     for _ in 0..count {
         let Some(doc) = app.doc(id) else { break };
@@ -378,7 +386,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
     }
 
     if let Some(target) = reached {
-        db::move_undo_pos(app, id, target);
+        db::move_undo_pos(app, id, target, &pre_content);
         materialize_ack::recompute_dirty(app, id);
     }
 }

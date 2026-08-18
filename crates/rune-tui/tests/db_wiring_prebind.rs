@@ -79,7 +79,7 @@ fn prebind_edits_replay_at_bind() {
 
     // The Load ack lands — content on disk never diverged from what this
     // session read, so hydration is a plain NoChange; no bridge Step
-    // pushed, `undo_base` stays 0.
+    // pushed, the undo mapping stays the identity.
     assert!(session.deliver_db().is_none());
 
     assert!(
@@ -127,7 +127,7 @@ fn prebind_edits_replay_at_bind() {
 /// bridged onto disk content by the store itself) pushes a synthetic bridge
 /// `Step` directly onto the local journal — permanently offsetting it by
 /// one position relative to the writer thread's own local-position count,
-/// which never sees that bridge as an `AppendEdit`. `DocDb::undo_base`
+/// which never sees that bridge as an `AppendEdit`. `DocDb::undo_offset`
 /// exists to correct exactly this offset; undo/redo must resolve cleanly
 /// all the way back through the bridge to the pre-crash disk anchor, with
 /// no error and no store degrade.
@@ -162,7 +162,7 @@ fn undo_after_adoption_resolves() {
     // Session B ("restart"): a brand-new `Store` on the SAME path, with
     // session A reported dead, hydrating through the ordinary ASYNC
     // open/ack path exactly like a real restart — `db_ack::handle_load_ack`
-    // is what sets `undo_base` here, not test scaffolding.
+    // is what derives the undo mapping here, not test scaffolding.
     let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
     let mut session_b = Session::open_with_db(
         "/doc.md",
@@ -178,7 +178,7 @@ fn undo_after_adoption_resolves() {
     assert!(session_b.app().active_doc().is_store_bound());
 
     // One more edit after adoption, then undo back through it (removing
-    // the typed edit), and once more (through the undo_base-corrected
+    // the typed edit), and once more (through the offset-corrected
     // bridge, back to the pre-crash disk anchor), then redo twice back to
     // where undo started — no error, no degrade, at every step.
     assert!(session_b.key(END).is_none());
@@ -218,9 +218,23 @@ fn undo_pos_error_is_doc_scoped() {
     assert!(session.app().doc(id).unwrap().is_store_bound());
 
     // A local position no `AppendEdit` this session has ever run could
-    // possibly resolve to — the writer thread's own `MoveUndoPos` handler
-    // must refuse it as `Error::NotFound`.
-    rune_tui::db_enqueue::move_undo_pos(session.app_mut(), id, 999);
+    // possibly resolve to — the app-side mapping never sends one (it
+    // journals a forward re-base instead), so this drives the writer
+    // thread's own `MoveUndoPos` refusal directly to pin its
+    // `Error::NotFound` routing domain.
+    let db_id = session.app().active_doc().doc_db().unwrap().db_id;
+    let op_id = session
+        .app()
+        .db
+        .as_ref()
+        .unwrap()
+        .store
+        .move_undo_pos(rune_db::DocId(db_id), 999)
+        .expect("enqueue the unresolvable move");
+    session
+        .app_mut()
+        .db_ops
+        .insert(op_id, rune_tui::db::PendingOp::move_undo_pos(id));
     assert!(session.deliver_db().is_none());
 
     assert!(

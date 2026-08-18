@@ -97,7 +97,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     // Session B (simulated restart): a brand-new `Store` on the SAME path,
     // with session A reported dead, hydrating through the ordinary
     // open/ack path — `db_ack::handle_load_ack` seeds the bridge step and
-    // `undo_base` here, not test scaffolding.
+    // the undo mapping here, not test scaffolding.
     let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
     let mut session_b = Session::open_with_db(
         "/doc.md",

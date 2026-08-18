@@ -285,11 +285,6 @@ fn apply_db_bootstrap(
         rune_tui::messages::error(app, banner);
     }
     app.db_banner = db_bootstrap.banner;
-    if let Some(doc_db) = db_bootstrap.doc_db {
-        let db_id = doc_db.db_id;
-        app.active_doc_mut().bind_doc_db(doc_db);
-        app.install_or_join_file_binding(db_id, db_bootstrap.expect_obs);
-    }
     if let Some(sync_kind) = db_bootstrap.sync_kind {
         app.active_doc_mut().last_sync = Some(sync_kind);
     }
@@ -297,14 +292,27 @@ fn apply_db_bootstrap(
         app.active_doc_mut().nlink = Some(nlink);
         rune_tui::db_ack::warn_hard_links(app, nlink);
     }
-    if let Some(recovered) = db_bootstrap.recovered_content {
+    // Hydrated BEFORE binding — the bind chokepoint compares the buffer
+    // against what the row reconstructs to, so the adoption must already
+    // be in the buffer when the mapping and any re-base are derived.
+    if let Some(recovered) = &db_bootstrap.recovered_content {
         let disk_content = app.active_doc_mut().buffer.content().to_string();
         if let rune_tui::document::Hydration::Refused(reason) =
-            app.active_doc_mut().hydrate(&disk_content, &recovered)
+            app.active_doc_mut().hydrate(&disk_content, recovered)
         {
             rune_tui::messages::error(app, format!("crash recovery: {reason}"));
         }
         app.recompute_dirty(first_doc_id);
+    }
+    if let Some(doc_db) = db_bootstrap.doc_db {
+        let db_id = doc_db.db_id;
+        let row_content = match &db_bootstrap.recovered_content {
+            Some(recovered) => recovered.clone(),
+            None if doc_db.bind_new => String::new(),
+            None => app.active_doc_mut().buffer.content().to_string(),
+        };
+        app.install_or_join_file_binding(db_id, db_bootstrap.expect_obs);
+        rune_tui::db_ack::bind_loaded_doc(app, first_doc_id, doc_db, &row_content);
     }
 }
 

@@ -79,6 +79,7 @@ pub(super) fn materialize_now(
             return;
         }
     };
+    crate::db_enqueue::flush_pending_rebase(app, id);
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.materialize_prepare(rune_db::DocId(db_id), target);
 
@@ -155,6 +156,7 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
         return;
     };
     let content: Arc<str> = Arc::from(doc.buffer.content());
+    crate::db_enqueue::flush_pending_rebase(app, id);
     let Some(db) = app.db.as_ref() else { return };
     // `expect`/CAS never applies on the create path — `prepare_materialize`
     // returns `MaterializePrep::Create` for `BindNew` and the caller-side
