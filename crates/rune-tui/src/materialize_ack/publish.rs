@@ -24,6 +24,9 @@ use super::{
     record_outcome,
 };
 
+pub(crate) const SAVE_RACED_BASELINE_REWRITE: &str =
+    "save cancelled \u{2014} the document was updated while the save was starting; save again";
+
 /// `Preparing`'s reaction: `prep` carries the materialize decision data
 /// (`rune_db::MaterializePrep`) — no disk-sourced fact of its own — so this
 /// only advances `id` from `Preparing` to `Publishing` and spawns the
@@ -31,11 +34,18 @@ use super::{
 /// that has moved on since this op was enqueued (closed mid-flight, or a
 /// stale ack for an attempt this document already abandoned) is a correct,
 /// silent no-op — `op_id` is checked against the document's own `prep_op`
-/// before anything else happens.
+/// before anything else happens; `enqueue_epoch` is then checked against
+/// the file binding's CURRENT `baseline_epoch` — a baseline rewrite in
+/// flight (an adoption, an abandon, a sibling tab's publish) means every
+/// verdict and hash this prep carries describes a world that no longer
+/// exists, so the attempt is abandoned with feedback and a fresh probe
+/// re-classifies the document instead (the probe ack's own stale-epoch
+/// drop, applied to the save path).
 pub(crate) fn handle_prepare_ack(
     app: &mut App,
     id: DocumentId,
     op_id: u64,
+    enqueue_epoch: Option<u32>,
     prep: rune_db::MaterializePrep,
     effects: &mut Effects,
 ) {
@@ -44,6 +54,13 @@ pub(crate) fn handle_prepare_ack(
         .and_then(super::super::document::Document::prep_op)
         != Some(op_id)
     {
+        return;
+    }
+    if enqueue_epoch.is_some()
+        && enqueue_epoch != app.doc_file_binding(id).map(|b| b.baseline_epoch)
+    {
+        fail_materialize_locally(app, id, SAVE_RACED_BASELINE_REWRITE);
+        crate::db_enqueue::probe(app, id);
         return;
     }
     let (prep_expect_hash, bound_path) = match prep {

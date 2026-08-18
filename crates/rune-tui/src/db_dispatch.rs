@@ -40,7 +40,14 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::MaterializePrep(prep),
         } => with_pending_op(app, op_id, |app, pending| {
-            materialize_ack::handle_prepare_ack(app, pending.doc, op_id, *prep, effects);
+            materialize_ack::handle_prepare_ack(
+                app,
+                pending.doc,
+                op_id,
+                pending.baseline_epoch,
+                *prep,
+                effects,
+            );
         }),
         DbEvent::Ok {
             id: op_id,
@@ -84,7 +91,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             let current_epoch = app
                 .doc_file_binding(pending.doc)
                 .map(|binding| binding.baseline_epoch);
-            if pending.probe_epoch != current_epoch {
+            if pending.baseline_epoch != current_epoch {
                 // Stale: a baseline rewrite (a materialize publish, a
                 // merge's terminal adoption, an abandon's retraction)
                 // landed between this probe's issue and its own ack — by
@@ -250,7 +257,7 @@ mod tests {
         }
     }
 
-    /// A probe ack whose `probe_epoch` no longer matches the
+    /// A probe ack whose `baseline_epoch` no longer matches the
     /// binding's current `baseline_epoch` — a publish landed while the probe was
     /// in flight — must re-issue a fresh probe rather than drop the ack and
     /// leave `last_sync` stuck at whatever it read before.
@@ -275,7 +282,7 @@ mod tests {
             .expect("probe enqueued")
             .0;
         assert_eq!(
-            app.db_ops.get(&op_id).expect("op recorded").probe_epoch,
+            app.db_ops.get(&op_id).expect("op recorded").baseline_epoch,
             Some(0)
         );
 
@@ -307,9 +314,86 @@ mod tests {
             .find(|pending| pending.is_probe && pending.doc == id)
             .expect("a fresh probe must be re-issued");
         assert_eq!(
-            reissued.probe_epoch,
+            reissued.baseline_epoch,
             Some(1),
             "the re-issued probe must record the CURRENT epoch"
         );
+    }
+
+    /// A `MaterializePrepare` ack whose enqueue-time epoch no longer
+    /// matches the binding's current `baseline_epoch` — an adoption,
+    /// abandon, or sibling-tab publish rewrote the baseline while the
+    /// prepare was in flight — carries a verdict about a world that no
+    /// longer exists. It must abandon the save attempt without
+    /// re-classifying the document or raising the disk-conflict Guard
+    /// (either would restart the re-merge-prompt loop a just-completed
+    /// reconciliation ended), and must re-probe so `last_sync` reflects
+    /// the post-rewrite world.
+    #[test]
+    fn stale_prepare_ack_abandons_the_save_without_reclassifying() {
+        let mut app = App::new(
+            Buffer::new("body"),
+            Some(PathBuf::from("/vault/note.md")),
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id = app.active;
+        app.doc_mut(id).expect("doc exists").replica =
+            Replica::Bound(DocDb::new(1, false, rune_db::Seq(0)));
+        app.install_or_join_file_binding(1, None);
+        let op_id = 7;
+        app.doc_mut(id).expect("doc exists").begin_prepare(
+            1,
+            Arc::from("body"),
+            crate::document::PublishParams {
+                path: PathBuf::from("/vault/note.md"),
+                bind_new: false,
+                db_id: 1,
+                seq: 0,
+                mode: crate::save::SaveMode::Normal,
+                bind_target: None,
+            },
+            op_id,
+        );
+        app.db_ops.insert(op_id, PendingOp::prepare(id, 0));
+
+        app.file_binding_mut(1)
+            .expect("binding exists")
+            .baseline_epoch = 1;
+
+        let mut effects = crate::runtime::Effects::default();
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::Db(rune_db::DbEvent::Ok {
+                id: op_id,
+                result: rune_db::OpOutcome::MaterializePrep(Box::new(
+                    rune_db::MaterializePrep::Overwrite {
+                        bound_path: "/vault/note.md".to_string(),
+                        expect_hash: BlobHash("stale".to_string()),
+                        sync: SyncKind::Diverged,
+                    },
+                )),
+            }),
+            &mut effects,
+        );
+
+        assert!(
+            app.doc(id).expect("doc exists").last_sync.is_none(),
+            "a stale-epoch prepare verdict must never overwrite last_sync"
+        );
+        assert!(
+            app.guard.is_none(),
+            "a stale-epoch prepare refusal must never raise the disk-conflict Guard"
+        );
+        assert!(
+            !app.doc(id).expect("doc exists").save_in_flight(),
+            "the save attempt must be abandoned"
+        );
+        let reissued = app
+            .db_ops
+            .values()
+            .find(|pending| pending.is_probe && pending.doc == id)
+            .expect("a fresh probe must be issued for the post-rewrite world");
+        assert_eq!(reissued.baseline_epoch, Some(1));
     }
 }
