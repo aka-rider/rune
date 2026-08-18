@@ -144,7 +144,21 @@ pub fn get<V: Vfs + ?Sized>(
     max_bytes: Option<u64>,
 ) -> Result<Sighting, GetRefusal> {
     let resolved = vfs.resolve(path).map_err(as_not_found)?;
-    let stat = vfs.stat(&resolved).map_err(as_not_found)?;
+    get_resolved(vfs, &resolved, max_bytes)
+}
+
+/// [`get`]'s body, minus the resolve — for a caller that already resolved
+/// `resolved` itself and must not resolve it a second time (a second,
+/// independent `Vfs::resolve` call is a symlink-swap TOCTOU window: the
+/// target the caller decided to open could stop being the target this
+/// function reads). `resolved` MUST already be the caller's own
+/// `Vfs::resolve` output, not an arbitrary path.
+pub fn get_resolved<V: Vfs + ?Sized>(
+    vfs: &V,
+    resolved: &Path,
+    max_bytes: Option<u64>,
+) -> Result<Sighting, GetRefusal> {
+    let stat = vfs.stat(resolved).map_err(as_not_found)?;
     if stat.kind != FileKind::File {
         return Err(GetRefusal::NotAFile(stat.kind));
     }
@@ -156,7 +170,7 @@ pub fn get<V: Vfs + ?Sized>(
             limit,
         });
     }
-    let (bytes, sighted) = bracketed_get(vfs, &resolved).map_err(GetRefusal::Io)?;
+    let (bytes, sighted) = bracketed_get(vfs, resolved).map_err(GetRefusal::Io)?;
     let etag = etag_of(&bytes);
     Ok(Sighting {
         bytes,

@@ -29,7 +29,7 @@ pub use mem::Mem;
 #[cfg(any(test, feature = "fault-injection"))]
 pub use mem::OpKind;
 pub use publish::{PutCondition, PutOutcome, put};
-pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, get};
+pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, get, get_resolved};
 
 /// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping
 /// `e` itself reachable as [`std::error::Error::source`] — so a caller can

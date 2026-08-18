@@ -179,7 +179,7 @@ fn open_first_text(
         ),
         None => (
             rune_core::buffer::Buffer::new(""),
-            bootstrap_new_file(Arc::clone(vfs), home),
+            bootstrap_new_file(Arc::clone(vfs), &path, home),
         ),
     };
 

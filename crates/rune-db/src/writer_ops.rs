@@ -239,6 +239,10 @@ pub(crate) enum OpKind {
     CreateScratch {
         session_id: SessionId,
         now: SystemTime,
+        /// `Some` when this scratch names a launch positional that does not
+        /// exist on disk yet (see `crate::scratch::create_scratch_with_intent`)
+        /// — `None` for the plain bare-launch/quit-guard shape.
+        intended_path: Option<String>,
     },
     GcEmptyScratch {
         keep_id: i64,
@@ -247,6 +251,12 @@ pub(crate) enum OpKind {
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// candidate ids, newest first.
     RecoverableScratch { exclude_id: i64 },
+    /// Like `RecoverableScratch`, narrowed to scratch rows recorded as
+    /// intending `intended_path` — a launch positional naming a path that
+    /// does not (yet) exist on disk. On success, the completion's
+    /// `DbEvent::Ok.result` carries the candidate ids, newest first
+    /// (`OpOutcome::Ids`, the same shape `RecoverableScratch` uses).
+    FindNamedScratch { intended_path: String },
     /// For an untitled document — see `scratch::reconstruct_scratch`.
     /// `liveness_check` travels with the op for the same reason `Load`
     /// carries its own copy: the writer thread never touches `Store`'s
