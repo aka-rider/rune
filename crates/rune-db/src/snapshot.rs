@@ -164,6 +164,51 @@ mod tests {
         }]
     }
 
+    /// A corrupted journal row — two `AppliedEdit`s that collide on the
+    /// identical post-edit `start` — must surface as `Error::ReplayFailed`
+    /// rather than let `recover_document` silently pick a replay order.
+    /// This is a shape `append_edit`'s own writer never produces (see
+    /// `rune_core::undo::inverse_edits`'s coalescing), so it stands in for
+    /// a row a build predating that guard could still have written.
+    #[test]
+    fn recover_surfaces_a_journal_row_with_colliding_applied_starts_as_replay_failed() {
+        let mut conn = open();
+        let session_id = insert_test_session(&conn);
+        let tx = conn.transaction().expect("tx");
+        let doc_id = insert_test_document(&tx);
+
+        let colliding = vec![
+            AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: String::new(),
+                insert: "a".to_string(),
+            },
+            AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: String::new(),
+                insert: "b".to_string(),
+            },
+        ];
+        append_edit(
+            &tx,
+            session_id,
+            SystemTime::now(),
+            doc_id,
+            &colliding,
+            &[],
+            &[],
+        )
+        .expect("append_edit");
+
+        let err = recover_document(&tx, session_id, doc_id).expect_err("must refuse the replay");
+        assert!(
+            matches!(err, Error::ReplayFailed(_)),
+            "expected ReplayFailed, got {err:?}"
+        );
+    }
+
     #[test]
     fn recover_with_no_snapshot_replays_from_empty() {
         let mut conn = open();

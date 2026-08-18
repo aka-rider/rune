@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rune_core::buffer::{Buffer, Edit};
+use rune_core::buffer::{Buffer, Edit, SortedEdits};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{EditKind, Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
@@ -615,12 +615,12 @@ impl Document {
                 "recovered draft looked truncated relative to the file on disk — kept the on-disk version",
             );
         }
-        let edit = Edit {
+        let edit = SortedEdits::single(Edit {
             start: 0,
             end: self.buffer.len(),
             insert: recovered.to_string(),
-        };
-        let Ok((new_buffer, applied)) = self.buffer.apply_edits(std::slice::from_ref(&edit)) else {
+        });
+        let Ok((new_buffer, applied)) = self.buffer.apply_edits(&edit) else {
             return Hydration::Refused("recovered draft failed to apply to the buffer");
         };
         self.cursors = self.cursors.map(|c| {

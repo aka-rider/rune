@@ -10,14 +10,11 @@
 
 use std::collections::HashMap;
 
-/// The highest 24-bit id `rune_image::alloc_id` (and this allocator's own
-/// probe) ever hands out — ids wrap from here back to `1`, never to `0`
-/// (`0` is not a valid Kitty image id).
-const MAX_ID: u32 = 0x00FF_FFFF;
+use rune_image::ImageId;
 
 #[derive(Default)]
 pub struct EmbedAllocator {
-    by_id: HashMap<u32, String>,
+    by_id: HashMap<ImageId, String>,
 }
 
 impl EmbedAllocator {
@@ -27,15 +24,17 @@ impl EmbedAllocator {
 
     /// A deterministic 24-bit id for `key` (an embed's resolved absolute
     /// path, as a string), probing linearly on collision with a DIFFERENT
-    /// key and wrapping past [`MAX_ID`] back to `1`. Reallocating the SAME
+    /// key and wrapping past [`rune_image::ids::MAX_ID`] back to `1` (via
+    /// [`ImageId::next`], the same collision-probe step every allocation
+    /// scheme built over `rune_image`'s ids shares). Reallocating the SAME
     /// key (a respawn) returns the id it already holds rather than probing
     /// past it — the mtime-respawn contract requires the base id to stay
     /// unchanged across a respawn (plan gotcha 3).
-    pub fn alloc_free_id(&mut self, key: &str) -> u32 {
+    pub fn alloc_free_id(&mut self, key: &str) -> ImageId {
         let mut id = rune_image::alloc_id(key.as_bytes());
         loop {
             match self.by_id.get(&id) {
-                Some(existing) if existing != key => id = probe_next(id),
+                Some(existing) if existing != key => id = id.next(),
                 _ => {
                     self.by_id.insert(id, key.to_string());
                     return id;
@@ -50,14 +49,6 @@ impl EmbedAllocator {
     pub fn free_all_for(&mut self, key: &str) {
         self.by_id.retain(|_, v| v != key);
     }
-}
-
-/// One collision-probe step (plan WP9.S6: "linear probing on collision,
-/// wrapping past `0xFFFFFF` back to `1`") — split out so the wrap edge is
-/// unit-testable without occupying millions of ids to force a real
-/// `alloc_free_id` call all the way to the boundary.
-fn probe_next(id: u32) -> u32 {
-    if id >= MAX_ID { 1 } else { id + 1 }
 }
 
 #[cfg(test)]
@@ -92,12 +83,5 @@ mod tests {
         alloc.free_all_for("/vault/x.png");
         assert!(!alloc.by_id.contains_key(&a));
         assert!(alloc.by_id.contains_key(&b));
-    }
-
-    #[test]
-    fn probing_wraps_past_the_max_id_back_to_one() {
-        assert_eq!(probe_next(MAX_ID), 1);
-        assert_eq!(probe_next(MAX_ID - 1), MAX_ID);
-        assert_eq!(probe_next(1), 2);
     }
 }

@@ -1,10 +1,7 @@
 //! In-memory undo journal, SQLite-shaped for Phase 2 (the durable store adds
 //! persistence behind the same peek-then-commit shape, not a new one).
 
-use crate::buffer::{
-    AppliedEdit, Buffer, BufferError, Edit, clone_and_sort_edits_descending,
-    duplicate_applied_start,
-};
+use crate::buffer::{AppliedEdit, Buffer, BufferError, Edit, SortedEdits, duplicate_applied_start};
 use crate::cursor::Cursor;
 
 /// Merge every pair of adjacent/overlapping PURE-DELETE edits (`insert`
@@ -86,7 +83,7 @@ pub fn coalesce_touching_deletes<T>(
 /// `DuplicateEditStart` itself: any batch that still collides after this
 /// merge (e.g. a corrupted/adversarial persisted journal row) is still
 /// refused by `apply_edits`, unchanged.
-pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
+pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<SortedEdits, BufferError> {
     let mut raw = Vec::with_capacity(edits.len());
     for ae in edits {
         let end = ae
@@ -108,7 +105,7 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
     }
     let merged = coalesce_touching_deletes(raw, |(), ()| ());
     let plain: Vec<Edit> = merged.into_iter().map(|(e, ())| e).collect();
-    Ok(clone_and_sort_edits_descending(&plain))
+    Ok(SortedEdits::sort(&plain))
 }
 
 /// Apply the inverse of `edits` to `buf` (undo). All-or-nothing: on error
@@ -117,6 +114,18 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
 pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
     let inverse = inverse_edits(edits)?;
     let (new_buf, _) = buf.apply_edits(&inverse)?;
+    Ok(new_buf)
+}
+
+/// `reapply`'s own single-edit application boundary — [`SortedEdits::validate`]
+/// rather than [`SortedEdits::sort`], since a persisted journal row replayed
+/// through this function (`rune-db`'s recovery-store snapshot rebuild) is
+/// adversarial, decoded input: a single edit is always trivially ordered,
+/// but proving that rather than assuming it keeps this call site honest if
+/// `reapply` is ever changed to batch more than one edit at a time.
+fn apply_one_validated(buf: &Buffer, edit: Edit) -> Result<Buffer, BufferError> {
+    let sorted = SortedEdits::validate(vec![edit])?;
+    let (new_buf, _) = buf.apply_edits(&sorted)?;
     Ok(new_buf)
 }
 
@@ -179,8 +188,7 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
             end,
             insert: e.insert.clone(),
         };
-        let (new_buf, _) = work.apply_edits(std::slice::from_ref(&edit))?;
-        work = new_buf;
+        work = apply_one_validated(&work, edit)?;
     }
     Ok(work)
 }
@@ -285,11 +293,11 @@ mod tests {
     fn undo_then_redo_round_trips_content() {
         let buf = Buffer::new("hello world");
         let (edited, applied) = buf
-            .apply_edits(&[Edit {
+            .apply_edits(&SortedEdits::single(Edit {
                 start: 5,
                 end: 11,
                 insert: " rust".to_string(),
-            }])
+            }))
             .expect("edit should apply");
         assert_eq!(edited.content(), "hello rust");
 
@@ -318,7 +326,7 @@ mod tests {
     #[test]
     fn adjacent_bare_deletes_collide_on_the_same_post_edit_start() {
         let buf = Buffer::new("ab");
-        let err = buf.apply_edits(&[
+        let sorted = SortedEdits::sort(&[
             Edit {
                 start: 1,
                 end: 2,
@@ -330,6 +338,7 @@ mod tests {
                 insert: String::new(),
             },
         ]);
+        let err = buf.apply_edits(&sorted);
         assert_eq!(
             err,
             Err(BufferError::DuplicateEditStart { start: 0 }),
@@ -399,7 +408,7 @@ mod tests {
             insert: format!("{line}\n"),
         };
         let (cloned, applied) = buf
-            .apply_edits(&[clone_edit(), clone_edit()])
+            .apply_edits(&SortedEdits::sort(&[clone_edit(), clone_edit()]))
             .expect("two same-line pure-insert clones must not collide going forward");
         assert_eq!(cloned.content(), "\nhello world\nhello world\nhello world");
         assert_eq!(applied.len(), 2, "one AppliedEdit per cursor's clone");

@@ -208,15 +208,19 @@ impl Buffer {
             end,
             insert: text.to_string(),
         };
-        let sorted = clone_and_sort_edits_descending(std::slice::from_ref(&edit));
-        let (new_buf, _) = self.apply_edits(&sorted)?;
+        let (new_buf, _) = self.apply_edits(&SortedEdits::single(edit))?;
         Ok(new_buf)
     }
 
-    /// Apply a batch of edits atomically. `edits` must already be sorted
-    /// descending by `start` and non-overlapping (see
-    /// `clone_and_sort_edits_descending`) — validated, never assumed.
-    pub fn apply_edits(&self, edits: &[Edit]) -> Result<(Buffer, Vec<AppliedEdit>), BufferError> {
+    /// Apply a batch of edits atomically. `edits` proves its own sort order
+    /// and non-overlap by construction ([`SortedEdits`]) — this no longer
+    /// re-derives that invariant on every call, only the per-edit bounds
+    /// and char-boundary checks that a proven sort order cannot imply.
+    pub fn apply_edits(
+        &self,
+        edits: &SortedEdits,
+    ) -> Result<(Buffer, Vec<AppliedEdit>), BufferError> {
+        let edits = edits.as_slice();
         if edits.is_empty() {
             return Ok((self.clone(), Vec::new()));
         }
@@ -317,10 +321,6 @@ impl Buffer {
 }
 
 fn validate_edit_batch(content: &str, edits: &[Edit]) -> Result<(), BufferError> {
-    if !is_sorted_descending_non_overlapping(edits) {
-        return Err(BufferError::EditsNotSortedOrOverlapping);
-    }
-
     let len = content.len();
     for e in edits {
         if e.end > len || e.start > e.end {
@@ -358,7 +358,7 @@ pub(crate) fn duplicate_applied_start(applied: &[AppliedEdit]) -> Option<usize> 
         .and_then(|w| w.first().copied())
 }
 
-pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
+fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     edits.windows(2).all(|w| match (w.first(), w.get(1)) {
         (Some(a), Some(b)) => a.start >= b.end,
         _ => true,
@@ -367,10 +367,52 @@ pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
 
 /// `sort_by` is stable — ties break deterministically for any
 /// distinguishable `(start, end)` pair.
-pub fn clone_and_sort_edits_descending(edits: &[Edit]) -> Vec<Edit> {
+fn clone_and_sort_edits_descending(edits: &[Edit]) -> Vec<Edit> {
     let mut cloned = edits.to_vec();
     cloned.sort_by(|a, b| b.start.cmp(&a.start).then(b.end.cmp(&a.end)));
     cloned
+}
+
+/// An edit batch proven sorted descending by `start` and non-overlapping —
+/// [`Buffer::apply_edits`]'s only accepted input shape. The two
+/// constructors are the only way to obtain one: [`SortedEdits::sort`] sorts
+/// arbitrary edits into that order (always non-overlapping input is still
+/// the caller's job — coalescing touching/overlapping ranges before this
+/// point, as `rune-tui`'s `edit_core::coalesce_touching_edits` does), while
+/// [`SortedEdits::validate`] checks rather than assumes, for a batch
+/// arriving from outside this process's own edit construction — a
+/// persisted journal row, most notably.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SortedEdits(Vec<Edit>);
+
+impl SortedEdits {
+    pub fn sort(edits: &[Edit]) -> SortedEdits {
+        SortedEdits(clone_and_sort_edits_descending(edits))
+    }
+
+    pub fn single(edit: Edit) -> SortedEdits {
+        SortedEdits(vec![edit])
+    }
+
+    pub fn validate(edits: Vec<Edit>) -> Result<SortedEdits, BufferError> {
+        if is_sorted_descending_non_overlapping(&edits) {
+            Ok(SortedEdits(edits))
+        } else {
+            Err(BufferError::EditsNotSortedOrOverlapping)
+        }
+    }
+
+    pub fn as_slice(&self) -> &[Edit] {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[cfg(test)]
@@ -389,11 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn apply_edits_descending_order_and_overlap() {
-        let b = Buffer::new("hello world");
-
-        // Ascending order (should fail).
-        let err = b.apply_edits(&[
+    fn sorted_edits_validate_rejects_ascending_order() {
+        let err = SortedEdits::validate(vec![
             Edit {
                 start: 0,
                 end: 5,
@@ -406,9 +445,11 @@ mod tests {
             },
         ]);
         assert_eq!(err, Err(BufferError::EditsNotSortedOrOverlapping));
+    }
 
-        // Overlapping (should fail).
-        let err = b.apply_edits(&[
+    #[test]
+    fn sorted_edits_validate_rejects_overlap() {
+        let err = SortedEdits::validate(vec![
             Edit {
                 start: 5,
                 end: 10,
@@ -421,9 +462,12 @@ mod tests {
             },
         ]);
         assert_eq!(err, Err(BufferError::EditsNotSortedOrOverlapping));
+    }
 
-        // Correct (should pass).
-        let ok = b.apply_edits(&[
+    #[test]
+    fn apply_edits_accepts_a_validated_descending_non_overlapping_batch() {
+        let b = Buffer::new("hello world");
+        let sorted = SortedEdits::validate(vec![
             Edit {
                 start: 6,
                 end: 11,
@@ -434,8 +478,9 @@ mod tests {
                 end: 5,
                 insert: "a".to_string(),
             },
-        ]);
-        assert!(ok.is_ok());
+        ])
+        .expect("already descending and non-overlapping");
+        assert!(b.apply_edits(&sorted).is_ok());
     }
 
     #[test]
@@ -467,7 +512,7 @@ mod tests {
     #[test]
     fn apply_edits_rejects_a_batch_whose_edits_collide_on_post_edit_start() {
         let b = Buffer::new("ab");
-        let err = b.apply_edits(&[
+        let sorted = SortedEdits::sort(&[
             Edit {
                 start: 1,
                 end: 2,
@@ -479,6 +524,7 @@ mod tests {
                 insert: String::new(),
             },
         ]);
+        let err = b.apply_edits(&sorted);
         assert_eq!(err, Err(BufferError::DuplicateEditStart { start: 0 }));
     }
 }

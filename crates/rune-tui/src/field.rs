@@ -17,7 +17,7 @@
 
 use std::ops::Range;
 
-use rune_core::buffer::{Buffer, Edit};
+use rune_core::buffer::{Buffer, Edit, SortedEdits};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{self, EditKind, Journal, Step};
 
@@ -276,11 +276,11 @@ impl TextField {
             return KeyOutcome::Ignored;
         }
         let before = self.cursor;
-        let edits = [Edit {
+        let edits = SortedEdits::single(Edit {
             start,
             end,
             insert: insert.to_string(),
-        }];
+        });
         let Ok((new_buf, applied)) = self.buffer.apply_edits(&edits) else {
             return KeyOutcome::Ignored; // refuse an out-of-range edit rather than corrupt the buffer
         };

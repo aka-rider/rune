@@ -105,7 +105,7 @@ fn a_standalone_image_line_renders_placeholder_cells_with_the_allocated_id() {
         matches!(embed.status, ImageStatus::Live { .. }),
         "decode must have landed"
     );
-    let expected_id = embed.id;
+    let expected_id = embed.id.get();
 
     let buf = testgrid::draw(&app, 60, 20);
     let placeholder = rune_image::PLACEHOLDER;
@@ -205,7 +205,7 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
         .images
         .get("x.png")
         .expect("embed tracked");
-    let expected_id = embed.id;
+    let expected_id = embed.id.get();
     let (r, g, b) = (
         ((expected_id >> 16) & 0xFF) as u8,
         ((expected_id >> 8) & 0xFF) as u8,
@@ -283,11 +283,11 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     {
         let doc = app.doc_mut(id).expect("doc");
         let new_content = "text before\n\n";
-        let edits = [rune_core::buffer::Edit {
+        let edits = rune_core::buffer::SortedEdits::single(rune_core::buffer::Edit {
             start: 0,
             end: doc.buffer.len(),
             insert: new_content.to_string(),
-        }];
+        });
         let (new_buffer, _applied) = doc.buffer.apply_edits(&edits).expect("edit applies");
         doc.buffer = new_buffer;
         doc.cursors = CursorSet::new(0);

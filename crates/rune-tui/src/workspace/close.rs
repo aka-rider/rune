@@ -154,7 +154,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     {
         effects
             .raw
-            .push(rune_image::encode_delete(image.id).into_bytes());
+            .push(rune_image::encode_delete(image.id.get()).into_bytes());
     }
     let mut active_changed = false;
     if app.documents.len() == 1 {
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(effects.raw.len(), 1);
         assert_eq!(
             effects.raw[0],
-            rune_image::encode_delete(expected_id).into_bytes()
+            rune_image::encode_delete(expected_id.get()).into_bytes()
         );
     }
 

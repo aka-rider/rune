@@ -4,7 +4,7 @@
 //! lifecycle status the info card / placeholder cells read. Lives on
 //! `Document::image`, `None` for every non-image document.
 
-use rune_image::{CellFootprint, PixelSize};
+use rune_image::{CellFootprint, ImageId, PixelSize};
 
 /// An image document's decode/transmit lifecycle (plan WP4.S6/WP4.S10): a
 /// still terminal-graphics FSM state, not yet the full one WP9/WP10 add for
@@ -38,7 +38,7 @@ pub enum ImageStatus {
 pub struct ImageState {
     pub path: std::path::PathBuf,
     pub bytes_len: u64,
-    pub id: u32,
+    pub id: ImageId,
     pub dims: Option<PixelSize>,
     pub status: ImageStatus,
     pub in_flight: Option<u64>,

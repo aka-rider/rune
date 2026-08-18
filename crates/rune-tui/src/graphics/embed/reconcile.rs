@@ -206,7 +206,7 @@ fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effect
             embeds.alloc.free_all_for(&state.abs_path.to_string_lossy());
             effects
                 .raw
-                .push(rune_image::encode_delete(state.id).into_bytes());
+                .push(rune_image::encode_delete(state.id.get()).into_bytes());
         }
     }
 }
