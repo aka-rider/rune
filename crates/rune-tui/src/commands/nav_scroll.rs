@@ -86,7 +86,15 @@ pub(crate) fn page_step(doc: &Document) -> isize {
     if h > 1 { (h - 1) as isize } else { 1 }
 }
 
-/// Shared vertical-motion driver (line up/down, page up/down).
+/// Shared vertical-motion driver (line up/down, page up/down). Two passes:
+/// the first moves each cursor using the PRE-move view (reveal keyed off
+/// the old cursor position), which finds the right row but can misjudge the
+/// column on a line whose reveal state is itself cursor-driven (a heading's
+/// `# ` conceals until the caret lands on it) — landing there changes that
+/// line's own wrap layout the instant the cursor arrives. The second pass
+/// re-views (now reflecting the moved cursor) and resnaps each cursor's
+/// column from `desired_col` against that settled layout, so the caret ends
+/// up where the user now sees it, not where the stale layout put it.
 fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
     let view = doc.view();
     let new_cursors: Vec<Cursor> = doc
@@ -96,6 +104,47 @@ fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
         .map(|&c| move_row(&view, &doc.buffer, c, delta, extend))
         .collect();
     doc.cursors = CursorSet::new_from(&new_cursors);
+
+    let settled = doc.view();
+    let resettled: Vec<Cursor> = doc
+        .cursors
+        .all()
+        .iter()
+        .map(|&c| resettle_col(&settled, &doc.buffer, c, extend))
+        .collect();
+    doc.cursors = CursorSet::new_from(&resettled);
+}
+
+/// Re-derives a cursor's byte position from its own `desired_col` against
+/// `view`, keeping it on the same wrap row — the settle half of
+/// `move_row_cursors`'s two-pass fixup.
+fn resettle_col(
+    view: &ViewSnapshots,
+    buf: &rune_core::buffer::Buffer,
+    c: Cursor,
+    extend: Extend,
+) -> Cursor {
+    let bp = buf.offset_to_line_col(c.position);
+    let sp = view.syntax.buffer_to_syntax(bp);
+    let wp = view.wrap.syntax_to_wrap(sp);
+    let col = view
+        .wrap
+        .byte_col_from_visual(buf.content(), wp.row, c.desired_col);
+    let sp2 = view
+        .wrap
+        .wrap_to_syntax(buf.content(), WrapPoint { row: wp.row, col });
+    let bp2 = view.syntax.syntax_to_buffer(sp2);
+    let offset2 = buf.line_col_to_offset(bp2);
+    Cursor {
+        position: offset2,
+        anchor: if extend == Extend::Yes {
+            c.anchor
+        } else {
+            offset2
+        },
+        desired_col: c.desired_col,
+        id: c.id,
+    }
 }
 
 pub fn line_up(doc: &mut Document, extend: Extend) {

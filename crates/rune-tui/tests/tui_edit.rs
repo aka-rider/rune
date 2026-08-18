@@ -468,3 +468,49 @@ fn undo_with_an_empty_journal_is_a_no_op() {
     press(&mut app, KeyCode::Char('z'), SUP);
     assert_eq!(app.active_doc_mut().buffer.content(), "hello");
 }
+
+/// Moving straight onto a concealing heading with the caret at visual
+/// column 0 must land BEFORE its `# ` marker (byte 0 of that line), not
+/// after it — the marker is the leftmost thing on screen once the line
+/// reveals, so a fresh caret placed there directly (no navigation at all)
+/// sits at byte 0 too; this is that same landing spot reached via `Down`.
+#[test]
+fn moving_down_onto_a_heading_lands_before_its_marker() {
+    let content = "plain\n# Heading\ntext\n";
+    let mut app = app_for(content, 0);
+    press(&mut app, KeyCode::Down, Mods::NONE);
+    assert_eq!(
+        app.active_doc_mut().cursors.primary().position,
+        "plain\n".len()
+    );
+}
+
+/// Down then Up back onto a concealing heading must not change where
+/// typing lands versus a caret that never left the line: the round trip
+/// through the concealed line below must resettle the caret's column
+/// against the heading's own (revealed) layout, not the stale layout of
+/// wherever it detoured through.
+#[test]
+fn down_then_up_over_a_concealing_heading_lands_where_a_fresh_caret_would() {
+    let content = "# Heading\ntext\n";
+
+    let mut baseline = app_for(content, 0);
+    press(&mut baseline, KeyCode::Char('X'), Mods::NONE);
+    let baseline_content = baseline.active_doc_mut().buffer.content().to_string();
+
+    let mut roundtrip = app_for(content, 0);
+    press(&mut roundtrip, KeyCode::Down, Mods::NONE);
+    press(&mut roundtrip, KeyCode::Up, Mods::NONE);
+    assert_eq!(
+        roundtrip.active_doc_mut().cursors.primary().position,
+        0,
+        "the round trip must resettle the caret back to byte 0, not inside the revealed text"
+    );
+    press(&mut roundtrip, KeyCode::Char('X'), Mods::NONE);
+    let roundtrip_content = roundtrip.active_doc_mut().buffer.content().to_string();
+
+    assert_eq!(
+        roundtrip_content, baseline_content,
+        "a Down/Up round trip over a concealing heading must not change where typing lands"
+    );
+}
