@@ -1,5 +1,5 @@
-//! Exec-probes against the REAL compiled `rune` binary (plan WP4.S7/
-//! [rune-cli 13]): the only reliable way to assert on a process exit code,
+//! Exec-probes against the REAL compiled `rune` binary:
+//! the only reliable way to assert on a process exit code,
 //! since `std::process::ExitCode` (what `main`/`launch` return in-process)
 //! is deliberately opaque and can't be inspected by a unit test. Every case
 //! here is an EARLY-EXIT path (`--help`/`--version`, a rejected command
@@ -117,7 +117,7 @@ fn launch_non_unicode_argv_exits_usage_not_a_panic() {
     let output = rune().arg(bad_arg).output().expect("run rune <bad argv>");
     // Exit 64 (EX_USAGE), never 101 (the default Rust panic exit code) —
     // `env::args()` used to panic on non-UTF-8 argv before `env::args_os()`
-    // replaced it (plan WP4.S2/[rune-cli 4]).
+    // replaced it.
     assert_ne!(
         output.status.code(),
         Some(101),
@@ -126,8 +126,8 @@ fn launch_non_unicode_argv_exits_usage_not_a_panic() {
     assert_eq!(output.status.code(), Some(EX_USAGE));
 }
 
-/// The exit-code matrix (plan WP4's Done-when): every early-exit code this
-/// binary can produce, from one process launch each.
+/// The exit-code matrix: every early-exit code this binary can produce,
+/// from one process launch each.
 #[test]
 fn launch_exit_code_matrix() {
     let cases: &[(&[&str], i32)] = &[
