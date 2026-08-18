@@ -148,11 +148,11 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
         "doc b's write already committed before the writer died"
     );
     assert!(
-        !app.doc(id_a).unwrap().is_dirty(),
+        !app.doc(id_a).unwrap().dirty_for_render(),
         "doc a's already-landed save must not read as dirty after the Fatal teardown"
     );
     assert!(
-        !app.doc(id_b).unwrap().is_dirty(),
+        !app.doc(id_b).unwrap().dirty_for_render(),
         "doc b's already-landed save must not read as dirty after the Fatal teardown \
          — this is the re-entrancy this test exists to catch: doc a's own re-baseline \
          must never sweep doc b's still-queued save_pending out from under it"

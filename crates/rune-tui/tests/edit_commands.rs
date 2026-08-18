@@ -335,7 +335,7 @@ fn reading_view_blocks_undo_and_redo() {
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
 
     app.doc_mut(id).unwrap().read_only = ReadOnly::Reading;
-    let dirty_before = app.doc(id).unwrap().is_dirty();
+    let dirty_before = app.doc(id).unwrap().dirty_for_render();
 
     undo(&mut app, id);
     assert_eq!(
@@ -344,7 +344,7 @@ fn reading_view_blocks_undo_and_redo() {
         "undo must be blocked in reading view"
     );
     assert_eq!(
-        app.doc(id).unwrap().is_dirty(),
+        app.doc(id).unwrap().dirty_for_render(),
         dirty_before,
         "a blocked undo must not change dirtiness"
     );
@@ -361,7 +361,7 @@ fn reading_view_blocks_undo_and_redo() {
         "redo must be blocked in reading view"
     );
     assert_eq!(
-        app.doc(id).unwrap().is_dirty(),
+        app.doc(id).unwrap().dirty_for_render(),
         dirty_before,
         "a blocked redo must not change dirtiness"
     );
@@ -383,7 +383,7 @@ fn preview_blocks_undo_and_redo() {
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
 
     app.doc_mut(id).unwrap().read_only = ReadOnly::Preview;
-    let dirty_before = app.doc(id).unwrap().is_dirty();
+    let dirty_before = app.doc(id).unwrap().dirty_for_render();
 
     undo(&mut app, id);
     assert_eq!(
@@ -392,7 +392,7 @@ fn preview_blocks_undo_and_redo() {
         "undo must be blocked on a preview document"
     );
     assert_eq!(
-        app.doc(id).unwrap().is_dirty(),
+        app.doc(id).unwrap().dirty_for_render(),
         dirty_before,
         "a blocked undo must not change dirtiness"
     );
@@ -409,7 +409,7 @@ fn preview_blocks_undo_and_redo() {
         "redo must be blocked on a preview document"
     );
     assert_eq!(
-        app.doc(id).unwrap().is_dirty(),
+        app.doc(id).unwrap().dirty_for_render(),
         dirty_before,
         "a blocked redo must not change dirtiness"
     );

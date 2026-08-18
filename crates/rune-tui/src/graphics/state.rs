@@ -29,8 +29,7 @@ pub enum ImageStatus {
 /// decode `Cmd` exists to populate `decoded`. `in_flight` carries the request
 /// generation a currently-running async decode was spawned against (WP5) —
 /// `spawn_cmd` has no cancellation, so a stale reply must be recognisable
-/// and dropped; `next_generation` is the last generation this document ever
-/// issued, so a fresh spawn always mints a strictly greater value than any
+/// and dropped; `next_generation` mints a value strictly greater than any
 /// generation this document has issued before — including one whose reply
 /// never arrived — rather than deriving a value from `in_flight` (which is
 /// `None` again once a decode finishes, and would otherwise let a later
@@ -41,6 +40,6 @@ pub struct ImageState {
     pub id: ImageId,
     pub dims: Option<PixelSize>,
     pub status: ImageStatus,
-    pub in_flight: Option<u64>,
-    pub next_generation: u64,
+    pub in_flight: Option<crate::generation::Generation>,
+    pub next_generation: crate::generation::GenCounter,
 }

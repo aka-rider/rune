@@ -294,7 +294,7 @@ mod tests {
             PathBuf::from("/"),
             entries(&[("sub", true)]),
             DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
         app.explorer.nav.cursor = 0;
         let root_before = app.explorer.root.clone();
@@ -320,7 +320,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("b", false), ("c", false)]),
             DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
         let mut effects = Effects::default();
 

@@ -197,7 +197,14 @@ fn save_after_undo_past_a_published_merge_writes() {
         "the undone buffer must reach disk"
     );
     fixture.session.app_mut().recompute_dirty(fixture.doc);
-    assert!(!fixture.session.app().doc(fixture.doc).unwrap().is_dirty());
+    assert!(
+        !fixture
+            .session
+            .app()
+            .doc(fixture.doc)
+            .unwrap()
+            .dirty_for_render()
+    );
 }
 
 /// The mirror case: with no intermediate save, disk still holds the
@@ -232,7 +239,12 @@ fn save_after_undo_past_an_unpublished_merge_is_refused() {
     );
     fixture.session.app_mut().recompute_dirty(fixture.doc);
     assert!(
-        fixture.session.app().doc(fixture.doc).unwrap().is_dirty(),
+        fixture
+            .session
+            .app()
+            .doc(fixture.doc)
+            .unwrap()
+            .dirty_for_render(),
         "a refused save must never mark the document saved"
     );
     assert!(
@@ -267,7 +279,14 @@ fn save_anyway_after_the_refusal_publishes_the_buffer() {
         "[S]ave anyway must publish the buffer's own bytes"
     );
     fixture.session.app_mut().recompute_dirty(fixture.doc);
-    assert!(!fixture.session.app().doc(fixture.doc).unwrap().is_dirty());
+    assert!(
+        !fixture
+            .session
+            .app()
+            .doc(fixture.doc)
+            .unwrap()
+            .dirty_for_render()
+    );
 }
 
 /// The control for the refusal case below: `^w` answered with `[S]ave`
@@ -348,5 +367,12 @@ fn redo_back_over_the_merge_restores_an_ordinary_save() {
     );
     assert_eq!(fixture.on_disk(), redone.as_bytes());
     fixture.session.app_mut().recompute_dirty(fixture.doc);
-    assert!(!fixture.session.app().doc(fixture.doc).unwrap().is_dirty());
+    assert!(
+        !fixture
+            .session
+            .app()
+            .doc(fixture.doc)
+            .unwrap()
+            .dirty_for_render()
+    );
 }

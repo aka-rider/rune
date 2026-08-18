@@ -116,7 +116,7 @@ fn ctrl_w_from_editor_focus_on_a_dirty_document_arms_the_guard() {
     let mut session = open_seeded();
     let second = open_second(&mut session);
     edit::insert_char(session.app_mut(), second, '!');
-    assert!(session.app().doc(second).unwrap().is_dirty());
+    assert!(session.app().doc(second).unwrap().dirty_for_render());
     session
         .app_mut()
         .set_focus_pane(Pane::Editor, &mut Effects::default());

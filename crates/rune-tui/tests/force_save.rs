@@ -73,7 +73,7 @@ fn disk_conflict_guard_save_anyway_force_saves_and_preserves_the_displaced_bytes
         "!hello"
     );
     assert!(
-        !session.app().doc(doc_id).unwrap().is_dirty(),
+        !session.app().doc(doc_id).unwrap().dirty_for_render(),
         "a committed force-save must clear the dirty flag"
     );
     assert_eq!(
@@ -121,7 +121,7 @@ fn disk_conflict_guard_save_anyway_over_the_restored_baseline_posts_no_race_mess
     drain_materialize_round_trip(&mut session);
 
     assert!(session.app().guard.is_none());
-    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().dirty_for_render());
     assert_eq!(
         session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello"
@@ -160,7 +160,7 @@ fn disk_conflict_guard_save_anyway_succeeds_even_if_the_disk_moves_again_before_
         session.app().doc(doc_id).unwrap().buffer.content(),
         "!hello"
     );
-    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().dirty_for_render());
     assert_eq!(
         session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello"
@@ -205,7 +205,7 @@ fn disk_conflict_guard_save_anyway_recreates_the_file_when_it_vanished_meanwhile
         session.app().doc(doc_id).unwrap().buffer.content(),
         "!hello"
     );
-    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().dirty_for_render());
     assert_eq!(
         session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello"
@@ -229,7 +229,7 @@ fn an_ordinary_save_still_succeeds_once_the_disk_is_quiet() {
         session.app().guard.is_none(),
         "a save against a quiet disk must never raise the conflict guard"
     );
-    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().dirty_for_render());
     assert_eq!(
         session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello",
@@ -297,7 +297,7 @@ fn disk_conflict_prompt_survives_refused_force() {
     );
     drain_materialize_round_trip(&mut session);
 
-    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().dirty_for_render());
     assert_eq!(
         session.app().vfs.read(Path::new("/doc.md")).unwrap(),
         b"!hello",
@@ -354,7 +354,7 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
         "a baseline unconfirmed only because bookkeeping was lost must not \
          conflict against bytes this session itself just wrote"
     );
-    assert!(!session.app().doc(doc_id).unwrap().is_dirty());
+    assert!(!session.app().doc(doc_id).unwrap().dirty_for_render());
     assert_eq!(
         session
             .app()

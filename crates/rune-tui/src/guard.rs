@@ -753,7 +753,7 @@ mod tests {
     fn force_save_bypasses_not_dirty() {
         let mut app = store_bound_app(false);
         let doc = app.active;
-        assert!(!app.doc(doc).unwrap().is_dirty());
+        assert!(!app.doc(doc).unwrap().dirty_for_render());
         let mut effects = Effects::default();
 
         assert_eq!(

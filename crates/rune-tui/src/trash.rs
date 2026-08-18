@@ -92,8 +92,8 @@ pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
     if refuse_if_dirty(app, &path) {
         return;
     }
-    app.trash_gen = app.trash_gen.wrapping_add(1);
-    let generation = app.trash_gen;
+    let generation = app.next_trash_gen.mint();
+    app.trash_gen = generation;
     app.trash_pending = Some(path.clone());
     effects
         .cmds
@@ -115,7 +115,11 @@ fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
 
 /// The off-thread `vfs.trash` call — mirrors `rename_create::rename_cmd`'s
 /// shape.
-fn trash_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, generation: u32) -> Cmd {
+fn trash_cmd(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    generation: crate::generation::Generation,
+) -> Cmd {
     Cmd::trash(move || {
         let result = vfs.trash(&path).map_err(|e| e.to_string());
         Some(Msg::TrashDone {
@@ -145,7 +149,7 @@ fn trash_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, generation: u32) ->
 /// prompt for a document that no longer exists.
 pub(crate) fn handle_trash_done(
     app: &mut App,
-    generation: u32,
+    generation: crate::generation::Generation,
     path: &Path,
     result: Result<(), String>,
     effects: &mut Effects,

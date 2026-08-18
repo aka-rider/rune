@@ -288,7 +288,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     }
 }
 
-/// `Document::is_dirty` reads only the cache this recomputes. A straight
+/// `Document::dirty_for_render` reads only the cache this recomputes. A straight
 /// content comparison against `saved_content` — never a version proxy:
 /// `Buffer::apply_edits` always returns `version + 1`, and undo/redo build
 /// a fresh buffer, so a version comparison alone leaves an edit-then-undo
@@ -305,10 +305,11 @@ pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
 /// `recompute_dirty`'s other callers (edit/ack sites) already keep current
 /// between transitions. Every transition-time dirty check — the close-guard
 /// predicate, `workspace::request_close`, and the quit-guard's scan over
-/// unpreserved documents — calls this instead of `Document::is_dirty` so a
-/// transition's answer is never one edit/ack stale — render is the one place
-/// that keeps reading the cache.
+/// unpreserved documents — calls this instead of `Document::dirty_for_render`
+/// so a transition's answer is never one edit/ack stale — render is the one
+/// place that keeps reading the cache.
 pub(crate) fn is_dirty_now(app: &mut App, id: DocumentId) -> bool {
     recompute_dirty(app, id);
-    app.doc(id).is_some_and(super::document::Document::is_dirty)
+    app.doc(id)
+        .is_some_and(super::document::Document::dirty_for_render)
 }

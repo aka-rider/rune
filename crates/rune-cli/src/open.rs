@@ -298,7 +298,7 @@ mod tests {
         );
 
         assert!(
-            app.doc(id).expect("doc exists").is_dirty(),
+            app.doc(id).expect("doc exists").dirty_for_render(),
             "a recovered draft that differs from its (empty) baseline must be dirty"
         );
     }

@@ -27,7 +27,13 @@ fn load_entries(app: &mut App, names: &[&str]) {
             kind: FileKind::File,
         })
         .collect();
-    crate::explorer::handle_dir_loaded(app, PathBuf::from("/root"), entries, DirCause::Nav, 0);
+    crate::explorer::handle_dir_loaded(
+        app,
+        PathBuf::from("/root"),
+        entries,
+        DirCause::Nav,
+        crate::generation::Generation::ZERO,
+    );
 }
 
 /// Drains and runs every queued `Cmd`, feeding each `Msg` it produces
@@ -246,7 +252,13 @@ fn a_directory_row_produces_no_read_and_keeps_the_previous_preview() {
             kind: FileKind::Dir,
         },
     ];
-    crate::explorer::handle_dir_loaded(&mut app, PathBuf::from("/root"), entries, DirCause::Nav, 0);
+    crate::explorer::handle_dir_loaded(
+        &mut app,
+        PathBuf::from("/root"),
+        entries,
+        DirCause::Nav,
+        crate::generation::Generation::ZERO,
+    );
     let mut effects = Effects::default();
     app.explorer.nav.move_by(1, app.explorer.entries.len()); // "a.md"
     after_cursor_move(&mut app, &mut effects);

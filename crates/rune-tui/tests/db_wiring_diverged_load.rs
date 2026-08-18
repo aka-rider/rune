@@ -75,7 +75,7 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
     );
     assert_eq!(doc.last_sync, Some(SyncKind::Diverged));
     assert!(
-        doc.is_dirty(),
+        doc.dirty_for_render(),
         "an adopted draft that differs from disk must be dirty"
     );
     assert!(
@@ -144,7 +144,7 @@ fn bridged_load_without_disk_divergence_posts_a_plain_recovery_message() {
         Some(SyncKind::BufferAhead),
         "an unmoved disk with a bridged unsaved edit is BufferAhead, never Diverged"
     );
-    assert!(doc.is_dirty());
+    assert!(doc.dirty_for_render());
     assert_eq!(
         rune_tui::messages::posts(app),
         1,

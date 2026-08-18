@@ -85,7 +85,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         } else {
             "  "
         };
-        let dirty_marker = if doc.is_dirty() { "x" } else { " " };
+        let dirty_marker = if doc.dirty_for_render() { "x" } else { " " };
         let pin_marker = if doc.pinned { "*" } else { " " };
         let sync_marker = if doc
             .last_sync

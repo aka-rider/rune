@@ -59,7 +59,7 @@ fn cmd_s_creates_the_file_and_clears_bind_new() {
         "the create just committed — the next save is an overwrite"
     );
     assert!(
-        !app.doc(id).unwrap().is_dirty(),
+        !app.doc(id).unwrap().dirty_for_render(),
         "a just-published buffer must not read as dirty"
     );
 }
@@ -417,7 +417,7 @@ fn a_synthesized_commit_with_no_store_left_drops_the_binding_and_the_next_save_s
         "the write itself already committed before the store vanished"
     );
     assert!(
-        !app.doc(id).unwrap().is_dirty(),
+        !app.doc(id).unwrap().dirty_for_render(),
         "the just-published bytes must still count as saved"
     );
     assert!(
@@ -443,5 +443,5 @@ fn a_synthesized_commit_with_no_store_left_drops_the_binding_and_the_next_save_s
         format!("{UNPUBLISHED_BODY}!").as_bytes(),
         "the second save must still reach disk despite the dropped binding"
     );
-    assert!(!app.doc(id).unwrap().is_dirty());
+    assert!(!app.doc(id).unwrap().dirty_for_render());
 }

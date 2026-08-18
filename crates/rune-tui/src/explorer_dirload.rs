@@ -53,7 +53,7 @@ pub(crate) fn handle_dir_loaded(
     root: PathBuf,
     entries: Vec<DirEntry>,
     cause: DirCause,
-    generation: u32,
+    generation: crate::generation::Generation,
 ) {
     if generation != app.explorer.request_generation {
         return;
@@ -120,7 +120,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("b", false)]),
             DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
         assert_eq!(app.explorer.nav.cursor, 0);
         // "/root" has a parent ("/"), so a synthetic ".." row is prepended.
@@ -135,7 +135,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("b", false), ("c", false)]),
             DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
         app.explorer.nav.cursor = 3; // "c", shifted one place by the leading ".." row
 
@@ -144,7 +144,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("new", false), ("a", false), ("c", false)]),
             DirCause::Refresh,
-            0,
+            crate::generation::Generation::ZERO,
         );
         assert_eq!(app.explorer.entries[app.explorer.nav.cursor].name, "c");
     }
@@ -157,7 +157,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("gone", false)]),
             DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
         app.explorer.nav.cursor = 2; // "gone", shifted one place by the leading ".." row
 
@@ -166,7 +166,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("still-here", false)]),
             DirCause::Refresh,
-            0,
+            crate::generation::Generation::ZERO,
         );
         assert_eq!(app.explorer.nav.cursor, 0);
     }
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn a_stale_generation_reply_is_ignored() {
         let mut app = app();
-        app.explorer.request_generation = 5;
+        app.explorer.request_generation = crate::generation::Generation::from_raw(5);
         app.explorer.root = PathBuf::from("/root");
         app.explorer.entries = entries(&[("a", false)]);
 
@@ -187,7 +187,7 @@ mod tests {
             PathBuf::from("/elsewhere"),
             entries(&[("stale", false)]),
             DirCause::Nav,
-            4, // superseded — the live generation is 5
+            crate::generation::Generation::from_raw(4), // superseded — the live generation is 5
         );
 
         assert_eq!(
@@ -202,14 +202,14 @@ mod tests {
     #[test]
     fn the_current_generation_reply_is_applied() {
         let mut app = app();
-        app.explorer.request_generation = 5;
+        app.explorer.request_generation = crate::generation::Generation::from_raw(5);
 
         handle_dir_loaded(
             &mut app,
             PathBuf::from("/fresh"),
             entries(&[("fresh", false)]),
             DirCause::Nav,
-            5,
+            crate::generation::Generation::from_raw(5),
         );
 
         assert_eq!(app.explorer.root, PathBuf::from("/fresh"));

@@ -123,7 +123,7 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
                 root: PathBuf::from(FUZZ_DIR_ROOT),
                 entries,
                 cause,
-                generation,
+                generation: rune_tui::generation::Generation::from_raw(u64::from(generation)),
             };
             step_and_check(state, prev, msg, MsgTag::DirLoaded, None, outcome);
         }
