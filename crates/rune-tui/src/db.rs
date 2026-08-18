@@ -175,17 +175,18 @@ pub struct PendingOp {
     /// stacking redundant ones on every rapid tab switch would grow the
     /// store unboundedly for no new information).
     pub is_probe: bool,
-    /// `Some(baseline_epoch)` iff this op is a `Probe` — the issuing
-    /// document's `FileBinding::baseline_epoch` at enqueue time. The
-    /// `OpOutcome::Sync` ack handler compares this against
-    /// `FileBinding::baseline_epoch` as it stands when the reply lands: a
-    /// baseline rewrite in between (a materialize publish, a merge's
-    /// terminal adoption, an abandon's retraction) means the verdict this
-    /// probe computed no longer describes the current world, and the reply
-    /// is dropped rather than trusted — the same generation-echo shape
-    /// `merge_gen` below uses, scoped to one file's own baseline lineage
-    /// instead of a single app-wide counter.
-    pub probe_epoch: Option<u32>,
+    /// `Some(baseline_epoch)` iff this op's ack carries a verdict computed
+    /// against the file's CAS baseline (a `Probe` or a
+    /// `MaterializePrepare`) — the issuing document's
+    /// `FileBinding::baseline_epoch` at enqueue time. The ack handler
+    /// compares this against `FileBinding::baseline_epoch` as it stands
+    /// when the reply lands: a baseline rewrite in between (a materialize
+    /// publish, a merge's terminal adoption, an abandon's retraction) means
+    /// the verdict this op computed no longer describes the current world,
+    /// and the reply is dropped rather than trusted — the same
+    /// generation-echo shape `merge_gen` below uses, scoped to one file's
+    /// own baseline lineage instead of a single app-wide counter.
+    pub baseline_epoch: Option<u32>,
     /// `Some(generation)` iff this op is a `MergePrep` (plan WP3.S1/S5) — the
     /// generation `merge::begin` minted for this attempt at enqueue time.
     /// The landing handler (`merge::handle_merge_prep_ack`) compares this
@@ -221,7 +222,7 @@ impl PendingOp {
             doc,
             issued_version: None,
             is_probe: false,
-            probe_epoch: None,
+            baseline_epoch: None,
             merge_gen: None,
             binding_only: false,
             doc_scoped: false,
@@ -233,7 +234,7 @@ impl PendingOp {
             doc,
             issued_version: Some(issued_version),
             is_probe: false,
-            probe_epoch: None,
+            baseline_epoch: None,
             merge_gen: None,
             binding_only,
             doc_scoped: true,
@@ -245,10 +246,22 @@ impl PendingOp {
             doc,
             issued_version: None,
             is_probe: true,
-            probe_epoch: Some(baseline_epoch),
+            baseline_epoch: Some(baseline_epoch),
             merge_gen: None,
             binding_only: false,
             doc_scoped: true,
+        }
+    }
+
+    pub fn prepare(doc: DocumentId, baseline_epoch: u32) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            is_probe: false,
+            baseline_epoch: Some(baseline_epoch),
+            merge_gen: None,
+            binding_only: false,
+            doc_scoped: false,
         }
     }
 
@@ -263,7 +276,7 @@ impl PendingOp {
             doc,
             issued_version: None,
             is_probe: false,
-            probe_epoch: None,
+            baseline_epoch: None,
             merge_gen: None,
             binding_only: false,
             doc_scoped: true,
@@ -275,7 +288,7 @@ impl PendingOp {
             doc,
             issued_version: None,
             is_probe: false,
-            probe_epoch: None,
+            baseline_epoch: None,
             merge_gen: Some(generation),
             binding_only: false,
             doc_scoped: true,
@@ -422,7 +435,7 @@ pub struct FileBinding {
     /// or no-conflict install, or a completed resolution), and an abandoned
     /// merge's resolve retraction (`merge::enqueue_resolve_abandon`). A
     /// `Probe` records this value onto its own `PendingOp` at issue time
-    /// (`PendingOp::probe_epoch`'s own doc comment); the ack handler drops
+    /// (`PendingOp::baseline_epoch`'s own doc comment); the ack handler drops
     /// a reply whose recorded epoch no longer matches, since a baseline
     /// rewrite landing in between — from ANY tab on this file — means the
     /// verdict the probe computed is stale, and re-probes so the fresh

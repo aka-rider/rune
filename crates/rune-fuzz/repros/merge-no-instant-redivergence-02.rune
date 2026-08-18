@@ -1,0 +1,7 @@
+content 
+type h
+diverge-disk
+key char:s ---u
+deliver-db-all
+key char:d ----
+key char:s ---u

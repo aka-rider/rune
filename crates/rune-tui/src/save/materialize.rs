@@ -67,6 +67,7 @@ pub(super) fn materialize_now(
         return;
     };
     let expect_obs = binding.expect_obs;
+    let baseline_epoch = binding.baseline_epoch;
     let target = match (bind_new, expect_obs) {
         (true, _) => rune_db::MaterializeTarget::BindNew,
         (false, Some(expect)) => rune_db::MaterializeTarget::Existing { expect },
@@ -84,7 +85,8 @@ pub(super) fn materialize_now(
 
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
+            app.db_ops
+                .insert(op_id, crate::db::PendingOp::prepare(id, baseline_epoch));
             if let Some(doc) = app.doc_mut(id) {
                 doc.begin_prepare(
                     version,
