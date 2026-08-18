@@ -421,11 +421,12 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "find file",
         alias: true,
     },
-    // Appended last deliberately: at narrow widths the footer clips the
-    // tail hint, and this new hint should be the one clipped, not
-    // `^E messages`. `^j`, not the tab-cap plan's original `^g` — the
-    // in-file search feature claimed `^g` for `SearchNext` first (see
-    // `GlobalCommand::TogglePin`'s own doc).
+    // Appended after `messages`/`trash` deliberately: the footer's
+    // whole-hint truncation drops entries from the tail first, so this new
+    // hint (and `back`/`forward` below) are the ones clipped under width
+    // pressure, not `^E messages`. `^j`, not the tab-cap plan's original
+    // `^g` — the in-file search feature claimed `^g` for `SearchNext` first
+    // (see `GlobalCommand::TogglePin`'s own doc).
     Binding {
         key: KeyPattern::new(KeyCode::Char('j'), CTRL),
         cmd: GlobalCommand::TogglePin,

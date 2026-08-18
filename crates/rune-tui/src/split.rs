@@ -139,25 +139,36 @@ impl Split {
             };
         }
 
-        // Both floors fit. Honour the lead's desired size against the WHOLE
+        // Both floors fit. A DRAGGED desired is honoured against the WHOLE
         // axis — not a cap that pre-reserves the trail's floor, which would
-        // make the trail impossible to collapse by dragging.
-        let want = self
+        // make the trail impossible to collapse by dragging. A never-dragged
+        // split has expressed no such intent, so its fallback IS capped to
+        // leave the trail its floor: a stale default computed for a wider
+        // frame must yield room back on shrink rather than reading as a
+        // deliberate push past the trail's boundary.
+        let raw = self
             .desired
             .unwrap_or(fallback)
             .max(lead.min)
             .min(available);
+        let want = if self.desired.is_some() {
+            raw
+        } else {
+            raw.min(available.saturating_sub(trail.min))
+        };
         let rest = available.saturating_sub(want);
         if rest >= trail.min {
             return (Some(want), Some(rest));
         }
         if trail.collapsible {
             // Nothing is left for the trail, so it goes and the lead takes
-            // the whole axis. Two paths reach here and both are intended:
-            // a drag deliberately pushing the boundary past the trail's
-            // floor, and an axis that shrank underneath a size an earlier
-            // drag recorded. The second is transient — `desired` is never
-            // written back, so growing the axis again restores both panes.
+            // the whole axis. `want` is only ever capped for a never-dragged
+            // split, so this arm is reached exclusively by a DRAGGED desired
+            // pushing the boundary past the trail's floor — either straight
+            // (`want` computed this call) or transiently, an axis that
+            // shrank underneath a size an earlier drag recorded. Either way
+            // `desired` is never written back here, so growing the axis
+            // again restores both panes.
             return (Some(available), None);
         }
         // The trail may not vanish, so the lead yields back to its own
@@ -304,6 +315,18 @@ mod tests {
         split.request(25);
         assert_eq!(split.allot(10, 3, VERT_TRAIL), (Some(10), None));
         assert_eq!(split.allot(30, 3, VERT_TRAIL), (Some(25), Some(5)));
+    }
+
+    #[test]
+    fn allot_never_dragged_shrink_degrades_proportionally_not_a_trail_collapse() {
+        // The user never dragged this splitter, so `desired` is `None` and
+        // `allot` is working only off `fallback` — a stale default computed
+        // for a wider frame. Both floors (3 + 2) still fit inside the
+        // shrunk axis (10), so the trail must stay visible: the fallback
+        // yields back to the trail's floor instead of behaving like a real
+        // drag that deliberately pushed past it.
+        let split = Split::new(VERT_LEAD, true);
+        assert_eq!(split.allot(10, 20, VERT_TRAIL), (Some(8), Some(2)));
     }
 
     #[test]

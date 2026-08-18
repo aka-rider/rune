@@ -351,15 +351,15 @@ fn footer_global_tail_survives_truncation_with_explorer_focused() {
 }
 
 /// `truncated_default_hint_spans` drops the first non-fitting hint AND
-/// everything after it, so the new `^N new` row could silently push a later
-/// hint off-screen with nothing to catch it (the untruncated
+/// everything after it, so a hint inserted ahead of the table's tail
+/// (`^N new`, mid-table) could in principle push a later hint off-screen
+/// with nothing to catch it (the untruncated
 /// `default_mode_lists_every_global_binding_label` test can't observe
 /// truncation at all). Renders through `draw` at a realistic width and
-/// asserts the new hint itself survives. It does NOT also assert the
-/// table's tail hint ("messages") survives: measured, `messages` is now the
-/// one pushed off at width 120 — a pre-existing class of footer overflow
-/// (see the reading-view entry in TODO.md), not fixed here, and recorded
-/// there rather than pinned as a false "still fits" claim in this test.
+/// asserts BOTH the new hint and the table's own tail (`^E messages`)
+/// survive — measured, both fit within 120 columns; `trash` (the next
+/// entry) is the actual cutoff, confirming truncation drops whole hints
+/// from the low-priority end rather than the middle.
 #[test]
 fn footer_survives_truncation_with_new_document_hint_at_width_120() {
     let app = app_for("hello");
@@ -370,6 +370,14 @@ fn footer_survives_truncation_with_new_document_hint_at_width_120() {
     assert!(
         footer_row.contains("^N new"),
         "expected '^N new' on the width-120 footer row:\n{footer_row}"
+    );
+    assert!(
+        footer_row.contains("^E messages"),
+        "expected '^E messages' on the width-120 footer row:\n{footer_row}"
+    );
+    assert!(
+        !footer_row.contains("trash"),
+        "expected 'trash' to be the whole-hint cutoff at width 120, but it rendered:\n{footer_row}"
     );
 }
 

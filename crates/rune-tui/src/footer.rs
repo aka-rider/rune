@@ -373,6 +373,54 @@ mod tests {
         }
     }
 
+    /// The default-mode hint row budgets by WHOLE hints, never a partial
+    /// one: at width 120 (a realistic terminal) every entry through
+    /// `^E messages` still fits, and the row stops there rather than
+    /// spilling a truncated `tr` or `tra` from the next entry (`trash`) —
+    /// `truncated_default_hint_spans` breaks on the first entry whose FULL
+    /// width would overflow, so a dropped entry is always dropped whole.
+    #[test]
+    fn footer_hint_row_shows_a_maximal_prefix_of_whole_hints_at_width_120() {
+        let app = app_with("hello");
+        assert_eq!(app.focus(), Pane::Editor);
+        let row = footer_row(&app, 120);
+        assert!(
+            row.contains("^E messages"),
+            "expected the table's tail hint to still fit at width 120: {row:?}"
+        );
+        assert!(
+            !row.contains("trash"),
+            "expected 'trash' — and no partial fragment of it — past the width-120 cutoff: {row:?}"
+        );
+    }
+
+    /// At a narrower width the row degrades to FEWER whole hints, never a
+    /// partial one: width 30 only has room for the first entry (`save`) —
+    /// `explorer` (13 cells) does not fit alongside it and 21 cells, and the
+    /// row must show it fully-or-not-at-all, not a clipped `expl`.
+    #[test]
+    fn footer_hint_row_degrades_to_fewer_whole_hints_at_a_narrower_width() {
+        let app = app_with("hello");
+        assert_eq!(app.focus(), Pane::Editor);
+        let row = footer_row(&app, 30);
+        assert!(row.contains("^S save"), "expected 'save' to fit: {row:?}");
+        assert!(
+            !row.contains("explorer"),
+            "expected 'explorer' — and no partial fragment of it — dropped at width 30: {row:?}"
+        );
+    }
+
+    /// Degenerate widths (0, 1, and one just past the position readout's own
+    /// width) must never panic — `draw`'s padding arithmetic and the
+    /// truncation loop both guard every subtraction behind a fits check.
+    #[test]
+    fn footer_row_does_not_panic_at_degenerate_widths() {
+        for width in [0u16, 1, 20] {
+            let app = app_with("hello");
+            let _ = footer_row(&app, width);
+        }
+    }
+
     /// The rendered confirm hint names the actual save chord — the glyph
     /// comes from `GLOBAL_BINDINGS`' canonical `Save` row, so a rebind
     /// moves it here without this text ever going blank.
