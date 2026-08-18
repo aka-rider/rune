@@ -13,11 +13,11 @@ use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::keymap::{GlobalCommand, QuitKey};
 use crate::messages;
 use crate::pane_global;
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::{Effects, Msg};
 use crate::save;
 
-/// The quit-confirm arm-to-quit window: the first press arms and spawns a
-/// 2s timer `Cmd` carrying the confirm generation.
+/// The quit-confirm arm-to-quit window: the first press arms `App::timers`'
+/// `TimerKey::QuitConfirm` deadline, carrying the confirm generation.
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Which chrome region owns the next keystroke once the global table
@@ -103,7 +103,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
         }
         GlobalCommand::Help => pane_global::help(app, effects),
-        GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
+        GlobalCommand::QuitChord(key) => handle_quit_key(app, key),
         // Routes through the one close chokepoint regardless of which pane
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
@@ -225,7 +225,7 @@ pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mu
 /// 2s window. `pub(crate)` — moved out of `app.rs` (500-line
 /// budget); `handle_global_command` above is its only caller now that quit
 /// chords resolve at the global pipeline stage.
-pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
+pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey) {
     // Quit is an implicit Esc for an active OR
     // pending merge — exited/cancelled BEFORE the dirty-guard scan below,
     // so that scan (and the guard prompt it may raise) sees the reverted
@@ -270,7 +270,11 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
 
     let generation = app.next_quit_gen.mint();
     app.quit = crate::app::QuitNegotiation::ConfirmArmed(key, generation);
-    effects.cmds.push(quit_confirm_timeout_cmd(generation));
+    app.timers.arm(
+        crate::runtime::TimerKey::QuitConfirm,
+        CONFIRM_TIMEOUT,
+        Msg::ConfirmTimeout { generation },
+    );
 }
 
 /// Every open document that is both dirty and has no live, trustworthy
@@ -295,18 +299,6 @@ pub(crate) fn unpreserved_dirty_docs(app: &mut App) -> Vec<DocumentId> {
             !preserved && crate::materialize_ack::is_dirty_now(app, id)
         })
         .collect()
-}
-
-/// The 2s quit-confirm timer, carrying its generation so a stale timeout
-/// (superseded by a second press or a re-arm) is ignored on arrival.
-/// Genuine wall-clock pacing for a real UI feature — not a test-ordering
-/// hack — so `std::thread::sleep` here is correct (this `Cmd` runs on its
-/// own dedicated thread by runtime design, never blocking the main loop).
-fn quit_confirm_timeout_cmd(generation: crate::generation::Generation) -> Cmd {
-    Cmd::quit_timeout(move || {
-        std::thread::sleep(CONFIRM_TIMEOUT);
-        Some(Msg::ConfirmTimeout { generation })
-    })
 }
 
 #[cfg(test)]
@@ -438,9 +430,8 @@ mod tests {
             "test setup: no db binding"
         );
 
-        let mut effects = Effects::default();
-        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
-        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        handle_quit_key(&mut app, QuitKey::CtrlC);
+        handle_quit_key(&mut app, QuitKey::CtrlC);
 
         assert!(
             !app.should_quit,
@@ -473,10 +464,9 @@ mod tests {
             Replica::Bound(crate::db::DocDb::new(1, true, rune_db::Seq(0)));
         app.db = Some(live_db());
 
-        let mut effects = Effects::default();
-        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        handle_quit_key(&mut app, QuitKey::CtrlC);
         assert!(!app.should_quit, "the first press only arms the confirm");
-        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        handle_quit_key(&mut app, QuitKey::CtrlC);
         assert!(app.should_quit, "the second matching press quits");
     }
 
@@ -513,8 +503,7 @@ mod tests {
             "test setup: pre-arm a foreign guard"
         );
 
-        let mut effects = Effects::default();
-        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        handle_quit_key(&mut app, QuitKey::CtrlC);
 
         assert!(!app.should_quit);
         assert!(

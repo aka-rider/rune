@@ -38,11 +38,11 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: `Option<&Path>` through `rune-nav::resolve` if the family sweep continues; the two `usize::MAX` orderings stay unless their modules change anyway.
 - **Done when**: `rune-nav` no longer receives an empty path for "no root", or the entry records why the boundary deliberately stays.
 
-### Sleep-based uncancellable timers; unbounded thread-per-Cmd
-- **Where**: `crates/rune-tui/src/save.rs:215`, `crates/rune-tui/src/pane.rs:400`, `crates/rune-tui/src/messages/mod.rs:451` (`thread::sleep`-based `Cmd` timeouts); correct shape at `crates/rune-tui/src/runtime/snapshot_timer.rs`; unbounded spawn at `crates/rune-tui/src/runtime/mod.rs:469` (`spawn_cmd`)
-- **Wrong**: confirm/collapse timeouts park one OS thread per (re)arm with no cancellation — the generation counters exist largely to discard the late replies. `spawn_cmd` spawns unbounded threads; `Highlight`/`ImageDecode` issue at keystroke rate.
-- **Instead**: generalize `SnapshotTimer` (single thread, Mutex+Condvar, rearm-to-earliest) to a keyed deadline map; bound the worker pool.
-- **Done when**: no `Cmd` does a bare `thread::sleep`, and `spawn_cmd` is bounded.
+### Unbounded thread-per-Cmd in `spawn_cmd`
+- **Where**: `crates/rune-tui/src/runtime/mod.rs` (`spawn_cmd`)
+- **Wrong**: `spawn_cmd` spawns one OS thread per `Cmd` with no pool bound; `Highlight`/`ImageDecode` issue at keystroke rate. (The sleep-based confirm/collapse timeouts are gone — all deadlines route through the keyed `TimerService`.)
+- **Instead**: bound the worker pool.
+- **Done when**: `spawn_cmd` is bounded.
 
 ### A generation counter's type doesn't say which feature it belongs to
 - **Where**: `crates/rune-tui/src/generation.rs`'s `Generation`/`GenCounter` — one shared type now minted by every counter (`next_rename_gen`, `next_merge_gen`, `next_save_confirm_gen`, `next_quit_gen`, `next_trash_gen`, `next_filesearch_gen`, `next_search_history_gen`, `Explorer::next_request_gen`, `MessageLog::generation`, `ImageState::next_generation`); each is compared against a bare `generation: Generation` field carried by its own `Msg` reply.

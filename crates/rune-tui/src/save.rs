@@ -240,23 +240,16 @@ pub(crate) fn trigger_save(
             app,
             format!("recovery disabled for {name} \u{2014} press {save_key} again to save anyway"),
         );
-        effects.cmds.push(save_confirm_timeout_cmd(generation));
+        app.timers.arm(
+            crate::runtime::TimerKey::SaveConfirm,
+            SAVE_CONFIRM_TIMEOUT,
+            Msg::SaveConfirmTimeout { generation },
+        );
         return SaveStart::Refused;
     }
 
     materialize_now(app, id, path, version, mode, effects);
     SaveStart::InFlight
-}
-
-/// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6) — mirrors
-/// `app::quit_confirm_timeout_cmd`'s shape exactly. Doc-agnostic (plan WP1
-/// decision 3): the doc tag lives in `App::pending_save_confirm`'s `Option`
-/// tuple itself, not in this `Msg`.
-fn save_confirm_timeout_cmd(generation: crate::generation::Generation) -> Cmd {
-    Cmd::save_confirm_timeout(move || {
-        std::thread::sleep(SAVE_CONFIRM_TIMEOUT);
-        Some(Msg::SaveConfirmTimeout { generation })
-    })
 }
 
 /// The off-thread save I/O itself: an unconditional `rune_vfs::put`

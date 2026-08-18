@@ -1,6 +1,6 @@
 //! The fuzzy file finder's recents-load `Cmd` constructor — split out of
 //! `runtime.rs` itself (500-line budget), the same reason `highlight_cmd`/
-//! `snapshot_timer` were.
+//! `timer` were.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

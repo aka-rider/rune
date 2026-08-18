@@ -16,7 +16,7 @@ use crate::highlight::PassOutcome;
 use crate::keymap::{self, Command, Extend, KeyCode, KeyInput, Motion, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
-use crate::runtime::{Effects, Msg, PasteTarget};
+use crate::runtime::{Effects, Msg, PasteTarget, TimerKey};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
 
 /// The one dispatcher every `Msg` funnels through (`app::update`'s inner
@@ -194,9 +194,11 @@ pub(crate) fn after_update(
     // rules live in `should_arm_auto_collapse` itself.
     if crate::messages::should_arm_auto_collapse(app) {
         let generation = crate::messages::arm_auto_collapse(app);
-        effects
-            .cmds
-            .push(crate::messages::collapse_timeout_cmd(generation));
+        app.timers.arm(
+            TimerKey::MessagesCollapse,
+            crate::messages::AUTO_COLLAPSE,
+            Msg::MessagesCollapseTimeout { generation },
+        );
     }
 }
 
@@ -472,7 +474,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
             // practice — stage 2 (`keymap::GLOBAL_BINDINGS`) always
             // intercepts a quit chord before it reaches here.
             if let Some(quit_key) = QuitKey::from_key(key) {
-                pane::handle_quit_key(app, quit_key, effects);
+                pane::handle_quit_key(app, quit_key);
             }
         }
     }

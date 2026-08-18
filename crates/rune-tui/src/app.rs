@@ -334,13 +334,16 @@ pub struct App {
     /// initial-root fallback, the breadcrumb's relativization) falls back
     /// on its own ladder while the root is still unresolved.
     pub root: Option<PathBuf>,
-    /// The snapshot-autosave debounce's one rearmable timer
-    /// — `pub(crate)`, not private: `save::schedule_snapshot_debounce` (a
-    /// different module) is the sole caller of `arm`. No background thread
-    /// exists until `runtime::run` calls `attach` on it, so a test/fuzz
-    /// `App` that never reaches that loop never spawns one (mirrors
-    /// `db.bridge`'s own bootstrap/live split).
-    pub(crate) snapshot_timer: Arc<crate::runtime::SnapshotTimer>,
+    /// The one rearmable timer thread shared by the snapshot-autosave
+    /// debounce, the degraded-save confirm gate, the quit-confirm window,
+    /// and the message pane's auto-collapse — `pub(crate)`, not private:
+    /// `save::schedule_snapshot_debounce`, `save::trigger_save`,
+    /// `pane::handle_quit_key`, and `dispatch::after_update` each `arm`
+    /// their own keyed deadline on it. No background thread exists until
+    /// `runtime::run` calls `attach` on it, so a test/fuzz `App` that
+    /// never reaches that loop never spawns one (mirrors `db.bridge`'s own
+    /// bootstrap/live split).
+    pub(crate) timers: Arc<crate::runtime::TimerService>,
     pub nav_history: crate::navhistory::NavHistory,
 }
 
@@ -406,7 +409,7 @@ impl App {
             icon_tier: crate::theme::icons::IconTier::Unicode,
             graphics: crate::graphics::GraphicsCaps::default(),
             root: None,
-            snapshot_timer: crate::runtime::SnapshotTimer::new(),
+            timers: crate::runtime::TimerService::new(),
             nav_history: crate::navhistory::NavHistory::default(),
         }
     }

@@ -593,19 +593,16 @@ fn a_save_refused_during_a_rename_leaves_the_message_pane_open() {
     assert!(matches!(app.rename, RenameState::Committing { .. }));
 
     send(&mut app, plain(KeyCode::Char('X')));
-    let save_effects = send(&mut app, sup('s'));
+    send(&mut app, sup('s'));
 
-    // Checked on the very `Effects` the refusal itself produced (dispatch's
-    // `after_update` reconciler arms the timer within the same `update`
-    // call) — a later, separate read of `should_arm_auto_collapse` would
-    // see the timer already armed by that same reconciler and pass either
+    // Checked immediately after the refusal's own `update` call returns
+    // (dispatch's `after_update` reconciler arms the timer within that same
+    // call, directly on `App::timers`, before anything else can run) — a
+    // later, separate check after some OTHER action would see the timer
+    // already armed by that later action's own reconciler and pass either
     // way, regardless of the message's severity.
-    let armed = save_effects
-        .cmds
-        .iter()
-        .any(|c| c.kind() == CmdKind::MessagesCollapseTimeout);
     assert!(
-        !armed,
+        !messages::is_collapse_armed(&app),
         "a save refused for an in-flight rename must never arm the \
          auto-collapse timer"
     );

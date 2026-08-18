@@ -30,7 +30,7 @@ use rune_tui::app;
 use rune_tui::keymap::KeyCode;
 use rune_tui::messages;
 use rune_tui::pane::Pane;
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{Effects, Msg};
 
 use messages_common::{app_for, ctrl_e, frame_text, key};
 
@@ -315,8 +315,9 @@ fn a_newest_message_is_visible_after_the_pane_overflows() {
     );
 }
 
-/// An `Info` post arms exactly one `MessagesCollapseTimeout` `Cmd`, and
-/// sending the matching `Msg` back collapses the pane.
+/// An `Info` post arms exactly one auto-collapse timeout directly on
+/// `App::timers` (no `Cmd` any more), and sending the matching `Msg` back
+/// collapses the pane.
 #[test]
 fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_pane() {
     let mut session = app_for("hello");
@@ -325,15 +326,9 @@ fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_
 
     let mut effects = Effects::default();
     app::update(session.app_mut(), key(KeyCode::Right), &mut effects);
-    let armed: Vec<_> = effects
-        .cmds
-        .iter()
-        .filter(|c| c.kind() == CmdKind::MessagesCollapseTimeout)
-        .collect();
-    assert_eq!(
-        armed.len(),
-        1,
-        "expected exactly one auto-collapse timer armed"
+    assert!(
+        messages::is_collapse_armed(session.app()),
+        "expected the auto-collapse timer armed"
     );
 
     let mut effects2 = Effects::default();
@@ -403,12 +398,8 @@ fn an_error_post_arms_nothing_and_the_pane_stays_open() {
         &mut effects,
     );
 
-    let armed = effects
-        .cmds
-        .iter()
-        .any(|c| c.kind() == CmdKind::MessagesCollapseTimeout);
     assert!(
-        !armed,
+        !messages::is_collapse_armed(session.app()),
         "an error post must never arm the auto-collapse timer"
     );
     assert!(messages::is_open(session.app()));
@@ -422,12 +413,8 @@ fn a_focused_pane_arms_nothing() {
     app::update(session.app_mut(), ctrl_e(), &mut effects);
     assert_eq!(session.app().focus(), Pane::Messages);
 
-    let armed = effects
-        .cmds
-        .iter()
-        .any(|c| c.kind() == CmdKind::MessagesCollapseTimeout);
     assert!(
-        !armed,
+        !messages::is_collapse_armed(session.app()),
         "a focused pane must never arm the auto-collapse timer"
     );
 }
@@ -448,12 +435,8 @@ fn a_pane_with_a_selection_arms_nothing() {
 
     let mut effects = Effects::default();
     app::update(session.app_mut(), key(KeyCode::Right), &mut effects);
-    let armed = effects
-        .cmds
-        .iter()
-        .any(|c| c.kind() == CmdKind::MessagesCollapseTimeout);
     assert!(
-        !armed,
+        !messages::is_collapse_armed(session.app()),
         "a pane with a selection on its log document must never arm the auto-collapse timer"
     );
 }

@@ -79,10 +79,10 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     }
 
     // Same "App-held setter" pattern as `db.bridge.attach` right above:
-    // `App::new` constructs `snapshot_timer` with no background thread at
-    // all (plan WP16.S5), so every test/fuzz `App` that never reaches this
-    // `run` loop never spawns one either. This call starts its one thread.
-    app.snapshot_timer.attach(tx.clone());
+    // `App::new` constructs `timers` with no background thread at all, so
+    // every test/fuzz `App` that never reaches this `run` loop never spawns
+    // one either. This call starts its one thread.
+    app.timers.attach(tx.clone());
     // Tracks the join handle of every no-store fallback save `Cmd`
     // (`CmdKind::Save`) currently running, so quitting can join them instead
     // of detaching them mid-write (review fix, [rune-tui A 5]): a
