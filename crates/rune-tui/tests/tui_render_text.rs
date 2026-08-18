@@ -346,6 +346,15 @@ fn grapheme_width_agrees_with_ratatuis_own_cell_width_derivation() {
             "reported robot + Tibetan vowel signs",
             "\u{1F916}\u{0F72}\u{0F80}",
         ),
+        ("lone halfwidth dakuten", "\u{FF9E}"),
+        ("lone combining acute accent", "\u{0301}"),
+        ("lone zero-width joiner", "\u{200D}"),
+        (
+            "lone variation selector-16 (emoji presentation)",
+            "\u{FE0F}",
+        ),
+        ("lone variation selector-15 (text presentation)", "\u{FE0E}"),
+        ("lone zero-width space", "\u{200B}"),
     ];
 
     for (label, cluster) in corpus {
@@ -392,19 +401,19 @@ fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
     );
 }
 
-/// Guard for the ONE documented exception to the corpus-agreement test
-/// above (`rune_syntax::wrap::grapheme_width`'s doc and `blit`'s narrowed
-/// `assert_invariant`): a LONE (single-`char`) cluster that
-/// ratatui itself derives width 0 for — a bare combining mark with no base,
-/// a stray ZWJ, a lone variation selector, a lone zero-width space — is
-/// reserved at width 1 by `control_aware_width`'s clamp, not ratatui's 0,
-/// so rune's own caret math always has a cell to land the caret on. This
-/// test pins the divergence explicitly (never silently) and proves the
-/// whole render path — including `blit`'s own strict-mode assert, live in
-/// this `cfg(test)` build — tolerates it without panicking, rather than
-/// asserting the two numbers agree (which they deliberately do not here).
+/// The decided policy (superseding the FORMER documented exception this
+/// test used to pin, `lone_zero_width_cluster_reserves_width_one_though_
+/// ratatui_derives_zero`): a LONE (single-`char`) cluster that ratatui
+/// itself derives width 0 for — a bare combining mark with no base, a stray
+/// ZWJ, a lone variation selector, a lone zero-width space — now derives
+/// width 0 in rune too (`control_aware_width`'s doc), the SAME number as
+/// ratatui, with no exception left to admit in `blit`'s own strict-mode
+/// `assert_invariant`. This test pins that agreement explicitly, and proves
+/// the whole render path (`blit`'s strict-mode assert live in this
+/// `cfg(test)` build) still renders it without panicking despite the
+/// `Cell` occupying no screen column of its own.
 #[test]
-fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
+fn lone_zero_width_cluster_derives_zero_width_matching_ratatui() {
     let halfwidth_dakuten = '\u{FF9E}'; // agrees with ratatui at width 1 (control_aware_width's own doc) — the control case
     let lone_zero_width: &[(&str, char)] = &[
         ("combining acute accent", '\u{0301}'),
@@ -423,8 +432,7 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
             usize::from(ch.to_string().cell_width()),
             0,
             "{label} ({ch:?}): expected ratatui to derive width 0 for this rune — \
-             if this now fails, the divergence this test guards may no longer exist \
-             and the exception can be narrowed or removed"
+             if this now fails, the corpus assumption this test relies on no longer holds"
         );
 
         // The rune must lead its line, with no preceding base character —
@@ -450,14 +458,14 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
             .and_then(|row| row.iter().find(|c| c.text.chars().eq(std::iter::once(*ch))))
             .expect("expected a Cell carrying the lone rune verbatim");
         assert_eq!(
-            cell.width, 1,
-            "{label}: rune reserves width 1 for a lone zero-width rune (caret reachability)"
+            cell.width, 0,
+            "{label}: rune now derives width 0 for a lone zero-width rune, matching ratatui"
         );
 
         // The end-to-end render must not panic — this exercises `blit`'s
-        // own strict-mode `assert_invariant`, narrowed to admit exactly
-        // this divergence, in a real cfg(test) build (the strict-invariants
-        // gate is armed here).
+        // own strict-mode `assert_invariant`, now satisfied WITHOUT any
+        // exception, in a real cfg(test) build (the strict-invariants gate
+        // is armed here).
         let buf = render_to_test_backend(app);
         let text = full_text(&buf, HEIGHT, WIDTH);
         assert!(
@@ -465,4 +473,56 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
             "{label}: the surrounding glyphs must still reach the real backend buffer:\n{text}"
         );
     }
+}
+
+/// The actual user-visible symptom the width-0 policy above exists to fix:
+/// before it, a lone zero-width rune reserved a real screen column it
+/// ratatui itself never draws, so `a`/`b` after it landed one column too far
+/// right on a real terminal even though rune's own `Cell` accounting looked
+/// internally consistent. Pins the fix directly against the BACKEND column
+/// — not just the `Cell.width` number above — for every rune in the same
+/// corpus: `a` must land at the editor's own first content column
+/// (`EDITOR_LEFT_COL`), exactly where ratatui would place it for `"ab\n"`
+/// with no leading rune at all, never one column further right.
+#[test]
+fn text_after_a_lone_zero_width_rune_starts_at_ratatuis_own_column() {
+    let lone_zero_width: &[(&str, char)] = &[
+        ("combining acute accent", '\u{0301}'),
+        ("zero-width joiner", '\u{200D}'),
+        ("variation selector-16 (emoji presentation)", '\u{FE0F}'),
+        ("variation selector-15 (text presentation)", '\u{FE0E}'),
+        ("zero-width space", '\u{200B}'),
+    ];
+
+    for (label, ch) in lone_zero_width {
+        let content = format!("{ch}ab\n");
+        let session = app_for(&content, 0, true);
+        let app = session.app();
+
+        let buf = render_to_test_backend(app);
+        let row = row_text(&buf, EDITOR_TOP_ROW, WIDTH);
+        let a_col = row
+            .chars()
+            .position(|c| c == 'a')
+            .expect("'a' must reach the real backend buffer");
+        assert_eq!(
+            a_col, EDITOR_LEFT_COL as usize,
+            "{label}: 'a' must start at the editor's own first content column \
+             ({EDITOR_LEFT_COL}), not one column further right — got column {a_col}:\n{row:?}"
+        );
+    }
+
+    // Control: the SAME corpus check with no leading rune at all lands on
+    // the identical column — proves `EDITOR_LEFT_COL` itself is the right
+    // baseline, not a number picked to make the assertion above pass.
+    let session = app_for("ab\n", 0, true);
+    let app = session.app();
+    let buf = render_to_test_backend(app);
+    let row = row_text(&buf, EDITOR_TOP_ROW, WIDTH);
+    let a_col = row
+        .char_indices()
+        .find(|(_, c)| *c == 'a')
+        .map(|(byte_idx, _)| row[..byte_idx].chars().count())
+        .expect("'a' must reach the real backend buffer");
+    assert_eq!(a_col, EDITOR_LEFT_COL as usize);
 }

@@ -19,21 +19,28 @@ const HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK: char = '\u{FF9F}';
 
 /// `ControlAwareWidth` — the single source of truth for a rune's display
 /// width, shared by the wrap/coordinate layer and the cell renderer. Rule:
-/// `\n`/`\r` occupy no column; every other rune
-/// reported zero-width is clamped to 1 (this is a DISPLAY-width decision
-/// only — buffer bytes stay verbatim). The 1-clamp exists so a LONE
-/// zero-width rune (an isolated control char, a bare combining mark with no
-/// base) still gets its own reachable caret column — see `grapheme_width`
-/// below for why that reasoning does NOT extend to a rune that's part of a
-/// larger grapheme cluster.
+/// `\n`/`\r` occupy no column; the halfwidth katakana dakuten/handakuten
+/// marks above are clamped to 1 to mirror ratatui-core's own `CellWidth for
+/// str` adjustment (raw `unicode-width` reports them zero-width, but both
+/// sides deliberately agree on 1); every other rune's width is exactly what
+/// `unicode-width` reports, INCLUDING zero, for a rune ratatui itself
+/// derives zero-width for (a bare combining mark, a stray ZWJ, a lone
+/// variation selector, a zero-width space) — this is a DISPLAY-width
+/// decision only, buffer bytes stay verbatim, and rune's own reserved width
+/// for a symbol must equal what ratatui derives for that same symbol so
+/// painted cells and terminal columns never drift apart. A genuinely
+/// undefined width (`None` — a raw control byte, always routed through
+/// `control_placeholder`'s substitute glyph before it ever reaches a
+/// terminal) still floors to 1, since the substitute glyph itself occupies
+/// one cell.
 pub fn control_aware_width(r: char) -> usize {
     if r == '\n' || r == '\r' {
         return 0;
     }
-    match unicode_width::UnicodeWidthChar::width(r) {
-        Some(w) if w > 0 => w,
-        _ => 1,
+    if r == HALFWIDTH_KATAKANA_VOICED_SOUND_MARK || r == HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK {
+        return 1;
     }
+    unicode_width::UnicodeWidthChar::width(r).unwrap_or(1)
 }
 
 /// The one tab stop every width walker expands against — `rune_width_with_tab`
@@ -81,18 +88,18 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 /// equality is enforced by a guard test in `rune-tui`, which already
 /// depends on both.
 ///
-/// **One documented exception, not covered by that guard test:** a LONE
-/// (single-`char`) cluster that ratatui itself derives width 0 for — a bare
-/// combining mark with no base, a stray ZWJ, a lone variation selector
-/// (`U+FE0F`/`U+FE0E`), a lone zero-width space (`U+200B`) — takes
-/// `control_aware_width`'s 1-clamp above, not ratatui's 0, on purpose: the
-/// clamp exists so that rune's own caret/wrap column math always has a
-/// reachable cell for such a rune, per `control_aware_width`'s own doc. For
-/// exactly this single-rune case rune's reserved width and ratatui's own
-/// `cell_width()` for the SAME bytes disagree (1 vs 0) — this is a known,
-/// permanent divergence, not a bug to fix. `crates/rune-tui/src/render/
-/// blit.rs`'s own guard assert is narrowed to admit precisely this case and
-/// no other.
+/// A LONE (single-`char`) cluster that ratatui itself derives width 0 for —
+/// a bare combining mark with no base, a stray ZWJ, a lone variation
+/// selector (`U+FE0F`/`U+FE0E`), a lone zero-width space (`U+200B`) — is
+/// exactly what `control_aware_width` now also returns 0 for (its own doc):
+/// there is no exception here, on purpose. A width-0 `Cell` still needs
+/// somewhere for the caret to land, and reachability is handled entirely on
+/// the `rune-tui` side of the chokepoint — `render::overlay::place_caret`
+/// paints every `Cell` tied at the same visual column (a zero-width cell
+/// followed by whatever's actually visible there), and `blit`'s column walk
+/// never reserves a screen column for a `Cell` this function says is zero
+/// cells wide — rather than reserving an extra column here that ratatui
+/// itself would never draw.
 ///
 /// A per-rune MAX of `UnicodeWidthChar::width` (this function's prior
 /// implementation) gets this wrong for a whole class of clusters —

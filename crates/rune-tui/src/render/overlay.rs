@@ -276,29 +276,45 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
     }
 }
 
-/// Reverse-video the cell at `visual_col`, or — if the caret sits past the
-/// last visible char on this row — append a synthetic EOL cursor cell.
-/// Only ever reached when the caller has already
-/// decided the caret may be shown (`apply_cursor_overlays`'s `caret` gate) —
-/// none of its three REVERSED paths (this cell, the boxed-row last cell
-/// below, or the synthetic EOL push) runs on an unfocused or read-only
-/// document. `boxed` rows (a Grid/Wrapped table's own content and
-/// border rows) never take that append branch: appending would make this
-/// ONE row a cell wider than every other row in its table group, violating
-/// `TABLE-ROW-WIDTH` (every row in a boxed group shares one summed width,
-/// unconditionally). Reversing the row's own last cell instead keeps the
-/// row's width exactly what every sibling row's width already is, by
-/// construction — the caret still lands visibly inside the box, just
-/// clamped to its last real column instead of stepping past the closing
-/// border.
+/// Reverse-video every cell tied at `visual_col`, or — if the caret sits
+/// past the last visible char on this row — append a synthetic EOL cursor
+/// cell. Only ever reached when the caller has already decided the caret
+/// may be shown (`apply_cursor_overlays`'s `caret` gate) — none of its three
+/// REVERSED paths (the tied cells, the boxed-row last cell below, or the
+/// synthetic EOL push) runs on an unfocused or read-only document. `boxed`
+/// rows (a Grid/Wrapped table's own content and border rows) never take
+/// that append branch: appending would make this ONE row a cell wider than
+/// every other row in its table group, violating `TABLE-ROW-WIDTH` (every
+/// row in a boxed group shares one summed width, unconditionally).
+/// Reversing the row's own last cell instead keeps the row's width exactly
+/// what every sibling row's width already is, by construction — the caret
+/// still lands visibly inside the box, just clamped to its last real column
+/// instead of stepping past the closing border.
+///
+/// "Every cell tied at `visual_col`", not just the first: a width-0 `Cell`
+/// (a lone zero-width rune, `grapheme_width`'s doc) starts at the SAME
+/// column as whatever `Cell` follows it, since it advances the column
+/// counter by nothing — `blit` then overwrites that zero-width `Cell`'s own
+/// buffer position with the following `Cell`'s glyph, so only the LAST cell
+/// in a tied run is what a reader actually sees. Reversing every cell in
+/// the run, not only the first one `col == visual_col` finds, keeps
+/// `CUR-CELL-SYNC` satisfied for whichever of them a cursor's own
+/// `buf_offset` claims AND keeps the caret visible on the glyph `blit`
+/// actually paints there, whichever cell that turns out to be.
 fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed: bool) {
     let mut col = 0usize;
+    let mut matched = false;
     for cell in row.iter_mut() {
         if col == visual_col {
             cell.style = cell.style.add_modifier(RtModifier::REVERSED);
-            return;
+            matched = true;
+        } else if matched || col > visual_col {
+            break;
         }
-        col += cell.width.max(1) as usize;
+        col += cell.width as usize;
+    }
+    if matched {
+        return;
     }
     if boxed {
         if let Some(last) = row.last_mut() {

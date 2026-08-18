@@ -70,6 +70,30 @@ fn cell_offset_accepts_sentinel_and_valid_boundaries() {
     assert_eq!(cell_offset(&snap), None);
 }
 
+/// A real (non-decorative) cell whose declared `width` disagrees with what
+/// ratatui itself derives for its own `text` is a producer bug — 'a' is
+/// ordinary width-1 text, so declaring it width 0 must still trip
+/// `CELL-OFFSET`, exactly as it always did.
+#[test]
+fn cell_offset_detects_width_zero_on_an_ordinary_char() {
+    let mut snap = base_snapshot("abc");
+    snap.cells = vec![vec![cell_w('a', Some(0), 0)]];
+    let v = cell_offset(&snap).expect("width=0 on ordinary text must trip CELL-OFFSET");
+    assert_eq!(v.id, "CELL-OFFSET");
+}
+
+/// The decided policy's own carve-out: a real cell carrying a LONE
+/// zero-width rune (`rune_syntax::wrap::grapheme_width`'s doc — a bare
+/// combining mark, a stray ZWJ, a lone variation selector, a lone
+/// zero-width space) legitimately derives width 0, matching ratatui's own
+/// `cell_width()` for that same symbol — this must NOT trip `CELL-OFFSET`.
+#[test]
+fn cell_offset_accepts_width_zero_matching_ratatuis_own_derivation() {
+    let mut snap = base_snapshot("\u{200d}bc");
+    snap.cells = vec![vec![cell_w('\u{200d}', Some(0), 0)]];
+    assert_eq!(cell_offset(&snap), None);
+}
+
 // ---------------------------------------------------------------------
 // CELL-NO-EOL
 // ---------------------------------------------------------------------

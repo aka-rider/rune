@@ -10,6 +10,7 @@
 //! call, plan WP7.S1) and hands the results to `sync_idempotent` below,
 //! which is the actual pure, hand-testable assertion.
 
+use ratatui::buffer::CellWidth;
 use rune_tui::render::Cell;
 
 use super::Violation;
@@ -88,11 +89,15 @@ pub fn sync_idempotent(
 
 /// `CELL-OFFSET` (L0, sampled per G19) — every
 /// `Cell.buf_offset` is `None` (decorative) or a valid, in-bounds,
-/// char-boundary byte offset into `content`; a real offset implies
-/// `width >= 1` (a real buffer byte always renders as at least one cell).
-/// The old "negative but not the `-1` sentinel" arm is gone: `Option<u32>`
-/// makes negative garbage unrepresentable by construction, which is the
-/// point of the type.
+/// char-boundary byte offset into `content`. A real offset's `width` may be
+/// `0` ONLY when ratatui itself derives `0` for that same `Cell.text` (a
+/// lone zero-width rune — a bare combining mark, a stray ZWJ, a lone
+/// variation selector, a lone zero-width space — `rune_syntax::wrap::
+/// grapheme_width`'s doc); any OTHER width-0 real cell is a producer bug —
+/// a real buffer byte whose width silently disagrees with what a terminal
+/// would draw for it. The old "negative but not the `-1` sentinel" arm is
+/// gone: `Option<u32>` makes negative garbage unrepresentable by
+/// construction, which is the point of the type.
 ///
 /// Active-document-switch-safe: L0, checks one `Snapshot`'s `cells` against
 /// its own `content`.
@@ -113,10 +118,15 @@ pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
                     ),
                 ));
             }
-            if cell.width == 0 {
+            if cell.width == 0 && usize::from(cell.text.cell_width()) != 0 {
                 return Some(Violation::new(
                     "CELL-OFFSET",
-                    format!("cell at buf_offset={offset} has width=0"),
+                    format!(
+                        "cell at buf_offset={offset} has width=0 but ratatui derives \
+                         {} for its own text {:?}",
+                        cell.text.cell_width(),
+                        cell.text
+                    ),
                 ));
             }
         }
