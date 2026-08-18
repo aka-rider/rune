@@ -1,5 +1,5 @@
-//! `EDITOR_BINDINGS` — the ONE source of truth for every editor-pane chord
-//! (plan WP6.S1/S7, WP10.S3). `keymap::resolve` no longer hand-matches
+//! `EDITOR_BINDINGS` — the ONE source of truth for every editor-pane chord.
+//! `keymap::resolve` no longer hand-matches
 //! these chords itself; it delegates straight to `resolve_in(EDITOR_
 //! BINDINGS, key)`, so a chord either has a row here or it does not
 //! resolve — `help.rs`'s reflection pass and the startup collision index
@@ -184,8 +184,8 @@ mod tests {
 
     #[test]
     fn every_row_resolves_through_the_live_dispatch_path() {
-        // `resolve` delegates to this table directly (WP10.S3), so this is
-        // now near-tautological for the forward direction — kept as a
+        // `resolve` delegates to this table directly, so this is
+        // near-tautological for the forward direction — kept as a
         // cheap sanity check that a future change to `resolve` doesn't
         // reintroduce a second, hand-written match that drifts from this
         // table. The CONVERSE direction (every chord `resolve` accepts has

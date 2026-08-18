@@ -1,9 +1,9 @@
-//! Mouse input, decoupled from `termina` (plan WP7.S4/S5) — the same
+//! Mouse input, decoupled from `termina` — the same
 //! pattern `keymap.rs` uses for `KeyCode`/`KeyInput`: a platform- and
 //! library-independent event type, with `from_termina` the one bridge.
 //!
-//! Also `PointerState`, the multi-click tracker `commands::mouse` drives
-//! (plan WP7.S5): 500 ms window AND Chebyshev distance <= 1 cell
+//! Also `PointerState`, the multi-click tracker `commands::mouse` drives:
+//! 500 ms window AND Chebyshev distance <= 1 cell
 //! (deliberately not pixel-exact, since a human hand drifts). The wall
 //! clock never gets read directly here —
 //! `Clock` is an injected field on `App`, so a click sequence is
@@ -37,7 +37,7 @@ pub enum MouseKind {
 
 /// One mouse event, in zero-based terminal cell coordinates (matching
 /// `termina::event::MouseEvent`'s own convention) plus the modifier keys
-/// held at the time (alt-click/shift-click, plan WP7.S6).
+/// held at the time (alt-click/shift-click).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MouseInput {
     pub kind: MouseKind,
@@ -80,9 +80,9 @@ pub fn from_termina(event: termina::event::MouseEvent) -> Option<MouseInput> {
 }
 
 /// Answers "what time is it right now?" — a trait rather than a bare
-/// `Instant::now()` call so `App` can carry the answer source as a field
-/// (plan WP7.S5: "inject the clock as a field so the fuzzer can reproduce
-/// a gesture").
+/// `Instant::now()` call so `App` can carry the answer source as a field,
+/// letting the fuzzer inject its own clock and reproduce a gesture
+/// deterministically.
 pub trait Clock: std::fmt::Debug {
     fn now(&self) -> Instant;
 }
@@ -144,11 +144,11 @@ impl Clock for ManualClock {
     }
 }
 
-/// The multi-click threshold: 500 ms (plan WP7.S5).
+/// The multi-click threshold: 500 ms.
 const MULTI_CLICK_WINDOW: Duration = Duration::from_millis(500);
 
 /// The multi-click distance: Chebyshev (max of the row/column deltas) <= 1
-/// cell (plan WP7.S5) — a straight-line/Euclidean distance would reject a
+/// cell — a straight-line/Euclidean distance would reject a
 /// click one cell diagonally off the last one, which a real hand produces
 /// often enough that this deliberately doesn't use it.
 const MULTI_CLICK_DIST: i32 = 1;
@@ -188,7 +188,7 @@ pub enum Drag {
 }
 
 /// The click-aggregation + drag state a left-button gesture needs across
-/// messages (plan WP7.S5): `last_click`/`click_count` decide whether THIS
+/// messages: `last_click`/`click_count` decide whether THIS
 /// click continues a double/triple-click run; `drag` is the in-flight
 /// gesture a `Drag` event extends, `None` once the button is released.
 #[derive(Debug, Default)]

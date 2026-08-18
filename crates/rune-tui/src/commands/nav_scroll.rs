@@ -1,5 +1,6 @@
-//! Vertical/page motion (split out of `nav.rs`, plan WP7.S7, 500-line budget) plus the
-//! WP7.S2 viewport-only scroll commands: `scroll_line_up`/`down`,
+//! Vertical/page motion (split out of `nav.rs` to stay under the 500-line
+//! budget) plus the
+//! viewport-only scroll commands: `scroll_line_up`/`down`,
 //! `scroll_half_page_up`/`down`, `centre_cursor`, `cursor_to_top`,
 //! `cursor_to_bottom`.
 //!
@@ -175,14 +176,14 @@ fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
     WrapRow(view.wrap.syntax_to_wrap(sp).row)
 }
 
-/// Moves `scroll_row` by `delta` DISPLAY rows (WP3: `scroll_row` indexes
+/// Moves `scroll_row` by `delta` DISPLAY rows (`scroll_row` indexes
 /// `DisplaySnapshot::rows`, table borders included — not the wrap rows
 /// directly), clamped to `[0, total_rows - 1]` (never scrolled past the
-/// document), and arms `ScrollMode::Independent` (plan WP7.S1/S2) so the
+/// document), and arms `ScrollMode::Independent` so the
 /// per-batch settle snaps the cursor onto screen instead of scrolling the
 /// viewport back to it. The shared chokepoint both the line-scroll commands
-/// below and the mouse wheel (`commands::mouse`, WP7.S6: "wheel scrolls 3
-/// rows") route through, so the two can never disagree about how a scroll
+/// below and the mouse wheel (`commands::mouse`: the wheel scrolls 3
+/// rows per notch) route through, so the two can never disagree about how a scroll
 /// clamps or arms `Independent` mode.
 pub fn scroll_lines(doc: &mut Document, delta: isize) {
     let total = doc.view().display.total_rows();
@@ -237,8 +238,8 @@ fn scroll_to(doc: &mut Document, target_row: DisplayRow) {
 }
 
 /// Scrolls the viewport so the DISPLAY row containing byte offset `target`
-/// is visible — merge mode's own "jump to a hunk" primitive (plan WP3
-/// Gotchas `[R5]`). Converts through the exact same buffer -> syntax ->
+/// is visible — merge mode's own "jump to a hunk" primitive. Converts
+/// through the exact same buffer -> syntax ->
 /// wrap -> display chokepoint chain `cursor_wrap_row`/`scroll_to` above use
 /// for the cursor's own position, but starting from a raw byte offset
 /// instead — and, unlike every other command in this module, never touches

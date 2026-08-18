@@ -1,6 +1,4 @@
-//! `rune`: the CLI entry point (plan Context, WP5.S2; strict argument
-//! parsing and multi-file launch added WP7; the `launch`/`bootstrap` seam
-//! and its remaining fixes added WP4). `cli::parse` (abs-path'ing every
+//! `rune`: the CLI entry point. `cli::parse` (abs-path'ing every
 //! positional and `-w`'s value against the ONE `cwd` [`launch`] reads) hands
 //! back `--version`/`--help`, a parsed [`cli::Cli`], or a rejected command
 //! line; the first positional opens through the load path below exactly as
@@ -8,12 +6,13 @@
 //! tab, and the first stays the active document. No file opens an empty
 //! untitled document; a nonexistent path opens an empty buffer (created on
 //! first save via `RENAME_EXCL`); invalid UTF-8 is refused at load, before
-//! the TUI is ever entered (plan decision 4); a panic
+//! the TUI is ever entered — a document must be valid text before the
+//! runtime ever touches it; a panic
 //! anywhere in the run loop is caught here, after the terminal has already
 //! been restored by `term::Guard`'s `Drop` running during unwind.
 //!
 //! [`bootstrap`] does everything up to (but not including) the interactive
-//! run loop and is the seam WP4.S1/S7 test against `Mem`: it returns
+//! run loop, so it can be tested against `Mem`: it returns
 //! `Err(ExitCode)` for every early exit (`--version`/`--help`, a rejected
 //! command line, a load failure) and `Ok(AppGuard)` — a fully wired app,
 //! ready for `runtime::run` — otherwise. [`launch`] wraps it with the
@@ -55,7 +54,7 @@ pub(crate) mod exit_code {
 }
 
 fn main() -> ExitCode {
-    // Read exactly once (plan WP4.S6/[rune-cli 8]): every other spot that
+    // Read exactly once: every other spot that
     // used to read `env::current_dir()` a second time (the `-w`-absent
     // workspace-root fallback) now reuses this value, and a failure here is
     // surfaced instead of the two divergent silent fallbacks
@@ -79,7 +78,7 @@ fn main() -> ExitCode {
 
 /// Everything `main` does after resolving `cwd`/`$HOME` and constructing the
 /// real `vfs` — factored out so it's callable with a `Mem` vfs and canned
-/// args/cwd/home in tests (plan WP4.S1/[rune-cli 13]).
+/// args/cwd/home in tests.
 fn launch(
     vfs: &Arc<dyn Vfs + Send + Sync>,
     args: impl Iterator<Item = OsString>,
@@ -94,14 +93,14 @@ fn launch(
     let result = panic::catch_unwind(AssertUnwindSafe(|| rune_tui::runtime::run(&mut app)));
 
     // `app` (an `AppGuard`) drains the writer FIFO and runs clean-shutdown
-    // housekeeping (`wal_checkpoint(TRUNCATE)`/`optimize`, WP6.S2) in its
+    // housekeeping (`wal_checkpoint(TRUNCATE)`/`optimize`) in its
     // `Drop`, which now runs on EVERY exit path this function has — normal
     // return below, an early `?`-style return inside `bootstrap` after the
     // guard exists, AND a panic unwinding through this frame — not only the
     // three bootstrap-failure branches `bootstrap` itself handles before an
-    // `AppGuard` exists at all (plan WP4.S3/[rune-cli 5]: a panic between
-    // the store opening and this `catch_unwind` boundary used to skip the
-    // drain the old comment here claimed was unconditional).
+    // `AppGuard` exists at all. A panic between
+    // the store opening and this `catch_unwind` boundary must still drain
+    // the writer thread; it used to be skipped.
     match result {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(e)) => {
@@ -128,7 +127,7 @@ fn launch(
 
 /// Wraps `App` so the recovery store's writer thread is always drained,
 /// regardless of how this value stops being live — normal end of scope OR
-/// a panic unwinding through it (plan WP4.S3/[rune-cli 5]). The sole writer
+/// a panic unwinding through it. The sole writer
 /// of `App.db = None` from this point on; nothing past [`bootstrap`] calls
 /// `Db::shutdown` directly.
 pub(crate) struct AppGuard(App);
@@ -158,7 +157,7 @@ impl Drop for AppGuard {
 /// early exit (`--version`/`--help`, a rejected command line, a load
 /// failure) returns `Err` with its exit code already decided; the success
 /// path returns `Ok` with a fully wired [`AppGuard`], not yet handed to
-/// `runtime::run`. This split (plan WP4.S1/[rune-cli 13]) is what makes the
+/// `runtime::run`. This split is what makes the
 /// wiring testable against `Mem`: a test can call this directly and inspect
 /// the returned `App` without ever starting the interactive run loop.
 fn bootstrap(

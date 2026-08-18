@@ -1,7 +1,6 @@
-//! The initial-buffer load path split out of `main` (plan Context, WP5.S2):
-//! takes the first positional's single disk sighting through the injected
-//! `Vfs`, distinguishing "doesn't exist yet" from an actual read failure
-//! and refusing invalid UTF-8 outright.
+//! The initial-buffer load path: takes the first positional's single disk
+//! sighting through the injected `Vfs`, distinguishing "doesn't exist yet"
+//! from an actual read failure and refusing invalid UTF-8 outright.
 
 use std::path::Path;
 

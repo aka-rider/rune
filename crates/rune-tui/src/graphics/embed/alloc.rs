@@ -1,4 +1,4 @@
-//! `EmbedAllocator` (plan WP9.S6): a persistent map from a Kitty image id to
+//! `EmbedAllocator`: a persistent map from a Kitty image id to
 //! the resolved absolute path that owns it — one instance lives on
 //! `Document::embeds` (`EmbedSet`), surviving across reconcile passes so an
 //! id stays stable for a path's whole lifetime rather than being
@@ -28,8 +28,9 @@ impl EmbedAllocator {
     /// [`ImageId::next`], the same collision-probe step every allocation
     /// scheme built over `rune_image`'s ids shares). Reallocating the SAME
     /// key (a respawn) returns the id it already holds rather than probing
-    /// past it — the mtime-respawn contract requires the base id to stay
-    /// unchanged across a respawn (plan gotcha 3).
+    /// past it — a respawn triggered by an mtime change must keep the same
+    /// base id, or the Kitty terminal treats it as a brand-new image and
+    /// leaks the old placement.
     pub fn alloc_free_id(&mut self, key: &str) -> ImageId {
         let mut id = rune_image::alloc_id(key.as_bytes());
         loop {
@@ -43,9 +44,9 @@ impl EmbedAllocator {
         }
     }
 
-    /// Releases every id this allocator ever handed out for `key` (plan
-    /// WP9.S4's despawn) — a later respawn or an unrelated embed can then
-    /// reuse them instead of leaking them for the rest of the session.
+    /// Releases every id this allocator ever handed out for `key` — a later
+    /// respawn or an unrelated embed can then reuse them instead of leaking
+    /// them for the rest of the session.
     pub fn free_all_for(&mut self, key: &str) {
         self.by_id.retain(|_, v| v != key);
     }

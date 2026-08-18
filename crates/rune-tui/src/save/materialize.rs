@@ -1,10 +1,10 @@
-//! The store-backed materialize dance (WP7: enqueue `MaterializePrepare`,
+//! The store-backed materialize dance: enqueue `MaterializePrepare`,
 //! bookkeeping only; once `materialize_ack::handle_prepare_ack` reacts to
 //! its ack, it spawns the caller-side `vfs` `Cmd` that runs
 //! [`run_materialize_vfs`] — the ENTIRE `vfs` dance, through THIS app's own
 //! `Vfs` handle, never the writer thread's, since a dead writer thread must
-//! never make saving impossible ([rune-db 1])), and the snapshot-autosave
-//! debounce. Split out of `save.rs` (plan WP1, 500-line budget) — that file
+//! never make saving impossible, and the snapshot-autosave
+//! debounce. Split out of `save.rs` to stay under the 500-line budget — that file
 //! owns `trigger_save`'s start/refusal ladder and calls into
 //! [`materialize_now`]/[`bind_new_now`] here.
 
@@ -20,10 +20,10 @@ use crate::materialize_ack::{self, MaterializeVfsOutcome};
 use crate::runtime::{Effects, Msg, TimerKey};
 use crate::save::SaveMode;
 
-/// The snapshot-autosave debounce window (plan WP5.S6).
+/// The snapshot-autosave debounce window.
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 
-/// WP7 step (a), now Document-owned (`SaveState::Preparing`): enqueues
+/// Document-owned (`SaveState::Preparing`): enqueues
 /// `MaterializePrepare` — a plain, non-blocking channel send (never I/O that
 /// leaves this thread; the writer thread's reply carries no disk-sourced
 /// data at all, only DB bookkeeping), so `update` can call it directly.
@@ -101,13 +101,13 @@ pub(super) fn materialize_now(
             }
         }
         Err(e) => {
-            // WP7: nothing has touched disk yet — the store couldn't even
+            // Nothing has touched disk yet — the store couldn't even
             // perform the bookkeeping-only prepare step. Degrade the store
             // (same signal `on_store_failure` always raised on an
             // enqueue-time error) AND fall back to the uncoordinated
             // direct-vfs write, exactly like a document with no store
             // binding at all — save-anyway must actually save
-            // ([rune-db 1]). This document never entered
+            // even when the store is unavailable. This document never entered
             // `Preparing`, so `on_store_failure`'s sweep has nothing of
             // THIS attempt to abandon — the fallback below is the first
             // and only thing that arms `save_in_flight` for it.

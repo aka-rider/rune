@@ -1,12 +1,11 @@
-//! OSC 52 clipboard writes and `pbpaste`-based clipboard reads (WP8, plan
-//! Context "Clipboard"). Write: an OSC 52 escape sequence carrying the
-//! base64-encoded payload — built here as plain bytes and pushed into
-//! `Effects.raw` by `commands::clipboard`, never sent from a `Cmd` (plan
-//! Gotchas: "Cmds must never touch the terminal"). Read: `/usr/bin/pbpaste`,
-//! a deliberate choice over a pure-OSC-52 read (plan Context "Clipboard":
+//! OSC 52 clipboard writes and `pbpaste`-based clipboard reads. Write: an
+//! OSC 52 escape sequence carrying the base64-encoded payload — built here
+//! as plain bytes and pushed into `Effects.raw` by `commands::clipboard`,
+//! never sent from a `Cmd`, since Cmds must never touch the terminal.
+//! Read: `/usr/bin/pbpaste`, a deliberate choice over a pure-OSC-52 read —
 //! OSC 52 *read* is unsupported in Terminal.app and permission-gated in
 //! iTerm2/kitty — the macOS terminals this app targets; helix ships exactly
-//! this hybrid).
+//! this hybrid.
 
 use std::process::Command as ProcessCommand;
 
@@ -15,8 +14,8 @@ use base64::engine::general_purpose::STANDARD;
 
 use crate::runtime::{Cmd, Msg, PasteTarget};
 
-/// The largest raw (pre-base64) payload `osc52_copy` will encode (plan
-/// WP13.S4, `rune-tui C 6`). Terminal multiplexers (tmux, screen) cap how
+/// The largest raw (pre-base64) payload `osc52_copy` will encode.
+/// Terminal multiplexers (tmux, screen) cap how
 /// large an OSC 52 sequence they'll actually forward to the real terminal
 /// — far below 1 MiB — and silently drop anything over their own limit, so
 /// an unbounded copy/cut can write bytes into a sequence that never

@@ -176,8 +176,7 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
     })
 }
 
-/// Deletes the whole line under each (deduped) cursor (plan
-/// WP9.S2): the whole
+/// Deletes the whole line under each (deduped) cursor: the whole
 /// buffer when it's the only line; the line plus its own trailing `\n`
 /// when a later line exists; otherwise (the last line) the PREVIOUS
 /// line's trailing `\n` plus this line's own text, since the last line has

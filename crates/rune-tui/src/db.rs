@@ -1,12 +1,11 @@
 //! Wiring between `rune-tui`'s Elm-style runtime and `rune-db`'s async
-//! writer-thread `Store` (plan WP5, re-split in WP1 for multi-document
-//! support — plan WP1 decision 5): the `DbEvent` -> `Msg::Db` bridge, the
+//! writer-thread `Store`: the `DbEvent` -> `Msg::Db` bridge, the
 //! app-level `Db` handle (the `Store` itself + the bridge + the sticky
 //! degraded flag), and the per-document `DocDb` handle (this doc's bound
 //! row plus its async-replica bookkeeping). The
 //! in-memory `rune_core::undo::Journal` stays the synchronous, authoritative
 //! source of truth for the running session — nothing here ever waits on a
-//! `Store` ack before mutating the buffer (plan decision 3), and every call
+//! `Store` ack before mutating the buffer, and every call
 //! is a plain, non-blocking channel send (`Store::enqueue`'s `try_send`),
 //! never I/O — so these are called directly from `update`, not from a
 //! spawned `Cmd`.
@@ -17,7 +16,7 @@
 //! documents, a `DbEvent` ack's `id` alone doesn't say which document it
 //! belongs to — `App::db_ops: HashMap<u64, PendingOp>` records that mapping,
 //! plus (for a `Load` op) the buffer version it was issued against, at every
-//! successful enqueue (plan decision 6) and is consulted/popped by
+//! successful enqueue and is consulted/popped by
 //! `app::handle_db_event`.
 //!
 //! The functions building and submitting ops into `db_ops`
@@ -47,10 +46,10 @@ enum Sink {
 
 /// Adapts every `DbEvent` the `rune-db` writer thread posts into this
 /// crate's `Msg` channel. Constructed once at bootstrap (`rune-cli::main`),
-/// BEFORE `runtime::run` creates its own `Sender<Msg>` (plan Gotchas: "the
-/// runtime never exposes its `Sender<Msg>`" — `runtime.rs` creates it
-/// privately) — `Store::open`/`open_in_memory` (also bootstrap-time, so
-/// hydration, WP5.S4, can finish before the TUI ever draws a frame) take
+/// BEFORE `runtime::run` creates its own `Sender<Msg>` — the
+/// runtime never exposes its `Sender<Msg>`; `runtime.rs` creates it
+/// privately — `Store::open`/`open_in_memory` (also bootstrap-time, so
+/// hydration can finish before the TUI ever draws a frame) take
 /// their `on_event` callback fixed at construction, with no way to swap it
 /// afterward.
 ///
@@ -168,7 +167,7 @@ pub struct PendingOp {
     /// The issuing document's `buffer.version()` at the moment a `Load` op
     /// was enqueued — `None` for every other op kind, which never needs it.
     pub issued_version: Option<u64>,
-    /// True iff this op is a `Probe` (plan WP2.S4) — lets
+    /// True iff this op is a `Probe` — lets
     /// `workspace::switch_to` skip enqueueing a second probe for a document
     /// that already has one in flight (`probe.rs`'s own doc comment: each
     /// probe reads the whole file and inserts a fresh observation, so
@@ -187,7 +186,7 @@ pub struct PendingOp {
     /// generation-echo shape `merge_gen` below uses, scoped to one file's
     /// own baseline lineage instead of a single app-wide counter.
     pub baseline_epoch: Option<u32>,
-    /// `Some(generation)` iff this op is a `MergePrep` (plan WP3.S1/S5) — the
+    /// `Some(generation)` iff this op is a `MergePrep` — the
     /// generation `merge::begin` minted for this attempt at enqueue time.
     /// The landing handler (`merge::handle_merge_prep_ack`) compares this
     /// against `App.merge`'s OWN current `Pending` generation for the same
@@ -316,7 +315,7 @@ impl PendingOp {
     }
 }
 
-/// The app-wide half of the old `AppDb` (plan WP1 decision 5): the `Store`
+/// The app-wide half of the old `AppDb`: the `Store`
 /// itself, the bridge routing its acks into `Msg::Db`, and the sticky
 /// degraded flag — shared by every open `Document`. Per-document state
 /// (bound row, CAS baseline, async-replica bookkeeping) lives on `DocDb`
@@ -326,9 +325,9 @@ pub struct Db {
     pub bridge: Arc<DbBridge>,
     /// True once this store can no longer be trusted for recovery — either
     /// the open ladder degraded to `:memory:` at launch, or a LATER
-    /// enqueue-time error / `DbEvent::Err`/`Fatal` (plan decision 3: "on
+    /// enqueue-time error / `DbEvent::Err`/`Fatal`: on
     /// hard write failure the buffer is never rolled back; the store
-    /// enters degraded mode"). Sticky for the process lifetime — WP1 has no
+    /// enters degraded mode. Sticky for the process lifetime — there is no
     /// reopen/reconnect path.
     pub degraded: bool,
 }
@@ -351,8 +350,8 @@ impl Db {
     }
 }
 
-/// This document's handle onto the app-wide recovery store (plan WP1
-/// decision 5, split out of the pre-WP1 `AppDb`): the bound `documents` row
+/// This document's handle onto the app-wide recovery store, split out of
+/// the old `AppDb`: the bound `documents` row
 /// id (`db_id`, formerly `doc_id` — renamed so it can't be confused with
 /// `DocumentId`, the in-process tab identity) and the async-replica
 /// bookkeeping reconciling the LOCAL journal against the DURABLE one. The
@@ -411,7 +410,7 @@ pub struct DocDb {
     /// never be exact for either.
     pub last_known_seq: rune_db::Seq,
     /// Bumped on every journal mutation; the debounce token for the 2s
-    /// snapshot-autosave timer (plan WP5.S6) — a `Msg::SnapshotDue`
+    /// snapshot-autosave timer — a `Msg::SnapshotDue`
     /// arriving with a stale generation means a later edit already
     /// superseded it, so it's ignored.
     pub snapshot_generation: u32,

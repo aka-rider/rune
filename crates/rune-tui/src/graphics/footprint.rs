@@ -1,5 +1,5 @@
-//! Fit-to-width footprint math for an image document's live pixels (plan
-//! WP5.S2): how many terminal columns/rows a decoded image occupies once
+//! Fit-to-width footprint math for an image document's live pixels:
+//! how many terminal columns/rows a decoded image occupies once
 //! it is capped to the pane's own width and never upscaled. Pure — no
 //! `App`, no `Document`, so both the initial decode
 //! (`graphics::decode_cmd::handle_image_decoded`) and a later re-fit on
@@ -7,7 +7,7 @@
 //! `(cols, rows)` for the same inputs, with one implementation.
 //!
 //! Deliberately distinct from [`rune_image::fit_cells`]: that function fits
-//! independently against a `(max_cols, max_rows)` BOX (WP1.S2). This one
+//! independently against a `(max_cols, max_rows)` BOX. This one
 //! fits to WIDTH ONLY — Decision 8's
 //! "fit-to-width, never upscale, vertical scroll" — and derives the row
 //! count from whatever the width-driven scale leaves, rather than

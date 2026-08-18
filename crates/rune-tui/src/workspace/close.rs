@@ -1,6 +1,6 @@
 //! `request_close`/`close_now` — the tab-close chokepoint (split out of
-//! `workspace` per the 500-line budget; WP5.S7 adds the image-delete-on-close hook, which
-//! needed an `Effects` sink `close_now` didn't carry before).
+//! `workspace` per the 500-line budget; the image-delete-on-close hook needs
+//! an `Effects` sink `close_now` didn't carry before).
 
 use crate::app::App;
 use crate::document::DocumentId;
@@ -18,7 +18,7 @@ pub enum CloseOutcome {
     Unknown,
 }
 
-/// Requests closing `id` (plan WP5.S3): closes immediately if `id` is
+/// Requests closing `id`: closes immediately if `id` is
 /// clean, or arms the close-guard modal if it's dirty. A stale/already-
 /// closed `id` is a silent no-op. Closing the LAST remaining document is no
 /// longer refused — `close_now` mints a fresh untitled draft to replace it.
@@ -65,11 +65,11 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// title field and the breadcrumb reads live off `active_doc` at render
 /// time, so activating here is the one place both need to happen. The
 /// single constructor for this shape: `close_now` calls it below when the
-/// last document is about to close, and WP3's bootstrap adoption calls it
-/// when there is nothing recoverable to adopt instead.
+/// last document is about to close, and the startup bootstrap's adoption
+/// path calls it when there is nothing recoverable to adopt instead.
 ///
-/// Registers `id` as its own scratch row in the recovery store (plan WP0/
-/// WP3's mid-session gap) whenever a live store exists: `db_enqueue::
+/// Registers `id` as its own scratch row in the recovery store whenever a
+/// live store exists — this covers the mid-session gap: `db_enqueue::
 /// create_scratch` enqueues nothing and the document stays `Detached` —
 /// exactly today's behaviour — when there is no store or it's `degraded`, and
 /// `App::is_preserved` already reports that honestly to the quit/close
@@ -108,14 +108,14 @@ fn next_untitled_number(app: &App) -> usize {
         + 1
 }
 
-/// Closes `id` unconditionally — the plan WP5.S3 chokepoint every close
+/// Closes `id` unconditionally — the chokepoint every close
 /// path (clean `request_close`, the Guard's `[D]iscard`, and its `[S]ave`
 /// once the save ack lands) funnels through. Reassigns `active` to a
-/// neighbor FIRST when `id` is the active document — per the WP1 invariant
-/// comment on `App::active_doc`/`active_doc_mut`, `active` must always
+/// neighbor FIRST when `id` is the active document — `App::active_doc`/
+/// `active_doc_mut` require `active` to always
 /// reference a live entry, so the reassignment happens before `id` is
-/// removed, never after. Closing the LAST document is no longer refused
-/// (plan WP0): a fresh untitled draft is minted and activated first, so
+/// removed, never after. Closing the LAST document is no longer refused:
+/// a fresh untitled draft is minted and activated first, so
 /// that same non-empty floor holds even transiently. Sweeps `db_ops` of any
 /// entry still pointing at `id` — a stale ack would
 /// already be a correct no-op via `App::doc_mut` returning `None` (see its
@@ -130,7 +130,7 @@ fn next_untitled_number(app: &App) -> usize {
 /// stray `SaveConfirmTimeout` generation match resurrecting a confirm gate
 /// for a doc `[D]iscard` just closed.
 ///
-/// `effects` (plan WP5.S7): before the document is removed, an open image
+/// `effects`: before the document is removed, an open image
 /// document's allocated Kitty id is deleted from the terminal — gated on
 /// `app.graphics.kitty`, or a non-graphics terminal would receive escape
 /// bytes it never asked for. `materialize_ack::close_if_pending` (the only
@@ -146,7 +146,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if !app.documents.contains_key(&id) {
         return CloseOutcome::Unknown;
     }
-    // Plan WP6.S3, decision 12: closing the merge document is an implicit
+    // Closing the merge document is an implicit
     // Esc — exit BEFORE `id` is removed below, or `app.merge` would go on
     // pointing at a document that no longer exists at all. `auto_exit`
     // (review fix F3) cancels a `Pending` attempt WITH feedback instead of
@@ -165,7 +165,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     let mut active_changed = false;
     if app.documents.len() == 1 {
         // Closing the last document mints its replacement BEFORE `id` is
-        // removed (plan WP0): the non-empty
+        // removed: the non-empty
         // floor `App::active_doc`/`active_doc_mut` rely on is never
         // violated even transiently, and `new_untitled_document` already
         // activates the fresh draft and reseeds the title itself.
@@ -185,7 +185,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
         app.pending_save_confirm = None;
     }
-    // A quit-save fan-out (plan WP2) may be waiting on `id` specifically —
+    // A quit-save fan-out may be waiting on `id` specifically —
     // its enqueued save will never ack once the document is gone, so
     // without this sweep the wait would strand forever instead of
     // resolving once every OTHER awaited document's save lands.
@@ -224,8 +224,8 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
 }
 
 /// The neighbor `close_now` reassigns `active` to when the closed document
-/// WAS active: the next tab in `documents.order()`, else the previous one
-/// (plan WP5.S3). Falls back to any other live document if `id` isn't in
+/// WAS active: the next tab in `documents.order()`, else the previous one.
+/// Falls back to any other live document if `id` isn't in
 /// `documents.order()` at all — shouldn't happen (every document has a
 /// tab), but keeps this total rather than leaving `active` dangling.
 ///
@@ -260,7 +260,7 @@ mod tests {
 
     const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
-    /// Plan WP5.S7 Done-when: closing a `Live`-or-not image document pushes
+    /// Closing a `Live`-or-not image document pushes
     /// `encode_delete(id)` into `effects.raw` when the terminal is Kitty-
     /// capable, and never does when it isn't.
     #[test]
@@ -316,7 +316,7 @@ mod tests {
         assert!(effects.raw.is_empty());
     }
 
-    /// Plan WP0 Done-when: closing the ONLY open document does not refuse —
+    /// Closing the ONLY open document does not refuse —
     /// it mints a fresh untitled draft, so the session always ends up with
     /// exactly one document and no "can't close" status.
     #[test]

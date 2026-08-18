@@ -306,14 +306,14 @@ fn handle_scanned_error_clears_pending_and_posts_a_message() {
     );
 }
 
-/// WP4.S4: a basename match outranks a buried, non-boundary substring
-/// match — pins the ACTUAL `match_paths` behaviour (verified against
+/// A basename match outranks a buried, non-boundary substring match —
+/// pins the ACTUAL `match_paths` behaviour (verified against
 /// nucleo-matcher 0.3.1 directly: `Pattern::score` gives a query starting
 /// right after a `/` a boundary bonus a query starting mid-word does not
 /// get, regardless of which path segment either sits in — "notes/a.md"
 /// and "a/note.md" score IDENTICALLY for query "note", both starting at a
-/// boundary, so the plan's own suggested pair is not what actually
-/// distinguishes rank here).
+/// boundary, so an intuitive "basename vs. buried" pair is not what
+/// actually distinguishes rank here).
 #[test]
 fn a_basename_match_outranks_a_buried_mid_word_match() {
     let mut app = app();
@@ -364,9 +364,9 @@ fn a_basename_match_outranks_a_buried_mid_word_match() {
     );
 }
 
-/// WP4.S4: at equal score, an in-tree candidate ranks ahead of an
-/// out-of-tree one — the partition happens BEFORE the score-descending
-/// sort within each partition.
+/// At equal score, an in-tree candidate ranks ahead of an out-of-tree
+/// one — the partition happens BEFORE the score-descending sort within
+/// each partition.
 #[test]
 fn in_tree_beats_out_of_tree_at_equal_score() {
     let mut app = app();
@@ -402,7 +402,7 @@ fn in_tree_beats_out_of_tree_at_equal_score() {
     );
 }
 
-/// WP4.S4: MRU rank breaks a score tie — the two candidates below have
+/// MRU rank breaks a score tie — the two candidates below have
 /// the identical display string (so an identical score), differing only
 /// in `mru_rank`; the more recently used one (the lower rank) must sort
 /// first, and `Some` must always outrank `None`.

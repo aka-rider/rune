@@ -26,9 +26,9 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     Delete,
-    /// The F1 function key — bound to `GlobalCommand::Help` (WP2/WP7)
-    /// below. The only `Function(u8)` termina reports this crate binds; no
-    /// other function key is meaningful here yet.
+    /// The F1 function key, bound to `GlobalCommand::Help`. The only
+    /// `Function(u8)` termina reports this crate binds; no other function
+    /// key is meaningful here yet.
     F1,
 }
 

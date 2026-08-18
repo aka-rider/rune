@@ -1,4 +1,4 @@
-//! Mouse gesture dispatch (plan WP7.S6): click positions the caret,
+//! Mouse gesture dispatch: click positions the caret,
 //! alt-click adds a cursor, shift-click extends the selection, double-click
 //! selects the word, triple-click selects the whole logical line (including
 //! every wrapped row), plain click-drag extends a selection, and the wheel
@@ -24,9 +24,8 @@ use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
 
-/// The mouse wheel's step (plan WP7.S6: "wheel scrolls 3 rows" — vim,
-/// neovim's `mousescroll=ver:3`, and Helix's `scroll-lines = 3` all
-/// converge on this number).
+/// The mouse wheel's step: vim, neovim's `mousescroll=ver:3`, and Helix's
+/// `scroll-lines = 3` all converge on this number.
 pub(crate) const WHEEL_ROWS: isize = 3;
 
 /// Routes one `Msg::Mouse`. Takes `effects` because a ctrl-click may follow
@@ -151,7 +150,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
 
     if input.ctrl {
         // Ctrl-click: place the caret at the hit-tested offset and follow
-        // whatever link sits there (plan WP5.S8) — never registers toward
+        // whatever link sits there — never registers toward
         // the click-aggregation run (`PointerState::register_click` isn't
         // called on this branch), so a ctrl-click can never accidentally
         // chain into a double/triple-click select, and a plain double-click
@@ -316,8 +315,7 @@ pub(crate) fn extend_drag_cursor(
 /// it recomputes the editor rect itself rather than trusting rect-relative
 /// coordinates a caller elsewhere might compute against the wrong rect. A
 /// pointer that has wandered outside the editor mid-drag is a no-op (the
-/// selection simply stops extending until it re-enters), matching the
-/// pre-WP3 behaviour this replaces.
+/// selection simply stops extending until it re-enters).
 fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = crate::layout::geometry(area, app);
@@ -491,7 +489,7 @@ mod tests {
         assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
     }
 
-    /// WP3.S5: a click on a synthesised table border row must be a
+    /// A click on a synthesised table border row must be a
     /// complete no-op — never move the caret to some nearby
     /// offset. The table sits at the very top of the document, so editor
     /// row 0 is its synthesised `┌┬┐` top border (`DisplaySnapshot::

@@ -1,18 +1,18 @@
-//! Shared `TestBackend` -> glyph-grid extractor for headless render tests
-//! (plan WP1.S1). Every test module that used to hand-roll its own draw-
+//! Shared `TestBackend` -> glyph-grid extractor for headless render tests.
+//! Every test module that used to hand-roll its own draw-
 //! into-a-`TestBackend`-then-read-cells-back boilerplate (`tests/
 //! tui_render.rs` was the reference this module generalises) now goes
 //! through here instead — including `src/opentabs.rs`'s and
-//! `src/title.rs`'s own test modules (plan WP13.S5: both had grown a
+//! `src/title.rs`'s own test modules, which had grown a
 //! second, independent copy of the same construction, the coverage gap
-//! that let the "one place" claim below silently rot). `tests/
+//! that let the "one place" claim below silently rot. `tests/
 //! testgrid_inventory.rs` makes the claim self-checking rather than a
 //! comment nobody re-verifies: it asserts `TestBackend::new` appears
 //! exactly once crate-wide, right here.
 //!
 //! `draw_with` is the actual common denominator; `draw`/`grid`/`row` are
-//! thin convenience wrappers over it. Most callers only need the two named
-//! in the plan (`grid`, `row`); a few need the raw `ratatui::buffer::Buffer`
+//! thin convenience wrappers over it. Most callers only need `grid`/`row`;
+//! a few need the raw `ratatui::buffer::Buffer`
 //! back for cell-level color/modifier assertions (`tests/chrome.rs`'s
 //! border-color checks, `tests/tui_render.rs`'s caret/bold-modifier checks)
 //! or need to draw something other than the whole `App` (`src/
@@ -60,15 +60,15 @@ fn row_text(buf: &RtBuffer, y: u16, w: u16) -> String {
 }
 
 /// Draws `app` into a `w`x`h` `TestBackend` and returns every row as its
-/// own `String` (plan WP1.S1).
+/// own `String`.
 pub fn grid(app: &App, w: u16, h: u16) -> Vec<String> {
     let buf = draw(app, w, h);
     (0..h).map(|y| row_text(&buf, y, w)).collect()
 }
 
-/// Draws `app` into a `w`x`h` `TestBackend` and returns row `y` only (plan
-/// WP1.S1 names this `row(app, y, w)`; a height is required to actually
-/// draw a frame, so it is taken explicitly here — see WP1 report).
+/// Draws `app` into a `w`x`h` `TestBackend` and returns row `y` only. A
+/// height is required to actually draw a frame, so it is taken explicitly
+/// here even though only one row is returned.
 pub fn row(app: &App, y: u16, w: u16, h: u16) -> String {
     row_text(&draw(app, w, h), y, w)
 }

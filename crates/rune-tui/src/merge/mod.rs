@@ -19,8 +19,8 @@ use crate::db::PendingOp;
 use crate::messages;
 use crate::runtime::Effects;
 
-/// `^M` (plan WP3.S5): a fast pre-check against `Document.last_sync`
-/// (render/hint state only, plan Gotchas `[R3]`) before ever enqueueing a
+/// `^M`: a fast pre-check against `Document.last_sync`
+/// (render/hint state only) before ever enqueueing a
 /// `MergePrep` — refuses immediately, with feedback, when there is
 /// obviously nothing to merge, without waiting on a round trip to confirm
 /// what the hint already rules out. The fresh `MergePrep` landing
@@ -76,17 +76,16 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
     }
 }
 
-/// The exit-in-place chokepoint (plan WP3.S7, decision 4: "Esc = exit in
-/// place — no abort-restore"). A no-op outside `Active` — checked BEFORE
+/// The exit-in-place chokepoint: Esc exits an active merge in place, with
+/// no abort-restore. A no-op outside `Active` — checked BEFORE
 /// ever taking `app.merge` (review fix F3): a `Pending` attempt has no
 /// `saved_display_name`/blocks to restore or count, and taking it
 /// unconditionally used to silently cancel it with no feedback at all,
 /// contradicting this very doc's "no-op outside `Active`" — see
 /// `cancel_pending` below for `Pending`'s own exit path, with its own
-/// status. `pub(crate)`'s only caller in THIS work package is `^M` toggling
-/// off an already-`Active` merge by hand; later work packages (auto-exit on
-/// tab switch/close/quit, the resolver's own Esc, fully-resolved auto-exit)
-/// add more callers without changing this function's contract.
+/// status. `pub(crate)` because callers besides `^M` toggling off an
+/// already-`Active` merge by hand also reach it: auto-exit on tab
+/// switch/close/quit, the resolver's own Esc, and fully-resolved auto-exit.
 pub(crate) fn exit_in_place(app: &mut App) {
     if !matches!(app.merge, MergeState::Active { .. }) {
         return;
@@ -282,7 +281,7 @@ pub(crate) fn auto_exit(app: &mut App) {
     }
 }
 
-/// The save gate (plan WP4.S3, decision 6): while the resolver is active ON
+/// The save gate: while the resolver is active ON
 /// the document being saved with unresolved blocks remaining, saving is
 /// refused with the count — a reflexive save mid-merge must not publish a
 /// half-resolved working form with zero friction. A rung in
@@ -309,11 +308,10 @@ pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -
     true
 }
 
-/// `GlobalCommand::Merge`'s handler (plan WP3.S5): `^M` starts a merge
+/// `GlobalCommand::Merge`'s handler: `^M` starts a merge
 /// attempt when none is active, or exits an already-`Active` one in place —
-/// a natural toggle, and the only reachable caller `exit_in_place` has
-/// until later work packages (the resolver's own Esc, auto-exit) add
-/// theirs.
+/// a natural toggle. `exit_in_place` also has other callers (the
+/// resolver's own Esc, auto-exit) besides this one.
 pub(crate) fn toggle(app: &mut App, effects: &mut Effects) {
     if matches!(app.merge, MergeState::Active { .. }) {
         exit_in_place(app);

@@ -1,5 +1,5 @@
-//! Re-fitting a live image document's footprint on `Msg::Resize` (plan
-//! WP5.S6): a pane resize (or a cell-geometry re-derivation with no pane
+//! Re-fitting a live image document's footprint on `Msg::Resize`:
+//! a pane resize (or a cell-geometry re-derivation with no pane
 //! resize at all — a Retina-aware terminal reporting new pixel dimensions
 //! at the SAME cols/rows) can change the fit-to-width `(cols, rows)` an
 //! already-decoded image occupies. Retransmitting is only worth doing when

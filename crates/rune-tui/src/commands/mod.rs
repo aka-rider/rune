@@ -1,14 +1,13 @@
-//! Command execution: character/word movement/selection (`nav`, WP6),
+//! Command execution: character/word movement/selection (`nav`),
 //! line/document motion (`nav_line`), vertical/scroll motion and
-//! viewport-only scrolling (`nav_scroll`, WP7), mouse gestures
-//! (`mouse`, WP7), editing/undo-redo (`edit`), the shared buffer-mutation
-//! chokepoint (`edit_core`, WP9.S6), line-oriented editing (`edit_lines`
-//! and `edit_lines_move`, WP9), multi-cursor management (`multi`,
-//! WP9), the `⌃P` reading-view toggle (`reading`), and the read-only
+//! viewport-only scrolling (`nav_scroll`), mouse gestures
+//! (`mouse`), editing/undo-redo (`edit`), the shared buffer-mutation
+//! chokepoint (`edit_core`), line-oriented editing (`edit_lines`
+//! and `edit_lines_move`), multi-cursor management (`multi`),
+//! the `⌃P` reading-view toggle (`reading`), and the read-only
 //! "every motion key is a viewport command" policy (`reading_nav`),
 //! dispatched from `app::handle_key`/`app::update` against the
-//! `Command`/`Msg::Mouse` the keymap resolver/runtime produce (plan
-//! Context, "Keymap").
+//! `Command`/`Msg::Mouse` the keymap resolver/runtime produce.
 
 pub mod clipboard;
 pub mod edit;

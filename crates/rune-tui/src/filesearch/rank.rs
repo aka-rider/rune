@@ -1,4 +1,4 @@
-//! Non-empty-query ranking for the fuzzy file finder (plan WP4): scores
+//! Non-empty-query ranking for the fuzzy file finder: scores
 //! every candidate against the live query with the session's own
 //! long-lived `Matcher`, partitions in-tree above out-of-tree, and orders
 //! each partition by score, then MRU rank, then display width, then

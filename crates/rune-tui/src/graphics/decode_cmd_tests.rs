@@ -45,8 +45,8 @@ fn is_live(app: &App, id: DocumentId) -> bool {
 
 /// Drives a pending image document all the way to `Live` through the
 /// real `schedule_image_decode` -> `Cmd::run` -> `handle_image_decoded`
-/// path (plan WP6.S1's "reload" tests want an already-open, already-
-/// transmitted image to reload from, not a hand-constructed one).
+/// path, so reload tests get an already-open, already-transmitted image
+/// to reload from, not a hand-constructed one.
 fn app_with_live_image(kitty: bool) -> (App, DocumentId) {
     let (mut app, id) = app_with_pending_image(kitty);
     let mut effects = Effects::default();
@@ -261,10 +261,10 @@ fn reload_is_a_no_op_on_a_non_image_document() {
     assert!(effects.raw.is_empty());
 }
 
-/// WP2.S2: reload used to refuse outright while `in_flight.is_some()`,
-/// which is exactly what let a lost reply wedge a document forever —
-/// the recovery command refused to run precisely when recovery was
-/// needed. It must now preempt: spawn a fresh decode anyway, abandoning
+/// Reload must preempt rather than refuse while `in_flight.is_some()`:
+/// refusing there is exactly what let a lost reply wedge a document
+/// forever, since the recovery command refused to run precisely when
+/// recovery was needed. It spawns a fresh decode anyway, abandoning
 /// whatever was in flight.
 #[test]
 fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
@@ -280,7 +280,7 @@ fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
     );
 }
 
-/// WP2.S2: the abandoned decode's eventual reply (stamped with the OLD
+/// The abandoned decode's eventual reply (stamped with the OLD
 /// generation) must be dropped without disturbing the document, once
 /// the fresh decode from a preempting reload has already landed.
 #[test]
@@ -318,11 +318,10 @@ fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     );
 }
 
-/// WP2.S1's "Done when": two successive reloads must never collapse to
-/// the same generation — the bug this plan fixes was `spawn_decode`
-/// deriving the generation from `in_flight.unwrap_or(0)`, which is
-/// always exactly `1` from every caller that has already proven
-/// `in_flight.is_none()`.
+/// Two successive reloads must never collapse to the same generation —
+/// a prior bug had `spawn_decode` deriving the generation from
+/// `in_flight.unwrap_or(0)`, which is always exactly `1` from every
+/// caller that has already proven `in_flight.is_none()`.
 #[test]
 fn two_successive_reloads_produce_different_generations() {
     let (mut app, id) = app_with_live_image(true);

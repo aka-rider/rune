@@ -1,5 +1,4 @@
-//! Mouse hit-testing (split out of `mouse.rs` — WP9 pushed it
-//! past 500 lines): `hit_test`/`offset_at` walk the clicked row's own
+//! Mouse hit-testing: `hit_test`/`offset_at` walk the clicked row's own
 //! rendered cells (`render::segment_cells`) to find the buffer byte a
 //! screen column corresponds to — the same cells `render::build_rows` just
 //! blitted, so a click always resolves to exactly what's on screen.
@@ -23,7 +22,7 @@ pub(crate) fn hit_test(app: &App, doc: &Document, row: u16, col: u16) -> Option<
     Some((offset, desired_col_at(doc, view, offset)))
 }
 
-/// `row` is relative to the DISPLAY grid (WP3: what's actually on screen,
+/// `row` is relative to the DISPLAY grid (what's actually on screen,
 /// borders included) — clamped against `DisplaySnapshot::total_rows`, then
 /// converted to the WRAP row the click's hit-tested content actually lives
 /// at via `display_to_wrap`, since every coordinate below this point (cell
@@ -43,16 +42,17 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
     let wrap_row = view.display.display_to_wrap(display_row);
     let content = doc.buffer.content();
 
-    // Plan WP9.S3: an EMBED anchor row (`r.image` is `Some` with a
-    // `target` — the whole-document image producer's own rows are always
-    // `synthetic` and so already returned `None` above; only an embed's
-    // non-synthetic anchor row reaches here) is never walked through
+    // An EMBED anchor row (`r.image` is `Some` with a `target` — the
+    // whole-document image producer's own rows are always `synthetic` and
+    // so already returned `None` above; only an embed's non-synthetic
+    // anchor row reaches here) is never walked through
     // `render::segment_geometry` below when it's actually showing
     // placeholder pixels — that would measure the row's ORDINARY
     // span-based content (its alt text), not the placeholder-cell layout
     // `render::image::row_cells` actually draws, and mouse coordinates
-    // would disagree with what's on screen (plan gotcha: "mirror the
-    // override into the geometry-only variant"). Reuses `row_cells`
+    // would disagree with what's on screen. Any future image-row-specific
+    // rendering behavior added to `row_cells` must be mirrored here too, or
+    // this hit-test will disagree with what's drawn. Reuses `row_cells`
     // directly rather than a second, independently-written cell walk — the
     // exact chokepoint `build_rows` itself calls through. Every placeholder
     // cell carries no `buf_offset` of its own,
@@ -81,7 +81,7 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
 }
 
 /// The wrap segment `wrap_row`'s own first buffer position — what an image
-/// row's click resolves to (plan WP9.S3), since none of its placeholder
+/// row's click resolves to, since none of its placeholder
 /// cells carry a real one of their own to walk toward.
 fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: WrapRow) -> usize {
     let content = doc.buffer.content();
@@ -96,9 +96,9 @@ fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: WrapRow) -> 
     doc.buffer.line_col_to_offset(buffer_point)
 }
 
-/// The ordinary (non-image) row cell walk — unchanged from before WP9.S3,
-/// split out so the image-row branch above can share this tail (the
-/// past-the-last-cell fallback) without duplicating it.
+/// The ordinary (non-image) row cell walk, split out so the image-row
+/// branch above can share this tail (the past-the-last-cell fallback)
+/// without duplicating it.
 fn offset_at_ordinary(
     doc: &Document,
     view: &ViewSnapshots,
@@ -107,7 +107,7 @@ fn offset_at_ordinary(
     content: &str,
     col: u16,
 ) -> usize {
-    // WP4.S4: the clicked row may carry a decoration prefix (heading icon /
+    // The clicked row may carry a decoration prefix (heading icon /
     // bullet / quote bar / hr rule, `build_rows` prepends it before this
     // same `render::segment_geometry` content the cell walk below reads) —
     // subtract its width from `col` before walking so a click's column

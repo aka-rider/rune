@@ -28,7 +28,7 @@ pub(crate) const SEP: &str = "/";
 /// directory chain as its address.
 pub(crate) const LEAF_SEP: &str = " › ";
 
-/// Relativizes `path` against `root` (plan WP4.S6), returning the ordered list of path components the
+/// Relativizes `path` against `root`, returning the ordered list of path components the
 /// crumb renders. When `root` is non-empty and `path` is under it (`Path::
 /// starts_with` compares whole components, so this can never mistake
 /// `/a/vault2` for being under `/a/vault` the way a bare string-prefix

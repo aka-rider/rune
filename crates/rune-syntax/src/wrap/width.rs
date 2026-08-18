@@ -89,8 +89,8 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 /// clamp exists so that rune's own caret/wrap column math always has a
 /// reachable cell for such a rune, per `control_aware_width`'s own doc. For
 /// exactly this single-rune case rune's reserved width and ratatui's own
-/// `cell_width()` for the SAME bytes disagree (1 vs 0) — recorded, with the
-/// measured evidence, in `TODO/TODO.md`. `crates/rune-tui/src/render/
+/// `cell_width()` for the SAME bytes disagree (1 vs 0) — this is a known,
+/// permanent divergence, not a bug to fix. `crates/rune-tui/src/render/
 /// blit.rs`'s own guard assert is narrowed to admit precisely this case and
 /// no other.
 ///

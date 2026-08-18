@@ -1,4 +1,4 @@
-//! Icon-tier selection (plan WP5): decides which glyph family a session
+//! Icon-tier selection: decides which glyph family a session
 //! paints line decorations and file-tree rows with — a nerd-font tier that
 //! needs a Nerd Font or system font fallback for its private-use-area
 //! glyphs, or a plain-Unicode tier that renders in any terminal font. The

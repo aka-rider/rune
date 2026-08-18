@@ -1,11 +1,11 @@
-//! `workspace::open_path` — opens a file selected in the Explorer (plan
-//! WP4.S5): re-activates a `Document` already bound to the resolved path,
+//! `workspace::open_path` — opens a file selected in the Explorer:
+//! re-activates a `Document` already bound to the resolved path,
 //! or reads a fresh one SYNCHRONOUSLY through the injected `Vfs`.
 //! Directory navigation is the Explorer's own job instead
 //! (`explorer_keys::handle_key`'s `Open`/`ParentDir` arms build a `runtime::
 //! load_dir_cmd` `Cmd` directly) — this module only ever opens FILES, so
 //! unlike that path it needs no `Cmd`/`Effects` (a single `vfs.read` is
-//! cheap enough to run inline here, exactly as the pre-WP4 bootstrap load
+//! cheap enough to run inline here, exactly as the bootstrap load
 //! in `rune-cli::main::load_buffer` already does).
 
 use std::path::{Path, PathBuf};
@@ -64,7 +64,7 @@ pub fn resolve_or_report(app: &mut App, path: &Path, verb: &str) -> Option<PathB
 /// (`messages::error`) — the one chokepoint every error report
 /// funnels through. Returns the opened/reactivated
 /// document's id, or `None` on any of the error paths — `navigate::follow`
-/// (plan WP5) needs the id back to force-parse the target and land the
+/// needs the id back to force-parse the target and land the
 /// caret on an anchor.
 pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
     match resolve_and_read(app, path) {
@@ -132,8 +132,8 @@ fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
     }
 }
 
-/// Opens `path` off-thread (plan WP5.S6, [rune-tui A 7]: "synchronous
-/// `vfs.read` inside `update` blocks the Elm loop") — the interactive-
+/// Opens `path` off-thread — a synchronous `vfs.read` inside `update` would
+/// block the Elm loop, so this is the interactive-
 /// navigation counterpart of [`open_path`] above. An already-open document
 /// still reactivates synchronously (no I/O to wait on); a fresh path spawns
 /// a `ReadFile` `Cmd` and returns immediately with nothing landed yet — the
@@ -241,7 +241,7 @@ pub(crate) fn handle_file_opened(
 /// store, and switch to it. Reports and returns `None` on a decode failure
 /// — the caller's own read already succeeded by this point.
 ///
-/// Branches BEFORE `Buffer::from_bytes` for an image path (plan WP4.S7):
+/// Branches BEFORE `Buffer::from_bytes` for an image path:
 /// image bytes are never valid UTF-8 in general (`Buffer` is UTF-8 by
 /// type), and even a coincidentally UTF-8-clean image must still open as a
 /// read-only image document, not an editable text one. Covers both the
@@ -275,9 +275,9 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
     if let Some(doc) = app.doc_mut(id) {
         doc.bind_path(resolved.to_path_buf());
     }
-    // Hydrates `id` through the app-wide recovery store (plan WP6, closing
-    // the gap TODO.md's "per-doc recovery hydration for explorer-opened
-    // documents" entry records): non-blocking, ack-driven via
+    // Hydrates `id` through the app-wide recovery store — explorer-opened
+    // documents previously had no recovery hydration at all. Non-blocking,
+    // ack-driven via
     // `app::handle_db_event`'s `Load` arm — `Document::db` stays `None`
     // until that ack lands (or forever, if this store is absent/degraded).
     let _ = db::load_document(app, id, resolved, db::LoadIntent::Recover);
@@ -285,8 +285,8 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
     Some(id)
 }
 
-/// The image-document counterpart of `open_bytes`'s ordinary tail (plan
-/// WP4.S7): an always-empty `Buffer` (image bytes never live in one), read-
+/// The image-document counterpart of `open_bytes`'s ordinary tail: an
+/// always-empty `Buffer` (image bytes never live in one), read-
 /// only, no recovery binding at all — there is no text journal to hydrate
 /// and `save::trigger_save`'s own `DocumentKind::Image` guard means nothing
 /// would ever write through it anyway. `bind_path` still runs first (it is
@@ -296,7 +296,7 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
 /// `display_name`/`read_only`/`image` fields it doesn't itself set are
 /// layered on afterward. `probe_dimensions` is header-only (no full decode,
 /// no `ratatui`/protocol dependency) — enough for the info card to show
-/// `WIDTHxHEIGHT` before any decode `Cmd` exists at all (WP5).
+/// `WIDTHxHEIGHT` before any decode `Cmd` exists at all.
 fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId {
     let dims = rune_image::probe_dimensions(bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
     let id = rune_image::alloc_id(resolved.as_os_str().as_encoded_bytes());
@@ -333,14 +333,14 @@ pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId
         .map(|(id, _)| *id)
 }
 
-/// Switches the active document to `id` — the chokepoint plan WP5.S2 asks
-/// for (Open Tabs' `Select`), reused by `open_path`'s re-activation path
+/// Switches the active document to `id` — the chokepoint Open Tabs'
+/// `Select` command uses, reused by `open_path`'s re-activation path
 /// above. A no-op if `id` doesn't reference a live document (a stale id from
 /// some racing close). Also moves — never reorders — the Tabs pane's own
 /// cursor to `id`'s position in `documents.order()`, so the next Up/Down there
 /// starts from the tab that's actually now showing.
 ///
-/// Writes no focus of its own (plan decision 6): this is the one function
+/// Writes no focus of its own: this is the one function
 /// that could blur the title without an `Effects` sink, so every caller now
 /// does that itself, in prefix position, BEFORE calling this — `rename::
 /// begin` resolves its subject from the live `app.active`, so blurring
@@ -361,7 +361,7 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     // currently IS the discarded preview: the very next line below reseats
     // it at `id`.
     crate::explorer_preview::discard_if_switching_away(app, id);
-    // Plan WP6.S3, decision 12: switching AWAY from the merge document is an
+    // Switching AWAY from the merge document is an
     // implicit Esc — auto-exit BEFORE the title reseed below, or `name_for`
     // would re-derive the OUTGOING document's plain name while `app.merge`
     // still holds it `Active`, leaving the merge suffix to vanish from a
@@ -383,9 +383,9 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if let Some(idx) = app.documents.order().iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
-    // Plan WP2.S4: re-check this document's disk fact on every switch onto
+    // Re-check this document's disk fact on every switch onto
     // it — the only detection wiring besides `Load`-at-open and the
-    // save-time CAS conflict (plan decision 8: no file watcher).
+    // save-time CAS conflict (rune has no file watcher).
     crate::db_enqueue::probe(app, id);
 }
 
@@ -405,7 +405,7 @@ pub fn select_tab(app: &mut App, idx: usize) {
     crate::navhistory::record_departure_if_moved(app, departed);
 }
 
-/// `F1` (plan WP7.S2, `keymap::GlobalCommand::Help`): mints the read-only
+/// `F1` (`keymap::GlobalCommand::Help`): mints the read-only
 /// Help virtual document the first time it's ever needed (`App.help_doc`,
 /// idempotent — a second press never mints a duplicate), then toggles
 /// between it and whatever was active before, keeping the Help document as
@@ -451,7 +451,7 @@ pub fn toggle_help(app: &mut App, effects: &mut Effects) {
 }
 
 // `request_close`/`close_now`/`neighbor_of` moved to `workspace::close`
-// (500-line budget, WP5.S7's image-delete-on-close hook) — re-exported below so
+// (500-line budget) — re-exported below so
 // every existing `workspace::` call site keeps working unchanged.
 pub(crate) mod close;
 pub use close::{
@@ -498,11 +498,11 @@ mod tests {
         let after_first_open = app.documents.len();
         let first_active = app.active;
 
-        // `open_path` itself no longer moves focus (plan WP2 decision 6:
-        // `switch_to` lost that write, and this function has no `Effects`
+        // `open_path` itself no longer moves focus (`switch_to` lost that
+        // write, and this function has no `Effects`
         // sink to run `App::set_focus` through) — this test's own re-
         // activation contract is `documents.len()`/`active` staying put, not
-        // a focus assertion this change removes (plan gotcha 7).
+        // a focus assertion.
         open_path(&mut app, Path::new("/root/a.md"));
 
         assert_eq!(app.documents.len(), after_first_open, "must not duplicate");

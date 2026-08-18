@@ -1,29 +1,27 @@
-//! A minimal vim binding set (plan WP6.S8). Its whole point is to
+//! A minimal vim binding set. Its whole point is to
 //! demonstrate that collision validation is scoped per binding set
 //! (`crate::keymap::index::validate`): `h`/`j`/`k`/`l`/`i` deliberately
 //! reuse physical keys `editor_bindings::EDITOR_BINDINGS` ALSO binds (`i`
 //! is an ordinary insertable character there), which is fine because only
 //! one set is ever active at once (`BindingSet`, a field on `App`
-//! defaulting to `BindingSet::Default` — the plan's "VS Code set").
+//! defaulting to `BindingSet::Default`, the VS Code-style set).
 //! `validate` enforces that scoping at the TYPE level here, not just by
 //! convention: `VimCommand` and `Command` are different types, so
 //! `Binding<VimCommand>` and `Binding<Command>` can never even be compared
 //! by the same `validate::<C>` call.
 //!
 //! Full vim modal editing — mode-dependent live dispatch, `i` actually
-//! entering an insert mode `app::handle_editor_key` respects — is
-//! explicitly out of scope for this whole plan (see the plan's Goal
-//! section: "Explicitly not in this plan: ... full vim modal mode").
-//! `VimCommand`/`VIM_BINDINGS` exist to be validated and (once a future WP
-//! wires it up) help-documented; `app::handle_editor_key` does not consult
-//! this table yet.
+//! entering an insert mode `app::handle_editor_key` respects — is out of
+//! scope here. `VimCommand`/`VIM_BINDINGS` exist to be validated and
+//! (once wired up) help-documented; `app::handle_editor_key` does not
+//! consult this table yet.
 
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{KeyCode, Mods};
 
-/// Selects which binding set governs the editor pane (plan WP6.S8) — a
+/// Selects which binding set governs the editor pane — a
 /// field on `App`, defaulting to `Default` (the VS Code-style set this
-/// crate has had since WP2). Switching to `Vim` only ever changes which
+/// crate has always had). Switching to `Vim` only ever changes which
 /// table `resolve`-style dispatch consults; it does not by itself imply
 /// modal (normal/insert) editing semantics — see this module's doc comment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

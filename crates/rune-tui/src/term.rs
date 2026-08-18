@@ -1,7 +1,6 @@
-//! RAII terminal guard (plan Context, "Msg/Cmd runtime" / "Keymap"): enters
-//! raw mode, the alternate screen, Kitty keyboard enhancement flags,
-//! bracketed paste, and mouse reporting (plan WP7.S3) on construction;
-//! `Drop` restores all of it. `Drop` runs
+//! RAII terminal guard: enters raw mode, the alternate screen, Kitty
+//! keyboard enhancement flags, bracketed paste, and mouse reporting on
+//! construction; `Drop` restores all of it. `Drop` runs
 //! during unwind, before `catch_unwind` traps a panic in `rune-cli`'s
 //! `main` — the halt-never-panic path this crate requires (panic = "abort"
 //! is forbidden precisely so this restore can run).
@@ -60,7 +59,7 @@ pub struct Guard {
     terminal: RtTerminal<TerminaBackend<PlatformTerminal>>,
     events: EventReader,
     /// Whether the real terminal behind this `Guard` speaks the Kitty
-    /// graphics protocol (plan WP6.S3) — `false` at construction, since
+    /// graphics protocol — `false` at construction, since
     /// `Guard::new` runs before `graphics::detect` can ever measure the
     /// window (`bootstrap`'s own ordering: this field is set right after,
     /// via `set_kitty`, and re-synced on every later `Msg::Resize`). `Drop`
@@ -102,8 +101,8 @@ impl Guard {
         Ok(guard)
     }
 
-    /// Records whether the terminal speaks the Kitty graphics protocol
-    /// (plan WP6.S3) — called once right after `graphics::detect` runs in
+    /// Records whether the terminal speaks the Kitty graphics protocol —
+    /// called once right after `graphics::detect` runs in
     /// `bootstrap` (which itself needs a live `Guard` to query the window
     /// through, so this can never be known at `new`'s own construction
     /// time) and again on every `Msg::Resize`, since `app.graphics` is
@@ -119,7 +118,7 @@ impl Guard {
     /// called from `new`, on an already-constructed `Guard` — see its docs
     /// for why that ordering matters.
     ///
-    /// Mouse mode 1002 (`ButtonEventMouse`, plan WP7.S3) reports press/
+    /// Mouse mode 1002 (`ButtonEventMouse`) reports press/
     /// release/drag but never plain hover — mode 1003 (`AnyEventMouse`)
     /// would additionally report every hover, flooding an otherwise idle
     /// event loop with `Moved` events this crate has no gesture for.
@@ -197,8 +196,8 @@ impl Guard {
     }
 }
 
-/// The exact bytes `Guard::drop` writes to restore the terminal (plan
-/// WP6.S3) — a pure function so the Kitty-gating decision is unit-testable
+/// The exact bytes `Guard::drop` writes to restore the terminal — a pure
+/// function so the Kitty-gating decision is unit-testable
 /// without a live `PlatformTerminal` (which `Guard` itself can't be
 /// constructed without in a headless test environment). `kitty` decides
 /// only the LEADING `encode_delete_all()` escape: Kitty images stay
@@ -247,11 +246,8 @@ impl Drop for Guard {
 mod tests {
     use super::*;
 
-    /// Plan WP6.S3 Done-when: "Guard-equivalent teardown emits
-    /// `encode_delete_all()` when Kitty is available and emits nothing
-    /// when it is not" — asserted against the pure byte-builder `Guard::
-    /// drop` itself calls, since `Guard` cannot be constructed at all
-    /// without a live terminal.
+    /// Asserted against the pure byte-builder `Guard::drop` itself calls,
+    /// since `Guard` cannot be constructed at all without a live terminal.
     #[test]
     fn teardown_emits_delete_all_only_when_kitty_is_available() {
         let with_kitty = teardown_bytes(true);

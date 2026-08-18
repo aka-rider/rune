@@ -1,17 +1,16 @@
-//! Editing (insert/backspace/delete/delete-word/newline) and undo/redo
-//! (WP7): per-cursor edit commands run through a shared driver
+//! Editing (insert/backspace/delete/delete-word/newline) and undo/redo:
+//! per-cursor edit commands run through a shared driver
 //! (`per_cursor_selection_edits`), and undo/redo follow a peek-then-commit
 //! discipline (see `undo`/`redo` below). The shared buffer-mutation
 //! chokepoint (`apply_edit_batch_with_cursors`/`commit_edit_batch`) lives
 //! in the sibling `edit_core` module, and the line-oriented commands
 //! (indent/outdent, delete-line, clone/move-line) live in the sibling
-//! `edit_lines` module (plan WP9.S6 500-line budget — one
-//! `edit_lines` boundary was not enough to bring this file itself under
-//! budget, hence the second split into `edit_core`) — see each module's
-//! own doc for why the boundary sits there.
+//! `edit_lines` module: one `edit_lines` boundary was not enough to bring
+//! this file itself under the 500-line budget, hence the second split
+//! into `edit_core` — see each module's own doc for why the boundary sits
+//! there.
 //!
-//! Workspace-coupled (plan WP1 decision 4): every function here takes
-//! `(app: &mut App, id: DocumentId)` — every mutation funnels through
+//! Workspace-coupled: every function here takes
 //! `edit_core::commit_edit_batch`, which also touches `app.db`/the
 //! message log/the dirty cache, so unlike `commands::nav` this
 //! module can't work off a bare `&mut Document`. Internally, functions
@@ -134,7 +133,7 @@ pub fn newline(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Reused by `commands::clipboard::cut` (WP8): deletes each cursor's
+/// Reused by `commands::clipboard::cut`: deletes each cursor's
 /// selection, or — with no selection — its whole current line including
 /// the trailing `\n` (`nav_line::line_range_incl_newline`, the same range
 /// `copy_entire_line` used to build the text cut just copied — so cut
@@ -181,7 +180,7 @@ pub fn delete_right(app: &mut App, id: DocumentId) {
     );
 }
 
-/// (plan WP9.S2) Deletes the selection when the cursor has one (same
+/// Deletes the selection when the cursor has one (same
 /// selection-first rule every `per_cursor_selection_edits` caller
 /// shares); otherwise deletes from `nav::word_left_offset` up to the
 /// caret — one word, not one rune.

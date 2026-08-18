@@ -1,5 +1,5 @@
-//! The per-row override entry point for an image row's cells (plan
-//! WP4.S10/S11, extended WP9.S1 for inline embeds): a centered info card —
+//! The per-row override entry point for an image row's cells: a centered
+//! info card —
 //! file name, format, dimensions and byte size, and a reason line — for a
 //! whole `DocumentKind::Image` document with no pixels yet showable, and
 //! Kitty placeholder cells for one that IS live; an inline embed row
@@ -32,21 +32,21 @@ use crate::render::cell::push_grapheme_cells;
 use crate::width::display_width;
 
 /// The fixed number of display rows the image producer reserves while no
-/// pixel-based row count is known yet (plan WP4.S2, `Document::view`'s own
+/// pixel-based row count is known yet (`Document::view`'s own
 /// `set_image_document_dims` call) — enough to show every line of the info card
-/// this module builds. WP5 overrides this with the real cell-based row
-/// count once a decode's fit computation populates `ImageState::cells`.
+/// this module builds. The real cell-based row
+/// count, once a decode's fit computation populates `ImageState::cells`, overrides it.
 pub const INFO_CARD_ROWS: usize = 4;
 
 /// The single entry point `build_rows` calls for any row carrying an
-/// `ImageRowRef` (plan WP4.S11/WP9.S1). Dispatches on
+/// `ImageRowRef`. Dispatches on
 /// `image_ref.target`: `None` names a whole-document image row (exactly
 /// one per document, `doc.image` answers everything — always `Some`, this
 /// path never falls through to plain alt text since an image document has
 /// no alt text of its own); `Some(target)` names an inline embed row,
 /// looked up in `doc.embeds` by that key — may return `None` when Kitty
 /// isn't available, letting `build_rows` fall through to the row's own
-/// alt-text span instead (WP7's `Rendered` emit).
+/// alt-text span instead.
 pub fn row_cells(
     app: &App,
     doc: &Document,
@@ -59,8 +59,8 @@ pub fn row_cells(
     )
 }
 
-/// A whole `DocumentKind::Image` document's row (plan WP4.S10/S11, extended
-/// WP5.S4): a `Live` image on a Kitty-capable terminal renders real
+/// A whole `DocumentKind::Image` document's row: a `Live` image on a
+/// Kitty-capable terminal renders real
 /// placeholder cells (`live_row_cells`) carrying the smuggled 24-bit id;
 /// every other case (no Kitty, still `Pending`/`Failed`) falls back to the
 /// info card's own `image_ref.row`'th line, centered within `width`
@@ -89,7 +89,7 @@ fn doc_image_row_cells(
     centered_cells(text, width as usize)
 }
 
-/// One inline embed's row (plan WP9.S1): Kitty + `Live` -> placeholder
+/// One inline embed's row: Kitty + `Live` -> placeholder
 /// cells preceded by one blank left-margin cell (`margin: 1` below) so an
 /// embed's pixels never sit flush against the preceding column — the whole
 /// document producer's own rows (no margin) never need this, since a whole
@@ -121,8 +121,8 @@ fn embed_row_cells(
     }
 }
 
-/// A `Live` image row's real cells (plan WP5.S4, extended WP9.S1's
-/// `margin`): `margin` blank cells (0 for a whole document, 1 for an
+/// A `Live` image row's real cells (`margin` distinguishes them): `margin`
+/// blank cells (0 for a whole document, 1 for an
 /// embed), then up to `image_cols` (the producer's own reserved column
 /// count for this row, capped by `width`) placeholder cells, each
 /// `PLACEHOLDER` + a row diacritic + a column diacritic — the Kitty Unicode
@@ -166,8 +166,8 @@ fn live_row_cells(
     cells
 }
 
-/// The allocated Kitty image id, reinterpreted as a 24-bit RGB colour
-/// (plan WP5.S4) — `rune_image::alloc_id` already masks its result to
+/// The allocated Kitty image id, reinterpreted as a 24-bit RGB colour —
+/// `rune_image::alloc_id` already masks its result to
 /// `0x00FF_FFFF`, so the top byte is always zero and every id round-trips
 /// through this split without loss.
 fn id_to_rgb(id: u32) -> Color {
@@ -179,7 +179,7 @@ fn id_to_rgb(id: u32) -> Color {
 }
 
 /// The info card's own lines, in display order: file name, format,
-/// dimensions + byte size, and a reason line (plan WP4.S10).
+/// dimensions + byte size, and a reason line.
 fn info_card_lines(app: &App, doc: &Document) -> Vec<String> {
     let name = doc.file_name().to_string();
     let format = doc

@@ -1,4 +1,4 @@
-//! Silent workspace-root discovery (plan WP4): walks up looking for a
+//! Silent workspace-root discovery: walks up looking for a
 //! marker, with no consent prompt. The recovery store lives entirely
 //! outside the user's tree (`production_db_path()`), so there is nothing to
 //! create and nothing to consent to — this module only ever answers "where

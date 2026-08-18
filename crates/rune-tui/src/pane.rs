@@ -626,7 +626,7 @@ mod tests {
         assert_eq!(app.focus(), Pane::Editor);
     }
 
-    /// Table-driven close-gate invariant (plan WP1.S10): for every command
+    /// Table-driven close-gate invariant: for every command
     /// reachable from `GLOBAL_BINDINGS`, running it with the finder open
     /// must never leave it open with focus somewhere other than the
     /// Explorer — the exact "stage 3 swallows keys for a mode the user

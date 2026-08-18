@@ -209,7 +209,9 @@ pub(crate) fn after_update(
 /// next `App::sync_view` the main loop already runs after every message
 /// recomputes from the live, edited buffer through the ordinary synchronous
 /// path — the same one `bootstrap`'s large-document branch deferred, now
-/// fast per issue #11's own fix.
+/// fast because sync_content + snapshot together run comfortably under
+/// 40ms for documents below the large-document threshold
+/// (`LARGE_DOC_BOOTSTRAP_BYTES`).
 fn handle_bootstrap_view_ready(
     app: &mut App,
     id: DocumentId,

@@ -80,7 +80,7 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                 },
             );
             let width = u16::from(cell.width.max(1));
-            // WP13.S2: a cell that *starts* inside `area` can still not
+            // A cell that *starts* inside `area` can still not
             // *fit* — a double-width glyph landing on the last column
             // would need a continuation cell past `right` that this loop
             // never writes, leaving the border's own cell un-reset there

@@ -1,7 +1,7 @@
 //! Line duplication and reordering commands: split out of the sibling
 //! `edit_lines` module (that module was already over the 500-line
-//! budget). Implements clone-line-up/down and move-line-up/down commands
-//! (plan WP9.S2). `clone_line_up`/`clone_line_down` reuse `edit_lines`'s
+//! budget). Implements clone-line-up/down and move-line-up/down commands.
+//! `clone_line_up`/`clone_line_down` reuse `edit_lines`'s
 //! `per_line_edits` (via `pub(crate)`); `move_line_up`/`move_line_down`
 //! hand-place the resulting cursor at a column instead of the edit's end,
 //! so those two call `edit_core::apply_edit_batch_with_cursors` directly.
@@ -15,8 +15,8 @@ use crate::commands::edit_core::apply_edit_batch_with_cursors;
 use crate::commands::edit_lines::per_line_edits;
 use crate::document::DocumentId;
 
-/// Inserts a copy of each (non-deduped) cursor's line directly above it
-/// (plan WP9.S2). `line == 0` skips that cursor (no line to clone above).
+/// Inserts a copy of each (non-deduped) cursor's line directly above it.
+/// `line == 0` skips that cursor (no line to clone above).
 pub fn clone_line_up(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
         if line == 0 {
@@ -49,7 +49,7 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
 
 /// Swaps the FIRST cursor's line with the one directly above it, in a
 /// single edit, and collapses the whole cursor set to just that one
-/// cursor (plan WP9.S2): move-line only ever acts on the first
+/// cursor: move-line only ever acts on the first
 /// cursor, dropping any others in the set. The surviving cursor lands at
 /// the same COLUMN it held within its line, now inside the moved block —
 /// not at the edit's end, which is why this calls `apply_edit_batch_with_
@@ -284,8 +284,6 @@ mod tests {
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
-    /// A test for `move_line_down`, then one undo, asserting the buffer is
-    /// byte-identical to the original (plan WP9 Done-when).
     #[test]
     fn move_line_down_then_undo_restores_the_buffer_byte_for_byte() {
         let mut app = app_with("one\ntwo\nthree", 1);

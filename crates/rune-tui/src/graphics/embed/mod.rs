@@ -1,4 +1,4 @@
-//! Inline embed lifecycle (plan WP9): a markdown document can carry several
+//! Inline embed lifecycle: a markdown document can carry several
 //! `![alt](x.png)`/`![[x.png]]` images at once, unlike an image DOCUMENT
 //! (`graphics::state::ImageState`, exactly one per `Document`) — so this is
 //! a whole per-document SET, keyed by `ImageM::target_text` (the same key

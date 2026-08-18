@@ -1,12 +1,11 @@
-//! WP5 preview-parity tests: the fuzzy file finder's nav-driven preview
+//! Preview-parity tests: the fuzzy file finder's nav-driven preview
 //! rides the SAME `explorer_preview` machinery the Explorer itself uses
 //! (`app.explorer.preview`, `Msg::FileOpened` -> `maybe_consume_reply`) —
 //! these tests drive that shared round trip through the finder's own entry
 //! points (`open`, `handle_recents_loaded`, `keys::handle_key`) rather than
-//! the Explorer's, and cover both Esc-restore shapes the plan calls out by
-//! name: after arrowing onto an already-open document (no preview ever
-//! minted) and after previewing a not-yet-open file (a real preview to
-//! discard).
+//! the Explorer's, and cover both Esc-restore shapes: after arrowing onto
+//! an already-open document (no preview ever minted) and after previewing
+//! a not-yet-open file (a real preview to discard).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
