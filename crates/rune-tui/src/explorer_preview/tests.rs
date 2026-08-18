@@ -833,10 +833,15 @@ fn a_highlight_reply_for_the_previous_preview_file_cannot_paint_the_next_one() {
         Msg::Highlighted {
             doc: id,
             version: stale_version,
-            result: Some(crate::highlight::HighlightReply {
+            result: crate::highlight::PassOutcome::Replace(crate::highlight::HighlightReply {
                 regions: vec![crate::highlight::RegionResult {
                     map: crate::linemap::LineMap::new("# a\n", vec![marker_line]),
-                    payload: Some(crate::highlight::RegionPayload::Spans(vec![(0..4, scope)])),
+                    outcome: crate::highlight::RegionOutcome::Replace(
+                        crate::highlight::RegionPayload::Spans {
+                            source: String::new(),
+                            spans: vec![(0..4, scope)],
+                        },
+                    ),
                 }],
                 truncated: false,
             }),

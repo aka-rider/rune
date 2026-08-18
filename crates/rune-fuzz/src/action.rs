@@ -241,16 +241,22 @@ pub const TREE_PARSE_BUDGET: std::time::Duration = std::time::Duration::from_sec
 /// Builds the one `Msg::Highlighted`-ready reply `Action::HighlightTree`
 /// delivers: a single region whose `LineMap` is `tree_fixture_line_ranges`
 /// anchored at `base`, and whose payload is a real `rune_ts::parse` of
-/// `tree_fixture(fixture)`, mapped to `RegionPayload::Tree` (`None` on a
-/// parse failure, never a panic — the driver and its acceptance test share
-/// this one construction so they can never drift apart).
+/// `tree_fixture(fixture)`, mapped to `RegionPayload::Tree` (a carry-forward
+/// on a parse failure, never a panic — the driver and its acceptance test
+/// share this one construction so they can never drift apart).
 pub fn highlight_tree_reply(fixture: u8, base: usize) -> rune_tui::highlight::HighlightReply {
     let source = tree_fixture(fixture);
     let map = rune_tui::linemap::LineMap::new(source, tree_fixture_line_ranges(source, base));
-    let payload = rune_ts::parse("json", source, TREE_PARSE_BUDGET)
-        .map(rune_tui::highlight::RegionPayload::Tree);
+    let outcome = match rune_ts::parse("json", source, TREE_PARSE_BUDGET) {
+        Some(tree) => rune_tui::highlight::RegionOutcome::Replace(
+            rune_tui::highlight::RegionPayload::Tree(tree),
+        ),
+        None => rune_tui::highlight::RegionOutcome::CarryForward {
+            source: source.to_string(),
+        },
+    };
     rune_tui::highlight::HighlightReply {
-        regions: vec![rune_tui::highlight::RegionResult { map, payload }],
+        regions: vec![rune_tui::highlight::RegionResult { map, outcome }],
         truncated: false,
     }
 }

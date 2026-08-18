@@ -12,7 +12,7 @@ use crate::commands::{
     reading_nav,
 };
 use crate::document::DocumentId;
-use crate::highlight::HighlightReply;
+use crate::highlight::PassOutcome;
 use crate::keymap::{self, Command, Extend, KeyCode, KeyInput, Motion, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
@@ -226,8 +226,8 @@ fn handle_bootstrap_view_ready(
 /// Applies a `Msg::Highlighted` reply, in the fixed order `[R2]` requires:
 /// (a) `in_flight` clears regardless of what the reply carries, so a
 /// document can never deadlock waiting on a highlight that already returned;
-/// (b) `result: None` (every attempted region overran its budget, or none
-/// resolved) leaves every region exactly as it was — a slow document
+/// (b) a `CarryForward` pass (every attempted region overran its budget, or
+/// none resolved) leaves every region exactly as it was — a slow document
 /// degrades to STALE colours, never to none; (c) a `version` that no longer
 /// matches the live buffer means a NEWER edit landed while this reply was in
 /// flight, so it describes stale content and is dropped whole, regions again
@@ -236,7 +236,7 @@ fn handle_bootstrap_view_ready(
 /// (`pending`), it is cleared and a fresh highlight is requested immediately
 /// rather than waiting for the next keystroke.
 ///
-/// A `None` reply at the live version surfaces a status line — for a fence
+/// A `CarryForward` pass at the live version surfaces a status line — for a fence
 /// exactly as for a whole file, since both now run the same single bounded
 /// parse per region and both fail the same way. It is narrowed to a document
 /// that has never once been successfully highlighted (`highlight.version ==
@@ -254,7 +254,7 @@ fn handle_highlighted(
     app: &mut App,
     id: DocumentId,
     version: u64,
-    result: Option<HighlightReply>,
+    result: PassOutcome,
     effects: &mut Effects,
 ) {
     let mut timed_out = false;
@@ -266,15 +266,15 @@ fn handle_highlighted(
         doc.highlight.pending = false;
         let live_version = doc.buffer.version();
         match result {
-            Some(reply) if version == live_version => {
+            PassOutcome::Replace(reply) if version == live_version => {
                 crate::highlight::apply_reply(doc, version, reply);
             }
-            None if version == live_version && doc.highlight.version == 0 => {
+            PassOutcome::CarryForward if version == live_version && doc.highlight.version == 0 => {
                 timed_out = true;
             }
-            // A `None` reply for a document that already has colours, or any
-            // reply at a stale version, leaves every region untouched —
-            // `[R2]`.
+            // A `CarryForward` pass for a document that already has colours,
+            // or any reply at a stale version, leaves every region untouched
+            // — `[R2]`.
             _ => {}
         }
         truncated = doc.highlight.truncated;

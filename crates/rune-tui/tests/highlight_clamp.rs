@@ -13,6 +13,7 @@ mod highlight_common;
 use highlight_common::{all_spans, app_for, span_reply};
 use rune_syntax::scope::scope_table;
 use rune_tui::app;
+use rune_tui::highlight::PassOutcome;
 use rune_tui::runtime::{Effects, Msg};
 
 #[test]
@@ -37,7 +38,7 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(span_reply(vec![
+            result: PassOutcome::Replace(span_reply(vec![
                 (0..1000, keyword), // past the end -> clamped to `len`
                 (5..3, keyword),    // inverted -> dropped
                 (1..2, keyword),    // mid-char -> dropped
@@ -86,7 +87,7 @@ fn a_stored_span_is_re_clamped_after_the_buffer_shrinks() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(span_reply(vec![(0..13, keyword)])),
+            result: PassOutcome::Replace(span_reply(vec![(0..13, keyword)])),
         },
         &mut effects,
     );

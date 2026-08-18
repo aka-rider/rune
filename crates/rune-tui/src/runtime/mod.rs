@@ -25,7 +25,7 @@ use rune_vfs::{DirEntry, Vfs};
 
 use crate::app::{self, App};
 use crate::document::DocumentId;
-use crate::highlight::HighlightReply;
+use crate::highlight::PassOutcome;
 use crate::keymap::{self, KeyInput};
 use crate::pointer::MouseInput;
 use crate::term::Guard;
@@ -181,19 +181,15 @@ pub enum Msg {
         result: Result<Vec<u8>, String>,
         anchor: Option<rune_nav::Anchor>,
     },
-    /// A background highlight call completed. `result: None` means NO
-    /// RESULT — not one region produced anything, because every parse
-    /// budget elapsed or no language resolved — and is distinguishable from
-    /// `Some(..)` carrying empty payloads, a real empty result: `None` must
-    /// leave every region's stored tree/spans untouched, or a document whose
-    /// parse is slower than the budget would lose its colours on every
-    /// keystroke and never regain them. `version` is the buffer version the
+    /// A background highlight call completed. `result` says what the pass
+    /// came back with in its own words — its variants' docs carry the
+    /// keep-or-replace semantics. `version` is the buffer version the
     /// highlight ran against; a reply whose `version` no longer matches the
-    /// live buffer is dropped the same way.
+    /// live buffer is dropped whole.
     Highlighted {
         doc: DocumentId,
         version: u64,
-        result: Option<HighlightReply>,
+        result: PassOutcome,
     },
     /// The deferred bootstrap display-pipeline compute for a large document
     /// completed — `bootstrap::bootstrap_view_cmd`'s reply, routed to
@@ -583,6 +579,8 @@ mod bootstrap;
 // moved to `runtime::highlight_cmd` (500-line budget) — re-exported below so
 // every existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
+#[cfg(test)]
+pub(crate) use highlight_cmd::test_clock;
 pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, PassBudget, highlight_cmd, run_regions};
 pub use highlight_cmd::{PARSE_BUDGET, PASS_BUDGET};
 

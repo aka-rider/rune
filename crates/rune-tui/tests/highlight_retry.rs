@@ -9,7 +9,9 @@ use highlight_common::{all_spans, app_for, span_reply};
 use rune_fuzz::Session;
 use rune_syntax::scope::scope_table;
 use rune_tui::app;
-use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult};
+use rune_tui::highlight::{
+    HighlightReply, PassOutcome, RegionOutcome, RegionPayload, RegionResult,
+};
 use rune_tui::linemap::LineMap;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 
@@ -35,7 +37,7 @@ fn install(session: &mut Session, spans: Vec<(std::ops::Range<usize>, rune_synta
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(span_reply(spans)),
+            result: PassOutcome::Replace(span_reply(spans)),
         },
         &mut effects,
     );
@@ -57,7 +59,7 @@ fn none_result_leaves_spans_byte_identical() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: None,
+            result: PassOutcome::CarryForward,
         },
         &mut effects,
     );
@@ -93,7 +95,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
         Msg::Highlighted {
             doc: id,
             version: stale_version,
-            result: Some(span_reply(vec![(0..3, keyword)])),
+            result: PassOutcome::Replace(span_reply(vec![(0..3, keyword)])),
         },
         &mut effects,
     );
@@ -123,7 +125,7 @@ fn a_timed_out_document_surfaces_a_message() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: None,
+            result: PassOutcome::CarryForward,
         },
         &mut effects,
     );
@@ -168,7 +170,7 @@ fn a_timed_out_markdown_fence_surfaces_the_same_message() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: None,
+            result: PassOutcome::CarryForward,
         },
         &mut effects,
     );
@@ -207,7 +209,7 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: None,
+            result: PassOutcome::CarryForward,
         },
         &mut effects,
     );
@@ -250,7 +252,7 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: None,
+            result: PassOutcome::CarryForward,
         },
         &mut effects,
     );
@@ -286,10 +288,12 @@ fn a_payload_less_region_slot_carries_its_existing_colours_forward() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(HighlightReply {
+            result: PassOutcome::Replace(HighlightReply {
                 regions: vec![RegionResult {
                     map: LineMap::default(),
-                    payload: None,
+                    outcome: RegionOutcome::CarryForward {
+                        source: String::new(),
+                    },
                 }],
                 truncated: false,
             }),
@@ -318,10 +322,13 @@ fn span_cap_truncation_surfaces_a_status_line() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(HighlightReply {
+            result: PassOutcome::Replace(HighlightReply {
                 regions: vec![RegionResult {
                     map: LineMap::default(),
-                    payload: Some(RegionPayload::Spans(vec![(0..2, keyword)])),
+                    outcome: RegionOutcome::Replace(RegionPayload::Spans {
+                        source: String::new(),
+                        spans: vec![(0..2, keyword)],
+                    }),
                 }],
                 truncated: true,
             }),
@@ -362,7 +369,7 @@ fn timeout_outranks_truncation_in_the_status_line() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: None,
+            result: PassOutcome::CarryForward,
         },
         &mut effects,
     );

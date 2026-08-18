@@ -53,9 +53,9 @@ pub use query::visible_spans;
 /// `Cmd` was still running, so its completion re-schedules rather than the
 /// document going stale until the next keystroke.
 ///
-/// A completion carrying `result: None` (every attempted region overran its
-/// budget, or none resolved) leaves every region untouched: a slow document
-/// degrades to STALE colours, never to NO colours.
+/// A completion carrying `PassOutcome::CarryForward` (every attempted region
+/// overran its budget, or none resolved) leaves every region untouched: a
+/// slow document degrades to STALE colours, never to NO colours.
 #[derive(Debug, Default)]
 pub struct HighlightState {
     pub version: u64,
@@ -87,6 +87,7 @@ pub struct HighlightState {
 #[derive(Debug, Default)]
 pub struct RegionHighlight {
     pub map: LineMap,
+    pub source: String,
     pub tree: Option<rune_ts::ParsedTree>,
     pub spans: Vec<(Range<usize>, ScopeId)>,
 }
@@ -97,21 +98,45 @@ pub enum RegionPayload {
     Tree(rune_ts::ParsedTree),
     /// Buffer-coordinate spans — already mapped back through the region's
     /// own `LineMap`, so a nested fence's container prefix is excluded by
-    /// construction.
-    Spans(Vec<(Range<usize>, ScopeId)>),
+    /// construction — plus the reconstructed source they colour, the
+    /// identity a tree carries inside itself.
+    Spans {
+        source: String,
+        spans: Vec<(Range<usize>, ScopeId)>,
+    },
 }
 
-/// One region's slot in a reply: its refreshed map, plus the new payload
-/// when the call produced one.
+/// One region's slot in a reply: its refreshed map and its channels' fate.
 ///
-/// `payload: None` means "this region's channels carry forward unchanged" —
-/// either its retained tree was still valid and no parse was attempted, or
-/// the attempt overran its budget. Both cases want the same thing: keep the
-/// colours, take the new map.
+/// `CarryForward` means no new colours were produced — the retained tree
+/// was still valid and no parse was attempted, or the attempt overran its
+/// budget. It carries the region's reconstructed source text, the key the
+/// stored channels are matched against: colours survive only when they were
+/// produced from these exact bytes, never merely by sitting at the same
+/// index.
+#[derive(Debug)]
+pub enum RegionOutcome {
+    CarryForward { source: String },
+    Replace(RegionPayload),
+}
+
 #[derive(Debug)]
 pub struct RegionResult {
     pub map: LineMap,
-    pub payload: Option<RegionPayload>,
+    pub outcome: RegionOutcome,
+}
+
+/// What a whole highlight pass came back with.
+///
+/// `CarryForward` means NO region produced anything — every attempted parse
+/// overran its budget, or no language resolved — and must leave every
+/// stored region untouched: a slow document degrades to STALE colours,
+/// never to none. Distinct by construction from a `Replace` whose regions
+/// all carry forward individually — a real result of refreshed maps.
+#[derive(Debug)]
+pub enum PassOutcome {
+    CarryForward,
+    Replace(HighlightReply),
 }
 
 /// A completed highlight call: one entry per code region, in document order,
@@ -126,14 +151,20 @@ pub struct HighlightReply {
 
 /// One region's off-thread work item.
 ///
-/// `work: None` means the scheduler already holds a valid tree for this
-/// region: the job carries only the refreshed map, and the region is never
-/// reparsed. That is the mechanism that keeps the regions competing for a
-/// pass's total few enough for one full `PARSE_BUDGET` each to stay
-/// affordable.
+/// `Retain` means the scheduler already holds a valid tree for this region:
+/// the job carries only the refreshed map, and the region is never reparsed
+/// — the mechanism that keeps the regions competing for a pass's total few
+/// enough for one full `PARSE_BUDGET` each to stay affordable. Both
+/// variants carry the source, so a region that ends up carrying forward —
+/// retained OR starved — always names the bytes its kept colours came from.
 pub(crate) struct RegionJob {
     pub(crate) map: LineMap,
-    pub(crate) work: Option<(RegionLang, String)>,
+    pub(crate) work: RegionWork,
+}
+
+pub(crate) enum RegionWork {
+    Retain { source: String },
+    Parse { lang: RegionLang, source: String },
 }
 
 /// Which highlighter a region's info string resolves to: a tree-sitter
@@ -255,34 +286,41 @@ mod test_support {
 /// The ONE writer of `HighlightState::regions`.
 ///
 /// A reply describes the document's whole region layout at `version`, so
-/// installing it replaces the list outright. A slot with no payload inherits
-/// the channels of whatever sat at the same position before — that is how a
-/// region whose tree was still valid, and a region whose reparse overran its
-/// budget, both keep their colours while taking their new map.
+/// installing it replaces the list outright. A carried-forward slot
+/// inherits the channels stored at the same position ONLY when that slot's
+/// recorded source equals the carry's — colours produced from different
+/// bytes are dropped rather than misapplied, and the next pass reparses.
+/// That is how a still-valid tree and a budget-starved reparse both keep
+/// their colours while taking their new map, without a reshaped layout ever
+/// painting one region with another's tree.
 fn install_regions(doc: &mut Document, version: u64, reply: HighlightReply) {
     let mut carried = std::mem::take(&mut doc.highlight.regions);
     doc.highlight.regions = reply
         .regions
         .into_iter()
         .enumerate()
-        .map(|(i, result)| match result.payload {
-            Some(RegionPayload::Tree(tree)) => RegionHighlight {
+        .map(|(i, result)| match result.outcome {
+            RegionOutcome::Replace(RegionPayload::Tree(tree)) => RegionHighlight {
                 map: result.map,
+                source: tree.source().to_string(),
                 tree: Some(tree),
                 spans: Vec::new(),
             },
-            Some(RegionPayload::Spans(spans)) => RegionHighlight {
+            RegionOutcome::Replace(RegionPayload::Spans { source, spans }) => RegionHighlight {
                 map: result.map,
+                source,
                 tree: None,
                 spans,
             },
-            None => {
+            RegionOutcome::CarryForward { source } => {
                 let (tree, spans) = carried
                     .get_mut(i)
+                    .filter(|c| c.source == source)
                     .map(|c| (c.tree.take(), std::mem::take(&mut c.spans)))
                     .unwrap_or_default();
                 RegionHighlight {
                     map: result.map,
+                    source,
                     tree,
                     spans,
                 }
@@ -359,24 +397,21 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
 /// parse or not.
 ///
 /// A region's retained tree is valid exactly when it was parsed from the
-/// same bytes the region reconstructs to now. Region identity across an edit
-/// is positional — the same index in document order — and MUST be the same
-/// identity `install_regions` inherits channels by, since a slot that
-/// reported no payload takes whatever sits at its own index: a lookup that
-/// found a matching tree at some other index would leave this slot
-/// inheriting a different region's colours entirely.
+/// same bytes the region reconstructs to now. Reuse is positional — the
+/// same index in document order, gated on the tree's own source text — and
+/// `install_regions` inherits by the same index with the same source gate,
+/// carried inside `RegionWork` so the two checks can never disagree.
 ///
-/// The cost of that coupling is missed reuse, never a wrong tree — reuse is
-/// gated on the tree's own source text, so a candidate that moved is
-/// rejected and reparsed rather than misapplied. Inserting or deleting a
-/// region therefore reparses every region below it, which is exactly the
-/// shape a pass's total budget has to absorb. Keying reuse by content
-/// instead would mean carrying an explicit inherit-from index through the
-/// reply (the trees themselves cannot make the trip: they are what the
-/// render path paints from, so moving them to the `Cmd` thread would leave
-/// the document uncoloured for the whole time a pass is in flight), plus
-/// claiming bookkeeping so two identical regions cannot both inherit one
-/// tree. Not paid for what it buys today.
+/// The cost of that coupling is missed reuse, never a wrong tree: a
+/// candidate that moved is rejected and reparsed rather than misapplied.
+/// Inserting or deleting a region therefore reparses every region below it,
+/// which is exactly the shape a pass's total budget has to absorb. Keying
+/// reuse by content instead would mean claiming bookkeeping so two
+/// identical regions cannot both inherit one tree (the trees themselves
+/// cannot make the trip through the reply: they are what the render path
+/// paints from, so moving them to the `Cmd` thread would leave the document
+/// uncoloured for the whole time a pass is in flight). Not paid for what it
+/// buys today.
 fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
     sources
         .into_iter()
@@ -388,16 +423,19 @@ fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
                 .get(i)
                 .and_then(|region| region.tree.as_ref())
                 .is_some_and(|tree| tree.source() == source.text);
-            if valid {
-                RegionJob {
-                    map: source.map,
-                    work: None,
+            let work = if valid {
+                RegionWork::Retain {
+                    source: source.text,
                 }
             } else {
-                RegionJob {
-                    map: source.map,
-                    work: Some((source.lang, source.text)),
+                RegionWork::Parse {
+                    lang: source.lang,
+                    source: source.text,
                 }
+            };
+            RegionJob {
+                map: source.map,
+                work,
             }
         })
         .collect()
@@ -438,14 +476,17 @@ pub(crate) fn first_paint_highlight(app: &mut App) {
         .into_iter()
         .map(|source| RegionJob {
             map: source.map,
-            work: Some((source.lang, source.text)),
+            work: RegionWork::Parse {
+                lang: source.lang,
+                source: source.text,
+            },
         })
         .collect();
     if jobs.is_empty() {
         return;
     }
     let budget = runtime::PassBudget::new(runtime::FIRST_PAINT_BUDGET, runtime::FIRST_PAINT_BUDGET);
-    let Some(reply) = runtime::run_regions(jobs, budget) else {
+    let PassOutcome::Replace(reply) = runtime::run_regions(jobs, budget) else {
         return;
     };
     if let Some(doc) = app.doc_mut(id) {
@@ -454,5 +495,5 @@ pub(crate) fn first_paint_highlight(app: &mut App) {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests;

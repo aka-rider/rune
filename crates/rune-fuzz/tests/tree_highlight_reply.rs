@@ -20,7 +20,9 @@ use std::time::Duration;
 use common::new_app;
 use rune_fuzz::action::tree_fixture_line_ranges;
 use rune_tui::app::{self, App};
-use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult, visible_spans};
+use rune_tui::highlight::{
+    HighlightReply, PassOutcome, RegionOutcome, RegionPayload, RegionResult, visible_spans,
+};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::linemap::LineMap;
 use rune_tui::runtime::{Effects, Msg};
@@ -31,10 +33,10 @@ fn deliver_tree_reply(app: &mut App, map: LineMap, tree: rune_ts::ParsedTree, ve
     let msg = Msg::Highlighted {
         doc: app.active,
         version,
-        result: Some(HighlightReply {
+        result: PassOutcome::Replace(HighlightReply {
             regions: vec![RegionResult {
                 map,
-                payload: Some(RegionPayload::Tree(tree)),
+                outcome: RegionOutcome::Replace(RegionPayload::Tree(tree)),
             }],
             truncated: false,
         }),

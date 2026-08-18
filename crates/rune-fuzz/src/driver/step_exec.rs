@@ -57,7 +57,7 @@ fn highlight_reply_step(
     let msg = Msg::Highlighted {
         doc,
         version: delivered_version,
-        result: Some(result),
+        result: rune_tui::highlight::PassOutcome::Replace(result),
     };
     let tag = MsgTag::Highlighted {
         delivered_version,
@@ -83,9 +83,12 @@ pub(super) fn highlight_step(
     let result = rune_tui::highlight::HighlightReply {
         regions: vec![rune_tui::highlight::RegionResult {
             map: rune_tui::linemap::LineMap::default(),
-            payload: Some(rune_tui::highlight::RegionPayload::Spans(
-                highlight_spans_from_raw(spans),
-            )),
+            outcome: rune_tui::highlight::RegionOutcome::Replace(
+                rune_tui::highlight::RegionPayload::Spans {
+                    source: String::new(),
+                    spans: highlight_spans_from_raw(spans),
+                },
+            ),
         }],
         truncated: false,
     };

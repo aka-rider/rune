@@ -140,6 +140,75 @@ fn first_paint_highlights_a_markdown_fence_too() {
     );
 }
 
+/// A budget-limited pass that reaches only the first region of a reshaped
+/// layout must not let the starved slots inherit trees parsed from some
+/// OTHER region's text just because those trees sat at the same index.
+///
+/// The shape: a two-region layout `[A, B]` is fully highlighted, then a new
+/// region lands on top — `[TOP, A, B]` — and the follow-up pass's total
+/// (charged 100ms per budget consultation by the deterministic clock)
+/// affords only `TOP` before it is spent. The starved slots at indices 1 and
+/// 2 sit where `A`'s and `B`'s trees used to; inheriting those positionally
+/// would paint `A`'s text with `B`'s tree.
+#[test]
+fn a_budget_starved_region_never_inherits_a_tree_parsed_from_different_text() {
+    const TOP: &str = "let top = 0;\n";
+    const A: &str = "fn alpha() {}\n";
+    const B: &str = "let beta = 1;\n";
+    let parse_job = |text: &str| RegionJob {
+        map: LineMap::default(),
+        work: RegionWork::Parse {
+            lang: RegionLang::Ts("rust"),
+            source: text.to_string(),
+        },
+    };
+    let mut app = app_for("x\n", "/x/notes.md");
+    let id = app.active;
+
+    let full = runtime::run_regions(
+        vec![parse_job(A), parse_job(B)],
+        runtime::PassBudget::new(runtime::PARSE_BUDGET, runtime::PASS_BUDGET),
+    );
+    let PassOutcome::Replace(full) = full else {
+        panic!("a full-budget pass of parseable rust must produce a reply");
+    };
+    apply_reply(app.doc_mut(id).expect("doc"), 1, full);
+
+    let partial = runtime::run_regions(
+        vec![parse_job(TOP), parse_job(A), parse_job(B)],
+        runtime::PassBudget::with_clock(
+            runtime::PARSE_BUDGET,
+            std::time::Duration::from_millis(150),
+            runtime::test_clock::hundred_ms_per_call,
+        ),
+    );
+    let PassOutcome::Replace(partial) = partial else {
+        panic!("a pass whose first region parsed must produce a reply");
+    };
+    apply_reply(app.doc_mut(id).expect("doc"), 2, partial);
+
+    let doc = app.doc(id).expect("doc");
+    assert_eq!(doc.highlight.regions.len(), 3);
+    assert_eq!(
+        doc.highlight
+            .regions
+            .first()
+            .and_then(|region| region.tree.as_ref())
+            .map(rune_ts::ParsedTree::source),
+        Some(TOP),
+        "the region the budget afforded must hold its own fresh tree"
+    );
+    for (region, text) in doc.highlight.regions.iter().zip([TOP, A, B]) {
+        if let Some(tree) = &region.tree {
+            assert_eq!(
+                tree.source(),
+                text,
+                "a region must never hold a tree parsed from different text"
+            );
+        }
+    }
+}
+
 /// An info string with no highlighter behind it (unknown tag, or no tag)
 /// contributes no region — but is not an error and never blocks the
 /// document's other regions.
