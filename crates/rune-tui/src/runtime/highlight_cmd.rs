@@ -149,9 +149,12 @@ fn parse_region(
                 .spans
                 .into_iter()
                 .flat_map(|(range, scope)| {
-                    map.to_buffer(range)
-                        .into_iter()
-                        .map(move |piece| (piece.range(), scope))
+                    map.to_buffer(
+                        crate::linemap::ReconOffset(range.start)
+                            ..crate::linemap::ReconOffset(range.end),
+                    )
+                    .into_iter()
+                    .map(move |piece| (piece.range(), scope))
                 })
                 .collect();
             (

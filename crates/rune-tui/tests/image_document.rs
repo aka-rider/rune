@@ -240,6 +240,7 @@ fn a_live_image_document_renders_a_placeholder_cell_with_the_allocated_id() {
         })
     });
     let fg = found.expect("no placeholder cell found in the rendered frame");
+    let expected_id = expected_id.get();
     let (r, g, b) = (
         ((expected_id >> 16) & 0xFF) as u8,
         ((expected_id >> 8) & 0xFF) as u8,
@@ -374,7 +375,7 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
         effects
             .raw
             .iter()
-            .any(|bytes| *bytes == rune_image::encode_delete(image_id).into_bytes())
+            .any(|bytes| *bytes == rune_image::encode_delete(image_id.get()).into_bytes())
     );
 }
 

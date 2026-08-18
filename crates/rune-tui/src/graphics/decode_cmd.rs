@@ -210,7 +210,7 @@ pub(crate) fn handle_image_decoded(
         cell,
     );
     image.status = if kitty {
-        match rune_image::fit_and_encode(&decoded, img_id, cells.cols, cells.rows, cell) {
+        match rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell) {
             Ok(bytes) => {
                 effects.raw.push(bytes.into_bytes());
                 effects.force_redraw |= was_live;

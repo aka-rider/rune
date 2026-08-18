@@ -24,6 +24,28 @@ use std::ops::Range;
 
 use rune_syntax::element::LineLocal;
 
+/// A byte offset into the BUFFER's own content — the coordinate space
+/// `LineMap`'s `lines` ranges are drawn from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BufOffset(pub usize);
+
+/// A byte offset into the `'\n'`-joined, container-prefix-free text
+/// [`LineMap::reconstruct`] builds — a parser's own coordinate space, never
+/// interchangeable with [`BufOffset`] without going through this module's
+/// conversions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReconOffset(pub usize);
+
+/// Which end of a reconstructed range [`LineMap::reconstructed_offset`] is
+/// resolving — replaces a bare `is_end: bool` so the inclusive-end
+/// convention it encodes reads at every call site instead of a naked
+/// `true`/`false`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Endpoint {
+    Start,
+    End,
+}
+
 /// A fence's physical content lines plus the prefix sums that place each
 /// line in the reconstructed text.
 ///
@@ -116,7 +138,8 @@ impl LineMap {
     /// should happen given ranges from this map's own reconstructed text,
     /// but degrading to "contributes nothing" here keeps a caller from ever
     /// painting a gap byte.
-    pub fn to_buffer(&self, r: Range<usize>) -> Vec<LineLocal> {
+    pub fn to_buffer(&self, r: Range<ReconOffset>) -> Vec<LineLocal> {
+        let r = r.start.0..r.end.0;
         if r.start >= r.end {
             return Vec::new();
         }
@@ -171,16 +194,17 @@ impl LineMap {
     /// The end is resolved through the same inclusive-byte trick
     /// [`LineMap::to_buffer`] uses, so a range ending on a line boundary
     /// stays inside that line rather than probing the prefix that follows.
-    pub fn to_reconstructed(&self, r: Range<usize>) -> Option<Range<usize>> {
+    pub fn to_reconstructed(&self, r: Range<BufOffset>) -> Option<Range<ReconOffset>> {
+        let r = r.start.0..r.end.0;
         if r.start >= r.end {
             return None;
         }
-        let start = self.reconstructed_offset(r.start, false)?;
-        let end = self.reconstructed_offset(r.end - 1, true)?;
+        let start = self.reconstructed_offset(r.start, Endpoint::Start)?;
+        let end = self.reconstructed_offset(r.end - 1, Endpoint::End)?;
         if start >= end {
             return None;
         }
-        Some(start..end)
+        Some(ReconOffset(start)..ReconOffset(end))
     }
 
     /// The smallest reconstructed range covering every line that intersects
@@ -198,7 +222,8 @@ impl LineMap {
     ///
     /// `None` when no line intersects `r` at all — including an empty or
     /// inverted `r`, and a map with no lines.
-    pub fn reconstructed_window(&self, r: Range<usize>) -> Option<Range<usize>> {
+    pub fn reconstructed_window(&self, r: Range<BufOffset>) -> Option<Range<ReconOffset>> {
+        let r = r.start.0..r.end.0;
         if r.start >= r.end {
             return None;
         }
@@ -215,7 +240,11 @@ impl LineMap {
         let start = *self.prefix.get(first)?;
         let line = self.lines.get(last_index)?;
         let end = self.prefix.get(last_index)? + line.end.saturating_sub(line.start);
-        if start >= end { None } else { Some(start..end) }
+        if start >= end {
+            None
+        } else {
+            Some(ReconOffset(start)..ReconOffset(end))
+        }
     }
 
     /// The index of the line owning reconstructed `offset` — one past the
@@ -267,13 +296,13 @@ impl LineMap {
         Some(line.start + within)
     }
 
-    /// [`LineMap::to_reconstructed`]'s single-offset chokepoint. `is_end`
-    /// requests the inclusive-byte convention: after locating the line
-    /// owning `offset`, add one back so the result is an exclusive
-    /// reconstructed offset again. `None` when `offset` falls in a gap — a
-    /// container prefix byte, or anywhere before the first line or at or
-    /// past the last line's end.
-    fn reconstructed_offset(&self, offset: usize, is_end: bool) -> Option<usize> {
+    /// [`LineMap::to_reconstructed`]'s single-offset chokepoint.
+    /// `Endpoint::End` requests the inclusive-byte convention: after
+    /// locating the line owning `offset`, add one back so the result is an
+    /// exclusive reconstructed offset again. `None` when `offset` falls in
+    /// a gap — a container prefix byte, or anywhere before the first line
+    /// or at or past the last line's end.
+    fn reconstructed_offset(&self, offset: usize, endpoint: Endpoint) -> Option<usize> {
         // Lines are in ascending buffer order and never overlap, so the count
         // of starts at or below `offset` is one past the index of the only
         // line that could own it. An `offset` before the first line's start
@@ -288,7 +317,10 @@ impl LineMap {
             return None;
         }
         let mapped = self.prefix.get(i)? + (offset - line.start);
-        Some(if is_end { mapped + 1 } else { mapped })
+        Some(match endpoint {
+            Endpoint::End => mapped + 1,
+            Endpoint::Start => mapped,
+        })
     }
 }
 
@@ -319,6 +351,14 @@ fn trim_trailing_cr(content: &str, line: Range<usize>) -> (Range<usize>, bool) {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    fn recon(r: Range<usize>) -> Range<ReconOffset> {
+        ReconOffset(r.start)..ReconOffset(r.end)
+    }
+
+    fn buf(r: Range<usize>) -> Range<BufOffset> {
+        BufOffset(r.start)..BufOffset(r.end)
+    }
 
     /// A top-level fence: consecutive lines are truly adjacent in the buffer
     /// (the gap is exactly one real `'\n'`), so the reconstructed text is
@@ -362,7 +402,7 @@ mod tests {
         let (content, map) = contiguous();
         assert_eq!(&content[11..21], "let b = 2;");
 
-        let mapped = map.to_buffer(11..15);
+        let mapped = map.to_buffer(recon(11..15));
         assert_eq!(mapped.len(), 1, "a single-line range must map to one piece");
         assert_eq!(mapped[0].line(), 1);
         assert_eq!(mapped[0].range(), 11..15);
@@ -377,7 +417,7 @@ mod tests {
         // Reconstructed text is "let a = 1;\nlet b = 2;", so offsets 11..14
         // are line 1's own "let" and must land on line 1's real buffer bytes,
         // never inside the "> " gap.
-        let mapped = map.to_buffer(11..14);
+        let mapped = map.to_buffer(recon(11..14));
         assert_eq!(mapped.len(), 1);
         assert_eq!(&content[mapped[0].range()], "let");
     }
@@ -390,7 +430,7 @@ mod tests {
         // Reconstructed text is "ab\ncd". A range covering "ab" plus its
         // joining '\n' must map to the real newline's own end in the buffer,
         // never into the "> " gap that follows it.
-        let mapped = map.to_buffer(0..3);
+        let mapped = map.to_buffer(recon(0..3));
         assert_eq!(mapped.len(), 1);
         assert_eq!(mapped[0].range(), 0..3);
         assert_eq!(&content[mapped[0].range()], "ab\n");
@@ -409,7 +449,7 @@ mod tests {
         // Reconstructed text is "let a = 1;\nlet b = 2;". 8..14 covers
         // "1;\nlet" — the tail of line 0, the joining newline, and the head
         // of line 1.
-        let mapped = map.to_buffer(8..14);
+        let mapped = map.to_buffer(recon(8..14));
         assert_eq!(
             mapped.len(),
             2,
@@ -442,7 +482,7 @@ mod tests {
         let map = LineMap::new(content, vec![0..4, 5..9]);
         assert_eq!(map.reconstruct(content).unwrap(), "one\ntwo");
 
-        let mapped = map.to_buffer(0..7);
+        let mapped = map.to_buffer(recon(0..7));
         assert_eq!(mapped.len(), 2);
         for piece in &mapped {
             let text = &content[piece.range()];
@@ -457,7 +497,7 @@ mod tests {
         let (_, map) = nested();
         // Line 0 ends at buffer offset 10, which is the buffer's real '\n'
         // and the reconstructed text's joining '\n' at offset 10.
-        assert_eq!(map.to_reconstructed(10..11), Some(10..11));
+        assert_eq!(map.to_reconstructed(buf(10..11)), Some(recon(10..11)));
     }
 
     #[test]
@@ -465,18 +505,18 @@ mod tests {
         let (_, map) = nested();
         // Buffer 11..13 is "> ", pure gap: no reconstructed counterpart, and
         // certainly not line 1's opening offset.
-        assert_eq!(map.to_reconstructed(11..12), None);
-        assert_eq!(map.to_reconstructed(12..13), None);
+        assert_eq!(map.to_reconstructed(buf(11..12)), None);
+        assert_eq!(map.to_reconstructed(buf(12..13)), None);
         // The byte right after the last line's end is past the text.
-        assert_eq!(map.to_reconstructed(23..24), None);
+        assert_eq!(map.to_reconstructed(buf(23..24)), None);
     }
 
     #[test]
     fn to_reconstructed_rejects_offsets_before_the_first_line() {
         let map = one_line("01234567", 5..8);
-        assert_eq!(map.to_reconstructed(0..1), None);
-        assert_eq!(map.to_reconstructed(4..5), None);
-        assert_eq!(map.to_reconstructed(5..6), Some(0..1));
+        assert_eq!(map.to_reconstructed(buf(0..1)), None);
+        assert_eq!(map.to_reconstructed(buf(4..5)), None);
+        assert_eq!(map.to_reconstructed(buf(5..6)), Some(recon(0..1)));
     }
 
     #[test]
@@ -486,18 +526,18 @@ mod tests {
         // error, and these degenerate inputs are exactly what is under test.
         let empty = Range { start: 3, end: 3 };
         let inverted = Range { start: 5, end: 2 };
-        assert!(map.to_buffer(empty.clone()).is_empty());
-        assert!(map.to_buffer(inverted.clone()).is_empty());
-        assert_eq!(map.to_reconstructed(empty), None);
-        assert_eq!(map.to_reconstructed(inverted), None);
+        assert!(map.to_buffer(recon(empty.clone())).is_empty());
+        assert!(map.to_buffer(recon(inverted.clone())).is_empty());
+        assert_eq!(map.to_reconstructed(buf(empty)), None);
+        assert_eq!(map.to_reconstructed(buf(inverted)), None);
     }
 
     #[test]
     fn an_empty_line_map_maps_nothing() {
         let map = LineMap::new("", vec![]);
         assert_eq!(map.reconstruct("anything").unwrap(), "");
-        assert!(map.to_buffer(0..1).is_empty());
-        assert_eq!(map.to_reconstructed(0..1), None);
+        assert!(map.to_buffer(recon(0..1)).is_empty());
+        assert_eq!(map.to_reconstructed(buf(0..1)), None);
     }
 
     #[test]
@@ -505,13 +545,13 @@ mod tests {
         let content = "abc";
         let map = one_line(content, 0..3);
         assert_eq!(map.reconstruct(content).unwrap(), "abc");
-        let mapped = map.to_buffer(0..3);
+        let mapped = map.to_buffer(recon(0..3));
         assert_eq!(mapped.len(), 1);
         assert_eq!(mapped[0].range(), 0..3);
         // A single line is also the LAST line, so it has no joining '\n':
         // offset 3 is past the reconstructed text in both directions.
-        assert!(map.to_buffer(3..4).is_empty());
-        assert_eq!(map.to_reconstructed(3..4), None);
+        assert!(map.to_buffer(recon(3..4)).is_empty());
+        assert_eq!(map.to_reconstructed(buf(3..4)), None);
     }
 
     #[test]
@@ -524,10 +564,10 @@ mod tests {
 
         // The blank line's own newline sits at buffer offset 2 and
         // reconstructed offset 2.
-        let mapped = map.to_buffer(2..3);
+        let mapped = map.to_buffer(recon(2..3));
         assert_eq!(mapped.len(), 1);
         assert_eq!(mapped[0].range(), 2..3);
-        assert_eq!(map.to_reconstructed(2..3), Some(2..3));
+        assert_eq!(map.to_reconstructed(buf(2..3)), Some(recon(2..3)));
     }
 
     /// The property the two directions exist to guarantee: every in-range
@@ -543,7 +583,7 @@ mod tests {
             for start in 0..text.len() {
                 for end in (start + 1)..=text.len() {
                     let r = start..end;
-                    let pieces = map.to_buffer(r.clone());
+                    let pieces = map.to_buffer(recon(r.clone()));
                     assert!(
                         !pieces.is_empty(),
                         "every in-range reconstructed range maps to the buffer"
@@ -551,10 +591,10 @@ mod tests {
                     let mut cursor = r.start;
                     for piece in &pieces {
                         let back = map
-                            .to_reconstructed(piece.range())
+                            .to_reconstructed(buf(piece.range()))
                             .expect("a mapped piece must map back");
-                        assert_eq!(back.start, cursor, "pieces must cover {r:?} contiguously");
-                        cursor = back.end;
+                        assert_eq!(back.start.0, cursor, "pieces must cover {r:?} contiguously");
+                        cursor = back.end.0;
                     }
                     assert_eq!(cursor, r.end, "pieces must cover the whole of {r:?}");
                 }
@@ -572,8 +612,8 @@ mod tests {
         // Buffer 9..15 starts inside line 0 and ends inside line 1, crossing
         // the "> " prefix between them. `to_reconstructed` refuses the
         // prefix bytes outright; the window widens to both whole lines.
-        assert_eq!(map.to_reconstructed(11..12), None);
-        assert_eq!(map.reconstructed_window(9..15), Some(0..21));
+        assert_eq!(map.to_reconstructed(buf(11..12)), None);
+        assert_eq!(map.reconstructed_window(buf(9..15)), Some(recon(0..21)));
     }
 
     /// A window falling ENTIRELY inside a container prefix intersects no
@@ -581,24 +621,27 @@ mod tests {
     #[test]
     fn reconstructed_window_reports_none_for_a_window_wholly_inside_a_gap() {
         let (_, map) = nested();
-        assert_eq!(map.reconstructed_window(11..13), None);
+        assert_eq!(map.reconstructed_window(buf(11..13)), None);
     }
 
     #[test]
     fn reconstructed_window_covers_the_whole_text_for_an_oversized_window() {
         let (content, map) = nested();
         let len = map.reconstruct(content).unwrap().len();
-        assert_eq!(map.reconstructed_window(0..1000), Some(0..len));
+        assert_eq!(map.reconstructed_window(buf(0..1000)), Some(recon(0..len)));
     }
 
     #[test]
     fn reconstructed_window_reports_none_when_no_line_intersects() {
         let map = one_line("01234567", 5..8);
-        assert_eq!(map.reconstructed_window(0..5), None);
-        assert_eq!(map.reconstructed_window(9..20), None);
+        assert_eq!(map.reconstructed_window(buf(0..5)), None);
+        assert_eq!(map.reconstructed_window(buf(9..20)), None);
         let empty = Range { start: 6, end: 6 };
-        assert_eq!(map.reconstructed_window(empty), None);
-        assert_eq!(LineMap::new("", vec![]).reconstructed_window(0..10), None);
+        assert_eq!(map.reconstructed_window(buf(empty)), None);
+        assert_eq!(
+            LineMap::new("", vec![]).reconstructed_window(buf(0..10)),
+            None
+        );
     }
 
     /// A window covering only the second line must not drag the first
@@ -607,14 +650,14 @@ mod tests {
     #[test]
     fn reconstructed_window_starts_at_the_first_intersecting_line() {
         let (_, map) = nested();
-        assert_eq!(map.reconstructed_window(15..18), Some(11..21));
+        assert_eq!(map.reconstructed_window(buf(15..18)), Some(recon(11..21)));
     }
 
     #[test]
     fn an_out_of_range_reconstructed_offset_maps_nowhere() {
         let (content, map) = nested();
         let len = map.reconstruct(content).unwrap().len();
-        assert!(map.to_buffer(len..len + 1).is_empty());
-        assert!(map.to_buffer(len + 100..len + 101).is_empty());
+        assert!(map.to_buffer(recon(len..len + 1)).is_empty());
+        assert!(map.to_buffer(recon(len + 100..len + 101)).is_empty());
     }
 }

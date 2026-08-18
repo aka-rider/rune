@@ -149,7 +149,7 @@ fn every_fence_in_a_many_fence_document_highlights() {
         .map(|region| {
             region
                 .map
-                .to_buffer(0..1)
+                .to_buffer(rune_tui::linemap::ReconOffset(0)..rune_tui::linemap::ReconOffset(1))
                 .first()
                 .expect("every region covers at least one byte")
                 .start()

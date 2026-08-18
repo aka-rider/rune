@@ -54,8 +54,8 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
         return;
     }
     let img_id = image.id;
-    let encoded =
-        kitty.then(|| rune_image::fit_and_encode(decoded, img_id, cells.cols, cells.rows, cell));
+    let encoded = kitty
+        .then(|| rune_image::fit_and_encode(decoded, img_id.get(), cells.cols, cells.rows, cell));
 
     let Some(doc) = app.doc_mut(id) else { return };
     let Some(image) = doc.image_mut() else {

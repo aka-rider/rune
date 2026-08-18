@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use rune_image::PixelSize;
+use rune_image::{ImageId, PixelSize};
 use rune_md::snapshot::ImageDims;
 
 use super::EmbedAllocator;
@@ -23,7 +23,7 @@ use crate::graphics::ImageStatus;
 /// redecode" flag to carry.
 pub struct EmbedState {
     pub abs_path: PathBuf,
-    pub id: u32,
+    pub id: ImageId,
     /// The resolved file's mtime at the moment this state was (re)spawned,
     /// or `None` when the stat itself failed — the retry rule's own
     /// sentinel (plan gotcha: "`Failed` is sticky per `(path, mtime)`").

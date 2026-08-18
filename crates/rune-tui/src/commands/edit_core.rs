@@ -10,7 +10,7 @@
 //! via `commit_edit_batch`'s generic per-cursor rule below) — one call,
 //! one journal push, one undo step.
 
-use rune_core::buffer::{AppliedEdit, Edit};
+use rune_core::buffer::{AppliedEdit, Edit, SortedEdits};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_core::undo::{EditKind, Step};
 
@@ -99,7 +99,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
     let ids: Vec<CursorId> = infos.iter().map(|(_, cid)| *cid).collect();
 
-    match doc.buffer.apply_edits(&edits) {
+    match doc.buffer.apply_edits(&SortedEdits::sort(&edits)) {
         Ok((new_buf, applied)) => {
             let new_cursors = cursors_after(&applied, &ids);
             let Some(doc) = app.doc_mut(id) else {

@@ -34,7 +34,7 @@ fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
     doc.set_image(ImageState {
         path: PathBuf::from("/vault/x.png"),
         bytes_len: 146,
-        id: 1,
+        id: rune_image::ImageId::for_test(1),
         dims: Some(rune_image::PixelSize { w: 64, h: 48 }),
         status,
         in_flight: None,
@@ -162,7 +162,7 @@ fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_i
             "x.png".to_string(),
             crate::graphics::EmbedState {
                 abs_path: PathBuf::from("/vault/x.png"),
-                id: 0x00_10_20,
+                id: rune_image::ImageId::for_test(0x00_10_20),
                 mtime: None,
                 dims: Some(rune_image::PixelSize { w: 64, h: 48 }),
                 status: ImageStatus::Live {

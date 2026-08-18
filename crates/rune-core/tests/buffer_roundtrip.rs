@@ -11,7 +11,7 @@
 )]
 
 use proptest::prelude::*;
-use rune_core::buffer::{Buffer, Edit};
+use rune_core::buffer::{Buffer, Edit, SortedEdits};
 use rune_core::coords::BufferPoint;
 use rune_core::undo::{apply_inverse, reapply};
 
@@ -75,10 +75,10 @@ proptest! {
         // may legitimately refuse a split. The equivalence only applies
         // when both succeed.
         let indiv_result = b.replace(s1, e1, &i1).and_then(|b1| b1.replace(s2, e2, &i2));
-        let batch_result = b.apply_edits(&[
+        let batch_result = b.apply_edits(&SortedEdits::sort(&[
             Edit { start: s1, end: e1, insert: i1.clone() },
             Edit { start: s2, end: e2, insert: i2.clone() },
-        ]);
+        ]));
 
         if let (Ok(b_indiv), Ok((b_batch, _))) = (indiv_result, batch_result) {
             prop_assert_eq!(b_indiv.content(), b_batch.content());
@@ -143,7 +143,7 @@ proptest! {
         let (start, end) = normalize_bounds(b.len(), raw_start, raw_start.saturating_add(raw_len));
 
         let edit = Edit { start, end, insert: insert.clone() };
-        if let Ok((edited, applied)) = b.apply_edits(&[edit]) {
+        if let Ok((edited, applied)) = b.apply_edits(&SortedEdits::single(edit)) {
             let restored = apply_inverse(&edited, &applied).expect("inverse must apply cleanly");
             prop_assert_eq!(restored.content(), b.content());
             prop_assert_eq!(restored.len(), b.len());
@@ -189,7 +189,7 @@ proptest! {
             .map(|(s, e, ins)| Edit { start: *s, end: *e, insert: ins.clone() })
             .collect();
 
-        if let Ok((edited, applied)) = b.apply_edits(&edits) {
+        if let Ok((edited, applied)) = b.apply_edits(&SortedEdits::sort(&edits)) {
             let restored = apply_inverse(&edited, &applied).expect("inverse must apply cleanly");
             prop_assert_eq!(restored.content(), b.content());
 
@@ -233,7 +233,7 @@ fn incremental_line_index_matches_from_scratch_rebuild() {
             })
             .collect();
         let (edited, _) = b
-            .apply_edits(&edit_batch)
+            .apply_edits(&SortedEdits::sort(&edit_batch))
             .unwrap_or_else(|e| panic!("edit batch should apply for {init:?}: {e}"));
         let fresh = Buffer::new(edited.content());
 

@@ -43,13 +43,18 @@ pub fn visible_spans(doc: &Document, visible: Range<usize>) -> Vec<(Range<usize>
 
     for region in &doc.highlight.regions {
         if let Some(tree) = &region.tree
-            && let Some(window) = region.map.reconstructed_window(visible.clone())
-            && let Some(result) = rune_ts::highlight_range(tree, window)
+            && let Some(window) = region.map.reconstructed_window(
+                crate::linemap::BufOffset(visible.start)..crate::linemap::BufOffset(visible.end),
+            )
+            && let Some(result) = rune_ts::highlight_range(tree, window.start.0..window.end.0)
         {
             collected.extend(result.spans.into_iter().flat_map(|(range, scope)| {
                 region
                     .map
-                    .to_buffer(range)
+                    .to_buffer(
+                        crate::linemap::ReconOffset(range.start)
+                            ..crate::linemap::ReconOffset(range.end),
+                    )
                     .into_iter()
                     .map(move |piece| (piece.range(), scope))
             }));

@@ -76,7 +76,13 @@ fn doc_image_row_cells(
         && let Some(image) = doc.image()
         && matches!(image.status, ImageStatus::Live { .. })
     {
-        return live_row_cells(image.id, image_ref.row, image_ref.width, width as usize, 0);
+        return live_row_cells(
+            image.id.get(),
+            image_ref.row,
+            image_ref.width,
+            width as usize,
+            0,
+        );
     }
     let lines = info_card_lines(app, doc);
     let text = lines.get(image_ref.row).map_or("", String::as_str);
@@ -105,7 +111,7 @@ fn embed_row_cells(
     let width = width as usize;
     match doc.embeds().and_then(|embeds| embeds.images.get(target)) {
         Some(embed) if matches!(embed.status, ImageStatus::Live { .. }) => Some(live_row_cells(
-            embed.id,
+            embed.id.get(),
             image_ref.row,
             image_ref.width,
             width,

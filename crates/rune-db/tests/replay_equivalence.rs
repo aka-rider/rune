@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime};
 use proptest::prelude::*;
 use rusqlite::Connection;
 
-use rune_core::buffer::{Buffer, Edit};
+use rune_core::buffer::{Buffer, Edit, SortedEdits};
 use rune_core::undo::{EditKind, Journal, Step as CoreStep, apply_inverse, reapply};
 use rune_db::{
     DocId, SessionId, append_edit, current_seq, move_undo_pos, recover_document, redo_peek,
@@ -116,8 +116,9 @@ proptest! {
                         end: at,
                         insert: text,
                     };
-                    let (new_buf, applied) =
-                        buf.apply_edits(std::slice::from_ref(&edit)).expect("insert must apply");
+                    let (new_buf, applied) = buf
+                        .apply_edits(&SortedEdits::single(edit))
+                        .expect("insert must apply");
                     buf = new_buf;
 
                     journal.push(CoreStep {
@@ -141,8 +142,9 @@ proptest! {
                         end,
                         insert: String::new(),
                     };
-                    let (new_buf, applied) =
-                        buf.apply_edits(std::slice::from_ref(&edit)).expect("delete must apply");
+                    let (new_buf, applied) = buf
+                        .apply_edits(&SortedEdits::single(edit))
+                        .expect("delete must apply");
                     buf = new_buf;
 
                     journal.push(CoreStep {

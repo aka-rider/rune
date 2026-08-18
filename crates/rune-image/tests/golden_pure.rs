@@ -119,7 +119,7 @@ fn alloc_id_matches_golden() {
         let path = as_str(input, "path");
         let want = as_i64(output, "id");
         assert_eq!(
-            i64::from(alloc_id(path.as_bytes())),
+            i64::from(alloc_id(path.as_bytes()).get()),
             want,
             "alloc_id({path:?})"
         );
