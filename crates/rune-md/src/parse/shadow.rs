@@ -13,7 +13,8 @@ pub(crate) enum Round {
 
 /// The bytes comrak parses instead of the real buffer: every LONE `\r` (a
 /// CR NOT immediately followed by `\n`) blanked to a space, and every tab
-/// in a line's leading container-prefix region expanded to spaces. Same
+/// in a line's leading container-prefix region — save one in the line's
+/// trailing whitespace, which `walk_region` keeps — expanded to spaces. Same
 /// line count and same line order as `content`, so comrak's line numbers
 /// still index `line_starts(content)`; columns come back in this view's
 /// coordinates and convert through `real_offset_in_line`.
@@ -116,7 +117,7 @@ fn rebuild(content: &str) -> Option<Vec<u8>> {
     let mut changed = false;
     for line in lines(content) {
         let region = walk_region(line.bytes, line.is_first, |byte| {
-            if byte.byte == b'\t' {
+            if byte.expands {
                 shadow.resize(shadow.len() + byte.shadow_width, b' ');
             } else {
                 shadow.push(line.shadow_byte(byte.real, byte.byte));
@@ -128,7 +129,7 @@ fn rebuild(content: &str) -> Option<Vec<u8>> {
         if line.terminated {
             shadow.push(b'\n');
         }
-        changed |= region.has_tab || line.has_lone_cr();
+        changed |= region.has_expanded_tab || line.has_lone_cr();
     }
     changed.then_some(shadow)
 }
@@ -138,13 +139,14 @@ struct RegionByte {
     real: usize,
     byte: u8,
     shadow_width: usize,
+    expands: bool,
 }
 
 #[derive(Default)]
 struct Region {
     real_len: usize,
     shadow_len: usize,
-    has_tab: bool,
+    has_expanded_tab: bool,
 }
 
 fn is_region_byte(byte: u8) -> bool {
@@ -159,12 +161,24 @@ fn is_region_byte(byte: u8) -> bool {
 /// A byte-order mark opening the document is prefix comrak steps over
 /// without counting a column, so it is carried at width one and the tab
 /// stops start counting after it.
+///
+/// A tab in the line's trailing whitespace stays a tab at width one:
+/// expanding it would write two or more spaces before the line ending,
+/// which CommonMark reads as a hard line break where the source's tab was
+/// a soft one. Kept verbatim it starts at the same column in the copy as
+/// in the document — the expansions before it preserve every column — and
+/// only whitespace follows it, so no block decision or reported column can
+/// shift.
 fn walk_region(line: &[u8], is_first_line: bool, mut visit: impl FnMut(RegionByte)) -> Region {
     let mark = if is_first_line && line.starts_with(&BYTE_ORDER_MARK) {
         BYTE_ORDER_MARK.len()
     } else {
         0
     };
+    let trailing = line
+        .iter()
+        .rposition(|&byte| !matches!(byte, b' ' | b'\t' | b'\r'))
+        .map_or(0, |last| last + 1);
     let mut column = 0;
     let mut region = Region::default();
     for (real, &byte) in line.iter().enumerate() {
@@ -172,8 +186,9 @@ fn walk_region(line: &[u8], is_first_line: bool, mut visit: impl FnMut(RegionByt
         if !inside_mark && !is_region_byte(byte) {
             break;
         }
-        let shadow_width = if byte == b'\t' {
-            region.has_tab = true;
+        let expands = byte == b'\t' && real < trailing;
+        let shadow_width = if expands {
+            region.has_expanded_tab = true;
             TAB_STOP - column % TAB_STOP
         } else {
             1
@@ -185,6 +200,7 @@ fn walk_region(line: &[u8], is_first_line: bool, mut visit: impl FnMut(RegionByt
             real,
             byte,
             shadow_width,
+            expands,
         });
         region.real_len = real + 1;
         region.shadow_len += shadow_width;
@@ -204,6 +220,7 @@ mod tests {
         "\u{feff}\tx\n",
         "- x\n\n  \t\tcode",
         ">   -    a\n>\tb\n",
+        "1.>\n\t>\t\na",
     ];
 
     fn after_region(line: &str) -> &str {
@@ -218,6 +235,29 @@ mod tests {
     #[test]
     fn a_leading_tab_is_expanded_into_a_copy() {
         assert_eq!(parse_shadow("\ta"), Cow::Owned::<str>("    a".to_owned()));
+    }
+
+    #[test]
+    fn a_tab_in_the_trailing_whitespace_is_kept_verbatim() {
+        assert!(matches!(parse_shadow(">\t"), Cow::Borrowed(_)));
+        assert!(matches!(parse_shadow("\t"), Cow::Borrowed(_)));
+        assert!(matches!(parse_shadow("> \t \n"), Cow::Borrowed(_)));
+        assert_eq!(
+            parse_shadow("\t>\t\na"),
+            Cow::Owned::<str>("    >\t\na".to_owned())
+        );
+        assert_eq!(
+            parse_shadow("\t>\t\r\n"),
+            Cow::Owned::<str>("    >\t\r\n".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_offset_at_a_kept_trailing_tab_translates_byte_for_byte() {
+        assert_eq!(real_offset_in_line(b"\t>\t", false, 4, Round::Down), 1);
+        assert_eq!(real_offset_in_line(b"\t>\t", false, 5, Round::Down), 2);
+        assert_eq!(real_offset_in_line(b"\t>\t", false, 5, Round::Up), 2);
+        assert_eq!(real_offset_in_line(b"\t>\t", false, 6, Round::Up), 3);
     }
 
     #[test]

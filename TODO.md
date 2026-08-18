@@ -15,12 +15,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: anchor by consumed-byte accounting, or obtain structured hunks without parsing rendered text.
 - **Done when**: anchoring is position-accounted rather than content-searched.
 
-### A lazy-continuation tab in a blockquote-marker paragraph changes block structure on tab expansion
-- **Where**: `crates/rune-md/tests/shadow_equivalence_proptest.rs`'s `expanding_the_tabs_keeps_every_block_decision`, caught by an unseeded proptest run 2026-08-17 (rune-md untouched by the change being gated); minimal input `content = "1.>\n\t>\t\na"`, proptest cc hash `b3ac4e7f076bd69ebc8146e476578dce37f7f9395c7bb1117613b20003db7966`.
-- **Wrong**: expanding the document's tabs to spaces turns the second line's trailing tab into trailing spaces that comrak counts as a hard `LineBreak`, where the original tab parsed as a `SoftBreak` — the shadow copy parses to a different inline/block structure, so any decision keyed to the shadow disagrees with the real document.
-- **Instead**: root-cause whether the tab expansion must preserve line-ending significance (a trailing tab is never a hard-break trigger; the expansion invents one) or whether the equivalence assertion must compare modulo comrak's trailing-whitespace hard-break rule.
-- **Done when**: the proptest passes with this case pinned in a checked-in `shadow_equivalence_proptest.proptest-regressions` file, added in the same commit as the fix.
-
 ## Architecture
 
 ### TABLE-ROW-WIDTH lives twice, at two genuinely different layers
