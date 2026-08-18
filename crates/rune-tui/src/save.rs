@@ -1,7 +1,5 @@
-//! The start/refusal ladder of the save flow (plan WP1.S5 first extracted
-//! this out of `app.rs`; plan WP1's dirtiness rework split it again to stay
-//! under the 500-line budget): `trigger_save`'s guards and its plain
-//! no-store fallback `Cmd`. The store-backed materialize dance itself
+//! The start/refusal ladder of the save flow: `trigger_save`'s guards and
+//! its plain no-store fallback `Cmd`. The store-backed materialize dance itself
 //! (`materialize_now`/`bind_new_now`/`run_materialize_vfs`, the snapshot-
 //! autosave debounce) lives in the [`materialize`] submodule; the ack/
 //! reaction side — everything from the recovery store's first reply onward
@@ -28,8 +26,8 @@ use materialize::materialize_now;
 pub(crate) use materialize::{bind_new_now, run_materialize_vfs, schedule_snapshot_debounce};
 
 /// The degraded-save confirm-gate's arm-to-confirm window — mirrors
-/// `app::CONFIRM_TIMEOUT` (plan WP5.S2/S6: "a pending-confirm state like the
-/// existing quit-confirm pattern").
+/// `app::CONFIRM_TIMEOUT`: a pending-confirm state like the existing
+/// quit-confirm pattern.
 const SAVE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Distinguishes an ordinary save's compare-and-swap publish from the
@@ -49,9 +47,9 @@ pub(crate) enum SaveMode {
     Force,
 }
 
-/// What a `trigger_save` attempt actually did (plan WP1) — replaces the old
+/// What a `trigger_save` attempt actually did — replaces the old
 /// bare `()` return so no refusal is silent to the CALLER, not just to the
-/// footer: WP2's quit-save fan-out keys off this to decide whether a
+/// footer: the quit-save fan-out keys off this to decide whether a
 /// document is actually waiting on a save before it counts toward a quit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SaveStart {
@@ -72,26 +70,24 @@ pub(crate) enum SaveStart {
     Refused,
 }
 
-/// `super+s` (WP9, plan Context "Save"; WP5.S6 routes it through
-/// `rune-db`'s `materialize` on the writer FIFO when a store is present).
-/// Guarded by `id`'s in-flight flag (a second `super+s` before the first
-/// save's ack reports back is a no-op) and by the re-derived dirty check
-/// (nothing to persist otherwise).
+/// `super+s` routes it through `rune-db`'s `materialize` on the writer FIFO
+/// when a store is present. Guarded by `id`'s in-flight flag (a second
+/// `super+s` before the first save's ack reports back is a no-op) and by
+/// the re-derived dirty check (nothing to persist otherwise).
 ///
 /// When the store is degraded (open-ladder fallback or a later
 /// `on_store_failure`), the FIRST `super+s` only arms a confirm gate
-/// tagged with `id` (plan WP1 decision 3, mirrors `app::handle_quit_key`'s
-/// `pending_quit` shape) — a document with no durable recovery journal can
+/// tagged with `id`, mirroring `app::handle_quit_key`'s
+/// `pending_quit` shape — a document with no durable recovery journal can
 /// still be saved, but only once the user has explicitly acknowledged that
 /// crash protection is off; a SECOND `super+s` for the SAME document within
 /// the window proceeds.
 ///
 /// With no store at all, or with this particular document unbound to one
-/// (Assumption A1: a document opened after WP4's Explorer lands with
+/// (a document opened via the Explorer lands with
 /// `db: None` until per-doc hydration exists), falls back to the direct
 /// unconditional-publish `Cmd` ([`save_cmd`]) — Prime Directive: the user
-/// must always be able to save (plan decision 5: "losing the DB never
-/// damages a user file").
+/// must always be able to save; losing the DB never damages a user file.
 pub(crate) fn trigger_save(
     app: &mut App,
     id: DocumentId,
@@ -101,7 +97,7 @@ pub(crate) fn trigger_save(
     let Some(kind) = app.doc(id).map(|d| d.kind) else {
         return SaveStart::Refused;
     };
-    // Plan WP4.S9: an image document has a REAL
+    // An image document has a REAL
     // `file_path`, so without this a save would reach `save_cmd` and
     // overwrite it with the buffer's own (always empty) bytes. Placed
     // FIRST, before the in-flight/dirty checks below — those already
@@ -152,7 +148,7 @@ pub(crate) fn trigger_save(
     if crate::merge::refuses_save(app, id) {
         return SaveStart::Refused;
     }
-    // Re-derived, not read from the cache (plan WP1): a transition-quality
+    // Re-derived, not read from the cache: a transition-quality
     // answer, exactly like the close/quit guards' own `is_dirty_now` calls.
     // `Force` skips this: "save anyway" means "make disk hold my buffer" —
     // the user may have undone back to `saved_content` while disk still
@@ -185,7 +181,7 @@ pub(crate) fn trigger_save(
     let has_binding = app.db.is_some() && doc.is_store_bound();
     if !has_binding {
         // No store at all, or this document has no binding to it — the
-        // pre-WP5 direct-vfs fallback. `content` is captured HERE, once,
+        // direct-vfs fallback. `content` is captured HERE, once,
         // through `Document::begin_save` — the chokepoint that pairs
         // `save_in_flight` with the exact bytes this save will persist, so
         // `handle_save_done`'s eventual ack can only ever promote THESE
@@ -226,8 +222,8 @@ pub(crate) fn trigger_save(
         }
         let generation = app.next_save_confirm_gen.mint();
         app.pending_save_confirm = Some((id, generation));
-        // `App::pending_save_confirm` is a single global slot (plan WP1
-        // decision 3), so a caller driving MORE than one document through
+        // `App::pending_save_confirm` is a single global slot, so a caller
+        // driving MORE than one document through
         // this arm in succession (the quit-save fan-out) would otherwise
         // overwrite an earlier arm with a later one and leave the status
         // naming nothing — the fan-out is the one caller responsible for not
@@ -256,7 +252,7 @@ pub(crate) fn trigger_save(
 /// (`Force`, no baseline — a durable temp-write + atomic publish) writes
 /// EXACTLY `bytes` verbatim — no normalization anywhere on this path.
 /// Reached when `id` has no store binding (see `trigger_save`'s docs), or
-/// as WP7's fallback when a store binding exists but its `MaterializePrepare`
+/// as the fallback when a store binding exists but its `MaterializePrepare`
 /// enqueue itself failed (the store couldn't even do the bookkeeping-only
 /// first step) — either way, the Prime Directive holds: the user can
 /// always save. A publish whose durability confirmation failed is still a
@@ -300,7 +296,6 @@ pub(crate) fn save_cmd(
 }
 
 // The save/ack/dirty-flow unit tests that used to live here moved to
-// `tests/save_flow.rs` (plan WP1.S5, same rationale as `app.rs`'s
-// extraction: every item they exercise — `App`, `update`, `Msg`,
+// `tests/save_flow.rs`: every item they exercise — `App`, `update`, `Msg`,
 // `Effects`, `keymap` types, `commands::edit::insert_char` — is already
-// public).
+// public.

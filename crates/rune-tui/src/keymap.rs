@@ -1,6 +1,6 @@
 //! Typed `Command` enum + a stateless resolver (plan Context, "Keymap").
 //! `resolve` never consults any state; it IS the LIVE dispatch path
-//! `app::handle_editor_key` calls (plan WP10.S3), and it is now a thin
+//! `app::handle_editor_key` calls, and it is now a thin
 //! wrapper around `resolve_in(editor_bindings::EDITOR_BINDINGS, key)` —
 //! the data table is the one source of truth, not a mirror kept in sync by
 //! hand. `resolve_in`'s whole-`Mods` matching (`KeyPattern::matches`) is
@@ -18,12 +18,12 @@
 // 500-line budget). Re-exported here so every existing `keymap::` import
 // path keeps working.
 //
-// `index`/`editor_bindings`/`vim` are submodules of THIS file (plan WP6):
-// Rust lets a `foo.rs` module have its submodules live under `foo/` even
-// though `foo.rs` itself is not `foo/mod.rs` — so `keymap.rs` stays the
-// single top-level file the rest of the crate already imports from, while
-// its new WP6 machinery gets its own files instead of growing this one
-// past the 500-line budget again.
+// `index`/`editor_bindings`/`vim` are submodules of THIS file: Rust lets a
+// `foo.rs` module have its submodules live under `foo/` even though
+// `foo.rs` itself is not `foo/mod.rs` — so `keymap.rs` stays the single
+// top-level file the rest of the crate already imports from, while this
+// machinery gets its own files instead of growing this one past the
+// 500-line budget again.
 pub mod editor_bindings;
 pub mod index;
 mod keyinput;
@@ -34,9 +34,6 @@ pub use crate::global::{GLOBAL_BINDINGS, GlobalCommand};
 pub use keyinput::{KeyCode, KeyInput, Mods, from_termina};
 pub use vim::{BindingSet, VIM_BINDINGS, VimCommand};
 
-/// The typed command set (plan Context, "Keymap" table). Movement/editing/
-/// clipboard variants are resolved starting WP5 but only acted on starting
-/// WP6/7/8 — the plan's "movement commands may no-op until WP6".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Motion {
     CharLeft,
@@ -63,20 +60,20 @@ pub enum Command {
     SelectAll,
     DeleteLeft,
     DeleteRight,
-    /// Plan WP9.S2 — `⌥⌫`/`⌥⌦` (Option+Backspace/Delete).
+    /// `⌥⌫`/`⌥⌦` (Option+Backspace/Delete).
     DeleteWordLeft,
     DeleteWordRight,
-    /// Plan WP9.S2 — `⌘⇧K` (see `editor_bindings.rs`'s module doc).
+    /// `⌘⇧K` (see `editor_bindings.rs`'s module doc).
     DeleteLine,
     Indent,
     Outdent,
-    /// Plan WP9.S2 — `⌥↑`/`⌥↓`.
+    /// `⌥↑`/`⌥↓`.
     MoveLineUp,
     MoveLineDown,
-    /// Plan WP9.S2 — `⌥⇧↑`/`⌥⇧↓`.
+    /// `⌥⇧↑`/`⌥⇧↓`.
     CloneLineUp,
     CloneLineDown,
-    /// Plan WP9.S3 — `⌥⌘↑`/`⌥⌘↓`.
+    /// `⌥⌘↑`/`⌥⌘↓`.
     AddCursorAbove,
     AddCursorBelow,
     Copy,
@@ -86,7 +83,7 @@ pub enum Command {
     Redo,
     Save,
     QuitConfirm,
-    /// Viewport-only scroll (plan WP7.S2): vim `ctrl+e`/Helix
+    /// Viewport-only scroll: vim `ctrl+e`/Helix
     /// `scroll_line_up`/`down` — moves `Viewport::scroll_row` by one row,
     /// never the cursor (unless the scroll pushes it off screen; see
     /// `Viewport::reconcile`'s docs).
@@ -104,15 +101,15 @@ pub enum Command {
     /// vim/Helix `zb`: scrolls the cursor's row to the bottom of the
     /// viewport.
     CursorToBottom,
-    /// Follows the link under the cursor (plan WP5.S7) — ⌘Enter or ^Enter.
+    /// Follows the link under the cursor — ⌘Enter or ^Enter.
     /// Deliberately distinct from the hardcoded plain-Enter newline fast
     /// path (`app::handle_editor_key`, `Mods::NONE` only), so the two can
     /// never collide.
     FollowLink,
     /// Re-reads an image document through the `Vfs`, re-decodes it, and
-    /// retransmits under the same deterministic id (plan WP6.S1) — bound
-    /// to `⌘R`, gated by the `image` `when` atom (plan WP6.S2) so it only
-    /// ever does anything on an image document; `graphics::reload_image`
+    /// retransmits under the same deterministic id — bound to `⌘R`, gated
+    /// by the `image` `when` atom so it only ever does anything on an
+    /// image document; `graphics::reload_image`
     /// is itself a no-op on any other document, so the gate is a UX
     /// signal (footer/help visibility) rather than the only thing standing
     /// between this chord and a real editor document.
@@ -144,10 +141,9 @@ impl QuitKey {
     }
 }
 
-/// The stateless resolver (plan Context, "Keymap"; plan WP10.S3). `None`
-/// means this exact chord isn't bound — the caller's own hardcoded fast
-/// paths (Enter, Escape, printable fallthrough — plan: "Hardcoded fast
-/// paths outside the resolver") handle everything this function doesn't.
+/// The stateless resolver. `None` means this exact chord isn't bound —
+/// the caller's own hardcoded fast paths (Enter, Escape, printable
+/// fallthrough) handle everything this function doesn't.
 /// The quit chords are the one exception kept outside the table: they are
 /// identity-bearing (`QuitKey`, threaded through `App::quit`) in a
 /// way a plain `Command` isn't, so `QuitKey::from_key` stays the single

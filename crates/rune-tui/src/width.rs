@@ -1,6 +1,6 @@
-//! The ONE chrome-width chokepoint (plan WP8: display
+//! The ONE chrome-width chokepoint: display
 //! width is terminal CELLS via `unicode-width` over grapheme clusters, not
-//! a bare `char`/rune count): every chrome element that measures or
+//! a bare `char`/rune count. Every chrome element that measures or
 //! truncates user-visible text — footer padding and the always-on `Ln,
 //! Col` readout, the breadcrumb, the Explorer root-path title, the Tabs
 //! pane's `Open` divider — computes width through `display_width` and

@@ -19,7 +19,7 @@ use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
 
-/// The Explorer's own commands (plan WP4.S3) — resolved via `EXPLORER_
+/// The Explorer's own commands — resolved via `EXPLORER_
 /// BINDINGS`, mirroring `keymap::GlobalCommand`'s shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplorerCommand {
@@ -153,10 +153,9 @@ fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
 
 /// Opens the currently selected entry: a file activates it through
 /// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
-/// the Explorer into it (plan WP4.S3: "Open on a file → workspace::
-/// open_path; Open on a dir → dir load Cmd for the new root"). The target
+/// the Explorer into it. The target
 /// path comes straight from `entry.path` — the byte-exact path `Vfs::
-/// read_dir` returned (plan WP13.S1) — never rejoined from `entry.name`
+/// read_dir` returned — never rejoined from `entry.name`
 /// onto `app.explorer.root`: `name` is lossy-decoded for display, and
 /// rejoining it would let a byte the user's filename actually has silently
 /// become U+FFFD in the path the app opens. The directory branch

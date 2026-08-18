@@ -1,5 +1,5 @@
-//! The table-validation side of the prefix index (plan WP6.S4, WP10.S4):
-//! rejects, at startup, two bindings sharing the identical key. Split out of
+//! The table-validation side of the prefix index: rejects, at startup,
+//! two bindings sharing the identical key. Split out of
 //! `index.rs` to bring that file under the 500-line budget; `index`
 //! re-exports every item here so no import path downstream changed.
 
@@ -102,7 +102,7 @@ mod tests {
         }
     }
 
-    /// Plan WP10.S4's coverage-gap fix: `validate` was only ever called by
+    /// `validate` was only ever called by
     /// each table's own hand-written test — `global::GLOBAL_BINDINGS`,
     /// `opentabs::TABS_BINDINGS`, and `explorer_keys::EXPLORER_BINDINGS`
     /// shipped with none, so a shadowed chord in any of them could never

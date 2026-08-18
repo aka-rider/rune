@@ -85,21 +85,20 @@ fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
     doc.bind_target().cloned()
 }
 
-/// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
-/// WP7's `MaterializeRecord`): advances `saved_version`/`DocDb::expect_obs`/
-/// `publish_mode` on a commit, surfaces each `MatResult` outcome as status text,
-/// and — either way — clears `id`'s `save_in_flight` and recomputes its
-/// dirty cache (trigger (b) of `recompute_dirty`'s doc comment). Also
-/// called synthetically (WP7, `MatResult::Committed { saved: None }`) when
-/// the disk write physically succeeded but the DB-side bookkeeping that
-/// would have supplied `saved` was lost to a dead writer — see
-/// `record_outcome`'s doc comment.
+/// The reaction to a `materialize` ack for `id`: advances
+/// `saved_version`/`DocDb::expect_obs`/`publish_mode` on a commit, surfaces
+/// each `MatResult` outcome as status text, and — either way — clears
+/// `id`'s `save_in_flight` and recomputes its dirty cache (trigger (b) of
+/// `recompute_dirty`'s doc comment). Also called synthetically with
+/// `MatResult::Committed { saved: None }` when the disk write physically
+/// succeeded but the DB-side bookkeeping that would have supplied `saved`
+/// was lost to a dead writer — see `record_outcome`'s doc comment.
 pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: &MatResult) {
     let Some(doc) = app.doc(id) else { return };
     // `MatResult` carries no version of its own — this peek is how the
     // chokepoint below correlates the ack against the SAME bytes
-    // `begin_save` captured, never a later unrelated capture (plan WP1),
-    // and is also `quit_if_pending`'s (plan WP2) own correlation key.
+    // `begin_save` captured, never a later unrelated capture, and is also
+    // `quit_if_pending`'s own correlation key.
     let pending_version = doc.pending_save_version();
     let committed = matches!(
         mat,
@@ -244,7 +243,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
         app.refocus_title();
     } else {
         messages::error(app, super::SAVE_REFUSED_DISK_CHANGED);
-        // Plan WP6.S4: a genuine CAS conflict — the fresh disk
+        // A genuine CAS conflict — the fresh disk
         // observation `record_fresh_from_stat` already recorded — offers
         // the disk-conflict Guard so the user can act on it directly
         // rather than needing to know `^M` exists. `Diverged` is the
@@ -362,7 +361,7 @@ fn quit_if_pending(app: &mut App, id: DocumentId, version: Option<u64>, succeede
 
 /// Removes `id` from an outstanding `App::quit`'s `SaveFanOut` wait set — called
 /// by `quit_if_pending` above on a matching successful ack, and by
-/// `workspace::close_now` (plan WP2) when the document a quit-save was
+/// `workspace::close_now` when the document a quit-save was
 /// waiting on gets closed out from under it instead (a `[D]iscard` on a
 /// SEPARATE Guard, say): either way, quit no longer has anything left to
 /// wait on FROM THIS document. Completes the quit the same way a

@@ -1,4 +1,4 @@
-//! The `⌃P`/`⌘P` reading-view toggle (plan WP5) — the one place that mints
+//! The `⌃P`/`⌘P` reading-view toggle — the one place that mints
 //! `ReadOnly::Reading`. Flips the active document between `ReadOnly::No`
 //! and `ReadOnly::Reading`; refuses on `ReadOnly::Always` and `ReadOnly::
 //! Preview`, neither of which has an editable form the toggle could return

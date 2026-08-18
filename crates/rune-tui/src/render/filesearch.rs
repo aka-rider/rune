@@ -320,7 +320,7 @@ mod tests {
         );
     }
 
-    /// The plan's own WP3.S4 acceptance case, driven end to end: `open`
+    /// The full end-to-end acceptance path: `open`
     /// pushes the scan `Cmd` — inspected, never executed inline — and only
     /// once its reply is hand-delivered does the list settle into
     /// recents-then-walk order with the deduped path counted once, and the
@@ -436,7 +436,7 @@ mod tests {
         app
     }
 
-    /// WP4.S4: a query with zero matches renders an explicit "no matches"
+    /// A query with zero matches renders an explicit "no matches"
     /// feedback row rather than a blank pane.
     #[test]
     fn a_query_with_no_matches_renders_an_explicit_empty_state_row() {
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(text, "no matches");
     }
 
-    /// WP4.S4: two visible rows matching the same query have disjoint,
+    /// Two visible rows matching the same query have disjoint,
     /// per-row-correct bold spans — pins the `indices.clear()` requirement
     /// (`rank::rank`'s own doc): a callee that forgot to clear would leak
     /// the first row's matched positions into the second row's bold set.

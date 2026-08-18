@@ -7,11 +7,11 @@
 use rune_core::coords::DisplayRow;
 
 /// The vim/Helix scrolloff default (Helix's own default), clamped per
-/// viewport at `reconcile` time (plan WP7.S1) so a tiny pane still has a
+/// viewport at `reconcile` time so a tiny pane still has a
 /// valid `[top, bottom]` band.
 const DEFAULT_SCROLLOFF: u16 = 5;
 
-/// Which side drives the next `Viewport::reconcile` call (plan WP7.S1):
+/// Which side drives the next `Viewport::reconcile` call:
 /// `FollowCursor` — every ordinary motion command, and the default — means
 /// the CURSOR moved and the viewport must chase it, honouring `scrolloff`.
 /// `Independent` means a `commands::nav_scroll` scroll command already moved
@@ -38,7 +38,7 @@ pub struct Viewport {
     pub height: u16,
     pub scroll_row: DisplayRow,
     /// The minimum number of wrap rows kept visible above/below the cursor
-    /// (plan WP7.S1) — Helix's default (`DEFAULT_SCROLLOFF`), clamped at
+    /// — Helix's default (`DEFAULT_SCROLLOFF`), clamped at
     /// `reconcile` time to at most half the viewport height.
     pub scrolloff: u16,
     /// Which side is authoritative for the NEXT `reconcile` call — see
@@ -81,8 +81,7 @@ impl Viewport {
 
     /// `scrolloff`, clamped so `[scroll_row + off, scroll_row + height - 1
     /// - off]` is never empty — `(height - 1) / 2` is the largest `off` for
-    /// which `off <= height - 1 - off` still holds (plan WP7.S1: "clamped
-    /// to half the viewport height so it degrades in a tiny pane"). A
+    /// which `off <= height - 1 - off` still holds. A
     /// larger clamp (plain `height / 2`) would let the two bounds cross on
     /// an even-height viewport, breaking the one-step convergence
     /// `SYNC-IDEMPOTENT` (`rune-fuzz/src/invariant/render.rs`) requires.
@@ -91,7 +90,7 @@ impl Viewport {
         (self.scrolloff as usize).min(height.saturating_sub(1) / 2)
     }
 
-    /// The vim/Helix scrolloff invariant (plan WP7.S1, module docs): the
+    /// The vim/Helix scrolloff invariant: the
     /// cursor is never left outside the viewport. Replaces the old
     /// `scroll_to_row` (vim parity note: "If the cursor position is
     /// moved off of the window, the cursor is moved onto the window (with
@@ -161,7 +160,7 @@ impl Viewport {
 }
 
 /// The ONE row-window slice both `render::build_rows` and `row_meta::
-/// row_meta` walk (plan WP13.S3) — `[viewport.scroll_row, viewport.
+/// row_meta` walk — `[viewport.scroll_row, viewport.
 /// scroll_row + viewport.height)` over `display`'s rows. Before this
 /// chokepoint existed the two call sites each wrote the same `skip`/`take`
 /// pair independently, with only a comment (not the compiler) keeping them
@@ -249,8 +248,8 @@ mod tests {
         // armed `Independent` mode; the viewport scrolled far enough away
         // that the (unmoved) cursor now sits outside the padded band —
         // `reconcile` must return the boundary row to snap the CURSOR to,
-        // and must NOT move `scroll_row` itself (plan WP7.S1: "the cursor
-        // is moved onto the window", not the other way around).
+        // and must NOT move `scroll_row` itself — vim's scrolloff moves the
+        // cursor onto the window, not the other way around.
         let mut vp = viewport(10, 10);
         vp.scrolloff = 2;
         vp.scroll_row = DisplayRow(50);

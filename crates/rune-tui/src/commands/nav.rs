@@ -1,14 +1,14 @@
-//! Cursor movement, selection, select-all, and Escape-collapse (WP6).
+//! Cursor movement, selection, select-all, and Escape-collapse.
 //!
-//! Vertical/page motion and the WP7.S2 viewport-only scroll commands live
-//! in the sibling `nav_scroll` module (plan WP7.S7: this file was
-//! already over the 500-line budget before WP7 added anything). Line/
+//! Vertical/page motion and the viewport-only scroll commands live
+//! in the sibling `nav_scroll` module (split out because this file was
+//! already over the 500-line budget). Line/
 //! document motion (line start/end, and the `handle_move_to` driver) lives
 //! in the sibling `nav_line` module for the same reason; that module
 //! reaches back into this one for the shared `move_cursors`/
 //! `update_horizontal` cursor-stepping infrastructure.
 //!
-//! Doc-local (plan WP1 decision 4): every function here takes `&mut
+//! Doc-local: every function here takes `&mut
 //! Document` directly — motion/selection never touches `App`-level state
 //! (the recovery store, status message, dirty cache), so there is no reason
 //! to thread a `DocumentId` through this module at all.
@@ -50,8 +50,9 @@ enum CharClass {
     Other,
 }
 
-/// Unicode-aware word classifier (plan WP9.S1, recorded as a deliberate
-/// divergence in `TODO.md`): asks `unicode-segmentation`'s UAX #29
+/// Unicode-aware word classifier (a deliberate
+/// divergence from ASCII-only word classification, recorded in `TODO.md`):
+/// asks `unicode-segmentation`'s UAX #29
 /// word-boundary algorithm whether `r`, fused between two ordinary word
 /// characters, stays part of one word segment — the same rule that
 /// already makes `is_ascii_alphanumeric()` true for `a`-`z`/`0`-`9`, but
@@ -177,7 +178,7 @@ pub fn word_right_offset(buf: &Buffer, offset: usize) -> usize {
 
 /// The `[start, end)` byte range of the word (or whitespace/punctuation
 /// run) touching `offset` — the double-click "select word" gesture
-/// (`commands::mouse`, plan WP7.S6). Class-based like `word_left_offset`/
+/// (`commands::mouse`). Class-based like `word_left_offset`/
 /// `word_right_offset` above, but expands outward from a single anchor
 /// rather than walking motion-by-motion, since a click can land anywhere
 /// inside the run, not just at its start. `nav_line::line_range_incl_newline`
@@ -377,7 +378,7 @@ mod tests {
         assert_eq!(word_right_offset(&buf, 2), 5);
     }
 
-    /// Regression for WP9.S1: a
+    /// A
     /// non-ASCII alphabet must still form one word run, so `⌥→`/`⌥←` stop
     /// at the WORD boundary, never at every individual Cyrillic character.
     /// A naive ASCII-only classifier would treat every non-ASCII letter as

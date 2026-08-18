@@ -1,10 +1,9 @@
-//! The 256-colour (xterm ANSI) quantizer (plan WP4.S4/Half 2): macOS
+//! The 256-colour (xterm ANSI) quantizer: macOS
 //! Terminal.app — the default terminal on the only OS this app supports —
 //! has no truecolor support, so every `Theme` built for it needs its
 //! `Color::Rgb` values mapped down to `Color::Indexed`. Applied exactly
 //! once, at `Theme::catppuccin_mocha` construction (`theme/mod.rs`), never
-//! per frame (plan: "Apply the quantizer once, at Theme construction —
-//! never per frame").
+//! per frame.
 
 use ratatui::style::Color;
 

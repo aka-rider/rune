@@ -285,7 +285,7 @@ mod tests {
         );
     }
 
-    const WP2_SHAPE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false,"resolution":"Unresolved"},{"start":30,"end":40,"resolved":true,"resolution":"TookTheirs"}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
+    const BLOCKS_JSON_NO_ORIGIN_FIELD: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false,"resolution":"Unresolved"},{"start":30,"end":40,"resolved":true,"resolution":"TookTheirs"}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
 
     #[test]
     fn resume_decodes_a_resolution_bearing_row_without_origin_as_conflict_blocks() {
@@ -295,7 +295,7 @@ mod tests {
         resume_from_store(
             &mut app,
             doc,
-            WP2_SHAPE_BLOCKS_JSON,
+            BLOCKS_JSON_NO_ORIGIN_FIELD,
             ObsId::new(1).expect("nonzero"),
         );
 
@@ -378,7 +378,7 @@ mod tests {
         resume_from_store(
             &mut app,
             doc,
-            WP2_SHAPE_BLOCKS_JSON,
+            BLOCKS_JSON_NO_ORIGIN_FIELD,
             ObsId::new(1).expect("nonzero"),
         );
 
@@ -412,7 +412,7 @@ mod tests {
         resume_from_store(
             &mut app,
             doc,
-            WP2_SHAPE_BLOCKS_JSON,
+            BLOCKS_JSON_NO_ORIGIN_FIELD,
             ObsId::new(1).expect("nonzero"),
         );
 

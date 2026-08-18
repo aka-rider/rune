@@ -1,9 +1,6 @@
-//! The shared buffer-mutation chokepoint underneath every editing command
-//! (plan WP9.S6 500-line budget — extracted from `edit.rs` alongside
-//! the `edit_lines` split, since `edit.rs` was still over budget with just
-//! that one boundary; both `edit`'s per-cursor commands and `edit_lines`'
-//! line-oriented commands route through the two functions here, so this
-//! is genuinely their shared home, not an arbitrary third bucket).
+//! The shared buffer-mutation chokepoint underneath every editing command.
+//! Both `edit`'s per-cursor commands and `edit_lines`'s line-oriented
+//! commands route through the two functions here.
 //!
 //! `apply_edit_batch_with_cursors` is THE sole buffer-mutating primitive:
 //! every command in `edit`/`edit_lines` funnels through it (directly, or
@@ -62,12 +59,12 @@ use crate::navhistory;
 ///
 /// Returns whether a batch actually applied (a journal `Step` was pushed) —
 /// `false` for every refusal below (missing doc, read-only, empty-after-
-/// retain) and for `Buffer::apply_edits`'s own rejection. Plan WP3.S2
-/// (Gotchas `[B3]`): merge entry's D3 invariant needs to tell "the working
-/// form actually landed in the buffer" apart from "nothing happened" before
-/// it is safe to advance the recovery store's CAS baseline
-/// (`resolve_adopt`) over that install — an un-observable `()` return made
-/// that distinction impossible to make from the call site.
+/// retain) and for `Buffer::apply_edits`'s own rejection. The merge entry's
+/// D3 invariant needs to tell "the working form actually landed in the
+/// buffer" apart from "nothing happened" before it is safe to advance the
+/// recovery store's CAS baseline (`resolve_adopt`) over that install — an
+/// un-observable `()` return made that distinction impossible to make from
+/// the call site.
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
@@ -117,10 +114,10 @@ pub(crate) fn apply_edit_batch_with_cursors(
             });
             doc.ladder_presses = 0;
             doc.ladder_anchor = None;
-            // Async replica journaling (plan WP5.S3): the LOCAL journal
-            // above is already the authoritative, synchronous source of
-            // truth — this enqueue can never roll it back, only mark the
-            // store degraded on failure (`db::append_edit`'s doc comment).
+            // The LOCAL journal above is already the authoritative,
+            // synchronous source of truth — this enqueue can never roll it
+            // back, only mark the store degraded on failure
+            // (`db::append_edit`'s doc comment).
             db::append_edit(app, id, &applied, cursors_before.all(), &cursors_after);
             crate::merge::ranges::remap_after_edit_batch(app, id, &applied);
             materialize_ack::recompute_dirty(app, id);

@@ -1,20 +1,19 @@
-//! Strict command-line parsing (plan WP7.S1-S3) — no dependency added for
-//! this; `rune-cli` stays free of `clap`/`lexopt`. Supports a flag set
-//! (`-w`, `--version`) plus any number of positional files, but rejects
-//! any unrecognised `-`-prefixed argument outright rather than silently
-//! treating it as a filename.
+//! Strict command-line parsing — no dependency added for this; `rune-cli`
+//! stays free of `clap`/`lexopt`. Supports a flag set (`-w`, `--version`)
+//! plus any number of positional files, but rejects any unrecognised
+//! `-`-prefixed argument outright rather than silently treating it as a
+//! filename.
 //!
 //! `-w`'s value and every positional are absolutized the same way
 //! (`crate::to_abs_path`, reused rather than duplicated) against the ONE
-//! `cwd` the caller reads (plan WP4.S6/[rune-cli 8]: `main` reads it
-//! exactly once and hands it down here, rather than this module or
-//! `to_abs_path` re-reading `env::current_dir()` per argument) — but
-//! `-w`'s existence/directory-ness is NOT checked here: that needs the
-//! injected `Vfs`, which this module never touches, so it happens in
-//! `main` right after parsing (WP7.S4).
+//! `cwd` the caller reads: `main` reads it exactly once and hands it down
+//! here, rather than this module or `to_abs_path` re-reading
+//! `env::current_dir()` per argument — but `-w`'s existence/directory-ness
+//! is NOT checked here: that needs the injected `Vfs`, which this module
+//! never touches, so it happens in `main` right after parsing.
 //!
-//! Every argument arrives as an `OsString` (`env::args_os`, plan WP4.S2):
-//! a non-Unicode argument is a [`CliError::NonUnicodeArg`], not a panic.
+//! Every argument arrives as an `OsString` (`env::args_os`): a non-Unicode
+//! argument is a [`CliError::NonUnicodeArg`], not a panic.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -40,20 +39,20 @@ pub enum CliAction {
 /// Why parsing (or the post-parse `-w` validation in `main`) failed. `main`
 /// turns every variant into a stderr message plus [`USAGE_TEXT`], then
 /// exits `exit_code::USAGE` — except the `-w` causes below, which report
-/// their own distinct reason (plan WP4.S6/[rune-cli 9]: a wildcard "not a
-/// directory" used to collapse "doesn't exist", "permission denied", and
-/// "genuinely a file" into one indistinguishable message).
+/// their own distinct reason: a wildcard "not a directory" used to collapse
+/// "doesn't exist", "permission denied", and "genuinely a file" into one
+/// indistinguishable message.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CliError {
     UnknownFlag(String),
     MissingValue(&'static str),
-    /// An argument's raw bytes don't round-trip through UTF-8 (plan
-    /// WP4.S2/[rune-cli 4]) — reproducible from ordinary shell input since
-    /// macOS filenames are byte strings, not `env::args()`'s panic.
+    /// An argument's raw bytes don't round-trip through UTF-8 — reproducible
+    /// from ordinary shell input since macOS filenames are byte strings, not
+    /// `env::args()`'s panic.
     NonUnicodeArg(OsString),
     /// A file path argument (a positional, or `-w`'s value) was the empty
-    /// string (plan WP4.S6/[rune-cli 10]) — rejected at parse rather than
-    /// silently absolutizing to `cwd` itself and opening that as a file.
+    /// string — rejected at parse rather than silently absolutizing to `cwd`
+    /// itself and opening that as a file.
     EmptyPath,
     /// `-w`'s value exists but isn't a directory.
     NotADirectory(PathBuf),

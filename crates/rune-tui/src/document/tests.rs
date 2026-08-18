@@ -49,7 +49,7 @@ fn sync_reconciles_the_viewport_again_after_a_reveal_driven_geometry_shrink() {
     );
 }
 
-/// Plan WP5: the `⌃P` toggle changes reveal-driven geometry with the
+/// The `⌃P` toggle changes reveal-driven geometry with the
 /// cursor STATIONARY (unlike the reveal-driven-shrink case above, where
 /// `scroll_to_cursor` moves the cursor into the collapsing table) — the
 /// first `view()` call's `set_reveal_mode` transition already marks
@@ -84,7 +84,7 @@ fn sync_reconciles_the_viewport_again_after_a_reading_view_toggle() {
     );
 }
 
-/// Plan WP4: `hydrate` stays exempt from `read_only` even under
+/// `hydrate` stays exempt from `read_only` even under
 /// `ReadOnly::Reading` — a reading-view toggle must never cost the user a
 /// recovered draft. Pinned against the public `Document::hydrate` entry
 /// point, not the mint sites that call it.

@@ -101,7 +101,7 @@ pub(crate) const WORD_RIGHT_F: Binding<Command> = Binding {
     alias: false,
 };
 
-// WP7.S2/S7: viewport-only scroll commands — vim/Helix parity, see
+// Viewport-only scroll commands — vim/Helix parity, see
 // `keymap::resolve`'s doc comments on each arm for the exact rationale.
 pub(crate) const SCROLL_LINE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Up, CTRL),
@@ -152,7 +152,7 @@ pub(crate) const CURSOR_TO_BOTTOM: Binding<Command> = Binding {
     alias: false,
 };
 
-// WP5.S7: follow the link under the cursor — Super or Ctrl held, both
+// Follow the link under the cursor — Super or Ctrl held, both
 // mirroring the `keymap::resolve` arms exactly.
 pub(crate) const FOLLOW_LINK_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Enter, SUP),

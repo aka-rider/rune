@@ -1,4 +1,4 @@
-//! Terminal graphics capability detection (plan WP3.S1/S2/S3) — an
+//! Terminal graphics capability detection — an
 //! environment-only sniff, plus the measured cell pixel geometry an image
 //! needs to size itself in columns and rows.
 

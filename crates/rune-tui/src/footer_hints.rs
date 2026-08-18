@@ -28,12 +28,12 @@ fn labeled<C: Copy + 'static>(binding: &Binding<C>, buf: &mut String) -> String 
     buf.clone()
 }
 
-/// Default-mode hints, CONTEXTUAL per focused pane (plan WP6.S2,
-/// superseding WP2.S6/S7's blind `GLOBAL_BINDINGS` iteration): a
-/// priority-ordered `(label, help, active)` list —
+/// Default-mode hints, CONTEXTUAL per focused pane (supersedes a blind
+/// `GLOBAL_BINDINGS` iteration): a priority-ordered `(label, help, active)`
+/// list —
 ///
 /// 1. `^S save` — only in the Editor, and only when the active document
-///    isn't `ReadOnly::Always` (plan WP6: that variant can never be
+///    isn't `ReadOnly::Always` (that variant can never be
 ///    saved); styled active only when the document is dirty (assumption
 ///    A2: for every document where it's PRESENT it's never removed, so
 ///    the row never jumps there).
@@ -58,7 +58,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     let mut entries: Vec<(String, &'static str, bool)> = Vec::new();
     let mut label_buf = String::new();
 
-    // Plan WP6: keyed on the `ReadOnly` VARIANT, not on `is_read_only()`
+    // Keyed on the `ReadOnly` VARIANT, not on `is_read_only()`
     // and not on dirtiness. `Document::dirty_for_render()` returns the
     // render-only `is_dirty_cached` field, while `save::trigger_save` deliberately
     // re-derives via `materialize_ack::is_dirty_now` instead of reading
@@ -183,7 +183,7 @@ fn hint_suppressed(app: &App, cmd: GlobalCommand) -> bool {
 /// entry but the first), the key label (active/inactive style), a space,
 /// then the help text. The chokepoint both `default_hint_spans` (full,
 /// untruncated) and `draw`'s width-truncated renderer build from, so an
-/// entry can never render differently in the two paths (plan WP6.S3).
+/// entry can never render differently in the two paths.
 pub(crate) fn hint_entry_spans(
     theme: &crate::theme::Theme,
     index: usize,
@@ -206,7 +206,7 @@ pub(crate) fn hint_entry_spans(
     spans
 }
 
-/// The FULL, untruncated hint spans (plan WP6.S4) — what `footer_text`
+/// The FULL, untruncated hint spans — what `footer_text`
 /// asserts on and what `rune-fuzz/src/snapshot.rs` captures into every fuzz
 /// snapshot. Truncation happens only inside `draw`, so these stay
 /// width-independent and the snapshots stay stable.
@@ -218,7 +218,7 @@ pub(crate) fn default_hint_spans(app: &App) -> Vec<Span<'static>> {
         .collect()
 }
 
-/// Priority-truncated hint spans (plan WP6.S3, risk R3): reserves room for
+/// Priority-truncated hint spans: reserves room for
 /// `Ln n, Col n` (`right_width`) FIRST, then appends whole entries in
 /// priority order only while the next one still fits the remaining width —
 /// never a partial entry, so the position readout can never fall off the
@@ -256,7 +256,7 @@ mod tests {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
     }
 
-    /// WP5.S7 — while the title is focused with the extension gate locked
+    /// While the title is focused with the extension gate locked
     /// and an extension actually present, the footer offers both the
     /// unlock gesture and the commit itself.
     #[test]
@@ -312,7 +312,7 @@ mod tests {
         );
     }
 
-    /// Plan WP6.S6 — the span-level regression guard for assumption A2: the
+    /// The span-level regression guard for assumption A2: the
     /// `^S` label span carries `theme.chrome.footer_key_inactive` on a
     /// clean document and `theme.chrome.footer_key` once an edit makes it
     /// dirty.
@@ -382,7 +382,7 @@ mod tests {
         }
     }
 
-    /// Plan WP6 — the chord is dead for `ReadOnly::Always` (an image
+    /// The chord is dead for `ReadOnly::Always` (an image
     /// document is refused on `kind`, the Help tab has no `file_path`, the
     /// error banner is never in `app.documents`), so the hint must not
     /// promise it.
@@ -404,7 +404,7 @@ mod tests {
         );
     }
 
-    /// Plan WP6 — a `ReadOnly::Reading` document may hold bytes typed
+    /// A `ReadOnly::Reading` document may hold bytes typed
     /// before the toggle and keeps a live `^S`, so the hint stays.
     #[test]
     fn default_hint_entries_keep_save_for_a_read_only_reading_document() {

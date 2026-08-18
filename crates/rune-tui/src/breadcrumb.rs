@@ -167,11 +167,11 @@ mod tests {
     }
 
     /// Draws `overlay` into a `height`-tall `TestBackend` (via the shared
-    /// `testgrid::draw_with` — plan WP1: `overlay` renders a component
-    /// directly into its own `Rect`, not the whole `App` through
-    /// `render::draw`, so `grid`/`row` don't apply here) and returns the
-    /// bottom row's rendered symbols concatenated into one `String` — the
-    /// row `overlay` actually writes to.
+    /// `testgrid::draw_with`: `overlay` renders a component directly into
+    /// its own `Rect`, not the whole `App` through `render::draw`, so
+    /// `grid`/`row` don't apply here) and returns the bottom row's rendered
+    /// symbols concatenated into one `String` — the row `overlay` actually
+    /// writes to.
     fn overlay_bottom_row(app: &App, width: u16, height: u16, focused: bool) -> String {
         let buf = testgrid::draw_with(width, height, |frame| {
             let block = Rect::new(0, 0, width, height);

@@ -1,6 +1,6 @@
-//! The image document's decode `Cmd` (plan WP5.S1), its scheduling
+//! The image document's decode `Cmd`, its scheduling
 //! chokepoint, and the reply handler that turns a finished decode into a
-//! live footprint plus (Kitty only) a transmit escape (WP5.S2/S3).
+//! live footprint plus (Kitty only) a transmit escape.
 //!
 //! Mirrors `highlight::schedule_highlight`'s shape deliberately: an
 //! `in_flight` generation guards against a second decode for the same
@@ -29,8 +29,9 @@ use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
 /// Spawns a decode for `id` if — and only if — it is an image document
 /// still waiting on its very first decode: `status == Pending` (a prior
-/// success moved it to `Live`, a prior failure to `Failed`, and WP5 adds no
-/// retry path of its own — that's WP6's reload command) and no decode is
+/// success moved it to `Live`, a prior failure to `Failed`, and this
+/// function adds no retry path of its own — that's `reload_image`'s job)
+/// and no decode is
 /// already `in_flight` for it. A no-op for every other document, so every
 /// call site (the `App::update` active-change hook, `runtime::bootstrap`'s
 /// startup kick) can call this unconditionally without checking `kind`
@@ -44,7 +45,7 @@ pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut
     spawn_decode(app, id, effects);
 }
 
-/// The reload command (plan WP6.S1, made preempting by WP2.S2): re-reads
+/// The reload command: re-reads
 /// and re-decodes an already-open image document on demand, through the
 /// very same `Vfs`/decode `Cmd` `schedule_image_decode` uses — the only
 /// difference is this function does NOT check `status`, since reload's
@@ -76,7 +77,7 @@ pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects)
 /// The shared spawn chokepoint both `schedule_image_decode` and `reload_
 /// image` fall through to once their own gate has already passed: mints a
 /// generation strictly greater than any this document has ever issued
-/// (`ImageState::next_generation`, not derived from `in_flight` — WP2.S1:
+/// (`ImageState::next_generation`, not derived from `in_flight`:
 /// `in_flight` goes back to `None` once a decode finishes or is abandoned,
 /// so deriving from it would let a later spawn collide with an earlier,
 /// still-outstanding one), snapshots the path and `Vfs` handle, marks
@@ -140,7 +141,7 @@ pub(super) fn decode_embed_cmd(
     })
 }
 
-/// Applies a `Msg::ImageDecoded` reply (plan WP5.S2/S3). Fixed order: (a)
+/// Applies a `Msg::ImageDecoded` reply. Fixed order: (a)
 /// drop a stale generation with no further work at all — `in_flight` no
 /// longer names it, so this reply describes a decode this document isn't
 /// waiting on anymore; (b) otherwise clear `in_flight` unconditionally, so

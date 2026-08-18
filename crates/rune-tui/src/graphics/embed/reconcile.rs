@@ -1,7 +1,7 @@
-//! `sync_embeds` (plan WP9.S4/S5/S7): the spawn/despawn reconciler for the
+//! `sync_embeds`: the spawn/despawn reconciler for the
 //! ACTIVE document's inline embeds, scoped to Kitty-only placement (decision
-//! 2, no iTerm2 half) with no animation frame ids yet (WP10's own scope —
-//! none exist yet for an embed).
+//! 2, no iTerm2 half) with no per-embed animation frame ids yet —
+//! none exist yet for an embed.
 //!
 //! Spawn and despawn are DELIBERATELY asymmetric (plan gotcha 2): spawn
 //! only ever considers a RENDERED-only standalone image line
@@ -32,7 +32,7 @@ use crate::graphics::ImageStatus;
 use crate::runtime::Effects;
 
 /// Reconciles the embed set of the document named by `id` against its
-/// current content (plan WP9.S4) — called from `dispatch::after_update`
+/// current content — called from `dispatch::after_update`
 /// (the same post-dispatch chokepoint `schedule_highlight`/
 /// `schedule_image_decode` already funnel through) after every message, so
 /// no future edit path can forget to keep the embed set current. A no-op
@@ -113,7 +113,7 @@ fn spawn_or_respawn(
             continue;
         };
         if let Some(existing) = embeds.images.get(target) {
-            // Retry rule (plan WP9.S5): an unchanged mtime never respawns
+            // An unchanged mtime never respawns
             // (Failed is sticky per (path, mtime)); an in-flight decode
             // never respawns either — it must run to completion first.
             if existing.mtime == mtime || existing.in_flight.is_some() {
@@ -125,7 +125,7 @@ fn spawn_or_respawn(
             // entry for that id is therefore left exactly as it is:
             // allocator entries stay until despawn's FreeAllForPath —
             // conservative, no reuse, no collision.
-            // WP9 tracks no frame ids at all (animation is WP10's scope),
+            // No per-embed frame ids exist yet (animation is unimplemented),
             // so there is nothing else to delete here.
             let Some(state) = embeds.images.get_mut(target) else {
                 continue;
@@ -156,11 +156,11 @@ fn spawn_or_respawn(
     }
 }
 
-/// Reload's embed counterpart (plan WP2.S4): an embed whose decode reply
+/// Reload's embed counterpart: an embed whose decode reply
 /// was ever lost leaves `in_flight` set forever, and `spawn_or_respawn`'s
 /// own retry rule refuses to touch anything already `in_flight` — so
 /// without this, a wedged embed had no recovery path at all, unlike a whole
-/// image document (`reload_image`, WP2.S2). Abandons every currently in-
+/// image document (`reload_image`). Abandons every currently in-
 /// flight embed for the ACTIVE document (clearing `in_flight` first, so
 /// `schedule_embed_decode`'s own in-flight guard doesn't refuse the
 /// respawn) and immediately respawns each one. The abandoned reply is then
@@ -211,7 +211,7 @@ fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effect
     }
 }
 
-/// Resolves an embed's target to an absolute path (plan WP9.S7): decode,
+/// Resolves an embed's target to an absolute path: decode,
 /// trim, strip a leading `./`, try the document's own directory then the
 /// workspace root — all reused directly from `rune_nav::resolve`
 /// (`navigate::follow`'s own resolver), never reimplemented here. The
@@ -219,8 +219,8 @@ fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effect
 /// classification a `WikiLink`/`Link` node gets, so an embed and a link
 /// sharing the same raw text can never resolve through different policy.
 /// `None` when nothing on disk answers to the target — the embed is simply
-/// not spawned this pass (plan: "an absolute path resolves only if it
-/// exists").
+/// not spawned this pass; an absolute path only resolves if it
+/// exists.
 fn resolve_embed_path(
     vfs: &dyn Vfs,
     m: &ImageM,

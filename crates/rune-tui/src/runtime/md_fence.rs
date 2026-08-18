@@ -1,4 +1,4 @@
-//! Markdown-fence highlighting via comrak reuse (plan WP6.S3): a
+//! Markdown-fence highlighting via comrak reuse: a
 //! ```` ```markdown ````/```` ```md ```` fence has no `rune-ts` grammar
 //! ("markdown stays comrak's", `rune_ts::lang`'s own doc comment), so this
 //! module reuses the SAME emitter that renders the real document, just
@@ -10,14 +10,14 @@
 use rune_syntax::scope::scope_table;
 use rune_ts::{HighlightResult, MAX_SPANS};
 
-/// Highlights one fence's reconstructed markdown source (plan WP6.S3):
-/// parse -> force every block revealed (`rune_md::reveal_all`, plan
-/// WP6.S1) -> emit at width 0. Width only ever reaches the table layout
+/// Highlights one fence's reconstructed markdown source:
+/// parse -> force every block revealed (`rune_md::reveal_all`)
+/// -> emit at width 0. Width only ever reaches the table layout
 /// path (which short-circuits before using it once available width is 0,
 /// every subtraction there saturating) and the thematic-break rule (which
 /// ignores it) — a markdown fence rendered as an overlay never lays out a
-/// table or draws a rule, so width 0 is safe here. `decor` output (plan
-/// WP2) is irrelevant to this path and dropped along with everything else
+/// table or draws a rule, so width 0 is safe here. `decor` output
+/// is irrelevant to this path and dropped along with everything else
 /// `emit` returns besides the spans.
 ///
 /// Every span's own `(range(), scope())` becomes one overlay span, in the

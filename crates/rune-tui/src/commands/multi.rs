@@ -1,8 +1,8 @@
-//! Multi-cursor management (plan WP9.S3): add-cursor-above/add-cursor-below.
+//! Multi-cursor management: add-cursor-above/add-cursor-below.
 //! `multicursor.escape`, the third command in this family, lives in
 //! `commands::nav::escape`.
 //!
-//! Doc-local (plan WP1 decision 4), like `commands::nav`: pure cursor
+//! Doc-local, like `commands::nav`: pure cursor
 //! placement, no buffer mutation, so this takes `&mut Document` directly
 //! rather than `(app, id)` and never touches `apply_edit_batch_with_
 //! cursors`/`commit_edit_batch`.

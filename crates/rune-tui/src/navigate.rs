@@ -1,5 +1,5 @@
-//! `navigate::follow` — following the link under the cursor (plan WP5):
-//! ⌘Enter/^Enter and a ctrl-click both funnel through this one entry point.
+//! `navigate::follow` — following the link under the cursor: ⌘Enter/^Enter
+//! and a ctrl-click both funnel through this one entry point.
 //! Reads the ACTIVE document's `Document::catalogue` (rebuilt on every
 //! `Document::view()` call) to find what the cursor sits on, then dispatches
 //! on the `rune_nav::Destination` it resolves to — a same-document heading
@@ -82,8 +82,8 @@ fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
     })
 }
 
-/// `Target::SameDoc` never touches `resolve`/the filesystem (plan WP5.S5):
-/// the anchor is searched for directly in the ACTIVE document's own
+/// `Target::SameDoc` never touches `resolve`/the filesystem: the anchor
+/// is searched for directly in the ACTIVE document's own
 /// catalogue (`Anchor::Named`) or its buffer (`Anchor::Line`).
 fn follow_same_doc(app: &mut App, anchor: &Anchor) {
     let doc = app.active_doc();
@@ -100,8 +100,8 @@ fn follow_same_doc(app: &mut App, anchor: &Anchor) {
 }
 
 /// Opens (or reactivates) the document at `path` and, if `anchor` is
-/// `Some`, lands the caret on the matching heading once it's open (plan
-/// WP5.S6, [rune-tui A 7]): `workspace::open_path_async` reads the file
+/// `Some`, lands the caret on the matching heading once it's open:
+/// `workspace::open_path_async` reads the file
 /// off-thread when it isn't already open, so landing the anchor can't
 /// happen inline here anymore — it moves into the `Msg::FileOpened` ack
 /// reaction ([`land_anchor`] below), reached via `workspace::
@@ -122,8 +122,8 @@ fn follow_location(
 /// synchronous reactivation branch AND `workspace::handle_file_opened`'s
 /// async ack both call, so the two routes can't drift apart on how an
 /// anchor is resolved. Forces `id`'s catalogue to exist NOW through
-/// `Document::sync_catalogue` (plan WP5.S6, [rune-tui A 14]) rather than
-/// waiting for `App::sync_view`'s lazy per-active-document parse, since
+/// `Document::sync_catalogue` rather than waiting for
+/// `App::sync_view`'s lazy per-active-document parse, since
 /// `id` isn't necessarily the active (or even the only) document yet.
 pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
     let Some(doc) = app.doc_mut(id) else {
@@ -185,7 +185,7 @@ fn describe_target(target: &Target) -> String {
     }
 }
 
-/// The external-URL opener `Cmd` (plan WP5.S6), the exact shape of
+/// The external-URL opener `Cmd`, the exact shape of
 /// `clipboard::pbpaste_cmd`: runs off-thread, never touches the terminal.
 /// `url` is passed to `/usr/bin/open` as a SEPARATE argv element, never
 /// interpolated into a shell string, so a crafted link can never inject a

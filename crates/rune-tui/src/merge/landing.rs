@@ -1,4 +1,4 @@
-//! The `MergePrep` ack landing (plan WP3.S6) — where a fresh-state read
+//! The `MergePrep` ack landing — where a fresh-state read
 //! either turns into a clean-merge/discard install, a working-form install
 //! (entering the resolver), or a refusal, each with user feedback. Reached
 //! only through `db_dispatch::handle_db_event`'s `OpOutcome::MergePrep` arm.
@@ -23,7 +23,7 @@ use super::state::MergeState;
 
 const UTF8_REFUSAL: &str = "merge unavailable — the file on disk is not valid UTF-8";
 
-/// Routes a `MergePrep` ack (plan WP3.S6). `merge_gen` is the ack's own
+/// Routes a `MergePrep` ack. `merge_gen` is the ack's own
 /// `PendingOp::merge_gen` — `None` (an ack for a different kind of op that
 /// somehow reached this router, which never happens through the real
 /// dispatch table) is treated exactly like a stale/mismatched ticket.
@@ -119,8 +119,8 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     };
     // Captured fresh, NOW — not whatever `merge::begin` saw when the
-    // `MergePrep` op was enqueued (plan WP3.S6: re-runs on fresh
-    // bytes). The user may have kept typing during the round trip.
+    // `MergePrep` op was enqueued: the user may have kept typing during
+    // the round trip, so this re-reads the buffer on fresh bytes.
     let ours_text = active.buffer.content().to_string();
 
     // No ancestor means no shared basis to classify a change against — a
@@ -315,8 +315,7 @@ fn discard_install(app: &mut App, doc: DocumentId, theirs_text: &str, theirs_obs
 }
 
 /// Replaces `doc`'s ENTIRE live buffer content with `text` as one journaled
-/// edit (plan WP3.S6: "install the working form the same way"). Never
-/// routes through `Document::hydrate` (plan Gotchas: the suspicious-shrink
+/// edit. Never routes through `Document::hydrate` (the suspicious-shrink
 /// guard there skips `db::append_edit`, which would leave this install
 /// unreplicated to the recovery store). Returns whether it actually
 /// applied — `false` (read-only, or `Buffer::apply_edits` itself refusing)

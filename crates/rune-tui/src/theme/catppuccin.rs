@@ -1,4 +1,4 @@
-//! Catppuccin Mocha's canonical truecolor palette (plan WP4.S3), sourced
+//! Catppuccin Mocha's canonical truecolor palette, sourced
 //! from the MIT `catppuccin` crate's generated `PALETTE.mocha.colors`
 //! rather than hand-copied hex literals, so this crate's colours stay
 //! byte-identical to upstream's own spec.

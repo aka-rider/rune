@@ -303,7 +303,7 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
     }
 }
 
-/// The quit-guard's own answer (plan WP2): `d`/`D` discards immediately,
+/// The quit-guard's own answer: `d`/`D` discards immediately,
 /// and the prompt itself already said "Discard" — quitting right away
 /// rather than routing through a save at all. `s`/`S` starts a save for EVERY dirty,
 /// unpreserved document (not just the one the prompt named — quit is a

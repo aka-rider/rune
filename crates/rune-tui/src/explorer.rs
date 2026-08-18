@@ -29,7 +29,7 @@ use crate::pane::Pane;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
 use crate::width::truncate_tail_to_width;
 
-/// One open Explorer's state (plan WP4.S3): the directory it's rooted at,
+/// One open Explorer's state: the directory it's rooted at,
 /// its direct children (dirs-first, `Vfs::read_dir`'s own sort contract),
 /// the cursor/scroll position, and whether a `ReadDir` `Cmd` is in flight.
 /// `root` starts empty — the real starting root (the active document's own
@@ -105,9 +105,8 @@ impl Default for Explorer {
     }
 }
 
-/// The Explorer's starting root the first time it's ever shown (plan
-/// WP4.S4's "`^x` triggers the initial load"): the active document's own
-/// directory takes priority (a deliberate choice, rather than always
+/// The Explorer's starting root the first time it's ever shown, triggered
+/// by `^x`: the active document's own directory takes priority (a deliberate choice, rather than always
 /// rooting the tree at the workspace root) — a pathless (draft)
 /// session falls back to `app.root` (the workspace root discovered at
 /// startup), and only when THAT is also unresolved (still empty) does this
@@ -128,9 +127,9 @@ pub fn initial_root(app: &App) -> PathBuf {
     app.vfs.resolve(&base).unwrap_or(base)
 }
 
-/// Scrolls the Explorer's window to keep the cursor visible (plan WP4.S3:
-/// follow, margin = min(4, visible/4), jump buffer 0 since this call has no
-/// jump argument).
+/// Scrolls the Explorer's window to keep the cursor visible: follows the
+/// cursor with margin = min(4, visible/4) and no jump buffer, since this
+/// call has no jump argument.
 /// `pub(crate)`, not private: `explorer_keys::handle_key`'s Top/Bottom
 /// commands and `move_selection` call this from the sibling module the key
 /// handling lives in.
@@ -142,7 +141,7 @@ pub(crate) fn ensure_visible(app: &mut App) {
 }
 
 /// The Explorer pane's visible entry-row count for `ensure_visible`'s
-/// scroll margin — read straight from `layout::geometry` (plan WP3.S7),
+/// scroll margin — read straight from `layout::geometry`,
 /// the one chokepoint every pane's rect comes from, rather than the
 /// `viewport.height`-based approximation this used to reverse-engineer.
 /// The `-1` is the root-path row (`draw` below, row 0 of the block's inner
@@ -245,7 +244,7 @@ pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
 pub(crate) use crate::explorer_dirload::handle_dir_loaded;
 
 /// Draws the Explorer's content into `area` — the block's INNER rect
-/// (border already rendered by `render.rs::draw_left_pane`, plan WP4.S6):
+/// (border already rendered by `render.rs::draw_left_pane`):
 /// row 0 is the root path (truncated with a leading `…` when it doesn't
 /// fit, `theme.chrome.pane_title`); the remaining rows are the `listnav`-
 /// windowed entry slice, laid out `[› prefix][icon column, Nerd tier
@@ -307,8 +306,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
 }
 
 /// Truncates `root`'s displayed path to fit `width` terminal CELLS,
-/// keeping the TAIL and marking the cut with a leading `…` (plan WP4.S3:
-/// "root-path title row truncated with leading `…`") — the tail (the
+/// keeping the TAIL and marking the cut with a leading `…` — the tail (the
 /// directory's own name and its nearest ancestors) is what a user
 /// navigating a deep tree actually needs to see, not the common prefix
 /// every row would otherwise share. Delegates to the crate's one chrome-
@@ -344,10 +342,10 @@ mod tests {
     #[test]
     fn initial_root_falls_back_to_dot_when_app_root_is_also_unresolved() {
         // `initial_root` computes the literal `"."` fallback and then
-        // resolves it through `app.vfs`; against `Mem` (WP1.S6) that
-        // lexically normalizes to the synthetic root `"/"` rather than
-        // staying identity, the same way `Disk::resolve` would canonicalize
-        // `"."` to an absolute path rather than leaving it literal.
+        // resolves it through `app.vfs`; against `Mem` that lexically
+        // normalizes to the synthetic root `"/"` rather than staying
+        // identity, the same way `Disk::resolve` would canonicalize `"."`
+        // to an absolute path rather than leaving it literal.
         let app = app();
         assert_eq!(initial_root(&app), PathBuf::from("/"));
     }

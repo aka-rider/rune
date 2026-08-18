@@ -308,7 +308,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
 /// The pre-snapshot frame `draw` falls back to while `doc.view` is still
 /// `None` — a large document's first display-pipeline compute runs on a
 /// background `Cmd` (`runtime::bootstrap`'s large-document branch), and
-/// nothing is ever representable as a PARTIAL `DisplaySnapshot` (issue #11:
+/// nothing is ever representable as a PARTIAL `DisplaySnapshot` —
 /// `DisplaySnapshot::total_rows`/`wrap_to_display`/`display_to_wrap` clamp a
 /// short prefix indistinguishably from a genuinely short document, which
 /// would silently corrupt every scroll/caret/hit-test query built against

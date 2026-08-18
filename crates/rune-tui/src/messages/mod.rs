@@ -262,8 +262,9 @@ pub fn is_open(app: &App) -> bool {
 
 /// The log's own read-only document — exposed so a caller that already
 /// works generically over `&Document`/`&mut Document` (`render::build_rows`,
-/// WP3's hit-testing/copy, and tests exercising the pane's cursor state
-/// directly) can reach it without a matching accessor per field.
+/// the pane's hit-testing/copy handling, and tests exercising the pane's
+/// cursor state directly) can reach it without a matching accessor per
+/// field.
 pub fn doc(app: &App) -> &Document {
     &app.messages.doc
 }

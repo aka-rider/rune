@@ -1,8 +1,8 @@
 //! The footer row: a display-mode priority renderer, pure function of
-//! `&App` (plan WP2.S6): the `Mode` enum's declaration order below IS
+//! `&App`: the `Mode` enum's declaration order below IS
 //! priority order, highest first. File
-//! renamed from `status.rs`: WP1's per-doc file-name/dirty-dot display
-//! moves to WP6's `title.rs`; this module owns only the chrome-wide message
+//! renamed from `status.rs`: per-doc file-name/dirty-dot display now
+//! lives in `title.rs`; this module owns only the chrome-wide message
 //! row + the always-visible cursor position.
 
 use ratatui::Frame;
@@ -23,10 +23,9 @@ use rune_syntax::wrap::line_visual_col;
 /// messages pane's own keys (only while it holds focus), then a pending
 /// chord hint, the degraded-store
 /// banner, the merge/disk-changed ambient hints, and the default keymap
-/// hints. Mutually exclusive by construction — never concatenated, unlike
-/// the pre-WP2 `status.rs::status_text`. Transient user-facing messages no
-/// longer have a `Mode` of their own: they live in the message log/pane
-/// (`messages`) instead.
+/// hints. Mutually exclusive by construction — never concatenated. Transient
+/// user-facing messages no longer have a `Mode` of their own: they live in
+/// the message log/pane (`messages`) instead.
 enum Mode<'a> {
     /// The close/quit/rename/disk-conflict confirmation prompt. Carries the
     /// whole `GuardPrompt`, not just its `GuardKind`: `guard_spans` needs
@@ -40,13 +39,13 @@ enum Mode<'a> {
     Messages,
     ChordPending(String),
     Degraded(&'a str),
-    /// Passive persistent hint (plan WP2.S5, Assumption A1): the ACTIVE
+    /// Passive persistent hint: the ACTIVE
     /// document's disk fact has diverged from the buffer. Ranked just below
     /// `Degraded` — the message log carries every actual status text now,
     /// so this ambient reminder only needs to outrank the bare default
     /// keymap hints.
     DiskChanged,
-    /// Persistent resolver reminder (plan WP4.S4) carrying the live
+    /// Persistent resolver reminder carrying the live
     /// unresolved count.
     MergeHint(usize),
     DefaultHints,
@@ -75,7 +74,7 @@ fn mode(app: &App) -> Mode<'_> {
     {
         return Mode::MergeHint(app.merge.unresolved_count());
     }
-    // Suppressed while a merge attempt is underway (plan WP4.S4): `Active`
+    // Suppressed while a merge attempt is underway: `Active`
     // returned above, and a `Pending` attempt's merge invitation
     // would be stale advice about the very thing already in flight.
     if matches!(app.merge, crate::merge::MergeState::Inactive)
@@ -89,7 +88,7 @@ fn mode(app: &App) -> Mode<'_> {
     Mode::DefaultHints
 }
 
-/// `pending_quit`'s hint has no other home (the pre-WP2 `quit_hint`, ported
+/// `pending_quit`'s hint has no other home (`quit_hint`, ported
 /// unchanged below); `pending_save_confirm`'s hint is the fixed literal
 /// below — `trigger_save` also posts the degraded-save explanation to the
 /// message log the same tick it arms the confirm gate, so this no longer
@@ -135,8 +134,7 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
 }
 
 /// The footer's left-side text content, with no styling — for tests that
-/// only need to assert on WHAT shows, not how (mirrors the pre-WP2
-/// `status_text`'s role).
+/// only need to assert on WHAT shows, not how.
 pub fn footer_text(app: &App) -> String {
     left_spans(app).iter().map(|s| s.content.as_ref()).collect()
 }
@@ -160,8 +158,8 @@ fn sync_marker(app: &App) -> &'static str {
     }
 }
 
-/// `Ln <line>, Col <col>` from the active document's primary cursor (plan
-/// WP8) — always shown, regardless of the left side's `Mode`. Col is a LINE-relative
+/// `Ln <line>, Col <col>` from the active document's primary cursor —
+/// always shown, regardless of the left side's `Mode`. Col is a LINE-relative
 /// terminal-CELL column (`rune_syntax::wrap::line_visual_col`), not a
 /// wrap-row-relative one: `line_visual_col` walks the cursor's own logical
 /// line from its own start, so a wrapped line's second-and-later visual row
@@ -184,7 +182,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let right_text = position_text(app);
     let right_width = display_width(marker) + display_width(&right_text);
     let available = area.width as usize;
-    // Truncation (plan WP6.S3/risk R3) only applies to `DefaultHints` — the
+    // Truncation only applies to `DefaultHints` — the
     // one mode that grows with the focused pane's own hints; every other
     // mode's content is already short and the three exact-equality tests
     // (`save_error_outranks_everything_else` etc.) depend on it being
@@ -277,8 +275,6 @@ mod tests {
         }
     }
 
-    /// Plan WP6.S5: with Explorer focus, the pane's own keys show and
-    /// `save` (Editor-only, assumption A2) does not.
     #[test]
     fn explorer_focus_shows_its_own_keys_and_omits_save() {
         let mut app = app_with("hello");
@@ -293,7 +289,6 @@ mod tests {
         assert!(!text.contains("save"), "footer text: {text:?}");
     }
 
-    /// Plan WP6.S5: with Tabs focus, the pane's own keys show.
     #[test]
     fn tabs_focus_shows_its_own_keys() {
         let mut app = app_with("hello");
@@ -431,7 +426,7 @@ mod tests {
         assert_eq!(footer_text(&app), "press ^S again to save anyway");
     }
 
-    /// `pending_save_confirm` is doc-tagged (plan WP1 decision 3): a chord
+    /// `pending_save_confirm` is doc-tagged: a chord
     /// armed on doc A must not leak its hint onto doc B's footer after a
     /// tab switch, and must reappear once doc A is active again.
     #[test]

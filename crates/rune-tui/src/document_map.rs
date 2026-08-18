@@ -165,7 +165,7 @@ mod tests {
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
 
-    /// Review fix (plan WP5.S5): removing the id `DocumentMap`'s internal
+    /// Removing the id `DocumentMap`'s internal
     /// anchor currently holds must promote a survivor rather than ever
     /// leaving the map able to answer "empty" — `remove` on the LAST
     /// document is refused outright.

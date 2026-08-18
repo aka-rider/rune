@@ -34,7 +34,7 @@ impl Default for OpenTabs {
     }
 }
 
-/// The Tabs pane's own commands (plan WP5.S1), resolved via `TABS_BINDINGS`.
+/// The Tabs pane's own commands, resolved via `TABS_BINDINGS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabsCommand {
     Up,
@@ -44,7 +44,7 @@ pub enum TabsCommand {
 }
 
 /// Arrow keys move the cursor; Enter opens the selected tab
-/// (`workspace::switch_to`, plan WP5.S2 — Select is the ONLY way to switch
+/// (`workspace::switch_to` — Select is the ONLY way to switch
 /// tabs from a cursor row; jumping straight to a tab by digit, and closing
 /// the active document, both now resolve at the global pipeline stage
 /// (`^1`-`^0`, `^w` — `keymap::GLOBAL_BINDINGS`) so they work from any pane,
@@ -76,8 +76,8 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
     },
 ];
 
-/// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
-/// `app.focus() == Pane::Tabs`. `Select` now needs `Effects` (WP2.S8):
+/// Stage 3 of the four-stage key pipeline, when
+/// `app.focus() == Pane::Tabs`. `Select` needs `Effects` because it
 /// blurs the title BEFORE the switch — `switch_to` reassigns `app.active`,
 /// and `rename::begin` resolves its subject from the live `app.active`, so
 /// blurring after would rename the tab just switched TO, not the one being

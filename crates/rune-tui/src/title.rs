@@ -195,7 +195,7 @@ pub fn ext_split(name: &str) -> usize {
 /// rename a file to literally that.
 ///
 /// `display_name` overrides this ONLY when `doc` also has a real
-/// `file_path` (plan WP3.S8, `[B5]`): a bound document's only current
+/// `file_path`: a bound document's only current
 /// source of a display-name override is merge mode's own retitle
 /// (`"{file_name}: editor <-> disk"`, `merge::landing`), so respecting it
 /// here is what keeps `file_name()` (the tab/title row's own name source)

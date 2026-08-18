@@ -1,4 +1,4 @@
-//! One embed's decode `Cmd` and reply handler (plan WP9), the `EmbedSet`
+//! One embed's decode `Cmd` and reply handler, the `EmbedSet`
 //! sibling of `graphics::decode_cmd`'s whole-image-document pair.
 //! `generation` alone is enough to find the right `EmbedState`:
 //! `EmbedSet::next_generation` mints a value unique across EVERY embed in
@@ -49,8 +49,8 @@ pub(crate) fn schedule_embed_decode(
         ));
 }
 
-/// Applies a `Msg::EmbedDecoded` reply (plan WP9, mirroring `graphics::
-/// decode_cmd::handle_image_decoded`'s own fixed order exactly): find the
+/// Applies a `Msg::EmbedDecoded` reply, mirroring `graphics::
+/// decode_cmd::handle_image_decoded`'s own fixed order exactly: find the
 /// target this `generation` belongs to, drop silently if none matches (a
 /// stale reply, or the embed was despawned while its decode was in flight);
 /// otherwise clear `in_flight`, record failure or compute the fit-to-width

@@ -52,7 +52,7 @@ fn is_image_extension(ext: &str) -> bool {
         .any(|known| known.eq_ignore_ascii_case(ext))
 }
 
-/// Whether `path` would open as `DocumentKind::Image` (plan WP4.S8) — the
+/// Whether `path` would open as `DocumentKind::Image` — the
 /// one predicate `rune-cli`'s bootstrap needs to route the first
 /// positional through `workspace::open_path` instead of `load_buffer`,
 /// without making `rune_syntax::DocumentKind` a dependency of `rune-cli`
@@ -67,7 +67,7 @@ pub fn is_image_path(path: &Path) -> bool {
 }
 
 /// The outcome of [`crate::document::Document::hydrate`] — the shared
-/// hydration-adoption chokepoint (plan WP5.S2).
+/// hydration-adoption chokepoint.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Hydration {
     /// `recovered` was identical to `disk_content` — nothing to adopt.
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(kind_for(Some(Path::new("a.png")), ""), DocumentKind::Image);
     }
 
-    /// Plan WP4 Done-when: no image extension may also resolve through
+    /// No image extension may also resolve through
     /// `rune_ts::lang::resolve` — the image arm must never shadow a code
     /// language `kind_for` would otherwise have picked for that extension.
     #[test]

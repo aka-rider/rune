@@ -1,5 +1,5 @@
 //! `RowMeta` — per-display-row table membership metadata, sampled beside
-//! `render::build_rows` (plan WP5.S1) purely as a signal for the session
+//! `render::build_rows` purely as a signal for the session
 //! fuzzer's `TABLE-ROW-WIDTH`/`TABLE-SYNTHETIC-DECORATIVE` invariants.
 //! Kept out of `render.rs` (already over the 500-line budget) since no
 //! cell-building code ever reads it.

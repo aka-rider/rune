@@ -23,7 +23,7 @@ use super::{Cmd, Effects, Msg};
 
 /// The buffer size at/over which `bootstrap` defers the first display-
 /// pipeline compute to a background `Cmd` instead of running it
-/// synchronously ahead of the first draw (issue #11). Chosen from measured
+/// synchronously ahead of the first draw. Chosen from measured
 /// post-fix pipeline cost: every non-pathological shape measured completes
 /// `sync_content` + `snapshot` comfortably under 40ms at 1 MiB (worst case
 /// observed: `many_short_lines`, 31ms sync_content + 38ms snapshot on the
@@ -31,7 +31,7 @@ use super::{Cmd, Effects, Msg};
 /// or a visible flash — while a 5 MiB document in that same shape already
 /// costs several hundred ms, the regime a "still preparing" indicator earns
 /// its keep in. 1 MiB is comfortably above an ordinary note or README and
-/// comfortably below the sizes the issue's "multi-megabyte" title names.
+/// comfortably below multi-megabyte documents.
 const LARGE_DOC_BOOTSTRAP_BYTES: usize = 1_048_576;
 
 /// Everything `runtime::run`'s main loop needs once bootstrap has finished:
@@ -68,10 +68,10 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     let (tx, rx) = mpsc::channel::<Msg>();
     super::spawn_input_reader(guard.event_reader(), tx.clone());
 
-    // Hand the runtime's own `Sender<Msg>` to the DB bridge (plan WP5.S1's
-    // "App-held setter" — `Store::open`, at bootstrap in `rune-cli::main`,
-    // ran before this `Sender<Msg>` ever existed, see `db::DbBridge`'s doc
-    // comment) so every `DbEvent` from here on is delivered as `Msg::Db`
+    // Hand the runtime's own `Sender<Msg>` to the DB bridge — an "App-held
+    // setter": `Store::open`, at bootstrap in `rune-cli::main`,
+    // ran before this `Sender<Msg>` ever existed (see `db::DbBridge`'s doc
+    // comment) — so every `DbEvent` from here on is delivered as `Msg::Db`
     // through the ordinary Elm loop below, exactly like the initial
     // `Msg::Resize` seed right after it.
     if let Some(db) = &app.db {
@@ -115,7 +115,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // kick right after, unchanged.
     crate::highlight::first_paint_highlight(app);
 
-    // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
+    // `App::new` itself has no
     // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
     // runtime, and before any `Msg` has ever reached `app::update`'s
     // before/after gate), so the document it opened with never gets its
@@ -134,9 +134,9 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // empty box until the user pressed the focus chord. A no-op whenever the
     // column starts hidden or the Explorer already has entries.
     //
-    // Plan WP5.S1: the same gap applies to an image document opened before
-    // this runtime ever starts (`rune-cli`'s first-positional bootstrap,
-    // WP4.S8) — `app::update`'s own active-change hook never ran for it
+    // The same gap applies to an image document opened before
+    // this runtime ever starts (`rune-cli`'s first-positional bootstrap)
+    // — `app::update`'s own active-change hook never ran for it
     // either, so its decode would otherwise never be scheduled at all. A
     // no-op for a non-image document (`schedule_image_decode`'s own guard).
     {
