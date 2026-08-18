@@ -336,9 +336,9 @@ fn typing_inserts_characters_in_order_and_moves_the_caret() {
 #[test]
 fn typing_marks_the_buffer_dirty() {
     let mut app = app_for("hi", 0);
-    assert!(!app.is_dirty());
+    assert!(!app.dirty_for_render());
     press(&mut app, KeyCode::Char('!'), Mods::NONE);
-    assert!(app.is_dirty());
+    assert!(app.dirty_for_render());
 }
 
 #[test]

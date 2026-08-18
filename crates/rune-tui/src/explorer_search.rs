@@ -208,7 +208,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(names),
             DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
     }
 

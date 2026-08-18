@@ -59,8 +59,8 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     let mut label_buf = String::new();
 
     // Plan WP6: keyed on the `ReadOnly` VARIANT, not on `is_read_only()`
-    // and not on dirtiness. `Document::is_dirty()` returns the render-only
-    // `is_dirty_cached` field, while `save::trigger_save` deliberately
+    // and not on dirtiness. `Document::dirty_for_render()` returns the
+    // render-only `is_dirty_cached` field, while `save::trigger_save` deliberately
     // re-derives via `materialize_ack::is_dirty_now` instead of reading
     // that cache — a dirtiness-keyed hint would promise a chord the save
     // path doesn't actually honour whenever the cache is stale, and
@@ -79,7 +79,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         )
         && let Some((label, help)) = crate::global::hint_for(GlobalCommand::Save)
     {
-        entries.push((label, help, app.is_dirty()));
+        entries.push((label, help, app.dirty_for_render()));
     }
 
     entries.extend(
@@ -325,7 +325,7 @@ mod tests {
             .label();
 
         let app = app_with("hello");
-        assert!(!app.is_dirty());
+        assert!(!app.dirty_for_render());
         let spans = default_hint_spans(&app);
         let save_span = spans
             .iter()
@@ -335,7 +335,7 @@ mod tests {
 
         let mut app = app_with("hello");
         app.active_doc_mut().is_dirty_cached = true;
-        assert!(app.is_dirty());
+        assert!(app.dirty_for_render());
         let spans = default_hint_spans(&app);
         let save_span = spans
             .iter()

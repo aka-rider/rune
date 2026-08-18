@@ -353,7 +353,7 @@ fn trash_done_err_posts_and_closes_nothing() {
     };
     drop(cmd);
 
-    let generation = 1;
+    let generation = rune_tui::generation::Generation::ZERO; // the first (and only) mint
     send(
         &mut session,
         Msg::TrashDone {
@@ -379,12 +379,12 @@ fn stale_generation_trash_done_is_ignored() {
     let mut session = app_with(&mem);
     let id = session.app().active;
     send(&mut session, sup_backspace());
-    send(&mut session, yes()); // mints generation 1, app.trash_gen == 1
+    send(&mut session, yes()); // mints generation 0, app.trash_gen == 0
 
     send(
         &mut session,
         Msg::TrashDone {
-            generation: 0,
+            generation: rune_tui::generation::Generation::from_raw(1), // never minted — stale
             path: PathBuf::from("/root/a.md"),
             result: Ok(()),
         },
@@ -417,7 +417,7 @@ fn path_equality_is_exact_not_resolved() {
     send(&mut session, sup_backspace());
     let mut effects = send(&mut session, yes());
     let cmd = effects.cmds.remove(0);
-    let generation = 1;
+    let generation = rune_tui::generation::Generation::ZERO; // the first (and only) mint
     drop(cmd);
 
     send(

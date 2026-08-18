@@ -250,7 +250,7 @@ fn save_after_completion_commits_without_cas_refusal() {
     );
     session.app_mut().recompute_dirty(doc_id);
     assert!(
-        !session.app().doc(doc_id).unwrap().is_dirty(),
+        !session.app().doc(doc_id).unwrap().dirty_for_render(),
         "the document must be clean after the invited save"
     );
     assert_eq!(

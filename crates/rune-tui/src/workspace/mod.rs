@@ -319,7 +319,7 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId 
             dims,
             status: ImageStatus::Pending,
             in_flight: None,
-            next_generation: 0,
+            next_generation: crate::generation::GenCounter::default(),
         });
     }
     switch_to(app, doc_id);

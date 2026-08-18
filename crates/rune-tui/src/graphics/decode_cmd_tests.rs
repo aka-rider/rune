@@ -15,6 +15,10 @@ use super::*;
 
 const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
+fn mint_gen(raw: u64) -> crate::generation::Generation {
+    crate::generation::Generation::from_raw(raw)
+}
+
 fn app_with_pending_image(kitty: bool) -> (App, DocumentId) {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(Path::new("/vault/x.png"), X_PNG)
@@ -82,9 +86,9 @@ fn scheduling_twice_only_ever_spawns_one_cmd() {
 #[test]
 fn a_successful_decode_goes_live_and_transmits_when_kitty_is_on() {
     let (mut app, id) = app_with_pending_image(true);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(1);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(1));
     let mut effects = Effects::default();
-    handle_image_decoded(&mut app, id, 1, Ok(decode_x_png()), &mut effects);
+    handle_image_decoded(&mut app, id, mint_gen(1), Ok(decode_x_png()), &mut effects);
 
     let image = app.doc(id).unwrap().image().unwrap();
     assert!(matches!(image.status, ImageStatus::Live { .. }));
@@ -96,9 +100,9 @@ fn a_successful_decode_goes_live_and_transmits_when_kitty_is_on() {
 #[test]
 fn a_successful_decode_never_transmits_when_kitty_is_off() {
     let (mut app, id) = app_with_pending_image(false);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(1);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(1));
     let mut effects = Effects::default();
-    handle_image_decoded(&mut app, id, 1, Ok(decode_x_png()), &mut effects);
+    handle_image_decoded(&mut app, id, mint_gen(1), Ok(decode_x_png()), &mut effects);
 
     assert!(effects.raw.is_empty());
     assert!(
@@ -110,9 +114,15 @@ fn a_successful_decode_never_transmits_when_kitty_is_off() {
 #[test]
 fn a_failed_decode_becomes_failed_status_with_no_raw_output() {
     let (mut app, id) = app_with_pending_image(true);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(1);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(1));
     let mut effects = Effects::default();
-    handle_image_decoded(&mut app, id, 1, Err("boom".to_string()), &mut effects);
+    handle_image_decoded(
+        &mut app,
+        id,
+        mint_gen(1),
+        Err("boom".to_string()),
+        &mut effects,
+    );
 
     let image = app.doc(id).unwrap().image().unwrap();
     assert!(matches!(&image.status, ImageStatus::Failed(msg) if msg == "boom"));
@@ -122,10 +132,10 @@ fn a_failed_decode_becomes_failed_status_with_no_raw_output() {
 #[test]
 fn a_stale_generation_is_dropped_with_no_effects() {
     let (mut app, id) = app_with_pending_image(true);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(2);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(2));
     let mut effects = Effects::default();
     // generation 1 no longer matches the live in_flight of 2.
-    handle_image_decoded(&mut app, id, 1, Ok(decode_x_png()), &mut effects);
+    handle_image_decoded(&mut app, id, mint_gen(1), Ok(decode_x_png()), &mut effects);
 
     let image = app.doc(id).unwrap().image().unwrap();
     assert!(
@@ -134,7 +144,7 @@ fn a_stale_generation_is_dropped_with_no_effects() {
     );
     assert_eq!(
         image.in_flight,
-        Some(2),
+        Some(mint_gen(2)),
         "stale reply must not clear in_flight"
     );
     assert!(effects.raw.is_empty());
@@ -206,11 +216,11 @@ fn reload_retransmits_under_the_same_id_and_forces_a_redraw() {
 #[test]
 fn reload_recovers_a_failed_image_document() {
     let (mut app, id) = app_with_pending_image(true);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(1);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(1));
     handle_image_decoded(
         &mut app,
         id,
-        1,
+        mint_gen(1),
         Err("boom".to_string()),
         &mut Effects::default(),
     );
@@ -259,7 +269,7 @@ fn reload_is_a_no_op_on_a_non_image_document() {
 #[test]
 fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
     let (mut app, id) = app_with_live_image(true);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(99);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(99));
 
     let mut effects = Effects::default();
     reload_image(&mut app, id, &mut effects);
@@ -276,25 +286,34 @@ fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
 #[test]
 fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     let (mut app, id) = app_with_live_image(true);
-    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(1);
+    // `app_with_live_image` already minted once (returning 0, its own
+    // real `in_flight` since cleared) — `mint_gen(0)` stands in for that
+    // abandoned decode's actual generation.
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(0));
 
     let mut effects = Effects::default();
     reload_image(&mut app, id, &mut effects);
     let new_generation = app.doc(id).unwrap().image().unwrap().in_flight;
     assert_eq!(
         new_generation,
-        Some(2),
+        Some(mint_gen(1)),
         "reload must mint a strictly greater generation than the abandoned one"
     );
 
     // The abandoned decode's reply finally lands, still carrying the
     // OLD generation.
     let mut stale_effects = Effects::default();
-    handle_image_decoded(&mut app, id, 1, Ok(decode_x_png()), &mut stale_effects);
+    handle_image_decoded(
+        &mut app,
+        id,
+        mint_gen(0),
+        Ok(decode_x_png()),
+        &mut stale_effects,
+    );
     assert!(stale_effects.raw.is_empty(), "stale reply must not act");
     assert_eq!(
         app.doc(id).unwrap().image().unwrap().in_flight,
-        Some(2),
+        Some(mint_gen(1)),
         "the stale reply must not clear the fresh decode's in_flight"
     );
 }

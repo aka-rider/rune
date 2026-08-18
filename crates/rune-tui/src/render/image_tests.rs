@@ -38,7 +38,7 @@ fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
         dims: Some(rune_image::PixelSize { w: 64, h: 48 }),
         status,
         in_flight: None,
-        next_generation: 0,
+        next_generation: crate::generation::GenCounter::default(),
     });
     app
 }
@@ -47,7 +47,7 @@ fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
 fn info_card_lines_include_name_dims_and_kitty_reason() {
     let mut app = app_with_image_doc(true, ImageStatus::Pending);
     if let Some(image) = app.active_doc_mut().image_mut() {
-        image.in_flight = Some(1);
+        image.in_flight = Some(crate::generation::Generation::from_raw(1));
     }
     let doc = app.doc(app.active).expect("doc");
     let lines = info_card_lines(&app, doc);
@@ -80,7 +80,7 @@ fn pending_without_an_in_flight_decode_reads_differently_from_a_running_one() {
     );
 
     if let Some(image) = app.active_doc_mut().image_mut() {
-        image.in_flight = Some(7);
+        image.in_flight = Some(crate::generation::Generation::from_raw(7));
     }
     let running = {
         let doc = app.doc(app.active).expect("doc");

@@ -305,7 +305,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
         "a refused hydration must leave the buffer exactly as it was on disk"
     );
     assert!(
-        !app.doc(id).unwrap().is_dirty(),
+        !app.doc(id).unwrap().dirty_for_render(),
         "a refused hydration must not mark the buffer dirty"
     );
     assert!(

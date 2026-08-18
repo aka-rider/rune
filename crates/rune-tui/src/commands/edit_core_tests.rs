@@ -200,7 +200,7 @@ fn zero_width_edit_batch_on_an_empty_buffer_does_not_journal_or_dirty() {
     let id = app.active;
     let version_before = app.doc(id).expect("doc").buffer.version();
     let journal_len_before = app.doc(id).expect("doc").journal.len();
-    assert!(!app.doc(id).expect("doc").is_dirty());
+    assert!(!app.doc(id).expect("doc").dirty_for_render());
 
     edit::delete_selection_or_line(&mut app, id);
 
@@ -216,7 +216,7 @@ fn zero_width_edit_batch_on_an_empty_buffer_does_not_journal_or_dirty() {
         "a zero-width no-op must not journal a step"
     );
     assert!(
-        !doc.is_dirty(),
+        !doc.dirty_for_render(),
         "a zero-width no-op must not mark a clean document dirty"
     );
 }
@@ -234,7 +234,7 @@ fn zero_width_edit_batch_on_an_empty_last_line_does_not_journal_or_dirty() {
     doc.cursors = CursorSet::new(2);
     let version_before = app.doc(id).expect("doc").buffer.version();
     let journal_len_before = app.doc(id).expect("doc").journal.len();
-    assert!(!app.doc(id).expect("doc").is_dirty());
+    assert!(!app.doc(id).expect("doc").dirty_for_render());
 
     edit::delete_selection_or_line(&mut app, id);
 
@@ -251,7 +251,7 @@ fn zero_width_edit_batch_on_an_empty_last_line_does_not_journal_or_dirty() {
         "a zero-width no-op must not journal a step"
     );
     assert!(
-        !doc.is_dirty(),
+        !doc.dirty_for_render(),
         "a zero-width no-op must not mark a clean document dirty"
     );
 }

@@ -418,8 +418,11 @@ impl Document {
     }
 
     /// Reads the render-only dirty cache — see `materialize_ack::recompute_dirty`'s
-    /// doc comment for the two points that keep it current.
-    pub fn is_dirty(&self) -> bool {
+    /// doc comment for the two points that keep it current. A DECISION
+    /// (close/quit/save/trash gating and the like) must call `materialize_
+    /// ack::is_dirty_now` instead, which forces a re-derive first — this
+    /// accessor can be one edit/ack stale.
+    pub fn dirty_for_render(&self) -> bool {
         self.is_dirty_cached
     }
 

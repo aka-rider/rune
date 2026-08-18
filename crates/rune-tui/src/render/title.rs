@@ -52,7 +52,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         theme,
     );
 
-    if !focused && app.active_doc().is_dirty() {
+    if !focused && app.active_doc().dirty_for_render() {
         spans.push(Span::styled(" \u{2022}", theme.chrome.error));
     }
 

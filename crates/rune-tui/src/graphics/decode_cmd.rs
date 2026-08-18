@@ -84,7 +84,6 @@ pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects)
 fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let Some(image) = doc.image() else { return };
-    let generation = image.next_generation.wrapping_add(1);
     let path = image.path.clone();
     let vfs = Arc::clone(&app.vfs);
 
@@ -92,7 +91,7 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(image) = doc.image_mut() else {
         return;
     };
-    image.next_generation = generation;
+    let generation = image.next_generation.mint();
     image.in_flight = Some(generation);
     effects
         .cmds
@@ -114,7 +113,7 @@ pub(super) fn decode_image_cmd(
     doc: DocumentId,
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
-    generation: u64,
+    generation: crate::generation::Generation,
 ) -> Cmd {
     Cmd::image_decode(move || {
         let result = read_and_decode(vfs.as_ref(), &path);
@@ -164,7 +163,7 @@ pub(super) fn decode_embed_cmd(
 pub(crate) fn handle_image_decoded(
     app: &mut App,
     id: DocumentId,
-    generation: u64,
+    generation: crate::generation::Generation,
     result: Result<rune_image::decode::Decoded, String>,
     effects: &mut Effects,
 ) {

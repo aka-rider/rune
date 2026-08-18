@@ -289,7 +289,7 @@ impl Snapshot {
         for doc_id in doc_ids {
             app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
-                dirty_by_doc.insert(doc_id, d.is_dirty());
+                dirty_by_doc.insert(doc_id, d.dirty_for_render());
                 save_in_flight_by_doc.insert(doc_id, d.save_in_flight());
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
                 saved_version_by_doc.insert(doc_id, d.saved_version);
@@ -330,7 +330,7 @@ impl Snapshot {
             content: doc.buffer.content().to_string(),
             version: doc.buffer.version(),
             saved_version: doc.saved_version,
-            is_dirty: app.is_dirty(),
+            is_dirty: app.dirty_for_render(),
             cursors: doc.cursors.all().to_vec(),
             line_count,
             line_starts,

@@ -240,11 +240,14 @@ pub struct App {
     /// is the one chokepoint that writes a NEW prompt here; `guard::
     /// clear_guard` is the sole writer of `None`.
     pub guard: Option<GuardPrompt>,
-    /// The generation of the in-flight trash `Cmd` (plan WP2.S3) —
-    /// `trash::confirm` is the sole minter: a stale `Msg::TrashDone` whose
-    /// echoed generation no longer matches this field is discarded on
-    /// arrival rather than acted on.
-    pub(crate) trash_gen: u32,
+    /// The generation of the in-flight trash `Cmd` — `trash::confirm` is
+    /// the sole writer, via `next_trash_gen`: a stale `Msg::TrashDone`
+    /// whose echoed generation no longer matches this field is discarded
+    /// on arrival rather than acted on.
+    pub(crate) trash_gen: crate::generation::Generation,
+    /// Mints `trash_gen`'s next value — `GenCounter`'s standard "mint at
+    /// request time, compare on reply" shape.
+    pub(crate) next_trash_gen: crate::generation::GenCounter,
     /// The path of the one in-flight trash `Cmd`, if any — `trash::confirm`
     /// is the sole writer of `Some`; `trash::handle_trash_done` is the sole
     /// writer of `None`, cleared unconditionally (`Ok`, `Err`, or a stale
@@ -388,7 +391,8 @@ impl App {
             clock: Arc::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
             guard: None,
-            trash_gen: 0,
+            trash_gen: crate::generation::Generation::ZERO,
+            next_trash_gen: crate::generation::GenCounter::default(),
             trash_pending: None,
             messages: MessageLog::new(),
             overlay: crate::overlay::Overlay::None,
@@ -502,11 +506,12 @@ impl App {
         self.documents.get_or_anchor_mut(&self.active)
     }
 
-    /// Convenience delegate to the active document's dirty cache — kept on
-    /// `App` so render/status call sites don't need to spell out
-    /// `app.active_doc().is_dirty()` everywhere.
-    pub fn is_dirty(&self) -> bool {
-        self.active_doc().is_dirty()
+    /// Convenience delegate to the active document's render-only dirty
+    /// cache — kept on `App` so render/status call sites don't need to
+    /// spell out `app.active_doc().dirty_for_render()` everywhere. A
+    /// DECISION must call `materialize_ack::is_dirty_now` instead.
+    pub fn dirty_for_render(&self) -> bool {
+        self.active_doc().dirty_for_render()
     }
 
     /// Whether `doc` has a live, trustworthy recovery journal — the single

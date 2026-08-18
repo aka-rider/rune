@@ -379,7 +379,7 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
     // write really landed), so the next two `^C` presses (the ordinary
     // two-press quit confirm, nothing left dirty to guard) must complete
     // the quit rather than wedging.
-    assert!(!app.doc(id).unwrap().is_dirty());
+    assert!(!app.doc(id).unwrap().dirty_for_render());
     press(&mut app, ctrl_c());
     press(&mut app, ctrl_c());
     assert!(

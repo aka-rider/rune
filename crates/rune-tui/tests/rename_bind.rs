@@ -95,7 +95,7 @@ fn end_to_end_cmd_route_rename() {
     // Make the document dirty, so "stays dirty" is actually observable.
     let active = session.app().active;
     dirty_common::force_dirty(session.app_mut(), active);
-    let dirty_before = session.app().is_dirty();
+    let dirty_before = session.app().dirty_for_render();
     assert!(dirty_before, "test setup: the document must be dirty");
 
     commit_name(&mut session, "b");
@@ -122,7 +122,7 @@ fn end_to_end_cmd_route_rename() {
     );
     assert_eq!(session.app().active_doc().file_name(), "b.md");
     assert_eq!(
-        session.app().is_dirty(),
+        session.app().dirty_for_render(),
         dirty_before,
         "a rename must not change dirty state"
     );

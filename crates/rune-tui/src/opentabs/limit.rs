@@ -327,7 +327,7 @@ mod tests {
             std::path::PathBuf::from("/root"),
             entries,
             crate::runtime::DirCause::Nav,
-            0,
+            crate::generation::Generation::ZERO,
         );
         let tabs_before = app.documents.order().len();
         let newest_before = messages::newest_text(&app).map(str::to_string);

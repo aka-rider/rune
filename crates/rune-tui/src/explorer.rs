@@ -49,7 +49,9 @@ pub struct Explorer {
     /// this, the OLDER reply could overwrite the newer listing. Mirrors
     /// `DocDb::snapshot_generation`'s debounce-token pattern (`db.rs`) —
     /// bump in place, compare on receipt, ignore a stale one.
-    pub request_generation: u32,
+    pub request_generation: crate::generation::Generation,
+    /// Mints `request_generation`'s next value.
+    next_request_gen: crate::generation::GenCounter,
     /// The file `explorer_reveal::reveal` wants the cursor on, set when it
     /// issues a re-rooting `ReadDir`, consumed by `explorer_dirload::
     /// handle_dir_loaded`. Guarded by `request_generation` exactly like
@@ -92,7 +94,8 @@ impl Default for Explorer {
             entries: Vec::new(),
             nav: listnav::List { cursor: 0, top: 0 },
             loading: false,
-            request_generation: 0,
+            request_generation: crate::generation::Generation::ZERO,
+            next_request_gen: crate::generation::GenCounter::default(),
             pending_reveal: None,
             preview: None,
             browsing_origin: None,
@@ -171,8 +174,8 @@ pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
 /// `ensure_loaded`/`refresh_for` below do from this one.
 pub(crate) fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
     app.explorer.loading = true;
-    app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
-    let generation = app.explorer.request_generation;
+    let generation = app.explorer.next_request_gen.mint();
+    app.explorer.request_generation = generation;
     let vfs = Arc::clone(&app.vfs);
     effects
         .cmds
@@ -226,8 +229,8 @@ pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
         return;
     }
     app.explorer.loading = true;
-    app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
-    let generation = app.explorer.request_generation;
+    let generation = app.explorer.next_request_gen.mint();
+    app.explorer.request_generation = generation;
     let vfs = Arc::clone(&app.vfs);
     let root = app.explorer.root.clone();
     effects

@@ -16,11 +16,11 @@ impl Generation {
     /// driver deliberately targeting a generation `mint()` structurally
     /// cannot reach (a caller-chosen stale timer fire). Production code
     /// only ever holds a `Generation` a `GenCounter` minted.
-    pub fn from_raw(value: u64) -> Generation {
+    pub const fn from_raw(value: u64) -> Generation {
         Generation(value)
     }
 
-    pub fn raw(self) -> u64 {
+    pub const fn raw(self) -> u64 {
         self.0
     }
 }

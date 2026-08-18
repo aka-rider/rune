@@ -105,7 +105,7 @@ pub enum Msg {
     /// same stale-generation-is-ignored shape as `ConfirmTimeout`/
     /// `SaveConfirmTimeout`.
     MessagesCollapseTimeout {
-        generation: u32,
+        generation: crate::generation::Generation,
     },
     /// The 2s snapshot-autosave debounce timer — a stale
     /// generation (a later journal mutation already rescheduled) is
@@ -145,7 +145,7 @@ pub enum Msg {
         root: PathBuf,
         entries: Vec<DirEntry>,
         cause: DirCause,
-        generation: u32,
+        generation: crate::generation::Generation,
     },
     /// A rename/draft-create `Cmd` completed (the no-store route). Carries
     /// its own `generation` so a reply to a rename the user has since
@@ -163,7 +163,7 @@ pub enum Msg {
     /// `App::trash_gen` before this one lands) is dropped rather than
     /// applied to the fresh one.
     TrashDone {
-        generation: u32,
+        generation: crate::generation::Generation,
         path: PathBuf,
         result: Result<(), String>,
     },
@@ -210,7 +210,7 @@ pub enum Msg {
     /// reply whose generation no longer matches is dropped silently.
     ImageDecoded {
         doc: DocumentId,
-        generation: u64,
+        generation: crate::generation::Generation,
         result: Result<rune_image::decode::Decoded, String>,
     },
     EmbedDecoded {
@@ -471,7 +471,7 @@ pub fn load_dir_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     root: PathBuf,
     cause: DirCause,
-    generation: u32,
+    generation: crate::generation::Generation,
 ) -> Cmd {
     Cmd::read_dir(move || match vfs.read_dir(&root) {
         Ok(entries) => Some(Msg::DirLoaded {
