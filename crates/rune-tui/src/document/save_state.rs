@@ -17,7 +17,7 @@ pub(crate) struct SaveCapture {
 #[derive(Clone)]
 pub(crate) struct PublishParams {
     pub(crate) path: PathBuf,
-    pub(crate) bind_new: bool,
+    pub(crate) publish_mode: crate::db::PublishMode,
     pub(crate) db_id: i64,
     pub(crate) seq: i64,
     pub(crate) mode: SaveMode,

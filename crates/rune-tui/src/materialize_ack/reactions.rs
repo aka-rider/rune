@@ -35,11 +35,11 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
     resolve_continuations(app, id, pending_version, false);
 }
 
-/// Detects "a `bind_new` create lost the race": a concurrent writer's file
+/// Detects "a create-only publish lost the race": a concurrent writer's file
 /// is already sitting at this document's own intended path when a create
 /// was attempted. Returns that path — the caller's cue to hand the
 /// document off to an ordinary `Load`, the only transition out of
-/// `bind_new` that installs a real CAS baseline — for `handle_materialize_
+/// `PublishMode::CreateOnly` that installs a real CAS baseline — for `handle_materialize_
 /// ack` to route around the unanswerable `DiskConflict` Guard this refusal
 /// would otherwise raise.
 ///
@@ -53,7 +53,10 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
 /// document has no claim on, so adopting its row would be wrong.
 fn lost_create_race(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
     let doc = app.doc(id)?;
-    if !doc.doc_db().is_some_and(|d| d.bind_new) {
+    if !doc
+        .doc_db()
+        .is_some_and(|d| d.publish_mode.is_create_only())
+    {
         return None;
     }
     if doc.bind_target().is_some() {
@@ -62,8 +65,8 @@ fn lost_create_race(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
     doc.file_path.clone()
 }
 
-/// The naming-attempt counterpart to [`lost_create_race`]: a `bind_new`
-/// CREATE at a NEW target (`rename_create::bind_new_now`'s `^R` route)
+/// The naming-attempt counterpart to [`lost_create_race`]: a create-only
+/// publish at a NEW target (`rename_create::bind_new_now`'s `^R` route)
 /// losing the race. Never a `Load` hand-off — that is exactly what `lost_
 /// create_race` above declines to do for this shape — and, just as
 /// importantly, never the generic CAS-conflict `DiskConflict` Guard either:
@@ -73,7 +76,10 @@ fn lost_create_race(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
 /// footer refusal only.
 fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
     let doc = app.doc(id)?;
-    if !doc.doc_db().is_some_and(|d| d.bind_new) {
+    if !doc
+        .doc_db()
+        .is_some_and(|d| d.publish_mode.is_create_only())
+    {
         return None;
     }
     doc.bind_target().cloned()
@@ -81,7 +87,7 @@ fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
 
 /// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
 /// WP7's `MaterializeRecord`): advances `saved_version`/`DocDb::expect_obs`/
-/// `bind_new` on a commit, surfaces each `MatResult` outcome as status text,
+/// `publish_mode` on a commit, surfaces each `MatResult` outcome as status text,
 /// and — either way — clears `id`'s `save_in_flight` and recomputes its
 /// dirty cache (trigger (b) of `recompute_dirty`'s doc comment). Also
 /// called synthetically (WP7, `MatResult::Committed { saved: None }`) when
@@ -145,7 +151,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
     // ack actually still current" re-check needed the way a bare field
     // once required). A refused rename-create, a refused save of the
     // document's own `file_path`, and an ordinary CAS-conflict refusal
-    // all land here; `bind_target` and `bind_new` together are what
+    // all land here; `bind_target` and `publish_mode` together are what
     // tells the three apart.
     let race = lost_create_race(app, id);
     let naming = naming_collision(app, id);
@@ -159,7 +165,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
         // and see nothing to merge — there is no CAS baseline to raise a
         // Guard against. Instead take the document through the same
         // transition an ordinary bound document already has:
-        // `db_ack::handle_load_ack` installs `bind_new: false` with a
+        // `db_ack::handle_load_ack` installs the overwrite mode with a
         // real baseline, even when it declines to hydrate because the
         // buffer moved on, so the user's typing is never clobbered. The
         // abandoned scratch row still holds everything typed so far and
@@ -179,7 +185,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
         // an unresolved comparison would miss that they name one
         // document. It is also safe only with a usable store — a
         // degraded/absent one would leave `load_document` a silent
-        // no-op, `bind_new` stuck `true` forever. Either way out, the
+        // no-op, the document stuck create-only forever. Either way out, the
         // racer's file itself is left untouched: a direct-vfs fallback
         // here would clobber a foreign file this session has never
         // observed.

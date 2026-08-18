@@ -27,7 +27,7 @@ const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 /// `MaterializePrepare` — a plain, non-blocking channel send (never I/O that
 /// leaves this thread; the writer thread's reply carries no disk-sourced
 /// data at all, only DB bookkeeping), so `update` can call it directly.
-/// `content`/`path`/`seq`/`bind_new` are all captured HERE, synchronously,
+/// `content`/`path`/`seq`/`publish_mode` are all captured HERE, synchronously,
 /// into `Document::begin_prepare` — never re-derived once the round trip is
 /// under way, and never overwritable by a second attempt while this one's
 /// own ticket is still live (`trigger_save`'s in-flight refusal).
@@ -40,9 +40,9 @@ pub(super) fn materialize_now(
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    let Some((db_id, last_known_seq, bind_new)) = doc
+    let Some((db_id, last_known_seq, publish_mode)) = doc
         .doc_db()
-        .map(|d| (d.db_id, d.last_known_seq, d.bind_new))
+        .map(|d| (d.db_id, d.last_known_seq, d.publish_mode))
     else {
         return;
     };
@@ -68,17 +68,13 @@ pub(super) fn materialize_now(
     };
     let expect_obs = binding.expect_obs;
     let baseline_epoch = binding.baseline_epoch;
-    let target = match (bind_new, expect_obs) {
-        (true, _) => rune_db::MaterializeTarget::BindNew,
-        (false, Some(expect)) => rune_db::MaterializeTarget::Existing { expect },
-        (false, None) => {
-            materialize_ack::on_store_failure(
-                app,
-                &format!("materialize: document {id:?} bound to db_id {db_id} has no CAS baseline"),
-            );
-            fall_back_to_direct(app, id, path, version, content, effects);
-            return;
-        }
+    let Some(target) = publish_mode.materialize_target(expect_obs) else {
+        materialize_ack::on_store_failure(
+            app,
+            &format!("materialize: document {id:?} bound to db_id {db_id} has no CAS baseline"),
+        );
+        fall_back_to_direct(app, id, path, version, content, effects);
+        return;
     };
     crate::db_enqueue::flush_pending_rebase(app, id);
     let Some(db) = app.db.as_ref() else { return };
@@ -94,7 +90,7 @@ pub(super) fn materialize_now(
                     Arc::clone(&content),
                     PublishParams {
                         path,
-                        bind_new,
+                        publish_mode,
                         db_id,
                         seq: last_known_seq.0,
                         mode,
@@ -139,7 +135,7 @@ fn fall_back_to_direct(
 }
 
 /// The draft-naming route (`rename::bind_new`): materialize the buffer to
-/// `path` with `bind_new=true` — an atomic no-clobber `rename_excl` create
+/// `path` create-only — an atomic no-clobber `rename_excl` create
 /// whose EEXIST branch refuses and records the winner's bytes.
 ///
 /// `trigger_save` cannot be reused here: it reads `doc.file_path`, which is
@@ -180,10 +176,10 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
                     Arc::clone(&content),
                     PublishParams {
                         path: path.clone(),
-                        bind_new: true,
+                        publish_mode: crate::db::PublishMode::CreateOnly,
                         db_id,
                         seq,
-                        // `bind_new` never reaches the mode-dependent branch —
+                        // A create never reaches the mode-dependent branch —
                         // the create path has no CAS baseline to compare
                         // either way.
                         mode: SaveMode::Normal,
@@ -215,12 +211,12 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
 /// plain, synchronous, testable logic: the pre-checks (path disagreement,
 /// destination resolve) followed by one `rune_vfs::put` — `IfMatch` for an
 /// ordinary compare-and-swap save, `Force` for the disk-conflict Guard's
-/// escape hatch, `IfAbsent` for a `bind_new` create — and the adapter
+/// escape hatch, `IfAbsent` for a create-only publish — and the adapter
 /// mapping `PutOutcome` onto [`MaterializeVfsOutcome`].
 pub(crate) fn run_materialize_vfs(
     vfs: &dyn Vfs,
     path: &Path,
-    bind_new: bool,
+    publish_mode: crate::db::PublishMode,
     content: &str,
     expect_hash: &str,
     bound_path: Option<&str>,
@@ -233,7 +229,7 @@ pub(crate) fn run_materialize_vfs(
         Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
     };
 
-    if bind_new {
+    if publish_mode.is_create_only() {
         if let Some(dir) = resolved.parent()
             && !dir.as_os_str().is_empty()
             && let Err(e) = vfs.mkdir_all(dir)

@@ -270,8 +270,11 @@ mod tests {
             Some(in_memory_db()),
         );
         let id = app.active;
-        app.doc_mut(id).expect("doc exists").replica =
-            Replica::Bound(DocDb::new(1, false, rune_db::Seq(0)));
+        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(
+            1,
+            crate::db::PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
         app.install_or_join_file_binding(1, None);
 
         crate::db_enqueue::probe(&mut app, id);
@@ -338,8 +341,11 @@ mod tests {
             Some(in_memory_db()),
         );
         let id = app.active;
-        app.doc_mut(id).expect("doc exists").replica =
-            Replica::Bound(DocDb::new(1, false, rune_db::Seq(0)));
+        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(
+            1,
+            crate::db::PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
         app.install_or_join_file_binding(1, None);
         let op_id = 7;
         app.doc_mut(id).expect("doc exists").begin_prepare(
@@ -347,7 +353,7 @@ mod tests {
             Arc::from("body"),
             crate::document::PublishParams {
                 path: PathBuf::from("/vault/note.md"),
-                bind_new: false,
+                publish_mode: crate::db::PublishMode::OverwriteExisting,
                 db_id: 1,
                 seq: 0,
                 mode: crate::save::SaveMode::Normal,

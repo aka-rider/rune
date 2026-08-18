@@ -362,14 +362,42 @@ impl Db {
 /// must see the one truth about what disk holds, or one tab's own save
 /// falsely raises the disk-conflict guard against the other's very next
 /// attempt.
+/// How this document's NEXT save publishes: [`PublishMode::CreateOnly`]
+/// until the first successful create commits (no CAS baseline exists yet,
+/// so the publish is an atomic no-clobber `rename_excl` that must not
+/// overwrite a concurrent creator's file), [`PublishMode::OverwriteExisting`]
+/// once an established baseline exists (an ordinary compare-and-swap
+/// overwrite). [`PublishMode::materialize_target`] is the ONE conversion
+/// onto `rune_db::MaterializeTarget`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PublishMode {
+    CreateOnly,
+    OverwriteExisting,
+}
+
+impl PublishMode {
+    pub fn is_create_only(self) -> bool {
+        matches!(self, PublishMode::CreateOnly)
+    }
+
+    pub(crate) fn materialize_target(
+        self,
+        expect_obs: Option<rune_db::ObsId>,
+    ) -> Option<rune_db::MaterializeTarget> {
+        match self {
+            PublishMode::CreateOnly => Some(rune_db::MaterializeTarget::BindNew),
+            PublishMode::OverwriteExisting => {
+                expect_obs.map(|expect| rune_db::MaterializeTarget::Existing { expect })
+            }
+        }
+    }
+}
+
 pub struct DocDb {
     pub db_id: i64,
-    /// Whether the NEXT save must go through `materialize`'s `bind_new`
-    /// (create-only, `rename_excl`) path rather than the CAS-overwrite path
-    /// — true until the first successful create commits. Never shared: a
-    /// scratch row a create is still racing to bind is, by construction,
-    /// claimed by exactly one `Document`.
-    pub bind_new: bool,
+    /// Never shared: a scratch row a create is still racing to bind is, by
+    /// construction, claimed by exactly one `Document`.
+    pub publish_mode: PublishMode,
     /// The highest durable journal seq (`events.seq`) this session has SEEN
     /// acknowledged so far for this document — a conservative stand-in for
     /// "the durable journal's current head", used only as `materialize`'s
@@ -433,10 +461,10 @@ pub struct DocDb {
 }
 
 impl DocDb {
-    pub fn new(db_id: i64, bind_new: bool, last_known_seq: rune_db::Seq) -> DocDb {
+    pub fn new(db_id: i64, publish_mode: PublishMode, last_known_seq: rune_db::Seq) -> DocDb {
         DocDb {
             db_id,
-            bind_new,
+            publish_mode,
             last_known_seq,
             snapshot_generation: 0,
             undo_offset: 0,

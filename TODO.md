@@ -64,13 +64,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: introduce typed wrappers for the two coordinate spaces — a `ByteOffset` for `position`/`anchor`, a `SyntaxCol` or similar for `desired_col` — so mixing them becomes a compile error. Do this together with the next change to `crates/rune-db/src/payload.rs`'s cursor schema, since typing `desired_col` crosses the on-disk cursor payload and any schema change already forces a review of that boundary.
 - **Done when**: `Cursor`'s three fields have distinct types for their two coordinate spaces, and `CursorPayload`'s fields mirror that typing (or the entry records why the persisted form deliberately stays untyped).
 
-### `bind_new: bool` stands in for a two-way publish-mode choice
-- **Where**: `crates/rune-tui/src/db.rs`'s `DocDb::bind_new` field; read in `crates/rune-tui/src/save/materialize.rs` (`materialize_now`/`bind_new_now`) to choose between `PutCondition::IfAbsent` and `PutCondition::Force`; checked again in `crates/rune-tui/src/materialize_ack/reactions.rs`'s `lost_create_race` and `naming_collision`; flipped back to `false` on a successful publish in `crates/rune-tui/src/materialize_ack/committed.rs`'s `handle_committed_ack`.
-- **Wrong**: a `bool` reads as an on/off switch, but `bind_new` actually selects between two distinct publish modes — create-only versus overwrite-an-established-target — that ripple through several unrelated call sites. Each reader has to already know that `true` means "no CAS baseline exists yet, publish must not clobber a concurrent creator" and `false` means "an established baseline exists, publish as an ordinary overwrite"; that meaning lives in comments and call-site knowledge, not in the type.
-- **Instead**: replace the field with a two-variant publish-mode enum naming the create-only and overwrite-existing cases, so every branch that reads it states the mode explicitly instead of decoding a bare `true`/`false`.
-- **Done when**: `DocDb` no longer carries a bare `bind_new: bool`; every site listed above matches on a named publish-mode enum instead.
-- **Update**: `rune-db`'s own equivalent flag was already promoted to the `MaterializeTarget` enum (`crates/rune-db/src/materialize_types.rs`); `rune-tui`'s `bind_new` was deliberately left as a `bool` when that landed, and this entry is the deferred follow-up on the `rune-tui` side.
-
 ## Mechanical
 
 ### Typed errors flattened to String

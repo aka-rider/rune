@@ -32,7 +32,7 @@ use std::time::Duration;
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
 use rune_fuzz::Session;
 use rune_tui::app::{self, App};
-use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
@@ -126,7 +126,7 @@ pub fn draft_session() -> (Session, Arc<Mem>) {
 }
 
 /// [`draft_session`], with the `CreateScratch` ack delivered — the draft is
-/// store-bound (`bind_new` true), so a name commit routes through
+/// store-bound (create-only), so a name commit routes through
 /// `save::bind_new_now`'s materialize dance.
 pub fn bound_draft_session() -> (Session, Arc<Mem>) {
     let (mut session, mem) = draft_session();
@@ -308,7 +308,7 @@ pub fn wait_for_materialize_record(bridge: &Arc<DbBridge>) -> DbEvent {
 }
 
 /// Waits for a `Load` ack — the lost-create-race route's hand-off to an
-/// ordinary load once a `bind_new` create loses the race.
+/// ordinary load once a create-only publish loses the race.
 pub fn wait_for_load(bridge: &Arc<DbBridge>) -> DbEvent {
     wait_for(bridge, "a Load ack", |evt| {
         matches!(
@@ -352,8 +352,11 @@ pub fn app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(load.doc_id.0, false, rune_db::Seq(0)));
+    app.active_doc_mut().set_doc_db_for_test(DocDb::new(
+        load.doc_id.0,
+        PublishMode::OverwriteExisting,
+        rune_db::Seq(0),
+    ));
     app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
@@ -404,7 +407,7 @@ pub fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
 /// poked.
 pub const UNPUBLISHED_BODY: &str = "unpublished body";
 
-/// A path-set, `bind_new: true`, store-bound app whose file is ABSENT from
+/// A path-set, create-only, store-bound app whose file is ABSENT from
 /// `mem` — work package A's fixture: a document that already knows its
 /// name (unlike [`draft_app_with_store`]'s pathless shape) but has never
 /// been published, the state a named launch onto a not-yet-existing path
@@ -440,8 +443,11 @@ pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(row_id, true, rune_db::Seq(0)));
+    app.active_doc_mut().set_doc_db_for_test(DocDb::new(
+        row_id,
+        PublishMode::CreateOnly,
+        rune_db::Seq(0),
+    ));
     app.install_or_join_file_binding(row_id, None);
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();

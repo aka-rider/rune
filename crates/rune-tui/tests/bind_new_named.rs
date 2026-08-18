@@ -1,5 +1,5 @@
 //! Work package A: a document that already has a `file_path` AND a
-//! `DocDb { bind_new: true }` — a named file that does not exist on disk
+//! create-only `DocDb` — a named file that does not exist on disk
 //! yet, the shape a launch onto a not-yet-existing positional leaves
 //! behind. `rename_common::unsaved_named_app_with_store` is the shared
 //! fixture; the end-to-end tests here drive it through the same public
@@ -27,9 +27,10 @@ use rename_common::{
 };
 
 /// ⌘S on a named-but-unpublished document creates the file with the
-/// buffer's exact bytes, clears `bind_new`, and leaves the document clean.
+/// buffer's exact bytes, flips the publish mode to overwrite, and leaves
+/// the document clean.
 #[test]
-fn cmd_s_creates_the_file_and_clears_bind_new() {
+fn cmd_s_creates_the_file_and_flips_to_overwrite() {
     let mem = Arc::new(Mem::new());
     let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
     let id = app.active;
@@ -54,8 +55,9 @@ fn cmd_s_creates_the_file_and_clears_bind_new() {
         UNPUBLISHED_BODY.as_bytes()
     );
     let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
-    assert!(
-        !doc_db.bind_new,
+    assert_eq!(
+        doc_db.publish_mode,
+        rune_tui::db::PublishMode::OverwriteExisting,
         "the create just committed — the next save is an overwrite"
     );
     assert!(
@@ -67,7 +69,7 @@ fn cmd_s_creates_the_file_and_clears_bind_new() {
 /// ⌘S when the path is already occupied by other bytes (a create that
 /// lost the race, A2): the other bytes survive untouched, one error is
 /// posted, no `DiskConflict` guard is left standing, and the document
-/// ends up bound to the file's own row with `bind_new == false`.
+/// ends up bound to the file's own row in the overwrite publish mode.
 #[test]
 fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
     let mem = Arc::new(Mem::new());
@@ -131,9 +133,10 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
         "a lost create race must never raise an unanswerable DiskConflict guard"
     );
     let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
-    assert!(
-        !doc_db.bind_new,
-        "the document must come out of bind_new bound to the file's own row"
+    assert_eq!(
+        doc_db.publish_mode,
+        rune_tui::db::PublishMode::OverwriteExisting,
+        "the document must come out of the create bound to the file's own row"
     );
     assert_eq!(
         app.doc(id).unwrap().buffer.content(),
@@ -147,7 +150,7 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
 /// document's row may carry this-session history, which `hydrate` would
 /// replace this buffer's typing with. Instead the refusal stays plain, with
 /// the actionable message telling the user their buffer is intact and `^R`
-/// is the way out, and `bind_new` stays `true` so a later ⌘S keeps retrying
+/// is the way out, and the document stays create-only so a later ⌘S keeps retrying
 /// create-only semantics rather than ever falling back to a direct-vfs
 /// overwrite of a file this session has never observed.
 #[test]
@@ -188,8 +191,8 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
     );
     let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(
-        doc_db.bind_new,
-        "no hand-off happened, so bind_new must stay true"
+        doc_db.publish_mode.is_create_only(),
+        "no hand-off happened, so the document must stay create-only"
     );
     assert!(
         !app.db_ops
@@ -298,8 +301,8 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
     );
     let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
     assert!(
-        doc_db.bind_new,
-        "the document must stay bind_new — no naming attempt has succeeded yet"
+        doc_db.publish_mode.is_create_only(),
+        "the document must stay create-only — no naming attempt has succeeded yet"
     );
     assert!(
         app.doc(id).unwrap().bind_target().is_none(),
@@ -376,7 +379,11 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
         "the refused target must stay exactly as it was"
     );
     let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
-    assert!(!doc_db.bind_new, "the create just committed");
+    assert_eq!(
+        doc_db.publish_mode,
+        rune_tui::db::PublishMode::OverwriteExisting,
+        "the create just committed"
+    );
 }
 
 /// Blocker 3 regression (moved out of `materialize_ack::reactions`'s own

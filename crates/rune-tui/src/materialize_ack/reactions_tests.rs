@@ -36,7 +36,7 @@ fn racer_observation(doc_id: i64) -> Observation {
 }
 
 /// Builds the exact shape [`super::lost_create_race`] requires: a document
-/// already bound to `path`, `bind_new: true`, and no `pending_bind_path` —
+/// already bound to `path`, create-only, and no `pending_bind_path` —
 /// a named-but-unpublished document whose create is about to be told it
 /// lost the race.
 fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
@@ -60,7 +60,11 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut().replica = Replica::Bound(DocDb::new(row_id, true, rune_db::Seq(0)));
+    app.active_doc_mut().replica = Replica::Bound(DocDb::new(
+        row_id,
+        crate::db::PublishMode::CreateOnly,
+        rune_db::Seq(0),
+    ));
     app.install_or_join_file_binding(row_id, None);
     (app, row_id)
 }
@@ -91,8 +95,13 @@ fn a_resolve_failure_on_the_racers_own_path_keeps_the_plain_refusal() {
         messages::newest_text(&app)
     );
     assert!(
-        app.doc(id).unwrap().doc_db().unwrap().bind_new,
-        "no hand-off happened, so bind_new must stay true"
+        app.doc(id)
+            .unwrap()
+            .doc_db()
+            .unwrap()
+            .publish_mode
+            .is_create_only(),
+        "no hand-off happened, so the document must stay create-only"
     );
     assert!(
         app.db_ops.is_empty(),

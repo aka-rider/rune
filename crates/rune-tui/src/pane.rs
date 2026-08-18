@@ -460,8 +460,9 @@ mod tests {
         app.doc_mut(app.active)
             .expect("active doc exists")
             .saved_content = Arc::from("");
-        app.doc_mut(app.active).expect("active doc exists").replica =
-            Replica::Bound(crate::db::DocDb::new(1, true, rune_db::Seq(0)));
+        app.doc_mut(app.active).expect("active doc exists").replica = Replica::Bound(
+            crate::db::DocDb::new(1, crate::db::PublishMode::CreateOnly, rune_db::Seq(0)),
+        );
         app.db = Some(live_db());
 
         handle_quit_key(&mut app, QuitKey::CtrlC);

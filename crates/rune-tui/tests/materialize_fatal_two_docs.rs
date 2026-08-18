@@ -87,7 +87,7 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
         doc.file_path = Some(std::path::PathBuf::from("/root/b.md"));
         doc.set_doc_db_for_test(rune_tui::db::DocDb::new(
             db_id_b.doc_id.0,
-            false,
+            rune_tui::db::PublishMode::OverwriteExisting,
             rune_db::Seq(0),
         ));
         doc.viewport
