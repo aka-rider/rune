@@ -98,7 +98,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
 
 fn crumb_spans(app: &App, budget: usize) -> Option<Vec<Span<'static>>> {
     let path = app.active_doc().file_path.as_ref()?;
-    let parts = crumb_parts(path, &app.root);
+    let parts = crumb_parts(path, app.root.as_deref());
     if parts.is_empty() {
         return None;
     }

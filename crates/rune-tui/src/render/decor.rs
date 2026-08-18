@@ -2,7 +2,7 @@
 //! / quote bar / hr rule, `rune_syntax::wrap::decor::SegDecor`) into the
 //! prefix `Cell`s `build_rows` prepends to that row before any overlay
 //! walk runs (500-line budget split of the render module). A decoration cell carries no
-//! buffer position (`buf_offset: -1`, the same sentinel the table layout's
+//! buffer position (`buf_offset: None`, the same "no buffer byte" the table layout's
 //! synthetic border cells already use) — decoration is metadata carried
 //! alongside a wrap segment, never a substitute for the segment's own
 //! spans, so it never claims a byte the caret, selection, or click
@@ -42,7 +42,7 @@ pub fn decor_row_cells(theme: &Theme, row: &SnapshotRow) -> Vec<Cell> {
                 text: grapheme.into(),
                 width: width as u8,
                 style,
-                buf_offset: -1,
+                buf_offset: None,
             });
         }
     }
@@ -85,7 +85,7 @@ mod tests {
     }
 
     #[test]
-    fn decor_cells_carry_buf_offset_negative_one_and_the_pieces_style() {
+    fn decor_cells_carry_no_buf_offset_and_the_pieces_style() {
         let theme = Theme::catppuccin_mocha(false);
         let scope = scope_table().resolve("markup.heading.1").unwrap();
         let decor = SegDecor {
@@ -101,7 +101,7 @@ mod tests {
         let total_width: usize = cells.iter().map(|c| c.width as usize).sum();
         assert_eq!(total_width, 2);
         for cell in &cells {
-            assert_eq!(cell.buf_offset, -1);
+            assert_eq!(cell.buf_offset, None);
             assert_eq!(cell.style, theme.scope_style(scope));
         }
     }

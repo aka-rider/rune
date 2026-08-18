@@ -45,7 +45,7 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
         .as_deref()
         .and_then(|p| p.parent())
         .map(std::path::Path::to_path_buf);
-    let root = app.root.clone();
+    let root = app.root.clone().unwrap_or_default();
     let destination = rune_nav::resolve(
         app.vfs.as_ref(),
         &target,

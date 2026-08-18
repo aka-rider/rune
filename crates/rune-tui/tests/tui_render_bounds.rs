@@ -50,13 +50,13 @@ fn blit_does_not_overpaint_past_the_right_edge_with_a_wide_glyph() {
         text: text.into(),
         width: 1,
         style: ratatui::style::Style::default(),
-        buf_offset: 0,
+        buf_offset: Some(0),
     };
     let wide = render::Cell {
         text: "\u{1F600}".into(), // U+1F600, width 2
         width: 2,
         style: ratatui::style::Style::default(),
-        buf_offset: 0,
+        buf_offset: Some(0),
     };
     // "a" at x=0, "b" at x=1, wide glyph STARTS at x=2 (inside `area`, the
     // last owned column) but needs x=2..4 — one column past `right`(3).

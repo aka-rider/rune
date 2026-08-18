@@ -32,7 +32,7 @@ fn rows_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<Vec<rende
     render::build_rows(app, app.active_doc(), Some(app.active), view)
 }
 
-/// (a) A concealed `# h` row's own decor prefix carries `buf_offset == -1`
+/// (a) A concealed `# h` row's own decor prefix carries `buf_offset: None`
 /// and the heading's own style (plan A3: the Rendered branch styles the
 /// whole line uniformly, `render::decor::decor_row_cells`'s docs — the
 /// icon piece's scope IS `markup.heading.N`, not a separate "icon" scope).
@@ -49,13 +49,13 @@ fn concealed_heading_row_starts_with_a_styled_decorative_icon() {
     let session = app_for(content, cursor, true);
     let expected_style = session.app().theme.scope_style(heading1);
 
-    let icon_cells: Vec<_> = row.iter().take_while(|c| c.buf_offset < 0).collect();
+    let icon_cells: Vec<_> = row.iter().take_while(|c| c.buf_offset.is_none()).collect();
     assert!(
         !icon_cells.is_empty(),
         "expected at least one decorative icon cell before the real content:\n{row:?}"
     );
     for cell in &icon_cells {
-        assert_eq!(cell.buf_offset, -1);
+        assert_eq!(cell.buf_offset, None);
         assert_eq!(cell.style, expected_style);
     }
 
@@ -63,10 +63,10 @@ fn concealed_heading_row_starts_with_a_styled_decorative_icon() {
     // `/`## ` marker stays hidden, byte-neutral — plan Gotchas).
     let first_real = row
         .iter()
-        .find(|c| c.buf_offset >= 0)
+        .find(|c| c.buf_offset.is_some())
         .expect("some content cell");
     assert_eq!(
-        first_real.buf_offset as usize,
+        first_real.buf_offset.unwrap_or_default() as usize,
         content.find("Heading").unwrap()
     );
 }
@@ -89,7 +89,7 @@ fn concealed_quote_row_shows_its_bar_decor() {
     let expected_style = app.theme.scope_style(marker_scope);
 
     let bar = row.first().expect("row has at least the bar cell");
-    assert_eq!(bar.buf_offset, -1);
+    assert_eq!(bar.buf_offset, None);
     assert_eq!(bar.style, expected_style);
     assert_eq!(bar.text, app.icons().quote_bar);
 }
@@ -107,7 +107,7 @@ fn thematic_break_renders_a_full_width_rule_row() {
     assert!(!row.is_empty(), "expected a non-empty rule row");
     let total_width: usize = row.iter().map(|c| c.width as usize).sum();
     assert!(
-        row.iter().all(|c| c.buf_offset < 0),
+        row.iter().all(|c| c.buf_offset.is_none()),
         "every cell of an hr rule row must be decorative:\n{row:?}"
     );
     // The doc's own editor viewport width — narrower than the full backend
@@ -130,17 +130,17 @@ fn ordered_list_item_decor_shows_its_own_number() {
 
     let decor_text: String = row
         .iter()
-        .take_while(|c| c.buf_offset < 0)
+        .take_while(|c| c.buf_offset.is_none())
         .map(|c| c.text.clone())
         .collect();
     assert_eq!(decor_text, "1. ");
 
     let first_real = row
         .iter()
-        .find(|c| c.buf_offset >= 0)
+        .find(|c| c.buf_offset.is_some())
         .expect("some content cell");
     assert_eq!(
-        first_real.buf_offset as usize,
+        first_real.buf_offset.unwrap_or_default() as usize,
         content.find("item").unwrap()
     );
 }
@@ -210,7 +210,7 @@ fn unfocused_pane_with_cursor_on_a_decorated_heading_still_renders_its_icon() {
     let session = app_for(content, 0, false);
     let expected_style = session.app().theme.scope_style(heading2);
 
-    let icon_cells: Vec<_> = row.iter().take_while(|c| c.buf_offset < 0).collect();
+    let icon_cells: Vec<_> = row.iter().take_while(|c| c.buf_offset.is_none()).collect();
     assert!(
         !icon_cells.is_empty(),
         "an unfocused pane must still render the heading's decor:\n{row:?}"
@@ -267,14 +267,14 @@ tail paragraph\n";
     // every one of them keeps the bullet/continuation-blank decor.
     let marker_rows: Vec<&Vec<render::Cell>> = rows
         .iter()
-        .take_while(|row| row.iter().any(|c| c.buf_offset < 0))
+        .take_while(|row| row.iter().any(|c| c.buf_offset.is_none()))
         .collect();
     assert!(
         marker_rows.len() >= 2,
         "expected the item's first source line to wrap into multiple decorated rows:\n{rows:?}"
     );
     let bullet = marker_rows[0].first().expect("bullet cell");
-    assert_eq!(bullet.buf_offset, -1);
+    assert_eq!(bullet.buf_offset, None);
     assert_eq!(bullet.style, expected_style);
 
     // The continuation source line's own rows carry NO decor at all, and
@@ -291,7 +291,7 @@ tail paragraph\n";
         })
         .expect("the caret must land on some row");
     assert!(
-        caret_row.iter().all(|c| c.buf_offset != -1),
+        caret_row.iter().all(|c| c.buf_offset.is_some()),
         "the continuation line's own row must carry no decor prefix:\n{caret_row:?}"
     );
     let caret_cell = caret_row
@@ -303,7 +303,8 @@ tail paragraph\n";
         })
         .expect("caret cell");
     assert_eq!(
-        caret_cell.buf_offset as usize, cursor,
+        caret_cell.buf_offset.unwrap_or_default() as usize,
+        cursor,
         "the caret must land exactly on the cursor's own byte offset"
     );
 }

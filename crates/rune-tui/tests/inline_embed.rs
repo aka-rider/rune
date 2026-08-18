@@ -43,7 +43,7 @@ fn app_with_embed(content: &str) -> (App, DocumentId) {
     // A real session always has a resolved workspace root
     // (`workspaceroot::resolve`, run at startup); `rune_nav::resolve`'s
     // relative-candidate containment check requires a non-empty one.
-    app.root = Path::new("/vault").to_path_buf();
+    app.set_root(Path::new("/vault").to_path_buf());
     // `Document::new`'s default cursor sits at buffer offset 0 — which,
     // for content starting with the image markup itself, is INSIDE the
     // image's own byte range and would reveal it (RevealGrant::Decide)

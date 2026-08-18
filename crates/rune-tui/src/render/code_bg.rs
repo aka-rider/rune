@@ -28,7 +28,7 @@
 //!   boxed table row by a cell (`TABLE-ROW-WIDTH`) nor disturb a placeholder
 //!   row whose style smuggles an image id.
 //!
-//! Padding cells carry the `-1` "no buffer correspondence" sentinel every
+//! Padding cells carry the `None` "no buffer correspondence" marker every
 //! other decorative cell uses: they claim no byte for the caret, selection
 //! or click hit-testing to resolve to, and they stay out of the min/max
 //! `buf_offset` hull the per-frame highlight query window is derived from,
@@ -120,7 +120,7 @@ fn fill_row(cells: &mut Vec<Cell>, start_col: usize, width: usize, bg: Color) {
             text: " ".into(),
             width: 1,
             style: Style::default().bg(bg),
-            buf_offset: -1,
+            buf_offset: None,
         });
         col = col.saturating_add(1);
     }
@@ -131,7 +131,7 @@ fn fill_row(cells: &mut Vec<Cell>, start_col: usize, width: usize, bg: Color) {
 mod tests {
     use super::*;
 
-    fn cell(text: &str, width: u8, buf_offset: i64) -> Cell {
+    fn cell(text: &str, width: u8, buf_offset: Option<u32>) -> Cell {
         Cell {
             text: text.into(),
             width,
@@ -147,7 +147,7 @@ mod tests {
         fill_row(&mut cells, 0, 6, bg);
         assert_eq!(cells.len(), 6);
         for c in &cells {
-            assert_eq!(c.buf_offset, -1, "padding must claim no buffer byte");
+            assert_eq!(c.buf_offset, None, "padding must claim no buffer byte");
             assert_eq!(c.width, 1);
             assert_eq!(c.style.bg, Some(bg));
         }
@@ -156,11 +156,11 @@ mod tests {
     #[test]
     fn a_short_row_keeps_its_cells_and_grows_to_the_pane_width() {
         let bg = Color::Rgb(1, 2, 3);
-        let mut cells = vec![cell("a", 1, 0), cell("b", 1, 1)];
+        let mut cells = vec![cell("a", 1, Some(0)), cell("b", 1, Some(1))];
         fill_row(&mut cells, 0, 5, bg);
         assert_eq!(cells.len(), 5);
         assert_eq!(cells[0].text, "a");
-        assert_eq!(cells[0].buf_offset, 0);
+        assert_eq!(cells[0].buf_offset, Some(0));
         for c in &cells {
             assert_eq!(c.style.bg, Some(bg));
         }
@@ -169,7 +169,11 @@ mod tests {
     #[test]
     fn columns_before_the_decor_prefix_keep_their_own_style() {
         let bg = Color::Rgb(1, 2, 3);
-        let mut cells = vec![cell("\u{2502}", 1, -1), cell(" ", 1, -1), cell("x", 1, 0)];
+        let mut cells = vec![
+            cell("\u{2502}", 1, None),
+            cell(" ", 1, None),
+            cell("x", 1, Some(0)),
+        ];
         fill_row(&mut cells, 2, 5, bg);
         assert_eq!(cells[0].style.bg, None, "the quote bar must stay uncovered");
         assert_eq!(cells[1].style.bg, None);
@@ -183,7 +187,7 @@ mod tests {
     #[test]
     fn a_wide_glyph_advances_by_its_cell_width_not_by_one() {
         let bg = Color::Rgb(1, 2, 3);
-        let mut cells = vec![cell("\u{4E00}", 2, 0)];
+        let mut cells = vec![cell("\u{4E00}", 2, Some(0))];
         fill_row(&mut cells, 0, 4, bg);
         let total: usize = cells.iter().map(|c| usize::from(c.width)).sum();
         assert_eq!(total, 4);
@@ -194,7 +198,7 @@ mod tests {
     #[test]
     fn a_full_row_gains_no_padding() {
         let bg = Color::Rgb(1, 2, 3);
-        let mut cells: Vec<Cell> = (0..4).map(|i| cell("x", 1, i)).collect();
+        let mut cells: Vec<Cell> = (0..4).map(|i| cell("x", 1, Some(i))).collect();
         fill_row(&mut cells, 0, 4, bg);
         assert_eq!(cells.len(), 4);
     }

@@ -181,7 +181,7 @@ pub(crate) fn base_ctx() -> StepCtx {
     }
 }
 
-pub(crate) fn cell(ch: char, buf_offset: i64) -> Cell {
+pub(crate) fn cell(ch: char, buf_offset: Option<u32>) -> Cell {
     let theme = rune_tui::theme::Theme::catppuccin_mocha(false);
     Cell {
         text: ch.to_string().into(),
@@ -194,7 +194,7 @@ pub(crate) fn cell(ch: char, buf_offset: i64) -> Cell {
 /// Same as `cell` but with an explicit column `width` — `TABLE-ROW-WIDTH`'s
 /// tests need cells wider than one column to build rows of a chosen
 /// summed width without padding them out with dozens of `cell` calls.
-pub(crate) fn cell_w(ch: char, buf_offset: i64, width: u8) -> Cell {
+pub(crate) fn cell_w(ch: char, buf_offset: Option<u32>, width: u8) -> Cell {
     let theme = rune_tui::theme::Theme::catppuccin_mocha(false);
     Cell {
         text: ch.to_string().into(),
@@ -207,7 +207,7 @@ pub(crate) fn cell_w(ch: char, buf_offset: i64, width: u8) -> Cell {
 /// Same as `cell` but carrying `Modifier::REVERSED` — the exact modifier
 /// `render::overlay::place_caret` sets, and the one `CUR-NO-CARET-HIDDEN`'s
 /// tests build a hidden-caret snapshot's offending cell out of.
-pub(crate) fn reversed_cell(ch: char, buf_offset: i64) -> Cell {
+pub(crate) fn reversed_cell(ch: char, buf_offset: Option<u32>) -> Cell {
     let mut c = cell(ch, buf_offset);
     c.style = c.style.add_modifier(ratatui::style::Modifier::REVERSED);
     c

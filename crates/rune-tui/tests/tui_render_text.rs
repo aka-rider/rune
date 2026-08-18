@@ -171,7 +171,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     let tab_cells: Vec<_> = first_row
         .iter()
         .skip(1)
-        .take_while(|c| c.text == " " && c.buf_offset == 3)
+        .take_while(|c| c.text == " " && c.buf_offset == Some(3))
         .collect();
     assert_eq!(
         tab_cells.len(),
@@ -217,7 +217,7 @@ fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
         first_row[0].text, family,
         "the cell's text must be the whole grapheme cluster verbatim"
     );
-    assert_eq!(first_row[0].buf_offset, 0);
+    assert_eq!(first_row[0].buf_offset, Some(0));
 }
 
 /// Same regression, for a skin-tone-modified emoji (base codepoint + a
@@ -244,7 +244,7 @@ fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
         "a skin-tone-modified emoji must render as exactly one Cell: {first_row:?}"
     );
     assert_eq!(first_row[0].text, wave);
-    assert_eq!(first_row[0].buf_offset, 0);
+    assert_eq!(first_row[0].buf_offset, Some(0));
 }
 
 /// Regression for `blit`'s continuation-cell reset (the other half of the
@@ -310,7 +310,8 @@ fn control_char_gets_a_safe_placeholder_glyph() {
         .and_then(|row| row.iter().find(|c| c.text == "\u{2407}"))
         .expect("placeholder cell present in row 0");
     assert_eq!(
-        placeholder.buf_offset, 1,
+        placeholder.buf_offset,
+        Some(1),
         "the BEL is the 2nd byte (offset 1) of \"a\\x07b\""
     );
 }

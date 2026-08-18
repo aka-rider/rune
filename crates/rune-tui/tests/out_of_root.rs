@@ -52,7 +52,7 @@ fn app_with_content(mem: Arc<Mem>, content: &str) -> (App, DocumentId) {
     );
     let id = app.active;
     app.graphics.kitty = true;
-    app.root = Path::new("/vault").to_path_buf();
+    app.set_root(Path::new("/vault").to_path_buf());
     let end = content.len();
     app.doc_mut(id).expect("doc").cursors = CursorSet::new(end);
     app.sync_view();

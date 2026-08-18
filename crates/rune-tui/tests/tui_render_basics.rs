@@ -126,10 +126,10 @@ fn cell_grid_buf_offsets_map_back_into_the_source_text() {
     );
 
     for cell in first_row {
-        if cell.buf_offset < 0 {
-            continue; // decorative/synthetic — not required to map back
-        }
-        let offset = cell.buf_offset as usize;
+        let Some(offset) = cell.buf_offset else {
+            continue;
+        };
+        let offset = offset as usize;
         assert!(
             offset <= content.len(),
             "buf_offset {offset} exceeds source length {}",
@@ -144,5 +144,5 @@ fn cell_grid_buf_offsets_map_back_into_the_source_text() {
 
     // Revealed heading marker: the very first cell should map back to byte
     // 0 (the '#' of "## Heading").
-    assert_eq!(first_row.first().map(|c| c.buf_offset), Some(0));
+    assert_eq!(first_row.first().map(|c| c.buf_offset), Some(Some(0)));
 }

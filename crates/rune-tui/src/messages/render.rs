@@ -62,10 +62,10 @@ fn apply_severity_colours(
 ) {
     for row in rows.iter_mut() {
         for cell in row.iter_mut() {
-            if cell.buf_offset < 0 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
-            let offset = cell.buf_offset as usize;
+            };
+            let offset = offset as usize;
             let hit = ranges.iter().find(|(range, _)| range.contains(&offset));
             if let Some((_, severity)) = hit
                 && let Some(style) = severity_style(theme, *severity)

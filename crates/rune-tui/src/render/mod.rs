@@ -85,7 +85,7 @@ pub fn build_rows(
             }
             // The row's own decoration (heading icon / bullet /
             // quote bar / hr rule) is prepended BEFORE the overlay walks
-            // below run — those walks all skip `buf_offset < 0`
+            // below run — those walks all skip an offset-less cell
             // (the overlay module documents that skip), so a decor prefix never competes
             // for highlight/selection/caret painting the way a real cell
             // would.
@@ -162,10 +162,10 @@ pub fn build_rows(
 fn apply_reading_link_focus(rows: &mut [Vec<Cell>], focus: rune_syntax::element::ByteRange) {
     for row in rows.iter_mut() {
         for cell in row.iter_mut() {
-            if cell.buf_offset < 0 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
-            if focus.contains(cell.buf_offset as usize) {
+            };
+            if focus.contains(offset as usize) {
                 cell.style = cell.style.add_modifier(ratatui::style::Modifier::REVERSED);
             }
         }
@@ -370,7 +370,7 @@ fn blank_rows(width: u16, height: u16) -> Vec<Vec<Cell>> {
         text: " ".into(),
         width: 1,
         style: ratatui::style::Style::default(),
-        buf_offset: -1,
+        buf_offset: None,
     };
     (0..height)
         .map(|_| vec![blank.clone(); width as usize])

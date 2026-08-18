@@ -77,7 +77,7 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
         .as_deref()
         .and_then(Path::parent)
         .map(Path::to_path_buf);
-    let root = app.root.clone();
+    let root = app.root.clone().unwrap_or_default();
     let vfs = Arc::clone(&app.vfs);
 
     spawn_or_respawn(

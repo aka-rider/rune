@@ -30,7 +30,7 @@ fn seeded_app(files: &[(&str, &str)]) -> App {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(mem), None);
     app.frame_width = 120;
     app.frame_height = 34;
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     app
 }
 
@@ -198,7 +198,7 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     let mut app = App::new(Buffer::new("hello"), None, vfs, None);
     app.frame_width = 120;
     app.frame_height = 34;
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);

@@ -159,17 +159,19 @@ pub fn cur_cell_sync(snap: &Snapshot) -> Option<Violation> {
         return None;
     }
     for cursor in &snap.cursors {
-        let target = cursor.position as i64;
+        let Ok(target) = u32::try_from(cursor.position) else {
+            continue;
+        };
         let position_rendered = snap
             .cells
             .iter()
             .flatten()
-            .any(|cell| cell.buf_offset == target);
+            .any(|cell| cell.buf_offset == Some(target));
         if !position_rendered {
             continue;
         }
         let painted_correctly = snap.cells.iter().flatten().any(|cell| {
-            cell.buf_offset == target
+            cell.buf_offset == Some(target)
                 && cell.style.add_modifier.contains(Modifier::REVERSED)
                 && !reading_link_highlight(snap, cell)
         });
@@ -191,8 +193,8 @@ fn reading_link_highlight(snap: &Snapshot, cell: &Cell) -> bool {
     let Some(focus) = snap.reading_link_focus else {
         return false;
     };
-    let Ok(offset) = usize::try_from(cell.buf_offset) else {
+    let Some(offset) = cell.buf_offset else {
         return false;
     };
-    focus.contains(offset)
+    focus.contains(offset as usize)
 }

@@ -38,8 +38,8 @@ pub(crate) const LEAF_SEP: &str = " › ";
 /// "note.md"]`, not `["Users", "xiii", "vault", "notes", "note.md"]`.
 /// Falls back to every `Normal` component of the absolute path otherwise
 /// (`root` empty — not yet resolved — or `path` outside it).
-pub(crate) fn crumb_parts(path: &std::path::Path, root: &std::path::Path) -> Vec<String> {
-    if !root.as_os_str().is_empty()
+pub(crate) fn crumb_parts(path: &std::path::Path, root: Option<&std::path::Path>) -> Vec<String> {
+    if let Some(root) = root
         && let Ok(remainder) = path.strip_prefix(root)
     {
         let mut parts = Vec::new();
@@ -161,7 +161,7 @@ mod tests {
     fn crumb_parts_relativizes_against_a_set_root() {
         let parts = crumb_parts(
             Path::new("/Users/xiii/vault/notes/note.md"),
-            Path::new("/Users/xiii/vault"),
+            Some(Path::new("/Users/xiii/vault")),
         );
         assert_eq!(parts, vec!["vault", "notes", "note.md"]);
     }
@@ -170,14 +170,14 @@ mod tests {
     fn crumb_parts_falls_back_to_the_absolute_path_outside_root() {
         let parts = crumb_parts(
             Path::new("/Users/xiii/other/note.md"),
-            Path::new("/Users/xiii/vault"),
+            Some(Path::new("/Users/xiii/vault")),
         );
         assert_eq!(parts, vec!["Users", "xiii", "other", "note.md"]);
     }
 
     #[test]
     fn crumb_parts_falls_back_to_the_absolute_path_when_root_is_unresolved() {
-        let parts = crumb_parts(Path::new("/Users/xiii/vault/note.md"), Path::new(""));
+        let parts = crumb_parts(Path::new("/Users/xiii/vault/note.md"), None);
         assert_eq!(parts, vec!["Users", "xiii", "vault", "note.md"]);
     }
 
@@ -186,7 +186,7 @@ mod tests {
     /// prefix check.
     #[test]
     fn crumb_parts_does_not_mistake_a_sibling_with_a_shared_prefix_for_being_under_root() {
-        let parts = crumb_parts(Path::new("/a/vault2/notes.md"), Path::new("/a/vault"));
+        let parts = crumb_parts(Path::new("/a/vault2/notes.md"), Some(Path::new("/a/vault")));
         assert_eq!(parts, vec!["a", "vault2", "notes.md"]);
     }
 

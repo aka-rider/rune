@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn readout_shows_scanning_while_the_walk_is_pending() {
         let mut app = app();
-        app.root = PathBuf::from("/root");
+        app.root = Some(PathBuf::from("/root"));
         let mut effects = crate::runtime::Effects::default();
 
         crate::filesearch::open(&mut app, &mut effects);
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn readout_shows_matched_over_total_once_the_scan_reply_lands() {
         let mut app = app();
-        app.root = PathBuf::from("/root");
+        app.root = Some(PathBuf::from("/root"));
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
         let generation = app.filesearch().expect("open").generation;
@@ -335,7 +335,7 @@ mod tests {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(vfs), None);
         app.frame_width = 120;
         app.frame_height = 34;
-        app.root = PathBuf::from("/root");
+        app.root = Some(PathBuf::from("/root"));
         let mut effects = crate::runtime::Effects::default();
 
         crate::filesearch::open(&mut app, &mut effects);
@@ -432,7 +432,7 @@ mod tests {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(mem), None);
         app.frame_width = 120;
         app.frame_height = 34;
-        app.root = PathBuf::from("/root");
+        app.root = Some(PathBuf::from("/root"));
         app
     }
 

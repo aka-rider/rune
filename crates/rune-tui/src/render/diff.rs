@@ -74,7 +74,7 @@ pub(super) fn augment_fold(
 
 fn mark_virtual(row: &mut [Cell], theirs_bg: Style) {
     for cell in row.iter_mut() {
-        cell.buf_offset = -1;
+        cell.buf_offset = None;
         cell.style = cell.style.patch(theirs_bg);
     }
 }
@@ -85,7 +85,7 @@ fn filler_row(width: u16) -> Vec<Cell> {
             text: " ".into(),
             width: 1,
             style: Style::default(),
-            buf_offset: -1,
+            buf_offset: None,
         })
         .collect()
 }

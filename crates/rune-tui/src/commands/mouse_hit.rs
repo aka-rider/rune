@@ -55,7 +55,7 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
     // override into the geometry-only variant"). Reuses `row_cells`
     // directly rather than a second, independently-written cell walk — the
     // exact chokepoint `build_rows` itself calls through. Every placeholder
-    // cell carries `buf_offset: -1` (no real buffer position of its own),
+    // cell carries no `buf_offset` of its own,
     // so a click anywhere on such a row resolves to the row's own
     // wrap-segment start rather than walking column-by-column.
     if let Some(image_ref) = display_ref.and_then(|r| r.image.clone())
@@ -124,16 +124,14 @@ fn offset_at_ordinary(
     let col = (col as usize).saturating_sub(decor_width) as u16;
 
     let mut acc = 0usize;
-    let mut first_content_offset: Option<i64> = None;
+    let mut first_content_offset: Option<u32> = None;
     if let Some(seg) = view.wrap.segments().get(wrap_row.0) {
         for cell in render::segment_geometry(content, &seg.spans) {
-            if first_content_offset.is_none() && cell.buf_offset >= 0 {
-                first_content_offset = Some(cell.buf_offset);
-            }
+            first_content_offset = first_content_offset.or(cell.buf_offset);
             let width = cell.width.max(1) as usize;
             if (col as usize) < acc + width {
-                return if cell.buf_offset >= 0 {
-                    cell.buf_offset as usize
+                return if let Some(offset) = cell.buf_offset {
+                    offset as usize
                 } else {
                     // A click resolving onto a decorative cell (should only
                     // ever be a table's synthetic border padding, since the
