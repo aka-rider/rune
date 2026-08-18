@@ -1,14 +1,16 @@
-//! The open scope namespace (WP4) that replaces the closed 23-variant
-//! `StyleId` enum: a dotted-name -> dense `ScopeId` table, resolved by
+//! A closed dotted-name -> dense `ScopeId` vocabulary, resolved by
 //! **longest-dotted-prefix** — strip the name after its last `.` and retry
 //! until a hit or no dots remain. Helix (`rfind('.')` loop), Zed (`BTreeMap`
 //! range search) and Neovim (`@comment.documentation` -> `@comment`)
-//! converged on this rule independently: it lets an unknown capture from an
-//! updated grammar degrade to its parent scope instead of vanishing.
+//! converged on this rule independently: it lets an unknown-but-related
+//! capture from an updated grammar degrade to its parent scope instead of
+//! vanishing. A capture that shares no dotted prefix with anything in the
+//! vocabulary still fails to resolve — see `rune-ts`'s `run_query` for how
+//! that is surfaced rather than silently dropped.
 //!
 //! `rune-syntax` owns this table; a theme (`rune-tui`) only ever maps a
-//! resolved `ScopeId` to a rendered `Style` — it never registers or
-//! resolves a name itself.
+//! resolved `ScopeId` to a rendered `Style` — it never resolves a name
+//! itself.
 
 use std::collections::HashMap;
 
@@ -20,15 +22,14 @@ use std::collections::HashMap;
 pub struct ScopeId(pub u16);
 
 /// Dotted-name -> `ScopeId` registry with longest-dotted-prefix resolution.
-/// Open (any producer can `register` a name it needs at configure time),
-/// unlike the closed enum it replaces — but every producer today
-/// (`rune-md`'s comrak-driven emitter, `rune-ts`'s tree-sitter one) builds
-/// its table from the one shared [`scope_table`] constructor below rather
-/// than calling `register` with names of its own choosing, so the
-/// vocabulary is open in principle but closed in practice: a producer
-/// whose capture names fall outside [`MARKDOWN_SCOPES`]/[`CODE_SCOPES`]
-/// has no way to extend the table it's handed, and `resolve` silently
-/// drops such a capture down to `None` rather than registering it.
+/// The vocabulary is closed: [`scope_table`] is the only constructor, and it
+/// pre-registers exactly [`MARKDOWN_SCOPES`], [`CODE_SCOPES`], then
+/// [`EXTENDED_SCOPES`] — every producer (`rune-md`'s comrak-driven emitter,
+/// `rune-ts`'s tree-sitter one) and the theme (`rune-tui`) build their table
+/// from that same function, so a `ScopeId` means the same thing everywhere.
+/// A capture name outside that fixed list has no way into the table;
+/// `resolve` falls back to a registered dotted prefix and only reaches
+/// `None` when even the bare first segment is unregistered.
 #[derive(Debug, Default)]
 pub struct ScopeTable {
     names: Vec<String>,
@@ -42,8 +43,9 @@ impl ScopeTable {
 
     /// Registers `name`, returning its `ScopeId`. Idempotent: registering
     /// the same name twice returns the same id rather than minting a
-    /// duplicate — callers never need to check `resolve` first.
-    pub fn register(&mut self, name: &str) -> ScopeId {
+    /// duplicate. Private — the only caller is [`scope_table`], which
+    /// pre-registers the fixed vocabulary; nothing else may extend a table.
+    fn register(&mut self, name: &str) -> ScopeId {
         if let Some(&id) = self.index.get(name) {
             return id;
         }
