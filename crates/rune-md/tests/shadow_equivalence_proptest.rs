@@ -115,6 +115,44 @@ fn arb_document() -> impl Strategy<Value = String> {
     proptest::collection::vec(arb_line(), 0..6).prop_map(|lines| lines.join("\n"))
 }
 
+fn assert_block_shape_preserved(content: &str) {
+    let shadow = parse_shadow(content);
+    let baseline = with_lone_carriage_returns_blanked(content);
+    let arena = Arena::new();
+    let document = parse_document(&arena, &baseline, &options());
+    let copy = parse_document(&arena, &shadow, &options());
+    assert_eq!(
+        block_shape(document),
+        block_shape(copy),
+        "the copy parses to a different block structure\n\
+         document: {:?}\ncopy:     {:?}\nfrom the document:\n{}\nfrom the copy:\n{}",
+        baseline,
+        shadow,
+        readable_shape(document),
+        readable_shape(copy)
+    );
+}
+
+#[test]
+fn a_trailing_tab_on_a_lazy_continuation_stays_a_soft_break() {
+    assert_block_shape_preserved("1.>\n\t>\t\na");
+}
+
+#[test]
+fn a_trailing_tab_after_a_table_like_line_stays_a_soft_break() {
+    assert_block_shape_preserved("|\t\n\t>\t\na");
+}
+
+#[test]
+fn a_trailing_tab_before_a_crlf_ending_stays_a_soft_break() {
+    assert_block_shape_preserved("1.>\n\t>\t\r\na");
+}
+
+#[test]
+fn a_trailing_tab_padded_by_spaces_stays_a_soft_break() {
+    assert_block_shape_preserved("1.>\n\t> \t \na");
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
