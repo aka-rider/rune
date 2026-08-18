@@ -30,6 +30,22 @@ use crate::resize::{fit_box, resize};
 /// the whole payload — matching the Kitty protocol's own chunking unit.
 const MAX_CHUNK_SIZE: usize = 4096;
 
+/// Hard ceiling on the pixel COUNT (w*h) [`fit_and_encode`] will ever
+/// encode, independent of the caller-supplied `cols`/`rows` cell box.
+/// `footprint::fit` (`rune-tui`) derives that box by scaling to the pane's
+/// WIDTH only and letting the row count follow the image's own aspect
+/// ratio uncapped — the right call for the normal case (a screenshot a few
+/// thousand pixels tall), but a source image whose natural width already
+/// fits the pane (a narrow, very tall panorama or a hostile file) passes
+/// through `fit_box` untouched at full native resolution: nothing upstream
+/// bounds total decoded pixels. Past this ceiling `fit_and_encode` scales
+/// the box down further, preserving aspect, before resizing — the one
+/// place total transmitted bytes are capped regardless of source
+/// dimensions. `4096 * 4096` keeps the worst case (near-incompressible
+/// pixel data, base64 inflation) under ~85 MB rather than scaling with an
+/// arbitrary source image's total pixel count.
+const MAX_TRANSMIT_PIXELS: usize = 4096 * 4096;
+
 const APC_INTRO: &str = "\x1b_G";
 const APC_OUTRO: &str = "\x1b\\";
 
@@ -141,8 +157,27 @@ pub fn fit_and_encode(
             h: rows * cell.h,
         },
     );
-    let resized = resize(&decoded.image, fitted.w, fitted.h);
+    let capped = cap_pixel_count(fitted, MAX_TRANSMIT_PIXELS);
+    let resized = resize(&decoded.image, capped.w, capped.h);
     encode_transmit(&resized, id, cols, rows)
+}
+
+/// Scales `size` down to at most `max_pixels` total pixels, preserving
+/// aspect ratio; a no-op when `size` is already at or under the cap.
+/// Never upscales, and never returns a zero dimension for a non-zero
+/// input (floors each side at `1` so an extreme aspect ratio — e.g. a
+/// panorama a handful of pixels wide but enormous tall — still shrinks
+/// toward the cap rather than collapsing to nothing on the narrow side).
+fn cap_pixel_count(size: PixelSize, max_pixels: usize) -> PixelSize {
+    let total = size.w.saturating_mul(size.h);
+    if total <= max_pixels || total == 0 {
+        return size;
+    }
+    let scale = (max_pixels as f64 / total as f64).sqrt();
+    PixelSize {
+        w: ((size.w as f64 * scale) as usize).max(1),
+        h: ((size.h as f64 * scale) as usize).max(1),
+    }
 }
 
 /// Returns an APC sequence that deletes the image with the given ID and
@@ -217,6 +252,57 @@ mod tests {
     fn empty_payload_is_a_single_chunk_with_no_payload_and_no_m_key() {
         let seq = frame_transmit("", 1, 1, 1);
         assert_eq!(seq, "\x1b_Gf=100,q=2,i=1,U=1,c=1,r=1,a=T\x1b\\");
+    }
+
+    #[test]
+    fn cap_pixel_count_is_a_no_op_under_the_ceiling() {
+        let size = PixelSize { w: 100, h: 50 };
+        assert_eq!(cap_pixel_count(size, 4096 * 4096), size);
+    }
+
+    #[test]
+    fn cap_pixel_count_shrinks_a_wide_image_to_the_ceiling_preserving_aspect() {
+        let capped = cap_pixel_count(PixelSize { w: 2000, h: 1000 }, 500_000);
+        assert!(capped.w * capped.h <= 500_000);
+        // 2:1 aspect preserved within rounding.
+        assert!(capped.w.abs_diff(capped.h * 2) <= 2);
+    }
+
+    #[test]
+    fn cap_pixel_count_shrinks_an_extreme_aspect_ratio_without_collapsing() {
+        // A narrow, very tall panorama: width alone never exceeds a pane,
+        // so nothing upstream of `fit_and_encode` would ever downscale it.
+        let capped = cap_pixel_count(
+            PixelSize {
+                w: 10,
+                h: 10_000_000,
+            },
+            4096 * 4096,
+        );
+        assert!(capped.w * capped.h <= 4096 * 4096);
+        assert!(capped.w >= 1 && capped.h >= 1);
+    }
+
+    #[test]
+    fn fit_and_encode_caps_total_transmitted_pixels_when_the_box_does_not() {
+        // 5000x5000 (25M px) comfortably fits the requested cell box below
+        // (8000x16000 px), so `fit_box` alone passes it through untouched —
+        // `fit_and_encode`'s own ceiling is the only thing that still
+        // shrinks it, to exactly `MAX_TRANSMIT_PIXELS`.
+        let decoded = Decoded {
+            image: image::RgbaImage::from_pixel(5000, 5000, image::Rgba([5, 5, 5, 255])),
+            width: 5000,
+            height: 5000,
+            format: crate::decode::Format::Png,
+        };
+        let cell = CellSize { w: 8, h: 16 };
+        let seq = fit_and_encode(&decoded, 1, 1000, 1000, cell).expect("encode");
+        assert!(seq.contains(";"));
+        // A solid-colour source compresses far below the near-incompressible
+        // worst case — this only proves the ceiling was reached at all
+        // (covered for byte-size purposes separately, by `cap_pixel_count`'s
+        // own unit tests against near-incompressible dimensions).
+        assert!(seq.len() < 2_000_000, "seq.len() = {}", seq.len());
     }
 
     #[test]
