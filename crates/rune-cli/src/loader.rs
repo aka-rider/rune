@@ -35,8 +35,15 @@ pub(crate) struct LoadedFile {
 /// to re-validate it. Reads through `vfs` rather than `std::fs` directly, so
 /// this whole load path is exercisable against `Mem` in tests, not just
 /// against a real disk.
+///
+/// `path` MUST already be the caller's own `Vfs::resolve` output (`main`'s
+/// `open_launch` resolves the launch positional exactly once, before this
+/// runs) — this calls [`rune_vfs::get_resolved`], not [`rune_vfs::get`], so
+/// it never resolves `path` a second time. A second, independent resolve is
+/// a symlink-swap TOCTOU window: the identity the caller decided to open
+/// could stop being the identity this function reads.
 pub(crate) fn load_sighting(vfs: &dyn Vfs, path: &Path) -> Result<Option<LoadedFile>, LoadError> {
-    match rune_vfs::get(vfs, path, Some(MAX_DOCUMENT_BYTES)) {
+    match rune_vfs::get_resolved(vfs, path, Some(MAX_DOCUMENT_BYTES)) {
         Ok(sighting) => match String::from_utf8(sighting.bytes.clone()) {
             Ok(text) => Ok(Some(LoadedFile { sighting, text })),
             Err(_) => Err(LoadError::InvalidUtf8),

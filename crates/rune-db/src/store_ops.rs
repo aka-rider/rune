@@ -338,6 +338,20 @@ impl Store {
         self.enqueue(OpKind::CreateScratch {
             session_id: self.session_id,
             now,
+            intended_path: None,
+        })
+    }
+
+    /// Enqueues a `CreateScratch` op recording `intended_path` on the new
+    /// row — the launch-positional shape, so a later launch of the SAME
+    /// path (this session having died before ever materializing) can find
+    /// its way back to this row. See `scratch::create_scratch_with_intent`.
+    pub fn create_named_scratch(&self, intended_path: &str) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::CreateScratch {
+            session_id: self.session_id,
+            now,
+            intended_path: Some(intended_path.to_string()),
         })
     }
 
@@ -357,6 +371,15 @@ impl Store {
     /// asynchronously as `DbEvent::Ok.result` (`OpOutcome::Ids`).
     pub fn recoverable_scratch(&self, exclude_id: i64) -> Result<u64, Error> {
         self.enqueue(OpKind::RecoverableScratch { exclude_id })
+    }
+
+    /// Enqueues a `FindNamedScratch` op — the candidate ids arrive
+    /// asynchronously as `DbEvent::Ok.result` (`OpOutcome::Ids`), the same
+    /// shape `recoverable_scratch` uses.
+    pub fn find_named_scratch(&self, intended_path: &str) -> Result<u64, Error> {
+        self.enqueue(OpKind::FindNamedScratch {
+            intended_path: intended_path.to_string(),
+        })
     }
 
     /// Enqueues a `ReconstructScratch` op reconstructing `doc_id`'s content

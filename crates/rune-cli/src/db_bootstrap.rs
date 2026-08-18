@@ -408,11 +408,15 @@ pub(crate) fn bootstrap_untitled_db(
 
 /// The launch counterpart of a recovery-backed untitled draft, for a
 /// positional naming a file that does not exist yet: there is nothing to
-/// `Load` (no bytes to read, no row to adopt), so this mints a scratch row
-/// exactly as the no-positional launch does and binds it with `bind_new` —
-/// the first materialize turns that row into the real file's row through
-/// the same no-clobber publish every named draft already uses. Journaling
-/// is live from the first keystroke.
+/// `Load` (no bytes to read, no row to adopt from disk) — but a PRIOR launch
+/// of this exact `path` may already have minted a scratch row for it
+/// (`intended_path`, `crate::scratch::create_scratch_with_intent`) and died
+/// before ever materializing. [`find_named_draft`] looks for that row FIRST;
+/// only when nothing adoptable turns up does this mint a brand-new one, same
+/// as before this recovery existed. Either way the row binds with
+/// `bind_new` — the first materialize turns it into the real file's row
+/// through the same no-clobber publish every named draft already uses.
+/// Journaling is live from the first keystroke.
 ///
 /// `expect_obs: None` / `last_known_seq: 0` mirror `open::adopt_scratch_doc`'s
 /// own scratch binding: `prepare_materialize` short-circuits to
@@ -426,6 +430,7 @@ pub(crate) fn bootstrap_untitled_db(
 /// `rune` sweeps it) for possible data loss.
 pub(crate) fn bootstrap_new_file(
     vfs: Arc<dyn Vfs + Send + Sync>,
+    path: &Path,
     home: Option<&Path>,
 ) -> DbBootstrap {
     let OpenedStore {
@@ -438,12 +443,25 @@ pub(crate) fn bootstrap_new_file(
         Err(banner) => return banner.into(),
     };
 
-    let db_id = match blocking_call(&bridge, || store.create_scratch()) {
-        Ok(OpOutcome::ScratchDocId(id)) => id.0,
-        Ok(_) => {
-            return degrade(store, "internal error: unexpected reply to CreateScratch");
+    let intended_path = path.to_string_lossy().into_owned();
+    let inherited = match find_named_draft(&bridge, &store, &intended_path) {
+        Ok(inherited) => inherited,
+        Err(e) => return degrade(store, e),
+    };
+
+    let (db_id, recovered_content) = match inherited {
+        Some((db_id, content)) => (db_id, Some(content)),
+        None => {
+            let db_id = match blocking_call(&bridge, || store.create_named_scratch(&intended_path))
+            {
+                Ok(OpOutcome::ScratchDocId(id)) => id.0,
+                Ok(_) => {
+                    return degrade(store, "internal error: unexpected reply to CreateScratch");
+                }
+                Err(e) => return degrade(store, format!("create scratch failed: {e}")),
+            };
+            (db_id, None)
         }
-        Err(e) => return degrade(store, format!("create scratch failed: {e}")),
     };
 
     let db = Db::new(store, bridge, degraded_at_open);
@@ -458,11 +476,47 @@ pub(crate) fn bootstrap_new_file(
         db: Some(db),
         doc_db: Some(doc_db),
         expect_obs: None,
-        recovered_content: None,
+        recovered_content,
         sync_kind: None,
         nlink: None,
         banner,
     }
+}
+
+/// Looks for a dead session's own draft of `intended_path`
+/// (`store.find_named_scratch`, newest first) and adopts the first one
+/// [`Store::reconstruct_scratch`] actually reconstructs — the same call
+/// [`bootstrap_untitled_db`] runs per candidate, so a still-alive session's
+/// own row is refused here exactly as it is there (`Ok(None)`), never
+/// stolen out from under a concurrent `rune <same path>` launch. `Ok(None)`
+/// covers both "no candidate rows at all" and "every candidate belongs to a
+/// still-live session".
+fn find_named_draft(
+    bridge: &DbBridge,
+    store: &Store,
+    intended_path: &str,
+) -> Result<Option<(i64, String)>, String> {
+    let candidate_ids = match blocking_call(bridge, || store.find_named_scratch(intended_path)) {
+        Ok(OpOutcome::Ids(ids)) => ids,
+        Ok(_) => {
+            return Err("internal error: unexpected reply to FindNamedScratch".to_string());
+        }
+        Err(e) => return Err(format!("find named scratch failed: {e}")),
+    };
+
+    for db_id in candidate_ids {
+        match blocking_call(bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
+            Ok(OpOutcome::Reconstructed(Some(content))) if !content.trim().is_empty() => {
+                return Ok(Some((db_id, content)));
+            }
+            Ok(OpOutcome::Reconstructed(_)) => {}
+            Ok(_) => {
+                return Err("internal error: unexpected reply to ReconstructScratch".to_string());
+            }
+            Err(e) => return Err(format!("reconstruct scratch failed: {e}")),
+        }
+    }
+    Ok(None)
 }
 
 /// Opens the recovery store with no document to bind — the image-first

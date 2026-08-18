@@ -404,14 +404,19 @@ fn execute_op(
         OpKind::ResolveAbandon { session_id, doc_id } => {
             exec::resolve_abandon(conn, session_id, doc_id)
         }
-        OpKind::CreateScratch { session_id, now } => {
-            exec::create_scratch(conn, undo_state, session_id, now)
-        }
+        OpKind::CreateScratch {
+            session_id,
+            now,
+            intended_path,
+        } => exec::create_scratch(conn, undo_state, session_id, now, intended_path),
         OpKind::GcEmptyScratch {
             keep_id,
             liveness_check,
         } => exec::gc_empty_scratch(conn, keep_id, &liveness_check),
         OpKind::RecoverableScratch { exclude_id } => exec::recoverable_scratch(conn, exclude_id),
+        OpKind::FindNamedScratch { intended_path } => {
+            exec::find_named_scratch(conn, &intended_path)
+        }
         OpKind::ReconstructScratch {
             liveness_check,
             doc_id,

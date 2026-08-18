@@ -6,13 +6,14 @@ use crate::Error;
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
-	id           INTEGER PRIMARY KEY,
-	path         TEXT    NOT NULL DEFAULT '',
-	inode        INTEGER,
-	device       INTEGER,
-	kind         TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
-	created_at   TEXT    NOT NULL,
-	last_seen_at TEXT    NOT NULL
+	id             INTEGER PRIMARY KEY,
+	path           TEXT    NOT NULL DEFAULT '',
+	inode          INTEGER,
+	device         INTEGER,
+	kind           TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
+	intended_path  TEXT,
+	created_at     TEXT    NOT NULL,
+	last_seen_at   TEXT    NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path  ON documents(path)           WHERE path != '';

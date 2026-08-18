@@ -17,16 +17,27 @@ use crate::inherit::{is_session_alive, most_recent_session_for_doc};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
-pub fn create_scratch(
+/// Mints a brand-new unbound scratch `documents` row. `intended_path` is
+/// `Some` when this scratch names a launch positional that does not exist
+/// on disk yet — recorded so a LATER launch of the same path (this session
+/// having died before ever materializing) can find its way back to this
+/// exact row instead of starting over from an empty buffer — and `None` for
+/// the plain bare-launch/quit-guard shape. `intended_path`'s value plays no
+/// role in `path=''`'s own scratch-vs-bound meaning anywhere else in this
+/// crate: every existing scratch predicate (`recoverable_scratch`,
+/// `gc_empty_scratch`'s candidate filter, the evicted-bound-row guard) reads
+/// `path`/`inode`, never this column.
+pub fn create_scratch_with_intent(
     conn: &mut Connection,
     session_id: SessionId,
     now: SystemTime,
+    intended_path: Option<&str>,
 ) -> Result<DocId, Error> {
     let at = format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
         tx.execute(
-            "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('',?1,?2,?2)",
-            params![DocKind::Scratch.as_str(), at],
+            "INSERT INTO documents(path, kind, intended_path, created_at, last_seen_at) VALUES('',?1,?2,?3,?3)",
+            params![DocKind::Scratch.as_str(), intended_path, at],
         )?;
         let doc_id = DocId(tx.last_insert_rowid());
         tx.execute(
@@ -35,6 +46,31 @@ pub fn create_scratch(
         )?;
         Ok(doc_id)
     })
+}
+
+/// Lists scratch rows (`path=''`, never bound, `inode IS NULL` — the same
+/// evicted-bound-row exclusion [`recoverable_scratch`] uses) recorded as
+/// INTENDING `intended_path`, newest first, restricted to rows that
+/// actually carry history the way [`recoverable_scratch`] is — a scratch
+/// row nobody ever typed into has nothing worth adopting.
+///
+/// This alone does not decide adoption: the caller still runs each
+/// candidate through [`reconstruct_scratch`], which is what actually
+/// enforces "a live session's draft is never stolen" (its own
+/// [`crate::inherit::is_session_alive`] check) — this only narrows the
+/// candidate set by name.
+pub fn find_named_scratch(conn: &Connection, intended_path: &str) -> Result<Vec<i64>, Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM documents \
+         WHERE path='' AND inode IS NULL AND intended_path=?1 \
+           AND (id IN (SELECT DISTINCT doc_id FROM events) \
+             OR id IN (SELECT DISTINCT doc_id FROM snapshots)) \
+         ORDER BY id DESC",
+    )?;
+    let ids = stmt
+        .query_map(params![intended_path], |r| r.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+    Ok(ids)
 }
 
 pub fn gc_empty_scratch(
@@ -173,8 +209,8 @@ mod tests {
         let mut conn = open();
         let dead_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
-        let doc_id =
-            create_scratch(&mut conn, dead_session, SystemTime::now()).expect("create scratch");
+        let doc_id = create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None)
+            .expect("create scratch");
 
         {
             let tx = conn.transaction().expect("tx");
@@ -207,12 +243,16 @@ mod tests {
         let mut conn = open();
         let owner_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("owner session");
-        let keep_id = create_scratch(&mut conn, owner_session, SystemTime::now()).expect("keep");
-        let empty_id = create_scratch(&mut conn, owner_session, SystemTime::now()).expect("empty");
+        let keep_id = create_scratch_with_intent(&mut conn, owner_session, SystemTime::now(), None)
+            .expect("keep");
+        let empty_id =
+            create_scratch_with_intent(&mut conn, owner_session, SystemTime::now(), None)
+                .expect("empty");
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
         let with_history_id =
-            create_scratch(&mut conn, session_id, SystemTime::now()).expect("with history");
+            create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
+                .expect("with history");
         {
             let tx = conn.transaction().expect("tx");
             crate::journal::append_edit(
@@ -251,9 +291,10 @@ mod tests {
         let mut conn = open();
         let live_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("live session");
-        let draft_id = create_scratch(&mut conn, live_session, SystemTime::now())
+        let draft_id = create_scratch_with_intent(&mut conn, live_session, SystemTime::now(), None)
             .expect("live session's draft");
-        let keep_id = create_scratch(&mut conn, live_session, SystemTime::now()).expect("keep");
+        let keep_id = create_scratch_with_intent(&mut conn, live_session, SystemTime::now(), None)
+            .expect("keep");
 
         let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_alive).expect("gc");
         assert_eq!(
@@ -276,9 +317,10 @@ mod tests {
         let mut conn = open();
         let dead_session =
             crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
-        let draft_id = create_scratch(&mut conn, dead_session, SystemTime::now())
+        let draft_id = create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None)
             .expect("dead session's draft");
-        let keep_id = create_scratch(&mut conn, dead_session, SystemTime::now()).expect("keep");
+        let keep_id = create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None)
+            .expect("keep");
 
         let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
         assert_eq!(deleted, 1);
@@ -334,7 +376,8 @@ mod tests {
             "an evicted bound row must never be offered as a recoverable draft"
         );
 
-        let keep_id = create_scratch(&mut conn, session_id, SystemTime::now()).expect("keep");
+        let keep_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
+            .expect("keep");
         gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
         let still_present: bool = conn
             .query_row(
@@ -356,8 +399,8 @@ mod tests {
         let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let doc_id =
-            create_scratch(&mut conn, session_id, SystemTime::now()).expect("create scratch");
+        let doc_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
+            .expect("create scratch");
         {
             let tx = conn.transaction().expect("tx");
             crate::journal::append_edit(
@@ -383,10 +426,126 @@ mod tests {
         let mut conn = open();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let doc_id =
-            create_scratch(&mut conn, session_id, SystemTime::now()).expect("create scratch");
+        let doc_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
+            .expect("create scratch");
         let reconstructed =
             reconstruct_scratch(&mut conn, &always_dead, doc_id).expect("reconstruct_scratch");
         assert_eq!(reconstructed, None);
+    }
+
+    /// A scratch row that names `intended_path` and carries a dead session's
+    /// unsaved history is exactly what a later `rune <same path>` launch
+    /// must find: the named-but-never-saved recovery the launch layer
+    /// builds on.
+    #[test]
+    fn find_named_scratch_surfaces_a_dead_sessions_named_draft() {
+        let mut conn = open();
+        let dead_session =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
+        let doc_id = create_scratch_with_intent(
+            &mut conn,
+            dead_session,
+            SystemTime::now(),
+            Some("/vault/notes.md"),
+        )
+        .expect("create named scratch");
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                dead_session,
+                SystemTime::now(),
+                doc_id,
+                &text_insert("typed before the crash"),
+                &[],
+                &[],
+            )
+            .expect("append edit");
+            tx.commit().expect("commit");
+        }
+
+        let ids = find_named_scratch(&conn, "/vault/notes.md").expect("find_named_scratch");
+        assert_eq!(ids, vec![doc_id.0]);
+
+        let reconstructed = reconstruct_scratch(&mut conn, &always_dead, doc_id)
+            .expect("reconstruct_scratch")
+            .expect("must reconstruct the dead session's typed content");
+        assert_eq!(reconstructed, "typed before the crash");
+    }
+
+    /// A DIFFERENT intended path must never match — the whole point of
+    /// keying on `intended_path` is that `rune other.md` never adopts
+    /// `notes.md`'s draft.
+    #[test]
+    fn find_named_scratch_ignores_a_different_intended_path() {
+        let mut conn = open();
+        let dead_session =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
+        let doc_id = create_scratch_with_intent(
+            &mut conn,
+            dead_session,
+            SystemTime::now(),
+            Some("/vault/notes.md"),
+        )
+        .expect("create named scratch");
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                dead_session,
+                SystemTime::now(),
+                doc_id,
+                &text_insert("typed before the crash"),
+                &[],
+                &[],
+            )
+            .expect("append edit");
+            tx.commit().expect("commit");
+        }
+
+        let ids = find_named_scratch(&conn, "/vault/other.md").expect("find_named_scratch");
+        assert!(ids.is_empty());
+    }
+
+    /// A named scratch belonging to a session `find_named_scratch` sees as
+    /// still alive must still surface as a CANDIDATE (name matches) — it is
+    /// [`reconstruct_scratch`]'s own liveness check, not this listing, that
+    /// refuses to hand the live session's content to anyone else.
+    #[test]
+    fn find_named_scratch_lists_a_live_sessions_row_but_reconstruct_refuses_to_steal_it() {
+        let mut conn = open();
+        let live_session =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("live session");
+        let doc_id = create_scratch_with_intent(
+            &mut conn,
+            live_session,
+            SystemTime::now(),
+            Some("/vault/notes.md"),
+        )
+        .expect("create named scratch");
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                live_session,
+                SystemTime::now(),
+                doc_id,
+                &text_insert("still being typed"),
+                &[],
+                &[],
+            )
+            .expect("append edit");
+            tx.commit().expect("commit");
+        }
+
+        let ids = find_named_scratch(&conn, "/vault/notes.md").expect("find_named_scratch");
+        assert_eq!(ids, vec![doc_id.0]);
+
+        let reconstructed =
+            reconstruct_scratch(&mut conn, &always_alive, doc_id).expect("reconstruct_scratch");
+        assert_eq!(
+            reconstructed, None,
+            "a live session's own unsaved draft must never be handed to a concurrent launch"
+        );
     }
 }

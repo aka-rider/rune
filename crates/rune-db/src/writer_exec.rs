@@ -374,8 +374,14 @@ pub(crate) fn create_scratch(
     undo_state: &mut HashMap<DocId, DocUndoState>,
     session_id: SessionId,
     now: SystemTime,
+    intended_path: Option<String>,
 ) -> Result<OpOutcome, Error> {
-    let id = crate::scratch::create_scratch(conn, session_id, now)?;
+    let id = crate::scratch::create_scratch_with_intent(
+        conn,
+        session_id,
+        now,
+        intended_path.as_deref(),
+    )?;
     // A brand-new row, never bound before — local position `0`
     // starts at durable seq `0`, same as `Load`'s doc comment.
     undo_state.insert(id, DocUndoState::default());
@@ -396,6 +402,14 @@ pub(crate) fn recoverable_scratch(
     exclude_id: i64,
 ) -> Result<OpOutcome, Error> {
     let ids = crate::scratch::recoverable_scratch(conn, exclude_id)?;
+    Ok(OpOutcome::Ids(ids))
+}
+
+pub(crate) fn find_named_scratch(
+    conn: &mut Connection,
+    intended_path: &str,
+) -> Result<OpOutcome, Error> {
+    let ids = crate::scratch::find_named_scratch(conn, intended_path)?;
     Ok(OpOutcome::Ids(ids))
 }
 
