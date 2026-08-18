@@ -82,8 +82,9 @@ impl TryFrom<CursorPayload> for Cursor {
     type Error = Error;
 
     fn try_from(p: CursorPayload) -> Result<Self, Self::Error> {
-        let id = CursorId::try_from(p.id)
-            .map_err(|_| Error::CorruptPayload(format!("cursor id {} must be non-zero", p.id)))?;
+        let id = CursorId::try_from(p.id).map_err(|_| {
+            Error::CorruptPayload(crate::error::CorruptPayloadReason::InvalidCursorId { id: p.id })
+        })?;
         Ok(Cursor {
             position: p.position,
             anchor: p.anchor,
@@ -99,25 +100,27 @@ impl TryFrom<CursorPayload> for Cursor {
 /// `Result` rather than panicking/unwrapping per the workspace's deny-lints.
 pub(crate) fn edits_to_json(edits: &[AppliedEdit]) -> Result<String, Error> {
     let payload: Vec<EditPayload> = edits.iter().map(EditPayload::from).collect();
-    serde_json::to_string(&payload).map_err(|e| Error::CorruptPayload(e.to_string()))
+    serde_json::to_string(&payload)
+        .map_err(|e| Error::CorruptPayload(crate::error::CorruptPayloadReason::Json(e)))
 }
 
 /// Parses an edit batch from JSON. A parse failure is surfaced as
 /// [`Error::CorruptPayload`], never silently treated as an empty batch.
 pub(crate) fn edits_from_json(json: &str) -> Result<Vec<AppliedEdit>, Error> {
-    let payload: Vec<EditPayload> =
-        serde_json::from_str(json).map_err(|e| Error::CorruptPayload(e.to_string()))?;
+    let payload: Vec<EditPayload> = serde_json::from_str(json)
+        .map_err(|e| Error::CorruptPayload(crate::error::CorruptPayloadReason::Json(e)))?;
     Ok(payload.into_iter().map(AppliedEdit::from).collect())
 }
 
 pub(crate) fn cursors_to_json(cursors: &[Cursor]) -> Result<String, Error> {
     let payload: Vec<CursorPayload> = cursors.iter().map(CursorPayload::from).collect();
-    serde_json::to_string(&payload).map_err(|e| Error::CorruptPayload(e.to_string()))
+    serde_json::to_string(&payload)
+        .map_err(|e| Error::CorruptPayload(crate::error::CorruptPayloadReason::Json(e)))
 }
 
 pub(crate) fn cursors_from_json(json: &str) -> Result<Vec<Cursor>, Error> {
-    let payload: Vec<CursorPayload> =
-        serde_json::from_str(json).map_err(|e| Error::CorruptPayload(e.to_string()))?;
+    let payload: Vec<CursorPayload> = serde_json::from_str(json)
+        .map_err(|e| Error::CorruptPayload(crate::error::CorruptPayloadReason::Json(e)))?;
     payload.into_iter().map(Cursor::try_from).collect()
 }
 

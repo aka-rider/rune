@@ -18,7 +18,7 @@ use crate::document::DocumentId;
 use crate::listnav;
 use crate::pane::Pane;
 use crate::pointer::{MouseInput, MouseKind};
-use crate::runtime::Effects;
+use crate::runtime::{CmdError, Effects};
 use crate::workspace;
 
 pub(crate) mod keys;
@@ -246,7 +246,7 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
 pub(crate) fn handle_recents_loaded(
     app: &mut App,
     generation: crate::generation::Generation,
-    result: Result<Vec<Candidate>, String>,
+    result: Result<Vec<Candidate>, CmdError>,
     effects: &mut Effects,
 ) {
     let current = app.filesearch().map(|s| s.generation);

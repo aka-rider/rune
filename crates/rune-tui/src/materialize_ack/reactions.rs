@@ -10,7 +10,7 @@ use rune_db::MatResult;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::messages;
-use crate::runtime::Effects;
+use crate::runtime::{CmdError, Effects};
 use crate::workspace;
 
 use super::recompute_dirty;
@@ -266,7 +266,7 @@ pub(crate) fn handle_save_done(
     id: DocumentId,
     ticket: crate::document::SaveTicket,
     version: u64,
-    result: Result<(), String>,
+    result: Result<(), CmdError>,
     durable: bool,
 ) {
     if app

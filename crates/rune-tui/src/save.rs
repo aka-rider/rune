@@ -21,7 +21,7 @@ use crate::app::App;
 use crate::document::DocumentId;
 use crate::materialize_ack;
 use crate::messages;
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
 mod materialize;
 use materialize::materialize_now;
@@ -282,10 +282,12 @@ pub(crate) fn save_cmd(
                 | rune_vfs::PutOutcome::Raced { durable, .. },
             ) => (Ok(()), durable),
             Ok(_) => (
-                Err("save failed: unconditional publish refused".to_string()),
+                Err(CmdError::Refused(
+                    "save failed: unconditional publish refused".to_string(),
+                )),
                 true,
             ),
-            Err(e) => (Err(e.to_string()), true),
+            Err(e) => (Err(CmdError::Io(e)), true),
         };
         Some(Msg::SaveDone {
             id,

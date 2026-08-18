@@ -21,7 +21,7 @@ use crate::graphics::{ImageState, ImageStatus};
 use crate::help;
 use crate::messages;
 use crate::pane::Pane;
-use crate::runtime::Effects;
+use crate::runtime::{CmdError, Effects};
 
 /// Normalizes `path` through the injected `Vfs` — the ONE resolution
 /// chokepoint every path that will ever bind a `Document` funnels through
@@ -191,7 +191,7 @@ pub fn open_path_async(
 pub(crate) fn handle_file_opened(
     app: &mut App,
     path: &Path,
-    result: Result<Vec<u8>, String>,
+    result: Result<Vec<u8>, CmdError>,
     anchor: Option<rune_nav::Anchor>,
     effects: &mut Effects,
 ) {

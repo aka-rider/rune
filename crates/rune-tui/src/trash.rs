@@ -22,7 +22,7 @@ use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::materialize_ack;
 use crate::messages;
 use crate::pane::Pane;
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::{Cmd, CmdError, Effects, Msg};
 use crate::workspace;
 
 /// Resolves the trash target from the current focus and raises the confirm
@@ -121,7 +121,7 @@ fn trash_cmd(
     generation: crate::generation::Generation,
 ) -> Cmd {
     Cmd::trash(move || {
-        let result = vfs.trash(&path).map_err(|e| e.to_string());
+        let result = vfs.trash(&path).map_err(CmdError::from);
         Some(Msg::TrashDone {
             generation,
             path,
@@ -151,7 +151,7 @@ pub(crate) fn handle_trash_done(
     app: &mut App,
     generation: crate::generation::Generation,
     path: &Path,
-    result: Result<(), String>,
+    result: Result<(), CmdError>,
     effects: &mut Effects,
 ) {
     if generation != app.trash_gen {

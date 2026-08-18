@@ -105,9 +105,11 @@ pub fn recover_document(
             // genuinely corrupt snapshot, which must surface as an error,
             // never be silently coerced (blob.rs module doc).
             let content = String::from_utf8(bytes).map_err(|e| {
-                Error::CorruptPayload(format!(
-                    "snapshot blob {hash} for doc {doc_id}: non-utf8 content: {e}"
-                ))
+                Error::CorruptPayload(crate::error::CorruptPayloadReason::NonUtf8Blob {
+                    hash,
+                    doc_id,
+                    source: e,
+                })
             })?;
             (seq, content)
         }
@@ -118,11 +120,14 @@ pub fn recover_document(
 
     let mut buf = Buffer::new(anchor_content);
     for row in rows {
+        let seq = row.seq;
         buf = reapply(&buf, &row.edits).map_err(|e| {
-            Error::ReplayFailed(format!(
-                "doc {doc_id} session {session_id} at seq {}: {e}",
-                row.seq
-            ))
+            Error::ReplayFailed(Box::new(crate::error::ReplayFailure {
+                doc_id,
+                session_id,
+                seq,
+                source: e,
+            }))
         })?;
     }
     Ok(buf.content().to_string())

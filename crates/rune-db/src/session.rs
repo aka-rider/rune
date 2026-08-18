@@ -221,16 +221,16 @@ pub fn is_process_alive(pid: i64, started_at: &str) -> bool {
 /// `proc_started_at`).
 pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<SessionId, Error> {
     let pid = std::process::id() as i64;
-    let started_at = proc_started_at(pid as i32).ok_or_else(|| {
-        Error::SessionEstablish(format!("could not read start time of own pid {pid}"))
-    })?;
+    let started_at = proc_started_at(pid as i32).ok_or(Error::SessionEstablish(
+        crate::error::SessionEstablishReason::NoStartTime { pid },
+    ))?;
     let opened_at = format_rfc3339_nanos(now);
 
     conn.execute(
         "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES(?1, ?2, ?3)",
         rusqlite::params![pid, started_at, opened_at],
     )
-    .map_err(|e| Error::SessionEstablish(e.to_string()))?;
+    .map_err(|e| Error::SessionEstablish(crate::error::SessionEstablishReason::Sqlite(e)))?;
     Ok(SessionId(conn.last_insert_rowid()))
 }
 

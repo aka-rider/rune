@@ -25,7 +25,7 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
 /// Spawns a decode for `id` if — and only if — it is an image document
 /// still waiting on its very first decode: `status == Pending` (a prior
@@ -103,10 +103,9 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// CPU work, and a large/degraded-filesystem image must never block the
 /// main loop. No `catch_unwind` of its own: `spawn_cmd` already contains a
 /// decoder panic on malformed input.
-fn read_and_decode(vfs: &dyn Vfs, path: &Path) -> Result<rune_image::decode::Decoded, String> {
-    rune_vfs::get(vfs, path, None)
-        .map_err(|e| e.to_string())
-        .and_then(|sighting| rune_image::decode_still(&sighting.bytes).map_err(|e| e.to_string()))
+fn read_and_decode(vfs: &dyn Vfs, path: &Path) -> Result<rune_image::decode::Decoded, CmdError> {
+    let sighting = rune_vfs::get(vfs, path, None)?;
+    Ok(rune_image::decode_still(&sighting.bytes)?)
 }
 
 pub(super) fn decode_image_cmd(
@@ -164,7 +163,7 @@ pub(crate) fn handle_image_decoded(
     app: &mut App,
     id: DocumentId,
     generation: crate::generation::Generation,
-    result: Result<rune_image::decode::Decoded, String>,
+    result: Result<rune_image::decode::Decoded, CmdError>,
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
@@ -191,7 +190,7 @@ pub(crate) fn handle_image_decoded(
     let decoded = match result {
         Ok(decoded) => decoded,
         Err(e) => {
-            image.status = ImageStatus::Failed(e);
+            image.status = ImageStatus::Failed(e.to_string());
             return;
         }
     };

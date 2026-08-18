@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
-use crate::runtime::Effects;
+use crate::runtime::{CmdError, Effects};
 
 /// Spawns a decode for the embed named `target` in document `id`, iff one
 /// isn't already in flight for it. A no-op if the target isn't tracked at
@@ -59,7 +59,7 @@ pub(crate) fn handle_embed_decoded(
     app: &mut App,
     id: DocumentId,
     generation: u64,
-    result: Result<rune_image::decode::Decoded, String>,
+    result: Result<rune_image::decode::Decoded, CmdError>,
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
@@ -88,7 +88,7 @@ pub(crate) fn handle_embed_decoded(
     let decoded = match result {
         Ok(decoded) => decoded,
         Err(e) => {
-            state.status = ImageStatus::Failed(e);
+            state.status = ImageStatus::Failed(e.to_string());
             return;
         }
     };

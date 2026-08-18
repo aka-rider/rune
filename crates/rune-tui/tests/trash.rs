@@ -24,7 +24,7 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::messages;
 use rune_tui::messages::Severity;
 use rune_tui::pane::Pane;
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
 
 use rune_vfs::{Mem, Vfs};
 
@@ -359,7 +359,7 @@ fn trash_done_err_posts_and_closes_nothing() {
         Msg::TrashDone {
             generation,
             path: PathBuf::from("/root/a.md"),
-            result: Err("disk full".to_string()),
+            result: Err(CmdError::Refused("disk full".to_string())),
         },
     );
 

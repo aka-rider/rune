@@ -323,7 +323,11 @@ fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
     let generation = app.search().unwrap().history_generation;
     app.search_mut().unwrap().history = vec!["stale".to_string()];
 
-    handle_history_loaded(&mut app, generation, Err("reader gone".to_string()));
+    handle_history_loaded(
+        &mut app,
+        generation,
+        Err(CmdError::Refused("reader gone".to_string())),
+    );
 
     assert!(app.search().unwrap().history.is_empty());
     assert!(app.search().is_some(), "the bar itself keeps working");
