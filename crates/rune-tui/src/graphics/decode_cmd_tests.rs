@@ -120,7 +120,7 @@ fn a_failed_decode_becomes_failed_status_with_no_raw_output() {
         &mut app,
         id,
         mint_gen(1),
-        Err("boom".to_string()),
+        Err(CmdError::Refused("boom".to_string())),
         &mut effects,
     );
 
@@ -221,7 +221,7 @@ fn reload_recovers_a_failed_image_document() {
         &mut app,
         id,
         mint_gen(1),
-        Err("boom".to_string()),
+        Err(CmdError::Refused("boom".to_string())),
         &mut Effects::default(),
     );
     assert!(matches!(

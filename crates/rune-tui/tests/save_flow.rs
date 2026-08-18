@@ -15,7 +15,7 @@ use rune_core::undo::EditKind;
 use rune_tui::app::{App, update};
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
 
 /// A refused save posts a message, and an open message pane arms its own
 /// auto-collapse timer — so "no save was issued" is a claim about the save
@@ -95,7 +95,7 @@ fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log
             id,
             ticket,
             version,
-            result: Err("oops".to_string()),
+            result: Err(CmdError::Refused("oops".to_string())),
             durable: true,
         },
         &mut effects,
@@ -177,7 +177,7 @@ fn save_done_err_surfaces_status_and_keeps_dirty() {
             id,
             ticket,
             version,
-            result: Err("disk full".to_string()),
+            result: Err(CmdError::Refused("disk full".to_string())),
             durable: true,
         },
         &mut effects,

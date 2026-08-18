@@ -20,7 +20,7 @@ use rune_tui::document::DocumentId;
 use rune_tui::guard::{GuardKind, GuardPrompt};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{CmdError, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
 fn test_app() -> App {
@@ -193,7 +193,7 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
             id,
             ticket,
             version,
-            result: Err("disk full".to_string()),
+            result: Err(CmdError::Refused("disk full".to_string())),
             durable: true,
         },
         &mut effects,

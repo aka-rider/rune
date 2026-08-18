@@ -53,6 +53,73 @@ pub enum PasteTarget {
     Search,
 }
 
+/// A typed error crossing a `Cmd` boundary — the reply side of every
+/// off-thread call this module spawns that can fail. Preserves the
+/// underlying source's kind (an `io::ErrorKind` from a `Vfs` call, a
+/// `rune_vfs::GetRefusal`, a `rune_db::Error`, a `rune_image::ImageError`)
+/// rather than flattening it to a message at the `Cmd` closure itself, so a
+/// handler CAN branch on what actually failed; `Refused` is the escape
+/// hatch for a business refusal that never had a typed source to begin
+/// with (an unexpected reply shape, a redundant publish outcome). Every
+/// variant's `Display` renders exactly the text the flattened `String` used
+/// to carry, so message-pane wording is unchanged.
+#[derive(Debug)]
+pub enum CmdError {
+    Io(io::Error),
+    Get(rune_vfs::GetRefusal),
+    Db(rune_db::Error),
+    Image(rune_image::ImageError),
+    Refused(String),
+}
+
+impl std::fmt::Display for CmdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CmdError::Io(e) => write!(f, "{e}"),
+            CmdError::Get(e) => write!(f, "{e}"),
+            CmdError::Db(e) => write!(f, "{e}"),
+            CmdError::Image(e) => write!(f, "{e}"),
+            CmdError::Refused(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CmdError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CmdError::Io(e) => Some(e),
+            CmdError::Get(e) => Some(e),
+            CmdError::Db(e) => Some(e),
+            CmdError::Image(e) => Some(e),
+            CmdError::Refused(_) => None,
+        }
+    }
+}
+
+impl From<io::Error> for CmdError {
+    fn from(e: io::Error) -> Self {
+        CmdError::Io(e)
+    }
+}
+
+impl From<rune_vfs::GetRefusal> for CmdError {
+    fn from(e: rune_vfs::GetRefusal) -> Self {
+        CmdError::Get(e)
+    }
+}
+
+impl From<rune_db::Error> for CmdError {
+    fn from(e: rune_db::Error) -> Self {
+        CmdError::Db(e)
+    }
+}
+
+impl From<rune_image::ImageError> for CmdError {
+    fn from(e: rune_image::ImageError) -> Self {
+        CmdError::Image(e)
+    }
+}
+
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone` originate from a spawned
 /// `Cmd`'s return value; `ConfirmTimeout`/`SaveConfirmTimeout`/
@@ -87,7 +154,7 @@ pub enum Msg {
         id: DocumentId,
         ticket: crate::document::SaveTicket,
         version: u64,
-        result: Result<(), String>,
+        result: Result<(), CmdError>,
         durable: bool,
     },
     ConfirmTimeout {
@@ -153,7 +220,7 @@ pub enum Msg {
     /// thing standing between a late reply and a corrupted state.
     RenameDone {
         generation: crate::generation::Generation,
-        result: Result<rune_db::RenameOutcome, String>,
+        result: Result<rune_db::RenameOutcome, CmdError>,
     },
     /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
     /// `trash::handle_trash_done`. Carries its own `generation` so a reply
@@ -164,7 +231,7 @@ pub enum Msg {
     TrashDone {
         generation: crate::generation::Generation,
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), CmdError>,
     },
     /// A `ReadFile` `Cmd` completed —
     /// `workspace::open_path_async`'s reply, routed to `workspace::
@@ -177,7 +244,7 @@ pub enum Msg {
     /// same path just converge on one document rather than racing.
     FileOpened {
         path: PathBuf,
-        result: Result<Vec<u8>, String>,
+        result: Result<Vec<u8>, CmdError>,
         anchor: Option<rune_nav::Anchor>,
     },
     /// A background highlight call completed. `result` says what the pass
@@ -210,12 +277,12 @@ pub enum Msg {
     ImageDecoded {
         doc: DocumentId,
         generation: crate::generation::Generation,
-        result: Result<rune_image::decode::Decoded, String>,
+        result: Result<rune_image::decode::Decoded, CmdError>,
     },
     EmbedDecoded {
         doc: DocumentId,
         generation: u64,
-        result: Result<rune_image::decode::Decoded, String>,
+        result: Result<rune_image::decode::Decoded, CmdError>,
     },
     Error(String),
     /// The same transport as `Error`, tagged one severity down: a
@@ -234,7 +301,7 @@ pub enum Msg {
     /// instead of always surfacing a message regardless of generation.
     SearchHistory {
         generation: crate::generation::Generation,
-        result: Result<Vec<String>, String>,
+        result: Result<Vec<String>, CmdError>,
     },
     /// The fuzzy file finder's recents load, requested once per finder-open
     /// (`filesearch::open`) and delivered by [`filesearch_recents_cmd::
@@ -249,7 +316,7 @@ pub enum Msg {
     /// generation.
     FileSearchRecentsLoaded {
         generation: crate::generation::Generation,
-        result: Result<Vec<crate::filesearch::Candidate>, String>,
+        result: Result<Vec<crate::filesearch::Candidate>, CmdError>,
     },
     /// The fuzzy file finder's ignore-aware workspace walk completed —
     /// `filesearch::open`'s own `Cmd`, delivered by [`filesearch_cmd::
@@ -500,7 +567,7 @@ pub fn read_file_cmd(
     Cmd::read_file(move || {
         let result = rune_vfs::get(vfs.as_ref(), &path, Some(rune_vfs::MAX_DOCUMENT_BYTES))
             .map(|sighting| sighting.bytes)
-            .map_err(|e| e.to_string());
+            .map_err(CmdError::from);
         Some(Msg::FileOpened {
             path,
             result,
@@ -529,7 +596,7 @@ pub fn load_search_history_cmd(
                 rune_db::ReaderReply::RecentSearches(entries) => entries,
                 _ => Vec::new(),
             })
-            .map_err(|e| e.to_string());
+            .map_err(CmdError::from);
         Some(Msg::SearchHistory { generation, result })
     })
 }
@@ -552,16 +619,16 @@ pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 /// is always `None`: a preview never lands a navigation anchor.
 pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
     Cmd::read_file(move || {
-        let result = (|| -> Result<Vec<u8>, String> {
+        let result = (|| -> Result<Vec<u8>, CmdError> {
             let bytes = match rune_vfs::get(vfs.as_ref(), &path, Some(MAX_PREVIEW_BYTES)) {
                 Ok(sighting) => sighting.bytes,
                 Err(rune_vfs::GetRefusal::TooLarge { .. }) => {
-                    return Err("too large to preview".to_string());
+                    return Err(CmdError::Refused("too large to preview".to_string()));
                 }
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(CmdError::from(e)),
             };
             if std::str::from_utf8(&bytes).is_err() {
-                return Err("not valid UTF-8".to_string());
+                return Err(CmdError::Refused("not valid UTF-8".to_string()));
             }
             Ok(bytes)
         })();

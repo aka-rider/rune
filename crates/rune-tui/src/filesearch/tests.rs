@@ -162,7 +162,12 @@ fn recents_loaded_err_reply_posts_a_message_and_leaves_recents_empty() {
     open(&mut app, &mut effects);
     let generation = app.filesearch().expect("open").generation;
 
-    handle_recents_loaded(&mut app, generation, Err("boom".to_string()), &mut effects);
+    handle_recents_loaded(
+        &mut app,
+        generation,
+        Err(CmdError::Refused("boom".to_string())),
+        &mut effects,
+    );
 
     assert!(app.filesearch().expect("still open").recents.is_empty());
     assert_eq!(

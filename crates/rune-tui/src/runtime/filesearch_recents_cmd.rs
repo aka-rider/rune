@@ -9,7 +9,7 @@ use rune_vfs::Vfs;
 
 use crate::filesearch::Candidate;
 
-use super::{Cmd, Msg};
+use super::{Cmd, CmdError, Msg};
 
 /// Loads the finder's MRU document list off-thread through a cloned
 /// `ReaderQuery` — the reader thread's own connection, never the writer's,
@@ -40,16 +40,14 @@ fn load(
     reader: &rune_db::ReaderQuery,
     vfs: &dyn Vfs,
     root: &Path,
-) -> Result<Vec<Candidate>, String> {
-    let reply = reader
-        .query(rune_db::ReaderRequestKind::RecentDocuments { limit: 100 })
-        .map_err(|e| e.to_string())?;
+) -> Result<Vec<Candidate>, CmdError> {
+    let reply = reader.query(rune_db::ReaderRequestKind::RecentDocuments { limit: 100 })?;
     let paths = match reply {
         rune_db::ReaderReply::RecentDocuments(paths) => paths,
         rune_db::ReaderReply::Pong
         | rune_db::ReaderReply::Blob(_)
         | rune_db::ReaderReply::RecentSearches(_) => {
-            return Err("unexpected reader reply".to_string());
+            return Err(CmdError::Refused("unexpected reader reply".to_string()));
         }
     };
     // A `documents` row can outlive the file it named (deleted, renamed out

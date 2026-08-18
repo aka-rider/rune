@@ -38,7 +38,7 @@ use rune_core::buffer::Buffer;
 use crate::app::App;
 use crate::document::{Document, DocumentId, ReadOnly};
 use crate::pane::Pane;
-use crate::runtime::Effects;
+use crate::runtime::{CmdError, Effects};
 use crate::workspace;
 
 /// Resolves what the Explorer cursor sits on right now and reacts:
@@ -116,7 +116,7 @@ pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effect
 pub(crate) fn maybe_consume_reply(
     app: &mut App,
     path: &Path,
-    result: &Result<Vec<u8>, String>,
+    result: &Result<Vec<u8>, CmdError>,
 ) -> bool {
     if !app.explorer.preview_awaiting.remove(path) {
         return false;
@@ -129,7 +129,7 @@ pub(crate) fn maybe_consume_reply(
     }
     match result {
         Ok(bytes) => apply_loaded(app, path, bytes.clone()),
-        Err(reason) => apply_failed(app, path, reason),
+        Err(reason) => apply_failed(app, path, &reason.to_string()),
     }
     true
 }

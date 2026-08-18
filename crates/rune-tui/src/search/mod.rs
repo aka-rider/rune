@@ -14,6 +14,7 @@ use rune_syntax::wrap::WrapSnapshot;
 
 use crate::app::App;
 use crate::document::DocumentId;
+use crate::runtime::CmdError;
 
 pub(crate) mod keys;
 
@@ -96,7 +97,7 @@ pub(crate) fn open(app: &mut App) {
 pub(crate) fn handle_history_loaded(
     app: &mut App,
     generation: crate::generation::Generation,
-    result: Result<Vec<String>, String>,
+    result: Result<Vec<String>, CmdError>,
 ) {
     let current = app.search().map(|s| s.history_generation);
     if current != Some(generation) {

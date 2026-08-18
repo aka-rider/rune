@@ -16,7 +16,7 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::rename::{RenameState, Ticket};
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
 /// Enqueues the rename on whichever route this document has: the `rune-db`
 /// writer FIFO when it is store-bound, else a plain `Cmd` over the injected
@@ -75,9 +75,9 @@ pub(crate) fn rename_cmd(
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match vfs.stat(&to) {
                 Ok(seen) => Ok(RenameOutcome::Collided { seen }),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(CmdError::Io(e)),
             },
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(CmdError::Io(e)),
         };
         Some(Msg::RenameDone { generation, result })
     })
@@ -153,12 +153,14 @@ fn create_cmd(
             }),
             Ok(rune_vfs::PutOutcome::Conflict { current, .. }) => {
                 current.sighted.stat().map_or_else(
-                    || Err("target already exists".to_string()),
+                    || Err(CmdError::Refused("target already exists".to_string())),
                     |seen| Ok(RenameOutcome::Collided { seen }),
                 )
             }
-            Ok(_) => Err("create failed: unexpected publish outcome".to_string()),
-            Err(e) => Err(e.to_string()),
+            Ok(_) => Err(CmdError::Refused(
+                "create failed: unexpected publish outcome".to_string(),
+            )),
+            Err(e) => Err(CmdError::Io(e)),
         };
         Some(Msg::RenameDone { generation, result })
     })

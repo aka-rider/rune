@@ -14,7 +14,7 @@ use rune_tui::app::{App, update};
 use rune_tui::document::DocumentId;
 use rune_tui::graphics::ImageStatus;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
 use rune_tui::testgrid;
 use rune_vfs::{Mem, Vfs};
 
@@ -341,7 +341,7 @@ fn an_unchanged_mtime_after_a_failure_does_not_respawn_a_changed_mtime_does() {
                 Msg::EmbedDecoded {
                     doc,
                     generation,
-                    result: Err("boom".to_string()),
+                    result: Err(CmdError::Refused("boom".to_string())),
                 },
                 &mut reply_effects,
             );
