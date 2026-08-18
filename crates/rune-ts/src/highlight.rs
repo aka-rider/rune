@@ -14,10 +14,12 @@
 //! on the render path once per frame, scoped to whatever byte range is
 //! currently visible.
 
+use std::collections::HashSet;
 use std::ops::{ControlFlow, Range};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use rune_core::assert_invariant;
 use rune_syntax::scope::scope_table;
 use rune_syntax::{LangId, ScopeId, ScopeTable};
 use tree_sitter::{ParseOptions, ParseState, Parser, Query, QueryCursor, StreamingIterator, Tree};
@@ -35,6 +37,110 @@ pub const MAX_SPANS: usize = 100_000;
 /// theme use, so a `ScopeId` this crate hands out means the same thing to
 /// both.
 static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
+
+/// Capture names a grammar's bundled query already used before this
+/// mechanism existed, that the closed scope table has no entry (or
+/// dotted-prefix ancestor) for. [`note_unresolved_capture`] records every
+/// occurrence in [`UNRESOLVED_CAPTURES`] regardless, but only asserts on a
+/// pair that is NOT here — real source text hits this debt constantly (an
+/// `@escape` inside almost any string literal, for instance), so treating
+/// every occurrence as a hard failure would turn ordinary highlighting into
+/// a crash. Extending the closed vocabulary to cover one of these is a
+/// theming decision (it also needs a `Style` wherever `rune-tui`'s theme
+/// builds its `scopes` vector), not a mechanical one — deleting an entry
+/// here without doing that work would silently regress highlighting for
+/// whatever capture it names.
+pub const KNOWN_UNRESOLVED_CAPTURES: &[(&str, &str)] = &[
+    ("rust", "escape"),
+    ("json", "escape"),
+    ("bash", "embedded"),
+    ("python", "embedded"),
+    ("python", "escape"),
+    ("javascript", "embedded"),
+    ("go", "escape"),
+    ("c", "delimiter"),
+    ("typescript", "embedded"),
+    ("tsx", "embedded"),
+    ("csharp", "module"),
+    ("php", "module"),
+    ("php", "module.builtin"),
+    ("ruby", "embedded"),
+    ("ruby", "escape"),
+    ("sql", "conditional"),
+    ("sql", "field"),
+    ("sql", "float"),
+    ("sql", "parameter"),
+    ("sql", "spell"),
+    ("sql", "storageclass"),
+    ("kotlin", "_class"),
+    ("kotlin", "_function"),
+    ("kotlin", "character"),
+    ("kotlin", "conditional"),
+    ("kotlin", "exception"),
+    ("kotlin", "float"),
+    ("kotlin", "include"),
+    ("kotlin", "namespace"),
+    ("kotlin", "none"),
+    ("kotlin", "parameter"),
+    ("kotlin", "repeat"),
+    ("swift", "character.special"),
+    ("swift", "spell"),
+];
+
+/// Every `(language, capture name)` pair already reported by
+/// [`note_unresolved_capture`] — the set that turns a per-keystroke flood
+/// into a one-time signal. A grammar's query is fixed for the process's
+/// lifetime (compiled once by `registry()` and never recompiled), so a
+/// capture that fails to resolve today will fail identically on every later
+/// call; recording it once is exactly as informative as recording it every
+/// time and immeasurably cheaper.
+static UNRESOLVED_CAPTURES: LazyLock<Mutex<HashSet<(LangId, String)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Called whenever a query capture name resolves to `None` against
+/// [`SCOPES`] — a query (whether bundled by a grammar crate or hand-authored
+/// in this crate's `queries/`) using a scope outside the closed vocabulary
+/// [`rune_syntax::scope`] defines. The guard test over every
+/// [`crate::lang::LANGUAGES`] entry's compiled query exists to catch a
+/// brand-new instance of this before a grammar bump ships one.
+///
+/// The highlight path runs on a background thread at keystroke rate, so
+/// this cannot log or panic unconditionally without either adding a logging
+/// dependency this crate has never needed or turning routine highlighting
+/// of pre-existing debt into a crash loop. Instead: every occurrence is
+/// recorded once per `(language, name)` pair in [`UNRESOLVED_CAPTURES`], so
+/// a caller (a test, or future diagnostics plumbing) can observe that it
+/// happened without polling a log — and the first occurrence of a pair
+/// outside [`KNOWN_UNRESOLVED_CAPTURES`] also trips [`assert_invariant`], a
+/// hard failure under `cargo test` and any `strict-invariants` build,
+/// silent in an ordinary release build.
+fn note_unresolved_capture(lang: LangId, name: &str) {
+    let mut seen = UNRESOLVED_CAPTURES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if seen.insert((lang, name.to_string())) {
+        let known = KNOWN_UNRESOLVED_CAPTURES.contains(&(lang.name(), name));
+        assert_invariant!(known, || format!(
+            "unresolved tree-sitter capture @{name} for language {:?}: the \
+             closed ScopeTable vocabulary has no entry (or dotted prefix) \
+             for it, and it is not in KNOWN_UNRESOLVED_CAPTURES",
+            lang.name()
+        ));
+    }
+}
+
+/// The `(language, capture name)` pairs seen so far by
+/// [`note_unresolved_capture`] — every capture, once ever, that a query
+/// asked [`SCOPES`] to resolve and got `None` back. Exposed for tests: the
+/// production highlight path only ever inserts into this set, never reads
+/// it back.
+#[cfg(test)]
+pub(crate) fn unresolved_captures() -> HashSet<(LangId, String)> {
+    UNRESOLVED_CAPTURES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
 
 /// One [`highlight`]/[`highlight_range`] call's outcome: its spans in
 /// painter order, plus whether the query still had unyielded captures when
@@ -160,7 +266,13 @@ pub fn parse(lang: &str, source: &str, budget: Duration) -> Option<ParsedTree> {
 /// same registry backs both, but is returned rather than assumed.
 pub fn highlight_range(parsed: &ParsedTree, range: Range<usize>) -> Option<HighlightResult> {
     let (_language, query) = registry().get(parsed.lang)?;
-    Some(run_query(query, &parsed.tree, &parsed.source, Some(range)))
+    Some(run_query(
+        parsed.lang,
+        query,
+        &parsed.tree,
+        &parsed.source,
+        Some(range),
+    ))
 }
 
 /// Parses `source` as `lang` and returns its highlight spans in painter
@@ -193,6 +305,7 @@ pub fn highlight(lang: &str, source: &str, budget: Duration) -> Option<Highlight
 /// returns the results in the one painter-order sort this crate ever
 /// applies.
 fn run_query(
+    lang: LangId,
     query: &Query,
     tree: &Tree,
     source: &str,
@@ -215,6 +328,7 @@ fn run_query(
             continue;
         };
         let Some(scope_id) = SCOPES.resolve(capture_name) else {
+            note_unresolved_capture(lang, capture_name);
             continue;
         };
         let node_range = capture.node.byte_range();
@@ -252,4 +366,18 @@ fn painter_order(
         .cmp(&b.0.start)
         .then(b.0.end.cmp(&a.0.end))
         .then(a.2.cmp(&b.2))
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_known_unresolved_capture_is_recorded_without_panicking() {
+        let rust = LangId::from_name("rust").expect("rust is a known LangId");
+        let source = r#"fn main() { let _s = "a\nb"; }"#;
+        let _ = highlight(rust.name(), source, Duration::from_secs(1));
+        assert!(unresolved_captures().contains(&(rust, "escape".to_string())));
+    }
 }
