@@ -62,9 +62,12 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
         .copied()
         .filter(|&id| {
             id != app.active
-                && app
-                    .doc(id)
-                    .is_some_and(|doc| !doc.pinned && !doc.is_preview() && doc.file_path.is_some())
+                && app.doc(id).is_some_and(|doc| {
+                    !doc.pinned
+                        && !doc.is_preview()
+                        && doc.file_path.is_some()
+                        && !doc.save_in_flight()
+                })
         })
         .collect();
     let clean = eligible
@@ -245,6 +248,31 @@ mod tests {
         ));
         assert_eq!(app.active, expected_victim, "the victim was switched to");
         assert_eq!(app.documents.order().len(), MAX_TABS);
+    }
+
+    #[test]
+    fn a_tab_with_a_save_in_flight_is_never_the_eviction_victim() {
+        let (mut app, ids) = filled_app(MAX_TABS);
+        let saving = ids[1];
+        let next_lra = ids[2];
+        let (version, content) = {
+            let doc = app.doc(saving).unwrap();
+            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+        };
+        app.doc_mut(saving).unwrap().begin_save(version, content);
+
+        let mut effects = Effects::default();
+        assert!(ensure_room(&mut app, &mut effects));
+        app.open_document(Buffer::new("eleventh"));
+
+        assert!(
+            app.documents.order().contains(&saving),
+            "a tab mid-save must survive eviction"
+        );
+        assert!(
+            !app.documents.order().contains(&next_lra),
+            "the next least-recently-active clean tab must have been evicted instead"
+        );
     }
 
     #[test]

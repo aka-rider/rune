@@ -279,6 +279,7 @@ impl PendingOp {
             merge_gen: None,
             binding_only: false,
             doc_scoped: false,
+            is_append: false,
         }
     }
 

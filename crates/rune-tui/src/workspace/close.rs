@@ -48,6 +48,12 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
             },
             "close confirmation dropped \u{2014} a prompt is already showing",
         );
+    } else if app
+        .doc(id)
+        .is_some_and(crate::document::Document::save_in_flight)
+    {
+        app.pending_close_on_save = Some(id);
+        crate::messages::info(app, "save in progress \u{2014} closing once it completes");
     } else {
         let _ = close_now(app, id, effects);
     }
@@ -328,6 +334,49 @@ mod tests {
         assert!(!app.documents.contains_key(&only));
         assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
         assert!(crate::messages::newest_text(&app).is_none());
+    }
+
+    #[test]
+    fn closing_a_clean_document_with_a_save_in_flight_defers_until_the_ack() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        let id = app.active;
+        let extra = app.open_document(Buffer::new("second"));
+        let (version, content) = {
+            let doc = app.doc(id).unwrap();
+            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+        };
+        let ticket = app.doc_mut(id).unwrap().begin_save(version, content);
+
+        let mut effects = Effects::default();
+        request_close(&mut app, id, &mut effects);
+
+        assert!(
+            app.doc(id).is_some(),
+            "the close must wait for the save's ack"
+        );
+        assert_eq!(app.pending_close_on_save, Some(id));
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            Some("save in progress \u{2014} closing once it completes")
+        );
+
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::SaveDone {
+                id,
+                ticket,
+                version,
+                result: Ok(()),
+                durable: true,
+            },
+            &mut effects,
+        );
+
+        assert!(app.doc(id).is_none(), "the ack completes the close");
+        assert!(app.pending_close_on_save.is_none());
+        assert!(app.doc(extra).is_some());
     }
 
     #[test]

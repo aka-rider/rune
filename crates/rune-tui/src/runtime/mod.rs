@@ -349,6 +349,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
     for handle in save_handles.drain(..) {
         let _ = handle.join();
     }
+    exit_settle::settle_pending_materialize(app, &rx);
 
     Ok(())
 }
@@ -574,6 +575,7 @@ pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
 }
 
 mod bootstrap;
+mod exit_settle;
 
 // The tree-sitter highlight `Cmd` constructor and the region pass behind it
 // moved to `runtime::highlight_cmd` (500-line budget) — re-exported below so
