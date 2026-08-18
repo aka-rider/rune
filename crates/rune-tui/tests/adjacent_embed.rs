@@ -33,7 +33,7 @@ fn app_with(content: &str) -> (App, rune_tui::document::DocumentId) {
         vfs,
         None,
     );
-    app.root = Path::new("/vault").to_path_buf();
+    app.set_root(Path::new("/vault").to_path_buf());
     app.graphics.kitty = true;
     let id = app.active;
     app.active_doc_mut().viewport.set_size(80, 24);

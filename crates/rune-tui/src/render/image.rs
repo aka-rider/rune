@@ -12,11 +12,11 @@
 //! producer or, for an embed, `expand_images` sets on every row it
 //! synthesizes).
 //!
-//! Every cell built here carries `buf_offset: -1` (plan gotcha: "`Style::
+//! Every cell built here carries `buf_offset: None` (plan gotcha: "`Style::
 //! patch` is `or`, not overwrite" / "`place_caret`... no `buf_offset`
 //! check" — a decorative cell must never be mistaken for one with real
 //! buffer provenance by the cursor/selection/highlight overlays, all of
-//! which already skip `buf_offset < 0`).
+//! which already skip an offset-less cell).
 
 use ratatui::style::{Color, Style};
 use unicode_segmentation::UnicodeSegmentation;
@@ -123,7 +123,7 @@ fn embed_row_cells(
 /// placeholder protocol's own encoding of WHICH cell of the image this is
 /// — padded with blank cells out to `width`. Every cell is `width: 1`
 /// (`blit` resets the continuation columns of a wide cell, which would
-/// wipe the smuggled id) and `buf_offset: -1` (protects it from the
+/// wipe the smuggled id) and `buf_offset: None` (protects it from the
 /// syntax/selection/caret overlays, all of which skip a negative offset).
 /// `style.fg` carries the allocated Kitty image id as a 24-bit RGB colour
 /// — the ONLY way to smuggle an arbitrary colour past `segment_cells`'
@@ -151,7 +151,7 @@ fn live_row_cells(
             text,
             width: 1,
             style: Style::default().fg(fg),
-            buf_offset: -1,
+            buf_offset: None,
         });
     }
     while cells.len() < width {
@@ -241,7 +241,7 @@ fn human_size(bytes: u64) -> String {
 }
 
 /// `text` centered within `width` columns, padded to fill it — every cell
-/// `buf_offset: -1`. `text` names a user file (the card's file-name line, or
+/// `buf_offset: None`. `text` names a user file (the card's file-name line, or
 /// an inline embed's link target), so it is NOT ASCII-only and is not even
 /// guaranteed printable: it is routed through `push_grapheme_cells` — the
 /// SAME chokepoint `segment_cells` uses for real buffer content — one
@@ -303,7 +303,13 @@ fn grapheme_cells(text: &str, start_col: usize) -> Vec<Cell> {
     let mut cells = Vec::new();
     let mut visual_col = start_col;
     for grapheme in text.graphemes(true) {
-        push_grapheme_cells(&mut cells, &mut visual_col, grapheme, -1, Style::default());
+        push_grapheme_cells(
+            &mut cells,
+            &mut visual_col,
+            grapheme,
+            None,
+            Style::default(),
+        );
     }
     cells
 }
@@ -313,7 +319,7 @@ fn blank_cell() -> Cell {
         text: " ".into(),
         width: 1,
         style: Style::default(),
-        buf_offset: -1,
+        buf_offset: None,
     }
 }
 

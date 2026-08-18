@@ -71,7 +71,7 @@ pub struct FileSearchState {
     pub generation: crate::generation::Generation,
     pub return_to: DocumentId,
     /// The workspace walk's own root, resolved once at [`open`] (A4's own
-    /// ladder: `app.root` when non-empty, else `explorer::initial_root`)
+    /// ladder: `app.root` when resolved, else `explorer::initial_root`)
     /// and reused for both the walk `Cmd` and every candidate's root-
     /// relative `display` string — recomputing it later from live `App`
     /// state would drift out of step with the root the in-flight scan
@@ -143,20 +143,18 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
 }
 
 /// A4's own root ladder: `app.root`, when the user has resolved a workspace
-/// root, is authoritative. When it's still the startup default (an empty
-/// `PathBuf`), this falls back to `explorer::initial_root`'s own ladder —
+/// root, is authoritative. When it's still the startup default (`None`),
+/// this falls back to `explorer::initial_root`'s own ladder —
 /// which itself prefers the ACTIVE DOCUMENT'S OWN DIRECTORY over `app.root`.
 /// So an unresolved `app.root` does not mean the finder walks "the
 /// workspace": it walks wherever the currently active document happens to
 /// live, only falling back to `app.root`/`.` when that document has no path
 /// of its own.
 fn resolve_root(app: &App) -> PathBuf {
-    if app.root.as_os_str().is_empty() {
+    let Some(root) = app.root.as_deref() else {
         return crate::explorer::initial_root(app);
-    }
-    app.vfs
-        .resolve(&app.root)
-        .unwrap_or_else(|_| app.root.clone())
+    };
+    app.vfs.resolve(root).unwrap_or_else(|_| root.to_path_buf())
 }
 
 /// Drops the finder's state outright — the plain close every other writer

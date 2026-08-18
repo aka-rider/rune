@@ -327,11 +327,10 @@ pub struct App {
     /// The workspace root discovered by `workspaceroot::resolve` — the
     /// nearest ancestor of the launch directory carrying a
     /// `.git`/`.obsidian` marker, or `cwd` itself when none is found.
-    /// `PathBuf::new()` (empty) until `set_root` runs; an empty root is a
-    /// legal "not yet resolved" state, and every consumer (the Explorer's
-    /// initial-root fallback, the breadcrumb's relativization) skips it
-    /// rather than treating it as a real path.
-    pub root: PathBuf,
+    /// `None` until `set_root` runs; every consumer (the Explorer's
+    /// initial-root fallback, the breadcrumb's relativization) falls back
+    /// on its own ladder while the root is still unresolved.
+    pub root: Option<PathBuf>,
     /// The snapshot-autosave debounce's one rearmable timer
     /// — `pub(crate)`, not private: `save::schedule_snapshot_debounce` (a
     /// different module) is the sole caller of `arm`. No background thread
@@ -402,7 +401,7 @@ impl App {
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icon_tier: crate::theme::icons::IconTier::Unicode,
             graphics: crate::graphics::GraphicsCaps::default(),
-            root: PathBuf::new(),
+            root: None,
             snapshot_timer: crate::runtime::SnapshotTimer::new(),
             nav_history: crate::navhistory::NavHistory::default(),
         }
@@ -544,7 +543,7 @@ impl App {
     /// the launch-time `cwd`/`home`/file-argument inputs the resolver needs
     /// are available.
     pub fn set_root(&mut self, root: PathBuf) {
-        self.root = root;
+        self.root = Some(root);
     }
 }
 

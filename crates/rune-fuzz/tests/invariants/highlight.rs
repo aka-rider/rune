@@ -152,9 +152,9 @@ fn hl_no_reflow_detects_content_changing_on_a_highlighted_step() {
 #[test]
 fn hl_no_reflow_detects_a_cell_geometry_change() {
     let mut prev = base_snapshot("abc");
-    prev.cells = vec![vec![cell('a', 0), cell('b', 1)]];
+    prev.cells = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
     let mut next = base_snapshot("abc");
-    next.cells = vec![vec![cell('a', 0), cell_wide('b', 1, 2)]]; // width changed
+    next.cells = vec![vec![cell('a', Some(0)), cell_wide('b', Some(1), 2)]]; // width changed
     let ctx = highlighted_ctx(1);
     let v = hl_no_reflow(&prev, &next, &ctx)
         .expect("a cell geometry change on a Msg::Highlighted step must trip HL-NO-REFLOW");
@@ -177,7 +177,7 @@ fn hl_no_reflow_ignores_non_highlighted_messages() {
     assert_eq!(hl_no_reflow(&prev, &next, &ctx), None);
 }
 
-fn cell_wide(ch: char, buf_offset: i64, width: u8) -> Cell {
+fn cell_wide(ch: char, buf_offset: Option<u32>, width: u8) -> Cell {
     let mut c = cell(ch, buf_offset);
     c.width = width;
     c

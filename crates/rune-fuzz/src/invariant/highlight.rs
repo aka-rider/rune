@@ -155,7 +155,7 @@ pub fn hl_no_reflow(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<V
                     "HL-NO-REFLOW",
                     format!(
                         "a Msg::Highlighted step changed cell ({r},{c})'s geometry: \
-                         buf_offset {} -> {}, width {} -> {}",
+                         buf_offset {:?} -> {:?}, width {} -> {}",
                         pc.buf_offset, nc.buf_offset, pc.width, nc.width
                     ),
                 ));

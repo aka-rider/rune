@@ -18,8 +18,8 @@ use crate::support::{
 
 #[test]
 fn sync_idempotent_detects_a_changed_second_render() {
-    let before = vec![vec![cell('a', 0), cell('b', 1)]];
-    let after = vec![vec![cell('a', 0), cell('x', 1)]]; // second sync_view() changed a cell
+    let before = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
+    let after = vec![vec![cell('a', Some(0)), cell('x', Some(1))]]; // second sync_view() changed a cell
     let v = sync_idempotent(&before, 0, &after, 0)
         .expect("a changed second render must trip SYNC-IDEMPOTENT");
     assert_eq!(v.id, "SYNC-IDEMPOTENT");
@@ -27,7 +27,7 @@ fn sync_idempotent_detects_a_changed_second_render() {
 
 #[test]
 fn sync_idempotent_detects_a_moved_scroll_row() {
-    let rows = vec![vec![cell('a', 0)]];
+    let rows = vec![vec![cell('a', Some(0))]];
     let v = sync_idempotent(&rows, 0, &rows, 3)
         .expect("a second sync_view() moving scroll_row must trip SYNC-IDEMPOTENT");
     assert_eq!(v.id, "SYNC-IDEMPOTENT");
@@ -35,7 +35,7 @@ fn sync_idempotent_detects_a_moved_scroll_row() {
 
 #[test]
 fn sync_idempotent_accepts_an_unchanged_second_render() {
-    let rows = vec![vec![cell('a', 0), cell('b', 1)]];
+    let rows = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
     assert_eq!(sync_idempotent(&rows, 5, &rows, 5), None);
 }
 
@@ -46,7 +46,7 @@ fn sync_idempotent_accepts_an_unchanged_second_render() {
 #[test]
 fn cell_offset_detects_out_of_bounds_offset() {
     let mut snap = base_snapshot("abc");
-    snap.cells = vec![vec![cell('a', snap.content.len() as i64 + 1)]];
+    snap.cells = vec![vec![cell('a', Some(snap.content.len() as u32 + 1))]];
     let v = cell_offset(&snap).expect("an out-of-bounds buf_offset must trip CELL-OFFSET");
     assert_eq!(v.id, "CELL-OFFSET");
 }
@@ -54,7 +54,7 @@ fn cell_offset_detects_out_of_bounds_offset() {
 #[test]
 fn cell_offset_detects_mid_rune_offset() {
     let mut snap = base_snapshot("é"); // 2 bytes; offset 1 is mid-rune
-    snap.cells = vec![vec![cell('é', 1)]];
+    snap.cells = vec![vec![cell('é', Some(1))]];
     let v = cell_offset(&snap).expect("a mid-rune buf_offset must trip CELL-OFFSET");
     assert_eq!(v.id, "CELL-OFFSET");
 }
@@ -62,7 +62,11 @@ fn cell_offset_detects_mid_rune_offset() {
 #[test]
 fn cell_offset_accepts_sentinel_and_valid_boundaries() {
     let mut snap = base_snapshot("abc");
-    snap.cells = vec![vec![cell('a', 0), cell(' ', -1), cell('c', 2)]];
+    snap.cells = vec![vec![
+        cell('a', Some(0)),
+        cell(' ', None),
+        cell('c', Some(2)),
+    ]];
     assert_eq!(cell_offset(&snap), None);
 }
 
@@ -73,7 +77,7 @@ fn cell_offset_accepts_sentinel_and_valid_boundaries() {
 #[test]
 fn cell_no_eol_detects_a_newline_cell() {
     let mut snap = base_snapshot("a\nb");
-    snap.cells = vec![vec![cell('a', 0), cell('\n', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), cell('\n', Some(1))]];
     let v = cell_no_eol(&snap).expect("a cell carrying '\\n' must trip CELL-NO-EOL");
     assert_eq!(v.id, "CELL-NO-EOL");
 }
@@ -81,7 +85,7 @@ fn cell_no_eol_detects_a_newline_cell() {
 #[test]
 fn cell_no_eol_detects_a_carriage_return_cell() {
     let mut snap = base_snapshot("a\rb");
-    snap.cells = vec![vec![cell('a', 0), cell('\r', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), cell('\r', Some(1))]];
     let v = cell_no_eol(&snap).expect("a cell carrying '\\r' must trip CELL-NO-EOL");
     assert_eq!(v.id, "CELL-NO-EOL");
 }
@@ -89,7 +93,7 @@ fn cell_no_eol_detects_a_carriage_return_cell() {
 #[test]
 fn cell_no_eol_accepts_ordinary_chars() {
     let mut snap = base_snapshot("ab");
-    snap.cells = vec![vec![cell('a', 0), cell('b', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
     assert_eq!(cell_no_eol(&snap), None);
 }
 
@@ -100,7 +104,7 @@ fn cell_no_eol_accepts_ordinary_chars() {
 #[test]
 fn cell_order_detects_backwards_offsets() {
     let mut snap = base_snapshot("abc");
-    snap.cells = vec![vec![cell('a', 2), cell('b', 0)]];
+    snap.cells = vec![vec![cell('a', Some(2)), cell('b', Some(0))]];
     let v = cell_order(&snap).expect("backwards buf_offsets within a row must trip CELL-ORDER");
     assert_eq!(v.id, "CELL-ORDER");
 }
@@ -109,10 +113,10 @@ fn cell_order_detects_backwards_offsets() {
 fn cell_order_accepts_non_decreasing_offsets_and_skips_sentinels() {
     let mut snap = base_snapshot("abc");
     snap.cells = vec![vec![
-        cell('a', 0),
-        cell(' ', -1),
-        cell('b', 1),
-        cell('c', 2),
+        cell('a', Some(0)),
+        cell(' ', None),
+        cell('b', Some(1)),
+        cell('c', Some(2)),
     ]];
     assert_eq!(cell_order(&snap), None);
 }
@@ -128,8 +132,8 @@ fn table_row_width_detects_a_disagreeing_row_in_the_same_group() {
     // border/content row whose width disagrees with the rest of its own
     // table, exactly the defect class this invariant exists to catch.
     snap.cells = vec![
-        vec![cell_w('x', -1, 2), cell_w('y', -1, 2)],
-        vec![cell_w('x', -1, 2), cell_w('y', -1, 1)],
+        vec![cell_w('x', None, 2), cell_w('y', None, 2)],
+        vec![cell_w('x', None, 2), cell_w('y', None, 1)],
     ];
     snap.row_meta = vec![meta(true, Some(0)), meta(false, Some(0))];
     let v = table_row_width(&snap).expect(
@@ -145,10 +149,10 @@ fn table_row_width_accepts_equal_widths_within_a_group_and_ignores_other_groups(
     // DIFFERENT table, allowed to differ from group 0 freely. A `None`
     // group (plain prose) is ignored entirely.
     snap.cells = vec![
-        vec![cell_w('x', -1, 2), cell_w('y', -1, 2)],
-        vec![cell_w('x', -1, 2), cell_w('y', -1, 2)],
-        vec![cell_w('z', -1, 3)],
-        vec![cell_w('p', 0, 1)],
+        vec![cell_w('x', None, 2), cell_w('y', None, 2)],
+        vec![cell_w('x', None, 2), cell_w('y', None, 2)],
+        vec![cell_w('z', None, 3)],
+        vec![cell_w('p', Some(0), 1)],
     ];
     snap.row_meta = vec![
         meta(true, Some(0)),
@@ -166,7 +170,7 @@ fn table_row_width_accepts_equal_widths_within_a_group_and_ignores_other_groups(
 #[test]
 fn table_synthetic_decorative_detects_a_real_offset_on_a_border_row() {
     let mut snap = base_snapshot("| a | b |\n| - | - |\n");
-    snap.cells = vec![vec![cell('┌', -1), cell('a', 3)]]; // a border row must never carry a real byte
+    snap.cells = vec![vec![cell('┌', None), cell('a', Some(3))]]; // a border row must never carry a real byte
     snap.row_meta = vec![meta(true, Some(0))];
     let v = table_synthetic_decorative(&snap)
         .expect("a synthetic row cell with a real buf_offset must trip TABLE-SYNTHETIC-DECORATIVE");
@@ -177,8 +181,8 @@ fn table_synthetic_decorative_detects_a_real_offset_on_a_border_row() {
 fn table_synthetic_decorative_accepts_all_sentinel_borders_and_ignores_content_rows() {
     let mut snap = base_snapshot("| a | b |\n| - | - |\n");
     snap.cells = vec![
-        vec![cell('┌', -1), cell('─', -1), cell('┐', -1)],
-        vec![cell('a', 2), cell(' ', -1), cell('b', 6)], // non-synthetic: real offsets are fine
+        vec![cell('┌', None), cell('─', None), cell('┐', None)],
+        vec![cell('a', Some(2)), cell(' ', None), cell('b', Some(6))], // non-synthetic: real offsets are fine
     ];
     snap.row_meta = vec![meta(true, Some(0)), meta(false, Some(0))];
     assert_eq!(table_synthetic_decorative(&snap), None);
@@ -193,7 +197,7 @@ fn table_synthetic_decorative_accepts_all_sentinel_borders_and_ignores_content_r
 #[test]
 fn table_row_width_ignores_a_ragged_unboxed_pivot_group() {
     let mut snap = base_snapshot("| a | b |\n| - | - |\n| c | d |\n");
-    snap.cells = vec![vec![], vec![cell_w('x', -1, 2), cell_w('y', -1, 2)]];
+    snap.cells = vec![vec![], vec![cell_w('x', None, 2), cell_w('y', None, 2)]];
     snap.row_meta = vec![meta_unboxed(Some(0)), meta_unboxed(Some(0))];
     assert!(
         table_row_width(&snap).is_none(),
@@ -209,7 +213,7 @@ fn table_row_width_ignores_a_ragged_unboxed_pivot_group() {
 fn cur_no_caret_hidden_detects_a_reversed_cell_while_hidden() {
     let mut snap = base_snapshot("abc");
     snap.caret_visible = false;
-    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), reversed_cell('b', Some(1))]];
     let v = cur_no_caret_hidden(&snap)
         .expect("a REVERSED cell while caret_visible=false must trip CUR-NO-CARET-HIDDEN");
     assert_eq!(v.id, "CUR-NO-CARET-HIDDEN");
@@ -220,7 +224,7 @@ fn cur_no_caret_hidden_accepts_the_focused_reading_link_while_hidden() {
     let mut snap = base_snapshot("abc");
     snap.caret_visible = false;
     snap.reading_link_focus = Some(ByteRange::new(1, 3));
-    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), reversed_cell('b', Some(1))]];
     assert_eq!(cur_no_caret_hidden(&snap), None);
 }
 
@@ -229,7 +233,7 @@ fn cur_no_caret_hidden_detects_a_reversed_cell_outside_the_focused_reading_link(
     let mut snap = base_snapshot("abc");
     snap.caret_visible = false;
     snap.reading_link_focus = Some(ByteRange::new(2, 3));
-    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), reversed_cell('b', Some(1))]];
     let v = cur_no_caret_hidden(&snap)
         .expect("a REVERSED cell outside the focused reading link must trip CUR-NO-CARET-HIDDEN");
     assert_eq!(v.id, "CUR-NO-CARET-HIDDEN");
@@ -239,7 +243,7 @@ fn cur_no_caret_hidden_detects_a_reversed_cell_outside_the_focused_reading_link(
 fn cur_no_caret_hidden_accepts_reversed_cells_while_visible() {
     let mut snap = base_snapshot("abc");
     snap.caret_visible = true;
-    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), reversed_cell('b', Some(1))]];
     assert_eq!(cur_no_caret_hidden(&snap), None);
 }
 
@@ -247,7 +251,7 @@ fn cur_no_caret_hidden_accepts_reversed_cells_while_visible() {
 fn cur_no_caret_hidden_accepts_no_reversed_cells_while_hidden() {
     let mut snap = base_snapshot("abc");
     snap.caret_visible = false;
-    snap.cells = vec![vec![cell('a', 0), cell('b', 1)]];
+    snap.cells = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
     assert_eq!(cur_no_caret_hidden(&snap), None);
 }
 
@@ -260,7 +264,11 @@ fn cur_cell_sync_accepts_the_caret_on_its_own_logical_byte() {
     let mut snap = base_snapshot("abc");
     snap.cursors = vec![collapsed_cursor(1, 0)];
     snap.caret_visible = true;
-    snap.cells = vec![vec![reversed_cell('a', 0), cell('b', 1), cell('c', 2)]];
+    snap.cells = vec![vec![
+        reversed_cell('a', Some(0)),
+        cell('b', Some(1)),
+        cell('c', Some(2)),
+    ]];
     assert_eq!(cur_cell_sync(&snap), None);
 }
 
@@ -272,7 +280,11 @@ fn cur_cell_sync_detects_the_caret_painted_on_a_different_offset() {
     // Position 0 is rendered plainly, but the caret's REVERSED landed on
     // offset 1 instead — exactly the two-width-walk divergence this
     // invariant exists to catch.
-    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1), cell('c', 2)]];
+    snap.cells = vec![vec![
+        cell('a', Some(0)),
+        reversed_cell('b', Some(1)),
+        cell('c', Some(2)),
+    ]];
     let v = cur_cell_sync(&snap)
         .expect("a caret painted off the cursor's own position must trip CUR-CELL-SYNC");
     assert_eq!(v.id, "CUR-CELL-SYNC");
@@ -286,7 +298,11 @@ fn cur_cell_sync_skips_a_position_no_cell_claims() {
     // of which any cell can claim.
     snap.cursors = vec![collapsed_cursor(1, 5)];
     snap.caret_visible = true;
-    snap.cells = vec![vec![cell('a', 0), cell('b', 1), cell('c', 2)]];
+    snap.cells = vec![vec![
+        cell('a', Some(0)),
+        cell('b', Some(1)),
+        cell('c', Some(2)),
+    ]];
     assert_eq!(cur_cell_sync(&snap), None);
 }
 
@@ -295,7 +311,11 @@ fn cur_cell_sync_skips_while_caret_invisible() {
     let mut snap = base_snapshot("abc");
     snap.cursors = vec![collapsed_cursor(1, 0)];
     snap.caret_visible = false;
-    snap.cells = vec![vec![cell('a', 0), cell('b', 1), cell('c', 2)]];
+    snap.cells = vec![vec![
+        cell('a', Some(0)),
+        cell('b', Some(1)),
+        cell('c', Some(2)),
+    ]];
     assert_eq!(cur_cell_sync(&snap), None);
 }
 
@@ -307,6 +327,6 @@ fn cur_cell_sync_accepts_two_cursors_collapsed_onto_one_visible_cell() {
     // only cursor 1's own position needs a matching caret cell.
     snap.cursors = vec![collapsed_cursor(1, 0), collapsed_cursor(2, 1)];
     snap.caret_visible = true;
-    snap.cells = vec![vec![reversed_cell('a', 0), cell('c', 2)]];
+    snap.cells = vec![vec![reversed_cell('a', Some(0)), cell('c', Some(2))]];
     assert_eq!(cur_cell_sync(&snap), None);
 }

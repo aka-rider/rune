@@ -46,17 +46,17 @@
 //! - `SYNC-IDEMPOTENT` — a second `app.sync_view()` with no intervening
 //!   message reproduces the same rendered rows and the same
 //!   `viewport.scroll_row` (sampled per G19).
-//! - `CELL-OFFSET` — every rendered `Cell.buf_offset` is `-1` or a valid,
+//! - `CELL-OFFSET` — every rendered `Cell.buf_offset` is `None` or a valid,
 //!   in-bounds, char-boundary byte offset, and implies `width >= 1`
 //!   (sampled per G19).
 //! - `CELL-NO-EOL` — no rendered cell carries `\n`/`\r` (sampled per G19).
-//! - `CELL-ORDER` — within a row, non-negative `buf_offset`s never go
+//! - `CELL-ORDER` — within a row, real `buf_offset`s never go
 //!   backwards (sampled per G19).
 //! - `TABLE-ROW-WIDTH` — within one contiguous table, every row (content
 //!   or a synthesised border) has the same summed cell width (plan WP5.S3;
 //!   sampled per G19).
 //! - `TABLE-SYNTHETIC-DECORATIVE` — every cell of a synthesised border row
-//!   carries `buf_offset == -1` (plan WP5.S4; sampled per G19).
+//!   carries `buf_offset: None` (plan WP5.S4; sampled per G19).
 //! - `WRAP-RT` — `wrap_to_syntax(syntax_to_wrap(p)) == p` for every syntax
 //!   point `p` in the in-domain rectangle (forward composition only, per
 //!   G7; sampled per G19).

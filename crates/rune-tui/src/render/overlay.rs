@@ -10,6 +10,7 @@ use std::ops::Range;
 
 use ratatui::style::{Modifier as RtModifier, Style};
 
+use rune_core::assert_invariant;
 use rune_core::buffer::Buffer;
 use rune_core::coords::{DisplayRow, WrapRow};
 use rune_core::cursor::CursorSet;
@@ -87,10 +88,10 @@ pub(super) fn apply_highlight_spans(
 
     for row in rows.iter_mut() {
         for cell in row.iter_mut() {
-            if cell.buf_offset < 0 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
-            let offset = cell.buf_offset as usize;
+            };
+            let offset = offset as usize;
             if offset < lo || offset >= hi {
                 continue;
             }
@@ -101,9 +102,9 @@ pub(super) fn apply_highlight_spans(
     }
 }
 
-/// Scans `rows` for the visible byte window `lo..hi` (the min/max
-/// non-negative `buf_offset` seen, `hi` one past the max) — a decorative
-/// cell (`buf_offset < 0`, carries no buffer position at all, see `Cell`'s
+/// Scans `rows` for the visible byte window `lo..hi` (the min/max real
+/// `buf_offset` seen, `hi` one past the max) — a decorative cell
+/// (`buf_offset: None`, carries no buffer position at all, see `Cell`'s
 /// docs) is skipped.
 /// `None` when no cell in `rows` is real (an empty document, or every cell
 /// decorative). Split out of `apply_highlight_spans` so `render::build_rows`
@@ -116,10 +117,10 @@ pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
     let mut hi: usize = 0;
     for row in rows.iter() {
         for cell in row.iter() {
-            if cell.buf_offset < 0 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
-            let offset = cell.buf_offset as usize;
+            };
+            let offset = offset as usize;
             lo = Some(lo.map_or(offset, |current| current.min(offset)));
             hi = hi.max(offset + 1);
         }
@@ -265,8 +266,8 @@ pub(crate) fn apply_cursor_overlays(
 fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: &Theme) {
     for row in rows.iter_mut() {
         for cell in row.iter_mut() {
-            if cell.buf_offset >= 0 {
-                let offset = cell.buf_offset as usize;
+            if let Some(offset) = cell.buf_offset {
+                let offset = offset as usize;
                 if offset >= start && offset < end {
                     cell.style = cell.style.bg(theme.chrome.selection_bg);
                 }
@@ -305,11 +306,15 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed:
         }
         return;
     }
+    let synthetic_offset = u32::try_from(buf_offset).ok();
+    assert_invariant!(synthetic_offset.is_some(), || format!(
+        "caret byte offset {buf_offset} exceeds the cell offset range"
+    ));
     row.push(Cell {
         text: " ".into(),
         width: 1,
         style: Style::default().add_modifier(RtModifier::REVERSED),
-        buf_offset: buf_offset as i64,
+        buf_offset: synthetic_offset,
     });
 }
 
@@ -330,12 +335,19 @@ mod tests {
     use crate::theme::Theme;
     use rune_syntax::scope::scope_table;
 
-    fn cell(offset: i64) -> Cell {
+    fn cell(offset: u32) -> Cell {
         Cell {
             text: "x".into(),
             width: 1,
             style: Style::default(),
-            buf_offset: offset,
+            buf_offset: Some(offset),
+        }
+    }
+
+    fn decorative_cell() -> Cell {
+        Cell {
+            buf_offset: None,
+            ..cell(0)
         }
     }
 
@@ -435,7 +447,7 @@ mod tests {
     #[test]
     fn all_decorative_cells_leave_rows_untouched() {
         let theme = Theme::catppuccin_mocha(false);
-        let mut rows = vec![vec![cell(-1), cell(-1)]];
+        let mut rows = vec![vec![decorative_cell(), decorative_cell()]];
         let before = rows.clone();
         apply_highlight_spans(&mut rows, &[(0..2, scope("function"))], &theme);
         assert_eq!(rows, before);

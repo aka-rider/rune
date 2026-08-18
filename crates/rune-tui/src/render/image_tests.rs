@@ -129,7 +129,7 @@ fn row_cells_center_the_requested_line() {
     let text: String = cells.iter().map(|c| c.text.as_str()).collect();
     assert!(text.contains("x.png"));
     for c in &cells {
-        assert_eq!(c.buf_offset, -1);
+        assert_eq!(c.buf_offset, None);
     }
 }
 
@@ -254,7 +254,7 @@ fn centered_cells_segments_a_cjk_filename_by_grapheme_not_char() {
     for (cell, cluster) in content.iter().zip(expected.iter()) {
         assert_eq!(cell.text, *cluster);
         assert_eq!(cell.width as usize, oracle_grapheme_width(cluster));
-        assert_eq!(cell.buf_offset, -1);
+        assert_eq!(cell.buf_offset, None);
     }
 
     let text_width = display_width(text);

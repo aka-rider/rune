@@ -87,28 +87,22 @@ pub fn sync_idempotent(
 }
 
 /// `CELL-OFFSET` (L0, sampled per G19) — every
-/// `Cell.buf_offset` is `-1` or a valid, in-bounds, char-boundary byte
-/// offset into `content`; a non-negative offset implies `width >= 1` (a
-/// real buffer byte always renders as at least one cell).
+/// `Cell.buf_offset` is `None` (decorative) or a valid, in-bounds,
+/// char-boundary byte offset into `content`; a real offset implies
+/// `width >= 1` (a real buffer byte always renders as at least one cell).
+/// The old "negative but not the `-1` sentinel" arm is gone: `Option<u32>`
+/// makes negative garbage unrepresentable by construction, which is the
+/// point of the type.
 ///
 /// Active-document-switch-safe: L0, checks one `Snapshot`'s `cells` against
 /// its own `content`.
 pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         for cell in row {
-            if cell.buf_offset == -1 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
-            if cell.buf_offset < 0 {
-                return Some(Violation::new(
-                    "CELL-OFFSET",
-                    format!(
-                        "cell buf_offset={} is negative but not the -1 sentinel",
-                        cell.buf_offset
-                    ),
-                ));
-            }
-            let offset = cell.buf_offset as usize;
+            };
+            let offset = offset as usize;
             if offset > snap.content.len() || !snap.content.is_char_boundary(offset) {
                 return Some(Violation::new(
                     "CELL-OFFSET",
@@ -144,7 +138,7 @@ pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
                 return Some(Violation::new(
                     "CELL-NO-EOL",
                     format!(
-                        "cell carries an EOL char {:?} at buf_offset={}",
+                        "cell carries an EOL char {:?} at buf_offset={:?}",
                         cell.text, cell.buf_offset
                     ),
                 ));
@@ -155,29 +149,25 @@ pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
 }
 
 /// `CELL-ORDER` (L0, sampled per G19) — within each row, cells
-/// with a real (non-negative) `buf_offset` are non-decreasing left to
-/// right.
+/// with a real (`Some`) `buf_offset` are non-decreasing left to right.
 ///
 /// Active-document-switch-safe: L0, single `Snapshot`.
 pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
-        let mut last: Option<i64> = None;
+        let mut last: Option<u32> = None;
         for cell in row {
-            if cell.buf_offset < 0 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
+            };
             if let Some(prev_offset) = last
-                && cell.buf_offset < prev_offset
+                && offset < prev_offset
             {
                 return Some(Violation::new(
                     "CELL-ORDER",
-                    format!(
-                        "row cell buf_offsets go backwards: {prev_offset} then {}",
-                        cell.buf_offset
-                    ),
+                    format!("row cell buf_offsets go backwards: {prev_offset} then {offset}"),
                 ));
             }
-            last = Some(cell.buf_offset);
+            last = Some(offset);
         }
     }
     None
@@ -232,8 +222,8 @@ pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
 }
 
 /// `TABLE-SYNTHETIC-DECORATIVE` (L0, sampled per G19; plan WP5.S4) — every
-/// cell of a row whose `RowMeta.synthetic` is `true` carries `buf_offset
-/// == -1`: a synthesised border row has no source line at all
+/// cell of a row whose `RowMeta.synthetic` is `true` carries no
+/// `buf_offset`: a synthesised border row has no source line at all
 /// (`DisplaySnapshot::expand_tables`'s docs), so none of its cells may
 /// claim a real buffer byte.
 ///
@@ -247,13 +237,12 @@ pub fn table_synthetic_decorative(snap: &Snapshot) -> Option<Violation> {
             continue;
         };
         for cell in row {
-            if cell.buf_offset != -1 {
+            if let Some(offset) = cell.buf_offset {
                 return Some(Violation::new(
                     "TABLE-SYNTHETIC-DECORATIVE",
                     format!(
-                        "synthetic row {i} has a cell with buf_offset={} \
-                         (must be -1, decorative only)",
-                        cell.buf_offset
+                        "synthetic row {i} has a cell with buf_offset={offset} \
+                         (must be decorative only)"
                     ),
                 ));
             }

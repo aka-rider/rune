@@ -8,6 +8,7 @@ use std::ops::Range;
 
 use compact_str::{CompactString, ToCompactString};
 use ratatui::style::Style;
+use rune_core::assert_invariant;
 use unicode_segmentation::UnicodeSegmentation;
 
 use rune_syntax::ScopeId;
@@ -22,21 +23,21 @@ use crate::theme::Theme;
 /// several `char`s (joiner/modifier codepoints included) that together form
 /// ONE user-perceived character occupying ONE cell — see `push_grapheme_
 /// cells`'s docs for why splitting a cluster across multiple `Cell`s
-/// corrupts the terminal output. `-1` marks a cell with no direct buffer
-/// correspondence — decorative/synthetic (a synthetic EOL cursor cell
-/// still carries its actual cursor byte offset, never `-1`, since it DOES
-/// have a precise buffer position). A genuinely decorative cell — a
-/// synthetic table border, or a line's own heading-icon/bullet/quote-bar/
-/// hr-rule prefix — always uses `-1`, and every consumer that walks `Cell`s
-/// keyed on buffer position (the highlight overlay, the selection/caret
-/// overlays, mouse hit-testing) skips a negative `buf_offset` rather than
-/// resolving it to a byte.
+/// corrupts the terminal output. `buf_offset: None` marks a cell with no
+/// direct buffer correspondence — decorative/synthetic (a synthetic EOL
+/// cursor cell still carries its actual cursor byte offset, never `None`,
+/// since it DOES have a precise buffer position). A genuinely decorative
+/// cell — a synthetic table border, or a line's own heading-icon/bullet/
+/// quote-bar/hr-rule prefix — always uses `None`, and every consumer that
+/// walks `Cell`s keyed on buffer position (the highlight overlay, the
+/// selection/caret overlays, mouse hit-testing) skips an offset-less cell
+/// rather than resolving it to a byte.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
     pub text: CompactString,
     pub width: u8,
     pub style: Style,
-    pub buf_offset: i64,
+    pub buf_offset: Option<u32>,
 }
 
 /// Semantic `ScopeId` -> `ratatui::style::Style` — delegates to
@@ -130,7 +131,7 @@ pub(crate) fn push_grapheme_cells(
     cells: &mut Vec<Cell>,
     visual_col: &mut usize,
     grapheme: &str,
-    buf_offset: i64,
+    buf_offset: Option<u32>,
     style: Style,
 ) {
     let mut chars = grapheme.chars();
@@ -228,16 +229,11 @@ fn segment_cells_with(
                 // A producer bug (cell_map built from different text than
                 // what's emitted) would make a grapheme's offset lookup
                 // fall past the end of `cell_map` — an ordinary shipped
-                // build degrades gracefully (the `-1` "no buffer
-                // correspondence" sentinel, same as any other decorative
-                // cell).
+                // build degrades gracefully (`None`, "no buffer
+                // correspondence", same as any other decorative cell).
                 let mut char_idx = 0usize;
                 for grapheme in text.graphemes(true) {
-                    let offset = cell_map
-                        .get(char_idx)
-                        .copied()
-                        .flatten()
-                        .map_or(-1, |o| o as i64);
+                    let offset = cell_map.get(char_idx).copied().flatten();
                     push_grapheme_cells(&mut cells, &mut visual_col, grapheme, offset, style);
                     char_idx += grapheme.chars().count();
                 }
@@ -245,13 +241,11 @@ fn segment_cells_with(
             SyntaxSpan::Identical { .. } => {
                 let mut offset = sp.range().start;
                 for grapheme in sp.text(content).graphemes(true) {
-                    push_grapheme_cells(
-                        &mut cells,
-                        &mut visual_col,
-                        grapheme,
-                        offset as i64,
-                        style,
-                    );
+                    let cell_offset = u32::try_from(offset).ok();
+                    assert_invariant!(cell_offset.is_some(), || format!(
+                        "span byte offset {offset} exceeds the cell offset range"
+                    ));
+                    push_grapheme_cells(&mut cells, &mut visual_col, grapheme, cell_offset, style);
                     offset += grapheme.len();
                 }
             }
@@ -264,16 +258,15 @@ fn segment_cells_with(
 /// inside `range` — the one byte-range background painter every
 /// region-highlight pass in this crate shares (merge mode's per-block
 /// backgrounds, the search bar's per-match highlight): a decorative cell
-/// (`buf_offset < 0`) is never a candidate, since it claims no buffer byte
-/// to compare `range` against.
+/// (`buf_offset: None`) is never a candidate, since it claims no buffer
+/// byte to compare `range` against.
 pub(crate) fn paint_range(rows: &mut [Vec<Cell>], range: Range<usize>, style: Style) {
     for row in rows.iter_mut() {
         for cell in row.iter_mut() {
-            if cell.buf_offset < 0 {
+            let Some(offset) = cell.buf_offset else {
                 continue;
-            }
-            let offset = cell.buf_offset as usize;
-            if range.contains(&offset) {
+            };
+            if range.contains(&(offset as usize)) {
                 cell.style = cell.style.patch(style);
             }
         }

@@ -174,7 +174,7 @@ fn recents_loaded_err_reply_posts_a_message_and_leaves_recents_empty() {
 #[test]
 fn open_pushes_the_walk_cmd_and_marks_it_pending() {
     let mut app = app();
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     let mut effects = Effects::default();
 
     open(&mut app, &mut effects);
@@ -195,7 +195,7 @@ fn open_pushes_the_walk_cmd_and_marks_it_pending() {
 #[test]
 fn handle_scanned_drops_a_reply_whose_generation_no_longer_matches() {
     let mut app = app();
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
     let stale_generation = app.filesearch().expect("open").generation;
@@ -225,7 +225,7 @@ fn handle_scanned_drops_a_reply_whose_generation_no_longer_matches() {
 #[test]
 fn handle_scanned_dedups_walk_against_recents_keeping_the_recents_mru_rank() {
     let mut app = app();
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
     let generation = app.filesearch().expect("open").generation;
@@ -281,7 +281,7 @@ fn handle_scanned_dedups_walk_against_recents_keeping_the_recents_mru_rank() {
 #[test]
 fn handle_scanned_error_clears_pending_and_posts_a_message() {
     let mut app = app();
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
     let generation = app.filesearch().expect("open").generation;
@@ -447,7 +447,7 @@ fn mru_rank_breaks_a_score_tie() {
 #[test]
 fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_same_path() {
     let mut app = app();
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
     let generation = app.filesearch().expect("open").generation;
@@ -537,7 +537,7 @@ fn a_query_edit_recompute_resets_the_cursor_to_the_top() {
 #[test]
 fn two_query_edits_with_the_same_top_hit_push_exactly_one_preview_cmd_total() {
     let mut app = app();
-    app.root = PathBuf::from("/root");
+    app.root = Some(PathBuf::from("/root"));
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
     let generation = app.filesearch().expect("open").generation;

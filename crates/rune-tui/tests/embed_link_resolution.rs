@@ -68,7 +68,7 @@ fn app_with_content(content: &str, seed_paths: &[&str]) -> (App, DocumentId) {
     );
     let id = app.active;
     app.graphics.kitty = true;
-    app.root = Path::new("/vault").to_path_buf();
+    app.set_root(Path::new("/vault").to_path_buf());
     let end = content.len();
     app.doc_mut(id).expect("doc").cursors = CursorSet::new(end);
     app.sync_view();
@@ -118,7 +118,7 @@ fn a_link_and_an_embed_with_the_same_relative_target_resolve_to_the_same_path() 
         app.vfs.as_ref(),
         &link_target,
         doc_dir.as_deref(),
-        &app.root,
+        app.root.as_deref().expect("root set by the fixture"),
         rune_md::catalogue::NAME_RESOLUTION_EXTENSION,
     );
     match dest {
