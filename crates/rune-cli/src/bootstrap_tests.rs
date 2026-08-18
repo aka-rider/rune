@@ -228,9 +228,9 @@ fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
 
 /// A missing-path launch is a recovery-backed draft that already knows its
 /// name, not a launch with zero crash protection: no banner, a live
-/// app-wide `Db`, and the active document bound to a fresh scratch row with
-/// `bind_new == true` — the same shape a no-positional launch's default
-/// document gets.
+/// app-wide `Db`, and the active document bound to a fresh scratch row in
+/// the create-only publish mode — the same shape a no-positional launch's
+/// default document gets.
 #[test]
 fn launch_nonexistent_path_is_recovery_backed() {
     let vfs = Mem::new();
@@ -252,7 +252,7 @@ fn launch_nonexistent_path_is_recovery_backed() {
     assert!(
         app.doc(app.active)
             .and_then(|d| d.doc_db())
-            .is_some_and(|db| db.bind_new),
+            .is_some_and(|db| db.publish_mode.is_create_only()),
         "the active document must be bound to a scratch row awaiting its first publish"
     );
 }
@@ -291,7 +291,9 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
          not fall back to an untitled draft"
     );
     assert!(
-        active.doc_db().is_some_and(|db| db.bind_new),
+        active
+            .doc_db()
+            .is_some_and(|db| db.publish_mode.is_create_only()),
         "the first positional's document must bind the fresh scratch row"
     );
 

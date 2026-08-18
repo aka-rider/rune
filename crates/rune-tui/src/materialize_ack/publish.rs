@@ -121,7 +121,7 @@ fn refuse_divergent_publish(app: &mut App, id: DocumentId, kind: SyncKind) {
 /// re-derive any of it.
 #[derive(Debug)]
 pub enum MaterializeVfsOutcome {
-    /// The overwrite target no longer exists (`bind_new=false` only) —
+    /// The overwrite target no longer exists (overwrite publishes only) —
     /// never silently (re)create.
     Missing,
     /// The caller's own target disagrees with the document's bound path —
@@ -132,7 +132,8 @@ pub enum MaterializeVfsOutcome {
     /// this outcome — nothing happened worth recording, and the failure is
     /// specific to this document's save, not the store.
     Error(String),
-    /// The live target (or, for `bind_new`, a concurrent creator's file)
+    /// The live target (or, for a create-only publish, a concurrent
+    /// creator's file)
     /// didn't match `expect` — no write was attempted; `data`/`stat`
     /// describe whatever is actually on disk now. `confirmed` is the
     /// bracketed read's own verdict — a racer caught mid-external-rewrite
@@ -171,7 +172,7 @@ pub enum MaterializeVfsOutcome {
 }
 
 /// `Publishing`'s own vfs `Cmd` — resolves the destination, CAS-checks it
-/// (`!bind_new`), publishes (`exchange`/`rename_excl`), and on a plain
+/// (overwrite publishes only), publishes (`exchange`/`rename_excl`), and on a plain
 /// overwrite, reads back the displaced bytes to detect a swap-race —
 /// entirely through THIS app's own `Vfs` handle, never the writer thread's.
 /// `db_id`/`seq`/`content` are captured here at spawn time and echoed back
@@ -193,7 +194,7 @@ fn materialize_vfs_cmd(
         let outcome = save::run_materialize_vfs(
             vfs.as_ref(),
             &params.path,
-            params.bind_new,
+            params.publish_mode,
             &content,
             &expect_hash,
             bound_path.as_deref(),

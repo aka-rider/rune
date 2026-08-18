@@ -51,7 +51,11 @@ fn bind_second_tab(
     {
         let doc = app.doc_mut(id).unwrap();
         doc.file_path = Some(path.to_path_buf());
-        doc.set_doc_db_for_test(DocDb::new(db_id, false, rune_db::Seq(0)));
+        doc.set_doc_db_for_test(DocDb::new(
+            db_id,
+            rune_tui::db::PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
     }
     app.install_or_join_file_binding(db_id, None);
     id

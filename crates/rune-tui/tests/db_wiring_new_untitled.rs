@@ -32,8 +32,8 @@ fn pending_scratch_op(app: &app::App, id: DocumentId) -> u64 {
 }
 
 /// Minting an untitled draft with a live, non-degraded store enqueues a
-/// `CreateScratch` op; delivering its ack binds a real `DocDb` (`bind_new`
-/// true — a scratch row has never been bound to a real file).
+/// `CreateScratch` op; delivering its ack binds a real `DocDb` (create-only
+/// — a scratch row has never been bound to a real file).
 #[test]
 fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
     let mut session = Session::open("/doc.md", "");
@@ -54,8 +54,8 @@ fn new_untitled_document_binds_a_doc_db_once_the_create_scratch_ack_lands() {
         .doc_db()
         .expect("db_id bound");
     assert!(
-        doc_db.bind_new,
-        "a scratch row has never been bound to a real file, so bind_new stays true"
+        doc_db.publish_mode.is_create_only(),
+        "a scratch row has never been bound to a real file, so it stays create-only"
     );
     assert!(
         !session.app().db_ops.contains_key(&op_id),

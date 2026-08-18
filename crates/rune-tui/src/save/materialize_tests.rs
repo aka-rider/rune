@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rune_vfs::{DirEntry, Mem, Stat, Vfs};
 
+use crate::db::PublishMode;
+
 use super::*;
 
 /// Wraps a `Mem`, delegating every `Vfs` method to it verbatim EXCEPT
@@ -93,7 +95,7 @@ fn a_transient_cas_mismatch_that_closes_on_the_second_read_proceeds_to_commit() 
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -119,7 +121,7 @@ fn a_stable_cas_mismatch_reports_a_confirmed_conflict() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -153,7 +155,7 @@ fn an_ordinary_commit_reports_confirmed() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -177,7 +179,7 @@ fn a_force_save_of_a_missing_destination_commits_as_a_fresh_create() {
     let outcome = run_materialize_vfs(
         &vfs,
         Path::new("/doc.md"),
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -204,7 +206,7 @@ fn a_force_save_over_the_unchanged_baseline_commits_without_a_race() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -231,7 +233,7 @@ fn a_force_save_over_foreign_bytes_races_and_captures_the_displaced_bytes() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -312,7 +314,7 @@ fn an_unconfirmed_hash_equal_disk_refuses_the_save_as_a_conflict() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -349,7 +351,7 @@ fn a_flapping_post_publish_stat_commits_unconfirmed() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -379,7 +381,7 @@ fn a_post_publish_durability_failure_still_commits_with_durable_false() {
     let outcome = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "new content",
         &expect_hash,
         None,
@@ -410,7 +412,7 @@ fn two_saves_of_one_file_back_to_back_never_collide_on_temp_names() {
     let first = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "first tab's content",
         &rune_db::hash_bytes(b"original"),
         None,
@@ -424,7 +426,7 @@ fn two_saves_of_one_file_back_to_back_never_collide_on_temp_names() {
     let second = run_materialize_vfs(
         &vfs,
         path,
-        false,
+        PublishMode::OverwriteExisting,
         "second tab's content",
         &rune_db::hash_bytes(b"first tab's content"),
         None,
@@ -449,8 +451,11 @@ fn app_with_db() -> App {
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let id = app.active;
     if let Some(doc) = app.doc_mut(id) {
-        doc.replica =
-            crate::document::Replica::Bound(crate::db::DocDb::new(1, false, rune_db::Seq(0)));
+        doc.replica = crate::document::Replica::Bound(crate::db::DocDb::new(
+            1,
+            PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
     }
     app
 }

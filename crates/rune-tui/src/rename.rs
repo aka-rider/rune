@@ -256,7 +256,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
         && app
             .doc(id)
             .and_then(|d| d.doc_db())
-            .is_some_and(|d| d.bind_new)
+            .is_some_and(|d| d.publish_mode.is_create_only())
     {
         crate::save::bind_new_now(app, id, to);
         return Commit::Accepted;

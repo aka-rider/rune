@@ -28,7 +28,7 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::app::App;
-use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
 use rune_tui::merge::MergeState;
 use rune_tui::runtime::{CmdKind, Msg};
 use rune_vfs::{Mem, Vfs};
@@ -66,8 +66,11 @@ fn unsaved_named_app_with_file_store(mem: &Arc<Mem>, db_path: &Path) -> (App, Ar
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(row_id, true, rune_db::Seq(0)));
+    app.active_doc_mut().set_doc_db_for_test(DocDb::new(
+        row_id,
+        PublishMode::CreateOnly,
+        rune_db::Seq(0),
+    ));
     app.install_or_join_file_binding(row_id, None);
     app.active_doc_mut().viewport.set_size(80, 23);
     app.sync_view();

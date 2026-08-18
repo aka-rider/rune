@@ -58,8 +58,11 @@ fn file_store_app(mem: &Arc<Mem>, db_path: &Path) -> (App, Arc<DbBridge>) {
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
-    app.active_doc_mut()
-        .set_doc_db_for_test(DocDb::new(load.doc_id.0, false, rune_db::Seq(0)));
+    app.active_doc_mut().set_doc_db_for_test(DocDb::new(
+        load.doc_id.0,
+        rune_tui::db::PublishMode::OverwriteExisting,
+        rune_db::Seq(0),
+    ));
     app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
     app.active_doc_mut().viewport.set_size(80, 23);
     app.sync_view();

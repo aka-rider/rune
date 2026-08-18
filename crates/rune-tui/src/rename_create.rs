@@ -99,7 +99,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     let path = dir.join(name);
 
     if app.doc(id).and_then(|d| d.doc_db()).is_some() && app.db.is_some() {
-        // The store route: `materialize(bind_new=true)` is an atomic
+        // The store route: a create-only `materialize` is an atomic
         // `rename_excl` create whose EEXIST branch refuses and records the
         // winner's bytes. `save::trigger_save` cannot be reused — it reads
         // `doc.file_path`, which is exactly what does not exist yet.

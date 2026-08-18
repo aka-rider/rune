@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_db::{DbEvent, OpOutcome, Store};
-use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
 use rune_vfs::Vfs;
 
 /// The result of [`bootstrap_db`] (an existing path, loaded off disk) or
@@ -24,7 +24,7 @@ pub(crate) struct DbBootstrap {
     /// `db_id`, the same shared-per-file entry every later document bound to
     /// this `db_id` reads and advances — never installed directly on
     /// `doc_db` itself. A genuine baseline for a real `Load`, `None` for a
-    /// fresh scratch row (`doc_db`'s own `bind_new: true`).
+    /// fresh scratch row (`doc_db`'s own create-only publish mode).
     pub(crate) expect_obs: Option<rune_db::ObsId>,
     /// `Some` whenever `rune-db`'s `Load` returned reconstructed content
     /// (which may or may not differ from the buffer `load_sighting` already
@@ -232,7 +232,8 @@ pub(crate) fn bootstrap_db(
     let db = Db::new(store, bridge, degraded_at_open);
     let doc_db = DocDb::new(
         load_result.doc_id.0,
-        false, // bind_new: the caller only reaches here when `sighting` confirms the target exists
+        // The caller only reaches here when `sighting` confirms the target exists.
+        PublishMode::OverwriteExisting,
         // last_known_seq: `load` may have already durably journaled a
         // cross-session-inheritance bridge edit under THIS session's own
         // id — `bridge_seq` is that edit's own seq when it happened, and
@@ -414,7 +415,7 @@ pub(crate) fn bootstrap_untitled_db(
 /// before ever materializing. [`find_named_draft`] looks for that row FIRST;
 /// only when nothing adoptable turns up does this mint a brand-new one, same
 /// as before this recovery existed. Either way the row binds with
-/// `bind_new` — the first materialize turns it into the real file's row
+/// create-only — the first materialize turns it into the real file's row
 /// through the same no-clobber publish every named draft already uses.
 /// Journaling is live from the first keystroke.
 ///
@@ -465,7 +466,7 @@ pub(crate) fn bootstrap_new_file(
     };
 
     let db = Db::new(store, bridge, degraded_at_open);
-    let doc_db = DocDb::new(db_id, /* bind_new */ true, rune_db::Seq(0));
+    let doc_db = DocDb::new(db_id, PublishMode::CreateOnly, rune_db::Seq(0));
     let banner = if degraded_at_open {
         Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
     } else {

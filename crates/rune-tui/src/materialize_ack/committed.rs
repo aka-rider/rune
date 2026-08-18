@@ -27,7 +27,7 @@ pub(super) fn handle_committed_ack(
     // Once the bytes are published, the target exists, so the next save
     // is an overwrite — regardless of whether the bookkeeping that would
     // have supplied `saved` (and so a fresh CAS baseline) survived.
-    // `bind_new` stays on THIS document's own `DocDb` (never shared — a
+    // `publish_mode` stays on THIS document's own `DocDb` (never shared — a
     // scratch row racing to bind is claimed by exactly one document),
     // but the epoch/baseline below live on the SHARED `FileBinding` for
     // `db_id`, so every OTHER tab open on the same file sees the same
@@ -37,7 +37,7 @@ pub(super) fn handle_committed_ack(
     // instead of the file's true current baseline.
     let db_id = app.doc_db_id(id);
     if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.doc_db_mut()) {
-        doc_db.bind_new = false;
+        doc_db.publish_mode = crate::db::PublishMode::OverwriteExisting;
     }
     if let Some(binding) = app.doc_file_binding_mut(id) {
         // The publish just committed — any `Probe` issued before this
@@ -83,7 +83,7 @@ pub(super) fn handle_committed_ack(
         // A document may never be left with a store binding that
         // cannot serve its next save. The bookkeeping that would
         // have supplied a fresh CAS baseline was lost (`record_
-        // outcome`'s synthetic-commit arms), so `bind_new: false`
+        // outcome`'s synthetic-commit arms), so the overwrite mode
         // above paired with the STALE `expect_obs` a scratch row
         // installs would make the very next save's `materialize_
         // prepare` look up an observation that was never recorded.

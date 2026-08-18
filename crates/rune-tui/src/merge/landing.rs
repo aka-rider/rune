@@ -631,8 +631,11 @@ mod tests {
         let doc = app.active;
         if let Some(d) = app.doc_mut(doc) {
             d.read_only = crate::document::ReadOnly::Always;
-            d.replica =
-                crate::document::Replica::Bound(crate::db::DocDb::new(1, false, rune_db::Seq(0)));
+            d.replica = crate::document::Replica::Bound(crate::db::DocDb::new(
+                1,
+                crate::db::PublishMode::OverwriteExisting,
+                rune_db::Seq(0),
+            ));
         }
         app.install_or_join_file_binding(1, Some(rune_db::ObsId::new(7).expect("nonzero")));
         app.merge = MergeState::Pending {

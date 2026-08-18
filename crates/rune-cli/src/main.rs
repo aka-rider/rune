@@ -308,7 +308,7 @@ fn apply_db_bootstrap(
         let db_id = doc_db.db_id;
         let row_content = match &db_bootstrap.recovered_content {
             Some(recovered) => recovered.clone(),
-            None if doc_db.bind_new => String::new(),
+            None if doc_db.publish_mode.is_create_only() => String::new(),
             None => app.active_doc_mut().buffer.content().to_string(),
         };
         app.install_or_join_file_binding(db_id, db_bootstrap.expect_obs);

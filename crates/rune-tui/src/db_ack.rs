@@ -5,7 +5,7 @@
 //! ops these react to.
 
 use crate::app::App;
-use crate::db::DocDb;
+use crate::db::{DocDb, PublishMode};
 use crate::document::{DocumentId, Replica, ReplicaStep};
 use crate::messages;
 use rune_core::buffer::AppliedEdit;
@@ -173,7 +173,7 @@ fn install_doc_db(
 ) -> Vec<ReplicaStep> {
     let doc_db = DocDb::new(
         load_result.doc_id.0,
-        false,
+        PublishMode::OverwriteExisting,
         load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
     );
     bind_document_row(app, id, doc_db, &load_result.recovered, adopted)
@@ -353,7 +353,7 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: rune_db::Seq) {
 /// The reaction to a `CreateScratch` op's ack: `row_id` is a freshly
 /// minted, never-bound scratch row — `id`'s
 /// document binds to it exactly like a recovered launch-time scratch draft
-/// does (`rune-cli::open::adopt_scratch_doc`), `bind_new` true because a
+/// does (`rune-cli::open::adopt_scratch_doc`), create-only because a
 /// scratch row has never been bound to a real file, so its NEXT save must
 /// still go through the create-only path. `id` no longer live (the draft
 /// was closed while this op was still in flight) is a correct, silent
@@ -371,7 +371,7 @@ pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
 /// [`bind_document_row`] chokepoint — shared by [`handle_create_scratch_ack`]
 /// (the async mint) and [`adopt_scratch_doc`] (the launch-time synchronous
 /// bind). A scratch row reconstructs to the empty string for this session,
-/// and has never been bound to a real file, so `bind_new` stays true.
+/// and has never been bound to a real file, so it stays create-only.
 pub fn bind_scratch_doc(app: &mut App, id: DocumentId, row_id: i64) {
     if app.doc(id).is_none() {
         return;
@@ -379,7 +379,7 @@ pub fn bind_scratch_doc(app: &mut App, id: DocumentId, row_id: i64) {
     let pending = bind_document_row(
         app,
         id,
-        DocDb::new(row_id, true, rune_db::Seq(0)),
+        DocDb::new(row_id, PublishMode::CreateOnly, rune_db::Seq(0)),
         "",
         false,
     );
@@ -460,9 +460,9 @@ mod tests {
         let id_b = app.open_document(Buffer::new("b"));
 
         app.doc_mut(id_a).expect("doc a exists").replica =
-            Replica::Bound(DocDb::new(1, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(1, PublishMode::CreateOnly, rune_db::Seq(0)));
         app.doc_mut(id_b).expect("doc b exists").replica =
-            Replica::Bound(DocDb::new(2, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(2, PublishMode::CreateOnly, rune_db::Seq(0)));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -519,9 +519,9 @@ mod tests {
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
         app.doc_mut(id_a).expect("doc a exists").replica =
-            Replica::Bound(DocDb::new(1, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(1, PublishMode::CreateOnly, rune_db::Seq(0)));
         app.doc_mut(id_b).expect("doc b exists").replica =
-            Replica::Bound(DocDb::new(2, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(2, PublishMode::CreateOnly, rune_db::Seq(0)));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         let op_for_a = *app
@@ -571,9 +571,9 @@ mod tests {
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
         app.doc_mut(id_a).expect("doc a exists").replica =
-            Replica::Bound(DocDb::new(1, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(1, PublishMode::CreateOnly, rune_db::Seq(0)));
         app.doc_mut(id_b).expect("doc b exists").replica =
-            Replica::Bound(DocDb::new(2, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(2, PublishMode::CreateOnly, rune_db::Seq(0)));
 
         append_edit(&mut app, id_a, &[], &[], &[]);
         append_edit(&mut app, id_b, &[], &[], &[]);
@@ -642,7 +642,7 @@ mod tests {
     /// never adopt the recovered content or touch `last_sync` —
     /// only the shared per-file baseline and the document's own `DocDb` itself (which the
     /// lost-create-race hand-off relies on rebinding to an entirely
-    /// different row, `bind_new` included) advance. Contrasts `handle_
+    /// different row, `publish_mode` included) advance. Contrasts `handle_
     /// load_ack_messages_a_non_diverged_adoption` above, which drives the
     /// ordinary (`binding_only: false`) path and DOES adopt.
     #[test]
@@ -654,11 +654,11 @@ mod tests {
             Some(in_memory_db()),
         );
         let id = app.active;
-        // Starts `bind_new: true`, on a DIFFERENT `db_id` than the ack
+        // Starts create-only, on a DIFFERENT `db_id` than the ack
         // below carries — the exact shape the lost-create-race hand-off
         // leaves behind right before its own `binding_only` `Load` lands.
         app.doc_mut(id).expect("doc exists").replica =
-            Replica::Bound(DocDb::new(3, true, rune_db::Seq(0)));
+            Replica::Bound(DocDb::new(3, PublishMode::CreateOnly, rune_db::Seq(0)));
         app.install_or_join_file_binding(3, None);
         let issued_version = app.doc(id).expect("doc exists").buffer.version();
 
@@ -699,9 +699,10 @@ mod tests {
             doc_db.db_id, 7,
             "a binding_only ack rebinds doc.db to the ack's OWN db_id"
         );
-        assert!(
-            !doc_db.bind_new,
-            "a binding_only ack always installs bind_new: false"
+        assert_eq!(
+            doc_db.publish_mode,
+            PublishMode::OverwriteExisting,
+            "a binding_only ack always installs the overwrite mode"
         );
         assert_eq!(doc_db.last_known_seq, rune_db::Seq(9));
         assert_eq!(
@@ -805,8 +806,11 @@ mod tests {
             Some(Db::new(store, Arc::clone(&bridge), false)),
         );
         let id = app.active;
-        app.doc_mut(id).expect("doc exists").replica =
-            Replica::Bound(DocDb::new(load.doc_id.0, false, rune_db::Seq(0)));
+        app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(
+            load.doc_id.0,
+            PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
         app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
 
         // Simulates exactly the state a `saved: None` `MaterializeRecord`
