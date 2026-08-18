@@ -27,7 +27,10 @@ pub fn toggle(app: &mut App) {
     // refusal with a status message: `⌃P` firing from another pane is not
     // user-initiated intent to toggle THIS document, the same precondition
     // `app.rs::refocus_title` treats silently rather than as a refusal.
-    if focus::target(app) != FocusTarget::Editor {
+    if !matches!(
+        focus::target(app),
+        FocusTarget::Editor | FocusTarget::Palette
+    ) {
         return;
     }
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {

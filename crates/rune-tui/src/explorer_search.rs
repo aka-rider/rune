@@ -88,32 +88,32 @@ pub enum ExplorerSearchCommand {
 /// `resolve_in` matches on one exact `KeyPattern`, so this can't be folded
 /// into one row that ignores `mods` the way `KeyPattern::matches`'s whole-
 /// `Mods` equality is deliberately never allowed to. The shift row is
-/// marked `alias: true` so the footer's default hints don't advertise two
+/// marked `secondary: true` so the footer's default hints don't advertise two
 /// chords for what a user experiences as the same "just type" affordance.
 pub const EXPLORER_SEARCH_BINDINGS: &[Binding<ExplorerSearchCommand>] = &[
     Binding {
         key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: ExplorerSearchCommand::Cancel,
         help: "cancel search",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Backspace, Mods::NONE),
         cmd: ExplorerSearchCommand::Erase,
         help: "erase search char",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::printable(Mods::NONE),
         cmd: ExplorerSearchCommand::Type,
         help: "search by name",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::printable(SHIFT),
         cmd: ExplorerSearchCommand::Type,
         help: "search by name",
-        alias: true,
+        secondary: true,
     },
 ];
 

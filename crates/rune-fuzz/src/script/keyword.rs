@@ -20,6 +20,7 @@ pub(super) enum Keyword {
     DeliverDbAll,
     HighlightTree,
     AdvanceClock,
+    PaletteRecentsLoaded,
 }
 
 impl Keyword {
@@ -43,6 +44,7 @@ impl Keyword {
             Keyword::DeliverDbAll => "deliver-db-all",
             Keyword::HighlightTree => "highlight-tree",
             Keyword::AdvanceClock => "advance-clock",
+            Keyword::PaletteRecentsLoaded => "palette-recents",
         }
     }
 
@@ -66,9 +68,11 @@ impl Keyword {
             Action::DeliverDbAll => Keyword::DeliverDbAll,
             Action::HighlightTree { .. } => Keyword::HighlightTree,
             Action::AdvanceClock(_) => Keyword::AdvanceClock,
+            Action::PaletteRecentsLoaded { .. } => Keyword::PaletteRecentsLoaded,
         }
     }
 }
 
 pub(super) const DIRLOADED_ENTRY: &str = "dirloaded-entry";
 pub(super) const HIGHLIGHT_SPAN: &str = "highlight-span";
+pub(super) const PALETTE_RECENTS_NAME: &str = "palette-recents-name";

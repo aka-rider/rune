@@ -188,6 +188,7 @@ pub struct Document {
     /// reacquires) a path; a pathless draft and the Help document therefore
     /// stay `DocumentKind::Markdown`, exactly as before this plan.
     pub kind: DocumentKind,
+    pub kind_pinned: bool,
     /// The icon tier line decorations render with — mirrored
     /// onto `doc` via `DocMachine::set_icons` on every `view()` call, same
     /// pattern as `kind`/`set_kind`. `Document` holds no `App` reference,
@@ -408,6 +409,7 @@ impl Document {
             catalogue: Vec::new(),
             reading_link_focus: None,
             kind: DocumentKind::Markdown,
+            kind_pinned: false,
             icons: IconSet::unicode(),
             highlight: HighlightState::default(),
             graphics: crate::graphics::Graphics::None,
@@ -670,9 +672,11 @@ impl Document {
     /// `doc` too, so `DocMachine::sync_content` picks the right producer on
     /// its very next call.
     pub fn bind_path(&mut self, path: PathBuf) {
-        let kind = kind_for(Some(&path), self.buffer.content());
-        self.kind = kind;
-        self.doc.set_kind(self.kind);
+        if !self.kind_pinned {
+            let kind = kind_for(Some(&path), self.buffer.content());
+            self.kind = kind;
+            self.doc.set_kind(self.kind);
+        }
         self.file_path = Some(path);
         self.display_name = None;
     }

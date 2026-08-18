@@ -295,6 +295,11 @@ impl DocMachine {
         }
     }
 
+    pub fn invalidate(&mut self) {
+        self.built_version = u64::MAX;
+        self.dirty = true;
+    }
+
     /// Rebuild the block/inline tree iff the buffer version changed. A pure
     /// cursor move never bumps `buf.version()`, so this is a no-op on every
     /// keystroke that isn't a content edit. For a non-markdown `kind`, no

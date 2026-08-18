@@ -7,17 +7,13 @@
 //! instead.
 
 use crate::app::App;
-use crate::commands::{
-    clipboard, edit, edit_lines, edit_lines_move, mouse, multi, nav, nav_line, nav_scroll,
-    reading_nav,
-};
+use crate::commands::{clipboard, edit, editor_exec, mouse};
 use crate::document::DocumentId;
 use crate::highlight::PassOutcome;
-use crate::keymap::{self, Command, Extend, KeyCode, KeyInput, Motion, QuitKey};
-use crate::navigate;
+use crate::keymap::{self, KeyCode, KeyInput, QuitKey};
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg, PasteTarget, TimerKey};
-use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
+use crate::{explorer, explorer_keys, materialize_ack, opentabs};
 
 /// The one dispatcher every `Msg` funnels through (`app::update`'s inner
 /// half, split out here alongside the key/db-event routers it calls into —
@@ -154,6 +150,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::FileSearchScanned { generation, result } => {
             crate::filesearch::handle_scanned(app, generation, result, effects)
         }
+        Msg::PaletteRecentsLoaded { generation, result } => {
+            crate::palette::handle_recents_loaded(app, generation, result)
+        }
         Msg::Quit => {
             app.should_quit = true;
         }
@@ -199,6 +198,9 @@ pub(crate) fn after_update(
             crate::messages::AUTO_COLLAPSE,
             Msg::MessagesCollapseTimeout { generation },
         );
+    }
+    if app.palette().is_some() {
+        crate::palette::sync_stale(app);
     }
 }
 
@@ -339,6 +341,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
+    if crate::focus::target(app) == crate::focus::FocusTarget::Palette {
+        let _ = crate::palette::keys::handle_key(app, key, effects);
+        return;
+    }
+
     // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
     // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
     // here rather than threaded anywhere further.
@@ -386,101 +393,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         return keymap::KeyOutcome::Ignored;
     };
 
-    // A read-only document has no insertion point, so every motion key is a
-    // viewport command instead (`commands::reading_nav`'s module docs) —
-    // checked before the big match below so none of its cursor-driven
-    // handlers ever runs against a document that paints no caret to show
-    // the cursor moving.
-    if reading_nav::intercept(app, command) {
-        return keymap::KeyOutcome::Consumed;
-    }
-
-    match command {
-        Command::Motion(Motion::CharLeft, extend) => nav::char_left(app.active_doc_mut(), extend),
-        Command::Motion(Motion::CharRight, extend) => nav::char_right(app.active_doc_mut(), extend),
-        // Up at the very top of the buffer focuses the title instead — a
-        // contextual gesture, not a new binding, so the one-key-one-
-        // binding rule is untouched. Anywhere else it's an ordinary
-        // cursor move. A read-only document never reaches this arm:
-        // `reading_nav::intercept` above re-keys the same gesture to the
-        // view's own top and consumes the key first.
-        Command::Motion(Motion::LineUp, Extend::No) => {
-            if at_buffer_top(app) {
-                app.focus_title();
-            } else {
-                nav_scroll::line_up(app.active_doc_mut(), Extend::No);
-            }
-        }
-        Command::Motion(Motion::LineUp, Extend::Yes) => {
-            nav_scroll::line_up(app.active_doc_mut(), Extend::Yes);
-        }
-        Command::Motion(Motion::LineDown, extend) => {
-            nav_scroll::line_down(app.active_doc_mut(), extend)
-        }
-        Command::Motion(Motion::WordLeft, extend) => nav::word_left(app.active_doc_mut(), extend),
-        Command::Motion(Motion::WordRight, extend) => nav::word_right(app.active_doc_mut(), extend),
-        Command::Motion(Motion::LineStart, extend) => {
-            nav_line::line_start(app.active_doc_mut(), extend)
-        }
-        Command::Motion(Motion::LineEnd, extend) => {
-            nav_line::line_end(app.active_doc_mut(), extend)
-        }
-        Command::Motion(Motion::PageUp, extend) => {
-            nav_scroll::page_up(app.active_doc_mut(), extend)
-        }
-        Command::Motion(Motion::PageDown, extend) => {
-            nav_scroll::page_down(app.active_doc_mut(), extend)
-        }
-        Command::SelectAll => nav::select_all(app.active_doc_mut()),
-        Command::ScrollLineUp => nav_scroll::scroll_line_up(app.active_doc_mut()),
-        Command::ScrollLineDown => nav_scroll::scroll_line_down(app.active_doc_mut()),
-        Command::ScrollHalfPageUp => nav_scroll::scroll_half_page_up(app.active_doc_mut()),
-        Command::ScrollHalfPageDown => nav_scroll::scroll_half_page_down(app.active_doc_mut()),
-        Command::CentreCursor => nav_scroll::centre_cursor(app.active_doc_mut()),
-        Command::CursorToTop => nav_scroll::cursor_to_top(app.active_doc_mut()),
-        Command::CursorToBottom => nav_scroll::cursor_to_bottom(app.active_doc_mut()),
-        Command::DeleteLeft => edit::delete_left(app, app.active),
-        Command::DeleteRight => edit::delete_right(app, app.active),
-        Command::DeleteWordLeft => edit::delete_word_left(app, app.active),
-        Command::DeleteWordRight => edit::delete_word_right(app, app.active),
-        Command::DeleteLine => edit_lines::delete_line(app, app.active),
-        Command::Indent => edit_lines::indent(app, app.active),
-        Command::Outdent => edit_lines::outdent(app, app.active),
-        Command::MoveLineUp => edit_lines_move::move_line_up(app, app.active),
-        Command::MoveLineDown => edit_lines_move::move_line_down(app, app.active),
-        Command::CloneLineUp => edit_lines_move::clone_line_up(app, app.active),
-        Command::CloneLineDown => edit_lines_move::clone_line_down(app, app.active),
-        Command::AddCursorAbove => multi::add_cursor_above(app.active_doc_mut()),
-        Command::AddCursorBelow => multi::add_cursor_below(app.active_doc_mut()),
-        Command::Undo => edit::undo(app, app.active),
-        Command::Redo => edit::redo(app, app.active),
-        Command::Copy => clipboard::copy(app, app.active, effects),
-        Command::Cut => clipboard::cut(app, app.active, effects),
-        Command::Paste => clipboard::paste(effects, PasteTarget::Document(app.active)),
-        Command::Save => {
-            let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
-        }
-        Command::FollowLink => navigate::follow(app, effects),
-        Command::Reload => {
-            if app.active_doc().has_reloadable_graphics() {
-                crate::graphics::reload_image(app, app.active, effects);
-                crate::graphics::reload_embeds(app, app.active, effects);
-            } else {
-                crate::messages::info(app, "nothing to reload");
-            }
-        }
-        Command::QuitConfirm => {
-            // `resolve` only ever returns `QuitConfirm` when `key` is a
-            // known quit chord (see `keymap::QuitKey::from_key`, the single
-            // source of truth both functions route through). Dead in
-            // practice — stage 2 (`keymap::GLOBAL_BINDINGS`) always
-            // intercepts a quit chord before it reaches here.
-            if let Some(quit_key) = QuitKey::from_key(key) {
-                pane::handle_quit_key(app, quit_key);
-            }
-        }
-    }
-    keymap::KeyOutcome::Consumed
+    editor_exec::run(app, command, QuitKey::from_key(key), effects)
 }
 
 /// Guards the printable-insert fallthrough against control-byte leakage
@@ -501,17 +414,6 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 /// `char::is_control()` (Unicode category Cc: `0x00..=0x1F` and
 /// `0x7F..=0x9F`) closes that exact hazard without narrowing what a human
 /// can actually type.
-/// Whether the active document's primary cursor sits on the FIRST buffer
-/// line — `offset_to_line_col`'s `line` is 0-indexed, so line 0 is the top.
-/// Only ever asked about an editable document: a read-only one has no
-/// insertion point to test, and `commands::reading_nav` answers the same
-/// question there against the viewport's own top instead.
-fn at_buffer_top(app: &App) -> bool {
-    let doc = app.active_doc();
-    let offset = doc.cursors.primary().position;
-    doc.buffer.offset_to_line_col(offset).line == 0
-}
-
 fn is_insertable_key_char(ch: char) -> bool {
     !ch.is_control()
 }

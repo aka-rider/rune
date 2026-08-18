@@ -120,6 +120,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         title_window: 0..0,
         filesearch_query: None,
         search_draft: None,
+        palette_query: None,
         read_only: rune_tui::document::ReadOnly::No,
         caret_visible: true,
         reading_link_focus: None,

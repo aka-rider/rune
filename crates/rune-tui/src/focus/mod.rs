@@ -31,6 +31,7 @@ pub enum FocusTarget {
     /// `Pane` stays `Explorer` while it's open). Mutually exclusive with
     /// `SearchField` by construction (both live in the same `Overlay`).
     FileSearch,
+    Palette,
     /// The message-log pane above the footer (`Pane::Messages`).
     Messages,
 }
@@ -60,6 +61,7 @@ pub fn target(app: &App) -> FocusTarget {
     match &app.overlay {
         crate::overlay::Overlay::Search(state) if state.focused => FocusTarget::SearchField,
         crate::overlay::Overlay::FileSearch(_) => FocusTarget::FileSearch,
+        crate::overlay::Overlay::Palette(_) => FocusTarget::Palette,
         _ => from_pane(app.focus()),
     }
 }

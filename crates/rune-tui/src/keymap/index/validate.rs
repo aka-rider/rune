@@ -84,13 +84,13 @@ mod tests {
                 key: ctrl_k(),
                 cmd: TestCmd::Standalone,
                 help: "first",
-                alias: false,
+                secondary: false,
             },
             Binding {
                 key: ctrl_k(),
                 cmd: TestCmd::Standalone,
                 help: "second",
-                alias: false,
+                secondary: false,
             },
         ];
         let err = validate(TABLE).expect_err("must reject the duplicate key");
@@ -129,13 +129,13 @@ mod tests {
                 key: KeyPattern::new(KeyCode::Char('a'), Mods::NONE),
                 cmd: TestCmd::Standalone,
                 help: "a",
-                alias: false,
+                secondary: false,
             },
             Binding {
                 key: KeyPattern::new(KeyCode::Char('b'), Mods::NONE),
                 cmd: TestCmd::Standalone,
                 help: "b",
-                alias: false,
+                secondary: false,
             },
         ];
         assert!(validate(TABLE).is_ok());

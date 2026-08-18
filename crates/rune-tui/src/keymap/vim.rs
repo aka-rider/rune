@@ -56,31 +56,31 @@ pub const VIM_BINDINGS: &[Binding<VimCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('h'), NONE),
         cmd: VimCommand::Left,
         help: "left",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('j'), NONE),
         cmd: VimCommand::Down,
         help: "down",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('k'), NONE),
         cmd: VimCommand::Up,
         help: "up",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('l'), NONE),
         cmd: VimCommand::Right,
         help: "right",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('i'), NONE),
         cmd: VimCommand::EnterInsert,
         help: "insert",
-        alias: false,
+        secondary: false,
     },
 ];
 

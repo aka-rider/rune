@@ -54,25 +54,25 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
         key: KeyPattern::new(KeyCode::Up, Mods::NONE),
         cmd: TabsCommand::Up,
         help: "up",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Down, Mods::NONE),
         cmd: TabsCommand::Down,
         help: "down",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
         cmd: TabsCommand::Select,
         help: "open",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: TabsCommand::Leave,
         help: "back to editor",
-        alias: false,
+        secondary: false,
     },
 ];
 

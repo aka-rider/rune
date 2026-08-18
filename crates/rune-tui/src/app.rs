@@ -296,6 +296,9 @@ pub struct App {
     /// message instead of degrading. Cleared on both the write's success
     /// and its failure — never left stale.
     pub(crate) search_history_ops: HashSet<u64>,
+    pub(crate) next_palette_gen: crate::generation::GenCounter,
+    pub(crate) last_persisted_command: Option<String>,
+    pub(crate) command_history_ops: HashSet<u64>,
     pub should_quit: bool,
     /// The rendered theme — the one `Theme` every chrome
     /// style and every markdown/code `ScopeId` in this app resolves
@@ -404,6 +407,9 @@ impl App {
             last_persisted_search_query: None,
             next_search_history_gen: crate::generation::GenCounter::default(),
             search_history_ops: HashSet::new(),
+            next_palette_gen: crate::generation::GenCounter::default(),
+            last_persisted_command: None,
+            command_history_ops: HashSet::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icon_tier: crate::theme::icons::IconTier::Unicode,

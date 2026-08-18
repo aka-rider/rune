@@ -249,18 +249,18 @@ mod tests {
 
     #[test]
     fn default_mode_lists_every_global_binding_label() {
-        // Editor focus (`App::new`'s default) — every non-alias
+        // Editor focus (`App::new`'s default) — every non-secondary
         // `GLOBAL_BINDINGS` help string must still appear, though
         // `explorer`/`editor`/`tabs` now come from the leader table's own
-        // entries rather than `GLOBAL_BINDINGS` itself. Aliased bindings
+        // entries rather than `GLOBAL_BINDINGS` itself. Secondary bindings
         // (like `^d`'s "quit") are excluded on purpose: their help string is
-        // shared with a non-alias binding (`^c`'s "quit"), so iterating the
-        // full table would still pass even if the alias filter broke — this
-        // must walk only `!b.alias` entries to actually test that filter.
+        // shared with a non-secondary binding (`^c`'s "quit"), so iterating the
+        // full table would still pass even if the secondary filter broke — this
+        // must walk only `!b.secondary` entries to actually test that filter.
         let app = app_with("hello");
         assert_eq!(app.focus(), Pane::Editor);
         let text = footer_text(&app);
-        for binding in GLOBAL_BINDINGS.iter().filter(|b| !b.alias) {
+        for binding in GLOBAL_BINDINGS.iter().filter(|b| !b.secondary) {
             // `Merge` is conditional on divergence and pinned by the two
             // dedicated footer_hints tests; seeding divergence here would
             // flip the footer into `DiskChanged` mode instead.

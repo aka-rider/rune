@@ -16,6 +16,7 @@ use crate::focus::{self, FocusTarget};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
 use crate::pane::Pane;
+use crate::registry::{self, Availability, CommandId};
 use crate::width::display_width;
 
 /// `binding`'s label, built into the shared `buf` (cleared first) and cloned
@@ -37,7 +38,7 @@ fn labeled<C: Copy + 'static>(binding: &Binding<C>, buf: &mut String) -> String 
 ///    saved); styled active only when the document is dirty (assumption
 ///    A2: for every document where it's PRESENT it's never removed, so
 ///    the row never jumps there).
-/// 2. Every remaining non-alias `GLOBAL_BINDINGS` entry except `^S` (already
+/// 2. Every remaining non-secondary `GLOBAL_BINDINGS` entry except `^S` (already
 ///    placed at step 1, with its own dirty-state styling) — help and quit
 ///    are always-available actions, so they get a stable position ahead of
 ///    the pane-specific table below rather than being the first thing width
@@ -77,17 +78,23 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             app.active_doc().read_only,
             ReadOnly::Always | ReadOnly::Preview
         )
-        && let Some((label, help)) = crate::global::hint_for(GlobalCommand::Save)
+        && let Some((label, _)) = crate::global::hint_for(GlobalCommand::Save)
+        && let Some(spec) = registry::spec(CommandId::Global(GlobalCommand::Save))
     {
-        entries.push((label, help, app.dirty_for_render()));
+        entries.push((label, spec.help, app.dirty_for_render()));
     }
 
     entries.extend(
         GLOBAL_BINDINGS
             .iter()
-            .filter(|b| !b.alias && !matches!(b.cmd, GlobalCommand::Save))
-            .filter(|b| !hint_suppressed(app, b.cmd))
-            .map(|b| (labeled(b, &mut label_buf), b.help, true)),
+            .filter(|b| !b.secondary && !matches!(b.cmd, GlobalCommand::Save))
+            .filter(|b| {
+                registry::availability(app, CommandId::Global(b.cmd)) == Availability::Available
+            })
+            .filter_map(|b| {
+                let spec = registry::spec(registry::rows::global::adapt(b.cmd))?;
+                Some((labeled(b, &mut label_buf), spec.help, true))
+            }),
     );
 
     // The finder is never a `Pane` (chrome stays `Explorer` throughout), so
@@ -95,28 +102,36 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     // rows would always read as ordinary Explorer hints. Reflection over
     // `FILESEARCH_BINDINGS` keeps this from drifting out of step with the
     // table `filesearch::keys::handle_key` actually resolves against;
-    // aliased rows are skipped, same as `GLOBAL_BINDINGS` above.
+    // secondary rows are skipped, same as `GLOBAL_BINDINGS` above.
     if focus::target(app) == FocusTarget::FileSearch {
         entries.extend(
             FILESEARCH_BINDINGS
                 .iter()
-                .filter(|b| !b.alias)
-                .map(|b| (labeled(b, &mut label_buf), b.help, true)),
+                .filter(|b| !b.secondary)
+                .filter_map(|b| {
+                    let spec = registry::spec(registry::rows::pane::adapt_filesearch(b.cmd))?;
+                    Some((labeled(b, &mut label_buf), spec.help, true))
+                }),
         );
         return entries;
     }
 
+    if focus::target(app) == FocusTarget::Palette {
+        entries.push(("Esc".to_string(), "close", true));
+        entries.push(("\u{23ce}".to_string(), "run", true));
+        entries.push(("\u{2191}\u{2193}".to_string(), "navigate", true));
+        return entries;
+    }
+
     match app.focus() {
-        Pane::Explorer => entries.extend(
-            EXPLORER_BINDINGS
-                .iter()
-                .map(|b| (labeled(b, &mut label_buf), b.help, true)),
-        ),
-        Pane::Tabs => entries.extend(
-            TABS_BINDINGS
-                .iter()
-                .map(|b| (labeled(b, &mut label_buf), b.help, true)),
-        ),
+        Pane::Explorer => entries.extend(EXPLORER_BINDINGS.iter().filter_map(|b| {
+            let spec = registry::spec(registry::rows::pane::adapt_explorer(b.cmd))?;
+            Some((labeled(b, &mut label_buf), spec.help, true))
+        })),
+        Pane::Tabs => entries.extend(TABS_BINDINGS.iter().filter_map(|b| {
+            let spec = registry::spec(registry::rows::pane::adapt_tabs(b.cmd))?;
+            Some((labeled(b, &mut label_buf), spec.help, true))
+        })),
         // The title field has no binding TABLE of its own — `title::keys::
         // handle_key` matches Enter/Esc/editing keys directly (they are a
         // text field's own behaviour, not chords worth enumerating in the
@@ -139,8 +154,11 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
                 entries.extend(
                     crate::diff_view::keys::DIFF_BINDINGS
                         .iter()
-                        .filter(|b| !b.alias)
-                        .map(|b| (labeled(b, &mut label_buf), b.help, true)),
+                        .filter(|b| !b.secondary)
+                        .filter_map(|b| {
+                            let spec = registry::spec(registry::rows::pane::adapt_diff(b.cmd))?;
+                            Some((labeled(b, &mut label_buf), spec.help, true))
+                        }),
                 );
             }
         }
@@ -153,30 +171,6 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     }
 
     entries
-}
-
-/// The one place that suppresses a `GLOBAL_BINDINGS` hint the bulk
-/// `extend` above would otherwise show unconditionally: a `Preview`
-/// document refuses close (`workspace::request_close`) and rename entry
-/// (`App::focus_title`) alike, so their hints must not promise a chord that
-/// only sets a status message; and `merge` is offered only while the active
-/// document's last known sync classification actually has disk-side changes
-/// to merge (`DiskAhead`/`Diverged`) — `merge::begin` refuses every other
-/// state, so the hint would promise a chord that only posts a refusal.
-/// `Save` already has its own bespoke arm above (styled by dirtiness, not
-/// just present/absent) and is filtered out of this bulk `extend` before it
-/// ever reaches here.
-fn hint_suppressed(app: &App, cmd: GlobalCommand) -> bool {
-    if app.active_doc().read_only == ReadOnly::Preview
-        && matches!(cmd, GlobalCommand::CloseFile | GlobalCommand::FocusTitle)
-    {
-        return true;
-    }
-    matches!(cmd, GlobalCommand::Merge)
-        && !app
-            .active_doc()
-            .last_sync
-            .is_some_and(rune_db::SyncKind::is_disk_divergent)
 }
 
 /// One hint entry's own span group: a leading `"  "` separator (every

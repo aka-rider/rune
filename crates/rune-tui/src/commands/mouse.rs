@@ -102,6 +102,16 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = crate::layout::geometry(area, app);
 
+    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.palette().is_some() {
+        let inside = geo.palette.is_some_and(|rect| {
+            rect.contains(ratatui::layout::Position::new(input.column, input.row))
+        });
+        if !inside {
+            crate::palette::close(app);
+        }
+        return;
+    }
+
     if let (Some(diff_left), MouseKind::Down(MouseButton::Left)) = (geo.diff_left, input.kind)
         && diff_left.contains(ratatui::layout::Position::new(input.column, input.row))
     {

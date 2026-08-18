@@ -125,3 +125,11 @@ pub(crate) fn toggle_file_search(app: &mut App, effects: &mut Effects) {
         crate::filesearch::open(app, effects);
     }
 }
+
+pub(crate) fn toggle_palette(app: &mut App, effects: &mut Effects) {
+    if app.palette().is_some() {
+        crate::palette::close(app);
+    } else {
+        crate::palette::open(app, effects);
+    }
+}

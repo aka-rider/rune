@@ -9,11 +9,14 @@
 //! dispatched from `app::handle_key`/`app::update` against the
 //! `Command`/`Msg::Mouse` the keymap resolver/runtime produce.
 
+pub mod case;
 pub mod clipboard;
 pub mod edit;
 pub mod edit_core;
 pub mod edit_lines;
 pub mod edit_lines_move;
+pub(crate) mod editor_exec;
+pub mod language;
 pub mod mouse;
 pub(crate) mod mouse_hit;
 pub mod multi;

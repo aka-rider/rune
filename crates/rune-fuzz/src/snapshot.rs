@@ -76,6 +76,7 @@ pub struct Snapshot {
     pub title_window: Range<usize>,
     pub filesearch_query: Option<String>,
     pub search_draft: Option<String>,
+    pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`, reachable now that `F1` is in `arb_any_keycode`,
     /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃P`,
@@ -356,6 +357,7 @@ impl Snapshot {
             title_window: app.title.window(),
             filesearch_query: app.filesearch().map(|state| state.query.clone()),
             search_draft: app.search_draft().map(str::to_string),
+            palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,
             caret_visible: doc.has_insertion_point(),
             reading_link_focus: doc.reading_link_focus,

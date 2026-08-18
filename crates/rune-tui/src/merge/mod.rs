@@ -11,13 +11,19 @@ pub use session::{Block, BlockOrigin, Conflict, ConflictBlock, MergeSession, Res
 pub use state::{MergeIntent, MergeState};
 
 pub(crate) const VERB_HINT: &str = "⇧⌘Y take disk · ⇧⌘U keep yours · ⇧⌘J/^K next/prev · Esc close";
+pub(crate) const NO_DIVERGENCE_REASON: &str = "no divergence to merge";
 
 use rune_db::SyncKind;
 
 use crate::app::App;
 use crate::db::PendingOp;
+use crate::document::Document;
 use crate::messages;
 use crate::runtime::Effects;
+
+pub(crate) fn is_divergent(doc: &Document) -> bool {
+    doc.last_sync.is_some_and(SyncKind::is_disk_divergent)
+}
 
 /// `^M`: a fast pre-check against `Document.last_sync`
 /// (render/hint state only) before ever enqueueing a
@@ -44,20 +50,20 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         messages::warn(app, "save in progress — merge after it completes");
         return;
     }
-    if !doc.last_sync.is_some_and(SyncKind::is_disk_divergent) {
-        messages::warn(app, "no divergence to merge");
+    if !is_divergent(doc) {
+        messages::warn(app, NO_DIVERGENCE_REASON);
         return;
     }
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
-        messages::warn(app, "no divergence to merge");
+        messages::warn(app, NO_DIVERGENCE_REASON);
         return;
     };
     let Some(db) = app.db.as_ref() else {
-        messages::warn(app, "no divergence to merge");
+        messages::warn(app, NO_DIVERGENCE_REASON);
         return;
     };
     if db.degraded {
-        messages::warn(app, "no divergence to merge");
+        messages::warn(app, NO_DIVERGENCE_REASON);
         return;
     }
 

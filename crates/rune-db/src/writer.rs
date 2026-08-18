@@ -422,6 +422,7 @@ fn execute_op(
             doc_id,
         } => exec::reconstruct_scratch(conn, &liveness_check, doc_id),
         OpKind::TouchSearchQuery { query, now } => exec::touch_search_query(conn, &query, now),
+        OpKind::TouchCommandName { name, now } => exec::touch_command_name(conn, &name, now),
         OpKind::Shutdown {
             session_id,
             liveness_check,

@@ -431,6 +431,15 @@ pub(crate) fn touch_search_query(
     Ok(OpOutcome::None)
 }
 
+pub(crate) fn touch_command_name(
+    conn: &mut Connection,
+    name: &str,
+    now: SystemTime,
+) -> Result<OpOutcome, Error> {
+    retry::with_retry(conn, |tx| crate::command_history::touch(tx, name, now))?;
+    Ok(OpOutcome::None)
+}
+
 pub(crate) fn shutdown(
     conn: &mut Connection,
     session_id: SessionId,

@@ -66,6 +66,14 @@ impl Store {
         })
     }
 
+    pub fn touch_command_name(&self, name: &str) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::TouchCommandName {
+            name: name.to_string(),
+            now,
+        })
+    }
+
     /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
     /// `doc_id` at this session's CURRENT durable journal position, resolved
     /// fresh by the writer thread at execution time (`OpKind::CreateSnapshot`'s

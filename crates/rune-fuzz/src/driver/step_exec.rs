@@ -8,11 +8,12 @@
 
 use rune_tui::app::{self, App};
 use rune_tui::db::DbBridge;
-use rune_tui::keymap::{self, KeyInput};
-use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
+use rune_tui::keymap::{self, Command, KeyInput};
+use rune_tui::registry::{Availability, CommandId};
+use rune_tui::runtime::{Cmd, CmdError, CmdKind, Effects, Msg};
 use rune_vfs::Vfs;
 
-use crate::action::{HighlightVersion, highlight_spans_from_raw};
+use crate::action::{HighlightVersion, PaletteGenClaim, highlight_spans_from_raw};
 use crate::guard;
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
@@ -22,15 +23,46 @@ use super::checks;
 use super::session::{Outcome, State};
 use super::store_ops::wait_for_db_op;
 
-/// Builds the `(Msg, MsgTag)` pair for one keystroke — the one place
-/// `keymap::resolve` is consulted for tagging, shared by `Action::Key` and
-/// `Action::Type`'s per-char expansion.
-pub(super) fn key_step(key: KeyInput) -> (Msg, MsgTag) {
+fn palette_pending_save_command(app: &App, key: KeyInput) -> Option<Command> {
+    let state = app.palette()?;
+    if key.code != keymap::KeyCode::Enter || key.mods != keymap::Mods::NONE {
+        return None;
+    }
+    let row = state.rows.get(state.nav.cursor)?;
+    if !matches!(row.availability, Availability::Available) {
+        return None;
+    }
+    if row.id == CommandId::Global(keymap::GlobalCommand::Save) {
+        Some(Command::Save)
+    } else {
+        None
+    }
+}
+
+pub(super) fn key_step(app: &App, key: KeyInput) -> (Msg, MsgTag) {
+    let command = keymap::resolve(key).or_else(|| palette_pending_save_command(app, key));
     let tag = MsgTag::Key {
         input: key,
-        command: keymap::resolve(key),
+        command,
     };
     (Msg::Key(key), tag)
+}
+
+pub(super) fn palette_recents_step(
+    state: &State,
+    generation: PaletteGenClaim,
+    ok: bool,
+    names: Vec<String>,
+) -> (Msg, MsgTag) {
+    let live = state.app.palette().map(|p| p.generation);
+    let generation = generation.resolve(live);
+    let result = if ok {
+        Ok(names)
+    } else {
+        Err(CmdError::Refused("fuzz".to_string()))
+    };
+    let msg = Msg::PaletteRecentsLoaded { generation, result };
+    (msg, MsgTag::PaletteRecentsLoaded)
 }
 
 /// Builds the `(Msg, MsgTag)` pair for one mouse event — no keymap

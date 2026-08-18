@@ -41,37 +41,37 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
         key: KeyPattern::new(KeyCode::Up, Mods::NONE),
         cmd: ExplorerCommand::Up,
         help: "up",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Down, Mods::NONE),
         cmd: ExplorerCommand::Down,
         help: "down",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Home, Mods::NONE),
         cmd: ExplorerCommand::Top,
         help: "top",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::End, Mods::NONE),
         cmd: ExplorerCommand::Bottom,
         help: "bottom",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
         cmd: ExplorerCommand::Open,
         help: "open",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Backspace, Mods::NONE),
         cmd: ExplorerCommand::ParentDir,
         help: "up dir",
-        alias: false,
+        secondary: false,
     },
     // Only reached when `EXPLORER_SEARCH_BINDINGS`'s own Escape row didn't
     // already claim the key (`handle_key`'s `is_some()` gate below) — a
@@ -81,7 +81,7 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
         key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: ExplorerCommand::Leave,
         help: "back to editor",
-        alias: false,
+        secondary: false,
     },
 ];
 

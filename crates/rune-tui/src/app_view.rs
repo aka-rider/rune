@@ -85,7 +85,9 @@ impl App {
         crate::messages::sync(self, width, frame_height);
         self.relayout();
         let engaged = self.focus() == Pane::Editor && self.guard.is_none();
-        let focused = focus::target(self) == FocusTarget::Editor
+        let target = focus::target(self);
+        let focused = (target == FocusTarget::Editor
+            || (target == FocusTarget::Palette && self.focus() == Pane::Editor))
             && self.guard.is_none()
             && self.search().is_none();
         self.active_doc_mut().focused = focused;

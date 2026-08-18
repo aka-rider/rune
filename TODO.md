@@ -64,6 +64,18 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: introduce typed wrappers for the two coordinate spaces — a `ByteOffset` for `position`/`anchor`, a `SyntaxCol` or similar for `desired_col` — so mixing them becomes a compile error. Do this together with the next change to `crates/rune-db/src/payload.rs`'s cursor schema, since typing `desired_col` crosses the on-disk cursor payload and any schema change already forces a review of that boundary.
 - **Done when**: `Cursor`'s three fields have distinct types for their two coordinate spaces, and `CursorPayload`'s fields mirror that typing (or the entry records why the persisted form deliberately stays untyped).
 
+### Command palette: remaining imperative refusals not yet on the registry predicate
+- **Where**: `crates/rune-tui/src/pane.rs`'s `handle_global_command` (`Trash`), `crates/rune-tui/src/rename.rs` (rename-in-flight), `crates/rune-tui/src/save.rs`/`workspace/close.rs` (save-in-flight, close-while-saving) — every one still refuses through its own inline `messages::warn`/`messages::info` call rather than a `registry::avail` predicate the palette can grey a row against.
+- **Wrong**: a palette row for `trash`, `rename`, or `close` shows `Available` right up until Enter, then refuses with wording the palette never previewed — the same gap WP3 closed for Merge/ToggleReadOnly/TogglePin/Reload/read-only edits, just not closed everywhere yet.
+- **Instead**: migrate arm-by-arm, one `registry/avail.rs` predicate per imperative refusal, following the WP3 pattern (predicate consulted at the top of the arm, same reason string old and new).
+- **Done when**: no `GlobalCommand`/`keymap::Command` arm posts a refusal that isn't first visible as `Availability::Unavailable` on its registry row.
+
+### Command palette: no in-palette mouse support
+- **Where**: `crates/rune-tui/src/commands/mouse.rs`, `crates/rune-tui/src/palette/` — mouse routing only closes the palette on a click outside `geo.palette`; a wheel or drag while the palette is open falls through to the editor pane underneath instead of scrolling or selecting the palette's own row list.
+- **Wrong**: the palette is otherwise fully keyboard-driven, but a mouse user scrolling or dragging over the open overlay edits the hidden document instead.
+- **Instead**: route wheel/drag events landing inside `geo.palette` to the palette's row navigation instead of the editor.
+- **Done when**: a wheel or drag inside the open palette moves its own selection/window rather than the editor underneath.
+
 ## Mechanical
 
 ### O(file) per keystroke is the deliberate design ceiling
@@ -76,26 +88,25 @@ entry is deleted in the same commit that fixes it.
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
   - `crates/rune-cli/src/bootstrap_tests.rs` — 1119 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1083 (test file)
-  - `crates/rune-tui/src/global.rs` — 886 (grew from 793: WP6 `DIFF_BINDINGS` registration into `claimants_across_pane_tables` plus the new bidirectional collision guard test)
+  - `crates/rune-tui/src/global.rs` — 943 (grew from 886: command-palette WP2's `TogglePalette` rows plus its chord-freedom and `from_termina` reachability tests)
   - `crates/rune-tui/tests/diff_view.rs` — 801 (test file; newly over — the diff-view plan's own test suite grew through WP3-WP8: layout/alignment/intraline tests plus WP6's verb/chord/click tests all landed here; split candidate: move the verb and chord tests, `take_theirs_makes_the_region_same_and_undoes_in_one_step` through `click_in_the_left_pane_moves_the_right_pane_caret_to_the_aligned_line`, to a sibling `diff_view_verbs.rs`, leaving the layout/alignment/intraline tests here)
   - `crates/rune-vfs/src/mem.rs` — 766 (`fail_resolve` and its tests pushed this further over)
-  - `crates/rune-tui/src/pane.rs` — 761 (grew from 862 previously, now settled here: the `NavBack`/`NavForward` dispatch arms plus later routing growth)
-  - `crates/rune-tui/src/runtime/mod.rs` — 706 (grew from 621)
-  - `crates/rune-fuzz/src/generate/palette.rs` — 702 (grew from 659: the `NAV_BACK_KEY`/`NAV_FORWARD_KEY` consts, plan WP8)
-  - `crates/rune-db/src/schema.rs` — 684 (newly over — named-draft session support (`3d7af356`) grew the schema DDL)
-  - `crates/rune-tui/src/document/mod.rs` — 679 (split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
+  - `crates/rune-tui/src/pane.rs` — 796 (grew from 770: command-palette WP3's `registry_refusal` helper plus the availability gate hoisted into the Merge/ToggleReadOnly/TogglePin arms)
+  - `crates/rune-tui/src/runtime/mod.rs` — 713 (grew from 706: command-palette WP2's `Msg::PaletteRecentsLoaded` variant and `command_history_cmd` module wiring)
+  - `crates/rune-fuzz/src/generate/palette.rs` — 766 (grew from 702: WP7's `cmdpal` cluster key/const data — `CMDPAL_KEY_CTRL`/`CMDPAL_KEY_SUP`/`CMDPAL_TAB_KEY`/`CMDPAL_BACKSPACE_KEY`/`CMDPAL_NAV_KEYS`/`CMDPAL_PARAM_QUERIES`)
+  - `crates/rune-db/src/schema.rs` — 743 (grew from 684: command-palette recents added the `command_history` table and its apply-reconcile test; split candidate: move the schema tests to a sibling `schema_tests.rs`)
+  - `crates/rune-tui/src/document/mod.rs` — 683 (grew from 679: command-palette WP4's `kind_pinned` field; split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
   - `crates/rune-tui/src/db.rs` — 668 (split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
   - `crates/rune-tui/src/linemap.rs` — 663 (newly over — the typed-offsets/image-id rework (`8cdaaef3`) grew this)
-  - `crates/rune-tui/src/app.rs` — 619 (grew from 602)
+  - `crates/rune-tui/src/app.rs` — 625 (grew from 619: command-palette WP2's `next_palette_gen`/`last_persisted_command`/`command_history_ops` fields)
   - `crates/rune-db/tests/multiprocess/scenarios.rs` — 617 (test file)
   - `crates/rune-tui/tests/rename_focus.rs` — 613 (test file)
   - `crates/rune-fuzz/src/script/mod.rs` — 611 (newly over — mouse-event action support (`b970c59c`) grew the script table)
   - `crates/rune-fuzz/src/driver/session.rs` — 592 (already over at 533 before a boot()-splitting cleanup added the named `new_app`/`open_seed_document`/`live_session`/`panicked_session` substeps; split candidate: move `Session::boot` and its four helpers, plus the `Seed`/`new_state` plumbing they share, to a sibling `boot.rs`, leaving `Session`'s post-boot methods here)
   - `crates/rune-db/src/sync_tests.rs` — 592 (newly over — this is the sibling test module split out of `sync.rs` in this pass; the moved test block was already this size in-file, so it needs its own further split, no candidate identified yet)
   - `crates/rune-tui/src/filesearch/tests.rs` — 591 (test file)
-  - `crates/rune-fuzz/src/generate/cluster.rs` — 585 (grew from 505: plan WP8's `cluster_caret_history`/`cluster_advance_clock` plus WP9's merge-chord rework of `cluster_merge`'s own doc comment; split candidate: move the merge/highlight/multicursor cluster functions, `cluster_merge` through `cluster_multicursor`, to a sibling `cluster_scenarios.rs`, leaving the simpler single-shape clusters and `arb_cluster` itself here)
+  - `crates/rune-fuzz/src/generate/cluster.rs` — 722 (grew from 585: WP7's `cluster_cmdpal` family — `cmdpal_open` plus its eight `cluster_cmdpal_*` arms; split candidate: move the merge/highlight/multicursor/cmdpal cluster functions, `cluster_merge` through `cluster_cmdpal`, to a sibling `cluster_scenarios.rs`, leaving the simpler single-shape clusters and `arb_cluster` itself here)
   - `crates/rune-tui/src/workspace/mod.rs` — 567 (pushed over by the `resolve_or_report` chokepoint added alongside the `resolve` signature change; split candidate: move the `#[cfg(test)] mod tests` block to a sibling test module)
-  - `crates/rune-tui/src/render/filesearch.rs` — 559
   - `crates/rune-tui/src/messages/mod.rs` — 559
   - `crates/rune-cli/src/db_bootstrap.rs` — 558 (split candidate unchanged: move `bootstrap_untitled_db`/`ScratchDoc`/`DbBootstrapUntitled`/`degrade_untitled` to a sibling `db_bootstrap_untitled.rs`, matching the crate's own `bootstrap_tests.rs` split-out-of-`main.rs` pattern)
   - `crates/rune-tui/src/rename.rs` — 556
@@ -107,7 +118,6 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/tests/rename_common/mod.rs` — 530 (newly over — the publish-mode enum rework (`87bd9f9e`) grew the shared rename test helpers)
   - `crates/rune-core/src/buffer/mod.rs` — 530 (newly over — the typed-offsets/image-id rework (`8cdaaef3`) grew the buffer)
   - `crates/rune-db/src/reaper.rs` — 526 (newly over — the merge-session reap exemption (`3c24a826`) grew this)
-  - `crates/rune-tui/src/dispatch.rs` — 517 (grew from 536, settled lower after fmt reflow but still over)
   - `crates/rune-tui/tests/tui_edit.rs` — 516 (newly over — vertical-motion caret-resettle tests (`c13d70fc`) grew this)
   - `crates/rune-db/src/adopt.rs` — 516 (newly over — abandoned-resolve retention logic (`d8f69e9a`) grew this)
   - `crates/rune-tui/src/commands/edit.rs` — 514 (newly over — the selection-consumption fix (`d1543de5`) grew this)
@@ -115,7 +125,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-md/src/catalogue.rs` — 512
   - `crates/rune-tui/src/render/overlay.rs` — 511 (newly over — the Option-typed cell-offset rework (`008b9adf`) grew this)
   - `crates/rune-md/src/parse/inline.rs` — 511 (newly over — the forward-scan code-span fix (`78abf7a0`) grew this)
-  - `crates/rune-fuzz/src/script/decode.rs` — 509 (over again — previously dropped to 413, mouse-action decode support (`b970c59c`) grew it back over)
+  - `crates/rune-fuzz/src/script/decode.rs` — 578 (grew from 509: WP7's `parse_palette_recents` multi-line action decoder)
 - **Wrong**: source files exceed the 500-line house rule, none ledgered. This pass (moving nine in-file `#[cfg(test)] mod tests` blocks to `#[path]`-included siblings, the `rune-db/src/load.rs`/`load_tests.rs` pattern) dropped ten files below 500 and off this list: `crates/rune-merge/src/hunks.rs` (490), `crates/rune-tui/src/guard.rs` (452), `crates/rune-vfs/src/publish.rs` (225), `crates/rune-tui/src/db_ack.rs` (429), `crates/rune-db/src/sync.rs` (207, but its extracted `sync_tests.rs` sibling is itself over — see above), `crates/rune-db/src/probe.rs` (160), `crates/rune-tui/src/merge/landing.rs` (411), `crates/rune-tui/src/footer_hints.rs` (247), `crates/rune-tui/src/commands/mouse.rs` (337). Unrelated ordinary growth independently dropped `crates/rune-tui/src/footer.rs`, `crates/rune-fuzz/src/driver/mod.rs`, and `crates/rune-tui/src/focus.rs` below 500 since the last measurement; `crates/rune-db/src/writer.rs` also dropped below 500 (its now-moot split candidate, moving `execute_op`'s match into a sibling `writer_exec.rs`, is dropped). Five files dropped below 500 in an earlier pass and stay off this list: `crates/rune-tui/src/materialize_ack.rs` (305), `crates/rune-tui/src/materialize_ack/reactions.rs` (378), `crates/rune-md/src/emit/mod.rs` (343), `crates/rune-syntax/src/wrap/mod.rs` (494). `crates/rune-syntax/src/syntax.rs` (466) and `crates/rune-tui/src/save/materialize.rs` (329) remain under the threshold from an earlier drop.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).

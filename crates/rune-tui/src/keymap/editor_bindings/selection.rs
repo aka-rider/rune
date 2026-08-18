@@ -13,28 +13,28 @@ pub(crate) const SELECT_CHAR_LEFT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Left, SHIFT),
     cmd: Command::Motion(Motion::CharLeft, Extend::Yes),
     help: "select char left",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_CHAR_RIGHT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Right, SHIFT),
     cmd: Command::Motion(Motion::CharRight, Extend::Yes),
     help: "select char right",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_WORD_LEFT_ARROW: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Left, SHIFT_ALT),
     cmd: Command::Motion(Motion::WordLeft, Extend::Yes),
     help: "select word left",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_WORD_RIGHT_ARROW: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Right, SHIFT_ALT),
     cmd: Command::Motion(Motion::WordRight, Extend::Yes),
     help: "select word right",
-    alias: false,
+    secondary: false,
 };
 
 // The `Char('b')`/`Char('f')` word-motion mirror of the rows above:
@@ -47,82 +47,82 @@ pub(crate) const SELECT_WORD_LEFT_B: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('b'), SHIFT_ALT),
     cmd: Command::Motion(Motion::WordLeft, Extend::Yes),
     help: "select word left",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_WORD_LEFT_B_ALT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('B'), ALT),
     cmd: Command::Motion(Motion::WordLeft, Extend::Yes),
     help: "select word left",
-    alias: true,
+    secondary: true,
 };
 
 pub(crate) const SELECT_WORD_RIGHT_F: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('f'), SHIFT_ALT),
     cmd: Command::Motion(Motion::WordRight, Extend::Yes),
     help: "select word right",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_WORD_RIGHT_F_ALT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('F'), ALT),
     cmd: Command::Motion(Motion::WordRight, Extend::Yes),
     help: "select word right",
-    alias: true,
+    secondary: true,
 };
 
 pub(crate) const SELECT_LINE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Up, SHIFT),
     cmd: Command::Motion(Motion::LineUp, Extend::Yes),
     help: "select line up",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_LINE_DOWN: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Down, SHIFT),
     cmd: Command::Motion(Motion::LineDown, Extend::Yes),
     help: "select line down",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_LINE_START: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Home, SHIFT),
     cmd: Command::Motion(Motion::LineStart, Extend::Yes),
     help: "select to line start",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_LINE_END: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::End, SHIFT),
     cmd: Command::Motion(Motion::LineEnd, Extend::Yes),
     help: "select to line end",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_PAGE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::PageUp, SHIFT),
     cmd: Command::Motion(Motion::PageUp, Extend::Yes),
     help: "select page up",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_PAGE_DOWN: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::PageDown, SHIFT),
     cmd: Command::Motion(Motion::PageDown, Extend::Yes),
     help: "select page down",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_ALL_CTRL: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('a'), CTRL),
     cmd: Command::SelectAll,
     help: "select all",
-    alias: false,
+    secondary: false,
 };
 
 pub(crate) const SELECT_ALL_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('a'), SUP),
     cmd: Command::SelectAll,
     help: "select all",
-    alias: false,
+    secondary: false,
 };

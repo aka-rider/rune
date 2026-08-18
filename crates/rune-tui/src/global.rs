@@ -115,6 +115,7 @@ pub enum GlobalCommand {
     /// bit set — the shape `REPORT_ALTERNATE_KEYS` actually delivers a
     /// shifted chord in (see `SearchPrev`'s own doc for the same reasoning).
     ToggleFileSearch,
+    TogglePalette,
     NavBack,
     NavForward,
 }
@@ -136,7 +137,7 @@ const SUP: Mods = Mods {
 /// used to share is gone — a terminal cannot report the spacebar's physical
 /// state in-band, so a prefix chord can never be told apart from plain
 /// text; see the module removed at `keystate.rs`). One form of each pair is
-/// marked `alias: true` so the footer's hint row names the command once
+/// marked `secondary: true` so the footer's hint row names the command once
 /// while the Help doc still lists both; which form stays canonical keeps
 /// the shorter `^` glyph in the footer. Ghostty intercepts some ⌘ chords
 /// before the app ever sees them (⌘T in particular), so `^` is the form
@@ -154,7 +155,7 @@ const SUP: Mods = Mods {
 /// intentional binding.
 ///
 /// A ctrl chord that duplicates its ⌘ counterpart (or, for `^d`, another
-/// quit chord) is marked `alias: true` so the footer's hint row skips it,
+/// quit chord) is marked `secondary: true` so the footer's hint row skips it,
 /// since showing both would just repeat the same action twice. `F1` has no
 /// counterpart, so it is not one — hiding it would remove it from the
 /// footer entirely rather than leave a shorter, still-complete hint row.
@@ -168,25 +169,25 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('b'), CTRL),
         cmd: GlobalCommand::ToggleLeft,
         help: "explorer",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('b'), SUP),
         cmd: GlobalCommand::ToggleLeft,
         help: "explorer",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('t'), CTRL),
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('t'), SUP),
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
-        alias: true,
+        secondary: true,
     },
     // `⌘R` deliberately has NO row here, unlike the other four focus
     // commands' pairs: `EDITOR_BINDINGS`' `RELOAD` chord already claims
@@ -201,121 +202,121 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('r'), CTRL),
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('s'), CTRL),
         cmd: GlobalCommand::Save,
         help: "save",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('s'), SUP),
         cmd: GlobalCommand::Save,
         help: "save",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::F1, Mods::NONE),
         cmd: GlobalCommand::Help,
         help: "help",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('c'), CTRL),
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlC),
         help: "quit",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('d'), CTRL),
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlD),
         help: "quit",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('w'), CTRL),
         cmd: GlobalCommand::CloseFile,
         help: "close",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('n'), CTRL),
         cmd: GlobalCommand::NewDocument,
         help: "new",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('n'), SUP),
         cmd: GlobalCommand::NewDocument,
         help: "new",
-        alias: true,
+        secondary: true,
     },
     // `^1`-`^9` switch to the tab at that position; `^0` is the TENTH tab,
     // matching what the tab strip itself prints for the first ten tabs
     // (`opentabs::draw`'s `(idx + 1) % 10` shortcut digit). Ten near-identical
-    // hints would flood the footer's hint row, so all ten stay `alias: true`
+    // hints would flood the footer's hint row, so all ten stay `secondary: true`
     // — still fully discoverable through the F1 Help doc, just not repeated
     // ten times in the footer.
     Binding {
         key: KeyPattern::new(KeyCode::Char('1'), CTRL),
         cmd: GlobalCommand::TabSwitch(0),
         help: "tab 1",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('2'), CTRL),
         cmd: GlobalCommand::TabSwitch(1),
         help: "tab 2",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('3'), CTRL),
         cmd: GlobalCommand::TabSwitch(2),
         help: "tab 3",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('4'), CTRL),
         cmd: GlobalCommand::TabSwitch(3),
         help: "tab 4",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('5'), CTRL),
         cmd: GlobalCommand::TabSwitch(4),
         help: "tab 5",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('6'), CTRL),
         cmd: GlobalCommand::TabSwitch(5),
         help: "tab 6",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('7'), CTRL),
         cmd: GlobalCommand::TabSwitch(6),
         help: "tab 7",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('8'), CTRL),
         cmd: GlobalCommand::TabSwitch(7),
         help: "tab 8",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('9'), CTRL),
         cmd: GlobalCommand::TabSwitch(8),
         help: "tab 9",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('0'), CTRL),
         cmd: GlobalCommand::TabSwitch(9),
         help: "tab 10",
-        alias: true,
+        secondary: true,
     },
     // `^p`/`⌘p` are unclaimed across all six binding tables (`GLOBAL`,
     // `EDITOR`, `VIM`, `TABS`, `EXPLORER`, `EXPLORER_SEARCH` — see
@@ -327,13 +328,13 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('p'), CTRL),
         cmd: GlobalCommand::ToggleReadOnly,
         help: "reading",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('p'), SUP),
         cmd: GlobalCommand::ToggleReadOnly,
         help: "reading",
-        alias: true,
+        secondary: true,
     },
     // `^M` only — see the `Merge` variant's own doc for why `⌘M` has no row
     // (Ghostty steals it) and why `^M` doesn't collide with Enter here.
@@ -341,43 +342,43 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('m'), CTRL),
         cmd: GlobalCommand::Merge,
         help: "merge",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('e'), CTRL),
         cmd: GlobalCommand::ToggleMessages,
         help: "messages",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('e'), SUP),
         cmd: GlobalCommand::ToggleMessages,
         help: "messages",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Backspace, SUP),
         cmd: GlobalCommand::Trash,
         help: "trash",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Backspace, CTRL),
         cmd: GlobalCommand::Trash,
         help: "trash",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('f'), CTRL),
         cmd: GlobalCommand::ToggleSearch,
         help: "search",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('f'), SUP),
         cmd: GlobalCommand::ToggleSearch,
         help: "search",
-        alias: true,
+        secondary: true,
     },
     // Next/prev step through the current match list without needing the
     // bar open. `g`/`G` are the plain and shifted forms of the SAME
@@ -389,37 +390,49 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('g'), CTRL),
         cmd: GlobalCommand::SearchNext,
         help: "next match",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('g'), SUP),
         cmd: GlobalCommand::SearchNext,
         help: "next match",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('G'), CTRL),
         cmd: GlobalCommand::SearchPrev,
         help: "prev match",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('G'), SUP),
         cmd: GlobalCommand::SearchPrev,
         help: "prev match",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('F'), CTRL),
         cmd: GlobalCommand::ToggleFileSearch,
         help: "find file",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('F'), SUP),
         cmd: GlobalCommand::ToggleFileSearch,
         help: "find file",
-        alias: true,
+        secondary: true,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('P'), CTRL),
+        cmd: GlobalCommand::TogglePalette,
+        help: "command palette",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('P'), SUP),
+        cmd: GlobalCommand::TogglePalette,
+        help: "command palette",
+        secondary: true,
     },
     // Appended after `messages`/`trash` deliberately: the footer's
     // whole-hint truncation drops entries from the tail first, so this new
@@ -431,35 +444,35 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('j'), CTRL),
         cmd: GlobalCommand::TogglePin,
         help: "pin",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('['), CTRL),
         cmd: GlobalCommand::NavBack,
         help: "back",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('['), SUP),
         cmd: GlobalCommand::NavBack,
         help: "back",
-        alias: true,
+        secondary: true,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char(']'), CTRL),
         cmd: GlobalCommand::NavForward,
         help: "forward",
-        alias: false,
+        secondary: false,
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char(']'), SUP),
         cmd: GlobalCommand::NavForward,
         help: "forward",
-        alias: true,
+        secondary: true,
     },
 ];
 
-/// The canonical (non-alias) chord glyph for `cmd` paired with the
+/// The canonical (non-secondary) chord glyph for `cmd` paired with the
 /// command's own help text, for chrome that names a command instead of
 /// iterating the table — the footer's `^S` hint, the breadcrumb's
 /// navigation controls. Rebinding a command moves its glyph everywhere at
@@ -473,7 +486,9 @@ pub(crate) fn label_for(cmd: GlobalCommand) -> String {
 }
 
 fn canonical(cmd: GlobalCommand) -> Option<&'static Binding<GlobalCommand>> {
-    GLOBAL_BINDINGS.iter().find(|b| !b.alias && b.cmd == cmd)
+    GLOBAL_BINDINGS
+        .iter()
+        .find(|b| !b.secondary && b.cmd == cmd)
 }
 
 #[cfg(test)]
@@ -881,6 +896,48 @@ mod tests {
         assert_eq!(
             resolve_in(GLOBAL_BINDINGS, ctrl_cap_f),
             Some(GlobalCommand::ToggleFileSearch)
+        );
+    }
+
+    #[test]
+    fn palette_chords_are_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_cap_p = KeyInput {
+            code: KeyCode::Char('P'),
+            mods: CTRL,
+        };
+        let sup_cap_p = KeyInput {
+            code: KeyCode::Char('P'),
+            mods: SUP,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_cap_p, sup_cap_p]);
+    }
+
+    #[test]
+    fn ctrl_shifted_p_resolves_to_toggle_palette() {
+        use crate::binding::resolve_in;
+        use crate::keymap::KeyInput;
+
+        let ctrl_cap_p = KeyInput {
+            code: KeyCode::Char('P'),
+            mods: CTRL,
+        };
+        assert_eq!(
+            resolve_in(GLOBAL_BINDINGS, ctrl_cap_p),
+            Some(GlobalCommand::TogglePalette)
+        );
+    }
+
+    #[test]
+    fn ctrl_shifted_p_reaches_toggle_palette_through_from_termina() {
+        use termina::event::{KeyCode as TerminaKeyCode, KeyEvent, Modifiers};
+
+        let event = KeyEvent::new(TerminaKeyCode::Char('P'), Modifiers::CONTROL);
+        let input = crate::keymap::from_termina(event);
+        assert_eq!(
+            input.and_then(|key| crate::binding::resolve_in(GLOBAL_BINDINGS, key)),
+            Some(GlobalCommand::TogglePalette)
         );
     }
 }

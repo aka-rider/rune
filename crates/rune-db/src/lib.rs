@@ -35,6 +35,7 @@
 mod adopt;
 mod blob;
 mod bracket;
+mod command_history;
 mod confirmation;
 mod conn;
 mod diag;

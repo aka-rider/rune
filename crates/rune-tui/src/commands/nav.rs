@@ -185,6 +185,18 @@ pub fn word_right_offset(buf: &Buffer, offset: usize) -> usize {
 /// is the equivalent chokepoint for the triple-click "select the whole
 /// logical line" gesture — it already spans every wrapped row of the
 /// buffer line, since it works in buffer-line space, not wrap-row space.
+pub(crate) fn is_word_at(buf: &Buffer, offset: usize) -> bool {
+    if buf.is_empty() {
+        return false;
+    }
+    let anchor = if offset < buf.len() {
+        offset
+    } else {
+        prev_rune_offset(buf, offset)
+    };
+    class_at(buf, anchor) == CharClass::Word
+}
+
 pub(crate) fn word_range_at(buf: &Buffer, offset: usize) -> (usize, usize) {
     if buf.is_empty() {
         return (0, 0);

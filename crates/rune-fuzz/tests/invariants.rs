@@ -8,7 +8,7 @@
 //! `tests/invariants/highlight.rs`), and the four merge-mode invariants
 //! `MERGE-DOC-ACTIVE`/`MERGE-SAVE-BLOCKED`/`MERGE-KEY-FEEDBACK`/
 //! `MERGE-TITLE-CLEARED` (the merge plan's own WP7.S1,
-//! `tests/invariants/merge.rs`).
+//! `tests/invariants/merge.rs`), and `PALETTE-FOCUS-STABLE`/`PALETTE-GUARD`.
 //!
 //! Same pattern as `tests/tripwire.rs` (WP4.S3/S4): one hand-built BAD
 //! input per invariant asserting the checker fires with the right id, one
@@ -43,6 +43,8 @@ mod highlight;
 mod journal;
 #[path = "invariants/merge.rs"]
 mod merge;
+#[path = "invariants/palette.rs"]
+mod palette;
 #[path = "invariants/pane.rs"]
 mod pane;
 #[path = "invariants/protocol.rs"]

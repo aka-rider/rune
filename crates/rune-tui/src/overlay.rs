@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::filesearch::FileSearchState;
+use crate::palette::PaletteState;
 use crate::search::SearchState;
 
 #[derive(Default)]
@@ -8,6 +9,7 @@ pub(crate) enum Overlay {
     None,
     Search(SearchState),
     FileSearch(FileSearchState),
+    Palette(PaletteState),
     ExplorerFind(String),
 }
 
@@ -65,6 +67,40 @@ impl App {
     pub(crate) fn close_filesearch(&mut self) {
         if matches!(self.overlay, Overlay::FileSearch(_)) {
             self.overlay = Overlay::None;
+        }
+    }
+
+    pub fn palette(&self) -> Option<&PaletteState> {
+        match &self.overlay {
+            Overlay::Palette(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn palette_mut(&mut self) -> Option<&mut PaletteState> {
+        match &mut self.overlay {
+            Overlay::Palette(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn open_palette(&mut self, state: PaletteState) {
+        self.overlay = Overlay::Palette(state);
+    }
+
+    pub(crate) fn close_palette(&mut self) {
+        if matches!(self.overlay, Overlay::Palette(_)) {
+            self.overlay = Overlay::None;
+        }
+    }
+
+    pub(crate) fn take_palette(&mut self) -> Option<PaletteState> {
+        match std::mem::take(&mut self.overlay) {
+            Overlay::Palette(state) => Some(state),
+            other => {
+                self.overlay = other;
+                None
+            }
         }
     }
 

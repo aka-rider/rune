@@ -322,6 +322,22 @@ fn merge_key_feedback_ignores_an_inactive_merge() {
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }
 
+#[test]
+fn merge_key_feedback_ignores_an_escape_swallowed_by_an_open_overlay() {
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.focus_target = rune_tui::focus::FocusTarget::Palette;
+    prev.merge_doc = Some(prev.active);
+    let next = prev.clone();
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Escape, Mods::NONE),
+        command: None,
+    };
+    assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
+}
+
 // ---------------------------------------------------------------------
 // MERGE-TITLE-CLEARED
 // ---------------------------------------------------------------------

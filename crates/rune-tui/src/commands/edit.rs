@@ -45,7 +45,7 @@ use crate::undogroup::{self, Direction, Tier};
 /// One edit per cursor, replacing its selection when it has one, or
 /// `bare`'s caller-chosen range otherwise. `bare` returning `None` skips
 /// that cursor entirely (e.g. Backspace at buffer start).
-fn per_cursor_selection_edits(
+pub(crate) fn per_cursor_selection_edits(
     app: &mut App,
     id: DocumentId,
     kind: EditKind,

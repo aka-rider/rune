@@ -103,10 +103,10 @@ pub struct Binding<C: Copy + 'static> {
     pub cmd: C,
     pub help: &'static str,
     /// A secondary way to reach a command that already has a primary chord.
-    /// The footer's hint row skips an aliased binding so it does not
+    /// The footer's hint row skips a secondary binding so it does not
     /// advertise two chords for the same action; the generated Help doc
     /// still lists it, since it keeps working.
-    pub alias: bool,
+    pub secondary: bool,
 }
 
 impl<C: Copy + 'static> Binding<C> {
@@ -173,7 +173,7 @@ mod tests {
             key: KeyPattern::new(KeyCode::Char('k'), CTRL),
             cmd: TestCmd::Foo,
             help: "foo",
-            alias: false,
+            secondary: false,
         }];
         let key = KeyInput {
             code: KeyCode::Char('k'),

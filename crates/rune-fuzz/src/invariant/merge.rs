@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use rune_db::{DbEvent, MaterializePrep, OpOutcome, SyncKind};
 use rune_tui::document::DocumentId;
+use rune_tui::focus::FocusTarget;
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
@@ -98,7 +99,8 @@ pub fn merge_save_blocked(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
 /// intercept at all — that key's feedback obligation belongs to whichever
 /// pane's own table resolves it, not to this invariant.
 pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
-    if !prev.merge_active || prev.focus != Pane::Editor {
+    if !prev.merge_active || prev.focus != Pane::Editor || prev.focus_target != FocusTarget::Editor
+    {
         return None;
     }
     let MsgTag::Key { input, .. } = &ctx.msg else {

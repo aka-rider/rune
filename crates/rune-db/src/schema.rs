@@ -97,6 +97,11 @@ CREATE TABLE IF NOT EXISTS search_history (
 	query        TEXT PRIMARY KEY,
 	last_used_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS command_history (
+	name         TEXT PRIMARY KEY,
+	last_used_at TEXT NOT NULL
+);
 "#;
 
 pub fn apply(conn: &Connection) -> Result<(), Error> {
@@ -669,6 +674,60 @@ mod tests {
             .expect("a column's own definition must be found in the schema this crate ships");
 
         assert_eq!(segment, "parent_a INTEGER REFERENCES observations(id)");
+    }
+
+    const SCHEMA_BEFORE_COMMAND_HISTORY_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS documents (
+        id           INTEGER PRIMARY KEY,
+        path         TEXT    NOT NULL DEFAULT '',
+        inode        INTEGER,
+        device       INTEGER,
+        kind         TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
+        created_at   TEXT    NOT NULL,
+        last_seen_at TEXT    NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS search_history (
+        query        TEXT PRIMARY KEY,
+        last_used_at TEXT NOT NULL
+    );
+    "#;
+
+    #[test]
+    fn apply_on_a_file_missing_command_history_creates_it_without_disturbing_other_rows() {
+        let conn = Connection::open_in_memory().expect("open");
+        conn.execute_batch(SCHEMA_BEFORE_COMMAND_HISTORY_TABLE)
+            .expect("apply the shape missing command_history");
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('x', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        conn.execute(
+            "INSERT INTO search_history(query, last_used_at) VALUES ('hello', 't')",
+            [],
+        )
+        .expect("seed search_history");
+
+        apply(&conn).expect("apply creates the missing table");
+
+        let doc_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .expect("count documents");
+        assert_eq!(doc_count, 1);
+        let search_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM search_history", [], |r| r.get(0))
+            .expect("count search_history");
+        assert_eq!(search_count, 1);
+        let command_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM command_history", [], |r| r.get(0))
+            .expect("count command_history");
+        assert_eq!(command_count, 0);
+
+        apply(&conn).expect("a second apply against an already-reconciled file is a no-op");
+        let doc_count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .expect("count documents again");
+        assert_eq!(doc_count_after, 1);
     }
 
     #[test]

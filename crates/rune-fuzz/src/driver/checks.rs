@@ -188,6 +188,14 @@ fn search_field_focused_key(state: &State) -> Option<KeyInput> {
     (focus::target(&state.app) == FocusTarget::SearchField).then_some(ESCAPE)
 }
 
+fn palette_focused_key(state: &State) -> Option<KeyInput> {
+    (focus::target(&state.app) == FocusTarget::Palette).then_some(ESCAPE)
+}
+
+fn filesearch_focused_key(state: &State) -> Option<KeyInput> {
+    (focus::target(&state.app) == FocusTarget::FileSearch).then_some(ESCAPE)
+}
+
 /// The message pane isn't gated behind the left column, so the generic
 /// `^B` fallback below can't reach it — `^B` toggles a column this pane
 /// doesn't live in, leaving focus stuck here forever.
@@ -260,11 +268,13 @@ fn reading_view_key(state: &State) -> Option<KeyInput> {
     })
 }
 
-const RESTORE_STEPS: [fn(&State) -> Option<KeyInput>; 9] = [
+const RESTORE_STEPS: [fn(&State) -> Option<KeyInput>; 11] = [
     guard_up_key,
     help_active_key,
     title_focused_key,
     search_field_focused_key,
+    palette_focused_key,
+    filesearch_focused_key,
     messages_focused_key,
     seed_not_active_key,
     editor_unfocused_key,
@@ -273,13 +283,20 @@ const RESTORE_STEPS: [fn(&State) -> Option<KeyInput>; 9] = [
 ];
 
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
-    for step in RESTORE_STEPS {
-        let Some(key) = step(state) else {
-            continue;
-        };
-        let (msg, tag) = key_step(key);
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
+    for _ in 0..RESTORE_STEPS.len() {
+        let mut pressed_any = false;
+        for step in RESTORE_STEPS {
+            let Some(key) = step(state) else {
+                continue;
+            };
+            pressed_any = true;
+            let (msg, tag) = key_step(&state.app, key);
+            if step_and_check(state, prev, msg, tag, None, outcome) {
+                return true;
+            }
+        }
+        if !pressed_any {
+            return false;
         }
     }
     false
@@ -347,13 +364,16 @@ pub(super) fn drive_end_of_session_checks(
             && prev.journal_pos != 0
             && presses < bound
         {
-            let (msg, tag) = key_step(KeyInput {
-                code: KeyCode::Char('z'),
-                mods: Mods {
-                    sup: true,
-                    ..Mods::NONE
+            let (msg, tag) = key_step(
+                &state.app,
+                KeyInput {
+                    code: KeyCode::Char('z'),
+                    mods: Mods {
+                        sup: true,
+                        ..Mods::NONE
+                    },
                 },
-            });
+            );
             if step_and_check(state, prev, msg, tag, None, outcome) {
                 break;
             }
@@ -373,14 +393,17 @@ pub(super) fn drive_end_of_session_checks(
                 && prev.journal_pos != pre_undo.journal_pos
                 && redo_presses < bound
             {
-                let (msg, tag) = key_step(KeyInput {
-                    code: KeyCode::Char('z'),
-                    mods: Mods {
-                        sup: true,
-                        shift: true,
-                        ..Mods::NONE
+                let (msg, tag) = key_step(
+                    &state.app,
+                    KeyInput {
+                        code: KeyCode::Char('z'),
+                        mods: Mods {
+                            sup: true,
+                            shift: true,
+                            ..Mods::NONE
+                        },
                     },
-                });
+                );
                 if step_and_check(state, prev, msg, tag, None, outcome) {
                     break;
                 }

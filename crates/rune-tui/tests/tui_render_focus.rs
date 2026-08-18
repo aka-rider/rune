@@ -148,3 +148,34 @@ fn caret_not_visible_on_a_read_only_document() {
         "a read-only document must not paint a caret"
     );
 }
+
+const TOGGLE_PALETTE: KeyInput = KeyInput {
+    code: KeyCode::Char('P'),
+    mods: Mods {
+        ctrl: true,
+        ..Mods::NONE
+    },
+};
+
+#[test]
+fn caret_not_visible_when_the_palette_opens_over_an_unfocused_editor() {
+    let content = "hello world\n";
+    let offset = 3;
+
+    let mut unfocused = app_for(content, offset, false);
+    unfocused.key(TOGGLE_PALETTE);
+    let buf = render_to_test_backend(unfocused.app());
+    assert_eq!(
+        caret_column(&buf, EDITOR_TOP_ROW, WIDTH),
+        None,
+        "a palette opened over an unfocused editor must not paint a caret"
+    );
+
+    let mut focused = app_for(content, offset, true);
+    focused.key(TOGGLE_PALETTE);
+    let buf = render_to_test_backend(focused.app());
+    assert!(
+        caret_column(&buf, EDITOR_TOP_ROW, WIDTH).is_some(),
+        "a palette opened over a focused editor must still show a caret, or this test is vacuous"
+    );
+}

@@ -38,6 +38,9 @@ pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> GuardRaise {
     if app.guard.is_some() {
         return GuardRaise::Displaced;
     }
+    if app.palette().is_some() {
+        crate::palette::close(app);
+    }
     app.guard = Some(prompt);
     GuardRaise::Raised
 }

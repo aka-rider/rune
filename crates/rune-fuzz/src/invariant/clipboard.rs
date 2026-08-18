@@ -37,6 +37,7 @@ fn bracketed_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Op
     match prev.focus_target {
         FocusTarget::SearchField => search_paste_violation(prev, next, text),
         FocusTarget::FileSearch => filesearch_paste_violation(prev, next, text),
+        FocusTarget::Palette => palette_paste_violation(prev, next, text),
         FocusTarget::Title => title_paste_violation(prev, next, text),
         FocusTarget::Explorer
         | FocusTarget::Tabs
@@ -95,6 +96,16 @@ fn filesearch_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> O
         "file-search query",
         &prev.filesearch_query,
         &next.filesearch_query,
+        &sanitized,
+    )
+}
+
+fn palette_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
+    let sanitized = strip_control(text);
+    append_violation(
+        "command palette query",
+        &prev.palette_query,
+        &next.palette_query,
         &sanitized,
     )
 }
@@ -229,7 +240,7 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     // `pane_no_bleed` applies. (Latent since Explorer/Tabs focus existed;
     // the Up-at-editor-top-focuses-the-title gesture made it easy to
     // reach.)
-    if prev.modal_open || prev.focus != Pane::Editor {
+    if prev.modal_open || prev.focus != Pane::Editor || prev.focus_target != FocusTarget::Editor {
         return None;
     }
     let [cursor] = prev.cursors.as_slice() else {

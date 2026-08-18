@@ -46,7 +46,8 @@ fn load(
         rune_db::ReaderReply::RecentDocuments(paths) => paths,
         rune_db::ReaderReply::Pong
         | rune_db::ReaderReply::Blob(_)
-        | rune_db::ReaderReply::RecentSearches(_) => {
+        | rune_db::ReaderReply::RecentSearches(_)
+        | rune_db::ReaderReply::RecentCommands(_) => {
             return Err(CmdError::Refused("unexpected reader reply".to_string()));
         }
     };

@@ -308,3 +308,17 @@ fn clip_osc52_ignores_a_collapsed_cursor() {
     ctx.raw = Vec::new();
     assert_eq!(clip_osc52(&prev, &ctx), None);
 }
+
+#[test]
+fn clip_osc52_ignores_a_key_swallowed_by_an_open_overlay() {
+    let mut prev = base_snapshot("hello world");
+    prev.cursors = vec![selection_cursor(1, 0, 5)]; // "hello"
+    prev.focus_target = FocusTarget::Palette;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Char('c'), sup()),
+        command: Some(Command::Copy),
+    };
+    ctx.raw = Vec::new();
+    assert_eq!(clip_osc52(&prev, &ctx), None);
+}

@@ -120,6 +120,7 @@ pub enum MsgTag {
     /// it is that `update` never panics on a trash reply and that a pending
     /// trash actually resolves within a session.
     TrashDone,
+    PaletteRecentsLoaded,
 }
 
 /// Everything an invariant checker needs beyond `Snapshot`: what happened,

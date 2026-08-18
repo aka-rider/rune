@@ -659,6 +659,65 @@ pub(super) const MERGE_KEY: KeyInput = KeyInput {
     },
 };
 
+pub(super) const CMDPAL_KEY_CTRL: KeyInput = KeyInput {
+    code: KeyCode::Char('P'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
+pub(super) const CMDPAL_KEY_SUP: KeyInput = KeyInput {
+    code: KeyCode::Char('P'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
+
+pub(super) const CMDPAL_TAB_KEY: KeyInput = KeyInput {
+    code: KeyCode::Tab,
+    mods: Mods::NONE,
+};
+
+pub(super) const CMDPAL_BACKSPACE_KEY: KeyInput = KeyInput {
+    code: KeyCode::Backspace,
+    mods: Mods::NONE,
+};
+
+pub(super) static CMDPAL_NAV_KEYS: &[KeyInput] = &[
+    KeyInput {
+        code: KeyCode::Up,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Down,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::PageUp,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::PageDown,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Home,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::End,
+        mods: Mods::NONE,
+    },
+];
+
+pub(super) static CMDPAL_PARAM_QUERIES: &[&str] = &["lang", "tab"];
+
 /// `⇧⌘Y`/`⇧⌘U` (`DiffCommand::TakeTheirs`/`TakeOurs`, `diff_view::keys::
 /// DIFF_BINDINGS`) — the pane verb layer's own conflict-resolving chords.
 /// `cluster_merge` presses exactly one of these right after the working

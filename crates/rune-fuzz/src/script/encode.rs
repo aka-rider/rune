@@ -5,7 +5,7 @@
 use std::fmt::Write as _;
 
 use super::keyword::{self, Keyword};
-use crate::action::{Action, HighlightVersion};
+use crate::action::{Action, HighlightVersion, PaletteGenClaim};
 use crate::driver::DOC_PATH;
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
@@ -120,6 +120,32 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push_str(&millis.to_string());
             out.push('\n');
         }
+        Action::PaletteRecentsLoaded {
+            generation,
+            ok,
+            names,
+        } => {
+            out.push(' ');
+            out.push_str(&encode_palette_gen_claim(generation));
+            out.push(' ');
+            out.push_str(if *ok { "ok" } else { "err" });
+            out.push(' ');
+            out.push_str(&names.len().to_string());
+            out.push('\n');
+            for name in names {
+                out.push_str(keyword::PALETTE_RECENTS_NAME);
+                out.push(' ');
+                out.push_str(&escape(name));
+                out.push('\n');
+            }
+        }
+    }
+}
+
+fn encode_palette_gen_claim(claim: &PaletteGenClaim) -> String {
+    match claim {
+        PaletteGenClaim::Live => "live".to_string(),
+        PaletteGenClaim::Stale(raw) => format!("stale:{raw}"),
     }
 }
 

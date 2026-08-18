@@ -24,8 +24,10 @@ mod code_bg;
 pub(crate) mod decor;
 mod diff;
 pub mod filesearch;
+pub(crate) mod fuzzyspan;
 pub mod image;
 mod overlay;
+pub mod palette;
 pub mod rowbg;
 pub mod search;
 pub mod title;
@@ -303,6 +305,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
         messages::draw(app, messages_area, frame);
     }
     crate::footer::draw(app, geo.footer, frame);
+
+    if let Some(palette_area) = geo.palette {
+        palette::draw(app, palette_area, frame);
+    }
 }
 
 /// The pre-snapshot frame `draw` falls back to while `doc.view` is still

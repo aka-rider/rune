@@ -250,13 +250,17 @@ pub(crate) enum OpKind {
     },
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// candidate ids, newest first.
-    RecoverableScratch { exclude_id: i64 },
+    RecoverableScratch {
+        exclude_id: i64,
+    },
     /// Like `RecoverableScratch`, narrowed to scratch rows recorded as
     /// intending `intended_path` — a launch positional naming a path that
     /// does not (yet) exist on disk. On success, the completion's
     /// `DbEvent::Ok.result` carries the candidate ids, newest first
     /// (`OpOutcome::Ids`, the same shape `RecoverableScratch` uses).
-    FindNamedScratch { intended_path: String },
+    FindNamedScratch {
+        intended_path: String,
+    },
     /// For an untitled document — see `scratch::reconstruct_scratch`.
     /// `liveness_check` travels with the op for the same reason `Load`
     /// carries its own copy: the writer thread never touches `Store`'s
@@ -270,7 +274,14 @@ pub(crate) enum OpKind {
     /// cosmetic write: its own `Store` convenience method is the one place
     /// that decides an `Err` here must never sticky-degrade the store the
     /// way a failed recovery write does.
-    TouchSearchQuery { query: String, now: SystemTime },
+    TouchSearchQuery {
+        query: String,
+        now: SystemTime,
+    },
+    TouchCommandName {
+        name: String,
+        now: SystemTime,
+    },
     /// The writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER

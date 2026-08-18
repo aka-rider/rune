@@ -6,18 +6,16 @@
 //! indices` `update`'s own `recompute` chokepoint already computed — this
 //! module never scores or ranks anything itself.
 
-use std::collections::HashSet;
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
 use crate::filesearch::{FileSearchState, ResultRow, candidate_at};
 use crate::pane::Pane;
+use crate::render::fuzzyspan::{display_spans, with_bg};
 use crate::theme::Theme;
 use crate::width::display_width;
 
@@ -119,7 +117,7 @@ fn result_line(
 
     if let Some(candidate) = candidate_at(state, row.candidate_idx) {
         let avail = width.saturating_sub(display_width(prefix));
-        spans.extend(display_spans(
+        spans.extend(candidate_spans(
             &candidate.display,
             &row.indices,
             &app.theme,
@@ -138,16 +136,7 @@ fn result_line(
     Line::from(spans)
 }
 
-/// Styles one candidate's `display` string: the directory portion (up to
-/// and including the last `/`) dimmed, the filename portion in the `text`
-/// hue — no blue, reserved for a directory row the finder's results (files
-/// only) never show — and every grapheme `indices` names rendered bold on
-/// top of whichever base colour it falls under. Left-truncates to `avail_w`
-/// cells (leading `…`, tail kept, the `truncate_root`/`truncate_tail_to_
-/// width` idiom) by taking a SUFFIX of the already-styled grapheme list,
-/// so a truncated row's surviving bold/dim styling never has to be
-/// re-derived from a byte offset shifted by the cut.
-fn display_spans(
+fn candidate_spans(
     display: &str,
     indices: &[u32],
     theme: &Theme,
@@ -155,92 +144,9 @@ fn display_spans(
     row_bg: Option<Color>,
 ) -> Vec<Span<'static>> {
     let dir_end = display.rfind('/').map_or(0, |i| i + 1);
-    let graphemes: Vec<(usize, &str)> = display.grapheme_indices(true).collect();
-    let matched_graphemes = grapheme_match_mask(display, &graphemes, indices);
-    let total_w = display_width(display);
-    let (start, truncated) = fit_suffix(&graphemes, total_w, avail_w);
-
     let dim_style = with_bg(Style::new().fg(theme.chrome.subtle), row_bg);
     let file_style = with_bg(theme.chrome.file_normal, row_bg);
-
-    let mut spans = Vec::with_capacity(graphemes.len() - start + 1);
-    if truncated {
-        spans.push(Span::styled("\u{2026}".to_string(), dim_style));
-    }
-    for (grapheme_idx, (byte_off, g)) in graphemes.iter().enumerate().skip(start) {
-        let base = if *byte_off < dir_end {
-            dim_style
-        } else {
-            file_style
-        };
-        let style = if matched_graphemes
-            .get(grapheme_idx)
-            .copied()
-            .unwrap_or(false)
-        {
-            base.add_modifier(Modifier::BOLD)
-        } else {
-            base
-        };
-        spans.push(Span::styled((*g).to_string(), style));
-    }
-    spans
-}
-
-/// Maps nucleo's `indices` onto a per-grapheme bold mask, mirroring
-/// `Utf32Str::new`'s own branch choice (nucleo-matcher 0.3.1, default
-/// features): when every grapheme's leading codepoint is ASCII, nucleo
-/// matches against the display string's raw UTF-8 BYTES — a whole-ASCII
-/// name always takes this path, and so does an NFD name whose combining
-/// marks all trail an ASCII base (routine on macOS/APFS: "é" as `e` +
-/// U+0301) since the base codepoint alone is what survives nucleo's own
-/// per-grapheme reduction — so `indices` there are byte offsets, matched
-/// against each grapheme's own starting byte. Otherwise (a grapheme led by
-/// a non-ASCII codepoint, e.g. precomposed "é" or CJK) nucleo matches one
-/// codepoint per grapheme and `indices` are grapheme POSITIONS directly.
-fn grapheme_match_mask(display: &str, graphemes: &[(usize, &str)], indices: &[u32]) -> Vec<bool> {
-    let matched: HashSet<usize> = indices.iter().map(|&i| i as usize).collect();
-    let ascii_reduced = display.is_ascii()
-        || graphemes
-            .iter()
-            .all(|(_, g)| g.chars().next().is_some_and(|c| c.is_ascii()));
-    if ascii_reduced {
-        graphemes
-            .iter()
-            .map(|(byte_off, _)| matched.contains(byte_off))
-            .collect()
-    } else {
-        (0..graphemes.len()).map(|i| matched.contains(&i)).collect()
-    }
-}
-
-/// The longest SUFFIX of `graphemes` (grapheme-boundary cuts only) that
-/// fits `avail_w` cells alongside a leading `…` when `total_w` overruns it
-/// — the styling-aware sibling of `width::truncate_tail_to_width`, which
-/// this can't reuse directly since it needs to keep each surviving
-/// grapheme's own index (for the bold-matched lookup), not just the
-/// resulting string.
-fn fit_suffix(graphemes: &[(usize, &str)], total_w: usize, avail_w: usize) -> (usize, bool) {
-    if total_w <= avail_w {
-        return (0, false);
-    }
-    let ellipsis_w = display_width("\u{2026}");
-    let budget = avail_w.saturating_sub(ellipsis_w);
-    let mut used = 0usize;
-    let mut start = graphemes.len();
-    for (i, (_, g)) in graphemes.iter().enumerate().rev() {
-        let w = display_width(g);
-        if used + w > budget {
-            break;
-        }
-        used += w;
-        start = i;
-    }
-    (start, true)
-}
-
-fn with_bg(style: Style, bg: Option<Color>) -> Style {
-    bg.map_or(style, |color| style.bg(color))
+    display_spans(display, indices, dim_style, file_style, avail_w, dir_end)
 }
 
 /// The query row's right-aligned readout: `matched/total` ordinarily, or
@@ -531,17 +437,25 @@ mod tests {
             .first()
             .expect("query \"md\" matches the NFD filename's ascii tail");
 
-        let spans = display_spans(nfd_name, &row.indices, &app.theme, 80, None);
+        let spans = candidate_spans(nfd_name, &row.indices, &app.theme, 80, None);
         let bold_graphemes: Vec<String> = spans
             .iter()
-            .filter(|s| s.style.add_modifier.contains(Modifier::BOLD))
+            .filter(|s| {
+                s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::BOLD)
+            })
             .map(|s| s.content.to_string())
             .collect();
         assert_eq!(bold_graphemes, vec!["m".to_string(), "d".to_string()]);
 
         let non_bold_graphemes: Vec<String> = spans
             .iter()
-            .filter(|s| !s.style.add_modifier.contains(Modifier::BOLD))
+            .filter(|s| {
+                !s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::BOLD)
+            })
             .map(|s| s.content.to_string())
             .collect();
         assert_eq!(

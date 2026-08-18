@@ -153,6 +153,9 @@ pub struct Geometry {
     /// `diff_left`'s right edge. `None` whenever `diff_left` is — the diff
     /// view is inactive, or folded to full width.
     pub diff_splitter: Option<Rect>,
+    /// The command palette overlay's own floating rect — `None` unless
+    /// `App::palette` is open.
+    pub palette: Option<Rect>,
 }
 
 impl Geometry {
@@ -380,6 +383,8 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         });
     }
 
+    let palette = crate::palette::geometry_rect(area, app);
+
     Geometry {
         footer,
         messages: messages_area,
@@ -396,6 +401,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         main: main_area,
         left_splitter,
         diff_splitter,
+        palette,
     }
 }
 

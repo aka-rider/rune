@@ -13,8 +13,16 @@ use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::keymap::{GlobalCommand, QuitKey};
 use crate::messages;
 use crate::pane_global;
+use crate::registry::{self, Availability, CommandId};
 use crate::runtime::{Effects, Msg};
 use crate::save;
+
+fn registry_refusal(app: &App, cmd: GlobalCommand) -> Option<String> {
+    match registry::availability(app, CommandId::Global(cmd)) {
+        Availability::Available => None,
+        Availability::Unavailable(reason) => Some(reason.into_owned()),
+    }
+}
 
 /// The quit-confirm arm-to-quit window: the first press arms `App::timers`'
 /// `TimerKey::QuitConfirm` deadline, carrying the confirm generation.
@@ -113,16 +121,34 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // No focus change and no manual view invalidation needed — the
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
-        GlobalCommand::ToggleReadOnly => crate::commands::reading::toggle(app),
+        GlobalCommand::ToggleReadOnly => {
+            if let Some(reason) = registry_refusal(app, cmd) {
+                messages::warn(app, reason);
+            } else {
+                crate::commands::reading::toggle(app);
+            }
+        }
         // Starts a merge attempt, or exits an already-active
         // one in place — see `merge::toggle`'s own docs.
-        GlobalCommand::Merge => crate::merge::toggle(app, effects),
+        GlobalCommand::Merge => {
+            if let Some(reason) = registry_refusal(app, cmd) {
+                messages::warn(app, reason);
+            } else {
+                crate::merge::toggle(app, effects);
+            }
+        }
         // The message log pane's own open/focus/collapse state
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
         GlobalCommand::Trash => pane_global::trash(app, effects),
-        GlobalCommand::TogglePin => crate::opentabs::limit::toggle_pin(app, app.active),
+        GlobalCommand::TogglePin => {
+            if let Some(reason) = registry_refusal(app, cmd) {
+                messages::warn(app, reason);
+            } else {
+                crate::opentabs::limit::toggle_pin(app, app.active);
+            }
+        }
         GlobalCommand::ToggleSearch => pane_global::toggle_search(app, effects),
         // Reuses the same cursor-jump `advance` Enter/Shift+Enter already
         // drive: with the bar open, this chord behaves exactly like
@@ -133,6 +159,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::SearchNext => search_step(app, true),
         GlobalCommand::SearchPrev => search_step(app, false),
         GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
+        GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
         GlobalCommand::NavForward => crate::navhistory::forward(app, effects),
     }
@@ -166,7 +193,8 @@ fn bar_policy(cmd: GlobalCommand) -> BarPolicy {
         | GlobalCommand::SearchNext
         | GlobalCommand::SearchPrev
         | GlobalCommand::TogglePin
-        | GlobalCommand::ToggleFileSearch => BarPolicy::LeaveOpen,
+        | GlobalCommand::ToggleFileSearch
+        | GlobalCommand::TogglePalette => BarPolicy::LeaveOpen,
     }
 }
 
@@ -180,6 +208,13 @@ fn bar_policy(cmd: GlobalCommand) -> BarPolicy {
 fn close_modal_bars(app: &mut App, effects: &mut Effects) {
     crate::search::close(app);
     close_filesearch(app, effects);
+    close_palette(app);
+}
+
+fn close_palette(app: &mut App) {
+    if app.palette().is_some() {
+        crate::palette::close(app);
+    }
 }
 
 /// The finder-only half of [`close_modal_bars`] — `ToggleSearch`'s own arm

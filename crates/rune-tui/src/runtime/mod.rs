@@ -333,6 +333,10 @@ pub enum Msg {
         generation: crate::generation::Generation,
         result: Result<crate::filesearch::walk::ScanResult, String>,
     },
+    PaletteRecentsLoaded {
+        generation: crate::generation::Generation,
+        result: Result<Vec<String>, CmdError>,
+    },
     Quit,
 }
 
@@ -675,6 +679,9 @@ pub use filesearch_recents_cmd::load_filesearch_recents_cmd;
 // through `runtime::` like every other `Cmd` constructor in this file.
 mod filesearch_cmd;
 pub(crate) use filesearch_cmd::filesearch_scan_cmd;
+
+mod command_history_cmd;
+pub use command_history_cmd::load_command_history_cmd;
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {

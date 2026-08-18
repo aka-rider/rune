@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use super::ScriptError;
 use super::decode_key::parse_key;
 use super::keyword::{self, Keyword};
-use crate::action::{Action, HighlightVersion};
+use crate::action::{Action, HighlightVersion, PaletteGenClaim};
 use crate::driver::DOC_PATH;
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::DirCause;
@@ -115,6 +115,11 @@ pub fn decode(text: &str) -> Result<(String, String, Vec<Action>), ScriptError> 
 
         if let Some(rest) = strip_token(raw, Keyword::Highlight.as_str()) {
             actions.push(parse_highlight(rest, line, &mut lines)?);
+            continue;
+        }
+
+        if let Some(rest) = strip_token(raw, Keyword::PaletteRecentsLoaded.as_str()) {
+            actions.push(parse_palette_recents(rest, line, &mut lines)?);
             continue;
         }
 
@@ -324,6 +329,69 @@ fn parse_highlight_tree(rest: &str, line: usize) -> Result<Action, ScriptError> 
         version,
         fixture,
         base,
+    })
+}
+
+fn parse_palette_recents<'a>(
+    rest: &str,
+    line: usize,
+    lines: &mut Peekable<impl Iterator<Item = (usize, &'a str)>>,
+) -> Result<Action, ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `palette-recents <live|stale:<u32>> <ok|err> <n>`".to_string(),
+    };
+    let mut parts = rest.trim().splitn(3, ' ');
+    let gen_str = parts.next().ok_or_else(malformed)?;
+    let generation = if gen_str == "live" {
+        PaletteGenClaim::Live
+    } else if let Some(raw) = gen_str.strip_prefix("stale:") {
+        let raw: u32 = raw.parse().map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: "expected a u32 generation".to_string(),
+        })?;
+        PaletteGenClaim::Stale(raw)
+    } else {
+        return Err(malformed());
+    };
+    let ok_str = parts.next().ok_or_else(malformed)?;
+    let ok = match ok_str {
+        "ok" => true,
+        "err" => false,
+        _ => return Err(malformed()),
+    };
+    let n: usize = parts
+        .next()
+        .ok_or_else(malformed)?
+        .trim()
+        .parse()
+        .map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: "expected a usize name count".to_string(),
+        })?;
+
+    let mut names = Vec::with_capacity(n);
+    for _ in 0..n {
+        let Some((next_idx, next_raw)) = lines.next() else {
+            return Err(ScriptError::MalformedLine {
+                line,
+                reason: format!("expected {n} palette-recents-name lines, ran out of input"),
+            });
+        };
+        let entry_line = next_idx + 1;
+        let entry_rest = strip_token(next_raw, keyword::PALETTE_RECENTS_NAME).ok_or_else(|| {
+            ScriptError::MalformedLine {
+                line: entry_line,
+                reason: "expected `palette-recents-name <name>`".to_string(),
+            }
+        })?;
+        names.push(unescape(entry_rest, entry_line)?);
+    }
+
+    Ok(Action::PaletteRecentsLoaded {
+        generation,
+        ok,
+        names,
     })
 }
 

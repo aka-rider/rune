@@ -19,13 +19,15 @@ use super::arb::{
 #[cfg(test)]
 pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
 use super::palette::{
-    ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
-    CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
-    EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL, FILESEARCH_KEY_SUP, MARKDOWN_FRAGMENTS, MERGE_KEY,
-    MERGE_RESOLVE_KEYS, NAV_BACK_KEY, NAV_FORWARD_KEY, NAV_KEYS, PASTE_KEY, PASTE_PALETTE,
-    REDO_KEY, REDO_KEY_ALT, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS,
-    TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
+    ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, CMDPAL_BACKSPACE_KEY, CMDPAL_KEY_CTRL,
+    CMDPAL_KEY_SUP, CMDPAL_NAV_KEYS, CMDPAL_PARAM_QUERIES, CMDPAL_TAB_KEY, COPY_KEY, CTRL_B_KEY,
+    CTRL_C_KEY, CTRL_E_KEY, CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY,
+    ESCAPE_KEY, EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL, FILESEARCH_KEY_SUP, MARKDOWN_FRAGMENTS,
+    MERGE_KEY, MERGE_RESOLVE_KEYS, NAV_BACK_KEY, NAV_FORWARD_KEY, NAV_KEYS, PASTE_KEY,
+    PASTE_PALETTE, REDO_KEY, REDO_KEY_ALT, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS,
+    TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
 };
+use crate::action::PaletteGenClaim;
 
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
 /// 1-in-4 a `Paste` of a `PASTE_PALETTE` entry — the only path that can
@@ -539,6 +541,140 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
     })
 }
 
+fn cmdpal_open() -> impl Strategy<Value = KeyInput> {
+    prop_oneof![Just(CMDPAL_KEY_CTRL), Just(CMDPAL_KEY_SUP)]
+}
+
+fn cluster_cmdpal_type() -> impl Strategy<Value = Vec<Action>> {
+    (
+        cmdpal_open(),
+        proptest::collection::vec(select(TYPE_PALETTE), 1..=3),
+    )
+        .prop_map(|(open, frags)| vec![Action::Key(open), Action::Type(frags.join(" "))])
+}
+
+fn cluster_cmdpal_navigate() -> impl Strategy<Value = Vec<Action>> {
+    (
+        cmdpal_open(),
+        proptest::collection::vec(select(CMDPAL_NAV_KEYS), 1..=5),
+    )
+        .prop_map(|(open, keys)| {
+            let mut actions = vec![Action::Key(open)];
+            actions.extend(keys.into_iter().map(Action::Key));
+            actions
+        })
+}
+
+fn cluster_cmdpal_param_flow() -> impl Strategy<Value = Vec<Action>> {
+    (
+        cmdpal_open(),
+        select(CMDPAL_PARAM_QUERIES),
+        select(TYPE_PALETTE),
+    )
+        .prop_map(|(open, query, arg_frag)| {
+            vec![
+                Action::Key(open),
+                Action::Type(query.to_string()),
+                Action::Key(CMDPAL_TAB_KEY),
+                Action::Type(arg_frag.to_string()),
+                Action::Key(ENTER_KEY),
+            ]
+        })
+}
+
+fn cluster_cmdpal_save() -> impl Strategy<Value = Vec<Action>> {
+    cmdpal_open().prop_map(|open| {
+        vec![
+            Action::Key(open),
+            Action::Type("save".to_string()),
+            Action::Key(ENTER_KEY),
+        ]
+    })
+}
+
+fn cluster_cmdpal_backspace() -> impl Strategy<Value = Vec<Action>> {
+    (cmdpal_open(), select(CMDPAL_PARAM_QUERIES), 1u8..=6).prop_map(|(open, query, n)| {
+        let mut actions = vec![
+            Action::Key(open),
+            Action::Type(query.to_string()),
+            Action::Key(CMDPAL_TAB_KEY),
+        ];
+        actions.extend(std::iter::repeat_n(
+            Action::Key(CMDPAL_BACKSPACE_KEY),
+            n as usize,
+        ));
+        actions
+    })
+}
+
+fn cluster_cmdpal_escape() -> impl Strategy<Value = Vec<Action>> {
+    (cmdpal_open(), select(TYPE_PALETTE)).prop_map(|(open, frag)| {
+        vec![
+            Action::Key(open),
+            Action::Type(frag.to_string()),
+            Action::Key(ESCAPE_KEY),
+        ]
+    })
+}
+
+fn cluster_cmdpal_global_interleave() -> impl Strategy<Value = Vec<Action>> {
+    (
+        cmdpal_open(),
+        select(TYPE_PALETTE),
+        prop_oneof![
+            Just(CTRL_T_KEY),
+            Just(CTRL_B_KEY),
+            Just(CTRL_R_KEY),
+            Just(FILESEARCH_KEY_CTRL),
+            Just(FILESEARCH_KEY_SUP),
+        ],
+    )
+        .prop_map(|(open, frag, chord)| {
+            vec![
+                Action::Key(open),
+                Action::Type(frag.to_string()),
+                Action::Key(chord),
+            ]
+        })
+}
+
+fn cluster_cmdpal_recents() -> impl Strategy<Value = Vec<Action>> {
+    (
+        proptest::option::of(cmdpal_open()),
+        prop_oneof![
+            Just(PaletteGenClaim::Live),
+            any::<u32>().prop_map(PaletteGenClaim::Stale),
+        ],
+        proptest::bool::weighted(0.85),
+        proptest::collection::vec(select(TYPE_PALETTE), 0..=5),
+    )
+        .prop_map(|(open, generation, ok, frags)| {
+            let mut actions = Vec::new();
+            if let Some(key) = open {
+                actions.push(Action::Key(key));
+            }
+            actions.push(Action::PaletteRecentsLoaded {
+                generation,
+                ok,
+                names: frags.into_iter().map(str::to_string).collect(),
+            });
+            actions
+        })
+}
+
+fn cluster_cmdpal() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        4 => cluster_cmdpal_type().boxed(),
+        3 => cluster_cmdpal_navigate().boxed(),
+        2 => cluster_cmdpal_param_flow().boxed(),
+        2 => cluster_cmdpal_save().boxed(),
+        2 => cluster_cmdpal_backspace().boxed(),
+        2 => cluster_cmdpal_escape().boxed(),
+        2 => cluster_cmdpal_global_interleave().boxed(),
+        1 => cluster_cmdpal_recents().boxed(),
+    ]
+}
+
 /// The user-approved weighted table, now over 20 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
@@ -577,6 +713,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         1 => cluster_confirm_stale().boxed(),
         1 => cluster_quit_guard().boxed(),
         3 => cluster_merge().boxed(),
+        6 => cluster_cmdpal().boxed(),
     ]
 }
 

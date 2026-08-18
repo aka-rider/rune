@@ -29,16 +29,25 @@ pub enum ReaderRequestKind {
     Ping,
     /// Decompresses and hash-verifies the blob stored under `hash` —
     /// stale-tolerant display content, never a decision input.
-    GetBlob { hash: String },
+    GetBlob {
+        hash: String,
+    },
     /// The `limit` most recently used search queries, newest first — a
     /// history list for the search bar's UI, stale-tolerant and never
     /// consulted to make a decision, so it belongs on this thread exactly
     /// like `GetBlob`.
-    RecentSearches { limit: u32 },
+    RecentSearches {
+        limit: u32,
+    },
     /// The `limit` most recently opened real-file document paths, newest
     /// first — the fuzzy file finder's own MRU list, exactly as
     /// stale-tolerant and non-decision-input as `RecentSearches`.
-    RecentDocuments { limit: u32 },
+    RecentDocuments {
+        limit: u32,
+    },
+    RecentCommands {
+        limit: u32,
+    },
 }
 
 /// The reply to a [`ReaderRequestKind`].
@@ -54,6 +63,7 @@ pub enum ReaderReply {
     RecentSearches(Vec<String>),
     /// `RecentDocuments`'s reply: MRU-first document paths.
     RecentDocuments(Vec<String>),
+    RecentCommands(Vec<String>),
 }
 
 struct Request {
@@ -189,6 +199,9 @@ fn execute(conn: &Connection, kind: ReaderRequestKind) -> Result<ReaderReply, Er
         ReaderRequestKind::RecentDocuments { limit } => {
             crate::document::recent_paths(conn, limit).map(ReaderReply::RecentDocuments)
         }
+        ReaderRequestKind::RecentCommands { limit } => {
+            crate::command_history::recent(conn, limit).map(ReaderReply::RecentCommands)
+        }
     }
 }
 
@@ -278,6 +291,54 @@ mod tests {
         assert!(
             query_handle
                 .query(ReaderRequestKind::RecentSearches { limit: 1 })
+                .is_err(),
+            "query after shutdown must return an error, not block"
+        );
+
+        drop(bootstrap);
+    }
+
+    #[test]
+    fn recent_commands_round_trips_through_the_reader() {
+        let uri = crate::conn::memory_uri();
+        let mut bootstrap =
+            crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(&uri))
+                .expect("bootstrap shared memdb");
+
+        let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        for (i, name) in ["save", "quit"].into_iter().enumerate() {
+            let tx = bootstrap.transaction().expect("tx");
+            crate::command_history::touch(
+                &tx,
+                name,
+                base + std::time::Duration::from_secs(i as u64 * 10),
+            )
+            .expect("touch");
+            tx.commit().expect("commit");
+        }
+
+        let handle = spawn(&uri).expect("spawn reader");
+        let reply = handle
+            .query(ReaderRequestKind::RecentCommands { limit: 10 })
+            .expect("recent commands");
+        assert_eq!(
+            reply,
+            ReaderReply::RecentCommands(vec!["quit".to_string(), "save".to_string()])
+        );
+
+        let query_handle = handle.as_query();
+        let reply2 = query_handle
+            .query(ReaderRequestKind::RecentCommands { limit: 1 })
+            .expect("recent commands via cloneable handle");
+        assert_eq!(
+            reply2,
+            ReaderReply::RecentCommands(vec!["quit".to_string()])
+        );
+
+        handle.shutdown();
+        assert!(
+            query_handle
+                .query(ReaderRequestKind::RecentCommands { limit: 1 })
                 .is_err(),
             "query after shutdown must return an error, not block"
         );

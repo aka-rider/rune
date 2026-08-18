@@ -11,7 +11,8 @@ use crate::step::MsgTag;
 
 use super::super::step_exec::{
     discharge_pending_rename, discharge_pending_save, discharge_pending_trash, drain_one_db_op,
-    highlight_step, highlight_tree_step, key_step, mouse_step, step_and_check,
+    highlight_step, highlight_tree_step, key_step, mouse_step, palette_recents_step,
+    step_and_check,
 };
 use super::super::store_ops::{diverge_disk, drain_all_db_ops};
 use super::{Outcome, State};
@@ -79,7 +80,7 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             }
         }
         Action::Key(k) => {
-            let (msg, tag) = key_step(k);
+            let (msg, tag) = key_step(&state.app, k);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::Mouse(m) => {
@@ -87,7 +88,15 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::OpenFileSearch => {
-            let (msg, tag) = key_step(crate::action::OPEN_FILESEARCH_KEY);
+            let (msg, tag) = key_step(&state.app, crate::action::OPEN_FILESEARCH_KEY);
+            step_and_check(state, prev, msg, tag, None, outcome);
+        }
+        Action::PaletteRecentsLoaded {
+            generation,
+            ok,
+            names,
+        } => {
+            let (msg, tag) = palette_recents_step(state, generation, ok, names);
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::Paste(s) => {
@@ -161,14 +170,17 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
                      the generator must route byte-hostile payloads through Action::Paste \
                      (is_insertable_key_char silently drops it — plan Gotcha G3)"
                 );
-                let (msg, tag) = key_step(KeyInput {
-                    code: if ch == '\n' {
-                        KeyCode::Enter
-                    } else {
-                        KeyCode::Char(ch)
+                let (msg, tag) = key_step(
+                    &state.app,
+                    KeyInput {
+                        code: if ch == '\n' {
+                            KeyCode::Enter
+                        } else {
+                            KeyCode::Char(ch)
+                        },
+                        mods: Mods::NONE,
                     },
-                    mods: Mods::NONE,
-                });
+                );
                 if step_and_check(state, prev, msg, tag, None, outcome) {
                     return;
                 }

@@ -173,6 +173,33 @@ pub enum Action {
         base: usize,
     },
     AdvanceClock(u64),
+    PaletteRecentsLoaded {
+        generation: PaletteGenClaim,
+        ok: bool,
+        names: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PaletteGenClaim {
+    Live,
+    Stale(u32),
+}
+
+impl PaletteGenClaim {
+    pub fn resolve(
+        &self,
+        live: Option<rune_tui::generation::Generation>,
+    ) -> rune_tui::generation::Generation {
+        match self {
+            PaletteGenClaim::Live => {
+                live.unwrap_or_else(|| rune_tui::generation::Generation::from_raw(0))
+            }
+            PaletteGenClaim::Stale(raw) => {
+                rune_tui::generation::Generation::from_raw(u64::from(*raw))
+            }
+        }
+    }
 }
 
 /// Rebuilds the concrete `(Range<usize>, ScopeId)` pairs `Msg::Highlighted`

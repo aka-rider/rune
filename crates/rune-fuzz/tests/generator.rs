@@ -16,7 +16,7 @@ use std::mem::{Discriminant, discriminant};
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 
-use rune_fuzz::action::{Action, HighlightVersion};
+use rune_fuzz::action::{Action, HighlightVersion, PaletteGenClaim};
 use rune_fuzz::driver;
 use rune_fuzz::generate::{self, TYPE_PALETTE};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -134,10 +134,11 @@ fn action_variant_name(action: &Action) -> &'static str {
         Action::DeliverDbAll => "DeliverDbAll",
         Action::HighlightTree { .. } => "HighlightTree",
         Action::AdvanceClock(_) => "AdvanceClock",
+        Action::PaletteRecentsLoaded { .. } => "PaletteRecentsLoaded",
     }
 }
 
-fn every_action_variant_witness() -> [Action; 18] {
+fn every_action_variant_witness() -> [Action; 19] {
     [
         Action::Key(KeyInput {
             code: KeyCode::Char('a'),
@@ -178,6 +179,11 @@ fn every_action_variant_witness() -> [Action; 18] {
             base: 0,
         },
         Action::AdvanceClock(0),
+        Action::PaletteRecentsLoaded {
+            generation: PaletteGenClaim::Live,
+            ok: true,
+            names: Vec::new(),
+        },
     ]
 }
 

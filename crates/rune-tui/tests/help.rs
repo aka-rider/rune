@@ -7,11 +7,9 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::document::ReadOnly;
-use rune_tui::explorer_keys::EXPLORER_BINDINGS;
-use rune_tui::explorer_search::EXPLORER_SEARCH_BINDINGS;
-use rune_tui::keymap::{GLOBAL_BINDINGS, KeyCode, KeyInput, Mods};
-use rune_tui::opentabs::TABS_BINDINGS;
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
+use rune_tui::registry::{self, CommandId};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::testgrid;
 use rune_tui::workspace;
@@ -62,11 +60,8 @@ fn f1_twice_creates_exactly_one_help_document() {
     );
 }
 
-/// The generated content contains `## Global` plus at least one help label
-/// string from each of the three real binding tables — asserted against
-/// the tables themselves, not hardcoded strings, so this can never drift.
 #[test]
-fn help_content_covers_every_binding_table() {
+fn help_content_covers_every_registry_section() {
     let mut app = app_with("hello");
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(f1()), &mut effects);
@@ -77,29 +72,27 @@ fn help_content_covers_every_binding_table() {
         "missing ## Global:\n{content}"
     );
 
-    assert!(
-        GLOBAL_BINDINGS.iter().any(|b| content.contains(b.help)),
-        "expected a GLOBAL_BINDINGS help label in:\n{content}"
-    );
-    assert!(
-        EXPLORER_BINDINGS.iter().any(|b| content.contains(b.help)),
-        "expected an EXPLORER_BINDINGS help label in:\n{content}"
-    );
-    // Reflection check: type-to-search's own binding table must appear
-    // in the generated `## Explorer` section too, not just the ordinary
-    // nav/open one — a hand-typed "type to search" help line would pass the
-    // OLD version of this test just as well, which is exactly what this
-    // guards against.
-    assert!(
-        EXPLORER_SEARCH_BINDINGS
-            .iter()
-            .any(|b| content.contains(b.help)),
-        "expected an EXPLORER_SEARCH_BINDINGS help label in:\n{content}"
-    );
-    assert!(
-        TABS_BINDINGS.iter().any(|b| content.contains(b.help)),
-        "expected a TABS_BINDINGS help label in:\n{content}"
-    );
+    type SectionPredicate = (&'static str, fn(CommandId) -> bool);
+    let sections: [SectionPredicate; 7] = [
+        ("Global", |id| matches!(id, CommandId::Global(_))),
+        ("Explorer", |id| {
+            matches!(id, CommandId::Explorer(_) | CommandId::ExplorerSearch(_))
+        }),
+        ("File Search", |id| matches!(id, CommandId::FileSearch(_))),
+        ("Open Tabs", |id| matches!(id, CommandId::Tabs(_))),
+        ("Editor", |id| matches!(id, CommandId::Editor(_))),
+        ("Diff View", |id| matches!(id, CommandId::Diff(_))),
+        ("Palette", |id| matches!(id, CommandId::Palette(_))),
+    ];
+    for (title, pick) in sections {
+        assert!(
+            registry::all()
+                .iter()
+                .filter(|row| pick(row.id))
+                .any(|row| content.contains(row.help)),
+            "expected a {title} help label in:\n{content}"
+        );
+    }
 }
 
 /// The Help document rejects edits: a printable key while it's active
