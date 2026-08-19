@@ -10,14 +10,13 @@
 
 use std::ops::Range;
 
-use unicode_segmentation::UnicodeSegmentation;
-
 use rune_core::cursor::CursorSet;
 
 use crate::app::App;
 use crate::clipboard::pbpaste_cmd;
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::messages;
+use crate::queryline;
 use crate::runtime::{Effects, PasteTarget};
 use crate::viewport::ScrollMode;
 
@@ -76,13 +75,7 @@ pub(crate) fn paste(app: &mut App, text: &str) {
     if app.search().is_none_or(|s| !s.focused) {
         return;
     }
-    let sanitized: String = text
-        .lines()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let sanitized = queryline::sanitize_pasted_line(text);
     if sanitized.is_empty() {
         return;
     }
@@ -249,7 +242,7 @@ fn persist_query(app: &mut App, query: &str) {
 
 fn type_char(app: &mut App, c: char) {
     if let Some(state) = app.search_mut() {
-        state.draft.push(c);
+        queryline::type_char(&mut state.draft, c);
         state.history_pos = None;
         state.history_draft = None;
     }
@@ -265,9 +258,7 @@ fn erase(app: &mut App) {
     if let Some(state) = app.search_mut() {
         state.history_pos = None;
         state.history_draft = None;
-        if let Some((byte_idx, _)) = state.draft.grapheme_indices(true).next_back() {
-            state.draft.truncate(byte_idx);
-        }
+        queryline::erase_grapheme(&mut state.draft);
     }
     recompute(app);
 }

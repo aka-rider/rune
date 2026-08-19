@@ -66,7 +66,11 @@ fn cancel_falls_back_to_the_editor_when_return_to_no_longer_exists() {
 
     open(&mut app, &mut effects);
     let return_to = app.filesearch().map(|s| s.return_to).expect("open");
-    assert_eq!(return_to, second, "test setup: return_to names `second`");
+    assert_eq!(
+        return_to,
+        crate::returnto::ReturnTo::to(second),
+        "test setup: return_to names `second`"
+    );
 
     crate::workspace::request_close(&mut app, second, &mut effects);
     assert!(app.doc(second).is_none(), "test setup: closed for real");

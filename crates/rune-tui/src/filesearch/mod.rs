@@ -14,7 +14,6 @@ use nucleo_matcher::{Config, Matcher};
 
 use crate::app::App;
 use crate::commands::mouse::WHEEL_ROWS;
-use crate::document::DocumentId;
 use crate::listnav;
 use crate::pane::Pane;
 use crate::pointer::{MouseInput, MouseKind};
@@ -69,7 +68,7 @@ pub struct FileSearchState {
     pub query: String,
     pub nav: listnav::List,
     pub generation: crate::generation::FileSearchGen,
-    pub return_to: DocumentId,
+    pub return_to: crate::returnto::ReturnTo,
     /// The workspace walk's own root, resolved once at [`open`] (A4's own
     /// ladder: `app.root` when resolved, else `explorer::initial_root`)
     /// and reused for both the walk `Cmd` and every candidate's root-
@@ -109,7 +108,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     };
     crate::search::close(app);
     crate::explorer_search::clear_search(app);
-    let return_to = app.active;
+    let return_to = crate::returnto::ReturnTo::to(app.active);
     let generation = app.next_filesearch_gen.mint();
     let root = resolve_root(app);
     app.open_filesearch(
@@ -179,8 +178,8 @@ pub(crate) fn cancel(app: &mut App, effects: &mut Effects) {
         return;
     };
     close(app);
-    if app.doc(return_to).is_some() {
-        workspace::switch_to(app, return_to);
+    if let Some(target) = return_to.live(app) {
+        workspace::switch_to(app, target);
     }
     app.set_focus_pane(Pane::Editor, effects);
 }
@@ -319,7 +318,6 @@ fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool
         None
     };
     let height = keys::page_amount(app).max(1) as usize;
-    let margin = (height / 4).min(4);
 
     let Some(state) = app.filesearch_mut() else {
         return;
@@ -335,7 +333,7 @@ fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool
         .and_then(|path| find_row_for_path(state, &path))
         .unwrap_or(0);
     state.nav.cursor = cursor;
-    state.nav.follow(len, height, margin, 0);
+    state.nav.settle(len, height);
 
     let selected_now = selected_candidate(app).map(|c| c.path.clone());
     if selected_now != previous_path {

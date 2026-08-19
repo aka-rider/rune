@@ -1,6 +1,27 @@
-//! List navigation and scroll-follow helpers for cursor-driven lists.
+//! List navigation and scroll-follow helpers for cursor-driven lists, plus
+//! the command surface and nav mechanics shared by the palette and file
+//! finder overlays — two structural twins built on the same key set (type/
+//! erase/up/down/page/top/bottom/enter/cancel, palette alone adding `Tab`)
+//! driving the same `List` cursor.
 
 use std::ops::Range;
+
+/// The command set both list overlays resolve their key tables to. Palette
+/// alone binds `Tab`; the file finder's own table simply never produces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListCommand {
+    Type,
+    Erase,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+    Enter,
+    Tab,
+    Cancel,
+}
 
 /// A cursor-aware list navigator, tracking the visible window top.
 pub struct List {
@@ -78,6 +99,34 @@ impl List {
         let start = self.top.min(len);
         let end = (start + height).min(len);
         start..end
+    }
+
+    /// `Up`/`Down`/`PageUp`/`PageDown`'s shared body: steps `cursor` by
+    /// `delta`, then re-follows the visible window — the margin both list
+    /// overlays derive the same way, a quarter of the viewport capped at 4
+    /// rows.
+    pub(crate) fn move_and_follow(&mut self, delta: isize, len: usize, height: usize) {
+        let margin = (height / 4).min(4);
+        self.move_by(delta, len);
+        self.follow(len, height, margin, 0);
+    }
+
+    /// [`follow`] with the same default margin [`move_and_follow`] derives —
+    /// a rebuild that repositions `cursor` itself (a rank recompute, a
+    /// filtered listing) still needs the window re-settled around it with no
+    /// jump buffer.
+    pub(crate) fn settle(&mut self, len: usize, height: usize) {
+        let margin = (height / 4).min(4);
+        self.follow(len, height, margin, 0);
+    }
+
+    /// `Top`/`Bottom`'s shared body.
+    pub(crate) fn jump_to_edge(&mut self, len: usize, top: bool) {
+        if top {
+            self.first();
+        } else {
+            self.last(len);
+        }
     }
 }
 

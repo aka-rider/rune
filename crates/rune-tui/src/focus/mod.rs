@@ -306,7 +306,7 @@ impl App {
             crate::explorer_search::clear_search(self);
         }
         if next == Pane::Explorer {
-            self.explorer.browsing_origin = Some(self.active);
+            self.explorer.browsing_origin = crate::returnto::ReturnTo::to(self.active);
         }
         self.focus = next;
     }

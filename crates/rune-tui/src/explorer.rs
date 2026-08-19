@@ -73,7 +73,7 @@ pub struct Explorer {
     pub preview: Option<DocumentId>,
     /// The document active when the Explorer last took focus — a historical
     /// fact, never cleared, so it is not a mirror of anything live.
-    pub browsing_origin: Option<DocumentId>,
+    pub browsing_origin: crate::returnto::ReturnTo,
     /// Paths `explorer_preview` has asked the `Vfs` to read but hasn't
     /// heard back from yet — a request is removed the moment ITS OWN reply
     /// lands, whether that reply is adopted or found stale, so this can
@@ -99,7 +99,7 @@ impl Default for Explorer {
             next_request_gen: crate::generation::GenCounter::default(),
             pending_reveal: None,
             preview: None,
-            browsing_origin: None,
+            browsing_origin: crate::returnto::ReturnTo::none(),
             preview_awaiting: HashSet::new(),
             preview_failed: None,
         }

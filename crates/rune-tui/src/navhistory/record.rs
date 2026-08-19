@@ -64,7 +64,7 @@ pub fn departure_origin(app: &App) -> Option<DocumentId> {
     let browsing =
         focus::target(app) == FocusTarget::Explorer || app.explorer.preview == Some(app.active);
     if browsing {
-        app.explorer.browsing_origin
+        app.explorer.browsing_origin.raw()
     } else {
         Some(app.active)
     }
