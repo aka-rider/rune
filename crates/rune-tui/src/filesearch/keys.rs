@@ -10,12 +10,11 @@
 
 use std::path::PathBuf;
 
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
 use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::pane::Pane;
+use crate::queryline;
 use crate::runtime::Effects;
 
 use super::{after_cursor_move, cancel, close, reset_and_recompute};
@@ -125,7 +124,7 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
         FileSearchCommand::Type => {
             if let KeyCode::Char(c) = key.code {
                 if let Some(state) = app.filesearch_mut() {
-                    state.query.push(c);
+                    queryline::type_char(&mut state.query, c);
                 }
                 reset_and_recompute(app, effects);
             }
@@ -206,9 +205,7 @@ fn erase(app: &mut App) {
     let Some(state) = app.filesearch_mut() else {
         return;
     };
-    if let Some((byte_idx, _)) = state.query.grapheme_indices(true).next_back() {
-        state.query.truncate(byte_idx);
-    }
+    queryline::erase_grapheme(&mut state.query);
 }
 
 pub(super) fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
@@ -244,13 +241,7 @@ pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
     if app.filesearch().is_none() {
         return;
     }
-    let sanitized: String = text
-        .lines()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let sanitized = queryline::sanitize_pasted_line(text);
     if sanitized.is_empty() {
         return;
     }

@@ -174,7 +174,7 @@ impl App {
             self.overlay = Overlay::ExplorerFind(String::new());
         }
         if let Overlay::ExplorerFind(query) = &mut self.overlay {
-            query.push(c);
+            crate::queryline::type_char(query, c);
         }
     }
 

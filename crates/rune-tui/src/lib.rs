@@ -61,6 +61,7 @@ mod pane_global;
 mod pane_quit;
 mod pane_refusal;
 pub mod pointer;
+pub(crate) mod queryline;
 pub(crate) mod read_only;
 pub(crate) mod region;
 pub mod registry;
