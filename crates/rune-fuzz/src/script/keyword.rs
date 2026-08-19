@@ -21,6 +21,7 @@ pub(super) enum Keyword {
     HighlightTree,
     AdvanceClock,
     PaletteRecentsLoaded,
+    InstallDiffLeft,
 }
 
 impl Keyword {
@@ -45,6 +46,7 @@ impl Keyword {
             Keyword::HighlightTree => "highlight-tree",
             Keyword::AdvanceClock => "advance-clock",
             Keyword::PaletteRecentsLoaded => "palette-recents",
+            Keyword::InstallDiffLeft => "install-diff-left",
         }
     }
 
@@ -69,6 +71,7 @@ impl Keyword {
             Action::HighlightTree { .. } => Keyword::HighlightTree,
             Action::AdvanceClock(_) => Keyword::AdvanceClock,
             Action::PaletteRecentsLoaded { .. } => Keyword::PaletteRecentsLoaded,
+            Action::InstallDiffLeft { .. } => Keyword::InstallDiffLeft,
         }
     }
 }

@@ -13,6 +13,8 @@
 //! account for those two unreachable-here variants.
 
 mod checks;
+mod discharge;
+mod seed_scope;
 mod session;
 mod step_exec;
 mod store_ops;

@@ -118,6 +118,11 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push_str(&millis.to_string());
             out.push('\n');
         }
+        Action::InstallDiffLeft { seed_index } => {
+            out.push(' ');
+            out.push_str(&seed_index.to_string());
+            out.push('\n');
+        }
         Action::PaletteRecentsLoaded {
             generation,
             ok,

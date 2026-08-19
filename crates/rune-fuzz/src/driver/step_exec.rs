@@ -7,7 +7,6 @@
 //! through `step_exec::`.
 
 use rune_tui::app::{self, App};
-use rune_tui::db::DbBridge;
 use rune_tui::keymap::{self, Command, KeyInput};
 use rune_tui::registry::{Availability, CommandId};
 use rune_tui::runtime::{Cmd, CmdError, CmdKind, Effects, Msg};
@@ -20,8 +19,8 @@ use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
 use super::checks;
+use super::seed_scope::{tag_delivers_seed_save, tag_publishes_seed_doc};
 use super::session::{Outcome, State};
-use super::store_ops::wait_for_db_op;
 
 fn palette_pending_save_command(app: &App, key: KeyInput) -> Option<Command> {
     let state = app.palette()?;
@@ -142,101 +141,6 @@ pub(super) fn highlight_tree_step(
     highlight_reply_step(state, version, result, 0)
 }
 
-/// Runs the one deferred save `Cmd`, if any, returning the `Msg` it
-/// produced together with its tag — and, for the no-store fallback only,
-/// the bytes it was constructed with, looked up in the per-document
-/// snapshot by the ack's OWN `id`, never by whichever document is active
-/// at delivery time (see `MsgTag::SaveDone`'s docs; `TODO-fuzz-save-
-/// verbatim-help-doc-stale-ack.md`). The snapshot is guaranteed to have an
-/// entry for `id`: it was built from every open document at the moment
-/// THIS save `Cmd` was constructed, and `id` names exactly the document
-/// `trigger_save`/`materialize_ack::materialize_vfs_cmd` built the `Cmd`
-/// for — which must have existed then. `CmdKind::Save` now covers TWO
-/// distinct `Cmd` shapes (WP7's store-backed dance spawns its own caller-
-/// side `vfs` `Cmd` under the same tag `step_and_check` already tracks as
-/// `pending_save`, alongside the pre-existing no-store fallback): a
-/// `Msg::SaveDone` reply carries verbatim bytes worth pinning (`SAVE-
-/// VERBATIM`), a `Msg::MaterializeVfsDone` reply does not — `SAVE-VERBATIM`
-/// stays scoped to the tag it already keys off. Never synthesizes either
-/// reply itself (G14) — this only ever forwards what `cmd.run()` actually
-/// returned, and returns `None` for any OTHER reply shape as a defensive
-/// guard against `Cmd`'s general contract, not a path reachable from any
-/// real save `Cmd` this driver stores.
-pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Option<Vec<u8>>)> {
-    let (cmd, per_doc_bytes) = state.pending_save.take()?;
-    let msg = cmd.run()?;
-    match &msg {
-        Msg::SaveDone {
-            id,
-            version,
-            result,
-            ..
-        } => {
-            let tag = MsgTag::SaveDone {
-                id: *id,
-                version: *version,
-                ok: result.is_ok(),
-            };
-            let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
-            Some((msg, tag, Some(bytes)))
-        }
-        Msg::MaterializeVfsDone { id, .. } => {
-            let tag = MsgTag::MaterializeVfsDone { id: *id };
-            Some((msg, tag, None))
-        }
-        _ => None,
-    }
-}
-
-/// Runs the one deferred no-store rename `Cmd`, if any, returning the
-/// `Msg` it produced together with its tag (plan WP5). Without this, a
-/// rename `Cmd` spawned by `rename::begin` and never delivered would leave
-/// `app.rename` stuck in `RenameState::Committing` for the rest of the
-/// session: `in_flight()` then refuses every later blur attempt,
-/// including the end-of-session drive's own `^E` restore — which is
-/// exactly the bug this closes (a rename `Cmd` used to be silently
-/// dropped on the floor; only `CmdKind::Save` was ever tracked).
-pub(super) fn discharge_pending_rename(state: &mut State) -> Option<(Msg, MsgTag)> {
-    let cmd = state.pending_rename.take()?;
-    let msg = cmd.run()?;
-    if !matches!(msg, Msg::RenameDone { .. }) {
-        return None;
-    }
-    Some((msg, MsgTag::RenameDone))
-}
-
-/// Finds the oldest still-pending recovery-store op (lowest id) and blocks
-/// on `bridge` for its reply, returning the `(Msg, MsgTag)` pair to deliver
-/// — `Action::DeliverDb`'s and the end-of-session sweep's shared drain
-/// primitive. `None` when nothing is pending (either no store is wired, or
-/// every op issued so far has already been drained). Oldest-first mirrors
-/// the real writer thread's own FIFO completion order.
-pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(Msg, MsgTag)> {
-    let op_id = *state.app.db_ops.keys().min()?;
-    // Read BEFORE the reply is delivered: `handle_db_event` pops this exact
-    // entry out of `db_ops` as part of routing the ack (`db_dispatch.rs`),
-    // so it's gone from `App` by the time any checker could otherwise ask
-    // which document `op_id` belonged to.
-    let doc = state.app.db_ops.get(&op_id).map(|pending| pending.doc);
-    let evt = wait_for_db_op(bridge, op_id);
-    Some((Msg::Db(evt), MsgTag::Db { op_id, doc }))
-}
-
-/// Runs the one deferred trash `Cmd`, if any, returning the `Msg` it
-/// produced together with its tag (plan WP3.S3) — the same shape as
-/// `discharge_pending_rename`, closing the identical driver gap for
-/// `CmdKind::Trash`: left undischarged, `Mem::trash` and `Msg::TrashDone`
-/// are unreachable from this driver, and fuzz coverage of the trash flow
-/// stops at `set_guard`.
-pub(super) fn discharge_pending_trash(state: &mut State) -> Option<(Msg, MsgTag)> {
-    let cmd = state.pending_trash.take()?;
-    let msg = cmd.run()?;
-    if !matches!(msg, Msg::TrashDone { .. }) {
-        return None;
-    }
-    Some((msg, MsgTag::TrashDone))
-}
-
 /// Arms `state.pending_save` with a just-produced `CmdKind::Save`, or
 /// records `SAVE-SINGLE-FLIGHT` and stops the session (G9: at most one
 /// save `Cmd` may ever be outstanding — silently overwriting a still-
@@ -287,7 +191,11 @@ pub(super) fn step_and_check(
 ) -> bool {
     state.steps += 1;
     let step_index = state.steps;
-    let is_save_done_ok = matches!(&tag, MsgTag::SaveDone { ok: true, .. });
+    let is_save_done_ok = tag_delivers_seed_save(&tag, state.seed_doc);
+    let publishes_seed_doc = tag_publishes_seed_doc(&tag, state.seed_doc);
+    if publishes_seed_doc {
+        state.disk_diverged_since_publish = false;
+    }
 
     if let MsgTag::Db { doc, .. } = &tag {
         state
@@ -346,11 +254,13 @@ pub(super) fn step_and_check(
                 // practice.
                 state.pending_trash = Some(cmd);
             }
+            CmdKind::Highlight => {
+                state.pending_highlights.push_back(cmd);
+            }
             CmdKind::ClipboardRead
             | CmdKind::OpenExternal
             | CmdKind::ReadDir
             | CmdKind::ReadFile
-            | CmdKind::Highlight
             | CmdKind::ImageDecode
             | CmdKind::SearchHistory
             | CmdKind::BootstrapView => {
@@ -363,8 +273,8 @@ pub(super) fn step_and_check(
                 // never fire here either, same as when they were dropped
                 // `Cmd`s); `OpenExternal` forks `/usr/bin/open` (reachable
                 // via a ctrl-click on a link) and must never fork here;
-                // `ReadDir`/`ReadFile`/`Highlight`/
-                // `ImageDecode`/`SearchHistory`/`BootstrapView` are off-thread
+                // `ReadDir`/`ReadFile`/`ImageDecode`/`SearchHistory`/
+                // `BootstrapView` are off-thread
                 // reads/parses this driver has no discharge path for yet
                 // (their results never reach `update`, so nothing they'd
                 // produce is observable either way — `BootstrapView` is also
@@ -380,24 +290,35 @@ pub(super) fn step_and_check(
         state.saves_delivered_ok += 1;
     }
 
-    // Plan WP5: `RenameDone` was just processed above (`run_update_
-    // catching_panic` -> `rename::apply_outcome`), so `state.app`'s own
-    // document model already names the SEED document's real current path
-    // if the rename actually landed. `state.path` is separate driver
-    // bookkeeping, documented (`SAVE-VERBATIM`/`SAVE-CLEAN-MATCHES-DISK`)
-    // as "the real, seeded document's" location for the `ctx.disk` read
-    // immediately below — it must be resynced HERE, before that read,
-    // never after: `discharge_pending_rename` already ran the real
-    // `rename_excl` against the real `Mem` before this message ever
-    // reached `update`, so a resync any later would still compute `ctx.
-    // disk` against the now-stale pre-rename path on this very step.
-    if matches!(tag, MsgTag::RenameDone)
-        && let Some(path) = state
-            .app
-            .doc(state.seed_doc)
-            .and_then(|d| d.file_path.clone())
+    let old_path = state.path.clone();
+    if let Some(path) = state
+        .app
+        .doc(state.seed_doc)
+        .and_then(|d| d.file_path.clone())
     {
         state.path = path;
+    }
+    if state.path != old_path {
+        let announced = matches!(
+            &tag,
+            MsgTag::RenameDone
+                | MsgTag::SaveDone { .. }
+                | MsgTag::MaterializeVfsDone { .. }
+                | MsgTag::Db { .. }
+        );
+        if !announced {
+            outcome.violation = Some(Violation::new(
+                "SEED-PATH-SILENT-REBIND",
+                format!(
+                    "the seed document's own file path changed from {old_path:?} to {:?} on a \
+                     step whose tag was neither RenameDone nor a save/materialize ack: {tag:?}",
+                    state.path
+                ),
+            ));
+            outcome.final_snapshot = Some(Snapshot::capture(&mut state.app, true));
+            outcome.final_ctx = None;
+            return true;
+        }
     }
 
     let sampled = checks::should_sample(step_index);
@@ -423,6 +344,7 @@ pub(super) fn step_and_check(
         delivered_save_bytes,
         saves_delivered_ok: state.saves_delivered_ok,
         active_is_seed_doc: state.app.active == state.seed_doc,
+        disk_diverged_since_publish: state.disk_diverged_since_publish,
     };
 
     let mut violation = invariant::check_all(prev, &next, &ctx);

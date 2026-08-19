@@ -178,6 +178,9 @@ pub enum Action {
         ok: bool,
         names: Vec<String>,
     },
+    InstallDiffLeft {
+        seed_index: u8,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

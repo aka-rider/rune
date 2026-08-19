@@ -478,6 +478,16 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
             })?;
         return Ok(Action::AdvanceClock(millis));
     }
+    if let Some(rest) = strip_token(raw, Keyword::InstallDiffLeft.as_str()) {
+        let seed_index: u8 = rest
+            .trim()
+            .parse()
+            .map_err(|_| ScriptError::InvalidNumber {
+                line,
+                reason: "expected a u8 seed index".to_string(),
+            })?;
+        return Ok(Action::InstallDiffLeft { seed_index });
+    }
 
     let keyword = raw.split(' ').next().unwrap_or(raw);
     Err(ScriptError::UnknownKeyword {
