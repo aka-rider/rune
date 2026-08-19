@@ -71,7 +71,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 pending.doc,
                 *load_result,
                 pending.issued_version,
-                pending.binding_only,
+                pending.load_purpose,
             );
         }),
         DbEvent::Ok {

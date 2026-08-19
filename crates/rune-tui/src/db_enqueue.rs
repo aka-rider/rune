@@ -10,7 +10,7 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 
 use crate::app::App;
-use crate::db::PendingOp;
+use crate::db::{LoadPurpose, PendingOp};
 use crate::document::{DocumentId, Replica, ReplicaStep};
 
 /// THE sole chokepoint an edit batch's replica reaches after `Journal::
@@ -237,9 +237,10 @@ fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
 /// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
 /// `Load` arm needs both to decide, on the ack, whether adopting the
 /// recovered content is still safe (see [`crate::db_ack::handle_load_ack`]'s
-/// docs). `intent` becomes that `PendingOp`'s `binding_only` flag — see
-/// `PendingOp::binding_only`'s own doc comment for why a `Rebaseline` call
-/// must set it. A degraded store enqueues nothing — there is no
+/// docs). `intent` becomes that `PendingOp`'s [`crate::db::LoadPurpose`],
+/// carrying the row `id` is bound to right now — see that type's own doc
+/// comment for why a `Rebaseline` call must name it, on both this enqueue
+/// and the writer thread. A degraded store enqueues nothing — there is no
 /// trustworthy recovery journal to bind this document to either way.
 ///
 /// Returns whether the op was actually enqueued: a re-baseline caller
@@ -273,7 +274,7 @@ pub fn load_document_best_effort(app: &mut App, id: DocumentId, path: &Path) -> 
     )
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub enum LoadIntent {
     Recover,
     Rebaseline,
@@ -297,15 +298,26 @@ fn load_document_inner(
     }
     let Some(doc) = app.doc(id) else { return false };
     let issued_version = doc.buffer.version();
+    let bound_row = doc.doc_db().map(|d| d.db_id);
+    let purpose = match intent {
+        LoadIntent::Recover => LoadPurpose::Recover,
+        LoadIntent::Rebaseline => LoadPurpose::Rebaseline {
+            expect_row: bound_row,
+        },
+    };
     let Some(db) = app.db.as_ref() else {
         return false;
     };
-    match db.store.load(path) {
+    let enqueued = match purpose {
+        LoadPurpose::Rebaseline {
+            expect_row: Some(row),
+        } => db.store.load_rebaseline(path, rune_db::DocId(row)),
+        _ => db.store.load(path),
+    };
+    match enqueued {
         Ok(op_id) => {
-            app.db_ops.insert(
-                op_id,
-                PendingOp::load(id, issued_version, intent == LoadIntent::Rebaseline),
-            );
+            app.db_ops
+                .insert(op_id, PendingOp::load(id, issued_version, purpose));
             // A document with no binding yet starts buffering: every edit
             // committed before this op's ack lands must reach the store
             // eventually, not be dropped. A re-baseline/hand-off
