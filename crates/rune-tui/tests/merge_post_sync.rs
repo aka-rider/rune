@@ -248,9 +248,8 @@ fn save_after_completion_commits_without_cas_refusal() {
         "the post-merge save must not CAS-refuse, log: {:?}",
         rune_tui::messages::log_text(session.app())
     );
-    session.app_mut().recompute_dirty(doc_id);
     assert!(
-        !session.app().doc(doc_id).unwrap().dirty_for_render(),
+        !session.app().doc(doc_id).unwrap().is_dirty(),
         "the document must be clean after the invited save"
     );
     assert_eq!(

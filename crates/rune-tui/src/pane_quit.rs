@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::document::{Document, DocumentId};
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::keymap::QuitKey;
 use crate::runtime::{Effects, Msg};
@@ -83,9 +83,7 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
 /// member of, not just the first. Deterministic ordering (`documents` is a
 /// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
 /// first" — repeated presses always raise the Guard for the same document
-/// until it's resolved. Dirty is re-derived via `is_dirty_now`, not read
-/// from the cache — quit is a transition — so a stale
-/// cache can never wave a genuinely-dirty document through the guard.
+/// until it's resolved.
 /// `handle_quit_key`'s own Guard-raise takes just the first (lowest-id) one;
 /// the quit-save fan-out iterates the whole `Vec`.
 pub(crate) fn unpreserved_dirty_docs(app: &mut App) -> Vec<DocumentId> {
@@ -94,7 +92,7 @@ pub(crate) fn unpreserved_dirty_docs(app: &mut App) -> Vec<DocumentId> {
         .into_iter()
         .filter(|&id| {
             let preserved = app.doc(id).is_some_and(|d| app.is_preserved(d));
-            !preserved && crate::materialize_ack::is_dirty_now(app, id)
+            !preserved && app.doc(id).is_some_and(Document::is_dirty)
         })
         .collect()
 }
@@ -139,13 +137,11 @@ mod tests {
     #[test]
     fn double_quit_chord_on_an_unpreserved_dirty_doc_raises_a_guard_instead_of_quitting() {
         let mut app = app();
-        // Dirty is a content comparison — poking the render-
-        // only cache directly would just be overwritten by `is_dirty_now`'s
-        // re-derive, so diverge `saved_content` from the live buffer
-        // instead, exactly like a real edit would.
-        app.doc_mut(app.active)
-            .expect("active doc exists")
-            .saved_content = Arc::from("");
+        // `is_dirty` compares both the live version and the live bytes
+        // against the saved baseline, so a genuinely dirty fixture needs a
+        // real edit, exactly like a keystroke would make.
+        let active = app.active;
+        crate::commands::edit::insert_char(&mut app, active, '!');
         assert!(
             !app.active_doc().is_store_bound(),
             "test setup: no db binding"
@@ -176,11 +172,8 @@ mod tests {
     #[test]
     fn double_quit_chord_on_a_preserved_dirty_doc_still_quits() {
         let mut app = app();
-        // Genuinely dirty (a content comparison, not the cache) —
-        // `is_dirty_now`'s re-derive would just overwrite a cache poke.
-        app.doc_mut(app.active)
-            .expect("active doc exists")
-            .saved_content = Arc::from("");
+        let active = app.active;
+        crate::commands::edit::insert_char(&mut app, active, '!');
         app.doc_mut(app.active).expect("active doc exists").replica = Replica::Bound(
             crate::db::DocDb::new(1, crate::db::PublishMode::CreateOnly, rune_db::Seq(0)),
         );
@@ -205,9 +198,8 @@ mod tests {
     #[test]
     fn quit_chord_while_a_different_guard_is_up_warns_and_preserves_it() {
         let mut app = app();
-        app.doc_mut(app.active)
-            .expect("active doc exists")
-            .saved_content = Arc::from("");
+        let active = app.active;
+        crate::commands::edit::insert_char(&mut app, active, '!');
         assert!(
             !app.active_doc().is_store_bound(),
             "test setup: no db binding"

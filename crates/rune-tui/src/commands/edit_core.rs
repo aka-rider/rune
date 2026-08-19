@@ -14,7 +14,6 @@ use rune_core::undo::{EditKind, Step};
 use crate::app::App;
 use crate::db_enqueue as db;
 use crate::document::DocumentId;
-use crate::materialize_ack;
 use crate::messages;
 use crate::navhistory;
 
@@ -120,7 +119,6 @@ pub(crate) fn apply_edit_batch_with_cursors(
             // (`db::append_edit`'s doc comment).
             db::append_edit(app, id, &applied, cursors_before.all(), &cursors_after);
             crate::merge::ranges::remap_after_edit_batch(app, id, &applied);
-            materialize_ack::recompute_dirty(app, id);
             for ae in applied.iter().rev() {
                 app.nav_history
                     .shift(id, ae.start, ae.deleted.len(), ae.insert.len());

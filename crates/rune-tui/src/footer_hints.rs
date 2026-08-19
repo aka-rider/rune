@@ -60,12 +60,9 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     let mut label_buf = String::new();
 
     // Keyed on the `ReadOnly` VARIANT, not on `is_read_only()`
-    // and not on dirtiness. `Document::dirty_for_render()` returns the
-    // render-only `is_dirty_cached` field, while `save::trigger_save` deliberately
-    // re-derives via `materialize_ack::is_dirty_now` instead of reading
-    // that cache — a dirtiness-keyed hint would promise a chord the save
-    // path doesn't actually honour whenever the cache is stale, and
-    // `render` cannot take `&mut App` to refresh it first. `ReadOnly::
+    // and not on dirtiness — the label itself must always be reachable
+    // whenever the chord is live, independent of whatever the document's
+    // bytes happen to be doing right now. `ReadOnly::
     // Always` documents can never be saved regardless: an image document
     // is refused on `kind == DocumentKind::Image` in `save.rs`, the Help
     // tab has `file_path: None` and only reaches the `NeedsName` arm, and
@@ -81,7 +78,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         && let Some((label, _)) = crate::global::hint_for(GlobalCommand::Save)
         && let Some(spec) = registry::spec(CommandId::Global(GlobalCommand::Save))
     {
-        entries.push((label, spec.help, app.dirty_for_render()));
+        entries.push((label, spec.help, app.is_dirty()));
     }
 
     entries.extend(

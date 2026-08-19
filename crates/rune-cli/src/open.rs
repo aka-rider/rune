@@ -276,12 +276,9 @@ mod tests {
     use rune_vfs::{Mem, VfsTestExt};
 
     /// Finding 1 regression: `adopt_scratch_doc` hydrates a recovered
-    /// scratch draft into an otherwise-empty buffer but must also re-derive
-    /// dirty — dirtiness no longer falls out of `Document::hydrate` itself
-    /// since `mark_dirty_from_hydration` was deleted, so every hydration
-    /// site (this one included) must call
-    /// `App::recompute_dirty` explicitly or the recovered text renders
-    /// clean while `saved_content` is still empty.
+    /// scratch draft into an otherwise-empty buffer — `is_dirty` must read
+    /// the recovered bytes as different from the baseline, not fall back to
+    /// reading `saved_content` as if it still matched an empty buffer.
     #[test]
     fn adopt_scratch_doc_marks_the_document_dirty() {
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
@@ -298,7 +295,7 @@ mod tests {
         );
 
         assert!(
-            app.doc(id).expect("doc exists").dirty_for_render(),
+            app.doc(id).expect("doc exists").is_dirty(),
             "a recovered draft that differs from its (empty) baseline must be dirty"
         );
     }

@@ -183,7 +183,7 @@ fn save_done_err_surfaces_status_and_keeps_dirty() {
         &mut effects,
     );
     assert_eq!(app.doc(id).unwrap().saved_version, before_saved);
-    assert!(app.dirty_for_render());
+    assert!(app.is_dirty());
     assert!(rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("disk full")));
 }
 
@@ -244,7 +244,7 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
             content.as_bytes(),
             "saved bytes must be byte-identical to the buffer, verbatim"
         );
-        assert!(!app.dirty_for_render());
+        assert!(!app.is_dirty());
     }
 }
 
@@ -276,7 +276,7 @@ fn save_strips_trailing_whitespace_and_keeps_crlf_bom_and_a_missing_final_newlin
             expected.as_bytes(),
             "the save must strip trailing tabs and spaces and change nothing else"
         );
-        assert!(!app.dirty_for_render());
+        assert!(!app.is_dirty());
     }
 }
 
@@ -297,7 +297,7 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);
 
-    assert!(app.dirty_for_render());
+    assert!(app.is_dirty());
     assert!(
         rune_tui::messages::newest_text(&app).is_some(),
         "a failed save must surface a status-line error"
@@ -359,7 +359,7 @@ fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
          not the buffer's current (post-edit) version"
     );
     assert!(
-        app.dirty_for_render(),
+        app.is_dirty(),
         "an edit made during the in-flight save must leave the buffer dirty \
          once that save completes"
     );
@@ -386,7 +386,7 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);
 
-    assert!(!app.dirty_for_render());
+    assert!(!app.is_dirty());
     let saved = std::fs::read(&path).expect("save must have created the file on disk");
     assert_eq!(saved, b"brand new file\n");
 
@@ -406,7 +406,7 @@ fn save_on_a_dirty_untitled_document_leaves_the_title_unchanged() {
     let id = app.active;
     app.doc_mut(id).unwrap().display_name = Some("Untitled 1".to_string());
     edit::insert_char(&mut app, id, '!');
-    assert!(app.dirty_for_render(), "the fixture must actually be dirty");
+    assert!(app.is_dirty(), "the fixture must actually be dirty");
 
     press_save(&mut app);
 
@@ -440,7 +440,7 @@ fn preview_document_refuses_save_and_never_touches_disk() {
     );
     let id = app.active;
     edit::insert_text(&mut app, id, "!", EditKind::Insert);
-    assert!(app.dirty_for_render(), "the fixture must actually be dirty");
+    assert!(app.is_dirty(), "the fixture must actually be dirty");
 
     app.doc_mut(id).unwrap().read_only = rune_tui::document::ReadOnly::Preview;
 

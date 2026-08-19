@@ -10,7 +10,7 @@
 //! requested work must never be turned away for a tab.
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::document::{Document, DocumentId};
 use crate::guard::{GuardKind, GuardPrompt};
 use crate::runtime::Effects;
 
@@ -73,7 +73,7 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
     let clean = eligible
         .iter()
         .copied()
-        .find(|&id| !crate::materialize_ack::is_dirty_now(app, id));
+        .find(|&id| !app.doc(id).is_some_and(Document::is_dirty));
     let had_guard = app.guard.is_some();
     if let Some(victim) = clean.or_else(|| eligible.first().copied()) {
         if clean.is_none() {

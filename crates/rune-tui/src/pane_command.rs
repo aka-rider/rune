@@ -380,7 +380,8 @@ mod tests {
             let mut app = app();
             app.frame_width = 120;
             app.frame_height = 34;
-            app.active_doc_mut().saved_content = Arc::from("");
+            let active = app.active;
+            crate::commands::edit::insert_char(&mut app, active, '!');
             let mut effects = Effects::default();
             crate::filesearch::open(&mut app, &mut effects);
             assert!(

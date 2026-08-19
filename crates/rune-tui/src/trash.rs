@@ -17,10 +17,9 @@ use std::sync::Arc;
 use rune_vfs::Vfs;
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::document::{Document, DocumentId};
 use crate::explorer;
 use crate::guard::{self, GuardKind, GuardPrompt, TrashSubject};
-use crate::materialize_ack;
 use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
@@ -116,7 +115,7 @@ pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
 /// `confirm`'s re-check, since the user can keep typing between the two.
 fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
     if let Some(id) = workspace::existing_document_for(app, path)
-        && materialize_ack::is_dirty_now(app, id)
+        && app.doc(id).is_some_and(Document::is_dirty)
     {
         messages::error(app, "unsaved changes \u{2014} save before trashing");
         return true;
@@ -178,7 +177,7 @@ pub(crate) fn handle_trash_done(
             let mut kept_open = false;
             if let Some(id) = workspace::existing_document_for(app, path) {
                 sweep_live_guard(app, id);
-                if materialize_ack::is_dirty_now(app, id) {
+                if app.doc(id).is_some_and(Document::is_dirty) {
                     kept_open = true;
                     messages::warn(
                         app,

@@ -1,9 +1,8 @@
 //! The ack-reaction functions: what happens once a save/materialize attempt
 //! actually resolves — `handle_materialize_ack`/`handle_save_done`'s
-//! success/failure arms, the close-on-save-ack and quit-save-fan-out
-//! continuations every one of them funnels through, and a local
-//! (non-`rune-db`) materialize failure. The parent module keeps everything
-//! upstream of the first reply and the dirty-cache chokepoint itself.
+//! success/failure arms, and the close-on-save-ack and quit-save-fan-out
+//! continuations every one of them funnels through. The parent module keeps
+//! everything upstream of the first reply.
 
 use rune_db::MatResult;
 
@@ -12,8 +11,6 @@ use crate::document::DocumentId;
 use crate::messages;
 use crate::runtime::{CmdError, Effects};
 use crate::workspace;
-
-use super::recompute_dirty;
 
 #[path = "committed.rs"]
 mod committed;
@@ -31,7 +28,6 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
         doc.abandon_save();
     }
     messages::error(app, message.into());
-    recompute_dirty(app, id);
     resolve_continuations(app, id, pending_version, false);
 }
 
@@ -87,11 +83,10 @@ fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
 
 /// The reaction to a `materialize` ack for `id`: advances
 /// `saved_version`/`DocDb::expect_obs`/`publish_mode` on a commit, surfaces
-/// each `MatResult` outcome as status text, and — either way — clears
-/// `id`'s `save_in_flight` and recomputes its dirty cache (trigger (b) of
-/// `recompute_dirty`'s doc comment). The synthetic routes a lost writer
-/// ack takes — a commit or a missing file with no `MatResult` to carry —
-/// enter through `resolve_committed_ack`/`resolve_missing_ack` instead.
+/// each `MatResult` outcome as status text, and — either way — clears `id`'s
+/// `save_in_flight`. The synthetic routes a lost writer ack takes — a
+/// commit or a missing file with no `MatResult` to carry — enter through
+/// `resolve_committed_ack`/`resolve_missing_ack` instead.
 pub(crate) fn handle_materialize_ack(
     app: &mut App,
     id: DocumentId,
@@ -163,7 +158,6 @@ fn finish_ack(app: &mut App, id: DocumentId, pending_version: Option<u64>, commi
             crate::db_enqueue::probe(app, doc_id);
         }
     }
-    recompute_dirty(app, id);
     resolve_continuations(app, id, pending_version, committed);
 }
 
@@ -316,7 +310,6 @@ pub(crate) fn handle_save_done(
             messages::error(app, format!("save failed: {e}"));
         }
     }
-    recompute_dirty(app, id);
     resolve_continuations(app, id, Some(version), succeeded);
 }
 

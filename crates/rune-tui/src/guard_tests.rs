@@ -351,7 +351,7 @@ fn normal_save_still_arms_the_degraded_confirm_gate() {
 fn force_save_bypasses_not_dirty() {
     let mut app = store_bound_app(false);
     let doc = app.active;
-    assert!(!app.doc(doc).unwrap().dirty_for_render());
+    assert!(!app.doc(doc).unwrap().is_dirty());
     let mut effects = Effects::default();
 
     assert_eq!(
