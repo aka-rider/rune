@@ -271,6 +271,21 @@ mod tests {
         assert_eq!(session.conflicts, expected);
 
         let reencoded = blocks_json(&session.conflicts).expect("encodes");
+        assert_eq!(
+            reencoded, GOLDEN_BLOCKS_JSON,
+            "re-encoding must keep carrying the legacy resolved key, byte for byte, for mixed-version readers"
+        );
+        let reencoded_value: serde_json::Value =
+            serde_json::from_str(&reencoded).expect("re-decodes as json");
+        let blocks = reencoded_value.get("blocks").expect("blocks array");
+        let expected_resolved = [false, true, true, true];
+        for (i, resolved) in expected_resolved.into_iter().enumerate() {
+            assert_eq!(
+                blocks.get(i).and_then(|b| b.get("resolved")),
+                Some(&serde_json::Value::Bool(resolved)),
+                "block {i} must carry the legacy resolved key"
+            );
+        }
         let redecoded: BlocksPayload = serde_json::from_str(&reencoded).expect("re-decodes");
         assert_eq!(pairs_from_payload(redecoded), expected);
     }

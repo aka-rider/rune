@@ -29,12 +29,35 @@ impl Resolution {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Block {
-    #[serde(flatten)]
     pub range: Range<usize>,
     pub resolution: Resolution,
     pub origin: BlockOrigin,
+}
+
+impl serde::Serialize for Block {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            start: usize,
+            end: usize,
+            resolved: bool,
+            resolution: &'a Resolution,
+            origin: &'a BlockOrigin,
+        }
+        Wire {
+            start: self.range.start,
+            end: self.range.end,
+            resolved: self.resolution.is_resolved(),
+            resolution: &self.resolution,
+            origin: &self.origin,
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Block {
