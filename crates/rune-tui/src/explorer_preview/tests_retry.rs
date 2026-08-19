@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer as CoreBuffer;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::Mem;
 
 use super::*;
 use super::tests_common::{app_with, load_entries, run_cmds};
