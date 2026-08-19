@@ -19,13 +19,13 @@ fn nav_order(session: &MergeSession) -> Vec<usize> {
         .conflicts
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.origin == BlockOrigin::Conflict)
+        .filter(|(_, p)| p.block.origin == BlockOrigin::Conflict)
         .map(|(i, _)| i);
     let autos = session
         .conflicts
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.origin == BlockOrigin::AutoApplied)
+        .filter(|(_, p)| p.block.origin == BlockOrigin::AutoApplied)
         .map(|(i, _)| i);
     conflicts.chain(autos).collect()
 }
@@ -38,12 +38,12 @@ fn position_status(session: &MergeSession, idx: usize) -> String {
         .conflicts
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.origin == pair.origin)
+        .filter(|(_, p)| p.block.origin == pair.block.origin)
         .map(|(i, _)| i)
         .collect();
     let ordinal = peers.iter().position(|&i| i == idx).map_or(0, |p| p + 1);
     let total = peers.len();
-    match pair.origin {
+    match pair.block.origin {
         BlockOrigin::Conflict => {
             format!("conflict {ordinal}/{total} — {}", super::VERB_HINT)
         }
@@ -226,7 +226,7 @@ pub(crate) fn take_ours(app: &mut App) {
             };
             (
                 pair.conflict.ours.clone(),
-                pair.origin,
+                pair.block.origin,
                 pair.block.resolution,
             )
         }

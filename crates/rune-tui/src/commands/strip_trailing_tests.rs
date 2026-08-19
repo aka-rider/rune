@@ -88,8 +88,8 @@ fn resolved_merge_session(app: &mut App, id: DocumentId) {
                 block: Block {
                     range: 0..1,
                     resolution: Resolution::KeptOurs,
+                    origin: BlockOrigin::Conflict,
                 },
-                origin: BlockOrigin::Conflict,
             }],
             cur: 0,
             saved_display_name: None,

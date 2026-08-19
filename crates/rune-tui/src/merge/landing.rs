@@ -263,8 +263,8 @@ fn build_pane_install(
                     block: Block {
                         range: start..merged.len(),
                         resolution: Resolution::Unresolved,
+                        origin: BlockOrigin::Conflict,
                     },
-                    origin: BlockOrigin::Conflict,
                 });
             }
         }
@@ -301,8 +301,8 @@ fn auto_applied_entries(
             block: Block {
                 range,
                 resolution: Resolution::TookTheirs,
+                origin: BlockOrigin::AutoApplied,
             },
-            origin: BlockOrigin::AutoApplied,
         });
     }
     entries
