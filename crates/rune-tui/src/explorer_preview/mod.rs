@@ -366,7 +366,7 @@ fn discard_active(app: &mut App) {
         .then(|| {
             app.explorer
                 .browsing_origin
-                .filter(|&t| t != id && app.documents.contains_key(&t))
+                .live_excluding(app, id)
                 .or_else(|| workspace::close::neighbor_of(app, id))
         })
         .flatten();

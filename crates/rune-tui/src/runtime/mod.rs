@@ -213,8 +213,8 @@ pub enum Msg {
     /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
     /// `trash::handle_trash_done`. Carries its own `generation` so a reply
     /// to a trash the user has since dismissed (there is no dismiss path
-    /// once confirmed, but a fresh trash request can still overwrite
-    /// `App::trash_gen` before this one lands) is dropped rather than
+    /// once confirmed, but a fresh trash request can still replace `App::
+    /// trash`'s own `Pending` before this one lands) is dropped rather than
     /// applied to the fresh one.
     TrashDone {
         generation: crate::generation::TrashGen,

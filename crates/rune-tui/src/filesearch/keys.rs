@@ -153,7 +153,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         crate::messages::info(app, "no file selected");
         return;
     };
-    let departed = app.filesearch().map(|state| state.return_to);
+    let departed = app.filesearch().and_then(|state| state.return_to.raw());
 
     if let Some(id) = app.explorer.preview
         && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(path.as_path())

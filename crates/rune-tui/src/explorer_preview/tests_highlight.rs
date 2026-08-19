@@ -347,7 +347,10 @@ fn discarding_a_preview_falls_back_to_the_adjacent_tab_when_the_remembered_docum
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     let preview_id = app.explorer.preview.expect("preview minted");
-    assert_eq!(app.explorer.browsing_origin, Some(third));
+    assert_eq!(
+        app.explorer.browsing_origin,
+        crate::returnto::ReturnTo::to(third)
+    );
 
     // `third` — the remembered return-to document — closes while the
     // preview is still live, e.g. via the Tabs pane.
