@@ -5,7 +5,7 @@
 
 use super::*;
 use rune_core::buffer::AppliedEdit;
-use rune_vfs::Mem;
+use rune_vfs::{Mem, VfsTestExt};
 
 fn open() -> Connection {
     crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
@@ -172,8 +172,6 @@ fn load_without_inheritance_reports_no_bridge_seq() {
 /// whatever is on disk now.
 #[test]
 fn diverged_load_bridges_the_dead_sessions_own_baseline_not_disk() {
-    use rune_vfs::Vfs;
-
     let mut conn = open();
     let vfs = Mem::new();
     let path = Path::new("/doc.md");
@@ -265,8 +263,6 @@ fn diverged_load_bridges_the_dead_sessions_own_baseline_not_disk() {
 /// by a matching journal entry.
 #[test]
 fn dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees() {
-    use rune_vfs::Vfs;
-
     let mut conn = open();
     let vfs = Mem::new();
     let path = Path::new("/doc.md");

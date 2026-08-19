@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::sighting::{GetRefusal, Sighted, Sighting, bracketed_stat, get};
 use crate::{Etag, Vfs, etag_of, published_not_durable};
 
-pub use crate::put_result::{ForceOutcome, IfAbsentOutcome, Published};
+pub(crate) use crate::put_result::{ForceOutcome, IfAbsentOutcome, Published};
 
 #[derive(Debug)]
 pub enum PutCondition {

@@ -4,8 +4,9 @@
 //! The trait is the **materialize-complete primitive set**: `read`,
 //! `write_durable`, `exchange`, `rename_excl`, `remove`, `stat`, `resolve`,
 //! `mkdir_all`. The shape is already split so a caller can capture
-//! displaced bytes before they're discarded — see the module docs on
-//! `Vfs::save_atomic` below.
+//! displaced bytes before they're discarded — see [`testing::VfsTestExt::save_atomic`]
+//! for the compatibility convenience that composes them without that
+//! property.
 //!
 //! Two implementations: `Disk` (production, flagged atomic rename —
 //! `renamex_np` on Darwin, `renameat2` on Linux) and `Mem` (fully
@@ -14,9 +15,11 @@
 mod disk;
 mod etag;
 mod mem;
+mod path_util;
 mod publish;
 mod put_result;
 mod sighting;
+pub mod testing;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,6 +33,7 @@ pub use mem::Mem;
 pub use mem::OpKind;
 pub use publish::{PutCondition, PutOutcome, put};
 pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, get, get_resolved};
+pub use testing::VfsTestExt;
 
 /// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping
 /// `e` itself reachable as [`std::error::Error::source`] — so a caller can
@@ -255,41 +259,6 @@ pub trait Vfs {
     /// files, and case-sensitive by `name` within each group — callers (e.g.
     /// a filetree) can rely on this instead of re-sorting.
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>>;
-
-    /// Atomically save `bytes` to `path`, composed from the primitives
-    /// above: `resolve` the destination, `write_durable` the bytes to a
-    /// sibling temp, then publish via `exchange` (destination exists) or
-    /// `rename_excl` (destination is new).
-    ///
-    /// This is a **compatibility convenience** for callers that don't need
-    /// the displaced bytes — it deletes the temp (and, on the SWAP path,
-    /// the bytes the swap just displaced) as its last step, so it CANNOT
-    /// satisfy capture-before-discard on its own; a caller that
-    /// needs the displaced content must call `write_durable`/`exchange`
-    /// directly instead (a later work package wires `materialize` that
-    /// way). Kept only so existing callers (the plain `super+s` save path)
-    /// keep working unchanged through this work package.
-    fn save_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        let outcome = put(self, path, bytes, PutCondition::Force { expect: None })?;
-        let durable = match outcome {
-            PutOutcome::Committed { durable, .. } | PutOutcome::Raced { durable, .. } => durable,
-            PutOutcome::Conflict { .. } | PutOutcome::Missing => {
-                unreachable!("a Force put never conflicts or reports the destination missing")
-            }
-        };
-        if durable {
-            return Ok(());
-        }
-        // The publish already took effect but its durability could not be
-        // confirmed — the sibling temp holding the displaced content stays
-        // on disk rather than being removed; the marker is carried onto the
-        // re-wrapped error so the condition remains observable further up.
-        Err(wrap_io_published(
-            io::Error::other("durability could not be confirmed after publish"),
-            "save published but durability could not be confirmed; \
-             the prior content is preserved on a sibling temp file",
-        ))
-    }
 }
 
 /// The single chokepoint for `read_dir`'s ordering contract — shared by

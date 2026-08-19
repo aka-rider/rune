@@ -236,7 +236,7 @@ pub fn is_valid_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, VfsTestExt};
     use std::sync::Arc;
 
     fn app_for(content: &str) -> crate::app::App {

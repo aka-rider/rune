@@ -180,7 +180,7 @@ fn build_matcher(vfs: &dyn Vfs, dir: &Path, entries: &[DirEntry]) -> Gitignore {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, VfsTestExt};
     use std::fmt::Write as _;
 
     fn put(vfs: &Mem, path: &str, content: &str) {

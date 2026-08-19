@@ -23,7 +23,7 @@ use std::path::Path;
 
 use rune_db::{DbEvent, OpOutcome};
 use rune_tui::runtime::{CmdKind, Msg};
-use rune_vfs::Vfs;
+use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{next_event, send, sup, type_text};
 

@@ -30,7 +30,7 @@ use rune_tui::db::{Db, DbBridge};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 /// Seeds a `Mem` vfs with `/root/a.md`, `/root/b.md`, and `/root/sub/c.md`
 /// — two files plus a nested directory, so `Vfs::read_dir("/root")` lists

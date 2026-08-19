@@ -15,7 +15,7 @@ use rune_tui::keymap::{KeyCode, KeyOutcome};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdKind, Effects};
 
-use rune_vfs::Vfs;
+use rune_vfs::VfsTestExt;
 
 use explorer_common::{drive_load_explorer, key, open_seeded, seeded_vfs};
 

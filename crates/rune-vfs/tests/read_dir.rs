@@ -3,7 +3,7 @@
 //! original-case name), for both `Disk` and `Mem`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{DirEntry, Disk, FileKind, Link, Mem, Vfs};
+use rune_vfs::{DirEntry, Disk, FileKind, Link, Mem, Vfs, VfsTestExt};
 use std::fs;
 use std::path::PathBuf;
 

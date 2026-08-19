@@ -2,7 +2,7 @@
 //! a directory `FileKind::Dir`, for both `Disk` and `Mem`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{Disk, FileKind, Mem, Vfs};
+use rune_vfs::{Disk, FileKind, Mem, Vfs, VfsTestExt};
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;

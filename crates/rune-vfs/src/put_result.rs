@@ -5,7 +5,7 @@ use crate::publish::PutOutcome;
 use crate::sighting::{Sighted, Sighting};
 
 #[derive(Debug)]
-pub struct Published {
+pub(crate) struct Published {
     pub etag: Etag,
     pub sighted: Sighted,
     pub durable: bool,
@@ -24,7 +24,7 @@ impl From<Published> for PutOutcome {
 }
 
 #[derive(Debug)]
-pub enum ForceOutcome {
+pub(crate) enum ForceOutcome {
     Committed(Published),
     Raced {
         published: Published,
@@ -51,7 +51,7 @@ impl From<ForceOutcome> for PutOutcome {
 }
 
 #[derive(Debug)]
-pub enum IfAbsentOutcome {
+pub(crate) enum IfAbsentOutcome {
     Committed(Published),
     Conflict {
         current: Sighting,

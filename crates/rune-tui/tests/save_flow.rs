@@ -23,7 +23,7 @@ use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
 fn spawns_a_save(effects: &Effects) -> bool {
     effects.cmds.iter().any(|cmd| cmd.kind() == CmdKind::Save)
 }
-use rune_vfs::{Disk, Mem, Vfs};
+use rune_vfs::{Disk, Mem, Vfs, VfsTestExt};
 
 fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)

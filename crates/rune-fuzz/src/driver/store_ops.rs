@@ -12,7 +12,7 @@ use rune_tui::app::{self, App};
 use rune_tui::db::{Db, DbBridge};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
-use rune_vfs::Vfs;
+use rune_vfs::{Vfs, VfsTestExt};
 
 use crate::guard;
 use crate::snapshot::Snapshot;

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use rune_tui::explorer_reveal::reveal;
 use rune_tui::runtime::{CmdKind, Effects};
 
-use rune_vfs::Vfs;
+use rune_vfs::VfsTestExt;
 
 use explorer_common::{app_with, load_explorer, seeded_vfs};
 

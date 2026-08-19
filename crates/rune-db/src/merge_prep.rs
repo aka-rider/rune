@@ -169,7 +169,7 @@ fn resolve_ancestor(
 mod tests {
     use super::*;
     use crate::obs_origin::ObsOrigin;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, VfsTestExt};
     use std::path::Path;
 
     fn open() -> Connection {

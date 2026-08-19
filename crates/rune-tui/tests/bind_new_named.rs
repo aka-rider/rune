@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use rune_tui::runtime::{CmdKind, Msg};
 
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use rename_common::{
     UNPUBLISHED_BODY, active_path, rename_to, send, sup, type_text, wait_for_load,

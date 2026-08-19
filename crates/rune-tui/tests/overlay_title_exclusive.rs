@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, VfsTestExt};
 
 use rename_common::{
     DOC_CONTENT, bound_session, ctrl_key, draft_session, open_title, plain_key, store_session,

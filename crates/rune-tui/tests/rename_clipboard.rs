@@ -23,7 +23,7 @@ use rune_tui::keymap::KeyCode;
 use rune_tui::runtime::{Msg, PasteTarget};
 
 use rune_core::buffer::Buffer;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use rename_common::{app_with, ctrl, plain, seeded_vfs, send, sup};
 

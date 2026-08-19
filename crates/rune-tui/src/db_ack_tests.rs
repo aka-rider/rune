@@ -5,7 +5,7 @@ use crate::db::{Db, DbBridge, LoadPurpose};
 use crate::db_enqueue::append_edit;
 use rune_core::buffer::Buffer;
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

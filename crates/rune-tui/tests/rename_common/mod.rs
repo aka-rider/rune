@@ -40,7 +40,7 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 
 use rune_core::buffer::Buffer;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 // ── Session-driven fixtures ─────────────────────────────────────────────
 

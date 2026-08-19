@@ -34,7 +34,7 @@ mod tests {
     use std::sync::mpsc;
 
     use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
 
     use crate::app::{self, App};
     use crate::db::{Db, DbBridge};

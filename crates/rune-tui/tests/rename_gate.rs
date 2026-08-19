@@ -18,7 +18,7 @@ use std::sync::Arc;
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::rename::RenameState;
 use rune_tui::title::ext_split;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use rename_common::{
     active_path, bound_session, ctrl_key, key_input, open_title, plain_key, store_session,

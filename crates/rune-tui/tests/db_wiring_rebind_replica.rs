@@ -31,7 +31,7 @@ use rune_tui::app::App;
 use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
 use rune_tui::merge::MergeState;
 use rune_tui::runtime::{CmdKind, Msg};
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use db_wiring_common::{restarted_store_at, temp_db_dir};
 use rename_common::{

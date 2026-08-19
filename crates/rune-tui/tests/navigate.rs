@@ -15,7 +15,7 @@ use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 /// Following a link can post a message, and an open message pane arms its own
 /// auto-collapse timer — so "nothing was opened" is a claim about the external

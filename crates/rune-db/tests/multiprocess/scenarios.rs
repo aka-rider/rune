@@ -357,7 +357,7 @@ fn two_stores_closing_simultaneously_surface_no_error_despite_truncate_contentio
 
 #[test]
 fn reopen_after_external_atomic_swap_bridges_the_dead_sessions_own_draft() {
-    use rune_vfs::Vfs;
+    use rune_vfs::VfsTestExt;
 
     let dir = temp_dir("reopen-dataloss");
     let path = dir.join("rune-v1.db");

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_tui::keymap::KeyCode;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, VfsTestExt};
 
 use navhistory_common::*;
 

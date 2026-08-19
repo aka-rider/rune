@@ -18,7 +18,7 @@ use rune_tui::pane::Pane;
 use rune_tui::pointer::{ManualClock, MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;

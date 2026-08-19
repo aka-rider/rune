@@ -4,7 +4,7 @@
 //! incapable of it.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{Mem, OpKind, Vfs, published_not_durable};
+use rune_vfs::{Mem, OpKind, Vfs, VfsTestExt, published_not_durable};
 use std::io;
 use std::path::PathBuf;
 

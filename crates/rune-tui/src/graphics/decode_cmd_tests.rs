@@ -7,7 +7,7 @@ use std::path::Path;
 
 use rune_core::buffer::Buffer;
 use rune_image::CellSize;
-use rune_vfs::Mem;
+use rune_vfs::{Mem, VfsTestExt};
 
 use crate::runtime::CmdKind;
 

@@ -204,7 +204,7 @@ pub(crate) fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>,
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, VfsTestExt};
     use std::time::Duration;
 
     fn open() -> Connection {

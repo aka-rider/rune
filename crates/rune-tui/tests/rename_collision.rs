@@ -27,7 +27,7 @@ use rune_tui::rename::RenameState;
 use rune_tui::runtime::{CmdKind, Effects};
 use rune_tui::{footer, messages, workspace};
 
-use rune_vfs::Vfs;
+use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
     app_with, collide, collide_pending, plain_key, rename_to, seeded_vfs, send, unbound_session,

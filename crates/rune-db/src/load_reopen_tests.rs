@@ -5,7 +5,7 @@
 
 use super::*;
 use rune_core::buffer::AppliedEdit;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 fn open() -> Connection {
     crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(

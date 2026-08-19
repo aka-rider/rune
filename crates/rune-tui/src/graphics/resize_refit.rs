@@ -85,7 +85,7 @@ mod tests {
 
     use rune_core::buffer::Buffer;
     use rune_image::CellSize;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
 
     use super::*;
     use crate::document::DocumentId;

@@ -463,7 +463,7 @@ pub use close::{
 mod tests {
     use super::*;
     use rune_core::buffer::Buffer as CoreBuffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
     use std::sync::Arc;
 
     fn app_with_seed(mem: &Arc<Mem>) -> App {
