@@ -51,6 +51,20 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     };
 
+    if app
+        .doc(doc)
+        .is_some_and(crate::document::Document::save_in_flight)
+    {
+        super::set_last_sync(app, doc, prep.sync.kind);
+        app.merge = MergeState::Inactive;
+        let merge_key = crate::global::label_for(crate::global::GlobalCommand::Merge);
+        messages::warn(
+            app,
+            format!("save in flight — merge cancelled, press {merge_key} once it completes"),
+        );
+        return;
+    }
+
     // The authoritative gate (plan Gotchas `[R3]`): `Document.last_sync`
     // only ever gave `merge::begin` a fast hint to refuse on; THIS fresh
     // classification is what actually decides whether there is still

@@ -12,7 +12,6 @@ use rune_db::{DbEvent, MaterializePrep, OpOutcome, SyncKind};
 use rune_tui::document::DocumentId;
 use rune_tui::focus::FocusTarget;
 use rune_tui::guard::GuardKind;
-use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
 use rune_tui::runtime::Msg;
 
@@ -54,37 +53,40 @@ pub fn merge_doc_active(next: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `MERGE-SAVE-BLOCKED` (plan WP4.S3's save gate) — a `Command::Save` key
-/// pressed while merge is `Active` with unresolved blocks must never arm a
-/// save: no `Cmd` gets constructed (`ctx.pending_save_bytes` stays `None`)
-/// and `save_in_flight` never flips on. Both are checked, not just one —
-/// `pending_save_bytes` catches a save the driver never even delivered yet,
-/// `save_in_flight` catches one the gate let slip through synchronously.
+/// `MERGE-SAVE-BLOCKED` (plan WP4.S3's save gate) — no step may ARM a save
+/// while a merge attempt owns the document: `Pending` (the disk-state round
+/// trip that is about to install a resolver) as much as `Active` with
+/// unresolved blocks.
+///
+/// The arming EDGE is what fires, never the standing state: a save armed
+/// legitimately before the merge attempt began stays in flight across many
+/// later steps, and reading `save_in_flight`/`pending_save_bytes` as
+/// absolutes accuses every one of them. The trigger is that edge from ANY
+/// route, not a `Command::Save` key — the guards' `[S]` answers and the quit
+/// fan-out arm saves with no save key in sight, which is exactly where a
+/// missing gate would hide.
 pub fn merge_save_blocked(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
-    if !prev.merge_active || prev.merge_unresolved == 0 {
+    let merging = prev.merge_pending || (prev.merge_active && prev.merge_unresolved > 0);
+    if !merging || prev.merge_doc != Some(prev.active) {
         return None;
     }
-    let is_save_key = matches!(
-        ctx.msg,
-        MsgTag::Key {
-            command: Some(Command::Save),
-            ..
-        }
-    );
-    if !is_save_key {
+    let armed = (!prev.save_in_flight && next.save_in_flight) || ctx.save_newly_parked;
+    if !armed {
         return None;
     }
-    if ctx.pending_save_bytes.is_some() || next.save_in_flight {
-        return Some(Violation::new(
-            "MERGE-SAVE-BLOCKED",
-            format!(
-                "Command::Save scheduled a materialize while merge was Active with {} \
-                 unresolved block(s) (pending_save_bytes={:?}, save_in_flight={})",
-                prev.merge_unresolved, ctx.pending_save_bytes, next.save_in_flight
-            ),
-        ));
-    }
-    None
+    let state = if prev.merge_pending {
+        "Pending".to_string()
+    } else {
+        format!("Active with {} unresolved block(s)", prev.merge_unresolved)
+    };
+    Some(Violation::new(
+        "MERGE-SAVE-BLOCKED",
+        format!(
+            "{:?} armed a materialize while merge was {state} \
+             (save_newly_parked={}, save_in_flight={})",
+            ctx.msg, ctx.save_newly_parked, next.save_in_flight
+        ),
+    ))
 }
 
 /// `MERGE-KEY-FEEDBACK` — the diff verb layer owes feedback for every key

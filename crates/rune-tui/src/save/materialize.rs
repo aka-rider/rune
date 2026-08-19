@@ -19,6 +19,7 @@ use crate::document::{DocumentId, PublishParams};
 use crate::materialize_ack::{self, MaterializeVfsOutcome};
 use crate::runtime::{Effects, Msg, TimerKey};
 use crate::save::SaveMode;
+use crate::save::gate::SaveClearance;
 
 /// The snapshot-autosave debounce window.
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -37,6 +38,7 @@ pub(super) fn materialize_now(
     path: PathBuf,
     version: u64,
     mode: SaveMode,
+    clearance: &SaveClearance,
     effects: &mut Effects,
 ) {
     let Some(doc) = app.doc(id) else { return };
@@ -63,7 +65,7 @@ pub(super) fn materialize_now(
             app,
             &format!("materialize: document {id:?} bound to db_id {db_id} has no file binding"),
         );
-        fall_back_to_direct(app, id, path, version, content, effects);
+        save_directly(app, id, path, version, content, clearance, effects);
         return;
     };
     let expect_obs = binding.expect_obs;
@@ -73,7 +75,7 @@ pub(super) fn materialize_now(
             app,
             &format!("materialize: document {id:?} bound to db_id {db_id} has no CAS baseline"),
         );
-        fall_back_to_direct(app, id, path, version, content, effects);
+        save_directly(app, id, path, version, content, clearance, effects);
         return;
     };
     crate::db_enqueue::flush_pending_rebase(app, id);
@@ -112,17 +114,18 @@ pub(super) fn materialize_now(
             // THIS attempt to abandon — the fallback below is the first
             // and only thing that arms `save_in_flight` for it.
             materialize_ack::on_store_failure(app, &e.to_string());
-            fall_back_to_direct(app, id, path, version, content, effects);
+            save_directly(app, id, path, version, content, clearance, effects);
         }
     }
 }
 
-fn fall_back_to_direct(
+pub(super) fn save_directly(
     app: &mut App,
     id: DocumentId,
     path: PathBuf,
     version: u64,
     content: Arc<str>,
+    _clearance: &SaveClearance,
     effects: &mut Effects,
 ) {
     let bytes = content.as_bytes().to_vec();
@@ -131,7 +134,7 @@ fn fall_back_to_direct(
     let vfs = Arc::clone(&app.vfs);
     effects
         .cmds
-        .push(crate::save::save_cmd(id, ticket, vfs, path, bytes, version));
+        .push(super::save_cmd(id, ticket, vfs, path, bytes, version));
 }
 
 /// The draft-naming route (`rename::bind_new`): materialize the buffer to
@@ -144,11 +147,12 @@ fn fall_back_to_direct(
 /// leave the draft untitled, or a later ^S would overwrite the winner.
 /// `handle_materialize_ack` performs the bind once the
 /// write actually commits.
-pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
-    let Some(doc) = app.doc(id) else { return };
-    if doc.save_in_flight() {
-        return;
-    }
+pub(crate) fn bind_new_now(
+    app: &mut App,
+    id: DocumentId,
+    path: PathBuf,
+    _clearance: &SaveClearance,
+) {
     crate::commands::strip_trailing::leave_reading_then_strip(app, id);
     let Some(doc) = app.doc(id) else { return };
     let version = doc.buffer.version();

@@ -153,6 +153,46 @@ fn absent_ancestor_notifies_and_localizes_via_the_2way_path() {
     );
 }
 
+#[test]
+fn a_save_in_flight_cancels_the_landing_instead_of_installing_a_resolver() {
+    let mut app = app_with("shared-start\nours-only\nshared-end\n");
+    let doc = app.active;
+    app.merge = MergeState::Pending {
+        doc,
+        generation: crate::generation::Generation::ZERO,
+        intent: MergeIntent::Merge,
+    };
+    let content: Arc<str> = Arc::from(app.doc(doc).unwrap().buffer.content());
+    let version = app.doc(doc).unwrap().buffer.version();
+    let _ticket = app.doc_mut(doc).unwrap().begin_save(version, content);
+    assert!(app.doc(doc).unwrap().save_in_flight());
+    let before = app.doc(doc).unwrap().buffer.content().to_string();
+
+    let mut effects = Effects::default();
+    handle_merge_prep_ack(
+        &mut app,
+        doc,
+        Some(crate::generation::Generation::ZERO),
+        diverged_prep(
+            b"shared-start\ntheirs-only\nshared-end\n",
+            rune_db::ObsId::new(11).expect("nonzero"),
+        ),
+        &mut effects,
+    );
+
+    assert_eq!(app.merge, MergeState::Inactive);
+    assert_eq!(
+        app.doc(doc).unwrap().buffer.content(),
+        before,
+        "no working form may be installed under an in-flight save"
+    );
+    assert!(
+        messages::log_text(&app).contains("save in flight"),
+        "expected the cancelled-merge notice, got {:?}",
+        messages::log_text(&app)
+    );
+}
+
 /// A "nothing to merge" refusal still carries a fresh authoritative
 /// classification — the landing must keep it on `last_sync`, or the
 /// stale hint that invited the attempt would re-invite it forever.
