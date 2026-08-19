@@ -1,0 +1,24 @@
+//! Static session-generation data, split out of `generate` (500-line
+//! budget): the four string palettes and the fixed `KeyInput`s/`KeyInput`
+//! slices
+//! every `cluster_*` strategy in `cluster.rs` draws from.
+//!
+//! The document corpus (`SEEDS`, `MARKDOWN_FRAGMENTS`, `PASTE_PALETTE`,
+//! `TYPE_PALETTE`) lives in `palette_doc.rs`; the input corpus (key/chord
+//! palettes, `CMDPAL_*` constants) lives in `palette_input.rs`. Both are
+//! re-exported here so every consumer keeps importing from `palette`
+//! unchanged.
+
+mod palette_doc;
+mod palette_input;
+
+pub use palette_doc::TYPE_PALETTE;
+pub(super) use palette_doc::{MARKDOWN_FRAGMENTS, PASTE_PALETTE, SEEDS};
+pub(super) use palette_input::{
+    ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, CMDPAL_BACKSPACE_KEY, CMDPAL_KEY_CTRL,
+    CMDPAL_KEY_SUP, CMDPAL_NAV_KEYS, CMDPAL_PARAM_QUERIES, CMDPAL_TAB_KEY, COPY_KEY, CTRL_B_KEY,
+    CTRL_C_KEY, CTRL_E_KEY, CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY,
+    ESCAPE_KEY, EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL, FILESEARCH_KEY_SUP, MERGE_KEY,
+    MERGE_RESOLVE_KEYS, NAV_BACK_KEY, NAV_FORWARD_KEY, NAV_KEYS, PASTE_KEY, REDO_KEY, REDO_KEY_ALT,
+    SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, UNDO_KEY,
+};
