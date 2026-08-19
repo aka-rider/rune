@@ -20,6 +20,7 @@ test:
 
 lint:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --workspace --lib -- -D warnings
 
 fmt:
 	$(CARGO) fmt --all --check
