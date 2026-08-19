@@ -1,158 +1,11 @@
-//! Static session-generation data, split out of `generate` (500-line
-//! budget): the four string palettes and the fixed `KeyInput`s/`KeyInput`
-//! slices
-//! every `cluster_*` strategy in `cluster.rs` draws from.
+//! Input-corpus data split out of `palette.rs`: the key/chord palettes and
+//! command-palette constants every `cluster_*` strategy in `cluster.rs`
+//! draws from.
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 
-use crate::driver::DOC_PATH;
-
-/// `(path, content)` seed pairs sessions start from (plan WP7.S3 — a session
-/// now opens an arbitrary path, so `DocumentKind` producer selection is
-/// reachable, not just markdown). `select` panics on an empty slice (G16) —
-/// never let this list go empty. Every entry deliberately excludes any lone
-/// `\r` adjacent to a tab inside a nested container (plan Gotcha G1).
-pub(super) static SEEDS: &[(&str, &str)] = &[
-    (DOC_PATH, ""),
-    (
-        DOC_PATH,
-        "Hello there. This is a short prose paragraph with a few sentences in it.\n",
-    ),
-    (DOC_PATH, "line one\r\nline two\r\nline three\r\n"),
-    (DOC_PATH, "\u{feff}hello"),
-    (DOC_PATH, "no trailing newline in this document"),
-    (
-        DOC_PATH,
-        "你好世界 🙂 mixed CJK and emoji content 日本語のテスト\n",
-    ),
-    (
-        DOC_PATH,
-        "# Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n",
-    ),
-    // WP5.S2: a GFM table seed, so a whole session can start from, edit,
-    // and navigate a real rendered table — the only seed that ever gives
-    // `render::build_rows`/`row_meta::row_meta` a `TableSegInfo`-bearing
-    // segment to walk without relying on `MarkdownWrite` typing one in.
-    (
-        DOC_PATH,
-        "# Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n",
-    ),
-    // The only seed whose document opens with a frontmatter delimiter, so a
-    // session can edit — and destroy — the YAML code region frontmatter
-    // publishes. Every other markdown seed leaves that path unvisited.
-    (
-        DOC_PATH,
-        "---\ntitle: seed\ndraft: true\n---\n\n# Heading\n\nbody text\n",
-    ),
-    // WP7.S3: non-markdown seeds, opened at a path `rune_ts::lang::resolve`
-    // recognises — these exercise `DocumentKind::Code`, whole-document
-    // tree-sitter highlighting, and (for `notes.md`) fenced-code highlight
-    // together with the markdown producer.
-    (
-        "/fuzz/main.rs",
-        "fn main() {\n    let s = \"escape: \\n and \\t\";\n    // a line comment\n    if true {\n        println!(\"{s}\");\n    }\n}\n",
-    ),
-    (
-        "/fuzz/config.toml",
-        "[package]\nname = \"example\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1.0\"\n",
-    ),
-    (
-        "/fuzz/data.json",
-        "{\"name\": \"example\", \"values\": [1, 2, 3], \"nested\": {\"ok\": true}}\n",
-    ),
-    (
-        "/fuzz/script.sh",
-        "#!/bin/sh\necho \"hello world\"\nfor f in *.txt; do\n  cat \"$f\"\ndone\n",
-    ),
-    (
-        "/fuzz/mod.tsx",
-        "export function Hello() {\n  return <div className=\"a\">Hello, world!</div>;\n}\n",
-    ),
-    (
-        "/fuzz/notes.md",
-        "# Notes\n\n```rust\nfn main() {}\n```\n\n```python\ndef f():\n    return 1\n```\n\n```klingon\nQapla'\n```\n\n```\nuntagged fence\n```\n\ntail\n",
-    ),
-    (
-        "/fuzz/opaque.bin",
-        "二进制内容 🙂 # not a heading\n\tliteral tab\n你好\n",
-    ),
-];
-
-/// `Action::Paste`/`Action::ClipboardReply` payloads, verbatim by code
-/// point.
-/// `Paste`/`ClipboardReply` insert bytes with NO filtering
-/// with no filtering, so this is the only place byte-hostile
-/// content — CRLF, tab, ZWSP, a real ZWJ family sequence — can reach the
-/// buffer and exercise the byte-verbatim edge (G3). Invalid UTF-8 is
-/// out of scope: the Rust `Buffer` is a `String` and cannot represent it.
-pub(super) static PASTE_PALETTE: &[&str] = &[
-    "",
-    "hello world",
-    "你好世界，世界你好",
-    "👨‍👩‍👧‍👦 family",
-    "❤️ heart FE0F",
-    "⚡︎ lightning FE0E",
-    "é à ô",
-    "مرحبا بالعالم",
-    "𝕳𝖊𝖑𝖑𝖔 𝟙𝟚𝟛",
-    "aA1! 你好 🙂 mix",
-    "line1\r\nline2",
-    " \u{200b}\t\u{200b} ",
-    "***bold*** _em_ `code`",
-    "\n\n\n",
-    "\"quoted\" 'text'",
-    "12345.6789",
-    "a\tb\tc\td",
-    "𝓒𝓾𝓻𝓼𝓲𝓿𝓮",
-];
-
-/// `Action::Type` payloads: `PASTE_PALETTE` with every `char::is_control()`
-/// character except `'\n'` removed, since `Msg::Key(Char)` silently drops
-/// control characters (`is_insertable_key_char`, G3).
-/// Concretely: drops the CRLF entry and the tab-separated entry, and strips
-/// the tab (keeping the ZWSPs, which are format chars, not control chars)
-/// from the ZWSP entry. Do not "restore" those — a `Type` cannot deliver
-/// them. `pub` (re-exported at `crate::generate::TYPE_PALETTE`) so
-/// `tests/generator.rs`'s `type_palette_has_no_undeliverable_control_chars`
-/// self-test can inspect every entry.
-pub static TYPE_PALETTE: &[&str] = &[
-    "",
-    "hello world",
-    "你好世界，世界你好",
-    "👨‍👩‍👧‍👦 family",
-    "❤️ heart FE0F",
-    "⚡︎ lightning FE0E",
-    "é à ô",
-    "مرحبا بالعالم",
-    "𝕳𝖊𝖑𝖑𝖔 𝟙𝟚𝟛",
-    "aA1! 你好 🙂 mix",
-    " \u{200b}\u{200b} ",
-    "***bold*** _em_ `code`",
-    "\n\n\n",
-    "\"quoted\" 'text'",
-    "12345.6789",
-    "𝓒𝓾𝓻𝓼𝓲𝓿𝓮",
-];
-
-/// Markdown structural fragments for the `MarkdownWrite` cluster. The
-/// three table fragments (WP5.S2) let a session type a table into
-/// existence mid-document — a row, a delimiter, and an inline-alignment
-/// delimiter — rather than only ever starting from a table seed.
-pub(super) static MARKDOWN_FRAGMENTS: &[&str] = &[
-    "# ",
-    "- ",
-    "> ",
-    "[a](b)",
-    "[[wiki]]",
-    "**b**",
-    "`c`",
-    "| a | b |",
-    "|---|---|",
-    "| :-: |",
-];
-
 /// The eight motions the `Navigate` cluster draws from, plus alt+Left/Right.
-pub(super) static NAV_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static NAV_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Left,
         mods: Mods::NONE,
@@ -206,7 +59,7 @@ pub(super) static NAV_KEYS: &[KeyInput] = &[
 ];
 
 /// The same eight motions, shift-modified, for the `Selection` cluster.
-pub(super) static SELECT_MOTION_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static SELECT_MOTION_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Left,
         mods: Mods {
@@ -282,7 +135,7 @@ pub(super) static SELECT_MOTION_KEYS: &[KeyInput] = &[
 ];
 
 /// The `Delete` cluster's four keys.
-pub(super) static DELETE_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static DELETE_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Backspace,
         mods: Mods::NONE,
@@ -306,7 +159,7 @@ pub(super) static DELETE_KEYS: &[KeyInput] = &[
     },
 ];
 
-pub(super) const SELECT_ALL_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const SELECT_ALL_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('a'),
     mods: Mods {
         shift: false,
@@ -315,7 +168,7 @@ pub(super) const SELECT_ALL_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const UNDO_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const UNDO_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('z'),
     mods: Mods {
         shift: false,
@@ -324,7 +177,7 @@ pub(super) const UNDO_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const REDO_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const REDO_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('z'),
     mods: Mods {
         shift: true,
@@ -333,7 +186,7 @@ pub(super) const REDO_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const REDO_KEY_ALT: KeyInput = KeyInput {
+pub(in crate::generate) const REDO_KEY_ALT: KeyInput = KeyInput {
     code: KeyCode::Char('Z'),
     mods: Mods {
         shift: false,
@@ -342,7 +195,7 @@ pub(super) const REDO_KEY_ALT: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const NAV_BACK_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const NAV_BACK_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('['),
     mods: Mods {
         shift: false,
@@ -351,7 +204,7 @@ pub(super) const NAV_BACK_KEY: KeyInput = KeyInput {
         sup: false,
     },
 };
-pub(super) const NAV_FORWARD_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const NAV_FORWARD_KEY: KeyInput = KeyInput {
     code: KeyCode::Char(']'),
     mods: Mods {
         shift: false,
@@ -360,11 +213,11 @@ pub(super) const NAV_FORWARD_KEY: KeyInput = KeyInput {
         sup: false,
     },
 };
-pub(super) const ENTER_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const ENTER_KEY: KeyInput = KeyInput {
     code: KeyCode::Enter,
     mods: Mods::NONE,
 };
-pub(super) const SAVE_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const SAVE_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('s'),
     mods: Mods {
         shift: false,
@@ -373,7 +226,7 @@ pub(super) const SAVE_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const COPY_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const COPY_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('c'),
     mods: Mods {
         shift: false,
@@ -382,7 +235,7 @@ pub(super) const COPY_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const CUT_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CUT_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('x'),
     mods: Mods {
         shift: false,
@@ -391,7 +244,7 @@ pub(super) const CUT_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const PASTE_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const PASTE_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('v'),
     mods: Mods {
         shift: false,
@@ -400,7 +253,7 @@ pub(super) const PASTE_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-pub(super) const CTRL_C_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CTRL_C_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('c'),
     mods: Mods {
         shift: false,
@@ -415,7 +268,7 @@ pub(super) const CTRL_C_KEY: KeyInput = KeyInput {
 /// buffer byte". Every subsequent generated character then lands in the
 /// title field instead of the document, which is precisely the property
 /// worth fuzzing.
-pub(super) const CTRL_R_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CTRL_R_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('r'),
     mods: Mods {
         shift: false,
@@ -434,7 +287,7 @@ pub(super) const CTRL_R_KEY: KeyInput = KeyInput {
 /// `SELECT_MOTION_KEYS` already covers the char-wise shift pair, and
 /// `PANE-NO-BLEED` cares about "the title, not the document, moved",
 /// which any of these five keys equally proves.
-pub(super) static TITLE_MOTION_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static TITLE_MOTION_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Left,
         mods: Mods {
@@ -479,7 +332,7 @@ pub(super) static TITLE_MOTION_KEYS: &[KeyInput] = &[
 /// touching a buffer byte, and the key `title::handle_key` uses to revert
 /// and hand focus back to the editor. `driver/checks.rs::
 /// restore_editor_focus` is the existing precedent for this exact key.
-pub(super) const ESCAPE_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const ESCAPE_KEY: KeyInput = KeyInput {
     code: KeyCode::Escape,
     mods: Mods {
         shift: false,
@@ -497,7 +350,7 @@ pub(super) const ESCAPE_KEY: KeyInput = KeyInput {
 /// Enter/Escape rework's own way back to the Editor from any pane the
 /// column can hold (`Pane::Explorer`/`Pane::Tabs`), since both can only
 /// ever be focused while the column is painted.
-pub(super) const CTRL_B_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CTRL_B_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('b'),
     mods: Mods {
         shift: false,
@@ -509,7 +362,7 @@ pub(super) const CTRL_B_KEY: KeyInput = KeyInput {
 
 /// `^t` (`GlobalCommand::FocusTabs`) — the Tabs pane's own equivalent of
 /// `CTRL_B_KEY` above (CODE-REVIEW.md rune-fuzz finding 10).
-pub(super) const CTRL_T_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CTRL_T_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('t'),
     mods: Mods {
         shift: false,
@@ -523,7 +376,7 @@ pub(super) const CTRL_T_KEY: KeyInput = KeyInput {
 /// WP5/WP8). Reaching it is what exercises the reveal-follows-insertion-
 /// point machinery (plan WP1) against the fuzzer's own generated
 /// documents, not just the deterministic test suite.
-pub(super) const CTRL_P_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CTRL_P_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('p'),
     mods: Mods {
         shift: false,
@@ -537,7 +390,7 @@ pub(super) const CTRL_P_KEY: KeyInput = KeyInput {
 /// open/focus/collapse toggle. Reaching it is what exercises the pane
 /// (and, by extension, `Pane::Messages` focus routing) against the
 /// fuzzer's own generated sessions, not just the deterministic test suite.
-pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CTRL_E_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('e'),
     mods: Mods {
         shift: false,
@@ -551,7 +404,7 @@ pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
 /// it reliably is what exercises the trash guard and the async
 /// `CmdKind::Trash` discharge against the fuzzer's own generated sessions,
 /// not just the deterministic test suite.
-pub(super) const TRASH_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const TRASH_KEY: KeyInput = KeyInput {
     code: KeyCode::Backspace,
     mods: Mods {
         shift: false,
@@ -567,7 +420,7 @@ pub(super) const TRASH_KEY: KeyInput = KeyInput {
 /// every other global command) was reachable only through `cluster_monkey_
 /// burst`'s ~0.4%-of-16-mods-per-key odds, the same reachability gap
 /// `CTRL_B_KEY`/`CTRL_T_KEY` closed for the Explorer/Tabs panes.
-pub(super) const FILESEARCH_KEY_CTRL: KeyInput = KeyInput {
+pub(in crate::generate) const FILESEARCH_KEY_CTRL: KeyInput = KeyInput {
     code: KeyCode::Char('F'),
     mods: Mods {
         shift: false,
@@ -578,7 +431,7 @@ pub(super) const FILESEARCH_KEY_CTRL: KeyInput = KeyInput {
 };
 
 /// `⌘⇧F`, the same command's alias binding.
-pub(super) const FILESEARCH_KEY_SUP: KeyInput = KeyInput {
+pub(in crate::generate) const FILESEARCH_KEY_SUP: KeyInput = KeyInput {
     code: KeyCode::Char('F'),
     mods: Mods {
         shift: false,
@@ -596,7 +449,7 @@ pub(super) const FILESEARCH_KEY_SUP: KeyInput = KeyInput {
 /// (`cluster.rs`) is what supplies that reachability, letting `PANE-NO-
 /// BLEED` prove a key aimed at the Explorer (moving `nav.cursor`, not the
 /// active document) never mutates a buffer byte.
-pub(super) static EXPLORER_SEARCH_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static EXPLORER_SEARCH_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Char('r'),
         mods: Mods::NONE,
@@ -620,7 +473,7 @@ pub(super) static EXPLORER_SEARCH_KEYS: &[KeyInput] = &[
 /// multi-cursor surface was monkey-burst-only at ~0.42%/key, so
 /// `cluster_multicursor` (`cluster.rs`) can actually build a session with
 /// more than one cursor to check `CUR-ORDER`/clipboard against.
-pub(super) const ADD_CURSOR_ABOVE_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const ADD_CURSOR_ABOVE_KEY: KeyInput = KeyInput {
     code: KeyCode::Up,
     mods: Mods {
         shift: false,
@@ -632,7 +485,7 @@ pub(super) const ADD_CURSOR_ABOVE_KEY: KeyInput = KeyInput {
 
 /// `alt+sup+Down` (`Command::AddCursorBelow`) — the downward twin of
 /// `ADD_CURSOR_ABOVE_KEY` above.
-pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
     code: KeyCode::Down,
     mods: Mods {
         shift: false,
@@ -649,7 +502,7 @@ pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
 /// `Action::DivergeDisk` and its reprobe ack land, so this chord routinely
 /// carries a session all the way into `MergeState::Active`, not just its
 /// refusal path.
-pub(super) const MERGE_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const MERGE_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('m'),
     mods: Mods {
         shift: false,
@@ -659,7 +512,7 @@ pub(super) const MERGE_KEY: KeyInput = KeyInput {
     },
 };
 
-pub(super) const CMDPAL_KEY_CTRL: KeyInput = KeyInput {
+pub(in crate::generate) const CMDPAL_KEY_CTRL: KeyInput = KeyInput {
     code: KeyCode::Char('P'),
     mods: Mods {
         shift: false,
@@ -669,7 +522,7 @@ pub(super) const CMDPAL_KEY_CTRL: KeyInput = KeyInput {
     },
 };
 
-pub(super) const CMDPAL_KEY_SUP: KeyInput = KeyInput {
+pub(in crate::generate) const CMDPAL_KEY_SUP: KeyInput = KeyInput {
     code: KeyCode::Char('P'),
     mods: Mods {
         shift: false,
@@ -679,17 +532,17 @@ pub(super) const CMDPAL_KEY_SUP: KeyInput = KeyInput {
     },
 };
 
-pub(super) const CMDPAL_TAB_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CMDPAL_TAB_KEY: KeyInput = KeyInput {
     code: KeyCode::Tab,
     mods: Mods::NONE,
 };
 
-pub(super) const CMDPAL_BACKSPACE_KEY: KeyInput = KeyInput {
+pub(in crate::generate) const CMDPAL_BACKSPACE_KEY: KeyInput = KeyInput {
     code: KeyCode::Backspace,
     mods: Mods::NONE,
 };
 
-pub(super) static CMDPAL_NAV_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static CMDPAL_NAV_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Up,
         mods: Mods::NONE,
@@ -716,7 +569,7 @@ pub(super) static CMDPAL_NAV_KEYS: &[KeyInput] = &[
     },
 ];
 
-pub(super) static CMDPAL_PARAM_QUERIES: &[&str] = &["lang", "tab"];
+pub(in crate::generate) static CMDPAL_PARAM_QUERIES: &[&str] = &["lang", "tab"];
 
 /// `⇧⌘Y`/`⇧⌘U` (`DiffCommand::TakeTheirs`/`TakeOurs`, `diff_view::keys::
 /// DIFF_BINDINGS`) — the pane verb layer's own conflict-resolving chords.
@@ -726,7 +579,7 @@ pub(super) static CMDPAL_PARAM_QUERIES: &[&str] = &["lang", "tab"];
 /// that never reaches `Active` (a `DiskAhead` clean fast path, a UTF-8
 /// refusal, ...) still exercises the fallthrough itself, which is exactly
 /// `MERGE-KEY-FEEDBACK`'s other half.
-pub(super) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
+pub(in crate::generate) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Char('y'),
         mods: Mods {
