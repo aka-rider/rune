@@ -20,6 +20,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rune_image::{CellFootprint, CellSize, ImageId};
+
 use rune_vfs::Vfs;
 
 use crate::app::App;
@@ -141,25 +143,28 @@ pub(super) fn decode_embed_cmd(
     })
 }
 
-/// Applies a `Msg::ImageDecoded` reply. Fixed order: (a)
-/// drop a stale generation with no further work at all — `in_flight` no
-/// longer names it, so this reply describes a decode this document isn't
-/// waiting on anymore; (b) otherwise clear `in_flight` unconditionally, so
-/// a document can never wedge waiting on a decode that already returned;
-/// (c) a decode error becomes `ImageStatus::Failed`, the info card's own
-/// reason line; (d) a decode success computes the fit-to-width footprint
-/// from the CURRENT pane width and cell geometry, stores it (feeding the
-/// producer via `Document::view`'s existing `image.cells` read), and —
-/// Kitty only — encodes and pushes a transmit into the effects,
-/// forcing a full redraw alongside it (the reload command reaches this
-/// exact handler, and a reload's placeholder cells are typically
-/// byte-identical to what was already on screen — same id, same
-/// diacritics — so ratatui's own "only repaint changed cells" diffing
-/// cannot be trusted to notice the underlying pixels changed. Forcing it
-/// unconditionally on every successful transmit, not just a reload, costs
-/// nothing worse than one redundant `Terminal::clear` on the very first
-/// open, which had nothing to redraw over anyway); an encode failure lands
-/// the document in `ImageStatus::Failed` too, the same as a decode error.
+pub(super) fn encode_image_cmd(
+    doc: DocumentId,
+    decoded: Arc<rune_image::decode::Decoded>,
+    img_id: ImageId,
+    cells: CellFootprint,
+    cell: CellSize,
+    generation: crate::generation::ImageDecodeGen,
+    was_live: bool,
+) -> Cmd {
+    Cmd::image_encode(move || {
+        let result =
+            rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell)
+                .map_err(CmdError::from);
+        Some(Msg::ImageEncoded {
+            doc,
+            generation,
+            was_live,
+            result,
+        })
+    })
+}
+
 pub(crate) fn handle_image_decoded(
     app: &mut App,
     id: DocumentId,
@@ -186,11 +191,11 @@ pub(crate) fn handle_image_decoded(
     let Some(image) = doc.image_mut() else {
         return;
     };
-    image.in_flight = None;
 
     let decoded = match result {
         Ok(decoded) => decoded,
         Err(e) => {
+            image.in_flight = None;
             image.status = ImageStatus::Failed(e.to_string());
             return;
         }
@@ -208,18 +213,50 @@ pub(crate) fn handle_image_decoded(
         pane_width,
         cell,
     );
-    image.status = if kitty {
-        match rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell) {
-            Ok(transmit) => {
-                effects.transmit(transmit);
-                effects.force_redraw |= was_live;
-                ImageStatus::Live { decoded, cells }
-            }
-            Err(e) => ImageStatus::Failed(e.to_string()),
-        }
-    } else {
-        ImageStatus::Live { decoded, cells }
+    let decoded = Arc::new(decoded);
+
+    if !kitty {
+        image.in_flight = None;
+        image.status = ImageStatus::Live { decoded, cells };
+        return;
+    }
+
+    let generation = image.next_generation.mint();
+    image.in_flight = Some(generation);
+    image.status = ImageStatus::Live {
+        decoded: Arc::clone(&decoded),
+        cells,
     };
+    effects.cmds.push(encode_image_cmd(
+        id, decoded, img_id, cells, cell, generation, was_live,
+    ));
+}
+
+pub(crate) fn handle_image_encoded(
+    app: &mut App,
+    id: DocumentId,
+    generation: crate::generation::ImageDecodeGen,
+    was_live: bool,
+    result: Result<rune_image::Transmit, CmdError>,
+    effects: &mut Effects,
+) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    let Some(image) = doc.image_mut() else {
+        return;
+    };
+    if image.in_flight != Some(generation) {
+        return;
+    }
+    image.in_flight = None;
+    match result {
+        Ok(transmit) => {
+            effects.transmit(transmit);
+            effects.force_redraw |= was_live;
+        }
+        Err(e) => {
+            image.status = ImageStatus::Failed(e.to_string());
+        }
+    }
 }
 
 #[cfg(test)]
