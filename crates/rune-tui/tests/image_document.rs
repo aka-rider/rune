@@ -61,6 +61,11 @@ fn decode_x_png_via_update(app: &mut App, id: rune_tui::document::DocumentId) ->
         },
         &mut effects,
     );
+    for cmd in std::mem::take(&mut effects.cmds) {
+        if let Some(msg) = cmd.run() {
+            update(app, msg, &mut effects);
+        }
+    }
     effects
 }
 
@@ -91,7 +96,7 @@ fn a_known_reserved_row_count_is_visible_to_the_producer_and_scrollable() {
         .image_mut()
         .expect("image")
         .status = ImageStatus::Live {
-        decoded: rune_image::decode_still(X_PNG).expect("decode x.png"),
+        decoded: Arc::new(rune_image::decode_still(X_PNG).expect("decode x.png")),
         cells: rune_image::CellFootprint { cols: 40, rows: n },
     };
     app.sync_view();
@@ -409,6 +414,11 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
 
     let mut reply_effects = Effects::default();
     for cmd in effects.cmds {
+        if let Some(msg) = cmd.run() {
+            update(&mut app, msg, &mut reply_effects);
+        }
+    }
+    for cmd in std::mem::take(&mut reply_effects.cmds) {
         if let Some(msg) = cmd.run() {
             update(&mut app, msg, &mut reply_effects);
         }

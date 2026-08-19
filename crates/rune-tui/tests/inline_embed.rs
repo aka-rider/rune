@@ -66,12 +66,13 @@ fn app_with_embed(content: &str) -> (App, DocumentId) {
 /// embeds a single reconcile pass spawned.
 fn run_decodes(app: &mut App, effects: Effects) {
     for cmd in effects.cmds {
-        if cmd.kind() != CmdKind::ImageDecode {
+        if !matches!(cmd.kind(), CmdKind::ImageDecode | CmdKind::ImageEncode) {
             continue;
         }
         if let Some(msg) = cmd.run() {
             let mut reply_effects = Effects::default();
             update(app, msg, &mut reply_effects);
+            run_decodes(app, reply_effects);
         }
     }
 }

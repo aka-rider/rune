@@ -30,8 +30,8 @@ pub enum Graphics {
 // `graphics::` path, but no external consumer of this crate (`rune-cli`,
 // an integration test) has any business spawning a decode or re-fitting a
 // footprint directly.
-pub(crate) use decode_cmd::{handle_image_decoded, reload_image, schedule_image_decode};
-pub(crate) use embed::{handle_embed_decoded, reload_embeds, sync_embeds};
+pub(crate) use decode_cmd::{handle_image_decoded, handle_image_encoded, reload_image, schedule_image_decode};
+pub(crate) use embed::{handle_embed_decoded, handle_embed_encoded, reload_embeds, sync_embeds};
 pub(crate) use resize_refit::refit_on_resize;
 
 /// Re-derives `app.graphics` from the real terminal AND keeps `guard`'s own

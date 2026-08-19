@@ -268,6 +268,7 @@ pub(super) fn step_and_check(
             | CmdKind::ReadDir
             | CmdKind::ReadFile
             | CmdKind::ImageDecode
+            | CmdKind::ImageEncode
             | CmdKind::SearchHistory
             | CmdKind::BootstrapView => {
                 // Deliberately dropped, each for its own already-documented

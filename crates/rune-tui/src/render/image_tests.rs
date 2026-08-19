@@ -13,8 +13,8 @@ use crate::graphics::ImageState;
 
 const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
-fn decoded_fixture() -> rune_image::decode::Decoded {
-    rune_image::decode_still(X_PNG).expect("decode x.png")
+fn decoded_fixture() -> Arc<rune_image::decode::Decoded> {
+    Arc::new(rune_image::decode_still(X_PNG).expect("decode x.png"))
 }
 
 fn app_with_kitty(kitty: bool) -> App {

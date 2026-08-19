@@ -146,6 +146,17 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             generation,
             result,
         } => crate::graphics::handle_embed_decoded(app, doc, generation, result, effects),
+        Msg::ImageEncoded {
+            doc,
+            generation,
+            was_live,
+            result,
+        } => crate::graphics::handle_image_encoded(app, doc, generation, was_live, result, effects),
+        Msg::EmbedEncoded {
+            doc,
+            generation,
+            result,
+        } => crate::graphics::handle_embed_encoded(app, doc, generation, result, effects),
         Msg::Posted { severity, text } => crate::messages::post(app, severity, text),
         Msg::RecentsLoaded {
             kind,
