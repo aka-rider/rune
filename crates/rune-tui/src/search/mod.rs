@@ -41,13 +41,13 @@ pub(crate) struct SearchState {
     /// ([`handle_history_loaded`]), browsed with ↑/↓ (`keys::history_prev`/
     /// `keys::history_next`).
     pub(crate) history: Vec<String>,
-    /// The generation `Msg::SearchHistory`'s reply must echo back for
+    /// The generation `Msg::RecentsLoaded`'s search reply must echo back for
     /// [`handle_history_loaded`] to accept it — minted from
     /// `App::next_search_history_gen` at [`open`], the same shape
     /// `explorer_dirload`'s own request generation uses, and for the same
     /// reason: a close-then-reopen before a load lands must not have the
     /// stale reply land in the fresh session it wasn't answering.
-    pub(crate) history_generation: crate::generation::Generation,
+    pub(crate) history_generation: crate::generation::SearchHistoryGen,
     /// The ↑/↓ browse cursor into the fuzzy-filtered history list — `None`
     /// while the draft itself (not a browsed entry) is what's showing, i.e.
     /// before the first ↑ or after ↓ has walked back past the newest entry.
@@ -90,7 +90,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     );
 }
 
-/// Applies a `Msg::SearchHistory` reply: dropped outright
+/// Applies a `Msg::RecentsLoaded` search reply: dropped outright
 /// when the bar has since closed, or when `generation` no longer matches
 /// the still-open bar's own `history_generation` — a close-then-reopen (or,
 /// in principle, two overlapping loads) must never let a late reply for an
@@ -102,7 +102,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
 /// either way, since browsing an empty history is simply a no-op.
 pub(crate) fn handle_history_loaded(
     app: &mut App,
-    generation: crate::generation::Generation,
+    generation: crate::generation::SearchHistoryGen,
     result: Result<Vec<String>, CmdError>,
 ) {
     let current = app.search().map(|s| s.history_generation);

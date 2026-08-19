@@ -30,7 +30,7 @@ const UTF8_REFUSAL: &str = "merge unavailable — the file on disk is not valid 
 pub(crate) fn handle_merge_prep_ack(
     app: &mut App,
     doc: DocumentId,
-    merge_gen: Option<crate::generation::Generation>,
+    merge_gen: Option<crate::generation::MergeGen>,
     prep: MergePrepResult,
     _effects: &mut Effects,
 ) {

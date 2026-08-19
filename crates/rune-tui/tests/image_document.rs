@@ -46,7 +46,8 @@ fn decode_x_png_via_update(app: &mut App, id: rune_tui::document::DocumentId) ->
     // `app_with_image` opens synchronously via `workspace::open_path`,
     // never through `schedule_image_decode` — arm `in_flight` by hand so
     // this reply isn't dropped as stale, exactly as a real spawn would.
-    const GENERATION: rune_tui::generation::Generation = rune_tui::generation::Generation::ZERO;
+    const GENERATION: rune_tui::generation::ImageDecodeGen =
+        rune_tui::generation::ImageDecodeGen::ZERO;
     app.doc_mut(id).unwrap().image_mut().unwrap().in_flight = Some(GENERATION);
     let generation = GENERATION;
     let decoded = rune_image::decode_still(X_PNG).expect("decode x.png");

@@ -9,7 +9,7 @@
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, Command, KeyInput};
 use rune_tui::registry::{Availability, CommandId};
-use rune_tui::runtime::{Cmd, CmdError, CmdKind, Effects, Msg};
+use rune_tui::runtime::{Cmd, CmdError, CmdKind, Effects, Msg, RecentsKind, RecentsResult};
 use rune_vfs::Vfs;
 
 use crate::action::{HighlightVersion, PaletteGenClaim, highlight_spans_from_raw};
@@ -60,7 +60,11 @@ pub(super) fn palette_recents_step(
     } else {
         Err(CmdError::Refused("fuzz".to_string()))
     };
-    let msg = Msg::PaletteRecentsLoaded { generation, result };
+    let msg = Msg::RecentsLoaded {
+        kind: RecentsKind::Palette,
+        generation: generation.raw(),
+        result: RecentsResult::Strings(result),
+    };
     (msg, MsgTag::PaletteRecentsLoaded)
 }
 

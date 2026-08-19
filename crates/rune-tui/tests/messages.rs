@@ -30,7 +30,7 @@ use rune_tui::app;
 use rune_tui::keymap::KeyCode;
 use rune_tui::messages;
 use rune_tui::pane::Pane;
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{Effects, Msg, TimerKey};
 
 use messages_common::{app_for, ctrl_e, frame_text, key};
 
@@ -43,7 +43,10 @@ fn an_error_posts_and_opens_the_pane() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("boom".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "boom".to_string(),
+        },
         &mut effects,
     );
 
@@ -67,7 +70,10 @@ fn the_editor_keeps_focus_and_a_character_still_reaches_the_buffer() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("boom".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "boom".to_string(),
+        },
         &mut effects,
     );
 
@@ -229,7 +235,10 @@ fn a_second_settle_after_a_post_changes_neither_the_viewport_nor_the_rows() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("something went wrong\nwith a second line".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "something went wrong\nwith a second line".to_string(),
+        },
         &mut effects,
     );
     session.app_mut().sync_view();
@@ -263,11 +272,12 @@ fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error(
-            "a message long enough that it must re-wrap onto a different \
-             number of rows when the terminal narrows"
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "a message long enough that it must re-wrap onto a different \
+                   number of rows when the terminal narrows"
                 .to_string(),
-        ),
+        },
         &mut effects,
     );
     session.app_mut().sync_view();
@@ -334,8 +344,9 @@ fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_
     let mut effects2 = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::MessagesCollapseTimeout {
-            generation: rune_tui::generation::Generation::ZERO,
+        Msg::Timer {
+            key: TimerKey::MessagesCollapse,
+            generation: 0,
         },
         &mut effects2,
     );
@@ -361,8 +372,9 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
     let mut stale_effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::MessagesCollapseTimeout {
-            generation: rune_tui::generation::Generation::ZERO,
+        Msg::Timer {
+            key: TimerKey::MessagesCollapse,
+            generation: 0,
         },
         &mut stale_effects,
     );
@@ -374,8 +386,9 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
     let mut fresh_effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::MessagesCollapseTimeout {
-            generation: rune_tui::generation::Generation::from_raw(1),
+        Msg::Timer {
+            key: TimerKey::MessagesCollapse,
+            generation: 1,
         },
         &mut fresh_effects,
     );
@@ -394,7 +407,10 @@ fn an_error_post_arms_nothing_and_the_pane_stays_open() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("boom".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "boom".to_string(),
+        },
         &mut effects,
     );
 

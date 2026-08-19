@@ -13,9 +13,8 @@ use std::path::Path;
 use rune_fuzz::Session;
 use rune_tui::app::update;
 use rune_tui::footer;
-use rune_tui::generation::Generation;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{Effects, Msg, TimerKey};
 
 const END: KeyInput = KeyInput {
     code: KeyCode::End,
@@ -294,8 +293,9 @@ fn save_confirm_timeout_discards_a_stale_generation_and_fires_the_current_one() 
     let mut effects = Effects::default();
     update(
         session.app_mut(),
-        Msg::SaveConfirmTimeout {
-            generation: Generation::from_raw(generation.raw() + 1),
+        Msg::Timer {
+            key: TimerKey::SaveConfirm,
+            generation: generation.raw() + 1,
         },
         &mut effects,
     );
@@ -308,7 +308,10 @@ fn save_confirm_timeout_discards_a_stale_generation_and_fires_the_current_one() 
     let mut effects = Effects::default();
     update(
         session.app_mut(),
-        Msg::SaveConfirmTimeout { generation },
+        Msg::Timer {
+            key: TimerKey::SaveConfirm,
+            generation: generation.raw(),
+        },
         &mut effects,
     );
     assert!(

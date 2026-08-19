@@ -50,9 +50,9 @@ pub struct Explorer {
     /// this, the OLDER reply could overwrite the newer listing. Mirrors
     /// `DocDb::snapshot_generation`'s debounce-token pattern (`db.rs`) —
     /// bump in place, compare on receipt, ignore a stale one.
-    pub request_generation: crate::generation::Generation,
+    pub request_generation: crate::generation::DirLoadGen,
     /// Mints `request_generation`'s next value.
-    next_request_gen: crate::generation::GenCounter,
+    next_request_gen: crate::generation::GenCounter<crate::generation::DirLoad>,
     /// The file `explorer_reveal::reveal` wants the cursor on, set when it
     /// issues a re-rooting `ReadDir`, consumed by `explorer_dirload::
     /// handle_dir_loaded`. Guarded by `request_generation` exactly like

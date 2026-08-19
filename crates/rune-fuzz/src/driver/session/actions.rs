@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Msg, PasteTarget};
+use rune_tui::runtime::{Msg, PasteTarget, TimerKey};
 
 use crate::action::Action;
 use crate::guard;
@@ -52,7 +52,10 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
         }
         Action::ConfirmTimeout => {
             if let rune_tui::app::QuitNegotiation::ConfirmArmed(_, generation) = state.app.quit {
-                let msg = Msg::ConfirmTimeout { generation };
+                let msg = Msg::Timer {
+                    key: TimerKey::QuitConfirm,
+                    generation: generation.raw(),
+                };
                 let tag = MsgTag::ConfirmTimeout {
                     generation: generation.raw() as u32,
                 };
@@ -65,8 +68,9 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             // `App::quit` already cleared entirely, or after a
             // DIFFERENT generation re-armed it, is exactly the
             // production race this variant exists to exercise.
-            let msg = Msg::ConfirmTimeout {
-                generation: rune_tui::generation::Generation::from_raw(u64::from(generation)),
+            let msg = Msg::Timer {
+                key: TimerKey::QuitConfirm,
+                generation: u64::from(generation),
             };
             let tag = MsgTag::ConfirmTimeout { generation };
             step_and_check(state, prev, msg, tag, None, outcome);

@@ -40,6 +40,7 @@ pub mod graphics;
 pub mod guard;
 pub mod help;
 pub mod highlight;
+pub(crate) mod history_persistence;
 pub mod keymap;
 pub mod layout;
 mod layout_column;

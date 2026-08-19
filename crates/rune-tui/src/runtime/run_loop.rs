@@ -161,7 +161,10 @@ pub(super) fn spawn_cmd(
             }
             Ok(None) => {}
             Err(_) => {
-                let _ = tx.send(Msg::Error("a background task panicked".to_string()));
+                let _ = tx.send(Msg::Posted {
+                    severity: crate::messages::Severity::Error,
+                    text: "a background task panicked".to_string(),
+                });
             }
         }
     });
@@ -187,7 +190,10 @@ pub(super) fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<
                     // process losing its controlling terminal, ...) — see
                     // `run`'s doc comment on why this must not just exit
                     // silently.
-                    let _ = tx.send(Msg::Error(format!("input stream ended: {e}")));
+                    let _ = tx.send(Msg::Posted {
+                        severity: crate::messages::Severity::Error,
+                        text: format!("input stream ended: {e}"),
+                    });
                     let _ = tx.send(Msg::Quit);
                     return;
                 }

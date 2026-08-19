@@ -61,32 +61,37 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             result,
             durable,
         } => materialize_ack::handle_save_done(app, id, ticket, version, result, durable),
-        Msg::ConfirmTimeout { generation } => {
-            if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
-                && pending_gen == generation
-            {
-                app.quit = crate::app::QuitNegotiation::Idle;
+        // A stale generation (superseded by a fresh arm or already resolved
+        // since) is ignored in every arm below.
+        Msg::Timer { key, generation } => match key {
+            TimerKey::QuitConfirm => {
+                let generation = crate::generation::QuitGen::from_raw(generation);
+                if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
+                    && pending_gen == generation
+                {
+                    app.quit = crate::app::QuitNegotiation::Idle;
+                }
             }
-            // A stale generation (the user already quit-confirmed or
-            // re-armed with a new chord since) is ignored.
-        }
-        Msg::SaveConfirmTimeout { generation } => {
-            if app
-                .pending_save_confirm
-                .is_some_and(|(_, g)| g == generation)
-            {
-                app.pending_save_confirm = None;
+            TimerKey::SaveConfirm => {
+                let generation = crate::generation::SaveConfirmGen::from_raw(generation);
+                if app
+                    .pending_save_confirm
+                    .is_some_and(|(_, g)| g == generation)
+                {
+                    app.pending_save_confirm = None;
+                }
             }
-        }
-        // A stale generation (a newer post/focus/collapse superseded this
-        // one since it was armed) is ignored, mirroring `ConfirmTimeout`/
-        // `SaveConfirmTimeout` above.
-        Msg::MessagesCollapseTimeout { generation } => {
-            if crate::messages::is_armed(app, generation) {
-                crate::messages::collapse(app);
-                crate::focus::reconcile(app, effects);
+            TimerKey::MessagesCollapse => {
+                let generation = crate::generation::MessagesCollapseGen::from_raw(generation);
+                if crate::messages::is_armed(app, generation) {
+                    crate::messages::collapse(app);
+                    crate::focus::reconcile(app, effects);
+                }
             }
-        }
+            TimerKey::Snapshot(_) => {
+                unreachable!("Msg::Timer never carries TimerKey::Snapshot")
+            }
+        },
         Msg::SnapshotDue { id, generation } => {
             materialize_ack::handle_snapshot_due(app, id, generation)
         }
@@ -141,19 +146,43 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             generation,
             result,
         } => crate::graphics::handle_embed_decoded(app, doc, generation, result, effects),
-        Msg::Error(e) => crate::messages::error(app, e),
-        Msg::Warning(w) => crate::messages::warn(app, w),
-        Msg::SearchHistory { generation, result } => {
-            crate::search::handle_history_loaded(app, generation, result)
-        }
-        Msg::FileSearchRecentsLoaded { generation, result } => {
-            crate::filesearch::handle_recents_loaded(app, generation, result, effects)
-        }
+        Msg::Posted { severity, text } => crate::messages::post(app, severity, text),
+        Msg::RecentsLoaded {
+            kind,
+            generation,
+            result,
+        } => match (kind, result) {
+            (
+                crate::runtime::RecentsKind::Search,
+                crate::runtime::RecentsResult::Strings(result),
+            ) => crate::search::handle_history_loaded(
+                app,
+                crate::generation::SearchHistoryGen::from_raw(generation),
+                result,
+            ),
+            (
+                crate::runtime::RecentsKind::FileSearch,
+                crate::runtime::RecentsResult::Candidates(result),
+            ) => crate::filesearch::handle_recents_loaded(
+                app,
+                crate::generation::FileSearchGen::from_raw(generation),
+                result,
+                effects,
+            ),
+            (
+                crate::runtime::RecentsKind::Palette,
+                crate::runtime::RecentsResult::Strings(result),
+            ) => crate::palette::handle_recents_loaded(
+                app,
+                crate::generation::PaletteGen::from_raw(generation),
+                result,
+            ),
+            (kind, result) => {
+                unreachable!("Msg::RecentsLoaded kind/result mismatch: {kind:?}/{result:?}")
+            }
+        },
         Msg::FileSearchScanned { generation, result } => {
             crate::filesearch::handle_scanned(app, generation, result, effects)
-        }
-        Msg::PaletteRecentsLoaded { generation, result } => {
-            crate::palette::handle_recents_loaded(app, generation, result)
         }
         Msg::Quit => {
             app.should_quit = true;
@@ -198,7 +227,10 @@ pub(crate) fn after_update(
         app.timers.arm(
             TimerKey::MessagesCollapse,
             crate::messages::AUTO_COLLAPSE,
-            Msg::MessagesCollapseTimeout { generation },
+            Msg::Timer {
+                key: TimerKey::MessagesCollapse,
+                generation: generation.raw(),
+            },
         );
     }
     if app.palette().is_some() {

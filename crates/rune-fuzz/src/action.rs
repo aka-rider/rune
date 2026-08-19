@@ -192,14 +192,14 @@ pub enum PaletteGenClaim {
 impl PaletteGenClaim {
     pub fn resolve(
         &self,
-        live: Option<rune_tui::generation::Generation>,
-    ) -> rune_tui::generation::Generation {
+        live: Option<rune_tui::generation::PaletteGen>,
+    ) -> rune_tui::generation::PaletteGen {
         match self {
             PaletteGenClaim::Live => {
-                live.unwrap_or_else(|| rune_tui::generation::Generation::from_raw(0))
+                live.unwrap_or_else(|| rune_tui::generation::PaletteGen::from_raw(0))
             }
             PaletteGenClaim::Stale(raw) => {
-                rune_tui::generation::Generation::from_raw(u64::from(*raw))
+                rune_tui::generation::PaletteGen::from_raw(u64::from(*raw))
             }
         }
     }

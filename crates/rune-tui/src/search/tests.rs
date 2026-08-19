@@ -270,7 +270,7 @@ fn switching_the_active_document_resets_the_match_set() {
     assert!(app.search().unwrap().matches.is_empty());
 }
 
-/// A `Msg::SearchHistory` reply whose generation no longer
+/// A `Msg::RecentsLoaded` search reply whose generation no longer
 /// matches the CURRENTLY open bar's own `history_generation` — a
 /// close-then-reopen since the load was issued — is dropped outright,
 /// mirroring `explorer_dirload::handle_dir_loaded`'s own stale-generation

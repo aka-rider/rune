@@ -118,17 +118,16 @@ impl From<rune_image::ImageError> for CmdError {
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone` originate from a spawned
-/// `Cmd`'s return value; `ConfirmTimeout`/`SaveConfirmTimeout`/
-/// `MessagesCollapseTimeout`/`SnapshotDue` all originate from `App::timers`'s
-/// one long-lived rearmable timer thread, not a per-message spawned `Cmd`;
-/// `Db` originates from the `rune-db` writer thread via `db::DbBridge`;
-/// `Error`/`Quit` can be synthesized by `update` itself.
+/// `Cmd`'s return value; `Timer`/`SnapshotDue` all originate from
+/// `App::timers`'s one long-lived rearmable timer thread, not a per-message
+/// spawned `Cmd`; `Db` originates from the `rune-db` writer thread via
+/// `db::DbBridge`; `Error`/`Quit` can be synthesized by `update` itself.
 /// `SaveDone`/`SnapshotDue` carry a `DocumentId` so multi-
-/// document acks route back to the document that triggered them;
-/// `ConfirmTimeout`/`SaveConfirmTimeout`/`MessagesCollapseTimeout` stay
-/// doc-agnostic — `App::quit` is app-wide, `pending_save_confirm`'s doc
-/// tag lives in the `Option` tuple itself, and the message log is a single
-/// app-wide pane — none of them need a `Msg`-carried document identity.
+/// document acks route back to the document that triggered them; `Timer`
+/// stays doc-agnostic — `App::quit` is app-wide, `pending_save_confirm`'s
+/// doc tag lives in the `Option` tuple itself, and the message log is a
+/// single app-wide pane — none of them need a `Msg`-carried document
+/// identity.
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
@@ -154,21 +153,13 @@ pub enum Msg {
         result: Result<(), CmdError>,
         durable: bool,
     },
-    ConfirmTimeout {
-        generation: crate::generation::Generation,
-    },
-    /// The 2s degraded-save confirm-gate timer (mirroring
-    /// `ConfirmTimeout`'s quit-confirm shape) — a stale generation is
-    /// ignored exactly like `ConfirmTimeout`.
-    SaveConfirmTimeout {
-        generation: crate::generation::Generation,
-    },
-    /// The message pane's 5s auto-collapse timer, armed by
-    /// `dispatch::after_update` rather than by `messages::post` itself —
-    /// same stale-generation-is-ignored shape as `ConfirmTimeout`/
-    /// `SaveConfirmTimeout`.
-    MessagesCollapseTimeout {
-        generation: crate::generation::Generation,
+    /// The quit-confirm window, the degraded-save confirm gate, and the
+    /// message pane's auto-collapse timer — `TimerKey::{QuitConfirm,
+    /// SaveConfirm, MessagesCollapse}` — all share this one stale-
+    /// generation-is-ignored shape, dispatched by matching on `key`.
+    Timer {
+        key: crate::runtime::TimerKey,
+        generation: u64,
     },
     /// The 2s snapshot-autosave debounce timer — a stale
     /// generation (a later journal mutation already rescheduled) is
@@ -208,7 +199,7 @@ pub enum Msg {
         root: PathBuf,
         entries: Vec<DirEntry>,
         cause: DirCause,
-        generation: crate::generation::Generation,
+        generation: crate::generation::DirLoadGen,
     },
     /// A rename/draft-create `Cmd` completed (the no-store route). Carries
     /// its own `generation` so a reply to a rename the user has since
@@ -216,7 +207,7 @@ pub enum Msg {
     /// one — `spawn_cmd` has no cancellation, so this echo is the only
     /// thing standing between a late reply and a corrupted state.
     RenameDone {
-        generation: crate::generation::Generation,
+        generation: crate::generation::RenameGen,
         result: Result<rune_db::RenameOutcome, CmdError>,
     },
     /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
@@ -226,7 +217,7 @@ pub enum Msg {
     /// `App::trash_gen` before this one lands) is dropped rather than
     /// applied to the fresh one.
     TrashDone {
-        generation: crate::generation::Generation,
+        generation: crate::generation::TrashGen,
         path: PathBuf,
         result: Result<(), CmdError>,
     },
@@ -273,7 +264,7 @@ pub enum Msg {
     /// reply whose generation no longer matches is dropped silently.
     ImageDecoded {
         doc: DocumentId,
-        generation: crate::generation::Generation,
+        generation: crate::generation::ImageDecodeGen,
         result: Result<rune_image::decode::Decoded, CmdError>,
     },
     EmbedDecoded {
@@ -281,39 +272,34 @@ pub enum Msg {
         generation: u64,
         result: Result<rune_image::decode::Decoded, CmdError>,
     },
-    Error(String),
-    /// The same transport as `Error`, tagged one severity down: a
-    /// background task hit something worth telling the user
-    /// about, but not something as severe as `Error`'s glyph/persistence
-    /// implies.
-    Warning(String),
-    /// The search bar's MRU history load, requested once per bar-open
-    /// (`search::open`) and delivered by [`load_search_history_cmd`].
-    /// `generation` echoes the `SearchState::history_generation` minted at
-    /// the request — `search::handle_history_loaded` drops a reply whose
-    /// generation no longer matches (a close-then-reopen since issued it),
-    /// the same shape `Msg::DirLoaded` uses. A reader `Err` still carries
-    /// this variant (with an `Err` result) rather than folding into
-    /// `Msg::Error`, so a stale reply is discarded exactly like a fresh one
-    /// instead of always surfacing a message regardless of generation.
-    SearchHistory {
-        generation: crate::generation::Generation,
-        result: Result<Vec<String>, CmdError>,
+    /// A background task has something to tell the user — `severity`
+    /// selects `Error`'s sticky glyph/persistence or `Warning`'s lighter
+    /// one, the same `messages::Severity` the message log itself keys off,
+    /// routed straight through to `messages::post`.
+    Posted {
+        severity: crate::messages::Severity,
+        text: String,
     },
-    /// The fuzzy file finder's recents load, requested once per finder-open
-    /// (`filesearch::open`) and delivered by [`filesearch_recents_cmd::
-    /// load_filesearch_recents_cmd`]. `generation` echoes `FileSearchState::
-    /// generation` minted at the request — `filesearch::
-    /// handle_recents_loaded` drops a reply whose generation no longer
-    /// matches (a close-then-reopen since issued it), the same shape
-    /// `Msg::SearchHistory` uses. A reader `Err` still carries this variant
-    /// (with an `Err` result) rather than folding into `Msg::Error`, for the
-    /// same reason `SearchHistory` does: a stale reply is discarded exactly
+    /// One recents/MRU load reply — the search bar's history
+    /// ([`load_search_history_cmd`], routed to `search::
+    /// handle_history_loaded`), the fuzzy file finder's recents
+    /// ([`filesearch_recents_cmd::load_filesearch_recents_cmd`], routed to
+    /// `filesearch::handle_recents_loaded`), and the command palette's
+    /// recent commands (`command_history_cmd::load_command_history_cmd`,
+    /// routed to `palette::handle_recents_loaded`) — collapsed onto one
+    /// shape, `kind` selecting the handler. `generation` echoes the
+    /// requesting state's own counter, erased to its raw form the same way
+    /// `Msg::Timer`'s does — each handler reconstructs its own typed
+    /// `Generation<T>` via `from_raw` before comparing, so a search-history
+    /// generation can never be compared against a palette one by mistake.
+    /// A reader `Err` still carries this variant rather than folding into
+    /// `Msg::Error`/`Msg::Warning`, so a stale reply is discarded exactly
     /// like a fresh one instead of always surfacing a message regardless of
     /// generation.
-    FileSearchRecentsLoaded {
-        generation: crate::generation::Generation,
-        result: Result<Vec<crate::filesearch::Candidate>, CmdError>,
+    RecentsLoaded {
+        kind: RecentsKind,
+        generation: u64,
+        result: RecentsResult,
     },
     /// The fuzzy file finder's ignore-aware workspace walk completed —
     /// `filesearch::open`'s own `Cmd`, delivered by [`filesearch_cmd::
@@ -327,14 +313,29 @@ pub enum Msg {
     /// is discarded exactly like a stale success instead of always
     /// surfacing a message nobody's still waiting on.
     FileSearchScanned {
-        generation: crate::generation::Generation,
+        generation: crate::generation::FileSearchGen,
         result: Result<crate::filesearch::walk::ScanResult, String>,
     },
-    PaletteRecentsLoaded {
-        generation: crate::generation::Generation,
-        result: Result<Vec<String>, CmdError>,
-    },
     Quit,
+}
+
+/// Which recents/MRU load a [`Msg::RecentsLoaded`] reply answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecentsKind {
+    Search,
+    FileSearch,
+    Palette,
+}
+
+/// A [`Msg::RecentsLoaded`] reply's payload — `Search`/`Palette` share the
+/// plain MRU-string-list shape; `FileSearch`'s recents are file candidates
+/// carrying their own path/metadata, a genuinely different shape rather
+/// than a coincidental duplicate, so it gets its own case instead of being
+/// forced into `Strings`.
+#[derive(Debug)]
+pub enum RecentsResult {
+    Strings(Result<Vec<String>, CmdError>),
+    Candidates(Result<Vec<crate::filesearch::Candidate>, CmdError>),
 }
 
 /// Why a `Msg::DirLoaded` was requested — `explorer::
@@ -375,7 +376,7 @@ pub fn load_dir_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     root: PathBuf,
     cause: DirCause,
-    generation: crate::generation::Generation,
+    generation: crate::generation::DirLoadGen,
 ) -> Cmd {
     Cmd::read_dir(move || match vfs.read_dir(&root) {
         Ok(entries) => Some(Msg::DirLoaded {
@@ -384,10 +385,10 @@ pub fn load_dir_cmd(
             cause,
             generation,
         }),
-        Err(e) => Some(Msg::Warning(format!(
-            "could not list {}: {e}",
-            root.display()
-        ))),
+        Err(e) => Some(Msg::Posted {
+            severity: crate::messages::Severity::Warn,
+            text: format!("could not list {}: {e}", root.display()),
+        }),
     })
 }
 
@@ -417,15 +418,15 @@ pub fn read_file_cmd(
 /// Loads the search bar's MRU history off-thread through a cloned
 /// `ReaderQuery` — the reader thread's own connection, never
 /// the writer's, so this can never contend with or block on an in-flight
-/// recovery write. Always replies with `Msg::SearchHistory`, `generation`
-/// carried through unchanged: a query failure becomes `result: Err(..)`
-/// rather than `Msg::Error`/`Msg::Warning` directly, so `search::
-/// handle_history_loaded` can apply the same stale-generation check to a
-/// failure as to a success instead of always surfacing a message even for a
-/// reply nobody's still waiting on.
+/// recovery write. Always replies with `Msg::RecentsLoaded { kind:
+/// RecentsKind::Search, .. }`, `generation` carried through unchanged: a
+/// query failure becomes `result: Err(..)` rather than `Msg::Error`/
+/// `Msg::Warning` directly, so `search::handle_history_loaded` can apply
+/// the same stale-generation check to a failure as to a success instead of
+/// always surfacing a message even for a reply nobody's still waiting on.
 pub fn load_search_history_cmd(
     reader: rune_db::ReaderQuery,
-    generation: crate::generation::Generation,
+    generation: crate::generation::SearchHistoryGen,
 ) -> Cmd {
     Cmd::search_history(move || {
         let result = reader
@@ -435,7 +436,11 @@ pub fn load_search_history_cmd(
                 _ => Vec::new(),
             })
             .map_err(CmdError::from);
-        Some(Msg::SearchHistory { generation, result })
+        Some(Msg::RecentsLoaded {
+            kind: RecentsKind::Search,
+            generation: generation.raw(),
+            result: RecentsResult::Strings(result),
+        })
     })
 }
 

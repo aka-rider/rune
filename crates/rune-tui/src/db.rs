@@ -209,7 +209,7 @@ pub struct PendingOp {
     /// the current one (mirrors `is_probe`'s in-flight bookkeeping, but a
     /// generation counter rather than a plain flag, since more than one
     /// merge attempt can be in flight in sequence for the same document).
-    pub merge_gen: Option<crate::generation::Generation>,
+    pub merge_gen: Option<crate::generation::MergeGen>,
     /// Why this `Load` was issued — [`LoadPurpose`]. Every other op kind
     /// records [`LoadPurpose::Recover`] and never reads it back.
     pub load_purpose: LoadPurpose,
@@ -307,7 +307,7 @@ impl PendingOp {
         }
     }
 
-    pub fn merge_prep(doc: DocumentId, generation: crate::generation::Generation) -> PendingOp {
+    pub fn merge_prep(doc: DocumentId, generation: crate::generation::MergeGen) -> PendingOp {
         PendingOp {
             doc,
             issued_version: None,

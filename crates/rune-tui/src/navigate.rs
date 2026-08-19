@@ -197,8 +197,14 @@ fn open_external_cmd(url: String) -> Cmd {
     Cmd::open_external(
         move || match ProcessCommand::new("/usr/bin/open").arg(&url).status() {
             Ok(status) if status.success() => None,
-            Ok(status) => Some(Msg::Warning(format!("open exited with status {status}"))),
-            Err(e) => Some(Msg::Warning(format!("could not open {url}: {e}"))),
+            Ok(status) => Some(Msg::Posted {
+                severity: crate::messages::Severity::Warn,
+                text: format!("open exited with status {status}"),
+            }),
+            Err(e) => Some(Msg::Posted {
+                severity: crate::messages::Severity::Warn,
+                text: format!("could not open {url}: {e}"),
+            }),
         },
     )
 }

@@ -39,6 +39,6 @@ pub struct ImageState {
     pub id: ImageId,
     pub dims: Option<PixelSize>,
     pub status: ImageStatus,
-    pub in_flight: Option<crate::generation::Generation>,
-    pub next_generation: crate::generation::GenCounter,
+    pub in_flight: Option<crate::generation::ImageDecodeGen>,
+    pub next_generation: crate::generation::GenCounter<crate::generation::ImageDecode>,
 }

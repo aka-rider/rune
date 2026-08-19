@@ -345,22 +345,10 @@ fn run_and_persist(
 }
 
 fn persist_command(app: &mut App, name: &str) {
-    if app.last_persisted_command.as_deref() == Some(name) {
-        return;
-    }
-    let Some(db) = app.db.as_ref() else {
-        return;
-    };
-    if db.degraded {
-        return;
-    }
-    match db.store.touch_command_name(name) {
-        Ok(op_id) => {
-            app.command_history_ops.insert(op_id);
-            app.last_persisted_command = Some(name.to_string());
-        }
-        Err(e) => {
-            crate::messages::error(app, format!("command history not saved: {e}"));
-        }
+    let result = app.command_history.touch(app.db.as_ref(), name, |db| {
+        db.store.touch_command_name(name)
+    });
+    if let Some(Err(e)) = result {
+        crate::messages::error(app, format!("command history not saved: {e}"));
     }
 }

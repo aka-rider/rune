@@ -13,9 +13,9 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_tui::app::{App, QuitNegotiation, update};
 use rune_tui::commands::clipboard;
-use rune_tui::generation::Generation;
+use rune_tui::generation::QuitGen as Generation;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods, QuitKey};
-use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
+use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget, TimerKey};
 use rune_vfs::{Mem, Vfs};
 
 fn test_app() -> App {
@@ -124,8 +124,9 @@ fn matching_confirm_timeout_clears_pending_quit() {
     let mut effects = Effects::default();
     update(
         &mut app,
-        Msg::ConfirmTimeout {
-            generation: Generation::ZERO,
+        Msg::Timer {
+            key: TimerKey::QuitConfirm,
+            generation: Generation::ZERO.raw(),
         },
         &mut effects,
     );
@@ -163,8 +164,9 @@ fn stale_confirm_timeout_is_ignored() {
     let mut effects3 = Effects::default();
     update(
         &mut app,
-        Msg::ConfirmTimeout {
-            generation: Generation::ZERO,
+        Msg::Timer {
+            key: TimerKey::QuitConfirm,
+            generation: Generation::ZERO.raw(),
         },
         &mut effects3,
     );
