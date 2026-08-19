@@ -43,7 +43,10 @@ fn an_error_posts_and_opens_the_pane() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("boom".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "boom".to_string(),
+        },
         &mut effects,
     );
 
@@ -67,7 +70,10 @@ fn the_editor_keeps_focus_and_a_character_still_reaches_the_buffer() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("boom".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "boom".to_string(),
+        },
         &mut effects,
     );
 
@@ -229,7 +235,10 @@ fn a_second_settle_after_a_post_changes_neither_the_viewport_nor_the_rows() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("something went wrong\nwith a second line".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "something went wrong\nwith a second line".to_string(),
+        },
         &mut effects,
     );
     session.app_mut().sync_view();
@@ -263,11 +272,12 @@ fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error(
-            "a message long enough that it must re-wrap onto a different \
-             number of rows when the terminal narrows"
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "a message long enough that it must re-wrap onto a different \
+                   number of rows when the terminal narrows"
                 .to_string(),
-        ),
+        },
         &mut effects,
     );
     session.app_mut().sync_view();
@@ -397,7 +407,10 @@ fn an_error_post_arms_nothing_and_the_pane_stays_open() {
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::Error("boom".to_string()),
+        Msg::Posted {
+            severity: rune_tui::messages::Severity::Error,
+            text: "boom".to_string(),
+        },
         &mut effects,
     );
 

@@ -272,12 +272,14 @@ pub enum Msg {
         generation: u64,
         result: Result<rune_image::decode::Decoded, CmdError>,
     },
-    Error(String),
-    /// The same transport as `Error`, tagged one severity down: a
-    /// background task hit something worth telling the user
-    /// about, but not something as severe as `Error`'s glyph/persistence
-    /// implies.
-    Warning(String),
+    /// A background task has something to tell the user — `severity`
+    /// selects `Error`'s sticky glyph/persistence or `Warning`'s lighter
+    /// one, the same `messages::Severity` the message log itself keys off,
+    /// routed straight through to `messages::post`.
+    Posted {
+        severity: crate::messages::Severity,
+        text: String,
+    },
     /// One recents/MRU load reply — the search bar's history
     /// ([`load_search_history_cmd`], routed to `search::
     /// handle_history_loaded`), the fuzzy file finder's recents
@@ -383,10 +385,10 @@ pub fn load_dir_cmd(
             cause,
             generation,
         }),
-        Err(e) => Some(Msg::Warning(format!(
-            "could not list {}: {e}",
-            root.display()
-        ))),
+        Err(e) => Some(Msg::Posted {
+            severity: crate::messages::Severity::Warn,
+            text: format!("could not list {}: {e}", root.display()),
+        }),
     })
 }
 

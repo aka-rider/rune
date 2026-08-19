@@ -59,13 +59,18 @@ pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
     Cmd::clipboard_read(move || {
         let output = match ProcessCommand::new("/usr/bin/pbpaste").output() {
             Ok(output) => output,
-            Err(e) => return Some(Msg::Error(format!("pbpaste failed to run: {e}"))),
+            Err(e) => {
+                return Some(Msg::Posted {
+                    severity: crate::messages::Severity::Error,
+                    text: format!("pbpaste failed to run: {e}"),
+                });
+            }
         };
         if !output.status.success() {
-            return Some(Msg::Error(format!(
-                "pbpaste exited with status {}",
-                output.status
-            )));
+            return Some(Msg::Posted {
+                severity: crate::messages::Severity::Error,
+                text: format!("pbpaste exited with status {}", output.status),
+            });
         }
         Some(decode_pbpaste_stdout(output.stdout, target))
     })
@@ -76,7 +81,10 @@ pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
 /// shelling out to a real `pbpaste`.
 fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
     String::from_utf8(stdout).map_or_else(
-        |_| Msg::Error("pbpaste produced bytes that are not valid UTF-8".to_string()),
+        |_| Msg::Posted {
+            severity: crate::messages::Severity::Error,
+            text: "pbpaste produced bytes that are not valid UTF-8".to_string(),
+        },
         |text| Msg::ClipboardRead { text, target },
     )
 }
@@ -128,7 +136,10 @@ mod tests {
         let invalid = vec![0xff, 0xfe, 0xfd];
         assert!(matches!(
             decode_pbpaste_stdout(invalid, PasteTarget::Title(doc_id())),
-            Msg::Error(_)
+            Msg::Posted {
+                severity: crate::messages::Severity::Error,
+                ..
+            }
         ));
     }
 }
