@@ -301,7 +301,6 @@ fn apply_db_bootstrap(
         {
             rune_tui::messages::error(app, format!("crash recovery: {reason}"));
         }
-        app.recompute_dirty(first_doc_id);
     }
     if let Some(doc_db) = db_bootstrap.doc_db {
         let db_id = doc_db.db_id;

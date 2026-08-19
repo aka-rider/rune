@@ -127,7 +127,7 @@ fn a_dead_writer_racing_its_own_materialize_record_ack_still_resolves_the_save_a
         "the write itself already committed before the writer died"
     );
     assert!(
-        !app.doc(id).unwrap().dirty_for_render(),
+        !app.doc(id).unwrap().is_dirty(),
         "B1: a save whose bytes already landed on disk must never read as \
          dirty just because its own re-baseline Load lost a race with a dead writer"
     );

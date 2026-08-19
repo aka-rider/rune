@@ -1,6 +1,6 @@
 //! The ack/reaction side of the save flow: recording what the caller-side
-//! `vfs` work concluded, the snapshot-autosave enqueue, the dirty-cache
-//! recompute chokepoint, and `on_store_failure`'s whole-store degrade.
+//! `vfs` work concluded, the snapshot-autosave enqueue, and
+//! `on_store_failure`'s whole-store degrade.
 //! `save` owns building and submitting the materialize/save operation in
 //! the first place; this module owns everything from the recovery store's
 //! first reply onward.
@@ -240,7 +240,6 @@ pub(crate) fn on_store_failure(app: &mut App, error: &str) {
                 if let Some(doc) = app.doc_mut(id) {
                     doc.abandon_save();
                 }
-                recompute_dirty(app, id);
                 reactions::resolve_continuations(app, id, pending_version, false);
                 abandoned_any = true;
             }
@@ -294,30 +293,4 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
         }
         Err(e) => on_store_failure(app, &e.to_string()),
     }
-}
-
-/// `Document::dirty_for_render` reads only the cache this recomputes. A straight
-/// content comparison against `saved_content` — never a version proxy:
-/// `Buffer::apply_edits` always returns `version + 1`, and undo/redo build
-/// a fresh buffer, so a version comparison alone leaves an edit-then-undo
-/// document dirty forever even once the bytes are back to identical.
-pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
-    let Some(doc) = app.doc(id) else { return };
-    let dirty = doc.buffer.content() != &*doc.saved_content;
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.is_dirty_cached = dirty;
-}
-
-/// Dirty must be re-derived on every TRANSITION (open,
-/// switch, evict, close, quit), not merely read from the render-only cache
-/// `recompute_dirty`'s other callers (edit/ack sites) already keep current
-/// between transitions. Every transition-time dirty check — the close-guard
-/// predicate, `workspace::request_close`, and the quit-guard's scan over
-/// unpreserved documents — calls this instead of `Document::dirty_for_render`
-/// so a transition's answer is never one edit/ack stale — render is the one
-/// place that keeps reading the cache.
-pub(crate) fn is_dirty_now(app: &mut App, id: DocumentId) -> bool {
-    recompute_dirty(app, id);
-    app.doc(id)
-        .is_some_and(super::document::Document::dirty_for_render)
 }

@@ -140,14 +140,6 @@ pub fn handle_load_ack(
         }
         Some(crate::document::Hydration::NoChange) | None => {}
     }
-    // Dirty is a content comparison — `hydrate` no longer marks it itself,
-    // so every hydration site re-derives it explicitly, even on the
-    // `NoChange`/version-moved-on
-    // branches where `hydrate` was never actually called: this document's
-    // `db` binding is about to change below, which is itself a fact worth
-    // re-settling the cache against.
-    crate::materialize_ack::recompute_dirty(app, id);
-
     // Joins the shared baseline for this `db_id` — seeded from THIS load
     // only if no other document has bound it yet (`App::
     // install_or_join_file_binding`'s own doc comment): a second tab
@@ -460,7 +452,6 @@ pub fn adopt_scratch_doc(app: &mut App, id: DocumentId, row_id: i64, recovered: 
         if let crate::document::Hydration::Refused(reason) = doc.hydrate(&disk_content, recovered) {
             messages::error(app, format!("crash recovery: {reason}"));
         }
-        crate::materialize_ack::recompute_dirty(app, id);
     }
     bind_scratch_doc(app, id, row_id);
 }

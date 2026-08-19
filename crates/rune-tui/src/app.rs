@@ -211,8 +211,8 @@ impl App {
         self.documents.get_or_anchor_mut(&self.active)
     }
 
-    pub fn dirty_for_render(&self) -> bool {
-        self.active_doc().dirty_for_render()
+    pub fn is_dirty(&self) -> bool {
+        self.active_doc().is_dirty()
     }
 
     pub fn is_preserved(&self, doc: &Document) -> bool {
@@ -221,10 +221,6 @@ impl App {
 
     pub fn file_name(&self) -> &str {
         self.active_doc().file_name()
-    }
-
-    pub fn recompute_dirty(&mut self, id: DocumentId) {
-        crate::materialize_ack::recompute_dirty(self, id);
     }
 
     pub fn set_root(&mut self, root: PathBuf) {

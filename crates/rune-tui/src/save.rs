@@ -16,8 +16,7 @@ use rune_vfs::Vfs;
 
 use crate::app::App;
 use crate::commands::strip_trailing;
-use crate::document::{DocumentId, ReadOnly};
-use crate::materialize_ack;
+use crate::document::{Document, DocumentId, ReadOnly};
 use crate::messages;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
@@ -122,12 +121,10 @@ pub(crate) fn trigger_save(
         }
         SaveOrigin::Guard => strip_trailing::leave_reading_then_strip(app, id),
     }
-    // Re-derived, not read from the cache: a transition-quality
-    // answer, exactly like the close/quit guards' own `is_dirty_now` calls.
     // `Force` skips this: "save anyway" means "make disk hold my buffer" —
     // the user may have undone back to `saved_content` while disk still
     // holds the foreign bytes the disk-conflict Guard warned about.
-    if mode == SaveMode::Normal && !materialize_ack::is_dirty_now(app, id) {
+    if mode == SaveMode::Normal && !app.doc(id).is_some_and(Document::is_dirty) {
         return SaveStart::NotDirty;
     }
     let Some(doc) = app.doc(id) else {

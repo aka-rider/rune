@@ -24,9 +24,9 @@ mod sync;
 #[cfg(test)]
 mod tests;
 
+pub use crate::read_only::ReadOnly;
 pub(crate) use replica::{Replica, ReplicaStep};
 pub(crate) use save_state::PublishParams;
-pub use crate::read_only::ReadOnly;
 pub use save_state::{SavePhase, SaveTicket};
 use save_state::{SaveState, SaveTicketMint};
 
@@ -121,20 +121,22 @@ pub struct Document {
     /// persisted — advanced ONLY from a store ack (`save::handle_materialize_
     /// ack`) or, for the no-store fallback path, `Msg::SaveDone` (see
     /// `save::trigger_save`'s docs), and only ever via [`Document::finish_save_ok`].
-    /// Never read directly by `is_dirty` — see `is_dirty_cached`.
+    /// `is_dirty` checks this FIRST, as a cheap short-circuit: only when it
+    /// differs from the live buffer's version does the byte comparison
+    /// below ever run.
     pub saved_version: u64,
     /// The bytes the last successful save/materialize ack actually
     /// persisted — ground truth dirtiness compares the LIVE
-    /// buffer's content against THIS, not a version proxy: `Buffer::
+    /// buffer's content against THIS, not a version proxy alone: `Buffer::
     /// apply_edits` always returns `version + 1`, and undo/redo build a new
     /// buffer, so a version comparison alone leaves an edit-then-undo
     /// document dirty forever even though the bytes are back to identical.
     /// Advanced only by [`Document::finish_save_ok`]. `pub(crate)` (not
-    /// `pub`, matching `is_dirty_cached`): only `finish_save_ok` may move the
-    /// saved baseline, and a `pub` field left that invariant enforced by
-    /// convention rather than the type system alone — an out-of-crate
-    /// integration test that needs a dirty fixture goes through a real edit
-    /// instead, see `dirty_common::force_dirty`.
+    /// `pub`): only `finish_save_ok` may move the saved baseline, and a
+    /// `pub` field left that invariant enforced by convention rather than
+    /// the type system alone — an out-of-crate integration test that needs
+    /// a dirty fixture goes through a real edit instead, see
+    /// `dirty_common::force_dirty`.
     pub(crate) saved_content: Arc<str>,
     /// The save-lifecycle state machine — `Idle`, or one attempt's own
     /// ticket/capture/publish bookkeeping, one owner at a time: `Direct`
@@ -154,12 +156,6 @@ pub struct Document {
     /// first one's own publish is still outstanding.
     save: SaveState,
     next_save_ticket: SaveTicketMint,
-    /// The render-only dirty cache: `is_dirty` reads
-    /// ONLY this field. Recomputed in `update`, and ONLY there, at exactly
-    /// two trigger points — see `materialize_ack::recompute_dirty`'s doc comment.
-    /// `pub(crate)` (not private) because the recompute chokepoint now lives
-    /// in a different module (`save.rs`).
-    pub(crate) is_dirty_cached: bool,
     /// The most recent display-pipeline snapshot, cached by `App::sync_view`
     /// for `render::draw` to blit. `None` only before this document's first
     /// sync.
@@ -355,7 +351,6 @@ impl Document {
             saved_content,
             save: SaveState::default(),
             next_save_ticket: SaveTicketMint::default(),
-            is_dirty_cached: false,
             view: None,
             replica: Replica::Detached,
             display_name: None,
@@ -372,13 +367,19 @@ impl Document {
         }
     }
 
-    /// Reads the render-only dirty cache — see `materialize_ack::recompute_dirty`'s
-    /// doc comment for the two points that keep it current. A DECISION
-    /// (close/quit/save/trash gating and the like) must call `materialize_
-    /// ack::is_dirty_now` instead, which forces a re-derive first — this
-    /// accessor can be one edit/ack stale.
-    pub fn dirty_for_render(&self) -> bool {
-        self.is_dirty_cached
+    /// The one dirtiness derivation, read by every consumer (render, the
+    /// close/quit guards, save gating, trash gating alike): the live
+    /// buffer's version against `saved_version` first, as a cheap
+    /// short-circuit — the overwhelmingly common case is a clean document,
+    /// where the version comparison alone already answers `false` without
+    /// ever touching the bytes. Only when the version moved does the byte
+    /// comparison against `saved_content` run, which is what makes an
+    /// edit-then-undo document read clean again: `Buffer::apply_edits`
+    /// always returns `version + 1`, and undo/redo build a new buffer, so a
+    /// version comparison alone would leave such a document dirty forever
+    /// even though the bytes are back to identical.
+    pub fn is_dirty(&self) -> bool {
+        self.buffer.version() != self.saved_version && self.buffer.content() != &*self.saved_content
     }
 
     /// Arms the no-store fallback save in flight, capturing `version`/
@@ -551,11 +552,10 @@ impl Document {
     /// append_edit` — the durable side already has this content, only the
     /// LOCAL undo journal needs the anchor) so ⌘Z reaches `disk_content`;
     /// (c) surfaces an `apply_edits` failure as a refusal rather than an
-    /// unannotated no-op. Dirtiness is no longer marked here: an
-    /// adopting hydration leaves the buffer genuinely different from
-    /// `saved_content`, so the ordinary content comparison already reports
-    /// it dirty once the caller recomputes — see `materialize_ack::
-    /// recompute_dirty`, called after every hydration site.
+    /// unannotated no-op. Dirtiness is never marked here: an adopting
+    /// hydration leaves the buffer genuinely different from
+    /// `saved_content`, so `is_dirty` already reports it dirty on its very
+    /// next read, with no separate step required.
     ///
     /// Deliberately NOT gated on `read_only`, including
     /// `ReadOnly::Reading`. Hydration adopts the user's OWN unsaved

@@ -90,7 +90,7 @@ fn second_save_refused_while_publishing() {
     let record_evt = rename_common::wait_for_materialize_record(&bridge);
     send(&mut app, Msg::Db(record_evt));
 
-    assert!(!app.doc(id).unwrap().dirty_for_render());
+    assert!(!app.doc(id).unwrap().is_dirty());
     assert_eq!(
         mem.read(std::path::Path::new("/root/a.md")).unwrap(),
         first_content.as_bytes(),
@@ -282,7 +282,7 @@ fn store_failure_mid_publish_does_not_abandon() {
     send(&mut app, Msg::Db(record_evt));
 
     assert!(!app.doc(id).unwrap().save_in_flight());
-    assert!(!app.doc(id).unwrap().dirty_for_render());
+    assert!(!app.doc(id).unwrap().is_dirty());
     assert_eq!(
         mem.read(std::path::Path::new("/root/a.md")).unwrap(),
         content.as_bytes(),

@@ -123,7 +123,7 @@ fn help_document_rejects_edits_and_never_goes_dirty() {
         "a printable key must not mutate a read-only document"
     );
     assert!(
-        !app.active_doc().dirty_for_render(),
+        !app.active_doc().is_dirty(),
         "a rejected edit must never mark the help doc dirty"
     );
 }

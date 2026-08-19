@@ -11,12 +11,11 @@
 //! there.
 //!
 //! Workspace-coupled: every function here takes
-//! `edit_core::commit_edit_batch`, which also touches `app.db`/the
-//! message log/the dirty cache, so unlike `commands::nav` this
-//! module can't work off a bare `&mut Document`. Internally, functions
-//! borrow `app.doc_mut(id)` SEQUENTIALLY — mutate the doc, let that borrow
-//! end, then call `db::append_edit(app, id, ...)`/`materialize_ack::recompute_dirty(
-//! app, id)` — never a split-borrow context type.
+//! `edit_core::commit_edit_batch`, which also touches `app.db`/the message
+//! log, so unlike `commands::nav` this module can't work off a bare `&mut
+//! Document`. Internally, functions borrow `app.doc_mut(id)` SEQUENTIALLY —
+//! mutate the doc, let that borrow end, then call `db::append_edit(app, id,
+//! ...)` — never a split-borrow context type.
 //!
 //! Backspace/delete-right are RUNE-aware, not grapheme-cluster-aware: the
 //! offset walk decodes one UTF-8 codepoint at a time, with no
@@ -38,7 +37,6 @@ use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
-use crate::materialize_ack;
 use crate::messages;
 use crate::undogroup::{self, Direction, Tier};
 
@@ -319,7 +317,6 @@ pub fn undo(app: &mut App, id: DocumentId) {
 
     if let Some(target) = reached {
         db::move_undo_pos(app, id, target, &pre_content);
-        materialize_ack::recompute_dirty(app, id);
     }
 }
 
@@ -386,7 +383,6 @@ pub fn redo(app: &mut App, id: DocumentId) {
 
     if let Some(target) = reached {
         db::move_undo_pos(app, id, target, &pre_content);
-        materialize_ack::recompute_dirty(app, id);
     }
 }
 

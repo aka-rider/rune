@@ -131,7 +131,7 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     edit::insert_char(session.app_mut(), second, '!');
     session.app_mut().sync_view();
 
-    assert!(session.app().doc(second).unwrap().dirty_for_render());
+    assert!(session.app().doc(second).unwrap().is_dirty());
     let text = frame_text(&mut session);
     assert!(
         text.contains(" x  b.md"),
@@ -177,7 +177,7 @@ fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
     let mut session = open_seeded();
     let second = open_second(&mut session);
     edit::insert_char(session.app_mut(), second, '!');
-    assert!(session.app().doc(second).unwrap().dirty_for_render());
+    assert!(session.app().doc(second).unwrap().is_dirty());
 
     workspace::request_close(session.app_mut(), second, &mut Effects::default());
     assert!(
@@ -268,7 +268,7 @@ fn save_then_close_waits_for_the_save_done_ack() {
     }
     let second = open_second(&mut session);
     edit::insert_char(session.app_mut(), second, '!');
-    assert!(session.app().doc(second).unwrap().dirty_for_render());
+    assert!(session.app().doc(second).unwrap().is_dirty());
 
     workspace::request_close(session.app_mut(), second, &mut Effects::default());
     assert!(session.app().guard.is_some());
@@ -389,7 +389,7 @@ fn escape_cancels_the_guard() {
         content_before
     );
     assert!(
-        session.app().doc(second).unwrap().dirty_for_render(),
+        session.app().doc(second).unwrap().is_dirty(),
         "still dirty, untouched"
     );
 }
@@ -462,7 +462,7 @@ fn closing_a_dirty_only_document_still_routes_through_the_guard() {
     let mut session = open_seeded();
     let only = session.app().active;
     edit::insert_char(session.app_mut(), only, '!');
-    assert!(session.app().doc(only).unwrap().dirty_for_render());
+    assert!(session.app().doc(only).unwrap().is_dirty());
 
     workspace::request_close(session.app_mut(), only, &mut Effects::default());
 

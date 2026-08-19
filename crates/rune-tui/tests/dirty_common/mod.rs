@@ -24,13 +24,13 @@ use rune_tui::commands::edit;
 use rune_tui::document::DocumentId;
 
 /// Makes `id` genuinely dirty via the ordinary insert-char command — the
-/// same `commit_edit_batch` chokepoint a keystroke goes through, which
-/// already recomputes the render-only dirty cache (`materialize_ack::
-/// recompute_dirty`) as part of committing the edit. A no-op on a
-/// `read_only` document (the chokepoint refuses those outright): callers
-/// with a read-only fixture (e.g. an image document) cannot use this at
-/// all, since no production path can dirty one — see `image_document.rs`,
-/// which no longer calls this helper for exactly that reason.
+/// same `commit_edit_batch` chokepoint a keystroke goes through, so
+/// `is_dirty` (a pure content comparison, not a cache) reflects the edit
+/// immediately. A no-op on a `read_only` document (the chokepoint refuses
+/// those outright): callers with a read-only fixture (e.g. an image
+/// document) cannot use this at all, since no production path can dirty
+/// one — see `image_document.rs`, which no longer calls this helper for
+/// exactly that reason.
 pub fn force_dirty(app: &mut App, id: DocumentId) {
     edit::insert_char(app, id, '!');
 }

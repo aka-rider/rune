@@ -62,5 +62,5 @@ fn a_document_more_than_half_trailing_whitespace_saves_twice_without_a_disk_conf
         "the next save must not falsely conflict against rune's own stripping write"
     );
     assert_eq!(disk(&session), b"!a\nb\n");
-    assert!(!session.app().dirty_for_render());
+    assert!(!session.app().is_dirty());
 }

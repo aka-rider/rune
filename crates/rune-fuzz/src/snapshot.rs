@@ -153,12 +153,10 @@ pub struct Snapshot {
     /// treat an empty `Some` the same as `None` rather than assuming it
     /// can't happen.
     pub quit_intent_pending: Option<Vec<(DocumentId, u64)>>,
-    /// Every open document's own dirty cache, re-derived (via `App::
-    /// recompute_dirty`, the one public seam onto the same chokepoint
-    /// `materialize_ack::is_dirty_now` uses internally) rather than read
-    /// stale — `Snapshot.is_dirty` above is active-document-only, so a
-    /// quit/close-guard invariant that needs to know whether some OTHER,
-    /// inactive document is dirty has no other way to see it.
+    /// Every open document's own `Document::is_dirty` — `Snapshot.is_dirty`
+    /// above is active-document-only, so a quit/close-guard invariant that
+    /// needs to know whether some OTHER, inactive document is dirty has no
+    /// other way to see it.
     pub dirty_by_doc: BTreeMap<DocumentId, bool>,
     /// `Document::save_in_flight` for every open document, the same
     /// per-document shape as `dirty_by_doc` above. `QUIT-CHORD` needs this
@@ -272,9 +270,6 @@ impl Snapshot {
             (Vec::new(), Vec::new())
         };
 
-        // Computed BEFORE `doc` below borrows `app` immutably for the rest
-        // of this function: `recompute_dirty` needs `&mut App`, so it must
-        // run while no other borrow of `app` is still alive.
         let guard = app
             .guard
             .as_ref()
@@ -290,9 +285,8 @@ impl Snapshot {
         let mut saved_version_by_doc = BTreeMap::new();
         let mut buffer_len_by_doc = BTreeMap::new();
         for doc_id in doc_ids {
-            app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
-                dirty_by_doc.insert(doc_id, d.dirty_for_render());
+                dirty_by_doc.insert(doc_id, d.is_dirty());
                 save_in_flight_by_doc.insert(doc_id, d.save_in_flight());
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
                 saved_version_by_doc.insert(doc_id, d.saved_version);
@@ -333,7 +327,7 @@ impl Snapshot {
             content: doc.buffer.content().to_string(),
             version: doc.buffer.version(),
             saved_version: doc.saved_version,
-            is_dirty: app.dirty_for_render(),
+            is_dirty: app.is_dirty(),
             cursors: doc.cursors.all().to_vec(),
             line_count,
             line_starts,

@@ -95,7 +95,7 @@ fn refused_hydration_detaches() {
     rune_tui::app::update(&mut app, done_msg, &mut effects);
 
     assert!(
-        !app.doc(id).unwrap().dirty_for_render(),
+        !app.doc(id).unwrap().is_dirty(),
         "the direct-vfs save must succeed and clear dirty"
     );
     assert_eq!(

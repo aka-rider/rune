@@ -112,7 +112,7 @@ fn chord_hint(app: &App) -> Option<String> {
 }
 
 fn quit_hint(app: &App) -> &'static str {
-    if app.dirty_for_render() {
+    if app.is_dirty() {
         "press again to quit \u{2014} unsaved changes will be lost"
     } else {
         "press again to quit"

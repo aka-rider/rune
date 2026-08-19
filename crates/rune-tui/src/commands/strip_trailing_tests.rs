@@ -145,7 +145,7 @@ fn one_undo_after_a_stripping_save_restores_every_byte_and_leaves_the_document_d
     edit::undo(&mut app, id);
 
     assert_eq!(content(&app, id), "a  \nb\t\nc");
-    assert!(crate::materialize_ack::is_dirty_now(&mut app, id));
+    assert!(app.doc(id).unwrap().is_dirty());
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn saving_a_document_with_nothing_to_strip_preserves_the_redo_tail() {
 #[test]
 fn a_document_clean_on_open_but_carrying_trailing_whitespace_is_cleaned_by_a_plain_save() {
     let (mut app, mem, id) = app_with("messy   \nlines\t\n");
-    assert!(!crate::materialize_ack::is_dirty_now(&mut app, id));
+    assert!(!app.doc(id).unwrap().is_dirty());
 
     let (start, mut effects) = save_interactively(&mut app, id);
 

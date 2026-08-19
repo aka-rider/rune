@@ -231,7 +231,7 @@ fn a_printable_key_in_reading_view_never_mutates_the_buffer() {
         "a printable key must not mutate a reading-view document"
     );
     assert!(
-        !app.active_doc().dirty_for_render(),
+        !app.active_doc().is_dirty(),
         "a rejected edit must never mark a reading-view document dirty"
     );
 }
@@ -404,7 +404,7 @@ fn ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view() {
 
     app.active_doc_mut().read_only = ReadOnly::Reading;
     let content_before = app.active_doc().buffer.content().to_string();
-    let dirty_before = app.active_doc().dirty_for_render();
+    let dirty_before = app.active_doc().is_dirty();
 
     send(&mut app, sup('z'));
     assert_eq!(
@@ -413,7 +413,7 @@ fn ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view() {
         "⌘Z must not mutate a reading-view document"
     );
     assert_eq!(
-        app.active_doc().dirty_for_render(),
+        app.active_doc().is_dirty(),
         dirty_before,
         "a blocked undo must not change dirtiness"
     );
@@ -425,7 +425,7 @@ fn ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view() {
         "⌘⇧Z must not mutate a reading-view document"
     );
     assert_eq!(
-        app.active_doc().dirty_for_render(),
+        app.active_doc().is_dirty(),
         dirty_before,
         "a blocked redo must not change dirtiness"
     );

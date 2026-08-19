@@ -3,7 +3,7 @@
 //! an `Effects` sink `close_now` didn't carry before).
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::document::{Document, DocumentId};
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::runtime::Effects;
 
@@ -32,10 +32,7 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     if app.refuse_if_preview(id) {
         return;
     }
-    // Re-derived, not read from the cache (close is a transition) — a
-    // stale cache could wave a genuinely-dirty document
-    // through, or arm the Guard for one that's actually clean.
-    if crate::materialize_ack::is_dirty_now(app, id) {
+    if app.doc(id).is_some_and(Document::is_dirty) {
         // A Guard already up outranks this prompt; the close intent is then
         // simply not armed (the user presses `^w` again once it's
         // dismissed) — nothing waits on this Guard, unlike the rename

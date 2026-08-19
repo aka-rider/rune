@@ -80,7 +80,7 @@ fn save_label_span_is_styled_inactive_when_clean_and_active_when_dirty() {
         .label();
 
     let app = app_with("hello");
-    assert!(!app.dirty_for_render());
+    assert!(!app.is_dirty());
     let spans = default_hint_spans(&app);
     let save_span = spans
         .iter()
@@ -89,8 +89,9 @@ fn save_label_span_is_styled_inactive_when_clean_and_active_when_dirty() {
     assert_eq!(save_span.style, app.theme.chrome.footer_key_inactive);
 
     let mut app = app_with("hello");
-    app.active_doc_mut().is_dirty_cached = true;
-    assert!(app.dirty_for_render());
+    let active = app.active;
+    crate::commands::edit::insert_char(&mut app, active, '!');
+    assert!(app.is_dirty());
     let spans = default_hint_spans(&app);
     let save_span = spans
         .iter()
