@@ -5,8 +5,56 @@
 //! their callers span focus (`focus_title`), rename, save, and close.
 
 use crate::app::App;
-use crate::document::{DocumentId, ReadOnly};
+use crate::document::DocumentId;
 use crate::messages;
+
+/// Why a document refuses mutation — not a plain bool, so a toggleable view
+/// mode (`Reading`) can be told apart from a document with no editable form
+/// at all (`Always`), and both from a transient, not-yet-committed one
+/// (`Preview`): a toggle must not make the Help tab editable, and the
+/// undo/redo guard and the `^S` footer hint each branch on the variants
+/// differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadOnly {
+    /// Ordinary editable document.
+    No,
+    /// The user asked for reading view (⌃P) — the same chord returns it.
+    /// The document keeps its journal, its `db` binding and any unsaved
+    /// bytes.
+    Reading,
+    /// No editable form exists: the Help tab, the error banner, an image
+    /// document. `commands::reading::toggle` refuses; only a mint site sets
+    /// it.
+    Always,
+    /// A forthcoming Explorer feature previews the file under the cursor
+    /// in the Editor without the user having committed to opening it —
+    /// this document exists but has not been "opened" in the
+    /// ordinary sense. Save, close, and rename all refuse it outright
+    /// rather than acting on a document the user never asked to keep; a
+    /// later work package flips it to `No` on promotion (the user actually
+    /// editing it). Distinct from `Reading`: there is no chord that leaves
+    /// `Preview` the way ⌃P leaves `Reading`, so undo/redo join `Reading`
+    /// in refusing it rather than following `Always`'s bypass.
+    Preview,
+}
+
+impl ReadOnly {
+    /// The wording for why a read-only document refuses, or `None` for
+    /// `No` — which refuses nothing, so it has no wording to give (carry
+    /// that out of band instead of a sentinel string a missed check
+    /// could pass off as real). `Reading` names the way out because the
+    /// user reached it with a chord that also leaves it; `Always` has no
+    /// way out to name. The one place both user-initiated refusal
+    /// chokepoints (`App::refuse_if_read_only`) source their wording from.
+    pub fn refusal_message(&self) -> Option<&'static str> {
+        match self {
+            ReadOnly::No => None,
+            ReadOnly::Reading => Some("reading view — ⌃P to edit"),
+            ReadOnly::Always => Some("this document is read-only"),
+            ReadOnly::Preview => Some("preview — not yet open for editing"),
+        }
+    }
+}
 
 impl App {
     /// The single writer of a read-only refusal's status message: posts
