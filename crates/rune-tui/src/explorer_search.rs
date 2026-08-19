@@ -11,13 +11,12 @@
 //! Split out of `explorer_keys.rs` to keep that file under the 500-
 //! line budget once the search table and its own unit tests landed.
 
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern};
 use crate::explorer::ensure_visible;
 use crate::explorer_preview;
 use crate::keymap::{KeyCode, KeyInput, Mods};
+use crate::queryline;
 use crate::runtime::Effects;
 
 /// Ends a type-to-search, if one is running. `pub(crate)`, not private:
@@ -140,13 +139,7 @@ pub(crate) fn handle_search(
         ExplorerSearchCommand::Erase => {
             let emptied = match app.explorer_find_mut() {
                 Some(query) => {
-                    // Pop one GRAPHEME CLUSTER, not one `char`: a combining
-                    // mark popped alone would desync what's on screen from
-                    // what the buffer holds, the same reasoning `width.rs`/
-                    // `breadcrumb.rs` already apply to on-screen text.
-                    if let Some((byte_idx, _)) = query.grapheme_indices(true).next_back() {
-                        query.truncate(byte_idx);
-                    }
+                    queryline::erase_grapheme(query);
                     query.is_empty()
                 }
                 None => false,

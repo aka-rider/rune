@@ -369,7 +369,7 @@ pub(crate) fn save_and_die() {
     };
 
     let id = store
-        .materialize_prepare(doc_id, rune_db::MaterializeTarget::Existing { expect })
+        .materialize_prepare(doc_id, rune_db::MaterializeTarget::Existing { expect }, None)
         .expect("enqueue materialize prepare");
     let prep = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {

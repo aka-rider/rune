@@ -48,6 +48,7 @@ pub enum CmdKind {
     /// Off-thread: decode is CPU work and must never
     /// block the main loop.
     ImageDecode,
+    ImageEncode,
     /// `vfs.trash` — a blocking `NSFileManager` call, off-thread, never
     /// inline in `update`.
     Trash,
@@ -119,6 +120,10 @@ impl Cmd {
 
     pub fn image_decode(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
         Self::of(CmdKind::ImageDecode, run)
+    }
+
+    pub fn image_encode(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
+        Self::of(CmdKind::ImageEncode, run)
     }
 
     pub fn trash(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {

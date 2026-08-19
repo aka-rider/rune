@@ -424,12 +424,12 @@ pub fn toggle_help(app: &mut App, effects: &mut Effects) {
         if app.active == id {
             let target = app
                 .help_return_to
-                .filter(|t| *t != id && app.documents.contains_key(t))
+                .live_excluding(app, id)
                 .or_else(|| app.documents.keys().find(|&&other| other != id).copied())
                 .unwrap_or(id);
             switch_to(app, target);
         } else {
-            app.help_return_to = Some(app.active);
+            app.help_return_to = crate::returnto::ReturnTo::to(app.active);
             switch_to(app, id);
         }
         return;
@@ -446,7 +446,7 @@ pub fn toggle_help(app: &mut App, effects: &mut Effects) {
         doc.display_name = Some("Help".to_string());
     }
     app.help_doc = Some(id);
-    app.help_return_to = Some(previous);
+    app.help_return_to = crate::returnto::ReturnTo::to(previous);
     switch_to(app, id);
 }
 

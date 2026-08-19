@@ -8,7 +8,7 @@ use std::path::Path;
 use rune_vfs::Stat;
 
 use crate::Error;
-use crate::ids::{DocId, ObsId};
+use crate::ids::{BlobHash, DocId, ObsId};
 use crate::materialize::MaterializeTarget;
 use crate::store::Store;
 use crate::writer::OpKind;
@@ -203,11 +203,13 @@ impl Store {
         &self,
         doc_id: DocId,
         target: MaterializeTarget,
+        pending_rebaseline_hash: Option<BlobHash>,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MaterializePrepare {
             session_id: self.session_id,
             doc_id,
             target,
+            pending_rebaseline_hash,
         })
     }
 

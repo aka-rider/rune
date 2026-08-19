@@ -70,6 +70,10 @@ pub(super) fn materialize_now(
     };
     let expect_obs = binding.expect_obs;
     let baseline_epoch = binding.baseline_epoch;
+    let pending_rebaseline_hash = binding
+        .pending_rebaseline_hash
+        .clone()
+        .map(rune_db::BlobHash);
     let Some(target) = publish_mode.materialize_target(expect_obs) else {
         materialize_ack::on_store_failure(
             app,
@@ -80,7 +84,9 @@ pub(super) fn materialize_now(
     };
     crate::db_enqueue::flush_pending_rebase(app, id);
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.materialize_prepare(rune_db::DocId(db_id), target);
+    let result =
+        db.store
+            .materialize_prepare(rune_db::DocId(db_id), target, pending_rebaseline_hash);
 
     match result {
         Ok(op_id) => {
@@ -169,9 +175,11 @@ pub(crate) fn bind_new_now(
         .doc(id)
         .and_then(|d| d.doc_db())
         .map_or(0, |d| d.last_known_seq.0);
-    let result = db
-        .store
-        .materialize_prepare(rune_db::DocId(db_id), rune_db::MaterializeTarget::BindNew);
+    let result = db.store.materialize_prepare(
+        rune_db::DocId(db_id),
+        rune_db::MaterializeTarget::BindNew,
+        None,
+    );
 
     match result {
         Ok(op_id) => {

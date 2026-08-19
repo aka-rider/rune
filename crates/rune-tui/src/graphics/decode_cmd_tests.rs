@@ -51,17 +51,63 @@ fn app_with_live_image(kitty: bool) -> (App, DocumentId) {
     let (mut app, id) = app_with_pending_image(kitty);
     let mut effects = Effects::default();
     schedule_image_decode(&mut app, id, &mut effects);
-    for cmd in effects.cmds {
-        if let Some(Msg::ImageDecoded {
+    settle_cmds(&mut app, effects.cmds);
+    (app, id)
+}
+
+fn run_decoded_then_encoded(
+    app: &mut App,
+    doc: DocumentId,
+    generation: crate::generation::ImageDecodeGen,
+    result: Result<rune_image::decode::Decoded, CmdError>,
+) -> Effects {
+    let mut decode_effects = Effects::default();
+    handle_image_decoded(app, doc, generation, result, &mut decode_effects);
+    let mut encode_effects = Effects::default();
+    for cmd in decode_effects.cmds {
+        if let Some(Msg::ImageEncoded {
             doc,
             generation,
+            was_live,
             result,
         }) = cmd.run()
         {
-            handle_image_decoded(&mut app, doc, generation, result, &mut Effects::default());
+            handle_image_encoded(app, doc, generation, was_live, result, &mut encode_effects);
         }
     }
-    (app, id)
+    encode_effects
+}
+
+fn settle_cmds(app: &mut App, cmds: Vec<crate::runtime::Cmd>) {
+    for cmd in cmds {
+        match cmd.run() {
+            Some(Msg::ImageDecoded {
+                doc,
+                generation,
+                result,
+            }) => {
+                let mut effects = Effects::default();
+                handle_image_decoded(app, doc, generation, result, &mut effects);
+                settle_cmds(app, effects.cmds);
+            }
+            Some(Msg::ImageEncoded {
+                doc,
+                generation,
+                was_live,
+                result,
+            }) => {
+                handle_image_encoded(
+                    app,
+                    doc,
+                    generation,
+                    was_live,
+                    result,
+                    &mut Effects::default(),
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 #[test]
@@ -84,11 +130,28 @@ fn scheduling_twice_only_ever_spawns_one_cmd() {
 }
 
 #[test]
-fn a_successful_decode_goes_live_and_transmits_when_kitty_is_on() {
+fn a_successful_decode_spawns_an_encode_cmd_and_stays_in_flight() {
     let (mut app, id) = app_with_pending_image(true);
     app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(1));
     let mut effects = Effects::default();
     handle_image_decoded(&mut app, id, mint_gen(1), Ok(decode_x_png()), &mut effects);
+
+    let image = app.doc(id).unwrap().image().unwrap();
+    assert!(matches!(image.status, ImageStatus::Live { .. }));
+    assert!(
+        image.in_flight.is_some(),
+        "the encode is now the outstanding async op"
+    );
+    assert!(effects.transmits().is_empty(), "no transmit until encode replies");
+    assert_eq!(effects.cmds.len(), 1);
+    assert_eq!(effects.cmds[0].kind(), CmdKind::ImageEncode);
+}
+
+#[test]
+fn a_successful_decode_goes_live_and_transmits_when_kitty_is_on() {
+    let (mut app, id) = app_with_pending_image(true);
+    app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(1));
+    let effects = run_decoded_then_encoded(&mut app, id, mint_gen(1), Ok(decode_x_png()));
 
     let image = app.doc(id).unwrap().image().unwrap();
     assert!(matches!(image.status, ImageStatus::Live { .. }));
@@ -170,8 +233,7 @@ fn a_first_transmit_does_not_force_a_redraw() {
             result,
         }) = cmd.run()
         {
-            let mut reply = Effects::default();
-            handle_image_decoded(&mut app, doc, generation, result, &mut reply);
+            let reply = run_decoded_then_encoded(&mut app, doc, generation, result);
             assert_eq!(
                 reply.transmits().len(),
                 1,
@@ -201,8 +263,7 @@ fn reload_retransmits_under_the_same_id_and_forces_a_redraw() {
             result,
         }) = cmd.run()
         {
-            let mut reply_effects = Effects::default();
-            handle_image_decoded(&mut app, doc, generation, result, &mut reply_effects);
+            let reply_effects = run_decoded_then_encoded(&mut app, doc, generation, result);
             assert_eq!(reply_effects.transmits().len(), 1);
             assert!(reply_effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
             assert!(reply_effects.force_redraw, "a reload must force a redraw");
@@ -290,9 +351,9 @@ fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
 #[test]
 fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     let (mut app, id) = app_with_live_image(true);
-    // `app_with_live_image` already minted once (returning 0, its own
-    // real `in_flight` since cleared) — `mint_gen(0)` stands in for that
-    // abandoned decode's actual generation.
+    // `app_with_live_image` already minted twice settling to `Live`
+    // (decode generation 0, then the encode it spawned, generation 1) —
+    // `mint_gen(0)` stands in for the abandoned decode's actual generation.
     app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(0));
 
     let mut effects = Effects::default();
@@ -300,7 +361,7 @@ fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     let new_generation = app.doc(id).unwrap().image().unwrap().in_flight;
     assert_eq!(
         new_generation,
-        Some(mint_gen(1)),
+        Some(mint_gen(2)),
         "reload must mint a strictly greater generation than the abandoned one"
     );
 
@@ -320,7 +381,7 @@ fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     );
     assert_eq!(
         app.doc(id).unwrap().image().unwrap().in_flight,
-        Some(mint_gen(1)),
+        Some(mint_gen(2)),
         "the stale reply must not clear the fresh decode's in_flight"
     );
 }
@@ -357,5 +418,47 @@ fn two_successive_reloads_produce_different_generations() {
     assert_ne!(
         first_generation, second_generation,
         "each reload must mint a strictly new generation"
+    );
+}
+
+#[test]
+fn a_stale_encode_reply_is_dropped_without_disturbing_the_live_image() {
+    let (mut app, id) = app_with_live_image(true);
+    let ImageStatus::Live {
+        cells: live_cells, ..
+    } = &app.doc(id).unwrap().image().unwrap().status
+    else {
+        unreachable!("test setup: image must already be Live");
+    };
+    let live_cells = *live_cells;
+
+    let mut effects = Effects::default();
+    reload_image(&mut app, id, &mut effects);
+    let fresh_generation = app.doc(id).unwrap().image().unwrap().in_flight;
+    assert!(fresh_generation.is_some(), "test setup: reload must be in flight");
+
+    let mut stale_effects = Effects::default();
+    handle_image_encoded(
+        &mut app,
+        id,
+        mint_gen(0),
+        true,
+        Ok(rune_image::fit_and_encode(&decode_x_png(), 1, live_cells.cols, live_cells.rows, CellSize { w: 8, h: 16 })
+            .expect("encode")),
+        &mut stale_effects,
+    );
+
+    assert!(
+        stale_effects.transmits().is_empty(),
+        "a stale encode reply must not transmit"
+    );
+    assert!(
+        !stale_effects.force_redraw,
+        "a stale encode reply must not force a redraw"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().image().unwrap().in_flight,
+        fresh_generation,
+        "a stale encode reply must not clear the fresh reload's in_flight"
     );
 }

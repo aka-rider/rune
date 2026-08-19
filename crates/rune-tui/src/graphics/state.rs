@@ -4,6 +4,8 @@
 //! lifecycle status the info card / placeholder cells read. Lives on
 //! `Document::image`, `None` for every non-image document.
 
+use std::sync::Arc;
+
 use rune_image::{CellFootprint, ImageId, PixelSize};
 
 /// An image document's decode/transmit lifecycle: a
@@ -16,7 +18,7 @@ use rune_image::{CellFootprint, ImageId, PixelSize};
 pub enum ImageStatus {
     Pending,
     Live {
-        decoded: rune_image::decode::Decoded,
+        decoded: Arc<rune_image::decode::Decoded>,
         cells: CellFootprint,
     },
     Failed(String),

@@ -42,12 +42,15 @@ fn focusing_the_explorer_captures_the_browsing_origin() {
     app.frame_height = 24;
     let editing = app.active;
     let mut effects = Effects::default();
-    assert_eq!(app.explorer.browsing_origin, None);
+    assert_eq!(app.explorer.browsing_origin, crate::returnto::ReturnTo::none());
 
     app.set_focus_pane(Pane::Explorer, &mut effects);
 
     assert_eq!(app.focus(), Pane::Explorer);
-    assert_eq!(app.explorer.browsing_origin, Some(editing));
+    assert_eq!(
+        app.explorer.browsing_origin,
+        crate::returnto::ReturnTo::to(editing)
+    );
 }
 
 /// No `LayoutMode` this resolver can produce may ever call `Explorer`

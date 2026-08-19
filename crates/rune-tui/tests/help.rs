@@ -164,7 +164,10 @@ fn closing_the_previous_document_then_toggling_help_lands_somewhere_live() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(f1()), &mut effects);
     let help_id = app.active;
-    assert_eq!(app.help_return_to, Some(original));
+    assert_eq!(
+        app.help_return_to,
+        rune_tui::returnto::ReturnTo::to(original)
+    );
 
     // Close `original` while it's not active (help is) — a clean document,
     // so this closes immediately rather than arming the Guard.

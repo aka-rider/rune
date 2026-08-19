@@ -10,7 +10,7 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_vfs::Stat;
 
-use crate::ids::{DocId, ObsId, SessionId};
+use crate::ids::{BlobHash, DocId, ObsId, SessionId};
 use crate::load::LoadResult;
 use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
 use crate::merge_prep::MergePrepResult;
@@ -164,6 +164,7 @@ pub(crate) enum OpKind {
         session_id: SessionId,
         doc_id: DocId,
         target: MaterializeTarget,
+        pending_rebaseline_hash: Option<BlobHash>,
     },
     /// The recording half of `Materialize`: records what the caller's own
     /// `vfs` work concluded

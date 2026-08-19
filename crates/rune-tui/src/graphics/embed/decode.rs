@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
-use crate::runtime::{CmdError, Effects};
+use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
 /// Spawns a decode for the embed named `target` in document `id`, iff one
 /// isn't already in flight for it. A no-op if the target isn't tracked at
@@ -49,12 +49,6 @@ pub(crate) fn schedule_embed_decode(
         ));
 }
 
-/// Applies a `Msg::EmbedDecoded` reply, mirroring `graphics::
-/// decode_cmd::handle_image_decoded`'s own fixed order exactly: find the
-/// target this `generation` belongs to, drop silently if none matches (a
-/// stale reply, or the embed was despawned while its decode was in flight);
-/// otherwise clear `in_flight`, record failure or compute the fit-to-width
-/// footprint and — Kitty only — push a transmit escape.
 pub(crate) fn handle_embed_decoded(
     app: &mut App,
     id: DocumentId,
@@ -77,17 +71,17 @@ pub(crate) fn handle_embed_decoded(
     let kitty = app.graphics.kitty;
 
     let Some(doc) = app.doc_mut(id) else { return };
-    let Some(state) = doc
-        .embeds_mut()
-        .and_then(|embeds| embeds.images.get_mut(&target))
-    else {
+    let Some(embeds) = doc.embeds_mut() else {
         return;
     };
-    state.in_flight = None;
+    let Some(state) = embeds.images.get_mut(&target) else {
+        return;
+    };
 
     let decoded = match result {
         Ok(decoded) => decoded,
         Err(e) => {
+            state.in_flight = None;
             state.status = ImageStatus::Failed(e.to_string());
             return;
         }
@@ -106,15 +100,70 @@ pub(crate) fn handle_embed_decoded(
         cell,
     );
     let img_id = state.id;
-    state.status = if kitty {
-        match rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell) {
-            Ok(transmit) => {
-                effects.transmit(transmit);
-                ImageStatus::Live { decoded, cells }
-            }
-            Err(e) => ImageStatus::Failed(e.to_string()),
-        }
-    } else {
-        ImageStatus::Live { decoded, cells }
+    let decoded = Arc::new(decoded);
+
+    if !kitty {
+        state.in_flight = None;
+        state.status = ImageStatus::Live { decoded, cells };
+        return;
+    }
+
+    embeds.next_generation = embeds.next_generation.wrapping_add(1);
+    let generation = embeds.next_generation;
+    let Some(state) = embeds.images.get_mut(&target) else {
+        return;
     };
+    state.in_flight = Some(generation);
+    state.status = ImageStatus::Live {
+        decoded: Arc::clone(&decoded),
+        cells,
+    };
+    effects
+        .cmds
+        .push(encode_embed_cmd(id, decoded, img_id, cells, cell, generation));
+}
+
+pub(crate) fn handle_embed_encoded(
+    app: &mut App,
+    id: DocumentId,
+    generation: u64,
+    result: Result<rune_image::Transmit, CmdError>,
+    effects: &mut Effects,
+) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    let Some(embeds) = doc.embeds_mut() else {
+        return;
+    };
+    let Some((_, state)) = embeds
+        .images
+        .iter_mut()
+        .find(|(_, s)| s.in_flight == Some(generation))
+    else {
+        return;
+    };
+    state.in_flight = None;
+    match result {
+        Ok(transmit) => effects.transmit(transmit),
+        Err(e) => state.status = ImageStatus::Failed(e.to_string()),
+    }
+}
+
+fn encode_embed_cmd(
+    doc: DocumentId,
+    decoded: Arc<rune_image::decode::Decoded>,
+    img_id: rune_image::ImageId,
+    cells: rune_image::CellFootprint,
+    cell: rune_image::CellSize,
+    generation: u64,
+) -> Cmd {
+    Cmd::image_encode(move || {
+        let result =
+            rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell)
+                .map_err(CmdError::from);
+        Some(Msg::EmbedEncoded {
+            doc,
+            generation,
+            result,
+        })
+    })
 }

@@ -12,6 +12,8 @@
 //! (`Effects::force_redraw`) or the terminal would keep showing the stale
 //! placement.
 
+use std::sync::Arc;
+
 use crate::app::App;
 use crate::graphics::ImageStatus;
 use crate::runtime::Effects;
@@ -42,8 +44,8 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     let kitty = app.graphics.kitty;
     let Some(image) = doc.image() else { return };
     let ImageStatus::Live {
-        decoded,
         cells: current_cells,
+        ..
     } = &image.status
     else {
         return;
@@ -54,8 +56,6 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
         return;
     }
     let img_id = image.id;
-    let encoded = kitty
-        .then(|| rune_image::fit_and_encode(decoded, img_id.get(), cells.cols, cells.rows, cell));
 
     let Some(doc) = app.doc_mut(id) else { return };
     let Some(image) = doc.image_mut() else {
@@ -66,15 +66,18 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     else {
         return;
     };
-    image.status = match encoded {
-        Some(Ok(transmit)) => {
-            effects.transmit(transmit);
-            effects.force_redraw = true;
-            ImageStatus::Live { decoded, cells }
-        }
-        Some(Err(e)) => ImageStatus::Failed(e.to_string()),
-        None => ImageStatus::Live { decoded, cells },
+    image.status = ImageStatus::Live {
+        decoded: Arc::clone(&decoded),
+        cells,
     };
+    if !kitty {
+        return;
+    }
+    let generation = image.next_generation.mint();
+    image.in_flight = Some(generation);
+    effects.cmds.push(super::decode_cmd::encode_image_cmd(
+        id, decoded, img_id, cells, cell, generation, true,
+    ));
 }
 
 #[cfg(test)]
@@ -105,23 +108,40 @@ mod tests {
         app.doc_mut(id).expect("doc").viewport.set_size(80, 24);
         let mut effects = Effects::default();
         crate::graphics::schedule_image_decode(&mut app, id, &mut effects);
-        for cmd in effects.cmds {
-            if let Some(crate::runtime::Msg::ImageDecoded {
-                doc,
-                generation,
-                result,
-            }) = cmd.run()
-            {
-                crate::graphics::handle_image_decoded(
-                    &mut app,
+        settle_cmds(&mut app, effects.cmds);
+        (app, id)
+    }
+
+    fn settle_cmds(app: &mut App, cmds: Vec<crate::runtime::Cmd>) {
+        for cmd in cmds {
+            match cmd.run() {
+                Some(crate::runtime::Msg::ImageDecoded {
                     doc,
                     generation,
                     result,
-                    &mut Effects::default(),
-                );
+                }) => {
+                    let mut effects = Effects::default();
+                    crate::graphics::handle_image_decoded(app, doc, generation, result, &mut effects);
+                    settle_cmds(app, effects.cmds);
+                }
+                Some(crate::runtime::Msg::ImageEncoded {
+                    doc,
+                    generation,
+                    was_live,
+                    result,
+                }) => {
+                    crate::graphics::handle_image_encoded(
+                        app,
+                        doc,
+                        generation,
+                        was_live,
+                        result,
+                        &mut Effects::default(),
+                    );
+                }
+                _ => {}
             }
         }
-        (app, id)
     }
 
     fn live_cells(app: &App, id: DocumentId) -> Option<rune_image::CellFootprint> {
@@ -140,12 +160,31 @@ mod tests {
 
         let mut effects = Effects::default();
         refit_on_resize(&mut app, &mut effects);
+        assert_eq!(effects.cmds.len(), 1, "the re-encode must run off-thread");
 
         let after = live_cells(&app, id);
         assert_ne!(before, after, "the footprint must actually have changed");
-        assert_eq!(effects.transmits().len(), 1);
-        assert!(effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
-        assert!(effects.force_redraw);
+
+        let mut reply_effects = Effects::default();
+        if let Some(crate::runtime::Msg::ImageEncoded {
+            doc,
+            generation,
+            was_live,
+            result,
+        }) = effects.cmds.remove(0).run()
+        {
+            crate::graphics::handle_image_encoded(
+                &mut app,
+                doc,
+                generation,
+                was_live,
+                result,
+                &mut reply_effects,
+            );
+        }
+        assert_eq!(reply_effects.transmits().len(), 1);
+        assert!(reply_effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
+        assert!(reply_effects.force_redraw);
     }
 
     #[test]
@@ -161,5 +200,45 @@ mod tests {
 
         assert!(effects.transmits().is_empty());
         assert!(!effects.force_redraw);
+    }
+
+    #[test]
+    fn a_resize_storm_abandons_the_earlier_still_in_flight_encode() {
+        let (mut app, id) = app_with_live_image();
+        app.doc_mut(id).expect("doc").viewport.set_size(4, 24);
+        let mut first = Effects::default();
+        refit_on_resize(&mut app, &mut first);
+        assert_eq!(first.cmds.len(), 1);
+        let stale_generation = app.doc(id).expect("doc").image().expect("image").in_flight;
+
+        app.doc_mut(id).expect("doc").viewport.set_size(80, 24);
+        let mut second = Effects::default();
+        refit_on_resize(&mut app, &mut second);
+        assert_eq!(second.cmds.len(), 1);
+        let fresh_generation = app.doc(id).expect("doc").image().expect("image").in_flight;
+        assert_ne!(stale_generation, fresh_generation);
+
+        let Some(crate::runtime::Msg::ImageEncoded {
+            doc,
+            generation,
+            was_live,
+            result,
+        }) = first.cmds.remove(0).run()
+        else {
+            unreachable!("expected an ImageEncoded reply");
+        };
+        let mut stale_reply = Effects::default();
+        crate::graphics::handle_image_encoded(&mut app, doc, generation, was_live, result, &mut stale_reply);
+
+        assert!(
+            stale_reply.transmits().is_empty(),
+            "the abandoned resize's encode must not transmit"
+        );
+        assert!(!stale_reply.force_redraw);
+        assert_eq!(
+            app.doc(id).expect("doc").image().expect("image").in_flight,
+            fresh_generation,
+            "the stale reply must not clear the fresh resize's in_flight"
+        );
     }
 }

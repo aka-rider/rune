@@ -19,11 +19,24 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::{Document, DocumentId};
 use crate::explorer;
+use crate::generation::TrashGen;
 use crate::guard::{self, GuardKind, GuardPrompt, TrashSubject};
 use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 use crate::workspace;
+
+/// The single-flight state machine `request_trash`/`confirm`/
+/// `handle_trash_done` drive — mirrors `RenameState`/`MergeState`'s own
+/// shape rather than a loose generation-plus-`Option<PathBuf>` pair, so a
+/// stray read of one field can never disagree with the other about whether
+/// a trash is in flight.
+#[derive(Default)]
+pub(crate) enum TrashState {
+    #[default]
+    Idle,
+    Pending { generation: TrashGen },
+}
 
 /// Resolves the trash target from the current focus and raises the confirm
 /// guard. Explorer focus reads the selection the way `explorer_keys::
@@ -33,7 +46,7 @@ use crate::workspace;
 /// last re-checked again at `confirm` and once more when the reply lands,
 /// since the user can keep typing between each of these points.
 pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
-    if app.trash_pending.is_some() {
+    if !matches!(app.trash, TrashState::Idle) {
         messages::error(app, "a trash is already in progress");
         return;
     }
@@ -92,10 +105,9 @@ fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
 /// already in flight (mirrors `rename::begin`'s `in_flight` refusal),
 /// re-runs the dirty refusal (the user may have edited the open document
 /// between the chord and the confirm), then enqueues the off-thread `vfs.
-/// trash` call under a freshly minted generation and records it in `app.
-/// trash_pending`.
+/// trash` call under a freshly minted generation and arms `app.trash`.
 pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
-    if app.trash_pending.is_some() {
+    if !matches!(app.trash, TrashState::Idle) {
         messages::error(app, "a trash is already in progress");
         return;
     }
@@ -103,8 +115,7 @@ pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
         return;
     }
     let generation = app.next_trash_gen.mint();
-    app.trash_gen = generation;
-    app.trash_pending = Some(path.clone());
+    app.trash = TrashState::Pending { generation };
     effects
         .cmds
         .push(trash_cmd(Arc::clone(&app.vfs), path, generation));
@@ -140,15 +151,15 @@ fn trash_cmd(
     })
 }
 
-/// `Msg::TrashDone`'s handler. A stale `generation` (a fresh trash request
-/// started and finished before this one's reply lands) is dropped on
-/// arrival before `app.trash_pending` is touched — under single-flight
-/// enforcement (`request_trash`/`confirm` both refuse while it is `Some`)
-/// this reply can only be stale for a generation that predates the one
-/// `app.trash_pending` currently names, so it owns none of the state there
-/// is to clear. Once a reply IS for the current generation, `app.
-/// trash_pending` is cleared unconditionally — before the `Ok`/`Err` match,
-/// so neither outcome can leave the next request refused forever. `Err` is
+/// `Msg::TrashDone`'s handler. A reply that doesn't name `app.trash`'s own
+/// `Pending` generation (a fresh trash request started and finished before
+/// this one's reply lands, or this one simply already landed once) is
+/// dropped on arrival, before anything is touched — under single-flight
+/// enforcement (`request_trash`/`confirm` both refuse while `app.trash`
+/// isn't `Idle`) that can only happen for a reply that owns no state left to
+/// clear. Once a reply IS for the current `Pending`, `app.trash` returns to
+/// `Idle` unconditionally — before the `Ok`/`Err` match, so neither outcome
+/// can leave the next request refused forever. `Err` is
 /// reported and closes nothing. `Ok` re-derives dirtiness one last time
 /// (assumption A4): a document that became dirty while the Cmd was in
 /// flight keeps its tab open (the file is gone, but the unsaved words are
@@ -164,10 +175,13 @@ pub(crate) fn handle_trash_done(
     result: Result<(), CmdError>,
     effects: &mut Effects,
 ) {
-    if generation != app.trash_gen {
+    let TrashState::Pending { generation: expected } = &app.trash else {
+        return;
+    };
+    if generation != *expected {
         return;
     }
-    app.trash_pending = None;
+    app.trash = TrashState::Idle;
     let name = display_name(path);
     match result {
         Err(e) => {
@@ -292,7 +306,7 @@ mod tests {
             ),
             "the pre-existing prompt must survive unchanged"
         );
-        assert!(app.trash_pending.is_none(), "no trash was armed");
+        assert!(matches!(app.trash, TrashState::Idle), "no trash was armed");
         assert_eq!(
             messages::newest_text(&app),
             Some("trash confirmation dropped \u{2014} a prompt is already showing")
