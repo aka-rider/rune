@@ -194,29 +194,25 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
 // (500-line budget) — `update_inner`'s `Msg::Db` arm above calls it through
 // `db_dispatch::`.
 
-/// The post-dispatch chokepoint `app::update` calls after every message
-/// (moved out of `app.rs` itself, which already exceeds the 500-line ceiling
-/// from unrelated concurrent work and must not grow further): whatever a
-/// content/cursor/tab-switch change can invalidate that `update_inner`
-/// didn't already handle inline. Highlight scheduling and a newly-active
-/// image DOCUMENT's decode are unchanged; `sync_embeds` runs
-/// unconditionally (its own `app.graphics.kitty`/`doc.kind` guards make it
-/// a cheap no-op the overwhelming majority of the time) so no future edit
-/// path can forget to keep the active document's embed set current.
 pub(crate) fn after_update(
     app: &mut App,
     active_before: DocumentId,
     buffer_version_before: u64,
+    frame_width_before: u16,
     effects: &mut Effects,
 ) {
-    if app.active != active_before || app.active_doc().buffer.version() != buffer_version_before {
+    let content_changed =
+        app.active != active_before || app.active_doc().buffer.version() != buffer_version_before;
+    if content_changed {
         let id = app.active;
         crate::highlight::schedule_highlight(app, id, effects);
     }
     if app.active != active_before {
         crate::graphics::schedule_image_decode(app, app.active, effects);
     }
-    crate::graphics::sync_embeds(app, app.active, effects);
+    if content_changed || app.frame_width != frame_width_before {
+        crate::graphics::sync_embeds(app, app.active, effects);
+    }
     // The message pane's auto-collapse arming is re-evaluated after every
     // settle rather than only right after a post, so the
     // countdown starts (or restays suppressed) correctly no matter what

@@ -229,6 +229,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let journal_pos_before = app.active_doc().journal.pos();
     let active_before = app.active;
     let buffer_version_before = app.active_doc().buffer.version();
+    let frame_width_before = app.frame_width;
     let focus_before = app.focus();
     let nav_index_before = app.nav_history.index();
     let nav_caret_before = app.active_doc().cursors.primary().position;
@@ -240,6 +241,12 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     if app.nav_history.index() == nav_index_before {
         crate::navhistory::observe_jump(app, active_before, nav_caret_before);
     }
-    dispatch::after_update(app, active_before, buffer_version_before, effects);
+    dispatch::after_update(
+        app,
+        active_before,
+        buffer_version_before,
+        frame_width_before,
+        effects,
+    );
     crate::explorer_preview::on_focus_changed(app, focus_before, app.focus());
 }
