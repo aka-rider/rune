@@ -108,25 +108,28 @@ fn merge_doc_active_ignores_an_inactive_merge() {
 // MERGE-SAVE-BLOCKED
 // ---------------------------------------------------------------------
 
-#[test]
-fn merge_save_blocked_detects_a_pending_save() {
+fn merging_snapshot() -> rune_fuzz::snapshot::Snapshot {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.merge_unresolved = 1;
+    prev.merge_doc = Some(prev.active);
+    prev
+}
+
+#[test]
+fn merge_save_blocked_detects_a_newly_parked_save_cmd() {
+    let prev = merging_snapshot();
     let next = base_snapshot("abc");
     let mut ctx = save_key_ctx();
-    ctx.pending_save_bytes = Some(b"abc".to_vec());
-    let v = merge_save_blocked(&prev, &next, &ctx).expect(
-        "a Save key arming pending_save_bytes while unresolved must trip MERGE-SAVE-BLOCKED",
-    );
+    ctx.save_newly_parked = true;
+    let v = merge_save_blocked(&prev, &next, &ctx)
+        .expect("a save Cmd parked while unresolved must trip MERGE-SAVE-BLOCKED");
     assert_eq!(v.id, "MERGE-SAVE-BLOCKED");
 }
 
 #[test]
 fn merge_save_blocked_detects_save_in_flight() {
-    let mut prev = base_snapshot("abc");
-    prev.merge_active = true;
-    prev.merge_unresolved = 1;
+    let prev = merging_snapshot();
     let mut next = base_snapshot("abc");
     next.save_in_flight = true;
     let ctx = save_key_ctx();
@@ -136,34 +139,65 @@ fn merge_save_blocked_detects_save_in_flight() {
 }
 
 #[test]
-fn merge_save_blocked_accepts_a_refused_save() {
+fn merge_save_blocked_detects_a_save_armed_during_a_pending_merge() {
+    let mut prev = base_snapshot("abc");
+    prev.merge_pending = true;
+    prev.merge_doc = Some(prev.active);
+    let mut next = base_snapshot("abc");
+    next.save_in_flight = true;
+    let ctx = plain_key_ctx();
+    let v = merge_save_blocked(&prev, &next, &ctx).expect(
+        "the ^M window is exactly where a save slips past the gate, whatever key asked for it",
+    );
+    assert_eq!(v.id, "MERGE-SAVE-BLOCKED");
+}
+
+#[test]
+fn merge_save_blocked_ignores_a_save_of_a_document_the_merge_does_not_own() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;
     prev.merge_unresolved = 1;
+    prev.merge_doc = Some(other_doc_id());
+    prev.active = base_active_id();
+    let mut next = base_snapshot("abc");
+    next.save_in_flight = true;
+    let ctx = save_key_ctx();
+    assert_eq!(
+        merge_save_blocked(&prev, &next, &ctx),
+        None,
+        "the disk-conflict Guard may legitimately save a document no merge owns"
+    );
+}
+
+#[test]
+fn merge_save_blocked_accepts_a_refused_save() {
+    let prev = merging_snapshot();
     let next = base_snapshot("abc");
-    let ctx = save_key_ctx(); // pending_save_bytes: None, save_in_flight: false
+    let ctx = save_key_ctx(); // save_newly_parked: false, save_in_flight: false
     assert_eq!(merge_save_blocked(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn merge_save_blocked_accepts_a_save_that_was_already_in_flight() {
+    let mut prev = merging_snapshot();
+    prev.save_in_flight = true;
+    let mut next = base_snapshot("abc");
+    next.save_in_flight = true;
+    let ctx = save_key_ctx();
+    assert_eq!(
+        merge_save_blocked(&prev, &next, &ctx),
+        None,
+        "a save armed on an earlier step must not be re-accused on every step it outlives"
+    );
 }
 
 #[test]
 fn merge_save_blocked_ignores_a_fully_resolved_merge() {
-    let mut prev = base_snapshot("abc");
-    prev.merge_active = true;
+    let mut prev = merging_snapshot();
     prev.merge_unresolved = 0; // nothing left to block
     let mut next = base_snapshot("abc");
     next.save_in_flight = true;
     let ctx = save_key_ctx();
-    assert_eq!(merge_save_blocked(&prev, &next, &ctx), None);
-}
-
-#[test]
-fn merge_save_blocked_ignores_a_non_save_key() {
-    let mut prev = base_snapshot("abc");
-    prev.merge_active = true;
-    prev.merge_unresolved = 1;
-    let mut next = base_snapshot("abc");
-    next.save_in_flight = true;
-    let ctx = plain_key_ctx();
     assert_eq!(merge_save_blocked(&prev, &next, &ctx), None);
 }
 

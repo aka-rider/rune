@@ -12,7 +12,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
 use crate::app::App;
@@ -22,7 +21,9 @@ use crate::materialize_ack;
 use crate::messages;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
+pub(crate) mod gate;
 mod materialize;
+use gate::SaveEntry;
 use materialize::materialize_now;
 pub(crate) use materialize::{bind_new_now, run_materialize_vfs, schedule_snapshot_debounce};
 
@@ -102,60 +103,15 @@ pub(crate) fn trigger_save(
     origin: SaveOrigin,
     effects: &mut Effects,
 ) -> SaveStart {
-    let Some(kind) = app.doc(id).map(|d| d.kind) else {
-        return SaveStart::Refused;
-    };
-    // An image document has a REAL
-    // `file_path`, so without this a save would reach `save_cmd` and
-    // overwrite it with the buffer's own (always empty) bytes. Placed
-    // FIRST, before the in-flight/dirty checks below — those already
-    // return early for an unedited buffer, which would make a guard placed
-    // after them dead code.
-    if kind == DocumentKind::Image {
-        return SaveStart::Refused;
-    }
-    // Every global save chord routes here unconditionally,
-    // and the no-store fallback below publishes unconditionally — without
-    // this, saving a `Preview` document would atomically overwrite the
-    // previewed file with this document's own buffer.
-    if app.refuse_if_preview(id) {
-        return SaveStart::Refused;
-    }
-    if app
-        .doc(id)
-        .is_some_and(super::document::Document::save_in_flight)
-    {
-        messages::warn(app, "a save is already in progress");
-        return SaveStart::InFlight;
-    }
-    // The mirror of `rename::begin`'s own `save_in_flight` refusal, and
-    // required for the same reason from the other side: a save `Cmd`
-    // captures the document's path when it is spawned, while the rebind to
-    // the renamed path only happens once the rename ack lands. Saving in
-    // between republishes the edited content at the OLD path — resurrecting
-    // the file the rename is in the middle of moving away from, and leaving
-    // the new name holding stale bytes. Refused rather than queued: the ack
-    // is one message away, and ^S again after it lands does the right thing
-    // against the right path.
-    if app.rename.in_flight() {
-        // `error`, not `warn`: nothing was written, and unlike the
-        // in-progress-save refusal above (where the data genuinely is
-        // being written) or merge mode's own refusal (where the footer's
-        // merge hint keeps that state visible independently), an
-        // auto-collapsing message here would leave this refusal with no
-        // trace once its 5s window elapses.
-        messages::error(app, "can't save while a rename is in flight");
-        return SaveStart::Refused;
-    }
     // Structural, not per-call-site: EVERY save entry point (^S, the
     // DirtyClose/DirtyQuit guards' [S], the quit fan-out, DiskConflict's
-    // [S]ave anyway) funnels through this ladder, so an active resolver
-    // with unresolved blocks can never publish a half-resolved working
-    // form over the user's file no matter which chord asked for the save.
-    // `refuses_save` posts its own count-carrying status.
-    if crate::merge::refuses_save(app, id) {
-        return SaveStart::Refused;
-    }
+    // [S]ave anyway) funnels through this ladder, and the `SaveClearance` it
+    // mints is the only key the enqueue/spawn sites below accept — a save
+    // that never climbed it cannot be written.
+    let clearance = match gate::clear(app, id, SaveEntry::Materialize) {
+        Ok(clearance) => clearance,
+        Err(start) => return start,
+    };
     match origin {
         SaveOrigin::Interactive => {
             if let Some(message) = reading_refusal(app, id) {
@@ -206,15 +162,7 @@ pub(crate) fn trigger_save(
         // bytes into `saved_content`, never whatever the buffer holds by
         // the time the ack lands.
         let content: Arc<str> = Arc::from(doc.buffer.content());
-        let bytes = content.as_bytes().to_vec();
-        let Some(doc) = app.doc_mut(id) else {
-            return SaveStart::Refused;
-        };
-        let ticket = doc.begin_save(version, content);
-        let vfs = Arc::clone(&app.vfs);
-        effects
-            .cmds
-            .push(save_cmd(id, ticket, vfs, path, bytes, version));
+        materialize::save_directly(app, id, path, version, content, &clearance, effects);
         return SaveStart::InFlight;
     }
 
@@ -230,12 +178,12 @@ pub(crate) fn trigger_save(
             if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
                 app.pending_save_confirm = None;
             }
-            materialize_now(app, id, path, version, mode, effects);
+            materialize_now(app, id, path, version, mode, &clearance, effects);
             return SaveStart::InFlight;
         }
         if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
             app.pending_save_confirm = None;
-            materialize_now(app, id, path, version, mode, effects);
+            materialize_now(app, id, path, version, mode, &clearance, effects);
             return SaveStart::InFlight;
         }
         let generation = app.next_save_confirm_gen.mint();
@@ -262,7 +210,7 @@ pub(crate) fn trigger_save(
         return SaveStart::Refused;
     }
 
-    materialize_now(app, id, path, version, mode, effects);
+    materialize_now(app, id, path, version, mode, &clearance, effects);
     SaveStart::InFlight
 }
 
@@ -285,7 +233,7 @@ fn reading_refusal(app: &App, id: DocumentId) -> Option<&'static str> {
 /// always save. A publish whose durability confirmation failed is still a
 /// success (`durable: false`), surfaced as a warning on the ack side —
 /// never a save failure.
-pub(crate) fn save_cmd(
+fn save_cmd(
     id: DocumentId,
     ticket: crate::document::SaveTicket,
     vfs: std::sync::Arc<dyn Vfs + Send + Sync>,
@@ -326,3 +274,7 @@ pub(crate) fn save_cmd(
 // `tests/save_flow.rs`: every item they exercise — `App`, `update`, `Msg`,
 // `Effects`, `keymap` types, `commands::edit::insert_char` — is already
 // public.
+
+#[cfg(test)]
+#[path = "save/gate_tests.rs"]
+mod gate_tests;

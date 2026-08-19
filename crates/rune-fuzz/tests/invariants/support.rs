@@ -177,6 +177,7 @@ pub(crate) fn base_ctx() -> StepCtx {
         raw: Vec::new(),
         disk: None,
         pending_save_bytes: None,
+        save_newly_parked: false,
         delivered_save_bytes: None,
         saves_delivered_ok: 0,
         active_is_seed_doc: true,

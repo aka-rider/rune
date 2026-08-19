@@ -15,8 +15,9 @@ use rune_vfs::Vfs;
 
 use crate::app::App;
 use crate::document::DocumentId;
-use crate::rename::{RenameState, Ticket};
+use crate::rename::{Commit, RenameState, Ticket};
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
+use crate::save::gate::{self, SaveEntry};
 
 /// Enqueues the rename on whichever route this document has: the `rune-db`
 /// writer FIFO when it is store-bound, else a plain `Cmd` over the injected
@@ -94,7 +95,10 @@ pub(crate) fn rename_cmd(
 /// Writes no focus of its own: `begin` (the only caller) always runs inside
 /// `App::set_focus`'s blur of the title to the Editor, which assigns the
 /// focus itself once this returns.
-pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut Effects) {
+pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut Effects) -> Commit {
+    let Ok(clearance) = gate::clear(app, id, SaveEntry::BindNew) else {
+        return Commit::Refused;
+    };
     let dir = crate::explorer::initial_root(app);
     let path = dir.join(name);
 
@@ -103,8 +107,8 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         // `rename_excl` create whose EEXIST branch refuses and records the
         // winner's bytes. `save::trigger_save` cannot be reused — it reads
         // `doc.file_path`, which is exactly what does not exist yet.
-        crate::save::bind_new_now(app, id, path);
-        return;
+        crate::save::bind_new_now(app, id, path, &clearance);
+        return Commit::Accepted;
     }
 
     crate::commands::strip_trailing::leave_reading_then_strip(app, id);
@@ -128,6 +132,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         to: path_for_state,
         ticket: Ticket::Cmd(generation),
     };
+    Commit::Accepted
 }
 
 /// The no-store draft-create `Cmd`: a no-clobber `rune_vfs::put`

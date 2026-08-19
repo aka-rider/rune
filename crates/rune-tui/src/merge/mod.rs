@@ -297,6 +297,14 @@ pub(crate) fn auto_exit(app: &mut App) {
 /// after exit or full resolution the document is ordinary dirty text and
 /// saves normally.
 pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -> bool {
+    if matches!(&app.merge, MergeState::Pending { doc, .. } if *doc == target) {
+        let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
+        messages::warn(
+            app,
+            format!("merge is preparing — press {save_key} again once it lands"),
+        );
+        return true;
+    }
     let MergeState::Active { doc, .. } = &app.merge else {
         return false;
     };

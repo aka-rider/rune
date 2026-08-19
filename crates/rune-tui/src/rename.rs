@@ -239,8 +239,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // have never observed — forbidden, since no CAS baseline exists to
     // check against.
     let Some(from) = doc.file_path.clone() else {
-        crate::rename_create::bind_new(app, id, &typed, effects);
-        return Commit::Accepted;
+        return crate::rename_create::bind_new(app, id, &typed, effects);
     };
 
     let to = target_path(&from, &typed);
@@ -258,7 +257,12 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
             .and_then(|d| d.doc_db())
             .is_some_and(|d| d.publish_mode.is_create_only())
     {
-        crate::save::bind_new_now(app, id, to);
+        let Ok(clearance) =
+            crate::save::gate::clear(app, id, crate::save::gate::SaveEntry::BindNew)
+        else {
+            return Commit::Refused;
+        };
+        crate::save::bind_new_now(app, id, to, &clearance);
         return Commit::Accepted;
     }
 

@@ -141,6 +141,7 @@ pub struct StepCtx {
     /// Bytes the pending `save_cmd` was handed at construction, if one is
     /// deferred right now.
     pub pending_save_bytes: Option<Vec<u8>>,
+    pub save_newly_parked: bool,
     /// Bytes the save that JUST completed was handed — set only on a
     /// `MsgTag::SaveDone` step, looked up by THAT ack's own `id`, never by
     /// whichever document happens to be active when the ack lands (see
