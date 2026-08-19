@@ -257,6 +257,8 @@ mod tests {
                 fixture: 200,
                 base: usize::MAX,
             },
+            Action::InstallDiffLeft { seed_index: 0 },
+            Action::InstallDiffLeft { seed_index: 255 },
         ];
 
         let encoded = encode(DOC_PATH, content, &actions);

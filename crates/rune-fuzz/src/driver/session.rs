@@ -23,9 +23,11 @@ use crate::step::StepCtx;
 
 use super::RunResult;
 use super::checks;
-use super::step_exec::{
-    discharge_pending_rename, discharge_pending_save, discharge_pending_trash, step_and_check,
+use super::discharge::{
+    discharge_pending_highlight, discharge_pending_rename, discharge_pending_save,
+    discharge_pending_trash,
 };
+use super::step_exec::step_and_check;
 use super::store_ops::{drain_all_db_ops, drain_all_pending_setup, open_store};
 
 /// Mutable driver state threaded through one session. `pending_save` is an
@@ -62,6 +64,7 @@ pub(super) struct State {
     /// Left undischarged, `Mem::trash` and `Msg::TrashDone` are never
     /// reached from this driver.
     pub(super) pending_trash: Option<Cmd>,
+    pub(super) pending_highlights: std::collections::VecDeque<Cmd>,
     pub(super) saves_delivered_ok: usize,
     pub(super) steps: usize,
     /// The `DocumentId` `App::new` minted for the seeded document below —
@@ -106,6 +109,7 @@ pub(super) struct State {
     /// `Diverged`, defeating the very divergence this action exists to
     /// seed.
     pub(super) diverge_step: u64,
+    pub(super) disk_diverged_since_publish: bool,
     pub(super) manual_clock: Arc<rune_tui::pointer::ManualClock>,
 }
 
@@ -195,6 +199,7 @@ fn new_state(
         pending_save: None,
         pending_rename: None,
         pending_trash: None,
+        pending_highlights: std::collections::VecDeque::new(),
         saves_delivered_ok: 0,
         steps: 0,
         seed_doc,
@@ -203,6 +208,7 @@ fn new_state(
         rediverge: crate::invariant::RedivergenceTracker::default(),
         divergent_save: crate::invariant::DivergentSaveTracker::default(),
         diverge_step: 0,
+        disk_diverged_since_publish: false,
         manual_clock,
     }
 }
@@ -502,6 +508,14 @@ impl Session {
         &mut self.state.app
     }
 
+    pub fn saves_delivered_ok(&self) -> usize {
+        self.state.saves_delivered_ok
+    }
+
+    pub fn disk_diverged_since_publish(&self) -> bool {
+        self.state.disk_diverged_since_publish
+    }
+
     pub fn finish(mut self) -> RunResult {
         match std::mem::replace(&mut self.phase, Phase::SetupPanicked) {
             Phase::Live(mut prev) => {
@@ -539,7 +553,14 @@ impl Session {
                     step_and_check(state, prev, msg, tag, None, outcome);
                 }
 
-                // Rule 6d: drain every recovery-store op still pending
+                while outcome.violation.is_none() && !state.app.should_quit {
+                    let Some((msg, tag)) = discharge_pending_highlight(state) else {
+                        break;
+                    };
+                    step_and_check(state, prev, msg, tag, None, outcome);
+                }
+
+                // Rule 6e: drain every recovery-store op still pending
                 // before the end-of-session undo/redo drive — left undrained, a merge/
                 // probe/append-edit ack sitting in `app.db_ops` would just carry over
                 // into a `Store` about to be shut down anyway, so this settles the

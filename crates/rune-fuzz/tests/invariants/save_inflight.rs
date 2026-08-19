@@ -172,6 +172,7 @@ fn save_inflight_sm_accepts_clearing_on_materialize_vfs_done_for_this_document()
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::MaterializeVfsDone {
         id: base_active_id(),
+        committed: false,
     };
     assert_eq!(save_inflight_sm(&prev, &next, &ctx), None);
 }
@@ -186,7 +187,10 @@ fn save_inflight_sm_detects_clearing_on_materialize_vfs_done_for_another_documen
     prev.save_in_flight = true;
     let next = base_snapshot("abc");
     let mut ctx = base_ctx();
-    ctx.msg = MsgTag::MaterializeVfsDone { id: other_doc_id() };
+    ctx.msg = MsgTag::MaterializeVfsDone {
+        id: other_doc_id(),
+        committed: false,
+    };
     let v = save_inflight_sm(&prev, &next, &ctx).expect(
         "a MaterializeVfsDone naming a DIFFERENT document must not excuse this document's clear",
     );
@@ -205,6 +209,7 @@ fn save_inflight_sm_accepts_clearing_on_a_db_ack_naming_this_document() {
     ctx.msg = MsgTag::Db {
         op_id: 1,
         doc: Some(base_active_id()),
+        save_committed: false,
     };
     assert_eq!(save_inflight_sm(&prev, &next, &ctx), None);
 }
@@ -225,6 +230,7 @@ fn save_inflight_sm_accepts_clearing_on_a_db_ack_that_posts_a_store_failure_mess
     ctx.msg = MsgTag::Db {
         op_id: 1,
         doc: Some(other_doc_id()),
+        save_committed: false,
     };
     assert_eq!(save_inflight_sm(&prev, &next, &ctx), None);
 }
@@ -242,6 +248,7 @@ fn save_inflight_sm_detects_clearing_on_an_unrelated_db_ack() {
     ctx.msg = MsgTag::Db {
         op_id: 7,
         doc: Some(other_doc_id()),
+        save_committed: false,
     };
     let v = save_inflight_sm(&prev, &next, &ctx).expect(
         "a Db ack naming an unrelated document with no failure evidence must still trip \

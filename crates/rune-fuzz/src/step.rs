@@ -97,6 +97,7 @@ pub enum MsgTag {
     Db {
         op_id: u64,
         doc: Option<DocumentId>,
+        save_committed: bool,
     },
     /// `Msg::MaterializeVfsDone` — the caller-side `vfs` `Cmd` WP7's
     /// materialize dance spawns (`materialize_ack::materialize_vfs_cmd`)
@@ -112,6 +113,7 @@ pub enum MsgTag {
     /// `Db` ack for THAT lands.
     MaterializeVfsDone {
         id: DocumentId,
+        committed: bool,
     },
     /// `Msg::TrashDone` (plan WP3.S3, mirroring `RenameDone`'s driver gap
     /// fix): a `CmdKind::Trash` used to be silently dropped by the
@@ -157,4 +159,5 @@ pub struct StepCtx {
     /// checker never has to re-derive doc identity from a `Snapshot` that
     /// structurally can't carry it (module docs).
     pub active_is_seed_doc: bool,
+    pub disk_diverged_since_publish: bool,
 }

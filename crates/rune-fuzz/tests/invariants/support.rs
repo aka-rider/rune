@@ -180,6 +180,7 @@ pub(crate) fn base_ctx() -> StepCtx {
         delivered_save_bytes: None,
         saves_delivered_ok: 0,
         active_is_seed_doc: true,
+        disk_diverged_since_publish: false,
     }
 }
 

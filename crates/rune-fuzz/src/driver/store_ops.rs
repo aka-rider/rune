@@ -17,8 +17,9 @@ use rune_vfs::Vfs;
 use crate::guard;
 use crate::snapshot::Snapshot;
 
+use super::discharge::drain_one_db_op;
 use super::session::{Outcome, State};
-use super::step_exec::{drain_one_db_op, step_and_check};
+use super::step_exec::step_and_check;
 
 /// Blocks on `bridge` for the recovery-store reply completing `op_id` — the
 /// one drain predicate every consumer of a buffered `DbEvent` shares,
@@ -104,6 +105,7 @@ pub(super) fn drain_all_db_ops(
 /// session.
 pub(super) fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     state.rediverge.note_external_write();
+    state.disk_diverged_since_publish = true;
     state.diverge_step += 1;
     let bytes = format!("fuzz-external-write-{}\n", state.diverge_step).into_bytes();
     let path = state.path.clone();

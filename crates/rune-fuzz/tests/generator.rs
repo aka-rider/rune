@@ -137,10 +137,11 @@ fn action_variant_name(action: &Action) -> &'static str {
         Action::HighlightTree { .. } => "HighlightTree",
         Action::AdvanceClock(_) => "AdvanceClock",
         Action::PaletteRecentsLoaded { .. } => "PaletteRecentsLoaded",
+        Action::InstallDiffLeft { .. } => "InstallDiffLeft",
     }
 }
 
-fn every_action_variant_witness() -> [Action; 19] {
+fn every_action_variant_witness() -> [Action; 20] {
     [
         Action::Key(KeyInput {
             code: KeyCode::Char('a'),
@@ -186,6 +187,7 @@ fn every_action_variant_witness() -> [Action; 19] {
             ok: true,
             names: Vec::new(),
         },
+        Action::InstallDiffLeft { seed_index: 0 },
     ]
 }
 
@@ -232,4 +234,40 @@ fn arb_session_reaches_every_action_variant() {
              EXEMPT_ACTION_VARIANTS"
         );
     }
+}
+
+#[test]
+fn arb_session_boots_some_sessions_through_a_diff_left_and_varies_the_seed() {
+    let config = Config {
+        rng_seed: RngSeed::Fixed(0x5255_4e46),
+        ..Config::default()
+    };
+    let mut runner = TestRunner::new(config);
+
+    let mut booted = 0usize;
+    let mut skipped = 0usize;
+    let mut distinct_contents: HashSet<&'static str> = HashSet::new();
+    for _ in 0..SAMPLED_SESSIONS {
+        let tree = generate::arb_session()
+            .new_tree(&mut runner)
+            .unwrap_or_else(|e| panic!("arb_session generation failed: {e}"));
+        let (_, _, actions) = tree.current();
+        match actions.first() {
+            Some(Action::InstallDiffLeft { seed_index }) => {
+                booted += 1;
+                distinct_contents.insert(generate::diff_left_content(*seed_index));
+            }
+            _ => skipped += 1,
+        }
+    }
+
+    assert!(booted > 0, "no sampled session booted through a diff-left");
+    assert!(
+        skipped > 0,
+        "every sampled session booted through a diff-left"
+    );
+    assert!(
+        distinct_contents.len() > 1,
+        "every diff-left boot used the same left content: {distinct_contents:?}"
+    );
 }

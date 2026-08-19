@@ -6,13 +6,17 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Msg, PasteTarget};
 
 use crate::action::Action;
+use crate::guard;
+use crate::invariant::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::MsgTag;
 
+use super::super::discharge::{
+    discharge_pending_highlight, discharge_pending_rename, discharge_pending_save,
+    discharge_pending_trash, drain_one_db_op,
+};
 use super::super::step_exec::{
-    discharge_pending_rename, discharge_pending_save, discharge_pending_trash, drain_one_db_op,
-    highlight_step, highlight_tree_step, key_step, mouse_step, palette_recents_step,
-    step_and_check,
+    highlight_step, highlight_tree_step, key_step, mouse_step, palette_recents_step, step_and_check,
 };
 use super::super::store_ops::{diverge_disk, drain_all_db_ops};
 use super::{Outcome, State};
@@ -33,6 +37,9 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
         }
         Action::DivergeDisk => {
             diverge_disk(state, prev, outcome);
+        }
+        Action::InstallDiffLeft { seed_index } => {
+            install_diff_left(state, prev, outcome, seed_index);
         }
         Action::DeliverDb => {
             let bridge = Arc::clone(&state.bridge);
@@ -75,7 +82,12 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             {
                 return;
             }
-            if let Some((msg, tag)) = discharge_pending_trash(state) {
+            if let Some((msg, tag)) = discharge_pending_trash(state)
+                && step_and_check(state, prev, msg, tag, None, outcome)
+            {
+                return;
+            }
+            if let Some((msg, tag)) = discharge_pending_highlight(state) {
                 step_and_check(state, prev, msg, tag, None, outcome);
             }
         }
@@ -188,6 +200,39 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
                     break;
                 }
             }
+        }
+    }
+}
+
+fn install_diff_left(
+    state: &mut State,
+    prev: &mut Snapshot,
+    outcome: &mut Outcome,
+    seed_index: u8,
+) {
+    let left_content = crate::generate::diff_left_content(seed_index);
+    let left_name = "fuzz-diff-left.md".to_string();
+    let result = guard::catching_panic(|| {
+        rune_tui::diff_view::install(&mut state.app, left_content.as_bytes().to_vec(), left_name)
+    });
+    match result {
+        Ok(Ok(())) => {
+            *prev = Snapshot::capture(&mut state.app, false);
+        }
+        Ok(Err(rune_tui::diff_view::DiffInstallError::InvalidUtf8)) => {
+            outcome.violation = Some(Violation::new(
+                "DIFF-INSTALL-UTF8",
+                "diff_view::install refused the generator's own diff-left seed content as \
+                 invalid UTF-8"
+                    .to_string(),
+            ));
+            outcome.final_snapshot = Some(prev.clone());
+            outcome.final_ctx = None;
+        }
+        Err(violation) => {
+            outcome.violation = Some(violation);
+            outcome.final_snapshot = Some(prev.clone());
+            outcome.final_ctx = None;
         }
     }
 }

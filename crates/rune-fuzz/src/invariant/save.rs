@@ -43,38 +43,12 @@ pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     ))
 }
 
-/// `SAVE-CLEAN-MATCHES-DISK` — once the document reports clean
-/// (`!is_dirty`) with at least one successful save delivered and no save
-/// still pending, disk bytes must byte-equal the current content. Catches
-/// a save that reports success without actually persisting. Inert during
-/// the `UNDO-TOTAL` drive (G5 keeps `is_dirty` true there — correct, not a
-/// coverage hole).
-///
-/// `next.is_dirty`/`next.content` are doc-scoped (read off `app.active_
-/// doc()` at capture time), but `ctx.disk` is NOT — it's `mem.read` against
-/// the one fixed path the session was seeded and bound to (`driver.rs`'s
-/// `State::path`), which only ever holds the real, seeded document's bytes.
-/// `F1` (help toggle) swaps `app.active` to the virtual Help document,
-/// whose synthetic markdown and trivial `is_dirty == false` have nothing to
-/// do with that path — comparing them against `ctx.disk` misreports the
-/// checker's own doc-vs-path mismatch as a durability defect (this is what
-/// TODO-fuzz-save-clean-matches-disk-help-toggle.md's `Type("hello world")
-/// -> ⌘S -> A -> F1 -> A` repro actually hit).
-///
-/// Gated on `ctx.active_is_seed_doc` rather than `!next.read_only` alone
-/// (the `!read_only` proxy this used to rely on): plan WP0 (`rr` history)
-/// made closing the LAST open document mint and activate a fresh, non-
-/// read-only untitled draft instead of refusing — a second way "the active
-/// document is not the one `ctx.disk` describes" can now arise without
-/// `read_only` ever being set, e.g. a Guard's `[S]ave` closing the seed
-/// document once its save ack lands. `active_is_seed_doc` covers both
-/// cases directly instead of proxying through a field that only ever
-/// happened to correlate with the Help-toggle one.
 pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if !ctx.active_is_seed_doc
         || next.is_dirty
         || ctx.saves_delivered_ok == 0
         || ctx.pending_save_bytes.is_some()
+        || ctx.disk_diverged_since_publish
     {
         return None;
     }
@@ -98,6 +72,7 @@ pub fn save_no_trailing_ws(next: &Snapshot, ctx: &StepCtx) -> Option<Violation> 
         || next.is_dirty
         || ctx.saves_delivered_ok == 0
         || ctx.pending_save_bytes.is_some()
+        || ctx.disk_diverged_since_publish
     {
         return None;
     }

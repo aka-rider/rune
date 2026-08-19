@@ -96,7 +96,7 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
             // every outcome that settles `save_in_flight` synchronously on
             // this message (`Missing`, or a local `vfs`/path-disagreement
             // failure) does so only for `id` itself.
-            MsgTag::MaterializeVfsDone { id } => *id == next.active,
+            MsgTag::MaterializeVfsDone { id, .. } => *id == next.active,
             // Two DISTINCT legitimate paths land on `Msg::Db`, so `doc`
             // alone only covers the first: a `MaterializeRecord` ack for
             // THIS document's own pending op (`handle_materialize_ack`) —
