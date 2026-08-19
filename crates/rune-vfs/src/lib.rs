@@ -147,6 +147,19 @@ pub enum FileKind {
     Other,
 }
 
+/// Deliberately separate from [`FileKind`]: a fourth `FileKind` variant would
+/// erase the directory-or-file fact every caller keys off, silently
+/// reclassifying every `== FileKind::Dir` site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    No,
+    To,
+    Broken,
+}
+
+/// Mirrors the kernel's `SYMLOOP_MAX`.
+pub const MAX_SYMLINK_HOPS: usize = 32;
+
 /// A single direct child of a directory, as returned by [`Vfs::read_dir`].
 ///
 /// `name` and `path` are DELIBERATELY both carried, additively (plan
@@ -169,7 +182,10 @@ pub struct DirEntry {
     /// `file_name()` `OsString` (never round-tripped through `String`) and
     /// what `Mem` derived from its own key. Always safe to open.
     pub path: PathBuf,
+    /// The kind the entry names after any symlink is followed, matching what
+    /// `Vfs::stat` reports for the same path.
     pub kind: FileKind,
+    pub link: Link,
 }
 
 /// A virtual file system exposing the materialize-complete primitive set,
@@ -219,6 +235,10 @@ pub trait Vfs {
 
     /// Stat `path`, returning size/mtime/identity/nlink.
     fn stat(&self, path: &Path) -> io::Result<Stat>;
+
+    /// The target a symlink at `path` names, verbatim and unresolved.
+    /// Errors `io::ErrorKind::InvalidInput` when `path` is not a symlink.
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf>;
 
     /// Canonicalize `path`. Disk: resolves symlinks so saves write through a
     /// symlink to its target, never over the link itself; when the leaf

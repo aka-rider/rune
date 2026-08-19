@@ -142,6 +142,9 @@ impl Vfs for FixedKindVfs {
     fn read_dir(&self, _path: &Path) -> io::Result<Vec<DirEntry>> {
         unimplemented!("not exercised by resolve()")
     }
+    fn read_link(&self, _path: &Path) -> io::Result<PathBuf> {
+        unimplemented!("not exercised by resolve()")
+    }
 }
 
 #[test]

@@ -67,6 +67,9 @@ impl Vfs for SwappingReadVfs {
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         self.inner.read_dir(path)
     }
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.read_link(path)
+    }
 }
 
 fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
@@ -293,6 +296,9 @@ impl Vfs for FlappingStatVfs {
     }
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         self.inner.read_dir(path)
+    }
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.read_link(path)
     }
 }
 

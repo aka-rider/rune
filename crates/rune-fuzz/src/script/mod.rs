@@ -220,11 +220,13 @@ mod tests {
                         name: "sub dir".to_string(), // a literal space in the name
                         path: PathBuf::from("sub dir"),
                         kind: rune_vfs::FileKind::Dir,
+                        link: rune_vfs::Link::No,
                     },
                     DirEntry {
                         name: "a.md".to_string(),
                         path: PathBuf::from("a.md"),
                         kind: rune_vfs::FileKind::File,
+                        link: rune_vfs::Link::No,
                     },
                 ],
                 cause: DirCause::Nav,

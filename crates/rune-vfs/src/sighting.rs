@@ -294,6 +294,9 @@ mod tests {
         fn read_dir(&self, path: &Path) -> io::Result<Vec<crate::DirEntry>> {
             self.inner.read_dir(path)
         }
+        fn read_link(&self, path: &Path) -> io::Result<std::path::PathBuf> {
+            self.inner.read_link(path)
+        }
     }
 
     #[test]
@@ -373,6 +376,9 @@ mod tests {
         }
         fn read_dir(&self, path: &Path) -> io::Result<Vec<crate::DirEntry>> {
             self.inner.read_dir(path)
+        }
+        fn read_link(&self, path: &Path) -> io::Result<std::path::PathBuf> {
+            self.inner.read_link(path)
         }
     }
 

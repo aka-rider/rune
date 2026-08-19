@@ -186,23 +186,35 @@ fn parse_dir_loaded<'a>(
 fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
     let malformed = || ScriptError::MalformedLine {
         line,
-        reason: "expected `dirloaded-entry <f|d> <name>`".to_string(),
+        reason: "expected `dirloaded-entry <f|d|o> <n|t|b> <name>`".to_string(),
     };
-    let mut parts = rest.splitn(2, ' ');
-    let flag = parts.next().ok_or_else(malformed)?;
+    let mut parts = rest.splitn(3, ' ');
+    let kind_flag = parts.next().ok_or_else(malformed)?;
+    let link_flag = parts.next().ok_or_else(malformed)?;
     let name_field = parts.next().ok_or_else(malformed)?;
-    let kind = match flag {
-        "d" => rune_vfs::FileKind::Dir,
+
+    let kind = match kind_flag {
         "f" => rune_vfs::FileKind::File,
+        "d" => rune_vfs::FileKind::Dir,
+        "o" => rune_vfs::FileKind::Other,
         _ => return Err(malformed()),
     };
-    // WP13.S1: the script codec is text-only (its whole point is a
-    // human-readable, round-trippable session log), so `path` is derived
-    // straight from the decoded `name` — never lossy, since the codec
-    // never carries anything but valid Unicode.
+
+    let link = match link_flag {
+        "n" => rune_vfs::Link::No,
+        "t" => rune_vfs::Link::To,
+        "b" => rune_vfs::Link::Broken,
+        _ => return Err(malformed()),
+    };
+
     let name = unescape(name_field, line)?;
     let path = PathBuf::from(&name);
-    Ok(DirEntry { name, path, kind })
+    Ok(DirEntry {
+        name,
+        path,
+        kind,
+        link,
+    })
 }
 
 /// Parses a `highlight <live|stale|future> <n>` line plus its `n`

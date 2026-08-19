@@ -80,11 +80,9 @@ fn encode_action(out: &mut String, action: &Action) {
             for entry in entries {
                 out.push_str(keyword::DIRLOADED_ENTRY);
                 out.push(' ');
-                out.push(if entry.kind == rune_vfs::FileKind::Dir {
-                    'd'
-                } else {
-                    'f'
-                });
+                out.push(encode_file_kind(entry.kind));
+                out.push(' ');
+                out.push(encode_link(entry.link));
                 out.push(' ');
                 out.push_str(&escape(&entry.name));
                 out.push('\n');
@@ -227,4 +225,20 @@ fn escape_char(c: char) -> String {
 
 fn escape(s: &str) -> String {
     s.chars().flat_map(char::escape_default).collect()
+}
+
+fn encode_file_kind(kind: rune_vfs::FileKind) -> char {
+    match kind {
+        rune_vfs::FileKind::File => 'f',
+        rune_vfs::FileKind::Dir => 'd',
+        rune_vfs::FileKind::Other => 'o',
+    }
+}
+
+fn encode_link(link: rune_vfs::Link) -> char {
+    match link {
+        rune_vfs::Link::No => 'n',
+        rune_vfs::Link::To => 't',
+        rune_vfs::Link::Broken => 'b',
+    }
 }

@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rune_vfs::{DirEntry, FileKind};
+use rune_vfs::{DirEntry, FileKind, Link};
 
 use crate::app::App;
 use crate::explorer::ensure_visible;
@@ -29,6 +29,7 @@ fn with_parent_entry(root: &Path, mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
             name: "..".to_string(),
             path: parent.to_path_buf(),
             kind: FileKind::Dir,
+            link: Link::No,
         },
     );
     entries
@@ -107,6 +108,7 @@ mod tests {
                 } else {
                     FileKind::File
                 },
+                link: rune_vfs::Link::No,
             })
             .collect()
     }
@@ -221,6 +223,7 @@ mod tests {
                 name: "..".to_string(),
                 path: PathBuf::from("/"),
                 kind: FileKind::Dir,
+                link: rune_vfs::Link::No,
             },
         );
         assert_eq!(app.explorer.entries, expected);

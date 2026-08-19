@@ -63,6 +63,9 @@ impl Vfs for CountingReadVfs {
     fn read_dir(&self, path: &Path) -> std::io::Result<Vec<rune_vfs::DirEntry>> {
         self.inner.read_dir(path)
     }
+    fn read_link(&self, path: &Path) -> std::io::Result<PathBuf> {
+        self.inner.read_link(path)
+    }
 }
 
 struct ScratchHome(PathBuf);

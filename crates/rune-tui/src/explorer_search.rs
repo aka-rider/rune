@@ -198,6 +198,7 @@ mod tests {
                 name: (*name).to_string(),
                 path: PathBuf::from(*name),
                 kind: FileKind::File,
+                link: rune_vfs::Link::No,
             })
             .collect()
     }

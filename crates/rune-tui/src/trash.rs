@@ -4,11 +4,12 @@
 //! `confirm` enqueues the off-thread `vfs.trash` call once the user answers
 //! `[Y]es`; `handle_trash_done` reacts to its reply.
 //!
-//! Path matching against open documents is exact `PathBuf` equality
-//! (`workspace::existing_document_for`) — a file opened under one spelling
-//! and selected under another (a symlink, a non-canonical prefix) is not
-//! recognized as the same document. Inherited from the rest of the
-//! workspace's document-identity matching, not introduced here.
+//! An Explorer row is trashed at its LITERAL path, never resolved first:
+//! trashing a symlink removes the link and leaves the document it points at
+//! untouched, the way every file manager and `rm` behaves. This is the one
+//! deliberate exception to the workspace's resolve-everywhere rule, and the
+//! reason a link whose target is open keeps that tab open — the target
+//! still exists.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use rune_vfs::Vfs;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::explorer;
-use crate::guard::{self, GuardKind, GuardPrompt};
+use crate::guard::{self, GuardKind, GuardPrompt, TrashSubject};
 use crate::materialize_ack;
 use crate::messages;
 use crate::pane::Pane;
@@ -38,30 +39,7 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
         return;
     }
 
-    let target = if app.focus() == Pane::Explorer {
-        let Some((path, is_dir)) = app
-            .explorer
-            .entries
-            .get(app.explorer.nav.cursor)
-            .map(|e| (e.path.clone(), e.kind == rune_vfs::FileKind::Dir))
-        else {
-            messages::error(app, "nothing to trash \u{2014} no file selected");
-            return;
-        };
-        if is_dir {
-            messages::error(app, "cannot trash a directory");
-            return;
-        }
-        path
-    } else {
-        let Some(path) = app.active_doc().file_path.clone() else {
-            messages::error(app, "nothing to trash \u{2014} draft has no file");
-            return;
-        };
-        path
-    };
-
-    let Some(path) = workspace::resolve_or_report(app, &target, "trash") else {
+    let Some((path, subject)) = target(app) else {
         return;
     };
     if refuse_if_dirty(app, &path) {
@@ -72,10 +50,42 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
         app,
         GuardPrompt {
             doc: app.active,
-            kind: GuardKind::Trash { path },
+            kind: GuardKind::Trash { path, subject },
         },
         "trash confirmation dropped \u{2014} a prompt is already showing",
     );
+}
+
+fn target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
+    if app.focus() == Pane::Explorer {
+        return selected_row_target(app);
+    }
+    let Some(path) = app.active_doc().file_path.clone() else {
+        messages::error(app, "nothing to trash \u{2014} draft has no file");
+        return None;
+    };
+    let resolved = workspace::resolve_or_report(app, &path, "trash")?;
+    Some((resolved, TrashSubject::File))
+}
+
+fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
+    let row = app
+        .explorer
+        .entries
+        .get(app.explorer.nav.cursor)
+        .map(|e| (e.path.clone(), e.kind, e.link));
+    let Some((path, kind, link)) = row else {
+        messages::error(app, "nothing to trash \u{2014} no file selected");
+        return None;
+    };
+    match link {
+        rune_vfs::Link::To | rune_vfs::Link::Broken => Some((path, TrashSubject::Symlink)),
+        rune_vfs::Link::No if kind == rune_vfs::FileKind::Dir => {
+            messages::error(app, "cannot trash a directory");
+            None
+        }
+        rune_vfs::Link::No => Some((path, TrashSubject::File)),
+    }
 }
 
 /// The trash guard's `[Y]es` answer: refuses a second commit while one is

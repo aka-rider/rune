@@ -98,10 +98,14 @@ pub(crate) fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>>
             ));
             guard::DISK_CONFLICT_OPTIONS
         }
-        GuardKind::Trash { path } => {
+        GuardKind::Trash { path, subject } => {
             let name = crate::trash::display_name(path);
+            let what = match subject {
+                guard::TrashSubject::File => "",
+                guard::TrashSubject::Symlink => "symlink ",
+            };
             spans.push(Span::styled(
-                format!("Trash {name}? "),
+                format!("Trash {what}{name}? "),
                 app.theme.chrome.footer_hint,
             ));
             guard::TRASH_OPTIONS

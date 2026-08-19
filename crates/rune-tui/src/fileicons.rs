@@ -129,6 +129,7 @@ mod tests {
             name: name.to_string(),
             path: PathBuf::from(name),
             kind: FileKind::File,
+            link: rune_vfs::Link::No,
         }
     }
 
@@ -137,6 +138,7 @@ mod tests {
             name: name.to_string(),
             path: PathBuf::from(name),
             kind: FileKind::Dir,
+            link: rune_vfs::Link::No,
         }
     }
 

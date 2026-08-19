@@ -246,3 +246,67 @@ fn tabs_active_row_is_always_shown_and_the_cursor_row_only_when_tabs_is_focused_
         "the cursor bg must win where the active and cursor rows overlap"
     );
 }
+
+#[test]
+fn a_symlink_row_is_hued_by_what_it_resolves_to_and_a_dangling_one_reads_as_broken() {
+    use rune_vfs::Vfs;
+
+    let mem = seeded_vfs();
+    mem.save_atomic(std::path::Path::new("/root/real/inner.md"), b"inner")
+        .expect("seed the link's target directory");
+    mem.save_atomic(std::path::Path::new("/root/real.md"), b"real")
+        .expect("seed the link's target file");
+    mem.symlink(
+        std::path::Path::new("/root/dirlink"),
+        std::path::Path::new("/root/real"),
+    )
+    .expect("seed the directory symlink");
+    mem.symlink(
+        std::path::Path::new("/root/filelink.md"),
+        std::path::Path::new("/root/real.md"),
+    )
+    .expect("seed the file symlink");
+    mem.symlink(
+        std::path::Path::new("/root/dangling.md"),
+        std::path::Path::new("/root/gone.md"),
+    )
+    .expect("seed the dangling symlink");
+
+    let mut app = app_with(&mem);
+    app.icon_tier = IconTier::Unicode;
+    load_explorer(&mut app);
+    app.explorer.nav.cursor = app.explorer.entries.len();
+    app.explorer.nav.top = 0;
+
+    let row_of = |name: &str| {
+        app.explorer
+            .entries
+            .iter()
+            .position(|e| e.name == name)
+            .expect("the seeded link is listed")
+    };
+    let dir_link = row_of("dirlink");
+    let file_link = row_of("filelink.md");
+    let broken = row_of("dangling.md");
+
+    let inner = explorer_inner(&app);
+    let buf = testgrid::draw(&app, WIDTH, HEIGHT);
+    let name_cell = |row: usize| {
+        buf.cell((inner.x + 2, inner.y + 1 + row as u16))
+            .expect("row name cell")
+            .clone()
+    };
+
+    assert_eq!(
+        name_cell(dir_link).fg,
+        app.theme.chrome.link_dir.fg.unwrap()
+    );
+    assert_eq!(
+        name_cell(file_link).fg,
+        app.theme.chrome.link_file.fg.unwrap()
+    );
+    assert_eq!(
+        name_cell(broken).fg,
+        app.theme.chrome.link_broken.fg.unwrap()
+    );
+}

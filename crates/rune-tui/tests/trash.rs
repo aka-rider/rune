@@ -41,6 +41,17 @@ fn app_with(mem: &Arc<Mem>) -> Session {
     session
 }
 
+fn select_row(session: &mut Session, name: &str) {
+    let idx = session
+        .app()
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name == name)
+        .unwrap_or_else(|| panic!("{name} is listed"));
+    session.app_mut().explorer.nav.cursor = idx;
+}
+
 fn send(session: &mut Session, msg: Msg) -> Effects {
     let mut effects = Effects::default();
     app::update(session.app_mut(), msg, &mut effects);
@@ -79,7 +90,7 @@ fn clean_named_doc_raises_the_guard_and_names_the_file() {
 
     assert!(matches!(
         session.app().guard,
-        Some(ref p) if matches!(p.kind, GuardKind::Trash { ref path } if path == Path::new("/root/a.md"))
+        Some(ref p) if matches!(p.kind, GuardKind::Trash { ref path, .. } if path == Path::new("/root/a.md"))
     ));
     let text = rune_tui::footer::footer_text(session.app());
     assert!(text.contains("a.md"), "footer must name the file: {text:?}");
@@ -182,8 +193,80 @@ fn explorer_file_selection_carries_that_files_path() {
 
     assert!(matches!(
         session.app().guard,
-        Some(ref p) if matches!(p.kind, GuardKind::Trash { ref path } if path == Path::new("/root/b.md"))
+        Some(ref p) if matches!(p.kind, GuardKind::Trash { ref path, .. } if path == Path::new("/root/b.md"))
     ));
+}
+
+/// Trashing a symlink row removes the LINK and leaves the document it
+/// points at untouched — the row's literal path reaches `Vfs::trash`, never
+/// a resolved one.
+#[test]
+fn trashing_a_symlink_removes_the_link_and_leaves_its_target_readable() {
+    let mem = explorer_common::seeded_vfs();
+    mem.symlink(Path::new("/root/link.md"), Path::new("/root/b.md"))
+        .expect("seed a symlink to b.md");
+    let mut session = app_with(&mem);
+    explorer_common::drive_load_explorer(&mut session);
+    select_row(&mut session, "link.md");
+
+    send(&mut session, sup_backspace());
+    assert!(matches!(
+        session.app().guard,
+        Some(ref p) if matches!(p.kind, GuardKind::Trash { ref path, .. } if path == Path::new("/root/link.md"))
+    ));
+    let mut effects = send(&mut session, yes());
+    let msg = effects.cmds.remove(0).run().expect("Trash Cmd replies");
+    send(&mut session, msg);
+
+    assert_eq!(
+        mem.read(Path::new("/root/b.md")).expect("target survives"),
+        b"b content".to_vec()
+    );
+    assert!(
+        mem.read(Path::new("/root/link.md")).is_err(),
+        "the link itself is gone"
+    );
+}
+
+/// A symlink to a directory is trashable — the link is what goes — and the
+/// confirmation says so rather than describing it as a directory.
+#[test]
+fn the_confirmation_for_a_symlinked_directory_says_symlink() {
+    let mem = explorer_common::seeded_vfs();
+    mem.symlink(Path::new("/root/subalias"), Path::new("/root/sub"))
+        .expect("seed a symlink to sub");
+    let mut session = app_with(&mem);
+    explorer_common::drive_load_explorer(&mut session);
+    select_row(&mut session, "subalias");
+
+    send(&mut session, sup_backspace());
+
+    assert!(matches!(
+        session.app().guard,
+        Some(ref p) if matches!(p.kind, GuardKind::Trash { ref path, .. } if path == Path::new("/root/subalias"))
+    ));
+    let text = rune_tui::footer::footer_text(session.app());
+    assert!(
+        text.contains("Trash symlink subalias?"),
+        "the prompt must name what is actually removed: {text:?}"
+    );
+}
+
+/// A real directory is still refused outright.
+#[test]
+fn a_real_directory_is_still_refused() {
+    let mem = explorer_common::seeded_vfs();
+    let mut session = app_with(&mem);
+    explorer_common::drive_load_explorer(&mut session);
+    select_row(&mut session, "sub");
+
+    send(&mut session, sup_backspace());
+
+    assert!(session.app().guard.is_none());
+    assert_eq!(
+        messages::newest_text(session.app()),
+        Some("cannot trash a directory")
+    );
 }
 
 /// `y` enqueues exactly one `Trash` `Cmd`.

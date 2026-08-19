@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use rune_vfs::{DirEntry, FileKind, Vfs};
+use rune_vfs::{DirEntry, FileKind, Link, Vfs};
 
 /// Past this many collected files, or this many directory levels below
 /// `root`, the walk stops early rather than risking a multi-second `Cmd`
@@ -55,9 +55,7 @@ enum Step {
 /// Nested directories stack their matchers: the deepest directory's own
 /// matcher is checked first, and the first definitive verdict (ignore, or a
 /// `!`-negated whitelist) wins, so a child `.gitignore` can override a
-/// parent's rule exactly like git itself. A symlink to a directory is never
-/// descended (`Vfs::read_dir` reports it as a plain file), matching the
-/// Explorer's own blindness to it.
+/// parent's rule exactly like git itself.
 pub fn scan(vfs: &dyn Vfs, root: &Path) -> ScanResult {
     scan_with_caps(vfs, root, MAX_SCAN_FILES, MAX_SCAN_DEPTH)
 }
@@ -89,6 +87,9 @@ fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize
 
         let mut children = Vec::new();
         for entry in &entries {
+            if entry.link != Link::No {
+                continue;
+            }
             let entry_is_dir = entry.kind == FileKind::Dir;
             if is_ignore_file(&entry.name) {
                 continue; // consumed into the matcher above, never a candidate
@@ -299,6 +300,44 @@ mod tests {
 
         assert_eq!(result.files.len(), 8);
         assert!(result.truncated, "the ninth file was actually dropped");
+    }
+
+    #[test]
+    fn a_symlinked_directory_is_neither_descended_nor_offered_as_a_candidate() {
+        let vfs = Mem::new();
+        put(&vfs, "/root/real/inner.md", "reachable by its own path");
+        vfs.symlink(Path::new("/root/alias"), Path::new("/root/real"))
+            .expect("seed symlink");
+
+        let result = scanned(&vfs, "/root");
+
+        assert_eq!(result.files, vec![PathBuf::from("/root/real/inner.md")]);
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn a_directory_symlinked_to_its_own_parent_completes_the_walk() {
+        let vfs = Mem::new();
+        put(&vfs, "/root/a/real.md", "the only candidate");
+        vfs.symlink(Path::new("/root/a/loop"), Path::new("/root/a"))
+            .expect("seed self-referential symlink");
+
+        let result = scanned(&vfs, "/root");
+
+        assert_eq!(result.files, vec![PathBuf::from("/root/a/real.md")]);
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn a_symlink_to_a_file_is_not_offered_as_a_candidate() {
+        let vfs = Mem::new();
+        put(&vfs, "/root/real.md", "the only candidate");
+        vfs.symlink(Path::new("/root/alias.md"), Path::new("/root/real.md"))
+            .expect("seed symlink");
+
+        let result = scanned(&vfs, "/root");
+
+        assert_eq!(result.files, vec![PathBuf::from("/root/real.md")]);
     }
 
     #[test]

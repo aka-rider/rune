@@ -3,7 +3,7 @@
 //! original-case name), for both `Disk` and `Mem`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{DirEntry, Disk, FileKind, Mem, Vfs};
+use rune_vfs::{DirEntry, Disk, FileKind, Link, Mem, Vfs};
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,22 +37,26 @@ fn disk_read_dir_lists_children_sorted_dirs_first() {
             DirEntry {
                 name: "Aardvark".to_string(),
                 path: tmp.join("Aardvark"),
-                kind: FileKind::Dir
+                kind: FileKind::Dir,
+                link: Link::No,
             },
             DirEntry {
                 name: "beta".to_string(),
                 path: tmp.join("beta"),
-                kind: FileKind::Dir
+                kind: FileKind::Dir,
+                link: Link::No,
             },
             DirEntry {
                 name: "alpha.md".to_string(),
                 path: tmp.join("alpha.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
             DirEntry {
                 name: "zeta.md".to_string(),
                 path: tmp.join("zeta.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
         ]
     );
@@ -93,12 +97,14 @@ fn disk_read_dir_not_recursive() {
             DirEntry {
                 name: "sub".to_string(),
                 path: tmp.join("sub"),
-                kind: FileKind::Dir
+                kind: FileKind::Dir,
+                link: Link::No,
             },
             DirEntry {
                 name: "top.md".to_string(),
                 path: tmp.join("top.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
         ],
         "read_dir must list only direct children, not descend into `sub`"
@@ -165,12 +171,14 @@ fn mem_read_dir_files_at_root() {
             DirEntry {
                 name: "one.md".to_string(),
                 path: PathBuf::from("/one.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
             DirEntry {
                 name: "two.md".to_string(),
                 path: PathBuf::from("/two.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
         ]
     );
@@ -196,12 +204,14 @@ fn mem_read_dir_synthetic_dir_from_nested_key() {
             DirEntry {
                 name: "b".to_string(),
                 path: PathBuf::from("/a/b"),
-                kind: FileKind::Dir
+                kind: FileKind::Dir,
+                link: Link::No,
             },
             DirEntry {
                 name: "d.md".to_string(),
                 path: PathBuf::from("/a/d.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
         ]
     );
@@ -227,7 +237,8 @@ fn mem_read_dir_dedups_synthetic_dir_from_multiple_keys() {
         vec![DirEntry {
             name: "b".to_string(),
             path: PathBuf::from("/a/b"),
-            kind: FileKind::Dir
+            kind: FileKind::Dir,
+            link: Link::No,
         }],
         "one synthetic `b` entry, deduplicated across all keys under it"
     );
@@ -259,22 +270,26 @@ fn mem_read_dir_sort_order_dirs_first_then_case_insensitive_name() {
             DirEntry {
                 name: "Aardvark".to_string(),
                 path: PathBuf::from("/r/Aardvark"),
-                kind: FileKind::Dir
+                kind: FileKind::Dir,
+                link: Link::No,
             },
             DirEntry {
                 name: "beta".to_string(),
                 path: PathBuf::from("/r/beta"),
-                kind: FileKind::Dir
+                kind: FileKind::Dir,
+                link: Link::No,
             },
             DirEntry {
                 name: "alpha.md".to_string(),
                 path: PathBuf::from("/r/alpha.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
             DirEntry {
                 name: "zeta.md".to_string(),
                 path: PathBuf::from("/r/zeta.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
         ]
     );
@@ -307,22 +322,26 @@ fn mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak() {
             DirEntry {
                 name: "apple".to_string(),
                 path: PathBuf::from("/r/apple"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
             DirEntry {
                 name: "Banana".to_string(),
                 path: PathBuf::from("/r/Banana"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
             DirEntry {
                 name: "File.md".to_string(),
                 path: PathBuf::from("/r/File.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
             DirEntry {
                 name: "file.md".to_string(),
                 path: PathBuf::from("/r/file.md"),
-                kind: FileKind::File
+                kind: FileKind::File,
+                link: Link::No,
             },
         ],
         "case-insensitive primary order (apple before Banana), exact-name tiebreak (File.md before file.md)"
@@ -347,7 +366,8 @@ fn mem_read_dir_excludes_the_queried_path_itself() {
         vec![DirEntry {
             name: "b.md".to_string(),
             path: PathBuf::from("/a/b.md"),
-            kind: FileKind::File
+            kind: FileKind::File,
+            link: Link::No,
         }],
         "the key `/a` itself must not appear as a child of `/a`"
     );
@@ -376,7 +396,8 @@ fn mem_read_dir_parent_listing_dedups_a_name_claimed_as_both_file_and_dir() {
         vec![DirEntry {
             name: "a".to_string(),
             path: PathBuf::from("/a"),
-            kind: FileKind::Dir
+            kind: FileKind::Dir,
+            link: Link::No,
         }],
         "`a` must appear exactly once, as a directory — the directory claim wins"
     );

@@ -144,7 +144,17 @@ pub enum GuardKind {
     /// `GuardPrompt.doc` (set to `app.active`) is unused by this kind.
     Trash {
         path: PathBuf,
+        subject: TrashSubject,
     },
+}
+
+/// What a Trash confirmation is about to remove, so the prompt can name it:
+/// a symlink row removes the LINK and leaves whatever it points at alone,
+/// which the user must be told before answering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrashSubject {
+    File,
+    Symlink,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -277,7 +287,7 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         GuardKind::DiskConflict => {
             handle_disk_conflict_key(app, doc, key, effects);
         }
-        GuardKind::Trash { path } => handle_trash_key(app, path.clone(), key, effects),
+        GuardKind::Trash { path, .. } => handle_trash_key(app, path.clone(), key, effects),
     }
 }
 

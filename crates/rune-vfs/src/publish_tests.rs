@@ -94,6 +94,9 @@ impl Vfs for FlappingIdentityVfs {
     fn read_dir(&self, path: &Path) -> io::Result<Vec<crate::DirEntry>> {
         self.inner.read_dir(path)
     }
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.read_link(path)
+    }
 }
 
 #[test]

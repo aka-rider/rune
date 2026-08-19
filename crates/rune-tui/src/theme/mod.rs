@@ -40,6 +40,9 @@ pub struct ChromeStyles {
     /// An Explorer directory row's foreground — bold blue, the one hue
     /// reserved for "this row is a directory" among content rows.
     pub dir_normal: Style,
+    pub link_dir: Style,
+    pub link_file: Style,
+    pub link_broken: Style,
     pub tabs_divider: Style,
     pub tab_normal: Style,
     pub tab_active: Style,
@@ -118,6 +121,9 @@ impl Theme {
             pane_title: Style::new().fg(c(p.mauve)).add_modifier(Modifier::BOLD),
             file_normal: Style::new().fg(c(p.text)),
             dir_normal: Style::new().fg(c(p.blue)).add_modifier(Modifier::BOLD),
+            link_dir: Style::new().fg(c(p.sapphire)).add_modifier(Modifier::BOLD),
+            link_file: Style::new().fg(c(p.teal)),
+            link_broken: Style::new().fg(c(p.red)),
             tabs_divider: Style::new().fg(c(p.overlay1)),
             tab_normal: Style::new().fg(c(p.overlay1)),
             tab_active: Style::new().fg(c(p.text)).add_modifier(Modifier::BOLD),
@@ -389,23 +395,67 @@ mod tests {
         }
     }
 
-    /// The left column's own hue rule: blue means "directory" there, so no
-    /// other row style in that column may claim it. Stated as a rule rather
-    /// than a pinned hex, so a palette swap stays free to move any of these
-    /// colours — just not back on top of `dir_normal`.
+    /// The left column's hue rule, restated for symlinks: the blue family
+    /// means "directory-ish", so `dir_normal` and `link_dir` may both be
+    /// blue and the rule is no longer "nothing else is blue". What survives
+    /// is distinguishability, in two strengths. The five Explorer row
+    /// categories must differ by HUE alone — that is what a user reads a
+    /// listing by, and it is what the quantized pass protects, since several
+    /// Mocha hues collapse onto one ANSI-256 index and a collision there is
+    /// invisible on a 256-colour terminal. Across the whole left column,
+    /// including the Tabs rows, hue plus weight must still separate every
+    /// pair: `file_normal` and `tab_active` deliberately share `text` and
+    /// are told apart by boldness.
     #[test]
-    fn no_left_column_row_shares_the_directory_hue() {
+    fn every_left_column_row_style_is_visually_distinct() {
         for quantized in [false, true] {
             let chrome = Theme::catppuccin_mocha(quantized).chrome;
-            let dir = chrome.dir_normal.fg;
-            assert!(dir.is_some(), "a directory row has no foreground at all");
-            for (name, style) in [
+            let explorer_rows = [
+                ("dir_normal", chrome.dir_normal),
+                ("link_dir", chrome.link_dir),
+                ("link_file", chrome.link_file),
+                ("link_broken", chrome.link_broken),
                 ("file_normal", chrome.file_normal),
+            ];
+            let tab_rows = [
                 ("tab_normal", chrome.tab_normal),
                 ("tab_active", chrome.tab_active),
                 ("tab_pinned", chrome.tab_pinned),
-            ] {
-                assert_ne!(style.fg, dir, "{name} shares the directory hue");
+            ];
+
+            for (name, style) in explorer_rows.iter().chain(tab_rows.iter()) {
+                assert!(
+                    style.fg.is_some(),
+                    "{name} has no foreground at all (quantized {quantized})"
+                );
+            }
+
+            for (i, (name, style)) in explorer_rows.iter().enumerate() {
+                for (other_name, other) in explorer_rows.iter().skip(i + 1) {
+                    assert_ne!(
+                        style.fg, other.fg,
+                        "{name} and {other_name} share a hue (quantized {quantized})"
+                    );
+                }
+            }
+
+            let column: Vec<(&str, (Option<Color>, bool))> = explorer_rows
+                .iter()
+                .chain(tab_rows.iter())
+                .map(|(name, style)| {
+                    (
+                        *name,
+                        (style.fg, style.add_modifier.contains(Modifier::BOLD)),
+                    )
+                })
+                .collect();
+            for (i, (name, mark)) in column.iter().enumerate() {
+                for (other_name, other) in column.iter().skip(i + 1) {
+                    assert_ne!(
+                        mark, other,
+                        "{name} and {other_name} share hue and weight (quantized {quantized})"
+                    );
+                }
             }
         }
     }

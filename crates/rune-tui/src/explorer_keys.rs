@@ -151,9 +151,25 @@ fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
     select_index(app, app.explorer.nav.cursor, effects);
 }
 
+fn dangling_report(vfs: &dyn rune_vfs::Vfs, link: &std::path::Path) -> (String, String) {
+    match vfs.read_link(link) {
+        Err(error) => ("<unreadable>".to_string(), error.to_string()),
+        Ok(target) => {
+            let cause = match vfs.stat(link) {
+                Err(error) => error.to_string(),
+                Ok(_) => "the target resolves now; refresh the listing".to_string(),
+            };
+            (target.display().to_string(), cause)
+        }
+    }
+}
+
 /// Opens the currently selected entry: a file activates it through
 /// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
-/// the Explorer into it. The target
+/// the Explorer into it; a broken symlink opens nothing and reports the
+/// dangling target with the exact `io::Error` behind it — the listing's
+/// three-way vocabulary does not distinguish a missing target from a loop
+/// or a refused permission, so this is where the user learns which it is. The target
 /// path comes straight from `entry.path` — the byte-exact path `Vfs::
 /// read_dir` returned — never rejoined from `entry.name`
 /// onto `app.explorer.root`: `name` is lossy-decoded for display, and
@@ -174,14 +190,26 @@ fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
 /// a read failure raises the error banner instead and must not ALSO steal
 /// the keyboard from a user still arrowing the Explorer list.
 pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
-    let Some((target, is_dir)) = app
-        .explorer
-        .entries
-        .get(app.explorer.nav.cursor)
-        .map(|e| (e.path.clone(), e.kind == rune_vfs::FileKind::Dir))
+    let Some((target, is_dir, link, name)) =
+        app.explorer.entries.get(app.explorer.nav.cursor).map(|e| {
+            (
+                e.path.clone(),
+                e.kind == rune_vfs::FileKind::Dir,
+                e.link,
+                e.name.clone(),
+            )
+        })
     else {
         return;
     };
+    if link == rune_vfs::Link::Broken {
+        let (dangling, cause) = dangling_report(app.vfs.as_ref(), &target);
+        crate::messages::error(
+            app,
+            format!("broken symlink: {name} -> {dangling} ({cause})"),
+        );
+        return;
+    }
     if is_dir {
         let Some(resolved) = workspace::resolve_or_report(app, &target, "open") else {
             return;
@@ -277,6 +305,7 @@ mod tests {
                 } else {
                     FileKind::File
                 },
+                link: rune_vfs::Link::No,
             })
             .collect()
     }

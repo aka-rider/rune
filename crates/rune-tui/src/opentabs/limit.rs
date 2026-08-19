@@ -315,11 +315,13 @@ mod tests {
                 name: format!("doc{i}.md"),
                 path: std::path::PathBuf::from(format!("/root/doc{i}.md")),
                 kind: rune_vfs::FileKind::File,
+                link: rune_vfs::Link::No,
             })
             .chain(std::iter::once(rune_vfs::DirEntry {
                 name: "eleventh.md".to_string(),
                 path: std::path::PathBuf::from("/root/eleventh.md"),
                 kind: rune_vfs::FileKind::File,
+                link: rune_vfs::Link::No,
             }))
             .collect();
         crate::explorer::handle_dir_loaded(

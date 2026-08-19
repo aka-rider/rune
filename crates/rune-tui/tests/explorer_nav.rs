@@ -244,3 +244,139 @@ fn a_root_without_a_parent_gets_no_dotdot_row() {
         "the filesystem root has no parent, so no '..' row is injected"
     );
 }
+
+#[test]
+fn enter_on_a_symlinked_directory_lists_the_resolved_target() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/real/inner.md"), b"inner")
+        .expect("seed the link's target directory");
+    mem.symlink(Path::new("/root/alias"), Path::new("/root/real"))
+        .expect("seed the directory symlink");
+
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    let idx = session
+        .app()
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name == "alias")
+        .expect("alias listed");
+    session.app_mut().explorer.nav.cursor = idx;
+    let before_docs = session.app().documents.len();
+
+    let mut effects = Effects::default();
+    let outcome = explorer_keys::handle_key(session.app_mut(), key(KeyCode::Enter), &mut effects);
+
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(effects.cmds.len(), 1);
+    assert_eq!(effects.cmds[0].kind(), CmdKind::ReadDir);
+    let cmd = effects.cmds.remove(0);
+    let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
+    let mut effects2 = Effects::default();
+    rune_tui::app::update(session.app_mut(), msg, &mut effects2);
+
+    assert_eq!(
+        session.app().explorer.root,
+        PathBuf::from("/root/real"),
+        "stepping into a symlinked directory lands on the canonical target"
+    );
+    assert_eq!(session.app().documents.len(), before_docs);
+}
+
+#[test]
+fn a_symlinked_directory_sorts_among_the_directories() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/real/inner.md"), b"inner")
+        .expect("seed the link's target directory");
+    mem.symlink(Path::new("/root/alias"), Path::new("/root/real"))
+        .expect("seed the directory symlink");
+
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+
+    let names: Vec<&str> = session
+        .app()
+        .explorer
+        .entries
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+
+    assert_eq!(names, vec!["..", "alias", "real", "sub", "a.md", "b.md"]);
+}
+
+#[test]
+fn enter_on_a_symlinked_file_opens_the_document_bound_to_the_target() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/real.md"), b"real content")
+        .expect("seed the link's target file");
+    mem.symlink(Path::new("/root/alias.md"), Path::new("/root/real.md"))
+        .expect("seed the file symlink");
+
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    let idx = session
+        .app()
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name == "alias.md")
+        .expect("alias.md listed");
+    session.app_mut().explorer.nav.cursor = idx;
+    let before_docs = session.app().documents.len();
+
+    let mut effects = Effects::default();
+    let outcome = explorer_keys::handle_key(session.app_mut(), key(KeyCode::Enter), &mut effects);
+
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(session.app().documents.len(), before_docs + 1);
+    assert_eq!(session.app().focus(), Pane::Editor);
+    assert_eq!(
+        session.app().active_doc().file_path.as_deref(),
+        Some(Path::new("/root/real.md")),
+        "the opened document is bound to the target, not to the link's own name"
+    );
+    assert_eq!(session.app().active_doc().buffer.content(), "real content");
+}
+
+#[test]
+fn enter_on_a_broken_symlink_opens_nothing_and_reports_the_dangling_target() {
+    let mem = seeded_vfs();
+    mem.symlink(Path::new("/root/dangling.md"), Path::new("/root/gone.md"))
+        .expect("seed the dangling symlink");
+
+    let mut session = open_seeded(&mem);
+    drive_load_explorer(&mut session);
+    let idx = session
+        .app()
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name == "dangling.md")
+        .expect("dangling.md listed");
+    session.app_mut().explorer.nav.cursor = idx;
+    let before_docs = session.app().documents.len();
+    let before_root = session.app().explorer.root.clone();
+
+    let mut effects = Effects::default();
+    let outcome = explorer_keys::handle_key(session.app_mut(), key(KeyCode::Enter), &mut effects);
+
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(
+        session.app().documents.len(),
+        before_docs,
+        "a broken link must not open a document"
+    );
+    assert_eq!(session.app().explorer.root, before_root);
+    let reported = rune_tui::messages::newest_text(session.app())
+        .expect("the refusal is reported, never swallowed");
+    assert!(
+        reported.contains("broken symlink"),
+        "message was {reported:?}"
+    );
+    assert!(
+        reported.contains("dangling.md") && reported.contains("/root/gone.md"),
+        "the report names both the link and its dangling target: {reported:?}"
+    );
+}

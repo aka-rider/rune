@@ -41,6 +41,47 @@ proptest! {
         let encoded = script::encode(&path, &content, &actions);
         prop_assert_eq!(script::decode(&encoded), Ok((path, content, actions)));
     }
+
+}
+
+/// A malformed link flag in a dirloaded-entry is rejected as a decode error,
+/// not silently defaulted to Link::No — the same disciplined error handling
+/// as a malformed kind flag.
+#[test]
+fn malformed_dir_entry_link_flag_is_rejected() {
+    let script_with_bad_link = r#"content test
+dirloaded nav 0
+dirloaded-entry f x name1"#;
+    let result = script::decode(script_with_bad_link);
+    assert!(result.is_err(), "malformed link flag should fail to decode");
+    match result {
+        Err(script::ScriptError::MalformedLine { reason, .. }) => {
+            assert!(
+                reason.contains("dirloaded-entry") && reason.contains("n|t|b"),
+                "error should mention dirloaded-entry and link flags, got: {reason}"
+            );
+        }
+        other => panic!("expected MalformedLine error, got: {other:?}"),
+    }
+}
+
+/// A malformed kind flag in a dirloaded-entry is rejected as a decode error.
+#[test]
+fn malformed_dir_entry_kind_flag_is_rejected() {
+    let script_with_bad_kind = r#"content test
+dirloaded nav 0
+dirloaded-entry x n name1"#;
+    let result = script::decode(script_with_bad_kind);
+    assert!(result.is_err(), "malformed kind flag should fail to decode");
+    match result {
+        Err(script::ScriptError::MalformedLine { reason, .. }) => {
+            assert!(
+                reason.contains("dirloaded-entry") && reason.contains("f|d|o"),
+                "error should mention dirloaded-entry and kind flags, got: {reason}"
+            );
+        }
+        other => panic!("expected MalformedLine error, got: {other:?}"),
+    }
 }
 
 /// WP5.S7 — a permanent, self-cleaning regression that the report bundle

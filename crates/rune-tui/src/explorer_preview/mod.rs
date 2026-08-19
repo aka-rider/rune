@@ -31,7 +31,7 @@
 //! Explorer — discards a stale preview by construction, with no call site
 //! outside this module needing to remember to do it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rune_core::buffer::Buffer;
 
@@ -42,9 +42,9 @@ use crate::runtime::{CmdError, Effects};
 use crate::workspace;
 
 /// Resolves what the Explorer cursor sits on right now and reacts:
-/// silently does nothing for a directory (the synthetic `..` row included)
-/// or while a type-to-search query is live (design: "no preview while
-/// type-to-search is live" — a search's own cursor jumps call
+/// silently does nothing for a directory (the synthetic `..` row included),
+/// for a broken symlink, or while a type-to-search query is live (design:
+/// "no preview while type-to-search is live" — a search's own cursor jumps call
 /// `apply_search` directly, never this function, but the guard stays here
 /// too since `explorer_search::handle_search`'s clear points call this
 /// unconditionally). Everything past that guard is [`request_preview`]'s
@@ -57,7 +57,7 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
     let Some(entry) = app.explorer.entries.get(app.explorer.nav.cursor) else {
         return;
     };
-    if entry.kind == rune_vfs::FileKind::Dir {
+    if entry.kind == rune_vfs::FileKind::Dir || entry.link == rune_vfs::Link::Broken {
         return;
     }
     let target = entry.path.clone();
@@ -75,6 +75,10 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
 /// second reply path: every caller's request lands back through the same
 /// `Msg::FileOpened` -> [`maybe_consume_reply`] route.
 pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effects) {
+    let Some(resolved) = resolved_target(app, target) else {
+        return;
+    };
+    let target = resolved.as_path();
     if let Some(id) = workspace::existing_document_for(app, target) {
         workspace::switch_to(app, id);
         return;
@@ -147,7 +151,9 @@ pub(crate) fn maybe_consume_reply(
 /// Explorer branch below.
 fn is_current_target(app: &App, path: &Path) -> bool {
     if app.filesearch().is_some() {
-        return crate::filesearch::selected_candidate(app).is_some_and(|c| c.path == path);
+        return crate::filesearch::selected_candidate(app)
+            .and_then(|c| resolved_target(app, &c.path))
+            .is_some_and(|selected| selected == path);
     }
     if app.explorer_find().is_some() {
         return false;
@@ -155,7 +161,13 @@ fn is_current_target(app: &App, path: &Path) -> bool {
     app.explorer
         .entries
         .get(app.explorer.nav.cursor)
-        .is_some_and(|e| e.kind != rune_vfs::FileKind::Dir && e.path == path)
+        .filter(|e| e.kind != rune_vfs::FileKind::Dir)
+        .and_then(|e| resolved_target(app, &e.path))
+        .is_some_and(|selected| selected == path)
+}
+
+fn resolved_target(app: &App, path: &Path) -> Option<PathBuf> {
+    workspace::resolve(app.vfs.as_ref(), path).ok()
 }
 
 /// Mints the FIRST preview of this Explorer session, or replaces the

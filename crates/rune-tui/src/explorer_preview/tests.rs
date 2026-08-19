@@ -25,6 +25,7 @@ fn load_entries(app: &mut App, names: &[&str]) {
             name: (*name).to_string(),
             path: PathBuf::from("/root").join(name),
             kind: FileKind::File,
+            link: rune_vfs::Link::No,
         })
         .collect();
     crate::explorer::handle_dir_loaded(
@@ -245,11 +246,13 @@ fn a_directory_row_produces_no_read_and_keeps_the_previous_preview() {
             name: "a.md".to_string(),
             path: PathBuf::from("/root/a.md"),
             kind: FileKind::File,
+            link: rune_vfs::Link::No,
         },
         DirEntry {
             name: "sub".to_string(),
             path: PathBuf::from("/root/sub"),
             kind: FileKind::Dir,
+            link: rune_vfs::Link::No,
         },
     ];
     crate::explorer::handle_dir_loaded(

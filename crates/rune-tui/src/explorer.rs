@@ -17,10 +17,11 @@ use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use rune_vfs::{DirEntry, FileKind};
+use rune_vfs::{DirEntry, FileKind, Link};
 
 use crate::app::App;
 use crate::document::DocumentId;
@@ -243,13 +244,26 @@ pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
 /// unaware it moved.
 pub(crate) use crate::explorer_dirload::handle_dir_loaded;
 
+fn row_style(app: &App, entry: &DirEntry) -> Style {
+    let chrome = &app.theme.chrome;
+    let is_dir = entry.kind == FileKind::Dir;
+    match entry.link {
+        Link::No if is_dir => chrome.dir_normal,
+        Link::No => chrome.file_normal,
+        Link::To if is_dir => chrome.link_dir,
+        Link::To => chrome.link_file,
+        Link::Broken => chrome.link_broken,
+    }
+}
+
 /// Draws the Explorer's content into `area` — the block's INNER rect
 /// (border already rendered by `render.rs::draw_left_pane`):
 /// row 0 is the root path (truncated with a leading `…` when it doesn't
 /// fit, `theme.chrome.pane_title`); the remaining rows are the `listnav`-
 /// windowed entry slice, laid out `[› prefix][icon column, Nerd tier
-/// only][name][/ if dir]`. A directory's name is `theme.chrome.dir_normal`
-/// (bold blue), a file's is `file_normal`; the icon is monochrome, painted
+/// only][name][/ if dir]`. The name's hue says what the row is —
+/// directory, file, or symlink to either, or a broken one (`row_style`) —
+/// while the icon says what you can do with it; the icon is monochrome, painted
 /// in the row's own style rather than a colour of its own. The `›` prefix
 /// is always on, so the cursor row's position survives an unfocused pane
 /// or a terminal that drops backgrounds; the cursor row's own background
@@ -281,11 +295,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         let prefix = if selected { "\u{203a} " } else { "  " };
         let is_dir = entry.kind == FileKind::Dir;
         let suffix = if is_dir { "/" } else { "" };
-        let style = if is_dir {
-            app.theme.chrome.dir_normal
-        } else {
-            app.theme.chrome.file_normal
-        };
+        let style = row_style(app, entry);
         let icon = crate::fileicons::icon(app.icon_tier, entry)
             .map(|glyph| format!("{glyph} "))
             .unwrap_or_default();

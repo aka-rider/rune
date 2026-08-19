@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, UNIX_EPOCH};
 
-use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name};
+use crate::{
+    DirEntry, FileKind, Identity, Link, MAX_SYMLINK_HOPS, Stat, Vfs, sort_dir_entries, temp_name,
+};
 
 /// The `Vfs` operation a `Mem::fail_next`/`Mem::fail_after` injection
 /// targets.
@@ -28,6 +30,7 @@ pub enum OpKind {
     Resolve,
     MkdirAll,
     ReadDir,
+    ReadLink,
 }
 
 struct MemFile {
@@ -44,6 +47,9 @@ struct MemFile {
     /// `Mem::set_kind` so tests can model a FIFO/socket/device node
     /// (`FileKind::Other`) without a real filesystem.
     kind: FileKind,
+    /// `Some` makes this entry a symlink naming that target — absolute, or
+    /// relative to the link's own parent. Seeded by `Mem::symlink`.
+    link_target: Option<PathBuf>,
 }
 
 struct MemState {
@@ -351,6 +357,39 @@ impl Mem {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.insert(lexically_normalize(path));
     }
+
+    /// Seeds a symlink at `link` naming `target`, which need not exist —
+    /// a dangling link is exactly what `Link::Broken` must be driven by.
+    /// `target` may be relative, in which case it resolves against `link`'s
+    /// parent, matching `std::os::unix::fs::symlink`.
+    #[cfg(any(test, feature = "fault-injection"))]
+    pub fn symlink(&self, link: &Path, target: &Path) -> io::Result<()> {
+        let link = lexically_normalize(link);
+        let mut state = self.lock_state();
+        if state.files.contains_key(&link) {
+            return Err(crate::wrap_io(
+                io::Error::new(io::ErrorKind::AlreadyExists, "path already exists"),
+                format!("symlink {}", link.display()),
+            ));
+        }
+        state.tick += 1;
+        let mod_tick = state.tick;
+        let inode = state.next_inode;
+        state.next_inode += 1;
+        state.files.insert(
+            link,
+            MemFile {
+                data: Vec::new(),
+                inode,
+                device: 1,
+                mod_tick,
+                nlink: 1,
+                kind: FileKind::Other,
+                link_target: Some(target.to_path_buf()),
+            },
+        );
+        Ok(())
+    }
 }
 
 impl Default for Mem {
@@ -395,6 +434,66 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 fn sits_strictly_below(key: &Path, path: &Path) -> bool {
     key.strip_prefix(path)
         .is_ok_and(|rest| rest.components().next().is_some())
+}
+
+/// Where a symlink stored at `link` points: an absolute target as written, a
+/// relative one against the link's own parent — matching
+/// `std::os::unix::fs::symlink`.
+fn link_destination(link: &Path, target: &Path) -> PathBuf {
+    if target.is_absolute() {
+        return lexically_normalize(target);
+    }
+    let parent = link.parent().unwrap_or(Path::new("/"));
+    lexically_normalize(&parent.join(target))
+}
+
+/// Walks `path` component by component, replacing every component that names a
+/// symlink with its destination, until no link remains or the hop budget runs
+/// out. A path that touched no link is returned untouched, so a `Mem` keyed by
+/// exact spelling keeps answering the way it always did.
+fn follow_links(files: &HashMap<PathBuf, MemFile>, path: &Path) -> io::Result<PathBuf> {
+    let mut walked = PathBuf::new();
+    let mut hops = 0usize;
+    let mut followed = false;
+    for component in path.components() {
+        walked.push(component);
+        while let Some(target) = files.get(&walked).and_then(|f| f.link_target.clone()) {
+            hops += 1;
+            if hops > MAX_SYMLINK_HOPS {
+                // `io::ErrorKind::FilesystemLoop` cannot be named on stable
+                // rust; `ELOOP` is the same kind, spelled through the OS.
+                return Err(io::Error::from_raw_os_error(libc::ELOOP));
+            }
+            walked = link_destination(&walked, &target);
+            followed = true;
+        }
+    }
+    Ok(if followed { walked } else { path.to_path_buf() })
+}
+
+/// The kind of what `path` names, or `None` when nothing is there. A synthetic
+/// directory (some stored key sits below `path`) outranks a stored file of the
+/// same name, so an inconsistent-but-representable `Mem` state answers the same
+/// way whichever key the map iterates first.
+fn kind_at(files: &HashMap<PathBuf, MemFile>, path: &Path) -> Option<FileKind> {
+    if files.keys().any(|key| sits_strictly_below(key, path)) {
+        return Some(FileKind::Dir);
+    }
+    files.get(path).map(|f| f.kind)
+}
+
+fn classify(files: &HashMap<PathBuf, MemFile>, path: &Path) -> (FileKind, Link) {
+    let is_link = files.get(path).is_some_and(|f| f.link_target.is_some());
+    if !is_link {
+        return (kind_at(files, path).unwrap_or(FileKind::File), Link::No);
+    }
+    match follow_links(files, path)
+        .ok()
+        .and_then(|t| kind_at(files, &t))
+    {
+        Some(kind) => (kind, Link::To),
+        None => (FileKind::Other, Link::Broken),
+    }
 }
 
 fn not_found(path: &Path, op: &str) -> io::Error {
@@ -445,6 +544,7 @@ impl Vfs for Mem {
                 mod_tick,
                 nlink: 1,
                 kind: FileKind::File,
+                link_target: None,
             },
         );
         drop(state);
@@ -551,7 +651,8 @@ impl Vfs for Mem {
         self.take_failure(OpKind::Stat)?;
         let result = {
             let state = self.lock_state();
-            state.files.get(path).map(|f| {
+            let resolved = follow_links(&state.files, path)?;
+            state.files.get(&resolved).map(|f| {
                 Ok(Stat {
                     size: f.data.len() as u64,
                     mtime: UNIX_EPOCH + Duration::from_millis(f.mod_tick),
@@ -576,11 +677,10 @@ impl Vfs for Mem {
         // No exact file at `path` — `Mem` has no directory nodes, so a
         // directory is synthesized: `path` is a directory iff some stored
         // key sits strictly below it.
-        let is_synthetic_dir = self
-            .lock_state()
-            .files
-            .keys()
-            .any(|key| sits_strictly_below(key, path));
+        let state = self.lock_state();
+        let resolved = follow_links(&state.files, path)?;
+        let is_synthetic_dir = kind_at(&state.files, &resolved) == Some(FileKind::Dir);
+        drop(state);
         if is_synthetic_dir {
             return Ok(Stat {
                 size: 0,
@@ -617,7 +717,33 @@ impl Vfs for Mem {
                 ));
             }
         }
-        Ok(normalized)
+        let state = self.lock_state();
+        let followed = follow_links(&state.files, &normalized)?;
+        drop(state);
+        Ok(lexically_normalize(&followed))
+    }
+
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf> {
+        #[cfg(any(test, feature = "fault-injection"))]
+        self.take_failure(OpKind::ReadLink)?;
+        let normalized = lexically_normalize(path);
+        let state = self.lock_state();
+        if let Some(target) = state
+            .files
+            .get(&normalized)
+            .and_then(|f| f.link_target.clone())
+        {
+            return Ok(target);
+        }
+        let exists = kind_at(&state.files, &normalized).is_some();
+        drop(state);
+        if exists {
+            return Err(crate::wrap_io(
+                io::Error::new(io::ErrorKind::InvalidInput, "not a symlink"),
+                format!("read_link {}", path.display()),
+            ));
+        }
+        Err(not_found(path, "read_link"))
     }
 
     /// No-op: Mem has no directory tree, only flat path->content keys.
@@ -650,11 +776,12 @@ impl Vfs for Mem {
         #[cfg(any(test, feature = "fault-injection"))]
         self.take_failure(OpKind::ReadDir)?;
         let state = self.lock_state();
+        let listed = follow_links(&state.files, path)?;
         // WP13.S1: the `PathBuf` travels alongside `kind` in the same fold,
         // built from `path.join(first)` — the byte-exact `Component`
         // straight off the stored key, never round-tripped through the
         // lossy `String` `name` also computed below.
-        let mut by_name: HashMap<String, (FileKind, PathBuf)> = HashMap::new();
+        let mut by_name: HashMap<String, (FileKind, Link, PathBuf)> = HashMap::new();
         // WP1.S6: `Disk::read_dir` on a nonexistent path errors `NotFound`;
         // `Mem` used to report an empty listing instead, since it derives
         // everything from key shape and a path with zero matching keys
@@ -662,26 +789,21 @@ impl Vfs for Mem {
         // The synthetic root always exists; any other path needs either an
         // exact key (it's a stored file) or at least one key nested below
         // it (it's a synthetic directory) to count as present.
-        let mut path_exists = path == Path::new("/") || state.files.contains_key(path);
+        let mut path_exists = listed == Path::new("/") || state.files.contains_key(&listed);
         for key in state.files.keys() {
-            let Ok(rest) = key.strip_prefix(path) else {
+            let Ok(rest) = key.strip_prefix(&listed) else {
                 continue;
             };
             let Some(first) = rest.components().next() else {
-                // `rest` is empty: `key == path`, not a child of it.
+                // `rest` is empty: `key == listed`, not a child of it.
                 continue;
             };
             path_exists = true;
             let name = first.as_os_str().to_string_lossy().to_string();
-            let child_path = path.join(first.as_os_str());
-            let kind = sits_strictly_below(key, &child_path)
-                .then_some(FileKind::Dir)
-                .or_else(|| state.files.get(&child_path).map(|f| f.kind))
-                .unwrap_or(FileKind::File);
-            let entry = by_name.entry(name).or_insert((kind, child_path));
-            if kind == FileKind::Dir {
-                entry.0 = FileKind::Dir;
-            }
+            let (kind, link) = classify(&state.files, &listed.join(first.as_os_str()));
+            by_name
+                .entry(name)
+                .or_insert((kind, link, path.join(first.as_os_str())));
         }
         if !path_exists {
             return Err(not_found(path, "read_dir"));
@@ -689,7 +811,12 @@ impl Vfs for Mem {
         drop(state);
         let mut entries: Vec<DirEntry> = by_name
             .into_iter()
-            .map(|(name, (kind, path))| DirEntry { name, path, kind })
+            .map(|(name, (kind, link, path))| DirEntry {
+                name,
+                path,
+                kind,
+                link,
+            })
             .collect();
         sort_dir_entries(&mut entries);
         Ok(entries)

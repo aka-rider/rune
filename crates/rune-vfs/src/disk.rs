@@ -8,7 +8,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name};
+use crate::{DirEntry, FileKind, Identity, Link, Stat, Vfs, sort_dir_entries, temp_name};
 
 /// Disk-backed `Vfs`. Uses a flagged atomic rename syscall for crash-safe
 /// publish; stateless (no synchronization needed).
@@ -184,16 +184,12 @@ impl Vfs for Disk {
                 device: Some(meta.dev()),
             },
             nlink: Some(meta.nlink()),
-            // A FIFO, socket or device node is neither: it must never be
-            // offered as a link target, because reading one never returns.
-            kind: if meta.is_dir() {
-                FileKind::Dir
-            } else if meta.is_file() {
-                FileKind::File
-            } else {
-                FileKind::Other
-            },
+            kind: kind_of(&meta),
         })
+    }
+
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf> {
+        fs::read_link(path).map_err(|e| crate::wrap_io(e, format!("read_link {}", path.display())))
     }
 
     /// Canonicalize `path` via `fs::canonicalize`. When the leaf itself
@@ -245,20 +241,37 @@ impl Vfs for Disk {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            let kind = match entry.file_type() {
-                Ok(ft) if ft.is_dir() => FileKind::Dir,
-                Ok(ft) if ft.is_file() => FileKind::File,
-                Ok(_) => FileKind::Other,
+            let (kind, link) = match entry.file_type() {
+                Ok(ft) if ft.is_dir() => (FileKind::Dir, Link::No),
+                Ok(ft) if ft.is_file() => (FileKind::File, Link::No),
+                Ok(ft) if ft.is_symlink() => match fs::metadata(entry.path()) {
+                    Ok(target) => (kind_of(&target), Link::To),
+                    Err(_) => (FileKind::Other, Link::Broken),
+                },
+                Ok(_) => (FileKind::Other, Link::No),
                 Err(_) => continue,
             };
             entries.push(DirEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
                 path: entry.path(),
                 kind,
+                link,
             });
         }
         sort_dir_entries(&mut entries);
         Ok(entries)
+    }
+}
+
+/// A FIFO, socket or device node is neither file nor directory: it must never
+/// be offered as a link target, because reading one never returns.
+fn kind_of(meta: &fs::Metadata) -> FileKind {
+    if meta.is_dir() {
+        FileKind::Dir
+    } else if meta.is_file() {
+        FileKind::File
+    } else {
+        FileKind::Other
     }
 }
 

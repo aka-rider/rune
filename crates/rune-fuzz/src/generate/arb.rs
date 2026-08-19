@@ -132,22 +132,24 @@ pub(super) fn arb_mods() -> impl Strategy<Value = Mods> {
 }
 
 /// An arbitrary `DirEntry`: a short ASCII name (bounded so proptest doesn't
-/// waste its shrink budget on absurdly long ones) plus an arbitrary
-/// dir/file `kind`.
+/// waste its shrink budget on absurdly long ones) paired with a kind and
+/// link state. `Link::Broken` names no target, so it occurs only with
+/// `FileKind::Other` — the pairing the VFS itself guarantees.
 pub(super) fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
-    ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| {
-        // WP13.S1: the fuzzer's fixture names are always plain ASCII, so
-        // `path` derived straight from `name` round-trips exactly — the
-        // lossy-decode gap this field exists to close only ever opens on
-        // real, non-UTF-8 filenames, which `rune-vfs`'s own tests cover
-        // directly.
-        let path = PathBuf::from(&name);
-        let kind = if is_dir {
-            rune_vfs::FileKind::Dir
-        } else {
-            rune_vfs::FileKind::File
-        };
-        DirEntry { name, path, kind }
+    let shape = prop_oneof![
+        Just((rune_vfs::FileKind::File, rune_vfs::Link::No)),
+        Just((rune_vfs::FileKind::Dir, rune_vfs::Link::No)),
+        Just((rune_vfs::FileKind::Other, rune_vfs::Link::No)),
+        Just((rune_vfs::FileKind::File, rune_vfs::Link::To)),
+        Just((rune_vfs::FileKind::Dir, rune_vfs::Link::To)),
+        Just((rune_vfs::FileKind::Other, rune_vfs::Link::To)),
+        Just((rune_vfs::FileKind::Other, rune_vfs::Link::Broken)),
+    ];
+    ("[a-zA-Z0-9_.]{0,12}", shape).prop_map(|(name, (kind, link))| DirEntry {
+        path: PathBuf::from(&name),
+        name,
+        kind,
+        link,
     })
 }
 
