@@ -383,6 +383,50 @@ fn down_advances_both_cursors_when_one_sits_inside_an_inline_code_span() {
     );
 }
 
+/// `AddCursorBelow` then `⇧Up`: the two cursors coalesce into one
+/// selection, and its head must end up at the TOP, where Up was pointing.
+/// The merge used to take its direction from the lower-id survivor even
+/// when that survivor was the empty, clamped-at-top cursor — an empty
+/// cursor is never `reversed()`, so the merged selection faced downward
+/// and the caret sat at the bottom of a selection the user made by
+/// pressing Up.
+#[test]
+fn shift_up_after_add_cursor_below_leaves_the_head_at_the_top() {
+    let mut app = app_for("# Notes\n\ntail\n", 0);
+    let alt_sup = Mods {
+        shift: false,
+        alt: true,
+        ctrl: false,
+        sup: true,
+    };
+
+    press(&mut app, KeyCode::Down, alt_sup);
+    assert_eq!(
+        app.active_doc_mut().cursors.all().len(),
+        2,
+        "AddCursorBelow must produce a second cursor"
+    );
+
+    let shift = Mods {
+        shift: true,
+        alt: false,
+        ctrl: false,
+        sup: false,
+    };
+    press(&mut app, KeyCode::Up, shift);
+
+    let merged = app.active_doc_mut().cursors.primary();
+    assert!(
+        merged.has_selection(),
+        "shift+Up must leave a selection behind"
+    );
+    assert_eq!(
+        merged.position,
+        merged.selection_start(),
+        "the head of a selection made by pressing Up must sit at its top"
+    );
+}
+
 /// Regression for the plan's carried-forward review constraint: a `Key`
 /// handled right after a `Resize` in the SAME message batch must see the
 /// post-resize wrap, not a stale `app.view` (only refreshed once per

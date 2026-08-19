@@ -242,7 +242,11 @@ impl CursorSet {
 
     /// Sort by `(selection_start, selection_end, id)`, then coalesce any
     /// cursors whose selections touch or overlap into their lower-id
-    /// survivor.
+    /// survivor. The survivor carries the merged id and column, but the
+    /// merged DIRECTION comes from a cursor that actually has a selection:
+    /// an empty cursor is never `reversed()`, so letting an empty survivor
+    /// decide would face the result downward and strand the caret at the
+    /// far end of a selection the user built by reaching up.
     pub fn merge(&self) -> CursorSet {
         if self.cursors.len() <= 1 {
             return self.clone();
@@ -279,7 +283,14 @@ impl CursorSet {
                 if next.selection_end() > end {
                     end = next.selection_end();
                 }
-                let is_reversed = if current.id == survivor_id {
+                let survivor = if current.id == survivor_id {
+                    current
+                } else {
+                    next
+                };
+                let is_reversed = if survivor.has_selection() {
+                    survivor.reversed()
+                } else if current.has_selection() {
                     current.reversed()
                 } else {
                     next.reversed()
@@ -353,6 +364,35 @@ mod tests {
         assert_eq!(cs.len(), 1);
         let merged = cs.primary();
         assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
+    }
+
+    /// An empty cursor has no direction — `reversed()` is false for it
+    /// however the user got there. Taking the merged direction from an
+    /// empty survivor therefore flips a real selection to face the wrong
+    /// way: pressing Up merges a clamped-at-top empty cursor with a
+    /// selection reaching up to it, and the head must stay at the TOP.
+    #[test]
+    fn merge_takes_its_direction_from_the_cursor_that_has_a_selection() {
+        let clamped_at_top = Cursor {
+            position: 0,
+            anchor: 0,
+            desired_col: 0,
+            id: id(1),
+        };
+        let reaching_up = Cursor {
+            position: 0,
+            anchor: 8,
+            desired_col: 0,
+            id: id(2),
+        };
+        let cs = CursorSet::new_from(&[clamped_at_top, reaching_up]);
+        assert_eq!(cs.len(), 1);
+        let merged = cs.primary();
+        assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
+        assert_eq!(
+            merged.position, 0,
+            "merging an empty cursor with a selection reaching up must keep the head at the top"
+        );
     }
 
     /// [rune-core 14]: when two overlapping cursors merge, the survivor's
