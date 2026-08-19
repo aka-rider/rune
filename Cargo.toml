@@ -50,6 +50,9 @@ panic = "deny"
 indexing_slicing = "warn"
 map_unwrap_or = "deny"
 
+[workspace.lints.rust]
+dead_code = "deny"
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

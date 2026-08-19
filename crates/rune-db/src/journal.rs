@@ -15,20 +15,26 @@
 //! the only place wall-clock nondeterminism can enter, sampled ONCE per
 //! `append_edit` call for the row's `at` timestamp.
 
-use rusqlite::{OptionalExtension, Transaction, params};
+#[cfg(feature = "test-support")]
+use rusqlite::OptionalExtension;
+use rusqlite::{Transaction, params};
 
 use rune_core::buffer::AppliedEdit;
+#[cfg(feature = "test-support")]
 use rune_core::cursor::Cursor;
 
 use crate::Error;
 use crate::ids::{DocId, Seq, SessionId};
-use crate::payload::{cursors_from_json, edits_from_json};
+#[cfg(feature = "test-support")]
+use crate::payload::cursors_from_json;
+use crate::payload::edits_from_json;
 
 pub use crate::journal_append::append_edit;
 
 /// One undo/redo journal step: the edits to (re)apply to the buffer, the
 /// cursor state to restore, and the journal position `move_undo_pos` should
 /// commit to once the buffer reapply succeeds.
+#[cfg(feature = "test-support")]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Step {
     pub edits: Vec<AppliedEdit>,
@@ -50,6 +56,7 @@ pub(crate) struct EditRow {
 /// after the buffer reapply succeeds. `Ok(None)` means genuinely
 /// nothing to undo; `Err` means the read or an event's payload was corrupt
 /// — surfaced, never folded into `Ok(None)`.
+#[cfg(feature = "test-support")]
 pub fn undo_peek(
     tx: &Transaction<'_>,
     session_id: SessionId,
@@ -82,6 +89,7 @@ pub fn undo_peek(
 /// `doc_id`, plus the position the journal should advance to. Mirrors
 /// `undo_peek`: READ-ONLY, `Ok(None)` means genuinely nothing to redo, a
 /// corrupt payload is `Err`, never folded into `Ok(None)`.
+#[cfg(feature = "test-support")]
 pub fn redo_peek(
     tx: &Transaction<'_>,
     session_id: SessionId,

@@ -52,6 +52,7 @@ pub enum CorruptPayloadReason {
     Json(serde_json::Error),
     /// A `cursors` payload named cursor id 0 — `CursorId` is non-zero by
     /// construction, so a zero id can only have come from a corrupt row.
+    #[cfg(feature = "test-support")]
     InvalidCursorId { id: u32 },
 }
 
@@ -67,6 +68,7 @@ impl fmt::Display for CorruptPayloadReason {
                 "snapshot blob {hash} for doc {doc_id}: non-utf8 content: {source}"
             ),
             CorruptPayloadReason::Json(e) => write!(f, "{e}"),
+            #[cfg(feature = "test-support")]
             CorruptPayloadReason::InvalidCursorId { id } => {
                 write!(f, "cursor id {id} must be non-zero")
             }
