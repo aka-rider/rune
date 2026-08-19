@@ -395,4 +395,12 @@ fn remove_preview_document(app: &mut App, id: DocumentId) {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests_common;
+#[cfg(test)]
+mod tests_focus;
+#[cfg(test)]
+mod tests_highlight;
+#[cfg(test)]
+mod tests_preview;
+#[cfg(test)]
+mod tests_retry;
