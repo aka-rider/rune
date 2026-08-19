@@ -195,8 +195,8 @@ fn reconstruct_theirs(content: &str, pairs: &[ConflictBlock]) -> Option<String> 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    use super::*;
     use super::super::session::{BlockOrigin, Resolution};
+    use super::*;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;

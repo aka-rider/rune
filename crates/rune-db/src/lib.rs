@@ -85,12 +85,12 @@ mod writer_ops;
 
 pub use bracket::stat_facts_from;
 #[cfg(feature = "test-support")]
+pub use confirmation::Confirmation;
+#[cfg(feature = "test-support")]
 pub use conn::{
     fresh_memory_uri_for_test, open_raw_connection_at_path_for_test,
     open_recovery_store_at_path_for_test, open_recovery_store_in_memory_for_test,
 };
-#[cfg(feature = "test-support")]
-pub use confirmation::Confirmation;
 pub use error::Error;
 pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};
 #[cfg(feature = "test-support")]

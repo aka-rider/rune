@@ -17,8 +17,8 @@ use rune_tui::workspace;
 use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
-    app_with, bound_session, ctrl, ctrl_key, plain, plain_key, seeded_vfs, send, set_name,
-    sup_key, type_new_name, unbound_session,
+    app_with, bound_session, ctrl, ctrl_key, plain, plain_key, seeded_vfs, send, set_name, sup_key,
+    type_new_name, unbound_session,
 };
 
 // ── Focus loss is the single commit chokepoint ─────────────────────

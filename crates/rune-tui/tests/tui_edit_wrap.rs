@@ -275,7 +275,9 @@ fn scroll_row_does_not_move_until_the_batch_settles() {
         lines.push_str(&format!("line{i}\n"));
     }
     let mut app = app_for(&lines, 0);
-    app.active_doc_mut().viewport.set_size(tui_edit_common::WIDTH, 10);
+    app.active_doc_mut()
+        .viewport
+        .set_size(tui_edit_common::WIDTH, 10);
     let scroll_before = app.active_doc_mut().viewport.scroll_row;
 
     let mut effects = Effects::default();

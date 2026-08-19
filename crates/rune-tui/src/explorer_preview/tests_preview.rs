@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use rune_vfs::{DirEntry, FileKind, Mem, Vfs};
 
-use super::*;
 use super::tests_common::{app_with, load_entries, run_cmds};
+use super::*;
 use crate::runtime::{DirCause, Msg};
 
 #[test]
@@ -265,4 +265,3 @@ fn a_binary_file_renders_a_placeholder_with_no_banner() {
         "no message pane for a failed preview"
     );
 }
-

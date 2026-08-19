@@ -95,4 +95,3 @@ impl Drop for ScratchHome {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-

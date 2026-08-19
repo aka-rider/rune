@@ -6,8 +6,8 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer as CoreBuffer;
 use rune_vfs::{Mem, Vfs};
 
-use super::*;
 use super::tests_common::{app_with, load_entries, run_cmds, run_cmds_through_update};
+use super::*;
 use crate::runtime::Msg;
 
 /// A live in-memory `Db` — mirrors `pane.rs::tests::live_db` — needed to
