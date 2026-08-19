@@ -23,7 +23,7 @@ use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::testgrid;
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 

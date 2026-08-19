@@ -16,7 +16,7 @@ use rune_tui::graphics::ImageStatus;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
 use rune_tui::testgrid;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 

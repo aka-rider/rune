@@ -81,7 +81,7 @@ fn ceiling_for(start: &Path, home: Option<&Path>) -> PathBuf {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, VfsTestExt};
 
     #[test]
     fn marker_in_cwd_is_found_immediately() {

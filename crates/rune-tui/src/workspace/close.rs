@@ -250,7 +250,7 @@ mod tests {
     use std::sync::Arc;
 
     use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
 
     use crate::document::ReadOnly;
 

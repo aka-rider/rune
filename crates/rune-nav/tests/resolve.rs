@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use rune_nav::{Anchor, AnchorRole, Destination, Target};
-use rune_vfs::{DirEntry, FileKind, Mem, Stat, Vfs};
+use rune_vfs::{DirEntry, FileKind, Mem, Stat, Vfs, VfsTestExt};
 
 const MD: &str = "md";
 

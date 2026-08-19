@@ -2,7 +2,7 @@
 //! `Disk` and `Mem` backends, plus error-path and residue checks.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{Disk, Mem, Vfs};
+use rune_vfs::{Disk, Mem, Vfs, VfsTestExt};
 use std::fs;
 use std::io;
 use std::path::PathBuf;

@@ -20,7 +20,7 @@ use rune_db::SyncKind;
 use rune_fuzz::Session;
 use rune_tui::db::Db;
 use rune_tui::footer::footer_text;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use db_wiring_common::{publish, restarted_store_at, store_at, temp_db_dir};
 

@@ -14,6 +14,7 @@ use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::Effects;
 use rune_tui::workspace;
+use rune_vfs::VfsTestExt;
 
 pub const WIDTH: u16 = 80;
 pub const HEIGHT: u16 = 24;

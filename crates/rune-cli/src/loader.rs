@@ -56,7 +56,7 @@ pub(crate) fn load_sighting(vfs: &dyn Vfs, path: &Path) -> Result<Option<LoadedF
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, VfsTestExt};
 
     #[test]
     fn load_sighting_reads_existing_file_through_the_vfs() {

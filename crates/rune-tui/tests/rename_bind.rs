@@ -23,7 +23,7 @@ use std::path::Path;
 use rune_tui::keymap::KeyCode;
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
-use rune_vfs::Vfs;
+use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
     DOC_PATH, bound_session, commit_name, ctrl, ctrl_key, draft_session, name_draft, open_title,

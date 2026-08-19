@@ -268,7 +268,7 @@ mod tests {
     use crate::filesearch::Candidate;
     use crate::focus::{self, FocusTarget};
     use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
     use std::sync::Arc;
 
     fn app() -> App {

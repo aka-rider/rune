@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
-use rune_vfs::Mem;
+use rune_vfs::{Mem, VfsTestExt};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Counts every [`Vfs::read`] and [`Vfs::resolve`] call made against ANY

@@ -330,7 +330,7 @@ mod tests {
     /// data-loss bug this module's whole reap-scoping exists to prevent.
     #[test]
     fn diverged_load_bridge_survives_reaping_the_dead_session_it_inherited_from() {
-        use rune_vfs::Vfs;
+        use rune_vfs::{Vfs, VfsTestExt};
 
         let mut conn = open();
         let vfs = rune_vfs::Mem::new();

@@ -22,7 +22,7 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::merge::MergeState;
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 fn ctrl(c: char) -> KeyInput {
     KeyInput {

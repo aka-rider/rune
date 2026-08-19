@@ -273,7 +273,7 @@ pub(crate) fn open_extra_files(app: &mut AppGuard, files: &[PathBuf], first_doc_
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, VfsTestExt};
 
     /// Finding 1 regression: `adopt_scratch_doc` hydrates a recovered
     /// scratch draft into an otherwise-empty buffer but must also re-derive

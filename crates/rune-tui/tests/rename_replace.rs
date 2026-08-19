@@ -22,7 +22,7 @@ use rune_tui::footer;
 use rune_tui::guard;
 use rune_tui::keymap::KeyCode;
 use rune_tui::rename::RenameState;
-use rune_vfs::Vfs;
+use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{active_path, bound_session, commit_name, plain_key};
 

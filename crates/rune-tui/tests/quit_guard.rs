@@ -21,7 +21,7 @@ use rune_tui::guard::{GuardKind, GuardPrompt};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdError, Effects, Msg};
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)

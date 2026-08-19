@@ -4,7 +4,7 @@ use super::*;
 use crate::app::App;
 use crate::keymap::GlobalCommand;
 use rune_core::buffer::Buffer;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, VfsTestExt};
 use std::sync::Arc;
 
 fn app_with(content: &str) -> App {

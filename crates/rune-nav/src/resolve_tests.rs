@@ -1,6 +1,6 @@
 use super::*;
 use crate::types::AnchorRole;
-use rune_vfs::Mem;
+use rune_vfs::{Mem, VfsTestExt};
 
 const MD: &str = "md";
 

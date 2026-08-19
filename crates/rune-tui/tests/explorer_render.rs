@@ -16,7 +16,7 @@ use rune_tui::pane::Pane;
 use rune_tui::runtime::Effects;
 use rune_tui::testgrid;
 use rune_tui::theme::icons::IconTier;
-use rune_vfs::Mem;
+use rune_vfs::{Mem, VfsTestExt};
 
 use explorer_common::{app_with, load_explorer, seeded_vfs};
 
@@ -249,8 +249,6 @@ fn tabs_active_row_is_always_shown_and_the_cursor_row_only_when_tabs_is_focused_
 
 #[test]
 fn a_symlink_row_is_hued_by_what_it_resolves_to_and_a_dangling_one_reads_as_broken() {
-    use rune_vfs::Vfs;
-
     let mem = seeded_vfs();
     mem.save_atomic(std::path::Path::new("/root/real/inner.md"), b"inner")
         .expect("seed the link's target directory");

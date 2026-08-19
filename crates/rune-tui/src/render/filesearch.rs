@@ -177,7 +177,7 @@ mod tests {
     use crate::filesearch::{Candidate, walk};
     use crate::runtime::CmdKind;
     use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, VfsTestExt};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 

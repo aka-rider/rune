@@ -121,7 +121,7 @@ mod tests {
     use crate::messages;
     use crate::workspace;
     use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs};
+    use rune_vfs::{Mem, VfsTestExt};
     use std::sync::Arc;
 
     fn app() -> App {

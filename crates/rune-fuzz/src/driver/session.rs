@@ -13,7 +13,7 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::Cmd;
 use rune_tui::workspace;
-use rune_vfs::{Mem, Vfs};
+use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use crate::action::Action;
 use crate::guard;

@@ -2,7 +2,7 @@
 //! link, what `read_link` gives back, and how far `resolve` follows.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{DirEntry, Disk, FileKind, Link, MAX_SYMLINK_HOPS, Mem, Vfs};
+use rune_vfs::{DirEntry, Disk, FileKind, Link, MAX_SYMLINK_HOPS, Mem, Vfs, VfsTestExt};
 use std::fs;
 use std::path::{Path, PathBuf};
 
