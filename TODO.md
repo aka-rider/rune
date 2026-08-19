@@ -96,7 +96,7 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-fuzz/src/generate/palette.rs` — 766 (grew from 702: WP7's `cmdpal` cluster key/const data — `CMDPAL_KEY_CTRL`/`CMDPAL_KEY_SUP`/`CMDPAL_TAB_KEY`/`CMDPAL_BACKSPACE_KEY`/`CMDPAL_NAV_KEYS`/`CMDPAL_PARAM_QUERIES`)
   - `crates/rune-db/src/schema.rs` — 743 (grew from 684: command-palette recents added the `command_history` table and its apply-reconcile test; split candidate: move the schema tests to a sibling `schema_tests.rs`)
   - `crates/rune-tui/src/document/mod.rs` — 683 (grew from 679: command-palette WP4's `kind_pinned` field; split candidate unchanged: move the `ReadOnly` enum plus its `impl` block, which don't depend on `Document`'s own fields, to a sibling `read_only.rs`)
-  - `crates/rune-tui/src/db.rs` — 668 (split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
+  - `crates/rune-tui/src/db.rs` — 676 (grew from 668: the `LoadPurpose` a re-baseline `Load` carries; split candidate unchanged: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
   - `crates/rune-tui/src/linemap.rs` — 663 (newly over — the typed-offsets/image-id rework (`8cdaaef3`) grew this)
   - `crates/rune-tui/src/app.rs` — 625 (grew from 619: command-palette WP2's `next_palette_gen`/`last_persisted_command`/`command_history_ops` fields)
   - `crates/rune-db/tests/multiprocess/scenarios.rs` — 617 (test file)

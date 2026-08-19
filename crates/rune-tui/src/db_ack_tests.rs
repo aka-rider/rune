@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
-use crate::db::{Db, DbBridge};
+use crate::db::{Db, DbBridge, LoadPurpose};
 use crate::db_enqueue::append_edit;
 use rune_core::buffer::Buffer;
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
@@ -203,7 +203,13 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
         resumable_merge: None,
     };
 
-    handle_load_ack(&mut app, id, load_result, Some(issued_version), false);
+    handle_load_ack(
+        &mut app,
+        id,
+        load_result,
+        Some(issued_version),
+        LoadPurpose::Recover,
+    );
 
     assert_eq!(
         messages::newest_text(&app),
@@ -217,7 +223,7 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
 /// lost-create-race hand-off relies on rebinding to an entirely
 /// different row, `publish_mode` included) advance. Contrasts `handle_
 /// load_ack_messages_a_non_diverged_adoption` above, which drives the
-/// ordinary (`binding_only: false`) path and DOES adopt.
+/// ordinary (`LoadPurpose::Recover`) path and DOES adopt.
 #[test]
 fn binding_only_load_does_not_rehydrate() {
     let mut app = App::new(
@@ -256,7 +262,15 @@ fn binding_only_load_does_not_rehydrate() {
         resumable_merge: None,
     };
 
-    handle_load_ack(&mut app, id, load_result, Some(issued_version), true);
+    handle_load_ack(
+        &mut app,
+        id,
+        load_result,
+        Some(issued_version),
+        LoadPurpose::Rebaseline {
+            expect_row: Some(3),
+        },
+    );
 
     assert_eq!(
         app.doc(id).expect("doc exists").buffer.content(),
@@ -319,7 +333,13 @@ fn load_ack_for(nlink: u64) -> (App, DocumentId) {
     );
     let id = app.active;
     let issued_version = app.doc(id).expect("doc exists").buffer.version();
-    handle_load_ack(&mut app, id, load_result, Some(issued_version), false);
+    handle_load_ack(
+        &mut app,
+        id,
+        load_result,
+        Some(issued_version),
+        LoadPurpose::Recover,
+    );
     (app, id)
 }
 

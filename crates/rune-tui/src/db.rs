@@ -157,6 +157,20 @@ impl DbBridge {
     }
 }
 
+/// Why a `Load` op was issued. `Recover` adopts whatever the store
+/// recovered into the buffer; `Rebaseline` only refreshes an already-live
+/// document's CAS baseline and must never hydrate, or the user's own typing
+/// is replaced by a stale row's content the instant the round trip lands.
+/// `expect_row` is the row the document was bound to when the op was
+/// ENQUEUED — the same value the writer thread was given, so both sides
+/// decide "same row" from one fact rather than from two samplings. `None`
+/// means there was no binding to preserve.
+#[derive(Clone, Copy)]
+pub enum LoadPurpose {
+    Recover,
+    Rebaseline { expect_row: Option<i64> },
+}
+
 /// The document a recovery-store op belongs to, and — for a `Load` op only —
 /// the buffer version it was issued against. These two facts are always
 /// inserted and removed together for the same op id; carrying them in one
@@ -196,17 +210,9 @@ pub struct PendingOp {
     /// generation counter rather than a plain flag, since more than one
     /// merge attempt can be in flight in sequence for the same document).
     pub merge_gen: Option<crate::generation::Generation>,
-    /// True iff this `Load` was issued to re-baseline an already-live
-    /// document's `DocDb` (the save-ack re-baseline in `materialize_ack::
-    /// reactions`, and the lost-create-race hand-off) rather than to
-    /// recover a document the user just opened. A recovery `Load` is
-    /// meant to adopt whatever the store recovered; a re-baseline `Load`
-    /// exists only to install a fresh CAS baseline against content this
-    /// session already knows about, so `db_ack::handle_load_ack` must
-    /// never let it hydrate the buffer — doing so would silently replace
-    /// the user's own typing with a stale recovery row's content the
-    /// instant the round trip lands.
-    pub binding_only: bool,
+    /// Why this `Load` was issued — [`LoadPurpose`]. Every other op kind
+    /// records [`LoadPurpose::Recover`] and never reads it back.
+    pub load_purpose: LoadPurpose,
     /// True iff this op only READS one document's disk/journal state
     /// (`Probe`/`Load`/`MergePrep`): its failure means "this document's
     /// read didn't land", never "the store can't be trusted for recovery",
@@ -228,7 +234,7 @@ impl PendingOp {
             is_probe: false,
             baseline_epoch: None,
             merge_gen: None,
-            binding_only: false,
+            load_purpose: LoadPurpose::Recover,
             doc_scoped: false,
             is_append: false,
         }
@@ -243,14 +249,14 @@ impl PendingOp {
         }
     }
 
-    pub fn load(doc: DocumentId, issued_version: u64, binding_only: bool) -> PendingOp {
+    pub fn load(doc: DocumentId, issued_version: u64, load_purpose: LoadPurpose) -> PendingOp {
         PendingOp {
             doc,
             issued_version: Some(issued_version),
             is_probe: false,
             baseline_epoch: None,
             merge_gen: None,
-            binding_only,
+            load_purpose,
             doc_scoped: true,
             is_append: false,
         }
@@ -263,7 +269,7 @@ impl PendingOp {
             is_probe: true,
             baseline_epoch: Some(baseline_epoch),
             merge_gen: None,
-            binding_only: false,
+            load_purpose: LoadPurpose::Recover,
             doc_scoped: true,
             is_append: false,
         }
@@ -276,7 +282,7 @@ impl PendingOp {
             is_probe: false,
             baseline_epoch: Some(baseline_epoch),
             merge_gen: None,
-            binding_only: false,
+            load_purpose: LoadPurpose::Recover,
             doc_scoped: false,
             is_append: false,
         }
@@ -295,7 +301,7 @@ impl PendingOp {
             is_probe: false,
             baseline_epoch: None,
             merge_gen: None,
-            binding_only: false,
+            load_purpose: LoadPurpose::Recover,
             doc_scoped: true,
             is_append: false,
         }
@@ -308,7 +314,7 @@ impl PendingOp {
             is_probe: false,
             baseline_epoch: None,
             merge_gen: Some(generation),
-            binding_only: false,
+            load_purpose: LoadPurpose::Recover,
             doc_scoped: true,
             is_append: false,
         }
@@ -415,7 +421,8 @@ pub struct DocDb {
     /// superseded it, so it's ignored.
     pub snapshot_generation: u32,
     /// The writer thread numbers this binding's local undo positions by
-    /// the `AppendEdit`s it actually ran, starting over at every bind —
+    /// the `AppendEdit`s it actually ran, starting over at every bind that
+    /// is not a preserved same-row re-baseline —
     /// `writer position = local journal position - undo_offset`.
     /// `db_ack`'s install computes this from what the two sides genuinely
     /// disagree by: an adopting hydration's synthetic bridge `Step` lands
@@ -437,8 +444,9 @@ pub struct DocDb {
     /// positions that exist at all, maintained by `db_enqueue::send_append`
     /// and seeded by `db_ack::bind_document_row` with the appends already
     /// in flight when a same-row re-baseline restarted the writer's
-    /// numbering. A resolution above it names an entry the writer has
-    /// never run (a redo past a re-base), which — like one below
+    /// numbering (carried across verbatim when it did not). A resolution
+    /// above it names an entry the writer has never run (a redo past a
+    /// re-base), which — like one below
     /// `undo_floor` — must be journaled as a forward re-base, never sent.
     pub(crate) appends_sent: i64,
     /// A re-base bridge `db_ack::bind_document_row` computed but has not
@@ -446,7 +454,7 @@ pub struct DocDb {
     /// currently reconstructs to into the content this document's next
     /// `AppendEdit`'s coordinates assume. Deferred rather than journaled at
     /// bind time because journaling it rewrites the row's reconstruction —
-    /// a `binding_only` bind that is never edited must leave a dead
+    /// a re-baseline bind that is never edited must leave a dead
     /// session's recovered draft (and its resumable merge) reconstructable.
     /// The deferral is safe for the USER'S OWN words only because a
     /// hand-off rebind's abandoned scratch row still holds every pre-rebind
@@ -570,14 +578,14 @@ impl crate::app::App {
 
     /// Advances `db_id`'s shared [`FileBinding`] to `obs` unconditionally —
     /// the re-baseline counterpart to [`App::install_or_join_file_binding`],
-    /// called only from a `binding_only` `Load` ack (`db_ack::
+    /// called only from a `Rebaseline` `Load` ack (`db_ack::
     /// handle_load_ack`). When `db_id` already has a binding, always
     /// overwrites `expect_obs` and clears `pending_rebaseline_hash`, even
     /// though the ordinary join path never would: a re-baseline exists
     /// precisely to correct a baseline that path left stale.
     ///
     /// A missing entry is NOT an inconsistency — the lost-create-race
-    /// hand-off (`materialize_ack::reactions`) enqueues a `binding_only`
+    /// hand-off (`materialize_ack::reactions`) enqueues a `Rebaseline`
     /// `Load` against the RACER's own row, a `db_id` this process may never
     /// have touched before, so its first-ever sighting legitimately lands
     /// here rather than through [`App::install_or_join_file_binding`]. That

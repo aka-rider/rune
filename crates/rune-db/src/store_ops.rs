@@ -280,6 +280,20 @@ impl Store {
     /// with the op so the writer thread never needs to touch `Store`'s own
     /// mutex.
     pub fn load(&self, path: &Path) -> Result<u64, Error> {
+        self.enqueue_fresh_load(path, None)
+    }
+
+    /// Enqueues a `Load` op re-baselining a document this caller is ALREADY
+    /// bound to: `expect_doc` is that binding's row, and naming it here is
+    /// what keeps the row's local undo-position numbering alive across the
+    /// load (`OpKind::Load::rebaseline_of`). A load that resolves `path` to
+    /// some OTHER row restarts the numbering exactly like [`Store::load`]
+    /// does — the caller re-derives its own mapping in that case too.
+    pub fn load_rebaseline(&self, path: &Path, expect_doc: DocId) -> Result<u64, Error> {
+        self.enqueue_fresh_load(path, Some(expect_doc))
+    }
+
+    fn enqueue_fresh_load(&self, path: &Path, rebaseline_of: Option<DocId>) -> Result<u64, Error> {
         let now = self.now();
         let liveness_check = self.liveness_check();
         self.enqueue(OpKind::Load {
@@ -288,6 +302,7 @@ impl Store {
             path: path.to_path_buf(),
             now,
             source: crate::writer_ops::LoadSource::Fresh,
+            rebaseline_of,
         })
     }
 
@@ -305,6 +320,7 @@ impl Store {
             path: path.to_path_buf(),
             now,
             source: crate::writer_ops::LoadSource::Taken(sighting),
+            rebaseline_of: None,
         })
     }
 

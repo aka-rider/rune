@@ -23,7 +23,7 @@ use rune_db::SyncKind;
 use rune_fuzz::Session;
 use rune_fuzz::driver::wait_for_db_op;
 use rune_tui::app::App;
-use rune_tui::db::{Db, PendingOp};
+use rune_tui::db::{Db, LoadPurpose, PendingOp};
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
@@ -277,9 +277,14 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
         .store
         .load(Path::new("/doc.md"))
         .expect("enqueue binding-only load");
-    app_b
-        .db_ops
-        .insert(op_id, PendingOp::load(doc_b, issued_version, true));
+    app_b.db_ops.insert(
+        op_id,
+        PendingOp::load(
+            doc_b,
+            issued_version,
+            LoadPurpose::Rebaseline { expect_row: None },
+        ),
+    );
     let evt = wait_for_db_op(&bridge_b, op_id);
     let mut effects = Effects::default();
     rune_tui::app::update(&mut app_b, Msg::Db(evt), &mut effects);
@@ -308,9 +313,10 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
         .store
         .load(Path::new("/doc.md"))
         .expect("enqueue full load");
-    app_b
-        .db_ops
-        .insert(op_id, PendingOp::load(doc_b, issued_version, false));
+    app_b.db_ops.insert(
+        op_id,
+        PendingOp::load(doc_b, issued_version, LoadPurpose::Recover),
+    );
     let evt = wait_for_db_op(&bridge_b, op_id);
     let mut effects = Effects::default();
     rune_tui::app::update(&mut app_b, Msg::Db(evt), &mut effects);

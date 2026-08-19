@@ -5,7 +5,7 @@
 //! ops these react to.
 
 use crate::app::App;
-use crate::db::{DocDb, PublishMode};
+use crate::db::{DocDb, LoadPurpose, PublishMode};
 use crate::document::{DocumentId, Replica, ReplicaStep};
 use crate::messages;
 use rune_core::buffer::AppliedEdit;
@@ -28,12 +28,18 @@ use rune_db::LoadResult;
 /// document may never be left bound to a baseline this reply refused to
 /// supply.
 ///
-/// `binding_only` (`PendingOp::binding_only`'s own doc comment) routes
-/// straight to [`crate::db::App::rebaseline_file_binding`] and [`install_doc_
-/// db`], then returns: a re-baseline `Load` is never a recovery attempt, so
-/// it never touches `id`'s buffer or `last_sync` — only the shared per-file
-/// baseline and the document's own `DocDb` itself (which a lost-create-race hand-off may be
-/// rebinding to an entirely different row) advance.
+/// A `Rebaseline` purpose (`crate::db::LoadPurpose`'s own doc comment)
+/// routes straight to [`crate::db::App::rebaseline_file_binding`] and
+/// [`install_doc_db`], then returns: a re-baseline `Load` is never a
+/// recovery attempt, so it never touches `id`'s buffer or `last_sync` —
+/// only the shared per-file baseline and the document's own `DocDb` itself
+/// (which a lost-create-race hand-off may be rebinding to an entirely
+/// different row) advance. Whether the writer kept or restarted this row's
+/// undo numbering follows from the row named when the op was enqueued, so
+/// both sides decide it from one fact. A document that moved to another row
+/// meanwhile keeps the binding it now has — the reply describes a row it no
+/// longer holds — and only the exactness of its deep undo is at risk, which
+/// is warned about rather than paid for by dropping a live binding.
 ///
 /// Otherwise `recovered` is adopted into the buffer, through
 /// [`crate::document::Document::hydrate`], ONLY when `issued_version` still
@@ -60,7 +66,7 @@ pub fn handle_load_ack(
     id: DocumentId,
     load_result: LoadResult,
     issued_version: Option<u64>,
-    binding_only: bool,
+    purpose: LoadPurpose,
 ) {
     let Some(expect_obs) = load_result.saved_obs else {
         detach_file_binding(app, id);
@@ -71,9 +77,24 @@ pub fn handle_load_ack(
         return;
     };
 
-    if binding_only {
-        app.rebaseline_file_binding(load_result.doc_id.0, expect_obs);
-        let pending = install_doc_db(app, id, &load_result, false);
+    if let LoadPurpose::Rebaseline { expect_row } = purpose {
+        let loaded_row = load_result.doc_id.0;
+        let writer_kept_numbering = expect_row == Some(loaded_row);
+        let still_bound_there = app.doc_db_id(id) == Some(loaded_row);
+        if writer_kept_numbering && !still_bound_there {
+            messages::warn(
+                app,
+                "undo history for this tab may no longer be recoverable step by step \u{2014} save to settle it",
+            );
+            return;
+        }
+        app.rebaseline_file_binding(loaded_row, expect_obs);
+        let mode = if writer_kept_numbering {
+            BindMode::Preserved
+        } else {
+            BindMode::Restarted { adopted: false }
+        };
+        let pending = install_doc_db(app, id, &load_result, mode);
         crate::db_enqueue::replay_pending(app, id, pending);
         return;
     }
@@ -135,7 +156,7 @@ pub fn handle_load_ack(
     // join itself never touches `id`'s own document, so there is no reason
     // to interleave it with the borrow that does.
     app.install_or_join_file_binding(load_result.doc_id.0, Some(expect_obs));
-    let pending = install_doc_db(app, id, &load_result, adopted);
+    let pending = install_doc_db(app, id, &load_result, BindMode::Restarted { adopted });
     crate::db_enqueue::replay_pending(app, id, pending);
     let Some(doc) = app.doc_mut(id) else { return };
     // Render/hint state only (see `Document::last_sync`'s own doc comment)
@@ -156,12 +177,12 @@ pub fn handle_load_ack(
 
 /// Installs `id`'s `DocDb` for `load_result.doc_id` — shared by both
 /// `handle_load_ack` branches: the ordinary recovery path (where `db_id`
-/// is `id`'s own file, freshly loaded) and the `binding_only` path (where
+/// is `id`'s own file, freshly loaded) and the re-baseline path (where
 /// it may instead be a hand-off target this document has never bound
 /// before, e.g. the lost-create-race route's racer row). Either way `id`
 /// is now bound to a row read straight off disk, so the next save is an
-/// overwrite, never a create. `adopted` is whether THIS load's own
-/// hydration adopted the recovered content into the buffer. Returns the
+/// overwrite, never a create. `mode` is what the writer thread just did to
+/// this row's local-position numbering. Returns the
 /// [`ReplicaStep`]s the caller replays via `db_enqueue::replay_pending` —
 /// done AFTER `id` is `Bound`, so a document is only ever `Binding` for
 /// the length of one round trip.
@@ -169,26 +190,40 @@ fn install_doc_db(
     app: &mut App,
     id: DocumentId,
     load_result: &LoadResult,
-    adopted: bool,
+    mode: BindMode,
 ) -> Vec<ReplicaStep> {
     let doc_db = DocDb::new(
         load_result.doc_id.0,
         PublishMode::OverwriteExisting,
         load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
     );
-    bind_document_row(app, id, doc_db, &load_result.recovered, adopted)
+    bind_document_row(app, id, doc_db, &load_result.recovered, mode)
+}
+
+/// What the writer thread did to the bound row's local undo-position
+/// numbering, which this side must mirror. `adopted` is whether this load's
+/// own hydration adopted the recovered content — the extra local journal
+/// entry the writer never sees. Under `Preserved` the existing mapping is
+/// still the true one; re-deriving it would name a different entry than the
+/// writer resolves.
+#[derive(Clone, Copy)]
+enum BindMode {
+    Restarted { adopted: bool },
+    Preserved,
 }
 
 /// What `id`'s replaced `DocDb` carries into a re-bind: its identity (to
 /// tell a same-row re-baseline from a rebind), its lagging durable-head
-/// estimate, and any still-unflushed re-base bridge. The undo mapping is
-/// deliberately NOT carried — the writer restarts a row's local-position
-/// numbering at every bind, so the mapping is re-derived from scratch
-/// each time.
+/// estimate, any still-unflushed re-base bridge, and the undo mapping —
+/// which is carried only into a [`BindMode::Preserved`] bind, the one bind
+/// the writer thread does not restart the row's numbering at.
 struct PriorBinding {
     db_id: i64,
     last_known_seq: rune_db::Seq,
     pending_rebase: Option<ReplicaStep>,
+    undo_offset: i64,
+    undo_floor: i64,
+    appends_sent: i64,
 }
 
 /// The one chokepoint every fresh `Replica::Bound` install funnels through
@@ -197,19 +232,24 @@ struct PriorBinding {
 /// durable journal reconstructs to at this instant — a `Load`'s
 /// `recovered`, the empty string for a freshly minted scratch row.
 ///
-/// The writer thread restarts a row's local-position numbering at EVERY
-/// bind — a re-baseline `Load` of the row `id` is already bound to
-/// included — so the undo mapping is always re-derived here from the facts
-/// on the ground, never carried forward: the writer's entries after this
+/// The writer thread restarts a row's local-position numbering at every
+/// bind EXCEPT the same-row re-baseline it was asked to preserve
+/// ([`BindMode`]), so a `Restarted` bind re-derives the undo mapping here
+/// from the facts on the ground: the writer's entries after this
 /// bind are the appends still in flight past a same-row re-baseline
 /// (counted off `app.db_ops`), plus the re-base bridge and window steps
 /// about to be enqueued; `undo_offset` is the local journal position none
 /// of those cover, and `undo_floor` marks where exact resolution ends and
 /// `db_enqueue::move_undo_pos`'s forward re-base takes over
 /// (`DocDb::undo_offset`/`undo_floor`/`appends_sent`'s own doc comments).
-/// For a same-row re-baseline, writer position 0 is `bridge_seq` or `0` —
-/// a heal-adopt reload journals no bridge, so position 0 does NOT
-/// reconstruct to the buffer and the floor starts at 1.
+/// For a `Restarted` same-row re-baseline, writer position 0 is
+/// `bridge_seq` or `0` — a heal-adopt reload journals no bridge, so
+/// position 0 does NOT reconstruct to the buffer and the floor starts at 1.
+///
+/// A `Preserved` bind carries the whole mapping across instead: the local
+/// journal gained nothing across such a load, so re-deriving would renumber
+/// positions the writer still resolves the old way and a deep undo would
+/// land on a neighbouring seq rather than its own.
 ///
 /// Binding to a DIFFERENT row — a first bind, or a hand-off rebind whose
 /// buffer content never flowed through the new row's journal — must
@@ -219,7 +259,7 @@ struct PriorBinding {
 /// returned steps' coordinates assume differs from `row_content`, one
 /// synthetic replace-all bridge is computed and DEFERRED onto
 /// `DocDb::pending_rebase` (its own doc comment: journaling it eagerly
-/// would rewrite a reconstruction a never-edited `binding_only` bind must
+/// would rewrite a reconstruction a never-edited re-baseline bind must
 /// leave intact). The window steps replay verbatim only while they still
 /// mirror the whole local journal; a journal that moved underneath them
 /// (an undo inside the `Binding` window, or a window opened over an
@@ -234,7 +274,7 @@ fn bind_document_row(
     id: DocumentId,
     mut doc_db: DocDb,
     row_content: &str,
-    adopted: bool,
+    mode: BindMode,
 ) -> Vec<ReplicaStep> {
     let new_db_id = doc_db.db_id;
     let in_flight_appends = crate::db_enqueue::journal_i64(
@@ -250,15 +290,27 @@ fn bind_document_row(
         db_id: db.db_id,
         last_known_seq: db.last_known_seq,
         pending_rebase: db.pending_rebase.take(),
+        undo_offset: db.undo_offset,
+        undo_floor: db.undo_floor,
+        appends_sent: db.appends_sent,
     });
     let window = doc.replica.take_window();
     let mut pending = window.pending;
     let pos = crate::db_enqueue::journal_i64(doc.journal.pos());
     match prior {
         Some(prior) if prior.db_id == new_db_id => {
-            doc_db.appends_sent = in_flight_appends;
-            doc_db.undo_offset = pos - in_flight_appends;
-            doc_db.undo_floor = if adopted { in_flight_appends + 1 } else { 1 };
+            match mode {
+                BindMode::Preserved => {
+                    doc_db.appends_sent = prior.appends_sent;
+                    doc_db.undo_offset = prior.undo_offset;
+                    doc_db.undo_floor = prior.undo_floor;
+                }
+                BindMode::Restarted { adopted } => {
+                    doc_db.appends_sent = in_flight_appends;
+                    doc_db.undo_offset = pos - in_flight_appends;
+                    doc_db.undo_floor = if adopted { in_flight_appends + 1 } else { 1 };
+                }
+            }
             doc_db.last_known_seq = doc_db.last_known_seq.max(prior.last_known_seq);
             doc_db.pending_rebase = prior.pending_rebase;
             doc.replica = Replica::Bound(doc_db);
@@ -381,7 +433,7 @@ pub fn bind_scratch_doc(app: &mut App, id: DocumentId, row_id: i64) {
         id,
         DocDb::new(row_id, PublishMode::CreateOnly, rune_db::Seq(0)),
         "",
-        false,
+        BindMode::Restarted { adopted: false },
     );
     app.install_or_join_file_binding(row_id, None);
     crate::db_enqueue::replay_pending(app, id, pending);
@@ -420,7 +472,13 @@ pub fn adopt_scratch_doc(app: &mut App, id: DocumentId, row_id: i64, recovered: 
 /// bootstrap `Load` reported the row reconstructs to (`recovered`), so an
 /// un-adopted divergence still gets its re-base bridge.
 pub fn bind_loaded_doc(app: &mut App, id: DocumentId, doc_db: DocDb, row_content: &str) {
-    let pending = bind_document_row(app, id, doc_db, row_content, false);
+    let pending = bind_document_row(
+        app,
+        id,
+        doc_db,
+        row_content,
+        BindMode::Restarted { adopted: false },
+    );
     crate::db_enqueue::replay_pending(app, id, pending);
 }
 

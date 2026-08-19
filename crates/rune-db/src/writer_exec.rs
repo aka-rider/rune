@@ -11,6 +11,7 @@ use std::time::SystemTime;
 
 use rusqlite::Connection;
 
+use rune_core::assert_invariant;
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_vfs::{Stat, Vfs};
@@ -295,6 +296,7 @@ pub(crate) struct LoadArgs {
     pub(crate) path: PathBuf,
     pub(crate) now: SystemTime,
     pub(crate) source: LoadSource,
+    pub(crate) rebaseline_of: Option<DocId>,
 }
 
 pub(crate) fn load(
@@ -329,7 +331,8 @@ pub(crate) fn load(
             )?
         }
     };
-    // A fresh binding — this document's LOCAL undo-journal position
+    // Every load but a preserved same-row re-baseline is a fresh binding —
+    // this document's LOCAL undo-journal position
     // `0` (no local pushes yet this binding) durably predates
     // `bridge_seq` if this load journaled a cross-session
     // inheritance bridge edit, else it predates whatever this
@@ -338,13 +341,23 @@ pub(crate) fn load(
     // PRIOR binding of this same `doc_id` left behind (a close then
     // reopen within one process resets local position numbering
     // right along with it).
-    undo_state.insert(
-        result.doc_id,
-        DocUndoState {
-            base_seq: result.bridge_seq.unwrap_or(crate::ids::Seq(0)),
-            local_seq: Vec::new(),
-        },
-    );
+    let same_row_rebaseline = args.rebaseline_of == Some(result.doc_id);
+    let known = undo_state.contains_key(&result.doc_id);
+    assert_invariant!(!same_row_rebaseline || known, || {
+        format!(
+            "load doc {}: asked to preserve a local numbering this thread never started",
+            result.doc_id
+        )
+    });
+    if !(same_row_rebaseline && known) {
+        undo_state.insert(
+            result.doc_id,
+            DocUndoState {
+                base_seq: result.bridge_seq.unwrap_or(crate::ids::Seq(0)),
+                local_seq: Vec::new(),
+            },
+        );
+    }
     Ok(OpOutcome::Load(Box::new(result)))
 }
 

@@ -382,6 +382,7 @@ fn execute_op(
             path,
             now,
             source,
+            rebaseline_of,
         } => exec::load(
             conn,
             vfs,
@@ -392,6 +393,7 @@ fn execute_op(
                 path,
                 now,
                 source,
+                rebaseline_of,
             },
         ),
         OpKind::ResolveAdopt {

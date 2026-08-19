@@ -186,12 +186,20 @@ pub(crate) enum OpKind {
     /// already-taken caller-side sighting (`LoadSource::Taken`,
     /// `crate::load::load_from_read`) — the single-sighting fix: a caller
     /// that already read `path` once must never have this op read it again.
+    /// `rebaseline_of` names the document row the caller is ALREADY bound
+    /// to and means to stay bound to: that row's local undo-position
+    /// numbering (`crate::writer::DocUndoState`) survives this load when —
+    /// and only when — this load resolves `path` to exactly that row. Every
+    /// other load (`None`, or a row that turned out to be a different one)
+    /// restarts the numbering, because the caller's own mapping restarts
+    /// with it.
     Load {
         session_id: SessionId,
         liveness_check: LivenessCheckFn,
         path: PathBuf,
         now: SystemTime,
         source: LoadSource,
+        rebaseline_of: Option<DocId>,
     },
     /// Rename `from` → `to` with no clobber (`rename::rename_bind`). A
     /// collision comes back as `RenameOutcome::Collided` — a refusal, not

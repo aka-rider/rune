@@ -9,6 +9,7 @@ mod rename_common;
 
 use std::path::Path;
 
+use rune_tui::db::LoadPurpose;
 use rune_tui::db_ack::handle_load_ack;
 use rune_tui::runtime::CmdKind;
 use rune_vfs::Vfs;
@@ -54,7 +55,13 @@ fn refused_hydration_detaches() {
         resumable_merge: None,
     };
 
-    handle_load_ack(&mut app, id, load_result, Some(issued_version), false);
+    handle_load_ack(
+        &mut app,
+        id,
+        load_result,
+        Some(issued_version),
+        LoadPurpose::Recover,
+    );
 
     assert!(
         !app.doc(id).unwrap().is_store_bound(),

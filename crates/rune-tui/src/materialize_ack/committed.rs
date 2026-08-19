@@ -96,7 +96,7 @@ pub(super) fn handle_committed_ack(
         // Journaling is already dead in that state (`append_edit`
         // early-returns on degraded), so the binding costs nothing
         // kept dropped and only blocks saving kept standing. The
-        // `Load` is `binding_only` (never a recovery adoption) — this
+        // `Load` is a re-baseline (never a recovery adoption) — this
         // is anchoring a CAS baseline for content already known, not
         // recovering anything. Uses the best-effort enqueue, never the
         // degrading one: this call may run once per document inside a

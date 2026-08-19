@@ -1,11 +1,11 @@
 //! The writer thread restarts a document's local-position numbering at
-//! EVERY bind — including a same-row re-baseline `Load` and the launch-time
-//! scratch adoption — so the app-side undo mapping must be re-derived at
-//! each bind and a position the bound row cannot express must be journaled
-//! as a forward re-base, never mis-resolved into a wrong-but-existing seq
-//! (which silently truncates or resurrects content on recovery). Driven
-//! bare-`App` over file-backed stores so a restart proves what recovery
-//! actually reconstructs.
+//! every bind EXCEPT the same-row re-baseline it is asked to preserve — so
+//! the app-side undo mapping is re-derived at each restarting bind, carried
+//! verbatim across a preserved one, and a position the bound row cannot
+//! express is journaled as a forward re-base, never mis-resolved into a
+//! wrong-but-existing seq (which silently truncates or resurrects content
+//! on recovery). Driven bare-`App` over file-backed stores so a restart
+//! proves what recovery actually reconstructs.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -172,6 +172,92 @@ fn undo_after_a_same_row_rebaseline_never_resurrects_undone_text() {
         restart_recovered(&mem, &db_path),
         buffer,
         "crash recovery must reconstruct exactly the undone-to buffer"
+    );
+}
+
+/// The content the buffer showed at each local journal position, indexed by
+/// position — the ladder an undo run must walk back down, one rung per
+/// press.
+fn record_rung(app: &App, id: rune_tui::document::DocumentId, ladder: &mut Vec<String>) {
+    let doc = app.doc(id).unwrap();
+    let pos = doc.journal.pos();
+    ladder.truncate(pos);
+    ladder.push(doc.buffer.content().to_string());
+}
+
+/// A same-row re-baseline `Load` leaves the writer's local-position
+/// numbering alone, so undo positions from BEFORE it still resolve exactly:
+/// the run walks back rung by rung through the states the user actually
+/// saw, and no press falls back on a forward re-base (a replace-all
+/// `AppendEdit` that only re-anchors the mapping, losing the exact
+/// correspondence the writer already holds).
+#[test]
+fn deep_undo_after_a_same_row_rebaseline_resolves_without_re_basing() {
+    let dir = temp_db_dir("rebaseline-deep-undo");
+    let db_path = dir.join("rune-v1.db");
+    let mem = Arc::new(Mem::new());
+    publish(mem.as_ref(), Path::new(DOC), b"a content");
+    let (mut app, bridge) = file_store_app(&mem, &db_path);
+    let id = app.active;
+
+    let mut ladder = Vec::new();
+    record_rung(&app, id, &mut ladder);
+    for ch in ["a", "b"] {
+        type_text(&mut app, ch);
+        record_rung(&app, id, &mut ladder);
+    }
+    drain_db_ops(&mut app, &bridge);
+    save_round_trip(&mut app, &bridge);
+
+    assert!(
+        rune_tui::db_enqueue::load_document_best_effort(&mut app, id, Path::new(DOC)),
+        "the re-baseline load must enqueue"
+    );
+    let load_evt = wait_for_load(&bridge);
+    send(&mut app, Msg::Db(load_evt));
+
+    send(&mut app, plain(KeyCode::End));
+    for ch in ["c", "d"] {
+        type_text(&mut app, ch);
+        record_rung(&app, id, &mut ladder);
+    }
+    drain_db_ops(&mut app, &bridge);
+    assert!(
+        ladder.len() > 3,
+        "the run must reach positions from before the re-baseline, got {ladder:?}"
+    );
+
+    while app.doc(id).unwrap().journal.pos() > 0 {
+        rune_tui::commands::edit::undo(&mut app, id);
+        assert!(
+            app.db_ops.values().all(|op| !op.is_append),
+            "an undo across the re-baseline must resolve exactly, never journal a forward re-base"
+        );
+        let doc = app.doc(id).unwrap();
+        assert_eq!(
+            doc.buffer.content(),
+            ladder[doc.journal.pos()],
+            "the undo run must walk back through the states the user saw"
+        );
+        drain_db_ops(&mut app, &bridge);
+    }
+    assert_eq!(app.doc(id).unwrap().buffer.content(), ladder[0]);
+    assert!(
+        !app.db.as_ref().unwrap().degraded,
+        "the undo run must not degrade the store"
+    );
+    assert_eq!(
+        rune_tui::messages::posts(&app),
+        0,
+        "no ack in the whole sequence may surface an error, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+
+    app.db.take().expect("store wired").shutdown();
+    assert_eq!(
+        restart_recovered(&mem, &db_path),
+        ladder[0],
+        "crash recovery must reconstruct exactly the fully undone buffer"
     );
 }
 
