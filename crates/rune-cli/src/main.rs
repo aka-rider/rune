@@ -340,5 +340,5 @@ fn to_abs_path(input: &str, cwd: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-#[path = "bootstrap_tests.rs"]
+#[path = "bootstrap_tests/mod.rs"]
 mod tests;
