@@ -10,6 +10,7 @@ pub(crate) mod breadcrumb_layout;
 pub mod clipboard;
 pub mod commands;
 pub mod db;
+mod db_types;
 pub mod db_ack;
 mod db_dispatch;
 pub mod db_enqueue;
