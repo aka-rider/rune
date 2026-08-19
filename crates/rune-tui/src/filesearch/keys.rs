@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
 use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::listnav::ListCommand;
 use crate::pane::Pane;
 use crate::queryline;
 use crate::runtime::Effects;
@@ -26,19 +27,7 @@ const SHIFT: Mods = Mods {
     sup: false,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FileSearchCommand {
-    Type,
-    Erase,
-    Up,
-    Down,
-    PageUp,
-    PageDown,
-    Top,
-    Bottom,
-    Open,
-    Cancel,
-}
+pub type FileSearchCommand = ListCommand;
 
 /// The finder's own key table. Two printable rows (`Mods::NONE`, `SHIFT`)
 /// let the very first keystroke both start filtering and supply its first
@@ -100,7 +89,7 @@ pub const FILESEARCH_BINDINGS: &[Binding<FileSearchCommand>] = &[
     },
     Binding {
         key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
-        cmd: FileSearchCommand::Open,
+        cmd: FileSearchCommand::Enter,
         help: "open",
         secondary: false,
     },
@@ -137,21 +126,11 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
         FileSearchCommand::Down => nav_move(app, 1, effects),
         FileSearchCommand::PageUp => nav_move(app, -page_amount(app), effects),
         FileSearchCommand::PageDown => nav_move(app, page_amount(app), effects),
-        FileSearchCommand::Top => {
-            if let Some(state) = app.filesearch_mut() {
-                state.nav.first();
-            }
-            after_cursor_move(app, effects);
-        }
-        FileSearchCommand::Bottom => {
-            if let Some(state) = app.filesearch_mut() {
-                let len = state.results.len();
-                state.nav.last(len);
-            }
-            after_cursor_move(app, effects);
-        }
-        FileSearchCommand::Open => open_selected(app, effects),
+        FileSearchCommand::Top => nav_edge(app, true, effects),
+        FileSearchCommand::Bottom => nav_edge(app, false, effects),
+        FileSearchCommand::Enter => open_selected(app, effects),
         FileSearchCommand::Cancel => cancel(app, effects),
+        FileSearchCommand::Tab => {}
     }
 }
 
@@ -210,13 +189,20 @@ fn erase(app: &mut App) {
 
 pub(super) fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
     let height = page_amount(app).max(1) as usize;
-    let margin = (height / 4).min(4);
     let Some(state) = app.filesearch_mut() else {
         return;
     };
     let len = state.results.len();
-    state.nav.move_by(delta, len);
-    state.nav.follow(len, height, margin, 0);
+    state.nav.move_and_follow(delta, len, height);
+    after_cursor_move(app, effects);
+}
+
+fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
+    let Some(state) = app.filesearch_mut() else {
+        return;
+    };
+    let len = state.results.len();
+    state.nav.jump_to_edge(len, top);
     after_cursor_move(app, effects);
 }
 

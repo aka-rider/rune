@@ -319,7 +319,6 @@ fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool
         None
     };
     let height = keys::page_amount(app).max(1) as usize;
-    let margin = (height / 4).min(4);
 
     let Some(state) = app.filesearch_mut() else {
         return;
@@ -335,7 +334,7 @@ fn recompute_core(app: &mut App, effects: &mut Effects, preserve_selection: bool
         .and_then(|path| find_row_for_path(state, &path))
         .unwrap_or(0);
     state.nav.cursor = cursor;
-    state.nav.follow(len, height, margin, 0);
+    state.nav.settle(len, height);
 
     let selected_now = selected_candidate(app).map(|c| c.path.clone());
     if selected_now != previous_path {

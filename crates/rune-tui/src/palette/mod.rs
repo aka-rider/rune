@@ -149,14 +149,13 @@ fn resync(app: &mut App, clear_refusal: bool) {
         }
     }
     let height = capacity(app.frame_height, &state).max(1);
-    let margin = (height / 4).min(4);
     let len = state.active_len();
     if len == 0 {
         state.nav.cursor = 0;
     } else {
         state.nav.cursor = state.nav.cursor.min(len - 1);
     }
-    state.nav.follow(len, height, margin, 0);
+    state.nav.settle(len, height);
     app.restore_palette(state);
 }
 

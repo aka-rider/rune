@@ -121,7 +121,7 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     filesearch_row(FileSearchCommand::PageDown, "page down", "page down"),
     filesearch_row(FileSearchCommand::Top, "top", "top"),
     filesearch_row(FileSearchCommand::Bottom, "bottom", "bottom"),
-    filesearch_row(FileSearchCommand::Open, "open", "open"),
+    filesearch_row(FileSearchCommand::Enter, "open", "open"),
     filesearch_row(FileSearchCommand::Cancel, "cancel", "cancel"),
     diff_row(DiffCommand::NextHunk, "next hunk", "next hunk"),
     diff_row(DiffCommand::PrevHunk, "prev hunk", "prev hunk"),

@@ -1,7 +1,7 @@
-use nucleo_matcher::Utf32Str;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 
 use crate::app::App;
+use crate::fuzzymatch;
 use crate::registry::{self, Availability, CommandSpec};
 
 use super::{PaletteRow, PaletteState, Tier};
@@ -78,35 +78,26 @@ fn score_row(
     matcher: &mut nucleo_matcher::Matcher,
 ) -> Option<(Tier, u32, Option<&'static str>, Vec<u32>)> {
     let mut buf: Vec<char> = Vec::new();
-    if let Some(score) = pattern.score(Utf32Str::new(spec.name, &mut buf), matcher) {
-        let mut indices = Vec::new();
-        let _ = pattern.indices(Utf32Str::new(spec.name, &mut buf), matcher, &mut indices);
-        indices.sort_unstable();
-        indices.dedup();
+    if let Some(score) = fuzzymatch::score(spec.name, pattern, matcher, &mut buf) {
+        let indices = fuzzymatch::indices(spec.name, pattern, matcher, &mut buf);
         return Some((Tier::NameHit, score, None, indices));
     }
 
     let mut best_alias: Option<(&'static str, u32)> = None;
     for alias in spec.fuzzy_aliases {
-        if let Some(score) = pattern.score(Utf32Str::new(alias, &mut buf), matcher)
+        if let Some(score) = fuzzymatch::score(alias, pattern, matcher, &mut buf)
             && best_alias.is_none_or(|(_, best)| score > best)
         {
             best_alias = Some((alias, score));
         }
     }
     if let Some((alias, score)) = best_alias {
-        let mut indices = Vec::new();
-        let _ = pattern.indices(Utf32Str::new(alias, &mut buf), matcher, &mut indices);
-        indices.sort_unstable();
-        indices.dedup();
+        let indices = fuzzymatch::indices(alias, pattern, matcher, &mut buf);
         return Some((Tier::NameHit, score, Some(alias), indices));
     }
 
-    if let Some(score) = pattern.score(Utf32Str::new(spec.help, &mut buf), matcher) {
-        let mut indices = Vec::new();
-        let _ = pattern.indices(Utf32Str::new(spec.help, &mut buf), matcher, &mut indices);
-        indices.sort_unstable();
-        indices.dedup();
+    if let Some(score) = fuzzymatch::score(spec.help, pattern, matcher, &mut buf) {
+        let indices = fuzzymatch::indices(spec.help, pattern, matcher, &mut buf);
         return Some((Tier::HelpHit, score, None, indices));
     }
 

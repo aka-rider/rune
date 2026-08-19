@@ -52,6 +52,7 @@ pub mod messages;
 pub(crate) mod navhistory;
 pub(crate) mod navigate;
 pub mod opentabs;
+pub(crate) mod fuzzymatch;
 mod overlay;
 mod palette;
 pub mod pane;

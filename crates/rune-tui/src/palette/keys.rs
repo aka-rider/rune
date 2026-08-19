@@ -3,6 +3,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
 use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::listnav::ListCommand;
+use crate::queryline;
 use crate::registry::{self, ArgKind, Availability, CommandId, ExecOutcome};
 use crate::runtime::Effects;
 
@@ -15,20 +17,7 @@ const SHIFT: Mods = Mods {
     sup: false,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PaletteKeyCommand {
-    Type,
-    Erase,
-    Up,
-    Down,
-    PageUp,
-    PageDown,
-    Top,
-    Bottom,
-    Enter,
-    Tab,
-    Cancel,
-}
+pub(crate) type PaletteKeyCommand = ListCommand;
 
 pub(crate) const PALETTE_BINDINGS: &[Binding<PaletteKeyCommand>] = &[
     Binding {
@@ -227,13 +216,7 @@ fn complete_arg(app: &mut App, cmd_end: usize, label: &str) {
 }
 
 pub(crate) fn paste(app: &mut App, text: &str) {
-    let sanitized: String = text
-        .lines()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let sanitized = queryline::sanitize_pasted_line(text);
     if sanitized.is_empty() {
         return;
     }
@@ -247,13 +230,11 @@ pub(crate) fn paste(app: &mut App, text: &str) {
 
 fn nav_move(app: &mut App, delta: isize) {
     let height = row_capacity(app).max(1);
-    let margin = (height / 4).min(4);
     let Some(state) = app.palette_mut() else {
         return;
     };
     let len = state.active_len();
-    state.nav.move_by(delta, len);
-    state.nav.follow(len, height, margin, 0);
+    state.nav.move_and_follow(delta, len, height);
 }
 
 fn nav_edge(app: &mut App, top: bool) {
@@ -261,11 +242,7 @@ fn nav_edge(app: &mut App, top: bool) {
         return;
     };
     let len = state.active_len();
-    if top {
-        state.nav.first();
-    } else {
-        state.nav.last(len);
-    }
+    state.nav.jump_to_edge(len, top);
 }
 
 fn page_amount(app: &App) -> isize {

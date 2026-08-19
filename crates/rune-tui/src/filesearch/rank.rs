@@ -7,8 +7,9 @@
 //! only the rows that survive the cap, since a row nothing ever displays
 //! needs none.
 
-use nucleo_matcher::Utf32Str;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+
+use crate::fuzzymatch;
 
 use super::{Candidate, FileSearchState, RESULT_CAP, ResultRow, candidate_by};
 
@@ -73,7 +74,7 @@ fn score_all(
         .iter()
         .enumerate()
         .filter_map(|(i, c)| {
-            let score = pattern.score(Utf32Str::new(&c.display, charbuf), matcher)?;
+            let score = fuzzymatch::score(&c.display, pattern, matcher, charbuf)?;
             Some(Scored {
                 candidate_idx: offset + i,
                 score,
@@ -98,13 +99,9 @@ fn indices_for(
     matcher: &mut nucleo_matcher::Matcher,
     charbuf: &mut Vec<char>,
 ) -> Vec<u32> {
-    let mut indices = Vec::new();
-    if let Some(c) = candidate_by(recents, walk, idx) {
-        let _ = pattern.indices(Utf32Str::new(&c.display, charbuf), matcher, &mut indices);
-        indices.sort_unstable();
-        indices.dedup();
-    }
-    indices
+    candidate_by(recents, walk, idx)
+        .map(|c| fuzzymatch::indices(&c.display, pattern, matcher, charbuf))
+        .unwrap_or_default()
 }
 
 fn display_of<'a>(recents: &'a [Candidate], walk: &'a [Candidate], idx: usize) -> &'a str {
