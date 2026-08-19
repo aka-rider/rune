@@ -224,7 +224,7 @@ fn app_with(content: &str) -> crate::app::App {
 #[test]
 fn open_creates_a_focused_empty_draft_and_close_is_a_no_op_when_already_closed() {
     let mut app = app_with("hello");
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     let state = app.search().expect("bar is open");
     assert!(state.focused);
     assert_eq!(state.draft, "");
@@ -244,18 +244,18 @@ fn open_creates_a_focused_empty_draft_and_close_is_a_no_op_when_already_closed()
 #[test]
 fn opening_twice_never_clobbers_an_in_progress_draft() {
     let mut app = app_with("hello");
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().draft.push('h');
     recompute(&mut app);
 
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     assert_eq!(app.search().unwrap().draft, "h");
 }
 
 #[test]
 fn switching_the_active_document_resets_the_match_set() {
     let mut app = app_with("hello hello");
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().draft = "hello".to_string();
     recompute(&mut app);
     assert_eq!(app.search().unwrap().matches.len(), 2);
@@ -278,10 +278,10 @@ fn switching_the_active_document_resets_the_match_set() {
 #[test]
 fn a_stale_generation_history_reply_is_discarded() {
     let mut app = app_with("hello");
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     let stale_generation = app.search().unwrap().history_generation;
     close(&mut app);
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     let live_generation = app.search().unwrap().history_generation;
     assert_ne!(
         stale_generation, live_generation,
@@ -302,7 +302,7 @@ fn a_stale_generation_history_reply_is_discarded() {
 #[test]
 fn a_matching_generation_history_reply_populates_history() {
     let mut app = app_with("hello");
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     let generation = app.search().unwrap().history_generation;
 
     handle_history_loaded(&mut app, generation, Ok(vec!["one".into(), "two".into()]));
@@ -319,7 +319,7 @@ fn a_matching_generation_history_reply_populates_history() {
 #[test]
 fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
     let mut app = app_with("hello");
-    open(&mut app);
+    open(&mut app, &mut crate::runtime::Effects::default());
     let generation = app.search().unwrap().history_generation;
     app.search_mut().unwrap().history = vec!["stale".to_string()];
 

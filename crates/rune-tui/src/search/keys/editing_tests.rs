@@ -38,7 +38,7 @@ const SUP: Mods = Mods {
 #[test]
 fn typing_recomputes_matches_live() {
     let mut app = app_with("hello world hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
 
     for c in "hello".chars() {
@@ -56,7 +56,7 @@ fn typing_recomputes_matches_live() {
 #[test]
 fn backspace_on_an_empty_draft_leaves_the_bar_open() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
 
     let backspace = KeyInput {
@@ -76,7 +76,7 @@ fn backspace_on_an_empty_draft_leaves_the_bar_open() {
 #[test]
 fn backspace_erases_one_grapheme_and_clears_its_matches() {
     let mut app = app_with("ab ab");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('a'), &mut effects);
     let _ = handle_key(&mut app, char_key('b'), &mut effects);
@@ -95,7 +95,7 @@ fn backspace_erases_one_grapheme_and_clears_its_matches() {
 #[test]
 fn escape_closes_the_bar_and_saves_the_query() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('h'), &mut effects);
 
@@ -114,7 +114,7 @@ fn escape_closes_the_bar_and_saves_the_query() {
 #[test]
 fn arrow_keys_with_empty_history_leave_state_untouched() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('h'), &mut effects);
     let before = app.search().unwrap().draft.clone();
@@ -135,7 +135,7 @@ fn arrow_keys_with_empty_history_leave_state_untouched() {
 #[test]
 fn a_ctrl_modified_char_is_swallowed_rather_than_typed() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
 
     let ctrl_x = KeyInput {
@@ -155,7 +155,7 @@ fn a_ctrl_modified_char_is_swallowed_rather_than_typed() {
 #[test]
 fn command_v_spawns_a_pbpaste_cmd_tagged_for_the_search_bar() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
 
     let cmd_v = KeyInput {
@@ -173,7 +173,7 @@ fn command_v_spawns_a_pbpaste_cmd_tagged_for_the_search_bar() {
 #[test]
 fn paste_appends_to_the_draft_and_never_touches_the_buffer() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let before = app.active_doc().buffer.content().to_string();
 
     paste(&mut app, "wor\nld");
@@ -186,7 +186,7 @@ fn paste_appends_to_the_draft_and_never_touches_the_buffer() {
 #[test]
 fn paste_strips_control_characters() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
 
     paste(&mut app, "a\u{7}b");
 

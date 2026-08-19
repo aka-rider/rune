@@ -104,25 +104,31 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     if app.filesearch().is_some() {
         return;
     }
+    let Some(clearance) = app.clear_title_for_overlay(effects) else {
+        return;
+    };
     crate::search::close(app);
     crate::explorer_search::clear_search(app);
     let return_to = app.active;
     let generation = app.next_filesearch_gen.mint();
     let root = resolve_root(app);
-    app.open_filesearch(FileSearchState {
-        query: String::new(),
-        nav: listnav::List { cursor: 0, top: 0 },
-        generation,
-        return_to,
-        root: root.clone(),
-        recents: Vec::new(),
-        walk: Vec::new(),
-        walk_pending: true,
-        walk_truncated: false,
-        results: Vec::new(),
-        matcher: Matcher::new(Config::DEFAULT.match_paths()),
-        charbuf: Vec::new(),
-    });
+    app.open_filesearch(
+        FileSearchState {
+            query: String::new(),
+            nav: listnav::List { cursor: 0, top: 0 },
+            generation,
+            return_to,
+            root: root.clone(),
+            recents: Vec::new(),
+            walk: Vec::new(),
+            walk_pending: true,
+            walk_truncated: false,
+            results: Vec::new(),
+            matcher: Matcher::new(Config::DEFAULT.match_paths()),
+            charbuf: Vec::new(),
+        },
+        clearance,
+    );
     effects.cmds.push(crate::runtime::filesearch_scan_cmd(
         Arc::clone(&app.vfs),
         root.clone(),

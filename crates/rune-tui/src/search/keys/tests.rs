@@ -47,7 +47,7 @@ fn shift_enter_key() -> KeyInput {
 #[test]
 fn enter_wraps_from_the_last_match_to_the_first() {
     let mut app = app_with("hi hi hi");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "hi".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -69,7 +69,7 @@ fn enter_wraps_from_the_last_match_to_the_first() {
 #[test]
 fn shift_enter_wraps_from_the_first_match_to_the_last() {
     let mut app = app_with("hi hi hi");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "hi".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -84,7 +84,7 @@ fn shift_enter_wraps_from_the_first_match_to_the_last() {
 #[test]
 fn enter_with_zero_matches_is_a_consumed_no_op() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "zzz".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -112,7 +112,7 @@ fn enter_skips_matches_fully_inside_a_concealed_table_separator_but_still_counts
     // the cursor sits inside, and a cursor left inside the table itself
     // would defeat this fixture entirely.
     let mut app = app_with("text\n\n| a | b |\n|---|---|\n| a | c |\n");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('-'), &mut effects);
 
@@ -149,7 +149,7 @@ fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
     // the CURRENT view on the very next Enter, not from a cache stamped at
     // the earlier recompute.
     let mut app = app_with("text\n\n| a | b |\n|---|---|\n| a | c |\n");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('-'), &mut effects);
     let version_before = app.active_doc().buffer.version();
@@ -185,7 +185,7 @@ fn read_only_document_scrolls_the_viewport_on_a_jump() {
     app.active_doc_mut().read_only = crate::document::ReadOnly::Always;
     app.active_doc_mut().viewport.set_size(80, 10);
     app.sync_view();
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "line 150".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -216,7 +216,7 @@ fn a_degraded_db_attempts_no_write_but_still_navigates() {
         crate::db::DbBridge::bootstrap(),
         true,
     ));
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('h'), &mut effects);
     let _ = handle_key(&mut app, char_key('i'), &mut effects);
@@ -243,7 +243,7 @@ fn enter_after_a_coalesced_doc_switch_recomputes_instead_of_jumping_into_the_old
     // must revalidate and recompute against the NEW active document rather
     // than jumping using the old doc's stale match byte ranges.
     let mut app = app_with("needle needle");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "needle".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -286,7 +286,7 @@ fn repeated_enter_on_the_same_query_enqueues_one_touch_op() {
         crate::db::DbBridge::bootstrap(),
         false,
     ));
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "hi".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -312,7 +312,7 @@ fn repeated_enter_on_the_same_query_enqueues_one_touch_op() {
 #[test]
 fn closed_bar_next_steps_and_wraps_using_the_last_query() {
     let mut app = app_with("hi hi hi");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "hi".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -356,7 +356,7 @@ fn closed_bar_next_steps_and_wraps_using_the_last_query() {
 #[test]
 fn closed_bar_prev_wraps_from_the_first_match_to_the_last() {
     let mut app = app_with("hi hi hi");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     for c in "hi".chars() {
         let _ = handle_key(&mut app, char_key(c), &mut effects);
@@ -382,7 +382,7 @@ fn closed_bar_prev_wraps_from_the_first_match_to_the_last() {
 #[test]
 fn last_query_survives_closing_and_reopening_the_bar() {
     let mut app = app_with("hi hi");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('h'), &mut effects);
     let _ = handle_key(&mut app, char_key('i'), &mut effects);
@@ -396,7 +396,7 @@ fn last_query_survives_closing_and_reopening_the_bar() {
     // contract) — it must never seed from `last_search_query`, but the
     // field itself must survive so a subsequent closed-bar chord still
     // has something to navigate with.
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let _ = handle_key(&mut app, esc, &mut effects);
     assert_eq!(app.last_search_query.as_deref(), Some("hi"));
 

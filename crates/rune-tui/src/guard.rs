@@ -34,13 +34,11 @@ pub enum GuardRaise {
 /// `banner::set_modal`: never displaces a prompt already up — with the old
 /// modal error banner gone, a Guard is the only thing that can ever be up,
 /// so "never displace" now simply means "only while none is up".
-pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> GuardRaise {
+pub fn set_guard(app: &mut App, prompt: GuardPrompt, effects: &mut Effects) -> GuardRaise {
     if app.guard.is_some() {
         return GuardRaise::Displaced;
     }
-    if app.palette().is_some() {
-        crate::palette::close(app);
-    }
+    app.close_focus_overlays(effects);
     app.guard = Some(prompt);
     GuardRaise::Raised
 }
@@ -49,8 +47,13 @@ pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> GuardRaise {
 /// `refused` to the message log and return the raise so a caller that
 /// needs to know which one happened (`rename.rs`'s `Collision` entry) can
 /// still branch on it, without also warning a second time itself.
-pub fn set_guard_or_warn(app: &mut App, prompt: GuardPrompt, refused: &str) -> GuardRaise {
-    let raise = set_guard(app, prompt);
+pub fn set_guard_or_warn(
+    app: &mut App,
+    prompt: GuardPrompt,
+    refused: &str,
+    effects: &mut Effects,
+) -> GuardRaise {
+    let raise = set_guard(app, prompt, effects);
     if raise == GuardRaise::Displaced {
         messages::warn(app, refused);
     }

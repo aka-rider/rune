@@ -97,7 +97,7 @@ pub(crate) fn run(
         }
         Command::QuitConfirm => {
             if let Some(quit_key) = quit_key {
-                pane::handle_quit_key(app, quit_key);
+                pane::handle_quit_key(app, quit_key, effects);
             }
         }
     }

@@ -89,11 +89,15 @@ fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
 /// `saved_version`/`DocDb::expect_obs`/`publish_mode` on a commit, surfaces
 /// each `MatResult` outcome as status text, and — either way — clears
 /// `id`'s `save_in_flight` and recomputes its dirty cache (trigger (b) of
-/// `recompute_dirty`'s doc comment). Also called synthetically with
-/// `MatResult::Committed { saved: None }` when the disk write physically
-/// succeeded but the DB-side bookkeeping that would have supplied `saved`
-/// was lost to a dead writer — see `record_outcome`'s doc comment.
-pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: &MatResult) {
+/// `recompute_dirty`'s doc comment). The synthetic routes a lost writer
+/// ack takes — a commit or a missing file with no `MatResult` to carry —
+/// enter through `resolve_committed_ack`/`resolve_missing_ack` instead.
+pub(crate) fn handle_materialize_ack(
+    app: &mut App,
+    id: DocumentId,
+    mat: &MatResult,
+    effects: &mut Effects,
+) {
     let Some(doc) = app.doc(id) else { return };
     // `MatResult` carries no version of its own — this peek is how the
     // chokepoint below correlates the ack against the SAME bytes
@@ -112,16 +116,36 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: &MatRes
         MatResult::CommittedRaced { saved, .. } => {
             handle_committed_ack(app, id, pending_version, Some(saved), true);
         }
-        MatResult::Missing => {
-            if let Some(doc) = app.doc_mut(id) {
-                doc.abandon_save();
-            }
-            messages::error(app, "save failed: file no longer exists");
-        }
+        MatResult::Missing => abandon_missing(app, id),
         MatResult::Refused { .. } => {
-            handle_refused_ack(app, id);
+            handle_refused_ack(app, id, effects);
         }
     }
+    finish_ack(app, id, pending_version, committed);
+}
+
+fn abandon_missing(app: &mut App, id: DocumentId) {
+    if let Some(doc) = app.doc_mut(id) {
+        doc.abandon_save();
+    }
+    messages::error(app, "save failed: file no longer exists");
+}
+
+pub(crate) fn resolve_missing_ack(app: &mut App, id: DocumentId) {
+    let Some(doc) = app.doc(id) else { return };
+    let pending_version = doc.pending_save_version();
+    abandon_missing(app, id);
+    finish_ack(app, id, pending_version, false);
+}
+
+pub(crate) fn resolve_committed_ack(app: &mut App, id: DocumentId) {
+    let Some(doc) = app.doc(id) else { return };
+    let pending_version = doc.pending_save_version();
+    handle_committed_ack(app, id, pending_version, None, false);
+    finish_ack(app, id, pending_version, true);
+}
+
+fn finish_ack(app: &mut App, id: DocumentId, pending_version: Option<u64>, committed: bool) {
     // The save this document's `save_in_flight` gated is resolved either
     // way now — a `Probe` deferred against `db_id` (`db_enqueue::probe`'s
     // own doc comment) can finally read the post-save world exactly once.
@@ -143,7 +167,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: &MatRes
     resolve_continuations(app, id, pending_version, committed);
 }
 
-fn handle_refused_ack(app: &mut App, id: DocumentId) {
+fn handle_refused_ack(app: &mut App, id: DocumentId, effects: &mut Effects) {
     // Both discriminators read `bind_target` — they must run BEFORE
     // `abandon_save` below wipes it (it now lives inside `save` itself,
     // so a single resolve clears it atomically — no separate "was this
@@ -249,7 +273,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId) {
         // rather than needing to know `^M` exists. `Diverged` is the
         // superset of what a CAS refusal can mean: the comparison itself
         // proves only that disk moved, never how the two sides relate.
-        super::raise_disk_conflict(app, id, rune_db::SyncKind::Diverged);
+        super::raise_disk_conflict(app, id, rune_db::SyncKind::Diverged, effects);
     }
 }
 

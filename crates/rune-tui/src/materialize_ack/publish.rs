@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rune_db::{MatResult, MaterializeOutcome, ObsOrigin, StatFacts, SyncKind};
+use rune_db::{MaterializeOutcome, ObsOrigin, StatFacts, SyncKind};
 use rune_vfs::Vfs;
 
 use crate::app::App;
@@ -18,7 +18,7 @@ use crate::messages;
 use crate::runtime::{Cmd, Effects, Msg};
 use crate::save::{self, SaveMode};
 
-use super::reactions::{fail_materialize_locally, handle_materialize_ack};
+use super::reactions::fail_materialize_locally;
 use super::{
     RecordTarget, SAVE_REFUSED_DISK_CHANGED, raise_disk_conflict, record_orphan_outcome,
     record_outcome,
@@ -76,7 +76,7 @@ pub(crate) fn handle_prepare_ack(
                     .and_then(super::super::document::Document::preparing_mode)
                     == Some(SaveMode::Normal)
             {
-                refuse_divergent_publish(app, id, sync);
+                refuse_divergent_publish(app, id, sync, effects);
                 return;
             }
             (expect_hash.to_string(), Some(bound_path))
@@ -110,9 +110,9 @@ pub(crate) fn handle_prepare_ack(
     ));
 }
 
-fn refuse_divergent_publish(app: &mut App, id: DocumentId, kind: SyncKind) {
+fn refuse_divergent_publish(app: &mut App, id: DocumentId, kind: SyncKind, effects: &mut Effects) {
     fail_materialize_locally(app, id, SAVE_REFUSED_DISK_CHANGED);
-    raise_disk_conflict(app, id, kind);
+    raise_disk_conflict(app, id, kind, effects);
 }
 
 /// What the caller-side `vfs` work ([`save::run_materialize_vfs`])
@@ -235,7 +235,7 @@ pub(crate) fn handle_materialize_vfs_done(
     match outcome {
         MaterializeVfsOutcome::Missing => {
             if live {
-                handle_materialize_ack(app, id, &MatResult::Missing);
+                super::reactions::resolve_missing_ack(app, id);
             }
         }
         MaterializeVfsOutcome::PathDisagreement => {

@@ -26,6 +26,7 @@ use crate::app::App;
 use crate::document::{DocumentId, SavePhase};
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::messages;
+use crate::runtime::Effects;
 
 mod publish;
 mod reactions;
@@ -63,7 +64,12 @@ pub(crate) fn seed_refusal_classification(app: &mut App, id: DocumentId, kind: S
 }
 
 /// The chokepoint both of those refusals raise their answer prompt through.
-pub(crate) fn raise_disk_conflict(app: &mut App, id: DocumentId, kind: SyncKind) {
+pub(crate) fn raise_disk_conflict(
+    app: &mut App,
+    id: DocumentId,
+    kind: SyncKind,
+    effects: &mut Effects,
+) {
     seed_refusal_classification(app, id, kind);
     let _ = guard::set_guard_or_warn(
         app,
@@ -72,6 +78,7 @@ pub(crate) fn raise_disk_conflict(app: &mut App, id: DocumentId, kind: SyncKind)
             kind: GuardKind::DiskConflict,
         },
         "disk-conflict confirmation dropped \u{2014} a prompt is already showing",
+        effects,
     );
 }
 
@@ -85,11 +92,12 @@ pub(crate) fn handle_materialize_ack_for_op(
     id: DocumentId,
     op_id: u64,
     mat: MatResult,
+    effects: &mut Effects,
 ) {
     if app.doc(id).and_then(super::document::Document::record_op) != Some(op_id) {
         return;
     }
-    handle_materialize_ack(app, id, &mat);
+    handle_materialize_ack(app, id, &mat, effects);
 }
 
 /// The disk-sourced facts [`record_outcome`] needs to call `rune-db`'s
@@ -122,7 +130,7 @@ fn record_outcome(
         // (`published`); either way there is nothing left to record it
         // against, so finish exactly as a committed/refused ack would.
         if published {
-            handle_materialize_ack(app, id, &MatResult::Committed { saved: None });
+            reactions::resolve_committed_ack(app, id);
         } else {
             fail_materialize_locally(app, id, "save failed: recovery store unavailable");
         }
@@ -160,7 +168,7 @@ fn record_outcome(
                 // (resolving this document's `save` back to `Idle`) so the
                 // subsequent whole-store degrade doesn't also flag it as a
                 // failed save.
-                handle_materialize_ack(app, id, &MatResult::Committed { saved: None });
+                reactions::resolve_committed_ack(app, id);
             }
             on_store_failure(app, &e.to_string());
         }
@@ -243,7 +251,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: &str) {
         }
     }
     for id in resolved_committed {
-        handle_materialize_ack(app, id, &MatResult::Committed { saved: None });
+        reactions::resolve_committed_ack(app, id);
     }
     if abandoned_any {
         messages::error(app, format!("save failed: {error}"));

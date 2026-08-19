@@ -396,6 +396,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
                     "rename to {} refused \u{2014} a prompt is already showing",
                     display_name(&to)
                 ),
+                effects,
             );
             if raised == guard::GuardRaise::Raised {
                 app.rename = RenameState::Collision {

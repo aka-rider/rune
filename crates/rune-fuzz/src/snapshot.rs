@@ -46,7 +46,7 @@ pub struct Snapshot {
     pub line_ends: Vec<usize>,
     pub journal_pos: usize,
     pub journal_len: usize,
-    pub newest_applied_edit_kind: Option<EditKind>,
+    pub journal_tip_strip_run: usize,
     pub save_in_flight: bool,
     pub pending_quit: Option<(QuitKey, Generation)>,
     pub should_quit: bool,
@@ -340,12 +340,15 @@ impl Snapshot {
             line_ends,
             journal_pos: doc.journal.pos(),
             journal_len: doc.journal.len(),
-            newest_applied_edit_kind: doc
+            journal_tip_strip_run: doc
                 .journal
-                .pos()
-                .checked_sub(1)
-                .and_then(|newest| doc.journal.steps().get(newest))
-                .map(|step| step.kind),
+                .steps()
+                .get(..doc.journal.pos())
+                .unwrap_or_default()
+                .iter()
+                .rev()
+                .take_while(|step| step.kind == EditKind::StripTrailingWhitespace)
+                .count(),
             save_in_flight: doc.save_in_flight(),
             pending_quit: match app.quit {
                 rune_tui::app::QuitNegotiation::ConfirmArmed(key, generation) => {

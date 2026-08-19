@@ -48,7 +48,11 @@ fn set_guard_raises_onto_an_empty_slot() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
     assert!(matches!(
@@ -69,7 +73,11 @@ fn set_guard_refuses_to_replace_an_existing_prompt() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
     assert_eq!(
@@ -80,7 +88,8 @@ fn set_guard_refuses_to_replace_an_existing_prompt() {
                 GuardKind::RenameCollision {
                     target: "b.md".to_string(),
                 }
-            )
+            ),
+            &mut crate::runtime::Effects::default()
         ),
         GuardRaise::Displaced
     );
@@ -99,7 +108,11 @@ fn clear_guard_empties_the_slot() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
     clear_guard(&mut app);
@@ -113,7 +126,11 @@ fn retract_disk_conflict_on_convergence_is_a_noop_while_still_divergent() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DiskConflict),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
 
@@ -136,7 +153,11 @@ fn retract_disk_conflict_on_convergence_clears_the_prompt() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DiskConflict),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
 
@@ -156,7 +177,11 @@ fn retract_disk_conflict_on_convergence_touches_only_its_own_kind_and_doc() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
 
@@ -198,7 +223,8 @@ fn clear_guard_on_a_rename_collision_returns_the_rename_machine_to_idle() {
                 GuardKind::RenameCollision {
                     target: "b.md".to_string(),
                 }
-            )
+            ),
+            &mut crate::runtime::Effects::default()
         ),
         GuardRaise::Raised
     );
@@ -215,7 +241,11 @@ fn set_guard_or_warn_posts_refused_text_and_preserves_the_existing_prompt() {
     let mut app = app();
     let doc = app.active;
     assert_eq!(
-        set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)),
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DiskConflict),
+            &mut crate::runtime::Effects::default()
+        ),
         GuardRaise::Raised
     );
 
@@ -223,6 +253,7 @@ fn set_guard_or_warn_posts_refused_text_and_preserves_the_existing_prompt() {
         &mut app,
         prompt(doc, GuardKind::DirtyClose),
         "some confirmation dropped \u{2014} a prompt is already showing",
+        &mut crate::runtime::Effects::default(),
     );
 
     assert_eq!(raise, GuardRaise::Displaced);
@@ -246,7 +277,12 @@ fn set_guard_or_warn_raises_silently_onto_an_empty_slot() {
     let mut app = app();
     let doc = app.active;
 
-    let raise = set_guard_or_warn(&mut app, prompt(doc, GuardKind::DirtyClose), "unused");
+    let raise = set_guard_or_warn(
+        &mut app,
+        prompt(doc, GuardKind::DirtyClose),
+        "unused",
+        &mut crate::runtime::Effects::default(),
+    );
 
     assert_eq!(raise, GuardRaise::Raised);
     assert_eq!(messages::newest_text(&app), None);
@@ -341,4 +377,53 @@ fn force_save_bypasses_not_dirty() {
         SaveStart::InFlight
     );
     assert!(app.doc(doc).unwrap().save_in_flight());
+}
+
+/// A Guard takes the keyboard, so it closes whatever owned the keystroke —
+/// but a search bar the user left open only for its highlight owns nothing
+/// and must survive, or the highlight vanishes with no message saying why.
+#[test]
+fn an_unfocused_search_bar_survives_a_guard_raise() {
+    let mut app = app();
+    let doc = app.active;
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
+    app.search_mut().expect("the bar is open").focused = false;
+
+    assert_eq!(
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            &mut crate::runtime::Effects::default()
+        ),
+        GuardRaise::Raised
+    );
+
+    assert!(
+        app.search().is_some(),
+        "a kept, unfocused search bar must outlive a guard raise"
+    );
+}
+
+/// The focused half of the same rule: a bar that DOES own the keystroke is
+/// closed, since the Guard is about to claim every key.
+#[test]
+fn a_focused_search_bar_closes_on_a_guard_raise() {
+    let mut app = app();
+    let doc = app.active;
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
+    assert!(app.search().expect("the bar is open").focused);
+
+    assert_eq!(
+        set_guard(
+            &mut app,
+            prompt(doc, GuardKind::DirtyClose),
+            &mut crate::runtime::Effects::default()
+        ),
+        GuardRaise::Raised
+    );
+
+    assert!(
+        app.search().is_none(),
+        "a focused bar must yield the keyboard"
+    );
 }

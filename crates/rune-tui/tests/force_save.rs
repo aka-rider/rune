@@ -267,6 +267,7 @@ fn disk_conflict_prompt_survives_refused_force() {
             doc: doc_id,
             kind: GuardKind::DiskConflict,
         },
+        &mut rune_tui::runtime::Effects::default(),
     );
     assert_eq!(raise, rune_tui::guard::GuardRaise::Raised);
 

@@ -14,7 +14,7 @@ use rune_syntax::wrap::WrapSnapshot;
 
 use crate::app::App;
 use crate::document::DocumentId;
-use crate::runtime::CmdError;
+use crate::runtime::{CmdError, Effects};
 
 pub(crate) mod keys;
 
@@ -65,23 +65,29 @@ pub(crate) struct SearchState {
 /// `App::last_search_query` — the last query is for CLOSED-bar navigation
 /// only (a later change), so re-opening the bar always starts blank. A
 /// no-op if the bar is already open.
-pub(crate) fn open(app: &mut App) {
+pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     if app.search().is_some() {
         return;
     }
+    let Some(clearance) = app.clear_title_for_overlay(effects) else {
+        return;
+    };
     let history_generation = app.next_search_history_gen.mint();
-    app.open_search(SearchState {
-        focused: true,
-        draft: String::new(),
-        matches: Vec::new(),
-        current: None,
-        doc: app.active,
-        buffer_version: app.active_doc().buffer.version(),
-        history: Vec::new(),
-        history_generation,
-        history_pos: None,
-        history_draft: None,
-    });
+    app.open_search(
+        SearchState {
+            focused: true,
+            draft: String::new(),
+            matches: Vec::new(),
+            current: None,
+            doc: app.active,
+            buffer_version: app.active_doc().buffer.version(),
+            history: Vec::new(),
+            history_generation,
+            history_pos: None,
+            history_draft: None,
+        },
+        clearance,
+    );
 }
 
 /// Applies a `Msg::SearchHistory` reply: dropped outright

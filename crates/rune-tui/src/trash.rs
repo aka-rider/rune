@@ -33,7 +33,7 @@ use crate::workspace;
 /// directory selection, a pathless draft, and a dirty open document — the
 /// last re-checked again at `confirm` and once more when the reply lands,
 /// since the user can keep typing between each of these points.
-pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
+pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
     if app.trash_pending.is_some() {
         messages::error(app, "a trash is already in progress");
         return;
@@ -53,6 +53,7 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
             kind: GuardKind::Trash { path, subject },
         },
         "trash confirmation dropped \u{2014} a prompt is already showing",
+        effects,
     );
 }
 
@@ -273,6 +274,7 @@ mod tests {
                     doc,
                     kind: GuardKind::DiskConflict,
                 },
+                &mut crate::runtime::Effects::default(),
             ),
             GuardRaise::Raised,
             "test setup: pre-arm a foreign guard"

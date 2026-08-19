@@ -1,6 +1,8 @@
 use crate::app::App;
 use crate::filesearch::FileSearchState;
 use crate::palette::PaletteState;
+use crate::pane::Pane;
+use crate::runtime::Effects;
 use crate::search::SearchState;
 
 #[derive(Default)]
@@ -13,7 +15,52 @@ pub(crate) enum Overlay {
     ExplorerFind(String),
 }
 
+pub(crate) struct OverlayClearance(());
+
 impl App {
+    pub(crate) fn clear_title_for_overlay(
+        &mut self,
+        effects: &mut Effects,
+    ) -> Option<OverlayClearance> {
+        self.blur_title(effects);
+        (self.focus() != Pane::Title).then_some(OverlayClearance(()))
+    }
+
+    /// Closes every overlay — the in-file search bar whether or not it is
+    /// focused, the fuzzy file finder, and the command palette — for every
+    /// global that moves focus, switches the active document, or opens
+    /// another surface. The finder closes via `filesearch::cancel` rather
+    /// than a bare overlay reset, so its own focus/return-to restore stays
+    /// coherent instead of leaving `App::focus` wherever the caller's own
+    /// arm is about to move it.
+    pub(crate) fn close_all_overlays(&mut self, effects: &mut Effects) {
+        crate::search::close(self);
+        if self.filesearch().is_some() {
+            crate::filesearch::cancel(self, effects);
+        }
+        if self.palette().is_some() {
+            crate::palette::close(self);
+        }
+    }
+
+    /// Closes only an overlay that owns the keyboard, so a Guard taking the
+    /// keystroke never also discards a kept, unfocused search highlight.
+    /// One `Overlay` slot means at most one is ever open, so closing "all"
+    /// once it owns focus closes exactly that one.
+    pub(crate) fn close_focus_overlays(&mut self, effects: &mut Effects) {
+        if self.overlay_owns_focus() {
+            self.close_all_overlays(effects);
+        }
+    }
+
+    pub(crate) fn overlay_owns_focus(&self) -> bool {
+        match &self.overlay {
+            Overlay::Search(state) => state.focused,
+            Overlay::FileSearch(_) | Overlay::Palette(_) => true,
+            Overlay::None | Overlay::ExplorerFind(_) => false,
+        }
+    }
+
     pub(crate) fn search(&self) -> Option<&SearchState> {
         match &self.overlay {
             Overlay::Search(state) => Some(state),
@@ -32,7 +79,7 @@ impl App {
         }
     }
 
-    pub(crate) fn open_search(&mut self, state: SearchState) {
+    pub(crate) fn open_search(&mut self, state: SearchState, _: OverlayClearance) {
         self.overlay = Overlay::Search(state);
     }
 
@@ -60,7 +107,7 @@ impl App {
         }
     }
 
-    pub(crate) fn open_filesearch(&mut self, state: FileSearchState) {
+    pub(crate) fn open_filesearch(&mut self, state: FileSearchState, _: OverlayClearance) {
         self.overlay = Overlay::FileSearch(state);
     }
 
@@ -84,7 +131,11 @@ impl App {
         }
     }
 
-    pub(crate) fn open_palette(&mut self, state: PaletteState) {
+    pub(crate) fn open_palette(&mut self, state: PaletteState, _: OverlayClearance) {
+        self.overlay = Overlay::Palette(state);
+    }
+
+    pub(crate) fn restore_palette(&mut self, state: PaletteState) {
         self.overlay = Overlay::Palette(state);
     }
 
