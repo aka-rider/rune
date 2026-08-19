@@ -22,7 +22,7 @@ fn regions_of(content: &str, kind: DocumentKind) -> (Buffer, Arc<[CodeRegion]>) 
     let mut doc = DocMachine::new();
     doc.set_kind(kind);
     doc.sync_content(&buf);
-    let regions = doc.snapshot(&buf).code_regions;
+    let regions = doc.snapshot(&buf).code_regions.clone();
     (buf, regions)
 }
 

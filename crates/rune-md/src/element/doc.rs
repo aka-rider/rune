@@ -26,22 +26,32 @@ use rune_syntax::wrap::WrapSnapshot;
 /// table borders synthesised in (WP3's `DisplaySnapshot::expand_tables`) —
 /// every display-space consumer (rendering, the viewport, mouse
 /// hit-testing) reads row geometry from `display`, never `wrap` directly.
-#[derive(Clone, Debug)]
-pub struct ViewSnapshots {
+#[derive(Debug)]
+pub struct ViewSnapshotsInner {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
     pub display: DisplaySnapshot,
     /// Every region of code in the document this view describes — the one
     /// value the highlight scheduler and the background painter both read,
     /// so neither walks the block tree itself.
-    ///
-    /// Behind an `Arc` because a `ViewSnapshots` is cloned out of the
-    /// `snapshot` memo several times per message batch (commands call
-    /// `view()` freely) while it is computed only when the document
-    /// actually changes: an owned `Vec` here would trade one walk per frame
-    /// for one deep copy per `view()` call, and a whole code document's
-    /// region carries one `Range` per buffer line.
     pub code_regions: Arc<[CodeRegion]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ViewSnapshots(Arc<ViewSnapshotsInner>);
+
+impl std::ops::Deref for ViewSnapshots {
+    type Target = ViewSnapshotsInner;
+
+    fn deref(&self) -> &ViewSnapshotsInner {
+        &self.0
+    }
+}
+
+impl ViewSnapshots {
+    fn new(inner: ViewSnapshotsInner) -> ViewSnapshots {
+        ViewSnapshots(Arc::new(inner))
+    }
 }
 
 /// Force every block (and, transitively, every nested block/inline) into
@@ -393,12 +403,12 @@ impl DocMachine {
                 .expand_tables(&wrap)
                 .expand_images(&wrap, &self.blocks, buf.content(), &self.images)
         };
-        ViewSnapshots {
+        ViewSnapshots::new(ViewSnapshotsInner {
             syntax,
             wrap,
             display,
             code_regions: self.code_regions(buf),
-        }
+        })
     }
 
     /// Bypasses the `snapshot` memo entirely — for verifying
