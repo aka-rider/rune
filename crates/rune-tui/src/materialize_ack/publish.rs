@@ -63,7 +63,7 @@ pub(crate) fn handle_prepare_ack(
         crate::db_enqueue::probe(app, id);
         return;
     }
-    let (prep_expect_hash, bound_path) = match prep {
+    let (expect_hash, bound_path) = match prep {
         rune_db::MaterializePrep::Create => (String::new(), None),
         rune_db::MaterializePrep::Overwrite {
             bound_path,
@@ -82,18 +82,6 @@ pub(crate) fn handle_prepare_ack(
             (expect_hash.to_string(), Some(bound_path))
         }
     };
-    // A baseline left unconfirmed by a prior commit whose observation was
-    // lost (`FileBinding::pending_rebaseline_hash`'s own doc comment) stands
-    // in for `expect_hash` here — the DB's own lookup would otherwise still
-    // be answering off the stale row `expect_obs` never advanced past. Once
-    // a real observation lands, this returns `None` again and the DB's own
-    // hash is used as always. Shared per file, not per document: whichever
-    // tab's own lost-bookkeeping commit produced the stash, this document's
-    // OWN next save must recognize the same disk bytes as its own echo too.
-    let expect_hash = app
-        .doc_file_binding(id)
-        .and_then(|b| b.pending_rebaseline_hash.clone())
-        .unwrap_or(prep_expect_hash);
     let Some(doc) = app.doc_mut(id) else { return };
     let Some((ticket, content, params)) = doc.begin_publishing() else {
         return;

@@ -57,6 +57,7 @@ fn prepare_materialize_is_vfs_free_and_returns_the_bound_path_and_expect_hash() 
         &mut conn,
         DocSession { doc_id, session_id },
         MaterializeTarget::Existing { expect },
+        None,
     )
     .expect("prepare");
     let (bound_path, expect_hash) = match prep {
@@ -74,6 +75,33 @@ fn prepare_materialize_is_vfs_free_and_returns_the_bound_path_and_expect_hash() 
     );
 }
 
+/// A `pending_rebaseline_hash` stands in for `expect`'s own stored hash —
+/// the caller's own last publish committed but the observation that would
+/// have advanced `expect` past it was lost, so `expect`'s row still names
+/// stale content; the override is what lets this session's own next save
+/// compare against the bytes it actually last wrote instead.
+#[test]
+fn prepare_materialize_pending_rebaseline_hash_overrides_expects_own_stored_hash() {
+    let mut conn = open();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let doc_id = seed_doc_with_path(&conn, "/doc.md");
+    let expect = record_obs(&conn, doc_id, session_id, "original");
+    let override_hash = crate::ids::BlobHash(observation::hash_bytes(b"lost publish"));
+
+    let prep = prepare_materialize(
+        &mut conn,
+        DocSession { doc_id, session_id },
+        MaterializeTarget::Existing { expect },
+        Some(override_hash.clone()),
+    )
+    .expect("prepare");
+    let expect_hash = match prep {
+        MaterializePrep::Overwrite { expect_hash, .. } => expect_hash,
+        MaterializePrep::Create => unreachable!("expected Overwrite, got Create"),
+    };
+    assert_eq!(expect_hash, override_hash);
+}
+
 /// `BindNew` skips the bound-path/CAS-baseline lookup entirely —
 /// `materialize_create`'s original shape never consulted `expect`.
 #[test]
@@ -89,6 +117,7 @@ fn prepare_materialize_create_target_is_a_pure_no_query() {
             session_id: SessionId(999),
         },
         MaterializeTarget::BindNew,
+        None,
     )
     .expect("prepare BindNew");
     assert_eq!(prep, MaterializePrep::Create);
@@ -108,6 +137,7 @@ fn prepare_materialize_refuses_an_untitled_document() {
         &mut conn,
         DocSession { doc_id, session_id },
         MaterializeTarget::Existing { expect },
+        None,
     )
     .expect_err("untitled document must refuse");
     assert!(matches!(err, Error::Invalid(_)));

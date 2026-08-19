@@ -38,7 +38,7 @@ use rusqlite::{Connection, params};
 
 use crate::Error;
 use crate::confirmation::Confirmation;
-use crate::ids::ObsId;
+use crate::ids::{BlobHash, ObsId};
 use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, Observation, ObservationMeta, StatFacts};
 use crate::rebind::{Rebind, rebind_document_tx};
@@ -59,10 +59,20 @@ pub use crate::materialize_types::{
 /// even while every disk in the workspace is unreachable, and the caller's
 /// OWN subsequent disk work never depends on the writer thread being alive
 /// a moment longer than it takes to answer this one query).
+///
+/// `pending_rebaseline_hash`, when given, stands in for `expect`'s own
+/// stored hash: the caller's own last publish physically committed but the
+/// observation that would have advanced `expect` past it was lost to a
+/// failing writer, so `expect`'s row still names the PRE-publish content.
+/// Comparing against it here, inside the same transaction the rest of this
+/// decision is read from, is what lets a save that starts before the
+/// re-baseline `Load` lands recognize the disk as its own echo instead of
+/// manufacturing a conflict against bytes this session just wrote.
 pub(crate) fn prepare_materialize(
     conn: &mut Connection,
     ds: DocSession,
     target: MaterializeTarget,
+    pending_rebaseline_hash: Option<BlobHash>,
 ) -> Result<MaterializePrep, Error> {
     let expect = match target {
         MaterializeTarget::BindNew => return Ok(MaterializePrep::Create),
@@ -81,11 +91,14 @@ pub(crate) fn prepare_materialize(
                 ds.doc_id
             )));
         }
-        let expect_obs = observation::get_observation(tx, expect)?;
+        let expect_hash = match &pending_rebaseline_hash {
+            Some(hash) => hash.clone(),
+            None => observation::get_observation(tx, expect)?.blob_hash,
+        };
         let sync = crate::sync::sync(tx, ds.session_id, ds.doc_id)?;
         Ok(MaterializePrep::Overwrite {
             bound_path: db_path,
-            expect_hash: expect_obs.blob_hash,
+            expect_hash,
             sync: sync.kind,
         })
     })

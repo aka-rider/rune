@@ -339,7 +339,8 @@ fn execute_op(
             session_id,
             doc_id,
             target,
-        } => exec::materialize_prepare(conn, session_id, doc_id, target),
+            pending_rebaseline_hash,
+        } => exec::materialize_prepare(conn, session_id, doc_id, target, pending_rebaseline_hash),
         OpKind::MaterializeRecord {
             session_id,
             doc_id,

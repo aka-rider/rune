@@ -17,7 +17,7 @@ use rune_core::cursor::Cursor;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
-use crate::ids::{DocId, ObsId, SessionId};
+use crate::ids::{BlobHash, DocId, ObsId, SessionId};
 use crate::materialize::{MaterializeOutcome, MaterializeTarget};
 use crate::retry;
 use crate::store::LivenessCheckFn;
@@ -207,11 +207,13 @@ pub(crate) fn materialize_prepare(
     session_id: SessionId,
     doc_id: DocId,
     target: MaterializeTarget,
+    pending_rebaseline_hash: Option<BlobHash>,
 ) -> Result<OpOutcome, Error> {
     let prep = crate::materialize::prepare_materialize(
         conn,
         crate::materialize::DocSession { doc_id, session_id },
         target,
+        pending_rebaseline_hash,
     )?;
     Ok(OpOutcome::MaterializePrep(Box::new(prep)))
 }
