@@ -178,7 +178,7 @@ pub(crate) fn retract_active_on_convergence(
     let nothing_resolved_yet = matches!(
         &app.merge,
         MergeState::Active { doc: d, session }
-            if *d == doc && session.conflicts.iter().all(|c| match c.origin {
+            if *d == doc && session.conflicts.iter().all(|c| match c.block.origin {
                 session::BlockOrigin::Conflict => {
                     c.block.resolution == session::Resolution::Unresolved
                 }
@@ -362,7 +362,6 @@ mod tests {
                             theirs: "theirs".to_string(),
                         },
                         block,
-                        origin: BlockOrigin::Conflict,
                     })
                     .collect(),
                 cur: 0,
@@ -384,6 +383,7 @@ mod tests {
             vec![Block {
                 range: 0..5,
                 resolution: Resolution::Unresolved,
+                origin: BlockOrigin::Conflict,
             }],
         );
 
@@ -405,10 +405,12 @@ mod tests {
                 Block {
                     range: 0..5,
                     resolution: Resolution::TookTheirs,
+                    origin: BlockOrigin::Conflict,
                 },
                 Block {
                     range: 5..9,
                     resolution: Resolution::Unresolved,
+                    origin: BlockOrigin::Conflict,
                 },
             ],
         );
@@ -434,6 +436,7 @@ mod tests {
             vec![Block {
                 range: 0..5,
                 resolution: Resolution::Unresolved,
+                origin: BlockOrigin::Conflict,
             }],
         );
 
@@ -461,6 +464,7 @@ mod tests {
             vec![Block {
                 range: 0..5,
                 resolution: Resolution::Unresolved,
+                origin: BlockOrigin::Conflict,
             }],
         );
         let other = app.open_document(Buffer::new("other"));

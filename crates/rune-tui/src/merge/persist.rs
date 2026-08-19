@@ -6,37 +6,17 @@ use crate::db::PendingOp;
 use crate::document::DocumentId;
 use crate::messages;
 
-use super::session::{Block, BlockOrigin, Conflict, ConflictBlock, MergeSession, Resolution};
+use super::session::{Block, Conflict, ConflictBlock, MergeSession};
 use super::state::MergeState;
-
-#[derive(Clone, Serialize, Deserialize)]
-struct PersistedBlock {
-    start: usize,
-    end: usize,
-    resolved: bool,
-    #[serde(default)]
-    resolution: Option<Resolution>,
-    #[serde(default)]
-    origin: Option<BlockOrigin>,
-}
 
 #[derive(Serialize, Deserialize)]
 struct BlocksPayload {
-    blocks: Vec<PersistedBlock>,
+    blocks: Vec<Block>,
     conflicts: Vec<Conflict>,
 }
 
 fn blocks_json(pairs: &[ConflictBlock]) -> Option<String> {
-    let blocks = pairs
-        .iter()
-        .map(|p| PersistedBlock {
-            start: p.block.range.start,
-            end: p.block.range.end,
-            resolved: p.block.resolution.is_resolved(),
-            resolution: Some(p.block.resolution),
-            origin: Some(p.origin),
-        })
-        .collect();
+    let blocks = pairs.iter().map(|p| p.block.clone()).collect();
     let conflicts = pairs.iter().map(|p| p.conflict.clone()).collect();
     serde_json::to_string(&BlocksPayload { blocks, conflicts }).ok()
 }
@@ -46,21 +26,7 @@ fn pairs_from_payload(payload: BlocksPayload) -> Vec<ConflictBlock> {
         .blocks
         .into_iter()
         .zip(payload.conflicts)
-        .map(|(b, conflict)| {
-            let resolution = b.resolution.unwrap_or(if b.resolved {
-                Resolution::HandEdited
-            } else {
-                Resolution::Unresolved
-            });
-            ConflictBlock {
-                conflict,
-                block: Block {
-                    range: b.start..b.end,
-                    resolution,
-                },
-                origin: b.origin.unwrap_or(BlockOrigin::Conflict),
-            }
-        })
+        .map(|(block, conflict)| ConflictBlock { conflict, block })
         .collect()
 }
 
@@ -196,15 +162,15 @@ pub(crate) fn resume_from_store(
     messages::info(app, format!("merge resumed — {unresolved} conflict(s)"));
 }
 
-fn ranges_well_formed(blocks: &[PersistedBlock], buffer_len: usize) -> bool {
-    let mut sorted: Vec<&PersistedBlock> = blocks.iter().collect();
-    sorted.sort_by_key(|b| b.start);
+fn ranges_well_formed(blocks: &[Block], buffer_len: usize) -> bool {
+    let mut sorted: Vec<&Block> = blocks.iter().collect();
+    sorted.sort_by_key(|b| b.range.start);
     let mut prev_end = 0usize;
     for b in sorted {
-        if b.start > b.end || b.end > buffer_len || b.start < prev_end {
+        if b.range.start > b.range.end || b.range.end > buffer_len || b.range.start < prev_end {
             return false;
         }
-        prev_end = b.end;
+        prev_end = b.range.end;
     }
     true
 }
@@ -230,12 +196,98 @@ fn reconstruct_theirs(content: &str, pairs: &[ConflictBlock]) -> Option<String> 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use super::super::session::{BlockOrigin, Resolution};
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
 
     fn app_with(content: &str) -> App {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    const GOLDEN_BLOCKS_JSON: &str = r#"{"blocks":[{"start":0,"end":5,"resolved":false,"resolution":"Unresolved","origin":"Conflict"},{"start":5,"end":10,"resolved":true,"resolution":"TookTheirs","origin":"Conflict"},{"start":10,"end":15,"resolved":true,"resolution":"KeptOurs","origin":"AutoApplied"},{"start":15,"end":20,"resolved":true,"resolution":"HandEdited","origin":"Conflict"}],"conflicts":[{"ours":"o0","theirs":"t0"},{"ours":"o1","theirs":"t1"},{"ours":"o2","theirs":"t2"},{"ours":"o3","theirs":"t3"}]}"#;
+
+    #[test]
+    fn golden_fixture_current_wire_shape_decodes_and_round_trips_semantically() {
+        let mut app = app_with(&"x".repeat(20));
+        let doc = app.active;
+
+        resume_from_store(
+            &mut app,
+            doc,
+            GOLDEN_BLOCKS_JSON,
+            ObsId::new(1).expect("nonzero"),
+        );
+
+        let MergeState::Active { session, .. } = &app.merge else {
+            panic!("expected an Active merge, got {:?}", app.merge);
+        };
+        let expected = vec![
+            ConflictBlock {
+                conflict: Conflict {
+                    ours: "o0".to_string(),
+                    theirs: "t0".to_string(),
+                },
+                block: Block {
+                    range: 0..5,
+                    resolution: Resolution::Unresolved,
+                    origin: BlockOrigin::Conflict,
+                },
+            },
+            ConflictBlock {
+                conflict: Conflict {
+                    ours: "o1".to_string(),
+                    theirs: "t1".to_string(),
+                },
+                block: Block {
+                    range: 5..10,
+                    resolution: Resolution::TookTheirs,
+                    origin: BlockOrigin::Conflict,
+                },
+            },
+            ConflictBlock {
+                conflict: Conflict {
+                    ours: "o2".to_string(),
+                    theirs: "t2".to_string(),
+                },
+                block: Block {
+                    range: 10..15,
+                    resolution: Resolution::KeptOurs,
+                    origin: BlockOrigin::AutoApplied,
+                },
+            },
+            ConflictBlock {
+                conflict: Conflict {
+                    ours: "o3".to_string(),
+                    theirs: "t3".to_string(),
+                },
+                block: Block {
+                    range: 15..20,
+                    resolution: Resolution::HandEdited,
+                    origin: BlockOrigin::Conflict,
+                },
+            },
+        ];
+        assert_eq!(session.conflicts, expected);
+
+        let reencoded = blocks_json(&session.conflicts).expect("encodes");
+        assert_eq!(
+            reencoded, GOLDEN_BLOCKS_JSON,
+            "re-encoding must keep carrying the legacy resolved key, byte for byte, for mixed-version readers"
+        );
+        let reencoded_value: serde_json::Value =
+            serde_json::from_str(&reencoded).expect("re-decodes as json");
+        let blocks = reencoded_value.get("blocks").expect("blocks array");
+        let expected_resolved = [false, true, true, true];
+        for (i, resolved) in expected_resolved.into_iter().enumerate() {
+            assert_eq!(
+                blocks.get(i).and_then(|b| b.get("resolved")),
+                Some(&serde_json::Value::Bool(resolved)),
+                "block {i} must carry the legacy resolved key"
+            );
+        }
+        let redecoded: BlocksPayload = serde_json::from_str(&reencoded).expect("re-decodes");
+        assert_eq!(pairs_from_payload(redecoded), expected);
     }
 
     const PRE_CHANGE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false},{"start":30,"end":40,"resolved":true}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
@@ -267,8 +319,8 @@ mod tests {
                     block: Block {
                         range: 5..20,
                         resolution: Resolution::Unresolved,
+                        origin: BlockOrigin::Conflict,
                     },
-                    origin: BlockOrigin::Conflict,
                 },
                 ConflictBlock {
                     conflict: Conflict {
@@ -278,8 +330,8 @@ mod tests {
                     block: Block {
                         range: 30..40,
                         resolution: Resolution::HandEdited,
+                        origin: BlockOrigin::Conflict,
                     },
-                    origin: BlockOrigin::Conflict,
                 },
             ]
         );
@@ -307,7 +359,7 @@ mod tests {
             session
                 .conflicts
                 .iter()
-                .all(|p| p.origin == BlockOrigin::Conflict)
+                .all(|p| p.block.origin == BlockOrigin::Conflict)
         );
         assert_eq!(
             session.conflicts.first().map(|p| p.block.resolution),
@@ -322,7 +374,7 @@ mod tests {
     const POST_CHANGE_BLOCKS_JSON: &str = r#"{"blocks":[{"start":5,"end":20,"resolved":false,"resolution":"Unresolved","origin":"Conflict"},{"start":30,"end":40,"resolved":true,"resolution":"TookTheirs","origin":"AutoApplied"}],"conflicts":[{"ours":"mine","theirs":"yours"},{"ours":"a","theirs":"b"}]}"#;
 
     #[test]
-    fn resume_decodes_the_current_on_disk_shape_and_round_trips_the_written_json_exactly() {
+    fn resume_decodes_the_current_on_disk_shape_and_round_trips_semantically() {
         let mut app = app_with(&"x".repeat(40));
         let doc = app.active;
 
@@ -337,37 +389,35 @@ mod tests {
             panic!("expected an Active merge, got {:?}", app.merge);
         };
         assert_eq!(session.cur, 0);
-        assert_eq!(
-            session.conflicts,
-            vec![
-                ConflictBlock {
-                    conflict: Conflict {
-                        ours: "mine".to_string(),
-                        theirs: "yours".to_string(),
-                    },
-                    block: Block {
-                        range: 5..20,
-                        resolution: Resolution::Unresolved,
-                    },
+        let expected = vec![
+            ConflictBlock {
+                conflict: Conflict {
+                    ours: "mine".to_string(),
+                    theirs: "yours".to_string(),
+                },
+                block: Block {
+                    range: 5..20,
+                    resolution: Resolution::Unresolved,
                     origin: BlockOrigin::Conflict,
                 },
-                ConflictBlock {
-                    conflict: Conflict {
-                        ours: "a".to_string(),
-                        theirs: "b".to_string(),
-                    },
-                    block: Block {
-                        range: 30..40,
-                        resolution: Resolution::TookTheirs,
-                    },
+            },
+            ConflictBlock {
+                conflict: Conflict {
+                    ours: "a".to_string(),
+                    theirs: "b".to_string(),
+                },
+                block: Block {
+                    range: 30..40,
+                    resolution: Resolution::TookTheirs,
                     origin: BlockOrigin::AutoApplied,
                 },
-            ]
-        );
-        assert_eq!(
-            blocks_json(&session.conflicts).expect("encodes"),
-            POST_CHANGE_BLOCKS_JSON
-        );
+            },
+        ];
+        assert_eq!(session.conflicts, expected);
+
+        let reencoded = blocks_json(&session.conflicts).expect("encodes");
+        let redecoded: BlocksPayload = serde_json::from_str(&reencoded).expect("re-decodes");
+        assert_eq!(pairs_from_payload(redecoded), expected);
     }
 
     #[test]

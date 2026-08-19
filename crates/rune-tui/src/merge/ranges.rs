@@ -130,7 +130,7 @@ pub(crate) fn rederive_after_jump(app: &mut App, id: DocumentId, deltas: &[Delta
         pair.block.resolution = match content.get(pair.block.range.clone()) {
             None => Resolution::Unresolved,
             Some(bytes) if bytes == pair.conflict.theirs => Resolution::TookTheirs,
-            Some(bytes) if bytes == pair.conflict.ours => match pair.origin {
+            Some(bytes) if bytes == pair.conflict.ours => match pair.block.origin {
                 BlockOrigin::Conflict => Resolution::Unresolved,
                 BlockOrigin::AutoApplied => Resolution::KeptOurs,
             },

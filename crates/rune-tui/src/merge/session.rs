@@ -16,8 +16,9 @@ pub enum Resolution {
     HandEdited,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BlockOrigin {
+    #[default]
     Conflict,
     AutoApplied,
 }
@@ -32,13 +33,67 @@ impl Resolution {
 pub struct Block {
     pub range: Range<usize>,
     pub resolution: Resolution,
+    pub origin: BlockOrigin,
+}
+
+impl serde::Serialize for Block {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            start: usize,
+            end: usize,
+            resolved: bool,
+            resolution: &'a Resolution,
+            origin: &'a BlockOrigin,
+        }
+        Wire {
+            start: self.range.start,
+            end: self.range.end,
+            resolved: self.resolution.is_resolved(),
+            resolution: &self.resolution,
+            origin: &self.origin,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Block {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            start: usize,
+            end: usize,
+            #[serde(default)]
+            resolved: bool,
+            #[serde(default)]
+            resolution: Option<Resolution>,
+            #[serde(default)]
+            origin: Option<BlockOrigin>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let resolution = raw.resolution.unwrap_or(if raw.resolved {
+            Resolution::HandEdited
+        } else {
+            Resolution::Unresolved
+        });
+        Ok(Block {
+            range: raw.start..raw.end,
+            resolution,
+            origin: raw.origin.unwrap_or_default(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConflictBlock {
     pub conflict: Conflict,
     pub block: Block,
-    pub origin: BlockOrigin,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,8 +155,8 @@ mod tests {
             block: Block {
                 range: 0..1,
                 resolution,
+                origin: BlockOrigin::Conflict,
             },
-            origin: BlockOrigin::Conflict,
         }
     }
 
