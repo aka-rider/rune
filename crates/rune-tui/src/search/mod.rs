@@ -41,7 +41,7 @@ pub(crate) struct SearchState {
     /// ([`handle_history_loaded`]), browsed with ↑/↓ (`keys::history_prev`/
     /// `keys::history_next`).
     pub(crate) history: Vec<String>,
-    /// The generation `Msg::SearchHistory`'s reply must echo back for
+    /// The generation `Msg::RecentsLoaded`'s search reply must echo back for
     /// [`handle_history_loaded`] to accept it — minted from
     /// `App::next_search_history_gen` at [`open`], the same shape
     /// `explorer_dirload`'s own request generation uses, and for the same
@@ -90,7 +90,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     );
 }
 
-/// Applies a `Msg::SearchHistory` reply: dropped outright
+/// Applies a `Msg::RecentsLoaded` search reply: dropped outright
 /// when the bar has since closed, or when `generation` no longer matches
 /// the still-open bar's own `history_generation` — a close-then-reopen (or,
 /// in principle, two overlapping loads) must never let a late reply for an

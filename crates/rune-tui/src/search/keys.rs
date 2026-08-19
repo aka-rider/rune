@@ -225,12 +225,12 @@ fn jump(
 
 /// Records `query` as just-used in the recovery store's `search_history`
 /// table and remembers it as the closed-bar navigation target
-/// (`App::last_search_query`). Debounced by equality against
-/// `App::last_persisted_search_query`: wrapping back onto the same match (or
-/// simply pressing Enter again on an unchanged query) enqueues nothing after
-/// the first time — a DB write per key-repeat would be pure waste. A
-/// degraded or absent store enqueues nothing. The enqueued op id is tracked
-/// in `App::search_history_ops` so `db_dispatch::handle_db_event` can
+/// (`App::last_search_query`). Debounced by `App::search_history`
+/// (`HistoryPersistence`) against the last value it persisted: wrapping
+/// back onto the same match (or simply pressing Enter again on an
+/// unchanged query) enqueues nothing after the first time — a DB write per
+/// key-repeat would be pure waste. A degraded or absent store enqueues
+/// nothing. The enqueued op id is tracked so `db_dispatch::handle_db_event` can
 /// recognize a LATER `DbEvent::Err` for this exact write as a cosmetic
 /// failure rather than a real recovery one — an immediate enqueue `Err`
 /// (this write never even reached the writer's queue) has no such op id to
@@ -239,23 +239,11 @@ fn jump(
 /// history touch must not disable recovery for the rest of the session.
 fn persist_query(app: &mut App, query: &str) {
     app.last_search_query = Some(query.to_string());
-    if app.last_persisted_search_query.as_deref() == Some(query) {
-        return;
-    }
-    if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
-    }
-    let Some(db) = app.db.as_ref() else {
-        return;
-    };
-    match db.store.touch_search_query(query) {
-        Ok(op_id) => {
-            app.search_history_ops.insert(op_id);
-            app.last_persisted_search_query = Some(query.to_string());
-        }
-        Err(e) => {
-            messages::error(app, format!("search history not saved: {e}"));
-        }
+    let result = app.search_history.touch(app.db.as_ref(), query, |db| {
+        db.store.touch_search_query(query)
+    });
+    if let Some(Err(e)) = result {
+        messages::error(app, format!("search history not saved: {e}"));
     }
 }
 

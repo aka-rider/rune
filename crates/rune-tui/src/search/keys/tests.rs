@@ -297,7 +297,7 @@ fn repeated_enter_on_the_same_query_enqueues_one_touch_op() {
     let _ = handle_key(&mut app, enter_key(), &mut effects);
 
     assert_eq!(
-        app.search_history_ops.len(),
+        app.search_history.ops.len(),
         1,
         "an unchanged query across repeated Enter must enqueue exactly one write"
     );

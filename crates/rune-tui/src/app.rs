@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -87,13 +87,11 @@ pub struct App {
     pub(crate) overlay: crate::overlay::Overlay,
     pub(crate) next_filesearch_gen: crate::generation::GenCounter<crate::generation::FileSearch>,
     pub(crate) last_search_query: Option<String>,
-    pub(crate) last_persisted_search_query: Option<String>,
+    pub(crate) search_history: crate::history_persistence::HistoryPersistence,
     pub(crate) next_search_history_gen:
         crate::generation::GenCounter<crate::generation::SearchHistory>,
-    pub(crate) search_history_ops: HashSet<u64>,
     pub(crate) next_palette_gen: crate::generation::GenCounter<crate::generation::Palette>,
-    pub(crate) last_persisted_command: Option<String>,
-    pub(crate) command_history_ops: HashSet<u64>,
+    pub(crate) command_history: crate::history_persistence::HistoryPersistence,
     pub should_quit: bool,
     pub theme: crate::theme::Theme,
     pub icon_tier: crate::theme::icons::IconTier,
@@ -157,12 +155,10 @@ impl App {
             overlay: crate::overlay::Overlay::None,
             next_filesearch_gen: crate::generation::GenCounter::default(),
             last_search_query: None,
-            last_persisted_search_query: None,
+            search_history: crate::history_persistence::HistoryPersistence::new(),
             next_search_history_gen: crate::generation::GenCounter::default(),
-            search_history_ops: HashSet::new(),
             next_palette_gen: crate::generation::GenCounter::default(),
-            last_persisted_command: None,
-            command_history_ops: HashSet::new(),
+            command_history: crate::history_persistence::HistoryPersistence::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icon_tier: crate::theme::icons::IconTier::Unicode,

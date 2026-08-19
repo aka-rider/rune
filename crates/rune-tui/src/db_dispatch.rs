@@ -168,8 +168,8 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // entry `search::keys::persist_query` inserted at enqueue, so
             // it can't be mistaken for still-in-flight by a later `Err` for
             // an unrelated op that happens to reuse the id space.
-            app.search_history_ops.remove(&op_id);
-            app.command_history_ops.remove(&op_id);
+            app.search_history.ack(op_id);
+            app.command_history.ack(op_id);
         }
         DbEvent::Err { id: op_id, error } => {
             let pending = app.db_ops.remove(&op_id);
@@ -177,13 +177,11 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // sticky-degrade the whole recovery store the way a real
             // journal/materialize failure does — the bar keeps working,
             // only the just-used query wasn't recorded.
-            if app.search_history_ops.remove(&op_id) {
-                app.last_persisted_search_query = None;
+            if app.search_history.fail(op_id) {
                 crate::messages::error(app, format!("search history not saved: {error}"));
                 return;
             }
-            if app.command_history_ops.remove(&op_id) {
-                app.last_persisted_command = None;
+            if app.command_history.fail(op_id) {
                 crate::messages::error(app, format!("command history not saved: {error}"));
                 return;
             }
@@ -410,15 +408,15 @@ mod tests {
         assert_eq!(reissued.baseline_epoch, Some(1));
     }
 
-    /// A failed `command_history` write must clear `last_persisted_command`
+    /// A failed `command_history` write must clear `App::command_history`'s dedup guard
     /// so the next attempt to touch the same name enqueues a retry instead
     /// of being debounced away forever by the just-failed write's own
     /// dedup guard.
     #[test]
     fn a_failed_command_history_write_clears_the_dedup_guard() {
         let mut app = App::new(Buffer::new("body"), None, Arc::new(Mem::new()), None);
-        app.last_persisted_command = Some("save".to_string());
-        app.command_history_ops.insert(42);
+        app.command_history.last_persisted = Some("save".to_string());
+        app.command_history.ops.insert(42);
 
         let mut effects = crate::runtime::Effects::default();
         crate::app::update(
@@ -431,18 +429,18 @@ mod tests {
         );
 
         assert!(
-            app.last_persisted_command.is_none(),
+            app.command_history.last_persisted.is_none(),
             "a failed write must clear the dedup guard so a retry is not skipped forever"
         );
-        assert!(!app.command_history_ops.contains(&42));
+        assert!(!app.command_history.ops.contains(&42));
     }
 
     /// Same guarantee for the search-history twin.
     #[test]
     fn a_failed_search_history_write_clears_the_dedup_guard() {
         let mut app = App::new(Buffer::new("body"), None, Arc::new(Mem::new()), None);
-        app.last_persisted_search_query = Some("hi".to_string());
-        app.search_history_ops.insert(7);
+        app.search_history.last_persisted = Some("hi".to_string());
+        app.search_history.ops.insert(7);
 
         let mut effects = crate::runtime::Effects::default();
         crate::app::update(
@@ -455,9 +453,9 @@ mod tests {
         );
 
         assert!(
-            app.last_persisted_search_query.is_none(),
+            app.search_history.last_persisted.is_none(),
             "a failed write must clear the dedup guard so a retry is not skipped forever"
         );
-        assert!(!app.search_history_ops.contains(&7));
+        assert!(!app.search_history.ops.contains(&7));
     }
 }

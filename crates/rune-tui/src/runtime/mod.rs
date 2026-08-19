@@ -278,33 +278,26 @@ pub enum Msg {
     /// about, but not something as severe as `Error`'s glyph/persistence
     /// implies.
     Warning(String),
-    /// The search bar's MRU history load, requested once per bar-open
-    /// (`search::open`) and delivered by [`load_search_history_cmd`].
-    /// `generation` echoes the `SearchState::history_generation` minted at
-    /// the request — `search::handle_history_loaded` drops a reply whose
-    /// generation no longer matches (a close-then-reopen since issued it),
-    /// the same shape `Msg::DirLoaded` uses. A reader `Err` still carries
-    /// this variant (with an `Err` result) rather than folding into
-    /// `Msg::Error`, so a stale reply is discarded exactly like a fresh one
-    /// instead of always surfacing a message regardless of generation.
-    SearchHistory {
-        generation: crate::generation::SearchHistoryGen,
-        result: Result<Vec<String>, CmdError>,
-    },
-    /// The fuzzy file finder's recents load, requested once per finder-open
-    /// (`filesearch::open`) and delivered by [`filesearch_recents_cmd::
-    /// load_filesearch_recents_cmd`]. `generation` echoes `FileSearchState::
-    /// generation` minted at the request — `filesearch::
-    /// handle_recents_loaded` drops a reply whose generation no longer
-    /// matches (a close-then-reopen since issued it), the same shape
-    /// `Msg::SearchHistory` uses. A reader `Err` still carries this variant
-    /// (with an `Err` result) rather than folding into `Msg::Error`, for the
-    /// same reason `SearchHistory` does: a stale reply is discarded exactly
+    /// One recents/MRU load reply — the search bar's history
+    /// ([`load_search_history_cmd`], routed to `search::
+    /// handle_history_loaded`), the fuzzy file finder's recents
+    /// ([`filesearch_recents_cmd::load_filesearch_recents_cmd`], routed to
+    /// `filesearch::handle_recents_loaded`), and the command palette's
+    /// recent commands (`command_history_cmd::load_command_history_cmd`,
+    /// routed to `palette::handle_recents_loaded`) — collapsed onto one
+    /// shape, `kind` selecting the handler. `generation` echoes the
+    /// requesting state's own counter, erased to its raw form the same way
+    /// `Msg::Timer`'s does — each handler reconstructs its own typed
+    /// `Generation<T>` via `from_raw` before comparing, so a search-history
+    /// generation can never be compared against a palette one by mistake.
+    /// A reader `Err` still carries this variant rather than folding into
+    /// `Msg::Error`/`Msg::Warning`, so a stale reply is discarded exactly
     /// like a fresh one instead of always surfacing a message regardless of
     /// generation.
-    FileSearchRecentsLoaded {
-        generation: crate::generation::FileSearchGen,
-        result: Result<Vec<crate::filesearch::Candidate>, CmdError>,
+    RecentsLoaded {
+        kind: RecentsKind,
+        generation: u64,
+        result: RecentsResult,
     },
     /// The fuzzy file finder's ignore-aware workspace walk completed —
     /// `filesearch::open`'s own `Cmd`, delivered by [`filesearch_cmd::
@@ -321,11 +314,26 @@ pub enum Msg {
         generation: crate::generation::FileSearchGen,
         result: Result<crate::filesearch::walk::ScanResult, String>,
     },
-    PaletteRecentsLoaded {
-        generation: crate::generation::PaletteGen,
-        result: Result<Vec<String>, CmdError>,
-    },
     Quit,
+}
+
+/// Which recents/MRU load a [`Msg::RecentsLoaded`] reply answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecentsKind {
+    Search,
+    FileSearch,
+    Palette,
+}
+
+/// A [`Msg::RecentsLoaded`] reply's payload — `Search`/`Palette` share the
+/// plain MRU-string-list shape; `FileSearch`'s recents are file candidates
+/// carrying their own path/metadata, a genuinely different shape rather
+/// than a coincidental duplicate, so it gets its own case instead of being
+/// forced into `Strings`.
+#[derive(Debug)]
+pub enum RecentsResult {
+    Strings(Result<Vec<String>, CmdError>),
+    Candidates(Result<Vec<crate::filesearch::Candidate>, CmdError>),
 }
 
 /// Why a `Msg::DirLoaded` was requested — `explorer::
@@ -408,12 +416,12 @@ pub fn read_file_cmd(
 /// Loads the search bar's MRU history off-thread through a cloned
 /// `ReaderQuery` — the reader thread's own connection, never
 /// the writer's, so this can never contend with or block on an in-flight
-/// recovery write. Always replies with `Msg::SearchHistory`, `generation`
-/// carried through unchanged: a query failure becomes `result: Err(..)`
-/// rather than `Msg::Error`/`Msg::Warning` directly, so `search::
-/// handle_history_loaded` can apply the same stale-generation check to a
-/// failure as to a success instead of always surfacing a message even for a
-/// reply nobody's still waiting on.
+/// recovery write. Always replies with `Msg::RecentsLoaded { kind:
+/// RecentsKind::Search, .. }`, `generation` carried through unchanged: a
+/// query failure becomes `result: Err(..)` rather than `Msg::Error`/
+/// `Msg::Warning` directly, so `search::handle_history_loaded` can apply
+/// the same stale-generation check to a failure as to a success instead of
+/// always surfacing a message even for a reply nobody's still waiting on.
 pub fn load_search_history_cmd(
     reader: rune_db::ReaderQuery,
     generation: crate::generation::SearchHistoryGen,
@@ -426,7 +434,11 @@ pub fn load_search_history_cmd(
                 _ => Vec::new(),
             })
             .map_err(CmdError::from);
-        Some(Msg::SearchHistory { generation, result })
+        Some(Msg::RecentsLoaded {
+            kind: RecentsKind::Search,
+            generation: generation.raw(),
+            result: RecentsResult::Strings(result),
+        })
     })
 }
 

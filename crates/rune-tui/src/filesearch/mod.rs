@@ -240,7 +240,7 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
     crate::explorer_preview::request_preview(app, &path, effects);
 }
 
-/// Applies a `Msg::FileSearchRecentsLoaded` reply: dropped outright when the
+/// Applies a `Msg::RecentsLoaded` file-search reply: dropped outright when the
 /// finder has since closed, or when `generation` no longer matches the
 /// still-open finder's own `generation` — a close-then-reopen since issued
 /// it must never let a late reply land in the session that superseded it,

@@ -148,17 +148,42 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         } => crate::graphics::handle_embed_decoded(app, doc, generation, result, effects),
         Msg::Error(e) => crate::messages::error(app, e),
         Msg::Warning(w) => crate::messages::warn(app, w),
-        Msg::SearchHistory { generation, result } => {
-            crate::search::handle_history_loaded(app, generation, result)
-        }
-        Msg::FileSearchRecentsLoaded { generation, result } => {
-            crate::filesearch::handle_recents_loaded(app, generation, result, effects)
-        }
+        Msg::RecentsLoaded {
+            kind,
+            generation,
+            result,
+        } => match (kind, result) {
+            (
+                crate::runtime::RecentsKind::Search,
+                crate::runtime::RecentsResult::Strings(result),
+            ) => crate::search::handle_history_loaded(
+                app,
+                crate::generation::SearchHistoryGen::from_raw(generation),
+                result,
+            ),
+            (
+                crate::runtime::RecentsKind::FileSearch,
+                crate::runtime::RecentsResult::Candidates(result),
+            ) => crate::filesearch::handle_recents_loaded(
+                app,
+                crate::generation::FileSearchGen::from_raw(generation),
+                result,
+                effects,
+            ),
+            (
+                crate::runtime::RecentsKind::Palette,
+                crate::runtime::RecentsResult::Strings(result),
+            ) => crate::palette::handle_recents_loaded(
+                app,
+                crate::generation::PaletteGen::from_raw(generation),
+                result,
+            ),
+            (kind, result) => {
+                unreachable!("Msg::RecentsLoaded kind/result mismatch: {kind:?}/{result:?}")
+            }
+        },
         Msg::FileSearchScanned { generation, result } => {
             crate::filesearch::handle_scanned(app, generation, result, effects)
-        }
-        Msg::PaletteRecentsLoaded { generation, result } => {
-            crate::palette::handle_recents_loaded(app, generation, result)
         }
         Msg::Quit => {
             app.should_quit = true;
