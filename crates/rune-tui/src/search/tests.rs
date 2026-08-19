@@ -16,7 +16,7 @@ fn wrap_for(content: &str) -> WrapSnapshot {
     let mut doc = DocMachine::new();
     doc.set_width(80);
     doc.sync_content(&buf);
-    doc.snapshot(&buf).wrap
+    doc.snapshot(&buf).wrap.clone()
 }
 
 #[test]
