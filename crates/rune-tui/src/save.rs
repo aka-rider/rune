@@ -205,7 +205,10 @@ pub(crate) fn trigger_save(
         app.timers.arm(
             crate::runtime::TimerKey::SaveConfirm,
             SAVE_CONFIRM_TIMEOUT,
-            Msg::SaveConfirmTimeout { generation },
+            Msg::Timer {
+                key: crate::runtime::TimerKey::SaveConfirm,
+                generation,
+            },
         );
         return SaveStart::Refused;
     }

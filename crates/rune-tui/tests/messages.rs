@@ -30,7 +30,7 @@ use rune_tui::app;
 use rune_tui::keymap::KeyCode;
 use rune_tui::messages;
 use rune_tui::pane::Pane;
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{Effects, Msg, TimerKey};
 
 use messages_common::{app_for, ctrl_e, frame_text, key};
 
@@ -334,7 +334,8 @@ fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_
     let mut effects2 = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::MessagesCollapseTimeout {
+        Msg::Timer {
+            key: TimerKey::MessagesCollapse,
             generation: rune_tui::generation::Generation::ZERO,
         },
         &mut effects2,
@@ -361,7 +362,8 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
     let mut stale_effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::MessagesCollapseTimeout {
+        Msg::Timer {
+            key: TimerKey::MessagesCollapse,
             generation: rune_tui::generation::Generation::ZERO,
         },
         &mut stale_effects,
@@ -374,7 +376,8 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
     let mut fresh_effects = Effects::default();
     app::update(
         session.app_mut(),
-        Msg::MessagesCollapseTimeout {
+        Msg::Timer {
+            key: TimerKey::MessagesCollapse,
             generation: rune_tui::generation::Generation::from_raw(1),
         },
         &mut fresh_effects,

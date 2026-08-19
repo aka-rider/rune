@@ -290,7 +290,8 @@ mod tests {
         timer.arm(
             TimerKey::QuitConfirm,
             Duration::from_millis(60),
-            Msg::ConfirmTimeout {
+            Msg::Timer {
+                key: TimerKey::QuitConfirm,
                 generation: crate::generation::Generation::from_raw(1),
             },
         );
@@ -303,7 +304,7 @@ mod tests {
                 .expect("both keys must fire");
             match msg {
                 Msg::SnapshotDue { .. } => seen_snapshot = true,
-                Msg::ConfirmTimeout { .. } => seen_quit = true,
+                Msg::Timer { .. } => seen_quit = true,
                 other => panic!("unexpected message: {other:?}"),
             }
         }

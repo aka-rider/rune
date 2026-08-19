@@ -61,32 +61,34 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             result,
             durable,
         } => materialize_ack::handle_save_done(app, id, ticket, version, result, durable),
-        Msg::ConfirmTimeout { generation } => {
-            if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
-                && pending_gen == generation
-            {
-                app.quit = crate::app::QuitNegotiation::Idle;
+        // A stale generation (superseded by a fresh arm or already resolved
+        // since) is ignored in every arm below.
+        Msg::Timer { key, generation } => match key {
+            TimerKey::QuitConfirm => {
+                if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
+                    && pending_gen == generation
+                {
+                    app.quit = crate::app::QuitNegotiation::Idle;
+                }
             }
-            // A stale generation (the user already quit-confirmed or
-            // re-armed with a new chord since) is ignored.
-        }
-        Msg::SaveConfirmTimeout { generation } => {
-            if app
-                .pending_save_confirm
-                .is_some_and(|(_, g)| g == generation)
-            {
-                app.pending_save_confirm = None;
+            TimerKey::SaveConfirm => {
+                if app
+                    .pending_save_confirm
+                    .is_some_and(|(_, g)| g == generation)
+                {
+                    app.pending_save_confirm = None;
+                }
             }
-        }
-        // A stale generation (a newer post/focus/collapse superseded this
-        // one since it was armed) is ignored, mirroring `ConfirmTimeout`/
-        // `SaveConfirmTimeout` above.
-        Msg::MessagesCollapseTimeout { generation } => {
-            if crate::messages::is_armed(app, generation) {
-                crate::messages::collapse(app);
-                crate::focus::reconcile(app, effects);
+            TimerKey::MessagesCollapse => {
+                if crate::messages::is_armed(app, generation) {
+                    crate::messages::collapse(app);
+                    crate::focus::reconcile(app, effects);
+                }
             }
-        }
+            TimerKey::Snapshot(_) => {
+                unreachable!("Msg::Timer never carries TimerKey::Snapshot")
+            }
+        },
         Msg::SnapshotDue { id, generation } => {
             materialize_ack::handle_snapshot_due(app, id, generation)
         }
@@ -198,7 +200,10 @@ pub(crate) fn after_update(
         app.timers.arm(
             TimerKey::MessagesCollapse,
             crate::messages::AUTO_COLLAPSE,
-            Msg::MessagesCollapseTimeout { generation },
+            Msg::Timer {
+                key: TimerKey::MessagesCollapse,
+                generation,
+            },
         );
     }
     if app.palette().is_some() {

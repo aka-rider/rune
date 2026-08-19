@@ -118,17 +118,16 @@ impl From<rune_image::ImageError> for CmdError {
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone` originate from a spawned
-/// `Cmd`'s return value; `ConfirmTimeout`/`SaveConfirmTimeout`/
-/// `MessagesCollapseTimeout`/`SnapshotDue` all originate from `App::timers`'s
-/// one long-lived rearmable timer thread, not a per-message spawned `Cmd`;
-/// `Db` originates from the `rune-db` writer thread via `db::DbBridge`;
-/// `Error`/`Quit` can be synthesized by `update` itself.
+/// `Cmd`'s return value; `Timer`/`SnapshotDue` all originate from
+/// `App::timers`'s one long-lived rearmable timer thread, not a per-message
+/// spawned `Cmd`; `Db` originates from the `rune-db` writer thread via
+/// `db::DbBridge`; `Error`/`Quit` can be synthesized by `update` itself.
 /// `SaveDone`/`SnapshotDue` carry a `DocumentId` so multi-
-/// document acks route back to the document that triggered them;
-/// `ConfirmTimeout`/`SaveConfirmTimeout`/`MessagesCollapseTimeout` stay
-/// doc-agnostic — `App::quit` is app-wide, `pending_save_confirm`'s doc
-/// tag lives in the `Option` tuple itself, and the message log is a single
-/// app-wide pane — none of them need a `Msg`-carried document identity.
+/// document acks route back to the document that triggered them; `Timer`
+/// stays doc-agnostic — `App::quit` is app-wide, `pending_save_confirm`'s
+/// doc tag lives in the `Option` tuple itself, and the message log is a
+/// single app-wide pane — none of them need a `Msg`-carried document
+/// identity.
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
@@ -154,20 +153,12 @@ pub enum Msg {
         result: Result<(), CmdError>,
         durable: bool,
     },
-    ConfirmTimeout {
-        generation: crate::generation::Generation,
-    },
-    /// The 2s degraded-save confirm-gate timer (mirroring
-    /// `ConfirmTimeout`'s quit-confirm shape) — a stale generation is
-    /// ignored exactly like `ConfirmTimeout`.
-    SaveConfirmTimeout {
-        generation: crate::generation::Generation,
-    },
-    /// The message pane's 5s auto-collapse timer, armed by
-    /// `dispatch::after_update` rather than by `messages::post` itself —
-    /// same stale-generation-is-ignored shape as `ConfirmTimeout`/
-    /// `SaveConfirmTimeout`.
-    MessagesCollapseTimeout {
+    /// The quit-confirm window, the degraded-save confirm gate, and the
+    /// message pane's auto-collapse timer — `TimerKey::{QuitConfirm,
+    /// SaveConfirm, MessagesCollapse}` — all share this one stale-
+    /// generation-is-ignored shape, dispatched by matching on `key`.
+    Timer {
+        key: crate::runtime::TimerKey,
         generation: crate::generation::Generation,
     },
     /// The 2s snapshot-autosave debounce timer — a stale

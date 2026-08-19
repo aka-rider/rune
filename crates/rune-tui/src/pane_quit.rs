@@ -71,7 +71,10 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     app.timers.arm(
         crate::runtime::TimerKey::QuitConfirm,
         CONFIRM_TIMEOUT,
-        Msg::ConfirmTimeout { generation },
+        Msg::Timer {
+            key: crate::runtime::TimerKey::QuitConfirm,
+            generation,
+        },
     );
 }
 
