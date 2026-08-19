@@ -4,15 +4,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
+use crate::test_support::open;
 use rune_core::buffer::AppliedEdit;
 use rune_vfs::{Mem, Vfs};
-
-fn open() -> Connection {
-    crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-        &crate::conn::memory_uri(),
-    ))
-    .expect("open")
-}
 
 fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
     let temp = vfs.write_durable(path, bytes).expect("write_durable");

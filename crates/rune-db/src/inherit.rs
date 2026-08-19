@@ -159,23 +159,12 @@ mod tests {
     use std::time::SystemTime;
 
     use rune_core::buffer::AppliedEdit;
-    use rusqlite::Connection;
 
     use super::*;
     use crate::adopt;
     use crate::confirmation::Confirmation;
     use crate::obs_origin::ObsOrigin;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
-
-    fn always_dead(_pid: i64, _started_at: &str) -> bool {
-        false
-    }
+    use crate::test_support::{always_dead, open};
 
     /// Dead-session inheritance must carry the dead session's OWN baseline
     /// (`H0`) forward, not bail, when disk has moved on since it (`H1`) —

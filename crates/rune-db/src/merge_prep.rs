@@ -169,15 +169,9 @@ fn resolve_ancestor(
 mod tests {
     use super::*;
     use crate::obs_origin::ObsOrigin;
+    use crate::test_support::open;
     use rune_vfs::Mem;
     use std::path::Path;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
         let temp = vfs.write_durable(path, bytes).expect("write_durable");

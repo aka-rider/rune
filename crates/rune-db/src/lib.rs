@@ -75,6 +75,8 @@ mod snapshot;
 mod store;
 mod store_ops;
 mod sync;
+#[cfg(test)]
+mod test_support;
 mod versioning;
 mod writer;
 mod writer_exec;
@@ -82,14 +84,16 @@ mod writer_lifecycle;
 mod writer_ops;
 
 pub use bracket::stat_facts_from;
-pub use confirmation::Confirmation;
 #[cfg(feature = "test-support")]
 pub use conn::{
     fresh_memory_uri_for_test, open_raw_connection_at_path_for_test,
     open_recovery_store_at_path_for_test, open_recovery_store_in_memory_for_test,
 };
+#[cfg(feature = "test-support")]
+pub use confirmation::Confirmation;
 pub use error::Error;
 pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};
+#[cfg(feature = "test-support")]
 pub use journal::{append_edit, current_seq, move_undo_pos, redo_peek, undo_peek};
 pub use load::LoadResult;
 pub use materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
@@ -98,10 +102,12 @@ pub use merge_state::MergeCloseState;
 pub use obs_origin::ObsOrigin;
 pub use observation::{Observation, StatFacts, hash_bytes};
 pub use reader::{ReaderQuery, ReaderReply, ReaderRequestKind};
+#[cfg(feature = "test-support")]
 pub use reaper::reap_dead_sessions;
 pub use rename::RenameOutcome;
-pub use schema::SCHEMA;
+#[cfg(feature = "test-support")]
 pub use session::is_process_alive;
+#[cfg(feature = "test-support")]
 pub use snapshot::recover_document;
 pub use store::{ClockFn, DEGRADED_WARNING, Store};
 pub use sync::{SyncKind, SyncState, Version};

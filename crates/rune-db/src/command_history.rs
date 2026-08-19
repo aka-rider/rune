@@ -27,16 +27,8 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use rusqlite::Connection;
-
     use super::*;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
+    use crate::test_support::open;
 
     #[test]
     fn touching_the_same_name_twice_bumps_last_used_at_without_duplicating() {

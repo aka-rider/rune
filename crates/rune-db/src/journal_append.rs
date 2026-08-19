@@ -94,26 +94,9 @@ pub fn append_edit(
 mod tests {
     use std::time::Duration;
 
-    use rusqlite::Connection;
-
     use super::*;
     use crate::journal::{current_seq, move_undo_pos, redo_peek, undo_peek};
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
-
-    fn insert_test_document(tx: &Transaction<'_>) -> DocId {
-        tx.execute(
-            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
-            [],
-        )
-        .expect("insert document");
-        DocId(tx.last_insert_rowid())
-    }
+    use crate::test_support::{insert_test_document, open};
 
     fn insert_char(pos: usize, ch: &str) -> Vec<AppliedEdit> {
         vec![AppliedEdit {

@@ -178,14 +178,8 @@ pub fn observe_disk(
 mod tests {
     use super::*;
     use crate::observation::ObservationMeta;
+    use crate::test_support::open;
     use rune_vfs::Mem;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(

@@ -185,25 +185,8 @@ pub(crate) fn edits_in_range(
 mod tests {
     use std::time::SystemTime;
 
-    use rusqlite::Connection;
-
     use super::*;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
-
-    fn insert_test_document(tx: &Transaction<'_>) -> DocId {
-        tx.execute(
-            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
-            [],
-        )
-        .expect("insert document");
-        DocId(tx.last_insert_rowid())
-    }
+    use crate::test_support::{insert_test_document, open};
 
     /// A corrupt edits payload must be returned as an error, never
     /// silently folded into "nothing to undo".
