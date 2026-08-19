@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer as CoreBuffer;
-use rune_vfs::{DirEntry, FileKind, Mem, Vfs, VfsTestExt};
+use rune_vfs::{DirEntry, FileKind, Mem, Vfs};
 
 use super::*;
 use crate::runtime::{DirCause, Msg};

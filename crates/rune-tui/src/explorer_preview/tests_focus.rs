@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+use rune_vfs::VfsTestExt;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer as CoreBuffer;
