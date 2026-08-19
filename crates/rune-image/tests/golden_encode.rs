@@ -32,7 +32,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use rune_image::{
-    PixelSize, decode_still, encode_delete, encode_delete_all, encode_transmit, fit_box, resize,
+    PixelSize, Transmit, decode_still, encode_delete, encode_delete_all, encode_transmit, fit_box,
+    resize,
 };
 
 /// Per-channel RGBA tolerance for comparing this crate's CatmullRom
@@ -73,6 +74,31 @@ fn asset_path(name: &str) -> PathBuf {
         .expect("repo root")
         .join("testdata/assets")
         .join(name)
+}
+
+fn flatten(transmit: &Transmit) -> String {
+    String::from_utf8(transmit.to_bytes()).expect("transmit bytes are utf-8")
+}
+
+fn assert_chunks_partition_the_stream(transmit: &Transmit, seq: &str, fixture: &str) {
+    assert_eq!(
+        transmit.chunks().len(),
+        split_apcs(seq).len(),
+        "{fixture}: one chunk per APC record"
+    );
+    for (i, chunk) in transmit.chunks().iter().enumerate() {
+        let text = std::str::from_utf8(chunk).expect("chunk is utf-8");
+        assert_eq!(
+            split_apcs(text).len(),
+            1,
+            "{fixture}: chunk {i} is one self-contained APC"
+        );
+    }
+    assert_eq!(
+        transmit.chunks().concat(),
+        seq.as_bytes(),
+        "{fixture}: chunks concatenate to the flat stream"
+    );
 }
 
 /// Splits a (possibly chunked) Kitty APC stream into its individual
@@ -181,9 +207,11 @@ fn check_encode_golden(golden_file: &str, asset_file: &str) {
     );
     let resized = resize(&decoded.image, fitted.w, fitted.h);
 
-    let seq = encode_transmit(&resized, id, cols, rows)
+    let transmit = encode_transmit(&resized, id, cols, rows)
         .unwrap_or_else(|e| panic!("encode_transmit {asset_file}: {e}"));
+    let seq = flatten(&transmit);
     let apcs = split_apcs(&seq);
+    assert_chunks_partition_the_stream(&transmit, &seq, asset_file);
 
     assert_eq!(apcs.len(), want_apcs.len(), "{asset_file}: APC count");
     for (i, (got, want)) in apcs.iter().zip(want_apcs.iter()).enumerate() {
@@ -326,8 +354,10 @@ fn noise_png_multi_chunk_framing_matches_reference_rules() {
         },
     );
     let resized = resize(&decoded.image, fitted.w, fitted.h);
-    let seq = encode_transmit(&resized, id, cols, rows).expect("encode_transmit noise.png");
+    let transmit = encode_transmit(&resized, id, cols, rows).expect("encode_transmit noise.png");
+    let seq = flatten(&transmit);
     let apcs = split_apcs(&seq);
+    assert_chunks_partition_the_stream(&transmit, &seq, "noise.png");
     assert!(
         apcs.len() > 2,
         "rune-image must also span several chunks, got {}",

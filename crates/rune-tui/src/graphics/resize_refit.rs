@@ -67,8 +67,8 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
         return;
     };
     image.status = match encoded {
-        Some(Ok(bytes)) => {
-            effects.raw.push(bytes.into_bytes());
+        Some(Ok(transmit)) => {
+            effects.transmit(transmit);
             effects.force_redraw = true;
             ImageStatus::Live { decoded, cells }
         }
@@ -143,8 +143,8 @@ mod tests {
 
         let after = live_cells(&app, id);
         assert_ne!(before, after, "the footprint must actually have changed");
-        assert_eq!(effects.raw.len(), 1);
-        assert!(effects.raw[0].starts_with(b"\x1b_G"));
+        assert_eq!(effects.transmits().len(), 1);
+        assert!(effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
         assert!(effects.force_redraw);
     }
 
@@ -159,7 +159,7 @@ mod tests {
         let mut effects = Effects::default();
         refit_on_resize(&mut app, &mut effects);
 
-        assert!(effects.raw.is_empty());
+        assert!(effects.transmits().is_empty());
         assert!(!effects.force_redraw);
     }
 }

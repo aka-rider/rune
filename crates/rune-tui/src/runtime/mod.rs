@@ -1,6 +1,6 @@
 //! The Elm-style runtime: `Msg`, `Cmd`, `Effects`, and the main loop.
 //! This module's `run` (main: recv -> drain
-//! `try_iter` -> `update` per message -> drain `Effects.raw` to the terminal
+//! `try_iter` -> `update` per message -> drain `Effects.out` to the terminal
 //! -> spawn `Effects.cmds` -> draw once), the input reader spawned by `run`,
 //! one `std::thread` per `Cmd`, and `App::timers`'s own single
 //! long-lived rearmable timer thread — the one background
@@ -9,7 +9,7 @@
 //!
 //! `update` mutates `App` synchronously — synchronous state changes directly
 //! in `update`; a Cmd is exclusively for I/O that leaves the thread.
-//! `Effects.raw` is the ONLY path by which escape bytes
+//! `Effects.out` is the ONLY path by which escape bytes
 //! (OSC 52 clipboard writes) reach the terminal — a `Cmd` never touches it;
 //! termina's `Terminal`
 //! is `io::Write` on `&mut self`, single-owner, undocumented for cross-
@@ -28,7 +28,6 @@ use crate::document::DocumentId;
 use crate::highlight::PassOutcome;
 use crate::keymap::{self, KeyInput};
 use crate::pointer::MouseInput;
-use crate::term::Guard;
 
 /// Where a `Msg::ClipboardRead`'s text is destined. Captured when the
 /// `pbpaste` `Cmd` is spawned (`clipboard::pbpaste_cmd`), never resolved
@@ -136,6 +135,7 @@ impl From<rune_image::ImageError> for CmdError {
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
+    PumpGraphics,
     Paste(String),
     Resize(u16, u16),
     /// A mouse event, translated from `termina::Event::Mouse` —
@@ -355,22 +355,9 @@ pub enum DirCause {
 mod cmd;
 pub use cmd::{Cmd, CmdKind};
 
-/// What one `update` call asks the runtime to do. `raw` is escape-byte
-/// output (OSC 52): the main loop drains it to the terminal writer with
-/// `write_all` + `flush` AFTER the message batch and BEFORE the next draw —
-/// same thread as `draw`, so raw output and frames are serialized by
-/// construction. `cmds` are spawned one `std::thread` each after `raw` is
-/// drained.
-#[derive(Default)]
-pub struct Effects {
-    pub cmds: Vec<Cmd>,
-    pub raw: Vec<Vec<u8>>,
-    /// Forces `apply` to clear the terminal's diff buffer —
-    /// ratatui only repaints changed cells, which would leave a stale
-    /// placement on screen after a retransmit whose placeholder cells
-    /// stayed byte-identical (see `graphics::resize_refit`'s own docs).
-    pub force_redraw: bool,
-}
+mod effects;
+pub use effects::{Effects, Outbound};
+use effects::{Sink, discharge};
 
 /// Runs the editor until the user quits or the input stream ends. Owns the
 /// terminal for the lifetime of this call: `term::Guard` wraps a
@@ -378,11 +365,17 @@ pub struct Effects {
 /// design (see module docs).
 pub fn run(app: &mut App) -> io::Result<()> {
     let bootstrap::Bootstrap {
-        mut guard,
+        mut sink,
         tx,
         rx,
         mut save_handles,
     } = bootstrap::bootstrap(app)?;
+
+    if sink.transmits.is_pending() {
+        let _ = tx.send(Msg::PumpGraphics);
+    }
+
+    let mut fatal: io::Result<()> = Ok(());
 
     // The normal exit is `app.should_quit` becoming true, set either by
     // `Msg::Quit` (quit-confirm) or synthesized by `spawn_input_reader`
@@ -400,28 +393,68 @@ pub fn run(app: &mut App) -> io::Result<()> {
             batch.push(msg);
         }
 
-        for msg in batch {
-            apply(app, msg, &mut guard, &tx, &mut save_handles)?;
+        match turn(app, batch, &mut sink, &tx, &mut save_handles) {
+            Ok(Turn::Continue) => {}
+            Ok(Turn::Quit) => break,
+            Err(e) => {
+                fatal = Err(e);
+                break;
+            }
         }
-
-        if app.should_quit {
-            break;
-        }
-
-        app.sync_view();
-        guard.draw(|frame| crate::render::draw(app, frame))?;
     }
 
-    // Every fallback save `Cmd` spawned above is joined before `run` returns
-    // and `main` drains/shuts down the store: an in-flight one finishes its
-    // atomic publish; an already-finished one joins immediately. Quit is
-    // reported as complete only once this returns.
+    // Every exit — quit, a dead channel, a broken terminal — lands here:
+    // whatever the terminal is still owed goes out, then every fallback
+    // save `Cmd` spawned above is joined before `run` returns and `main`
+    // drains/shuts down the store (an in-flight one finishes its atomic
+    // publish; an already-finished one joins immediately). Quit is reported
+    // as complete only once this returns.
+    let flushed = sink
+        .transmits
+        .flush_escapes_abandoning_images(|bytes| sink.guard.write_raw(bytes));
     for handle in save_handles.drain(..) {
         let _ = handle.join();
     }
     exit_settle::settle_pending_materialize(app, &rx);
 
-    Ok(())
+    fatal.and(flushed)
+}
+
+enum Turn {
+    Continue,
+    Quit,
+}
+
+fn turn(
+    app: &mut App,
+    batch: Vec<Msg>,
+    sink: &mut Sink,
+    tx: &mpsc::Sender<Msg>,
+    save_handles: &mut Vec<thread::JoinHandle<()>>,
+) -> io::Result<Turn> {
+    for msg in batch {
+        apply(app, msg, sink, tx, save_handles)?;
+    }
+
+    if app.should_quit {
+        return Ok(Turn::Quit);
+    }
+
+    let pumped = sink.transmits.pump(
+        transmit_queue::DRAIN_BUDGET_BYTES,
+        |bytes| sink.guard.write_raw(bytes),
+        || {
+            let _ = tx.send(Msg::PumpGraphics);
+        },
+    )?;
+    if pumped == Pumped::StillOwing {
+        return Ok(Turn::Continue);
+    }
+
+    sink.redraw_before_draw();
+    app.sync_view();
+    sink.guard.draw(|frame| crate::render::draw(app, frame))?;
+    Ok(Turn::Continue)
 }
 
 /// Runs `update` for one message and immediately discharges its `Effects` —
@@ -431,7 +464,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
 fn apply(
     app: &mut App,
     msg: Msg,
-    guard: &mut Guard,
+    sink: &mut Sink,
     tx: &mpsc::Sender<Msg>,
     save_handles: &mut Vec<thread::JoinHandle<()>>,
 ) -> io::Result<()> {
@@ -443,27 +476,9 @@ fn apply(
     let is_resize = matches!(msg, Msg::Resize(_, _));
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);
-    discharge(&mut effects, guard, tx, save_handles)?;
+    discharge(&mut effects, sink, tx, save_handles)?;
     if is_resize {
-        crate::graphics::redetect(app, guard);
-    }
-    Ok(())
-}
-
-fn discharge(
-    effects: &mut Effects,
-    guard: &mut Guard,
-    tx: &mpsc::Sender<Msg>,
-    save_handles: &mut Vec<thread::JoinHandle<()>>,
-) -> io::Result<()> {
-    for raw in effects.raw.drain(..) {
-        guard.write_raw(&raw)?;
-    }
-    for cmd in effects.cmds.drain(..) {
-        spawn_cmd(cmd, tx.clone(), save_handles);
-    }
-    if effects.force_redraw {
-        guard.force_redraw();
+        crate::graphics::redetect(app, &mut sink.guard);
     }
     Ok(())
 }
@@ -646,6 +661,9 @@ pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
 
 mod bootstrap;
 mod exit_settle;
+
+mod transmit_queue;
+pub use transmit_queue::{Pumped, TransmitQueue};
 
 // The tree-sitter highlight `Cmd` constructor and the region pass behind it
 // moved to `runtime::highlight_cmd` (500-line budget) — re-exported below so

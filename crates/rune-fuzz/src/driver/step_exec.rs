@@ -225,6 +225,7 @@ pub(super) fn step_and_check(
     // rune-fuzz finding 3). A second in-flight save `Cmd` is therefore a
     // violation in its own right, not a silent overwrite.
     let save_parked_before = state.pending_save.is_some();
+    let raw_bytes = effects.raw_bytes();
     for cmd in effects.cmds {
         // Exhaustive over every `CmdKind`: a future variant this driver has
         // no policy for yet fails to COMPILE here rather than falling
@@ -340,7 +341,7 @@ pub(super) fn step_and_check(
     let ctx = StepCtx {
         step: step_index,
         msg: tag,
-        raw: effects.raw,
+        raw: raw_bytes,
         disk,
         pending_save_bytes,
         save_newly_parked,

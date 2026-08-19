@@ -93,8 +93,8 @@ fn a_successful_decode_goes_live_and_transmits_when_kitty_is_on() {
     let image = app.doc(id).unwrap().image().unwrap();
     assert!(matches!(image.status, ImageStatus::Live { .. }));
     assert!(image.in_flight.is_none());
-    assert_eq!(effects.raw.len(), 1);
-    assert!(effects.raw[0].starts_with(b"\x1b_G"));
+    assert_eq!(effects.transmits().len(), 1);
+    assert!(effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn a_successful_decode_never_transmits_when_kitty_is_off() {
     let mut effects = Effects::default();
     handle_image_decoded(&mut app, id, mint_gen(1), Ok(decode_x_png()), &mut effects);
 
-    assert!(effects.raw.is_empty());
+    assert!(effects.raw_bytes().is_empty());
     assert!(
         is_live(&app, id),
         "the fit/footprint is still computed even without Kitty"
@@ -126,7 +126,7 @@ fn a_failed_decode_becomes_failed_status_with_no_raw_output() {
 
     let image = app.doc(id).unwrap().image().unwrap();
     assert!(matches!(&image.status, ImageStatus::Failed(msg) if msg == "boom"));
-    assert!(effects.raw.is_empty());
+    assert!(effects.raw_bytes().is_empty());
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn a_stale_generation_is_dropped_with_no_effects() {
         Some(mint_gen(2)),
         "stale reply must not clear in_flight"
     );
-    assert!(effects.raw.is_empty());
+    assert!(effects.raw_bytes().is_empty());
 }
 
 /// A FIRST transmit must not ask for a forced redraw. `force_redraw` clears
@@ -172,7 +172,11 @@ fn a_first_transmit_does_not_force_a_redraw() {
         {
             let mut reply = Effects::default();
             handle_image_decoded(&mut app, doc, generation, result, &mut reply);
-            assert_eq!(reply.raw.len(), 1, "the image must still be transmitted");
+            assert_eq!(
+                reply.transmits().len(),
+                1,
+                "the image must still be transmitted"
+            );
             assert!(
                 !reply.force_redraw,
                 "a first transmit must not clear the terminal"
@@ -199,8 +203,8 @@ fn reload_retransmits_under_the_same_id_and_forces_a_redraw() {
         {
             let mut reply_effects = Effects::default();
             handle_image_decoded(&mut app, doc, generation, result, &mut reply_effects);
-            assert_eq!(reply_effects.raw.len(), 1);
-            assert!(reply_effects.raw[0].starts_with(b"\x1b_G"));
+            assert_eq!(reply_effects.transmits().len(), 1);
+            assert!(reply_effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
             assert!(reply_effects.force_redraw, "a reload must force a redraw");
         }
     }
@@ -258,7 +262,7 @@ fn reload_is_a_no_op_on_a_non_image_document() {
     let mut effects = Effects::default();
     reload_image(&mut app, id, &mut effects);
     assert!(effects.cmds.is_empty());
-    assert!(effects.raw.is_empty());
+    assert!(effects.raw_bytes().is_empty());
 }
 
 /// Reload must preempt rather than refuse while `in_flight.is_some()`:
@@ -310,7 +314,10 @@ fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
         Ok(decode_x_png()),
         &mut stale_effects,
     );
-    assert!(stale_effects.raw.is_empty(), "stale reply must not act");
+    assert!(
+        stale_effects.raw_bytes().is_empty(),
+        "stale reply must not act"
+    );
     assert_eq!(
         app.doc(id).unwrap().image().unwrap().in_flight,
         Some(mint_gen(1)),

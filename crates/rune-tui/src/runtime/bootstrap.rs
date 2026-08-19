@@ -15,6 +15,8 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 
+use super::effects::{RedrawLatch, Sink};
+use super::transmit_queue::TransmitQueue;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::term::Guard;
@@ -35,10 +37,11 @@ use super::{Cmd, Effects, Msg};
 const LARGE_DOC_BOOTSTRAP_BYTES: usize = 1_048_576;
 
 /// Everything `runtime::run`'s main loop needs once bootstrap has finished:
-/// the terminal guard, the message channel's two ends, and the in-flight
+/// the output sink (terminal + what it still owes it), the message
+/// channel's two ends, and the in-flight
 /// no-store fallback save handles [`super::spawn_cmd`] has started tracking.
 pub(crate) struct Bootstrap {
-    pub guard: Guard,
+    pub sink: Sink,
     pub tx: mpsc::Sender<Msg>,
     pub rx: mpsc::Receiver<Msg>,
     pub save_handles: Vec<thread::JoinHandle<()>>,
@@ -49,7 +52,11 @@ pub(crate) struct Bootstrap {
 /// Ends immediately after the very first draw, so `run`'s main loop always
 /// starts from an already-rendered frame.
 pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
-    let mut guard = Guard::new()?;
+    let mut sink = Sink {
+        guard: Guard::new()?,
+        transmits: TransmitQueue::default(),
+        redraw: RedrawLatch::default(),
+    };
 
     app.theme = crate::theme::Theme::catppuccin_mocha(!crate::theme::probe::supports_truecolor());
 
@@ -57,7 +64,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // exists once a `Guard` does. `Msg::Resize` re-derives it on every later
     // resize, since the reported pixel dimensions can change even when the
     // Kitty decision itself cannot.
-    crate::graphics::redetect(app, &mut guard);
+    crate::graphics::redetect(app, &mut sink.guard);
 
     app.icon_tier = crate::theme::icons::choose(
         std::env::var("RUNE_ICONS").ok().as_deref(),
@@ -66,7 +73,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     );
 
     let (tx, rx) = mpsc::channel::<Msg>();
-    super::spawn_input_reader(guard.event_reader(), tx.clone());
+    super::spawn_input_reader(sink.guard.event_reader(), tx.clone());
 
     // Hand the runtime's own `Sender<Msg>` to the DB bridge — an "App-held
     // setter": `Store::open`, at bootstrap in `rune-cli::main`,
@@ -98,11 +105,11 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // Seed the initial size through the ordinary `update` path (not a
     // one-off field write) so `Msg::Resize`'s effect on the viewport has
     // exactly one implementation, exercised the same way on every resize.
-    let (width, height) = guard.size()?;
+    let (width, height) = sink.guard.size()?;
     super::apply(
         app,
         Msg::Resize(width, height),
-        &mut guard,
+        &mut sink,
         &tx,
         &mut save_handles,
     )?;
@@ -144,7 +151,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
         crate::graphics::schedule_image_decode(app, app.active, &mut effects);
         crate::explorer::ensure_loaded(app, &mut effects);
-        super::discharge(&mut effects, &mut guard, &tx, &mut save_handles)?;
+        super::discharge(&mut effects, &mut sink, &tx, &mut save_handles)?;
     }
 
     if app.active_doc().buffer.content().len() < LARGE_DOC_BOOTSTRAP_BYTES {
@@ -164,7 +171,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         // on their own.
         let mut effects = Effects::default();
         crate::graphics::sync_embeds(app, app.active, &mut effects);
-        super::discharge(&mut effects, &mut guard, &tx, &mut save_handles)?;
+        super::discharge(&mut effects, &mut sink, &tx, &mut save_handles)?;
     } else {
         // Over the threshold: the synchronous pipeline above `sync_view`
         // would run is deferred to a background `Cmd` instead, so the first
@@ -192,10 +199,11 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         super::spawn_cmd(cmd, tx.clone(), &mut save_handles);
     }
 
-    guard.draw(|frame| crate::render::draw(app, frame))?;
+    sink.redraw_before_draw();
+    sink.guard.draw(|frame| crate::render::draw(app, frame))?;
 
     Ok(Bootstrap {
-        guard,
+        sink,
         tx,
         rx,
         save_handles,

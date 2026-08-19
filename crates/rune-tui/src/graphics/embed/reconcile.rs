@@ -204,9 +204,7 @@ fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effect
     for key in gone {
         if let Some(state) = embeds.images.remove(&key) {
             embeds.alloc.free_all_for(&state.abs_path.to_string_lossy());
-            effects
-                .raw
-                .push(rune_image::encode_delete(state.id.get()).into_bytes());
+            effects.write(rune_image::encode_delete(state.id.get()).into_bytes());
         }
     }
 }

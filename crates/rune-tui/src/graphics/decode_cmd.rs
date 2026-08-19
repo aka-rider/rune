@@ -150,7 +150,7 @@ pub(super) fn decode_embed_cmd(
 /// reason line; (d) a decode success computes the fit-to-width footprint
 /// from the CURRENT pane width and cell geometry, stores it (feeding the
 /// producer via `Document::view`'s existing `image.cells` read), and —
-/// Kitty only — encodes and pushes a transmit escape into `effects.raw`,
+/// Kitty only — encodes and pushes a transmit into the effects,
 /// forcing a full redraw alongside it (the reload command reaches this
 /// exact handler, and a reload's placeholder cells are typically
 /// byte-identical to what was already on screen — same id, same
@@ -210,8 +210,8 @@ pub(crate) fn handle_image_decoded(
     );
     image.status = if kitty {
         match rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell) {
-            Ok(bytes) => {
-                effects.raw.push(bytes.into_bytes());
+            Ok(transmit) => {
+                effects.transmit(transmit);
                 effects.force_redraw |= was_live;
                 ImageStatus::Live { decoded, cells }
             }

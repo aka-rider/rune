@@ -28,7 +28,7 @@ use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::{Effects, PasteTarget};
 
-/// Pushes `text`'s OSC 52 write into `effects.raw`, or — over `clipboard::
+/// Pushes `text`'s OSC 52 write into `effects.raw_bytes()`, or — over `clipboard::
 /// OSC52_MAX_PAYLOAD_BYTES` — posts an error message instead of silently
 /// writing a sequence a terminal multiplexer would just drop. Shared by
 /// `copy`/`cut` and the title's own `Command::Copy`/`Command::Cut` handling
@@ -48,7 +48,7 @@ pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &
         );
         return;
     }
-    effects.raw.push(osc52_copy(text.as_bytes()));
+    effects.write(osc52_copy(text.as_bytes()));
 }
 
 /// Single cursor (Phase 1's only case): the selection text, or — with no
@@ -206,7 +206,7 @@ mod tests {
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
 
-        assert_eq!(effects.raw, vec![expected_osc52("hello")]);
+        assert_eq!(effects.raw_bytes(), vec![expected_osc52("hello")]);
         assert!(effects.cmds.is_empty(), "copy must never spawn a Cmd");
         assert_eq!(
             app.doc(id).unwrap().buffer.content(),
@@ -222,7 +222,7 @@ mod tests {
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
 
-        assert_eq!(effects.raw, vec![expected_osc52("second\n")]);
+        assert_eq!(effects.raw_bytes(), vec![expected_osc52("second\n")]);
     }
 
     #[test]
@@ -232,7 +232,7 @@ mod tests {
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
 
-        assert_eq!(effects.raw, vec![expected_osc52("third")]);
+        assert_eq!(effects.raw_bytes(), vec![expected_osc52("third")]);
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
 
-        assert_eq!(effects.raw, vec![expected_osc52("hello")]);
+        assert_eq!(effects.raw_bytes(), vec![expected_osc52("hello")]);
     }
 
     #[test]
@@ -254,7 +254,7 @@ mod tests {
         let mut effects = Effects::default();
         cut(&mut app, id, &mut effects);
 
-        assert_eq!(effects.raw, vec![expected_osc52("hello")]);
+        assert_eq!(effects.raw_bytes(), vec![expected_osc52("hello")]);
         assert_eq!(app.doc(id).unwrap().buffer.content(), " world");
         assert_eq!(app.doc(id).unwrap().journal.len(), 1);
 
@@ -267,7 +267,7 @@ mod tests {
     }
 
     /// A selection over `OSC52_MAX_PAYLOAD_BYTES` must not reach
-    /// `effects.raw` at all — writing it would just be a
+    /// `effects.raw_bytes()` at all — writing it would just be a
     /// sequence a terminal multiplexer silently drops — and must instead
     /// post a message so the user learns the copy never reached the
     /// system clipboard.
@@ -281,7 +281,7 @@ mod tests {
         copy(&mut app, id, &mut effects);
 
         assert!(
-            effects.raw.is_empty(),
+            effects.raw_bytes().is_empty(),
             "an over-cap selection must never reach the OSC 52 raw output"
         );
         assert!(
@@ -305,7 +305,7 @@ mod tests {
         cut(&mut app, id, &mut effects);
 
         assert!(
-            effects.raw.is_empty(),
+            effects.raw_bytes().is_empty(),
             "an over-cap selection must never reach the OSC 52 raw output"
         );
         assert!(
@@ -326,7 +326,7 @@ mod tests {
         let mut effects = Effects::default();
         cut(&mut app, id, &mut effects);
 
-        assert_eq!(effects.raw, vec![expected_osc52("second\n")]);
+        assert_eq!(effects.raw_bytes(), vec![expected_osc52("second\n")]);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "first\nthird");
     }
 
@@ -358,7 +358,10 @@ mod tests {
         paste(&mut effects, PasteTarget::Document(app.active));
 
         assert_eq!(effects.cmds.len(), 1);
-        assert!(effects.raw.is_empty(), "paste must never emit raw bytes");
+        assert!(
+            effects.raw_bytes().is_empty(),
+            "paste must never emit raw bytes"
+        );
     }
 
     #[test]
