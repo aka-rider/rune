@@ -14,6 +14,8 @@
 //! since `tables`/`width`/`icons`/`decors` were never part of the claim
 //! contract.
 
+use std::collections::BTreeMap;
+
 use crate::icons::IconSet;
 use rune_syntax::element::LineLocal;
 use rune_syntax::syntax::TableRowInfo;
@@ -47,6 +49,12 @@ pub(crate) struct EmitOut<'a> {
     spans: &'a mut [Vec<SyntaxSpan>],
     hidden: &'a mut Accounted,
     accounted: &'a mut Accounted,
+    /// Per-line mirror of `accounted`, kept merged and non-overlapping as
+    /// claims are spent (`Granted::push_visible`/`record_hidden` insert into
+    /// it) so `unclaimed` can query it with `BTreeMap::range` instead of
+    /// re-merging that line's entire claim history on every call — the O(K)
+    /// per-claim cost that made a K-claim line cost O(K^2) overall.
+    merged: Vec<BTreeMap<usize, usize>>,
     pub tables: &'a mut [Option<TableRowInfo>],
     pub width: u16,
     pub icons: &'a IconSet,
@@ -112,6 +120,7 @@ impl Granted<'_, '_> {
         if let Some(bucket) = self.out.accounted.get_mut(self.line) {
             bucket.extend(self.pieces.iter().copied());
         }
+        self.out.mark_merged(self.line, &self.pieces);
     }
 
     /// Spends this claim by recording its pieces as hidden (delimiter bytes
@@ -123,6 +132,7 @@ impl Granted<'_, '_> {
         if let Some(bucket) = self.out.accounted.get_mut(self.line) {
             bucket.extend(self.pieces.iter().copied());
         }
+        self.out.mark_merged(self.line, &self.pieces);
     }
 }
 
@@ -157,10 +167,22 @@ impl<'a> EmitOut<'a> {
         icons: &'a IconSet,
         decors: &'a mut [Option<LineDecor>],
     ) -> Self {
+        let merged = sinks
+            .accounted
+            .iter()
+            .map(|line| {
+                let mut map = BTreeMap::new();
+                for &(s, e) in line {
+                    insert_merged(&mut map, s, e);
+                }
+                map
+            })
+            .collect();
         Self {
             spans: sinks.spans,
             hidden: sinks.hidden,
             accounted: sinks.accounted,
+            merged,
             tables,
             width,
             icons,
@@ -170,10 +192,33 @@ impl<'a> EmitOut<'a> {
 
     /// The sub-ranges of `[start, end)` on `line` not already in
     /// `accounted` — the lookup both `claim_free` and `claim_whole` need
-    /// before applying their own (different) refusal policy.
+    /// before applying their own (different) refusal policy. Reads
+    /// `merged`, not `accounted`, so a line with K prior claims costs
+    /// O(log K + overlap) here instead of O(K).
     fn unclaimed(&self, line: usize, start: usize, end: usize) -> Vec<(usize, usize)> {
-        let existing = self.accounted.get(line).cloned().unwrap_or_default();
-        unclaimed_subranges(start, end, &existing)
+        match self.merged.get(line) {
+            Some(existing) => unclaimed_subranges_in_merged(start, end, existing),
+            None => {
+                if end > start {
+                    vec![(start, end)]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    /// Folds a just-spent claim's pieces into `merged`, keeping each line's
+    /// entry set sorted, non-overlapping, and touching-ranges-joined (same
+    /// rule `merge_overlapping` applies) — the incremental counterpart of
+    /// re-running `merge_overlapping` over the whole line on every claim.
+    fn mark_merged(&mut self, line: usize, pieces: &[(usize, usize)]) {
+        let Some(map) = self.merged.get_mut(line) else {
+            return;
+        };
+        for &(start, end) in pieces {
+            insert_merged(map, start, end);
+        }
     }
 
     /// Grants whatever sub-ranges of `[start, end)` on `line` are not
@@ -241,26 +286,27 @@ impl<'a> EmitOut<'a> {
     }
 }
 
-/// The sub-ranges of `[start, end)` NOT already covered by `existing` (a
-/// possibly unsorted, possibly-overlapping already-claimed set on the same
-/// line) — the visible-side counterpart of `rune_syntax`'s
-/// `merge_overlapping`'s hidden-side collapse. Reuses that same merge so
-/// both sides agree on what "already claimed" means.
-fn unclaimed_subranges(
+/// The sub-ranges of `[start, end)` NOT already covered by `existing` — a
+/// line's already-claimed byte ranges, kept merged and non-overlapping by
+/// `insert_merged` so this only has to walk the entries that actually
+/// overlap `[start, end)` (`BTreeMap::range`, not the whole line's history).
+fn unclaimed_subranges_in_merged(
     start: usize,
     end: usize,
-    existing: &[(usize, usize)],
+    existing: &BTreeMap<usize, usize>,
 ) -> Vec<(usize, usize)> {
     if end <= start {
         return Vec::new();
     }
-    let unsorted: Vec<(usize, usize)> = existing.iter().copied().filter(|&(s, e)| e > s).collect();
-    let merged = merge_overlapping(unsorted);
+    let lower = existing
+        .range(..=start)
+        .next_back()
+        .map_or(start, |(&s, _)| s);
 
     let mut result = Vec::new();
     let mut cursor = start;
-    for (s, e) in merged {
-        if e <= start || s >= end {
+    for (&s, &e) in existing.range(lower..end) {
+        if e <= start {
             continue;
         }
         let clipped_start = s.max(start);
@@ -276,178 +322,32 @@ fn unclaimed_subranges(
     result
 }
 
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
-
-    /// The visible-side dedup computation, tested in isolation (no assert
-    /// involved — `unclaimed_subranges` itself never panics, it just
-    /// computes what's left). Mirrors "- \n  > q"'s shape: a claim
-    /// ([0,8)) that overlaps a bit already claimed in the middle ([2,6)),
-    /// leaving two disjoint unclaimed pieces.
-    #[test]
-    fn unclaimed_subranges_skips_already_claimed_bytes() {
-        let pieces = unclaimed_subranges(0, 8, &[(2, 6)]);
-        assert_eq!(pieces, vec![(0, 2), (6, 8)]);
-
-        assert_eq!(
-            unclaimed_subranges(2, 6, &[(0, 8)]),
-            Vec::<(usize, usize)>::new()
-        );
-
-        assert_eq!(unclaimed_subranges(0, 4, &[(10, 12)]), vec![(0, 4)]);
-
-        assert_eq!(
-            unclaimed_subranges(0, 10, &[(6, 8), (1, 3), (3, 4)]),
-            vec![(0, 1), (4, 6), (8, 10)]
-        );
+/// Inserts `[start, end)` into `map`'s merged, non-overlapping range set,
+/// joining any existing range it overlaps OR touches — an equal endpoint
+/// counts as touching, matching `merge_overlapping`'s rule — so the set
+/// stays merged after every insert instead of needing a full re-merge.
+fn insert_merged(map: &mut BTreeMap<usize, usize>, start: usize, end: usize) {
+    if end <= start {
+        return;
     }
-
-    /// A `Granted` dropped without being spent through `push_visible` or
-    /// `record_hidden` leaves `accounted` untouched — the bytes it would
-    /// have claimed still reach `fill_gaps` instead of vanishing.
-    #[test]
-    fn dropped_claim_leaves_accounted_unchanged() {
-        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-        let mut hidden: Accounted = vec![Vec::new()];
-        let mut accounted: Accounted = vec![Vec::new()];
-        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-        let mut decors: Vec<Option<LineDecor>> = vec![None];
-        let icons = IconSet::unicode();
-        let mut out = EmitOut::new(
-            Sinks {
-                spans: &mut spans,
-                hidden: &mut hidden,
-                accounted: &mut accounted,
-            },
-            &mut tables,
-            80,
-            &icons,
-            &mut decors,
-        );
-
-        let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
-        let granted = out.claim_free(&ll);
-        drop(granted);
-
-        assert_eq!(accounted[0], Vec::<(usize, usize)>::new());
+    let (mut start, mut end) = (start, end);
+    if let Some((&prev_start, &prev_end)) = map.range(..=start).next_back()
+        && prev_end >= start
+    {
+        map.remove(&prev_start);
+        start = prev_start;
+        end = end.max(prev_end);
     }
-
-    /// An empty range conflicts with nothing, so `claim_whole` grants it —
-    /// never refuses it — regardless of what else the line already has
-    /// accounted for.
-    #[test]
-    fn claim_whole_grants_an_empty_range_even_when_the_line_is_fully_claimed() {
-        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-        let mut hidden: Accounted = vec![Vec::new()];
-        let mut accounted: Accounted = vec![vec![(0, 8)]];
-        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-        let mut decors: Vec<Option<LineDecor>> = vec![None];
-        let icons = IconSet::unicode();
-        let mut out = EmitOut::new(
-            Sinks {
-                spans: &mut spans,
-                hidden: &mut hidden,
-                accounted: &mut accounted,
-            },
-            &mut tables,
-            80,
-            &icons,
-            &mut decors,
-        );
-
-        let ll = LineLocal::clip(0, 0..8, 4..4).unwrap();
-        let result = out.claim_whole(&ll);
-
-        assert!(result.is_ok());
+    while let Some((&next_start, &next_end)) = map.range(start..).next() {
+        if next_start > end {
+            break;
+        }
+        map.remove(&next_start);
+        end = end.max(next_end);
     }
-
-    /// A `claim_whole` refusal — the requested range partially overlaps an
-    /// already-accounted piece — is a producer bug, so it asserts under
-    /// `strict-invariants`/test builds instead of returning silently.
-    #[test]
-    #[should_panic(expected = "is not entirely free")]
-    fn claim_whole_asserts_on_a_refused_overlap() {
-        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-        let mut hidden: Accounted = vec![Vec::new()];
-        let mut accounted: Accounted = vec![vec![(2, 4)]];
-        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-        let mut decors: Vec<Option<LineDecor>> = vec![None];
-        let icons = IconSet::unicode();
-        let mut out = EmitOut::new(
-            Sinks {
-                spans: &mut spans,
-                hidden: &mut hidden,
-                accounted: &mut accounted,
-            },
-            &mut tables,
-            80,
-            &icons,
-            &mut decors,
-        );
-
-        let ll = LineLocal::clip(0, 0..8, 0..8).unwrap();
-        let _ = out.claim_whole(&ll);
-    }
-
-    /// The producer-bug path above only proves the assert fires; this
-    /// checks the state a refusal leaves behind — `accounted` untouched, so
-    /// the bytes still reach `fill_gaps` — using `catch_unwind` to look past
-    /// the panic this test binary's own armed assert raises.
-    #[test]
-    fn refused_whole_claim_leaves_accounted_untouched() {
-        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-        let mut hidden: Accounted = vec![Vec::new()];
-        let mut accounted: Accounted = vec![vec![(2, 4)]];
-        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-        let mut decors: Vec<Option<LineDecor>> = vec![None];
-        let icons = IconSet::unicode();
-        let mut out = EmitOut::new(
-            Sinks {
-                spans: &mut spans,
-                hidden: &mut hidden,
-                accounted: &mut accounted,
-            },
-            &mut tables,
-            80,
-            &icons,
-            &mut decors,
-        );
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let ll = LineLocal::clip(0, 0..8, 0..8).unwrap();
-            out.claim_whole(&ll).is_err()
-        }));
-
-        assert!(result.is_err());
-        let _ = out;
-        assert_eq!(accounted[0], vec![(2, 4)]);
-    }
-
-    #[test]
-    #[should_panic(expected = "not fully covered")]
-    fn push_visible_catches_a_dropped_span_leaving_a_granted_piece_uncovered() {
-        let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
-        let mut hidden: Accounted = vec![Vec::new()];
-        let mut accounted: Accounted = vec![Vec::new()];
-        let mut tables: Vec<Option<TableRowInfo>> = vec![None];
-        let mut decors: Vec<Option<LineDecor>> = vec![None];
-        let icons = IconSet::unicode();
-        let mut out = EmitOut::new(
-            Sinks {
-                spans: &mut spans,
-                hidden: &mut hidden,
-                accounted: &mut accounted,
-            },
-            &mut tables,
-            80,
-            &icons,
-            &mut decors,
-        );
-
-        let ll = LineLocal::clip(0, 0..4, 0..4).unwrap();
-        let granted = out.claim_free(&ll);
-        granted.push_visible(Vec::new());
-    }
+    map.insert(start, end);
 }
+
+#[cfg(test)]
+#[path = "claim_tests.rs"]
+mod tests;
