@@ -199,7 +199,7 @@ fn merge_install_after_a_lost_create_race_rebind_keeps_recovery_replayable() {
         panic!("a fresh session's load must not fail, got {load_evt:?}");
     };
     assert_eq!(
-        load.recovered, buffer_content,
+        load.recovered.content, buffer_content,
         "crash recovery must reconstruct exactly the live buffer"
     );
 }
@@ -239,7 +239,7 @@ fn typing_after_a_lost_create_race_rebind_keeps_recovery_replayable() {
         panic!("a fresh session's load must not fail, got {load_evt:?}");
     };
     assert_eq!(
-        load.recovered, buffer_content,
+        load.recovered.content, buffer_content,
         "crash recovery must reconstruct exactly the live buffer"
     );
 }

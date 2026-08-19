@@ -35,7 +35,7 @@ fn first_load_anchors_a_snapshot_and_adopts() {
     )
     .expect("load");
     assert_eq!(result.disk_content, "hello world");
-    assert_eq!(result.recovered, "hello world");
+    assert_eq!(result.recovered.content, "hello world");
     assert!(
         !result.has_history,
         "HasHistory must reflect PRIOR history only"
@@ -113,7 +113,7 @@ fn load_through_inheritance_reports_the_bridge_edits_own_durable_seq() {
     )
     .expect("session b load");
 
-    assert_eq!(result.recovered, "UNSAVED shared content");
+    assert_eq!(result.recovered.content, "UNSAVED shared content");
     let bridge_seq = result
         .bridge_seq
         .expect("a bridge edit must have been journaled for session b");
@@ -218,7 +218,7 @@ fn diverged_load_bridges_the_dead_sessions_own_baseline_not_disk() {
         "the swap must reuse A's document row"
     );
     assert_eq!(
-        result.recovered, "UNSAVED session A's content",
+        result.recovered.content, "UNSAVED session A's content",
         "must bridge from A's own baseline, never silently drop A's draft"
     );
     assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
@@ -285,7 +285,7 @@ fn dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees() {
 
     assert_eq!(result.disk_content, "rewritten externally");
     assert_eq!(
-        result.recovered, "rewritten externally",
+        result.recovered.content, "rewritten externally",
         "a session that never edited leaves nothing to inherit"
     );
     assert_ne!(
@@ -299,7 +299,7 @@ fn dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees() {
     })
     .expect("recover_document");
     assert_eq!(
-        reconstructed, result.recovered,
+        reconstructed.content, result.recovered.content,
         "session b's own journal must reconstruct to exactly what its buffer holds"
     );
 }

@@ -11,7 +11,7 @@ use crate::runtime::Effects;
 use crate::workspace;
 
 use super::record;
-use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
+use super::{NavHistory, Place, PlaceKind};
 
 enum TravelOutcome {
     Landed,
@@ -124,7 +124,7 @@ fn land(app: &mut App, id: DocumentId, offset: usize, effects: &mut Effects) {
     let Some(doc) = app.doc_mut(id) else {
         return;
     };
-    let clamped = clamp_to_char_boundary(&doc.buffer, offset.min(doc.buffer.len()));
+    let clamped = rune_core::buffer::clamp_to_char_boundary(doc.buffer.content(), offset);
     doc.cursors = CursorSet::new(clamped);
     if cross_doc {
         report_cross_doc_landing(app, id, clamped);

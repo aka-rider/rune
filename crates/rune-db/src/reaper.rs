@@ -389,7 +389,7 @@ mod tests {
         )
         .expect("session b load");
         assert_eq!(
-            result.recovered, "UNSAVED session A's content",
+            result.recovered.content, "UNSAVED session A's content",
             "test setup: session b must have inherited a's bridged draft"
         );
 
@@ -399,7 +399,8 @@ mod tests {
         reap_dead_sessions(&mut conn, &|_pid, _started_at| false, None).expect("reap");
 
         let recovered = crate::snapshot::recover_document(&conn, session_b, doc_id)
-            .expect("recover_document must still succeed after the reap");
+            .expect("recover_document must still succeed after the reap")
+            .content;
         assert_eq!(
             recovered, "UNSAVED session A's content",
             "the bridged draft must survive reaping the dead session it came from"

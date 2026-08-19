@@ -15,9 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use rune_core::buffer::AppliedEdit;
-use rune_core::cursor::Cursor;
-#[cfg(feature = "test-support")]
-use rune_core::cursor::CursorId;
+use rune_core::cursor::{Cursor, CursorId};
 
 use crate::Error;
 
@@ -57,8 +55,7 @@ impl From<EditPayload> for AppliedEdit {
 }
 
 /// Mirrors `rune_core::cursor::Cursor`.
-#[derive(Clone, Copy, Debug, Serialize)]
-#[cfg_attr(feature = "test-support", derive(Deserialize))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct CursorPayload {
     #[serde(rename = "Position")]
     position: usize,
@@ -81,7 +78,6 @@ impl From<&Cursor> for CursorPayload {
     }
 }
 
-#[cfg(feature = "test-support")]
 impl TryFrom<CursorPayload> for Cursor {
     type Error = Error;
 
@@ -122,7 +118,6 @@ pub(crate) fn cursors_to_json(cursors: &[Cursor]) -> Result<String, Error> {
         .map_err(|e| Error::CorruptPayload(crate::error::CorruptPayloadReason::Json(e)))
 }
 
-#[cfg(feature = "test-support")]
 pub(crate) fn cursors_from_json(json: &str) -> Result<Vec<Cursor>, Error> {
     let payload: Vec<CursorPayload> = serde_json::from_str(json)
         .map_err(|e| Error::CorruptPayload(crate::error::CorruptPayloadReason::Json(e)))?;

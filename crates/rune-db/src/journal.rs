@@ -20,14 +20,11 @@ use rusqlite::OptionalExtension;
 use rusqlite::{Transaction, params};
 
 use rune_core::buffer::AppliedEdit;
-#[cfg(feature = "test-support")]
 use rune_core::cursor::Cursor;
 
 use crate::Error;
 use crate::ids::{DocId, Seq, SessionId};
-#[cfg(feature = "test-support")]
-use crate::payload::cursors_from_json;
-use crate::payload::edits_from_json;
+use crate::payload::{cursors_from_json, edits_from_json};
 
 pub use crate::journal_append::append_edit;
 
@@ -42,11 +39,13 @@ pub struct Step {
     pub new_pos: Seq,
 }
 
-/// One edit row tagged with the journal seq it was recorded at.
+/// One edit row tagged with the journal seq it was recorded at, plus the
+/// caret state the editing session held once the row's edits had landed.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EditRow {
     pub seq: Seq,
     pub edits: Vec<AppliedEdit>,
+    pub cursors_after: Vec<Cursor>,
 }
 
 /// Returns the most recent event at or before `session_id`'s current
@@ -173,17 +172,29 @@ pub(crate) fn edits_in_range(
     to_seq: Seq,
 ) -> Result<Vec<EditRow>, Error> {
     let mut stmt = conn.prepare(
-        "SELECT seq, edits FROM events \
+        "SELECT seq, edits, cursors_after FROM events \
          WHERE doc_id=?1 AND session_id=?2 AND seq > ?3 AND seq <= ?4 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(params![doc_id, session_id, from_seq, to_seq], |r| {
-        Ok((r.get::<_, Seq>(0)?, r.get::<_, String>(1)?))
+        Ok((
+            r.get::<_, Seq>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+        ))
     })?;
 
     rows.map(|row| {
-        let (seq, edits_json) = row?;
+        let (seq, edits_json, cursors_json) = row?;
         let edits = edits_from_json(&edits_json)?;
-        Ok(EditRow { seq, edits })
+        let cursors = match cursors_json {
+            Some(json) => cursors_from_json(&json)?,
+            None => Vec::new(),
+        };
+        Ok(EditRow {
+            seq,
+            edits,
+            cursors_after: cursors,
+        })
     })
     .collect::<Result<Vec<_>, Error>>()
 }

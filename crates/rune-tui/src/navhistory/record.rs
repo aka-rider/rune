@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::document::DocumentId;
 use crate::focus::{self, FocusTarget};
 
-use super::{NavHistory, Place, PlaceKind, clamp_to_char_boundary};
+use super::{NavHistory, Place, PlaceKind};
 
 const NAV_JUMP_LINES: usize = 10;
 
@@ -19,7 +19,7 @@ fn place_for(app: &App, doc: DocumentId, offset: usize, kind: PlaceKind) -> Opti
     Some(Place {
         doc,
         path: document.file_path.clone(),
-        offset: clamp_to_char_boundary(&document.buffer, offset),
+        offset: rune_core::buffer::clamp_to_char_boundary(document.buffer.content(), offset),
         kind,
     })
 }

@@ -297,7 +297,8 @@ fn apply_db_bootstrap(
     if let Some(recovered) = &db_bootstrap.recovered_content {
         let disk_content = app.active_doc_mut().buffer.content().to_string();
         if let rune_tui::document::Hydration::Refused(reason) =
-            app.active_doc_mut().hydrate(&disk_content, recovered)
+            app.active_doc_mut()
+                .hydrate(&disk_content, &recovered.content, &recovered.cursors)
         {
             rune_tui::messages::error(app, format!("crash recovery: {reason}"));
         }
@@ -305,7 +306,7 @@ fn apply_db_bootstrap(
     if let Some(doc_db) = db_bootstrap.doc_db {
         let db_id = doc_db.db_id;
         let row_content = match &db_bootstrap.recovered_content {
-            Some(recovered) => recovered.clone(),
+            Some(recovered) => recovered.content.clone(),
             None if doc_db.publish_mode.is_create_only() => String::new(),
             None => app.active_doc_mut().buffer.content().to_string(),
         };

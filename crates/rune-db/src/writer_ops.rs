@@ -16,6 +16,7 @@ use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep, Materia
 use crate::merge_prep::MergePrepResult;
 use crate::observation::Observation;
 use crate::rename::RenameOutcome;
+use crate::snapshot::Recovered;
 use crate::store::LivenessCheckFn;
 use crate::sync::SyncState;
 
@@ -347,7 +348,7 @@ pub enum OpOutcome {
     /// `ReconstructScratch`'s recovered content, or `None` when there was
     /// nothing to recover (no prior session ever touched the doc, or the
     /// most recent one is still alive).
-    Reconstructed(Option<String>),
+    Reconstructed(Option<Recovered>),
 }
 
 /// A completion posted by the writer thread for one `WriteOp`, or a fatal

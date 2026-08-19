@@ -155,7 +155,7 @@ fn undo_committed_with_unacked_appends_in_flight_never_desyncs_the_durable_journ
     store_b.shutdown();
 
     assert_eq!(
-        load_b.recovered, live_content,
+        load_b.recovered.content, live_content,
         "the recovered document must equal the live buffer — never a truncated/corrupted \
          durable journal behind an underestimated undo target"
     );

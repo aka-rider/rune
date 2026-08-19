@@ -93,7 +93,7 @@ fn hydrate_adopts_a_recovered_draft_even_in_reading_view() {
     let mut doc = Document::new(Buffer::new("on disk"));
     doc.read_only = ReadOnly::Reading;
 
-    let outcome = doc.hydrate("on disk", "recovered draft");
+    let outcome = doc.hydrate("on disk", "recovered draft", &[]);
 
     assert!(matches!(outcome, Hydration::Adopted));
     assert_eq!(doc.buffer.content(), "recovered draft");
@@ -105,7 +105,7 @@ fn hydrate_leaves_a_cursor_at_offset_zero_in_place() {
     let mut doc = Document::new(Buffer::new("on disk"));
     assert_eq!(doc.cursors.primary().position, 0);
 
-    doc.hydrate("on disk", "a much longer recovered draft");
+    doc.hydrate("on disk", "a much longer recovered draft", &[]);
 
     assert_eq!(doc.cursors.primary().position, 0);
     assert_eq!(doc.cursors.primary().anchor, 0);
@@ -117,7 +117,7 @@ fn hydrate_clamps_a_cursor_beyond_the_recovered_content() {
     let mut doc = Document::new(Buffer::new(disk));
     doc.cursors = CursorSet::new(doc.buffer.len());
 
-    doc.hydrate(disk, "01234567");
+    doc.hydrate(disk, "01234567", &[]);
 
     assert_eq!(doc.cursors.primary().position, "01234567".len());
     assert_eq!(doc.cursors.primary().anchor, "01234567".len());
@@ -128,7 +128,7 @@ fn hydrate_lands_a_clamped_cursor_on_a_char_boundary() {
     let mut doc = Document::new(Buffer::new("aaaaaa"));
     doc.cursors = CursorSet::new(3);
 
-    doc.hydrate("aaaaaa", "\u{e9}\u{e9}\u{e9}\u{e9}");
+    doc.hydrate("aaaaaa", "\u{e9}\u{e9}\u{e9}\u{e9}", &[]);
 
     let cursor = doc.cursors.primary();
     assert!(
@@ -143,12 +143,94 @@ fn hydrate_lands_a_clamped_cursor_on_a_char_boundary() {
     );
 }
 
+fn test_cursor(position: usize, anchor: usize) -> Cursor {
+    Cursor {
+        position,
+        anchor,
+        desired_col: 0,
+        id: rune_core::cursor::CursorId::try_from(1).expect("test id is non-zero"),
+    }
+}
+
+#[test]
+fn hydrate_installs_the_journaled_caret_over_the_existing_one() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    doc.cursors = CursorSet::new(2);
+
+    doc.hydrate("on disk", "recovered draft", &[test_cursor(9, 9)]);
+
+    assert_eq!(doc.cursors.primary().position, 9);
+    assert_eq!(doc.cursors.primary().anchor, 9);
+}
+
+#[test]
+fn hydrate_installs_every_journaled_caret() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+
+    doc.hydrate(
+        "on disk",
+        "recovered draft",
+        &[
+            test_cursor(2, 2),
+            Cursor {
+                id: rune_core::cursor::CursorId::try_from(2).expect("test id is non-zero"),
+                ..test_cursor(11, 11)
+            },
+        ],
+    );
+
+    let positions: Vec<usize> = doc.cursors.all().iter().map(|c| c.position).collect();
+    assert_eq!(positions, vec![2, 11]);
+}
+
+#[test]
+fn hydrate_without_a_journaled_caret_keeps_the_existing_one() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    doc.cursors = CursorSet::new(4);
+
+    doc.hydrate("on disk", "recovered draft", &[]);
+
+    assert_eq!(doc.cursors.primary().position, 4);
+}
+
+#[test]
+fn hydrate_clamps_a_journaled_caret_past_the_end_of_the_recovered_content() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+
+    doc.hydrate("on disk", "short draft", &[test_cursor(9_000, 9_000)]);
+
+    assert_eq!(doc.cursors.primary().position, "short draft".len());
+    assert_eq!(doc.cursors.primary().anchor, "short draft".len());
+}
+
+#[test]
+fn hydrate_snaps_a_journaled_caret_off_a_char_boundary() {
+    let recovered = "\u{e9}\u{e9}\u{e9}";
+    let mut doc = Document::new(Buffer::new("aaaaaaaa"));
+
+    doc.hydrate("aaaaaaaa", recovered, &[test_cursor(3, 5)]);
+
+    let cursor = doc.cursors.primary();
+    assert!(
+        recovered.is_char_boundary(cursor.position),
+        "position {} splits a char",
+        cursor.position
+    );
+    assert!(
+        recovered.is_char_boundary(cursor.anchor),
+        "anchor {} splits a char",
+        cursor.anchor
+    );
+    assert_eq!(cursor.position, 2);
+    assert_eq!(cursor.anchor, 4);
+}
+
 #[test]
 fn hydrate_keeps_a_cursor_offset_within_the_recovered_content() {
     let mut doc = Document::new(Buffer::new("on disk"));
     doc.cursors = CursorSet::new(3);
 
-    doc.hydrate("on disk", "recovered draft");
+    doc.hydrate("on disk", "recovered draft", &[]);
 
     assert_eq!(doc.cursors.primary().position, 3);
     assert_eq!(doc.cursors.primary().anchor, 3);

@@ -38,6 +38,13 @@ pub(crate) fn snap_char_boundary(content: &str, offset: usize) -> usize {
     content.floor_char_boundary(offset)
 }
 
+/// The one place an untrusted byte offset — a journaled caret, a recorded
+/// nav place, a stored merge-hunk start — becomes an offset a cursor may be
+/// seated at.
+pub fn clamp_to_char_boundary(content: &str, offset: usize) -> usize {
+    snap_char_boundary(content, offset.min(content.len()))
+}
+
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {

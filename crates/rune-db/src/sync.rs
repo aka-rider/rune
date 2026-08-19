@@ -169,7 +169,7 @@ pub fn sync_with_theirs(
     theirs: Option<Version>,
 ) -> Result<SyncState, Error> {
     let pos = crate::journal::current_seq(tx, session_id, doc_id)?;
-    let ours_content = crate::snapshot::recover_document(tx, session_id, doc_id)?;
+    let ours_content = crate::snapshot::recover_document(tx, session_id, doc_id)?.content;
     let ours = Version {
         hash: BlobHash(observation::hash_bytes(ours_content.as_bytes())),
         obs: None,

@@ -315,7 +315,8 @@ pub(crate) fn reload_diverged() {
         other => panic!("expected load ack, got {other:?}"),
     };
 
-    std::fs::write(&recovered_marker, &load_result.recovered).expect("write recovered marker");
+    std::fs::write(&recovered_marker, &load_result.recovered.content)
+        .expect("write recovered marker");
     std::fs::write(&sync_marker, format!("{:?}", load_result.sync.kind))
         .expect("write sync marker");
 

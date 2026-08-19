@@ -111,7 +111,7 @@ fn restart_recovered(mem: &Arc<Mem>, db_path: &Path) -> String {
         DbEvent::Ok {
             result: OpOutcome::Load(load),
             ..
-        } => load.recovered,
+        } => load.recovered.content,
         other => panic!("a fresh session's load must not fail, got {other:?}"),
     }
 }
@@ -296,7 +296,7 @@ fn launch_adopted_draft_keeps_edits_and_undo_recoverable() {
     app.active_doc_mut().viewport.set_size(80, 23);
     app.sync_view();
 
-    rune_tui::db_ack::adopt_scratch_doc(&mut app, id, row_id, "recovered draft");
+    rune_tui::db_ack::adopt_scratch_doc(&mut app, id, row_id, "recovered draft", &[]);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "recovered draft");
 
     send(&mut app, plain(KeyCode::End));
@@ -325,7 +325,7 @@ fn launch_adopted_draft_keeps_edits_and_undo_recoverable() {
             result: OpOutcome::Reconstructed(content),
             ..
         } => assert_eq!(
-            content.as_deref(),
+            content.map(|r| r.content).as_deref(),
             Some("recovered draft"),
             "the scratch row must reconstruct the undone-to buffer"
         ),

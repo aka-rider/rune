@@ -134,7 +134,9 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     // came back `Err`.
     let conn =
         rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
-    let recovered = rune_db::recover_document(&conn, session_id, doc_id).expect("recover_document");
+    let recovered = rune_db::recover_document(&conn, session_id, doc_id)
+        .expect("recover_document")
+        .content;
     assert_eq!(
         recovered, buf,
         "recover_document must equal the caller's own buffer bytes exactly"
