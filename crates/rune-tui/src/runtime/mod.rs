@@ -18,15 +18,12 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread;
 
 use rune_vfs::{DirEntry, Vfs};
 
-use crate::app::{self, App};
 use crate::document::DocumentId;
 use crate::highlight::PassOutcome;
-use crate::keymap::{self, KeyInput};
+use crate::keymap::KeyInput;
 use crate::pointer::MouseInput;
 
 /// Where a `Msg::ClipboardRead`'s text is destined. Captured when the
@@ -359,187 +356,9 @@ mod effects;
 pub use effects::{Effects, Outbound};
 use effects::{Sink, discharge};
 
-/// Runs the editor until the user quits or the input stream ends. Owns the
-/// terminal for the lifetime of this call: `term::Guard` wraps a
-/// `termina::Terminal`, single-owner and main-thread-only by the crate's own
-/// design (see module docs).
-pub fn run(app: &mut App) -> io::Result<()> {
-    let bootstrap::Bootstrap {
-        mut sink,
-        tx,
-        rx,
-        mut save_handles,
-    } = bootstrap::bootstrap(app)?;
-
-    if sink.transmits.is_pending() {
-        let _ = tx.send(Msg::PumpGraphics);
-    }
-
-    let mut fatal: io::Result<()> = Ok(());
-
-    // The normal exit is `app.should_quit` becoming true, set either by
-    // `Msg::Quit` (quit-confirm) or synthesized by `spawn_input_reader`
-    // itself when its `events.read` fails (input stream gone — tty closed,
-    // SIGHUP, ...): it sends `Msg::Error` then `Msg::Quit` before exiting,
-    // specifically so this loop is never left blocking on `rx.recv()`
-    // forever while holding an unsaved buffer hostage (no recovery store in
-    // Phase 1). The `while let` here is a total fallback for the case where
-    // literally every `Sender` clone (the reader's and any in-flight
-    // `Cmd`'s) has been dropped without sending anything — shouldn't happen
-    // given the above, but keeps this loop correct even if it did.
-    while let Ok(first) = rx.recv() {
-        let mut batch = vec![first];
-        while let Ok(msg) = rx.try_recv() {
-            batch.push(msg);
-        }
-
-        match turn(app, batch, &mut sink, &tx, &mut save_handles) {
-            Ok(Turn::Continue) => {}
-            Ok(Turn::Quit) => break,
-            Err(e) => {
-                fatal = Err(e);
-                break;
-            }
-        }
-    }
-
-    // Every exit — quit, a dead channel, a broken terminal — lands here:
-    // whatever the terminal is still owed goes out, then every fallback
-    // save `Cmd` spawned above is joined before `run` returns and `main`
-    // drains/shuts down the store (an in-flight one finishes its atomic
-    // publish; an already-finished one joins immediately). Quit is reported
-    // as complete only once this returns.
-    let flushed = sink
-        .transmits
-        .flush_escapes_abandoning_images(|bytes| sink.guard.write_raw(bytes));
-    for handle in save_handles.drain(..) {
-        let _ = handle.join();
-    }
-    exit_settle::settle_pending_materialize(app, &rx);
-
-    fatal.and(flushed)
-}
-
-enum Turn {
-    Continue,
-    Quit,
-}
-
-fn turn(
-    app: &mut App,
-    batch: Vec<Msg>,
-    sink: &mut Sink,
-    tx: &mpsc::Sender<Msg>,
-    save_handles: &mut Vec<thread::JoinHandle<()>>,
-) -> io::Result<Turn> {
-    for msg in batch {
-        apply(app, msg, sink, tx, save_handles)?;
-    }
-
-    if app.should_quit {
-        return Ok(Turn::Quit);
-    }
-
-    let pumped = sink.transmits.pump(
-        transmit_queue::DRAIN_BUDGET_BYTES,
-        |bytes| sink.guard.write_raw(bytes),
-        || {
-            let _ = tx.send(Msg::PumpGraphics);
-        },
-    )?;
-    if pumped == Pumped::StillOwing {
-        return Ok(Turn::Continue);
-    }
-
-    sink.redraw_before_draw();
-    app.sync_view();
-    sink.guard.draw(|frame| crate::render::draw(app, frame))?;
-    Ok(Turn::Continue)
-}
-
-/// Runs `update` for one message and immediately discharges its `Effects` —
-/// raw bytes to the terminal, `Cmd`s to their own thread. Shared by the
-/// resize-seeding call above and the main loop so there is exactly one
-/// "apply a message" chokepoint.
-fn apply(
-    app: &mut App,
-    msg: Msg,
-    sink: &mut Sink,
-    tx: &mpsc::Sender<Msg>,
-    save_handles: &mut Vec<thread::JoinHandle<()>>,
-) -> io::Result<()> {
-    // A resize can change the terminal's reported pixel
-    // dimensions even when the Kitty/truecolor decision itself cannot, so
-    // `app.graphics` is re-derived here — the one "apply a message"
-    // chokepoint this module's own doc comment above describes — rather
-    // than only once at `bootstrap` time.
-    let is_resize = matches!(msg, Msg::Resize(_, _));
-    let mut effects = Effects::default();
-    app::update(app, msg, &mut effects);
-    discharge(&mut effects, sink, tx, save_handles)?;
-    if is_resize {
-        crate::graphics::redetect(app, &mut sink.guard);
-    }
-    Ok(())
-}
-
-/// A panicking `Cmd` must not vanish silently — `update` might be waiting on
-/// exactly this `Cmd`'s reply with no other input in flight, which would
-/// otherwise leave the main loop's `rx.recv()` blocked forever. Catching the
-/// unwind here and reporting it as `Msg::Error` keeps that impossible: every
-/// spawned `Cmd` thread sends SOMETHING back, success, `None`, or a caught
-/// panic.
-///
-/// `CmdKind::Save`'s handle is retained in `save_handles` (pruning already-
-/// finished ones first) so `run` can join it on quit instead of letting
-/// `JoinHandle::drop` detach it — every other kind is fire-and-forget
-/// exactly as before.
-fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>, save_handles: &mut Vec<thread::JoinHandle<()>>) {
-    let is_save = cmd.kind() == CmdKind::Save;
-    let handle = thread::spawn(move || {
-        // Both sends below discard a closed-channel failure the same way
-        // `spawn_input_reader` does: `tx` only closes once the main loop
-        // has exited, so there is nothing left to notify either way.
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cmd.run())) {
-            Ok(Some(msg)) => {
-                let _ = tx.send(msg);
-            }
-            Ok(None) => {}
-            Err(_) => {
-                let _ = tx.send(Msg::Error("a background task panicked".to_string()));
-            }
-        }
-    });
-    if is_save {
-        save_handles.retain(|h| !h.is_finished());
-        save_handles.push(handle);
-    }
-}
-
-fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
-    thread::spawn(move || {
-        loop {
-            match events.read(|_| true) {
-                Ok(event) => {
-                    if let Some(msg) = translate_event(event)
-                        && tx.send(msg).is_err()
-                    {
-                        return; // main loop gone; nothing left to notify
-                    }
-                }
-                Err(e) => {
-                    // The input source is gone (tty closed, SIGHUP, the
-                    // process losing its controlling terminal, ...) — see
-                    // `run`'s doc comment on why this must not just exit
-                    // silently.
-                    let _ = tx.send(Msg::Error(format!("input stream ended: {e}")));
-                    let _ = tx.send(Msg::Quit);
-                    return;
-                }
-            }
-        }
-    });
-}
+mod run_loop;
+pub use run_loop::run;
+use run_loop::{apply, spawn_cmd, spawn_input_reader};
 
 /// Reads `root`'s children off-thread via `vfs.read_dir` and
 /// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
@@ -620,44 +439,10 @@ pub fn load_search_history_cmd(
     })
 }
 
-/// The Explorer live-preview's largest previewable file, in bytes — past
-/// this, `explorer_preview` skips the read entirely rather than pulling a
-/// huge file into memory just because the cursor happened to pass over it.
-pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
-
-/// Reads `path` off-thread for the Explorer's live preview, the same
-/// physical work as [`read_file_cmd`] but with the preview's own tighter
-/// size gate ([`MAX_PREVIEW_BYTES`], enforced by `rune_vfs::get` before
-/// reading) and a UTF-8 validity check so a binary file never reaches
-/// `Buffer::from_bytes`. Every rejection reports through the SAME `Result`
-/// channel `read_file_cmd` uses (`Msg::FileOpened`'s `result`) rather than a
-/// distinct error shape — `explorer_preview::maybe_consume_reply` is the
-/// only reader, and it treats every `Err` here identically: silently keep
-/// showing whatever was previewed before, never the ordinary open-failure
-/// banner `workspace::handle_file_opened` would otherwise raise. `anchor`
-/// is always `None`: a preview never lands a navigation anchor.
-pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
-    Cmd::read_file(move || {
-        let result = (|| -> Result<Vec<u8>, CmdError> {
-            let bytes = match rune_vfs::get(vfs.as_ref(), &path, Some(MAX_PREVIEW_BYTES)) {
-                Ok(sighting) => sighting.bytes,
-                Err(rune_vfs::GetRefusal::TooLarge { .. }) => {
-                    return Err(CmdError::Refused("too large to preview".to_string()));
-                }
-                Err(e) => return Err(CmdError::from(e)),
-            };
-            if std::str::from_utf8(&bytes).is_err() {
-                return Err(CmdError::Refused("not valid UTF-8".to_string()));
-            }
-            Ok(bytes)
-        })();
-        Some(Msg::FileOpened {
-            path,
-            result,
-            anchor: None,
-        })
-    })
-}
+// The Explorer live-preview `Cmd` constructor — split out for the same
+// 500-line-budget reason as `highlight_cmd`/`timer` below.
+mod preview_cmd;
+pub use preview_cmd::{MAX_PREVIEW_BYTES, read_preview_cmd};
 
 mod bootstrap;
 mod exit_settle;
@@ -700,32 +485,3 @@ pub(crate) use filesearch_cmd::filesearch_scan_cmd;
 
 mod command_history_cmd;
 pub use command_history_cmd::load_command_history_cmd;
-
-fn translate_event(event: termina::Event) -> Option<Msg> {
-    match event {
-        termina::Event::Key(key) => keymap::from_termina(key).map(Msg::Key),
-        termina::Event::Paste(text) => Some(Msg::Paste(text)),
-        termina::Event::WindowResized(size) => Some(Msg::Resize(size.cols, size.rows)),
-        termina::Event::Mouse(mouse) => crate::pointer::from_termina(mouse).map(Msg::Mouse),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod translate_event_tests {
-    use termina::escape::csi::{Csi, Cursor};
-
-    use super::translate_event;
-
-    #[test]
-    fn a_terminal_reply_nobody_asked_for_produces_no_message() {
-        let event = termina::Event::Csi(Csi::Cursor(Cursor::RequestActivePositionReport));
-        assert!(translate_event(event).is_none());
-    }
-
-    #[test]
-    fn a_focus_change_stays_silent() {
-        assert!(translate_event(termina::Event::FocusIn).is_none());
-        assert!(translate_event(termina::Event::FocusOut).is_none());
-    }
-}
