@@ -410,15 +410,8 @@ pub fn saved_obs_for(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::test_support::open;
     use std::time::SystemTime;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(

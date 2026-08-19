@@ -69,15 +69,8 @@ mod tests {
     use crate::confirmation::Confirmation;
     use crate::obs_origin::ObsOrigin;
     use crate::observation::{ObservationMeta, ParentEdges, StatFacts};
-    use rusqlite::Connection;
+    use crate::test_support::open;
     use std::time::SystemTime;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     fn seed_doc(tx: &Transaction<'_>) -> DocId {
         tx.execute(

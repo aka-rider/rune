@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use crate::Error;
 
-pub const SCHEMA: &str = r#"
+pub(crate) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
 	id             INTEGER PRIMARY KEY,
 	path           TEXT    NOT NULL DEFAULT '',

@@ -105,14 +105,8 @@ fn reap_session_footprint(tx: &Transaction<'_>, session_id: SessionId) -> Result
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::test_support::open;
     use std::time::SystemTime;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     fn seed_doc(conn: &Connection) -> DocId {
         conn.execute(

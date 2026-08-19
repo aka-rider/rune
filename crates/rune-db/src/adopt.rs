@@ -253,13 +253,7 @@ pub(crate) fn resolve_abandon(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
+    use crate::test_support::open;
 
     fn seed_doc(conn: &Connection) -> DocId {
         conn.execute(

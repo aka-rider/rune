@@ -138,23 +138,8 @@ pub fn recover_document(
 mod tests {
     use super::*;
     use crate::journal::{append_edit, move_undo_pos, undo_peek};
+    use crate::test_support::{insert_test_document, open};
     use rune_core::buffer::AppliedEdit;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
-
-    fn insert_test_document(tx: &Transaction<'_>) -> DocId {
-        tx.execute(
-            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
-            [],
-        )
-        .expect("insert document");
-        DocId(tx.last_insert_rowid())
-    }
 
     fn insert_test_session(conn: &Connection) -> SessionId {
         crate::session::establish_session(conn, SystemTime::now()).expect("establish session")

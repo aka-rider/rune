@@ -87,13 +87,7 @@ pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
+    use crate::test_support::open;
 
     #[test]
     fn put_then_get_round_trips() {

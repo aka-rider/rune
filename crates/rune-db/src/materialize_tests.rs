@@ -8,13 +8,7 @@ use rune_vfs::{Mem, Vfs};
 
 use super::*;
 use crate::ids::{DocId, SessionId};
-
-fn open() -> Connection {
-    crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-        &crate::conn::memory_uri(),
-    ))
-    .expect("open")
-}
+use crate::test_support::open;
 
 fn seed_doc_with_path(conn: &Connection, path: &str) -> DocId {
     conn.execute(

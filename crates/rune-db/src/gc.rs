@@ -40,14 +40,8 @@ pub(crate) fn sweep_unreferenced_blobs(tx: &Transaction) -> Result<usize, Error>
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::test_support::open;
     use rusqlite::{Connection, params};
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     fn seed_doc(conn: &Connection) -> i64 {
         conn.execute(

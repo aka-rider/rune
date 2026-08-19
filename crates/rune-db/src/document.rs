@@ -204,15 +204,9 @@ pub(crate) fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>,
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::test_support::open;
     use rune_vfs::{Mem, VfsTestExt};
     use std::time::Duration;
-
-    fn open() -> Connection {
-        crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
-            &crate::conn::memory_uri(),
-        ))
-        .expect("open")
-    }
 
     #[test]
     fn open_path_by_name_reuses_the_same_row_on_a_second_open() {
