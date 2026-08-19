@@ -212,6 +212,177 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
     );
 }
 
+const INLINE_CODE_PARAGRAPH: &str = "Explore many databases in one search with our helpful `Explore` command to find results quickly across all your files today.\n";
+const INLINE_CODE_WIDTH: u16 = 37;
+
+fn wrap_row_of(app: &mut App, pos: usize) -> usize {
+    let view = app.active_doc_mut().view();
+    let bp = app.active_doc_mut().buffer.offset_to_line_col(pos);
+    let sp = view.syntax.buffer_to_syntax(bp);
+    view.wrap.syntax_to_wrap(sp).row
+}
+
+/// Down from INSIDE a mid-paragraph inline code span must advance one wrap
+/// row, the same as it would anywhere else in the paragraph. Regression for
+/// the reveal-driven reflow bug: `move_row_cursors`'s first pass measures
+/// the destination against the REVEALED span (caret still touching it), but
+/// the second pass used to re-derive only the column from wherever that
+/// destination landed in the newly CONCEALED (reflowed) layout — if reflow
+/// pulled the destination back onto the origin row, the caret never moved.
+#[test]
+fn down_from_inside_an_inline_code_span_advances_one_wrap_row() {
+    let backtick = INLINE_CODE_PARAGRAPH.find('`').unwrap();
+    let between_the_backticks = backtick + 3;
+    let mut app = app_for(INLINE_CODE_PARAGRAPH, between_the_backticks);
+    app.active_doc_mut()
+        .viewport
+        .set_size(INLINE_CODE_WIDTH, HEIGHT - 1);
+
+    let origin_row = wrap_row_of(&mut app, between_the_backticks);
+    assert_eq!(
+        origin_row, 1,
+        "test fixture must place the span on the second wrap row"
+    );
+
+    press(&mut app, KeyCode::Down, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    let landed_row = wrap_row_of(&mut app, after);
+    assert_eq!(
+        landed_row,
+        origin_row + 1,
+        "Down from inside a concealed-on-move code span must advance one wrap row"
+    );
+}
+
+/// Down from ON the opening backtick of a mid-paragraph inline code span
+/// must advance one wrap row, not shift one character right on the SAME
+/// row. Regression for the same reflow bug as above; this is the case that
+/// produced the "one symbol right" symptom, from `clamp_col` clamping a
+/// buffer column inside a newly concealed run forward to the run's end.
+#[test]
+fn down_from_the_opening_backtick_of_an_inline_code_span_advances_one_wrap_row() {
+    let backtick = INLINE_CODE_PARAGRAPH.find('`').unwrap();
+    let mut app = app_for(INLINE_CODE_PARAGRAPH, backtick);
+    app.active_doc_mut()
+        .viewport
+        .set_size(INLINE_CODE_WIDTH, HEIGHT - 1);
+
+    let origin_row = wrap_row_of(&mut app, backtick);
+    assert_eq!(
+        origin_row, 1,
+        "test fixture must place the span on the second wrap row"
+    );
+    let origin_col = app.active_doc_mut().cursors.primary().position;
+
+    press(&mut app, KeyCode::Down, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    let landed_row = wrap_row_of(&mut app, after);
+    assert_eq!(
+        landed_row,
+        origin_row + 1,
+        "Down from the opening backtick must advance one wrap row, not stay on the origin row"
+    );
+    assert_ne!(
+        after,
+        origin_col + 1,
+        "Down must not degrade into a same-row right shift"
+    );
+}
+
+/// `line_up` back from the destination of `down_from_inside_an_inline_code_span_advances_one_wrap_row`
+/// must return to the origin row — the reflow-safe row derivation must work
+/// symmetrically in both directions.
+#[test]
+fn line_up_from_below_an_inline_code_span_returns_to_the_origin_row() {
+    // A leading line keeps the paragraph off logical line 0, so `Up` moves
+    // the caret within the buffer instead of focusing the title bar
+    // (`editor_exec::at_buffer_top` checks the LOGICAL line, and the whole
+    // paragraph is otherwise one line with no line break above it).
+    let leading_line = "intro\n";
+    let content = format!("{leading_line}{INLINE_CODE_PARAGRAPH}");
+    let backtick = leading_line.len() + INLINE_CODE_PARAGRAPH.find('`').unwrap();
+    let between_the_backticks = backtick + 3;
+    let mut app = app_for(&content, between_the_backticks);
+    app.active_doc_mut()
+        .viewport
+        .set_size(INLINE_CODE_WIDTH, HEIGHT - 1);
+
+    let origin_row = wrap_row_of(&mut app, between_the_backticks);
+    press(&mut app, KeyCode::Down, Mods::NONE);
+    press(&mut app, KeyCode::Up, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    let landed_row = wrap_row_of(&mut app, after);
+    assert_eq!(
+        landed_row, origin_row,
+        "Down then Up over an inline code span must return to the origin wrap row"
+    );
+}
+
+/// `page_down` over the same paragraph must advance by the page step, even
+/// though the paragraph reflows under the moving cursor along the way.
+#[test]
+fn page_down_over_an_inline_code_span_advances_by_the_page_step() {
+    let backtick = INLINE_CODE_PARAGRAPH.find('`').unwrap();
+    let between_the_backticks = backtick + 3;
+    let mut app = app_for(INLINE_CODE_PARAGRAPH, between_the_backticks);
+    app.active_doc_mut().viewport.set_size(INLINE_CODE_WIDTH, 4);
+
+    let origin_row = wrap_row_of(&mut app, between_the_backticks);
+    press(&mut app, KeyCode::PageDown, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    let landed_row = wrap_row_of(&mut app, after);
+    assert_eq!(
+        landed_row,
+        origin_row + 3,
+        "page down (viewport height 4, page step 3) must advance the wrap row by the page step"
+    );
+}
+
+/// `move_row_cursors` maps over the whole `CursorSet`: with two cursors, one
+/// inside the code span and one plain, both must independently advance one
+/// wrap row on Down.
+#[test]
+fn down_advances_both_cursors_when_one_sits_inside_an_inline_code_span() {
+    let leading_line = "ab\n";
+    let content = format!("{leading_line}{INLINE_CODE_PARAGRAPH}");
+    let backtick = leading_line.len() + INLINE_CODE_PARAGRAPH.find('`').unwrap();
+    let between_the_backticks = backtick + 3;
+    let mut app = app_for(&content, between_the_backticks);
+    app.active_doc_mut()
+        .viewport
+        .set_size(INLINE_CODE_WIDTH, HEIGHT - 1);
+
+    let row_without_a_code_span = 1;
+    app.active_doc_mut().cursors =
+        CursorSet::new_from_positions(&[row_without_a_code_span, between_the_backticks]);
+
+    let row_without_a_code_span_origin_row = wrap_row_of(&mut app, row_without_a_code_span);
+    let between_the_backticks_origin_row = wrap_row_of(&mut app, between_the_backticks);
+
+    press(&mut app, KeyCode::Down, Mods::NONE);
+
+    let all = app.active_doc_mut().cursors.all().to_vec();
+    assert_eq!(all.len(), 2, "both cursors must survive the move");
+    let mut rows: Vec<usize> = all
+        .iter()
+        .map(|c| wrap_row_of(&mut app, c.position))
+        .collect();
+    rows.sort_unstable();
+    let mut expected = vec![
+        row_without_a_code_span_origin_row + 1,
+        between_the_backticks_origin_row + 1,
+    ];
+    expected.sort_unstable();
+    assert_eq!(
+        rows, expected,
+        "both cursors must independently advance one wrap row"
+    );
+}
+
 /// Regression for the plan's carried-forward review constraint: a `Key`
 /// handled right after a `Resize` in the SAME message batch must see the
 /// post-resize wrap, not a stale `app.view` (only refreshed once per
