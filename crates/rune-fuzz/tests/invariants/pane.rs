@@ -4,9 +4,9 @@
 //! is focused, when a modal owns the keyboard, when the active document
 //! itself changed, and on any non-`Key` message.
 
-use rune_core::undo::EditKind;
-use rune_fuzz::invariant::pane_no_bleed;
+use rune_fuzz::invariant::{overlay_title_exclusive, pane_no_bleed};
 use rune_fuzz::step::MsgTag;
+use rune_tui::focus::FocusTarget;
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::pane::Pane;
 
@@ -28,13 +28,29 @@ fn key_ctx() -> rune_fuzz::step::StepCtx {
 fn fires_on_an_edit_behind_an_explorer_focused_key() {
     let mut prev = base_snapshot("abc");
     prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
     let mut next = base_snapshot("abcd");
     next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
     next.version = 2;
     next.journal_len = 1;
     let v = pane_no_bleed(&prev, &next, &key_ctx())
         .expect("a document mutation behind an Explorer-focused key must trip PANE-NO-BLEED");
     assert_eq!(v.id, "PANE-NO-BLEED");
+}
+
+#[test]
+fn silent_when_a_palette_command_edits_the_document_over_explorer_focus() {
+    let mut prev = base_snapshot("one line");
+    prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Palette;
+    let mut next = base_snapshot("");
+    next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
+    next.version = 2;
+    next.journal_len = 1;
+    next.journal_pos = 1;
+    assert_eq!(pane_no_bleed(&prev, &next, &key_ctx()), None);
 }
 
 #[test]
@@ -50,9 +66,11 @@ fn silent_when_focus_is_editor() {
 fn silent_when_a_modal_is_up() {
     let mut prev = base_snapshot("abc");
     prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
     prev.modal_open = true;
     let mut next = base_snapshot("abcd");
     next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
     next.modal_open = true;
     next.version = 2;
     next.journal_len = 1;
@@ -63,9 +81,11 @@ fn silent_when_a_modal_is_up() {
 fn silent_when_the_active_document_changed() {
     let mut prev = base_snapshot("abc");
     prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
     prev.active = base_active_id();
     let mut next = base_snapshot("abcd");
     next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
     next.active = other_doc_id();
     next.version = 2;
     next.journal_len = 1;
@@ -76,8 +96,10 @@ fn silent_when_the_active_document_changed() {
 fn silent_on_a_non_key_message() {
     let mut prev = base_snapshot("abc");
     prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
     let mut next = base_snapshot("abcd");
     next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
     next.version = 2;
     next.journal_len = 1;
     let ctx = base_ctx(); // MsgTag::Resize
@@ -88,48 +110,149 @@ fn silent_on_a_non_key_message() {
 fn silent_when_a_save_strips_trailing_whitespace_behind_a_title_focused_key() {
     let mut prev = base_snapshot("# \n\n\n");
     prev.focus = Pane::Title;
+    prev.focus_target = FocusTarget::Title;
     prev.journal_pos = 5;
     prev.journal_len = 5;
     let mut next = base_snapshot("#\n\n\n");
     next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title;
     next.version = 2;
     next.journal_pos = 6;
     next.journal_len = 6;
-    next.newest_applied_edit_kind = Some(EditKind::StripTrailingWhitespace);
+    next.journal_tip_strip_run = 1;
     assert_eq!(pane_no_bleed(&prev, &next, &key_ctx()), None);
+}
+
+#[test]
+fn silent_when_one_key_appends_two_strips() {
+    let mut prev = base_snapshot("# \n\n\n");
+    prev.focus = Pane::Title;
+    prev.focus_target = FocusTarget::Title;
+    prev.journal_pos = 5;
+    prev.journal_len = 5;
+    let mut next = base_snapshot("#\n\n\n");
+    next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title;
+    next.version = 2;
+    next.journal_pos = 7;
+    next.journal_len = 7;
+    next.journal_tip_strip_run = 2;
+    assert_eq!(pane_no_bleed(&prev, &next, &key_ctx()), None);
+}
+
+#[test]
+fn fires_when_a_chrome_key_redoes_pre_existing_strips() {
+    let mut prev = base_snapshot("#\n\n\n");
+    prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
+    prev.journal_pos = 5;
+    prev.journal_len = 7;
+    let mut next = base_snapshot("# \n\n\n");
+    next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
+    next.version = 2;
+    next.journal_pos = 6;
+    next.journal_len = 7;
+    next.journal_tip_strip_run = 2;
+    let v = pane_no_bleed(&prev, &next, &key_ctx())
+        .expect("a redo driven from chrome is a bleed, not a sanctioned strip");
+    assert_eq!(v.id, "PANE-NO-BLEED");
+}
+
+#[test]
+fn silent_when_a_save_strip_truncates_a_redo_tail() {
+    let mut prev = base_snapshot("abc  \n");
+    prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
+    prev.journal_pos = 45;
+    prev.journal_len = 49;
+    let mut next = base_snapshot("abc\n");
+    next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
+    next.version = 2;
+    next.journal_pos = 46;
+    next.journal_len = 46;
+    next.journal_tip_strip_run = 1;
+    assert_eq!(pane_no_bleed(&prev, &next, &key_ctx()), None);
+}
+
+#[test]
+fn fires_when_a_strip_run_is_shorter_than_the_journal_delta() {
+    let mut prev = base_snapshot("# \n\n\n");
+    prev.focus = Pane::Title;
+    prev.focus_target = FocusTarget::Title;
+    prev.journal_pos = 5;
+    prev.journal_len = 5;
+    let mut next = base_snapshot("#x\n\n\n");
+    next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title;
+    next.version = 2;
+    next.journal_pos = 7;
+    next.journal_len = 7;
+    next.journal_tip_strip_run = 1;
+    let v = pane_no_bleed(&prev, &next, &key_ctx())
+        .expect("a non-strip step hiding beneath a strip tip is still a bleed");
+    assert_eq!(v.id, "PANE-NO-BLEED");
+}
+
+#[test]
+fn overlay_title_exclusive_fires_when_the_palette_owns_a_title_focused_key() {
+    let mut next = base_snapshot("abc");
+    next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Palette;
+    let v = overlay_title_exclusive(&next)
+        .expect("the palette must never own a keystroke while the title holds focus");
+    assert_eq!(v.id, "OVERLAY-TITLE-EXCLUSIVE");
+}
+
+#[test]
+fn overlay_title_exclusive_silent_when_the_title_itself_owns_the_key() {
+    let mut next = base_snapshot("abc");
+    next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title;
+    assert_eq!(overlay_title_exclusive(&next), None);
+}
+
+#[test]
+fn overlay_title_exclusive_silent_when_the_palette_owns_an_editor_focused_key() {
+    let mut next = base_snapshot("abc");
+    next.focus = Pane::Editor;
+    next.focus_target = FocusTarget::Palette;
+    assert_eq!(overlay_title_exclusive(&next), None);
 }
 
 #[test]
 fn fires_on_an_ordinary_insert_behind_a_title_focused_key() {
     let mut prev = base_snapshot("abc");
     prev.focus = Pane::Title;
+    prev.focus_target = FocusTarget::Title;
     prev.journal_pos = 5;
     prev.journal_len = 5;
     let mut next = base_snapshot("abcd");
     next.focus = Pane::Title;
+    next.focus_target = FocusTarget::Title;
     next.version = 2;
     next.journal_pos = 6;
     next.journal_len = 6;
-    next.newest_applied_edit_kind = Some(EditKind::Insert);
     let v = pane_no_bleed(&prev, &next, &key_ctx())
         .expect("a plain insert behind a Title-focused key must still trip PANE-NO-BLEED");
     assert_eq!(v.id, "PANE-NO-BLEED");
 }
 
 #[test]
-fn fires_when_a_strip_kind_is_claimed_without_a_new_journal_step() {
+fn fires_when_a_mutation_journals_nothing() {
     let mut prev = base_snapshot("abc  ");
     prev.focus = Pane::Explorer;
+    prev.focus_target = FocusTarget::Explorer;
     prev.journal_pos = 5;
     prev.journal_len = 5;
     let mut next = base_snapshot("abc");
     next.focus = Pane::Explorer;
+    next.focus_target = FocusTarget::Explorer;
     next.version = 2;
     next.journal_pos = 5;
     next.journal_len = 5;
-    next.newest_applied_edit_kind = Some(EditKind::StripTrailingWhitespace);
-    let v = pane_no_bleed(&prev, &next, &key_ctx()).expect(
-        "a mutation that journalled nothing is a bleed however the newest step is labelled",
-    );
+    let v = pane_no_bleed(&prev, &next, &key_ctx())
+        .expect("a mutation that journalled nothing is a bleed, whatever sits at the journal tip");
     assert_eq!(v.id, "PANE-NO-BLEED");
 }

@@ -229,6 +229,7 @@ fn the_dirty_quit_guard_saves_a_reading_view_document_stripped_and_whole() {
             doc: id,
             kind: GuardKind::DirtyQuit,
         },
+        &mut crate::runtime::Effects::default(),
     );
 
     let mut effects = Effects::default();

@@ -9,9 +9,10 @@
 use crate::app::App;
 use crate::commands::{clipboard, edit, editor_exec, mouse};
 use crate::document::DocumentId;
+use crate::focus::FocusTarget;
 use crate::highlight::PassOutcome;
 use crate::keymap::{self, KeyCode, KeyInput, QuitKey};
-use crate::pane::{self, Pane};
+use crate::pane;
 use crate::runtime::{Effects, Msg, PasteTarget, TimerKey};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs};
 
@@ -325,36 +326,20 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
-    // Stage 3, search-bar branch: checked BEFORE the chrome-level `Pane`
-    // match below, since the bar is its own focus state, never a `Pane`
-    // variant (`focus::target`'s own "second input checked first" doc).
-    if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
-        let _ = crate::search::keys::handle_key(app, key, effects);
-        return;
-    }
-
-    // Stage 3, file-finder branch: same shape as the search-bar branch
-    // above, checked before the chrome-level `Pane` match — the finder is
-    // never a `Pane` either.
-    if crate::focus::target(app) == crate::focus::FocusTarget::FileSearch {
-        let _ = crate::filesearch::keys::handle_key(app, key, effects);
-        return;
-    }
-
-    if crate::focus::target(app) == crate::focus::FocusTarget::Palette {
-        let _ = crate::palette::keys::handle_key(app, key, effects);
-        return;
-    }
-
-    // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
-    // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
-    // here rather than threaded anywhere further.
-    let _ = match app.focus() {
-        Pane::Editor => handle_editor_key(app, key, effects),
-        Pane::Explorer => explorer_keys::handle_key(app, key, effects),
-        Pane::Tabs => opentabs::handle_key(app, key, effects),
-        Pane::Title => crate::title::handle_key(app, key, effects),
-        Pane::Messages => {
+    // Stage 3 + stage 4: the focused target's own keymap. There is no
+    // stage 5 to react to `KeyOutcome::Ignored` with, so the verdict is
+    // discarded here rather than threaded anywhere further.
+    let _ = match crate::focus::target(app) {
+        FocusTarget::SearchField | FocusTarget::ReplaceField => {
+            crate::search::keys::handle_key(app, key, effects)
+        }
+        FocusTarget::FileSearch => crate::filesearch::keys::handle_key(app, key, effects),
+        FocusTarget::Palette => crate::palette::keys::handle_key(app, key, effects),
+        FocusTarget::Editor => handle_editor_key(app, key, effects),
+        FocusTarget::Explorer => explorer_keys::handle_key(app, key, effects),
+        FocusTarget::Tabs => opentabs::handle_key(app, key, effects),
+        FocusTarget::Title => crate::title::handle_key(app, key, effects),
+        FocusTarget::Messages => {
             if crate::messages::handle_key(app, key, effects) {
                 keymap::KeyOutcome::Consumed
             } else {

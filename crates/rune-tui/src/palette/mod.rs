@@ -64,6 +64,9 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     if app.palette().is_some() {
         return;
     }
+    let Some(clearance) = app.clear_title_for_overlay(effects) else {
+        return;
+    };
     crate::search::close(app);
     crate::filesearch::cancel(app, effects);
     let generation = app.next_palette_gen.mint();
@@ -79,7 +82,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
         refusal: None,
     };
     rank::rank(app, &mut state);
-    app.open_palette(state);
+    app.open_palette(state, clearance);
     if let Some(db) = app.db.as_ref() {
         effects.cmds.push(crate::runtime::load_command_history_cmd(
             db.store.reader_query(),
@@ -154,7 +157,7 @@ fn resync(app: &mut App, clear_refusal: bool) {
         state.nav.cursor = state.nav.cursor.min(len - 1);
     }
     state.nav.follow(len, height, margin, 0);
-    app.open_palette(state);
+    app.restore_palette(state);
 }
 
 pub(crate) fn ghost_text(state: &PaletteState) -> Option<String> {

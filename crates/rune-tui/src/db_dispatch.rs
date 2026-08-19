@@ -53,7 +53,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::Materialize(mat),
         } => with_pending_op(app, op_id, |app, pending| {
-            materialize_ack::handle_materialize_ack_for_op(app, pending.doc, op_id, *mat);
+            materialize_ack::handle_materialize_ack_for_op(app, pending.doc, op_id, *mat, effects);
         }),
         DbEvent::Ok {
             id: op_id,

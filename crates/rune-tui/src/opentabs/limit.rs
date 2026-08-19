@@ -377,7 +377,8 @@ mod tests {
                 GuardPrompt {
                     doc,
                     kind: GuardKind::DirtyQuit,
-                }
+                },
+                &mut crate::runtime::Effects::default()
             ),
             crate::guard::GuardRaise::Raised
         );

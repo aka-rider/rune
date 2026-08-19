@@ -14,7 +14,7 @@ fn an_open_search_bar_reserves_one_row_between_title_and_editor() {
     let closed = geometry(area, &app);
     assert!(closed.search_bar.is_none());
 
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let open = geometry(area, &app);
     let bar = open.search_bar.expect("bar row while App::search is open");
     let title = open.title.expect("title row at this frame size");
@@ -33,7 +33,7 @@ fn an_open_search_bar_reserves_one_row_between_title_and_editor() {
 #[test]
 fn a_one_row_content_area_gives_the_bar_no_room_and_never_panics() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     // Tall enough for the footer alone plus one content row.
     let geo = geometry(Rect::new(0, 0, 40, 2), &app);
     assert!(geo.search_bar.is_none());

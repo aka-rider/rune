@@ -44,7 +44,7 @@ fn down_key() -> KeyInput {
 #[test]
 fn up_filters_history_against_the_currently_typed_draft() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().history = vec![
         "needle".to_string(),
         "hay".to_string(),
@@ -65,7 +65,7 @@ fn up_filters_history_against_the_currently_typed_draft() {
 #[test]
 fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().history = vec!["one".to_string(), "two".to_string()];
     let mut effects = Effects::default();
 
@@ -82,7 +82,7 @@ fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
 #[test]
 fn down_past_the_newest_entry_restores_the_in_progress_draft() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().history = vec!["hello world".to_string(), "help".to_string()];
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('h'), &mut effects);
@@ -102,7 +102,7 @@ fn down_past_the_newest_entry_restores_the_in_progress_draft() {
 #[test]
 fn down_with_no_browse_session_active_is_a_no_op() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().history = vec!["one".to_string()];
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, char_key('x'), &mut effects);
@@ -114,7 +114,7 @@ fn down_with_no_browse_session_active_is_a_no_op() {
 #[test]
 fn typing_after_browsing_history_resets_the_browse_session() {
     let mut app = app_with("hello");
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     app.search_mut().unwrap().history = vec!["one".to_string()];
     let mut effects = Effects::default();
     let _ = handle_key(&mut app, up_key(), &mut effects);

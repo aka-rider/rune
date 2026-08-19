@@ -1,0 +1,10 @@
+content hello world
+key char:r --c-
+key char:a --c-
+key backspace ----
+key right ----
+key char:a --c-
+key backspace ----
+key char:P --c-
+type delete line
+key enter ----

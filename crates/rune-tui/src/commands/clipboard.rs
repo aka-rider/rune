@@ -421,7 +421,7 @@ mod tests {
         use crate::runtime::Msg;
 
         let mut app = app_with("ac", 1);
-        crate::search::open(&mut app);
+        crate::search::open(&mut app, &mut crate::runtime::Effects::default());
         let id = app.active;
         let before = app.doc(id).unwrap().buffer.content().to_string();
 

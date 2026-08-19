@@ -216,6 +216,10 @@ impl App {
     /// field that can never commit (the Help document is the case this
     /// removes rather than guards against).
     pub fn focus_title(&mut self) {
+        if self.overlay_owns_focus() {
+            crate::messages::warn(self, "close the overlay first — Esc");
+            return;
+        }
         if self.refuse_if_read_only(self.active_doc().read_only) {
             return;
         }
@@ -252,6 +256,9 @@ impl App {
     /// reseeding would resurrect the old name and discard their in-progress
     /// undo history.
     pub fn refocus_title(&mut self) {
+        if self.overlay_owns_focus() {
+            return;
+        }
         // The same read-only precondition `focus_title` enforces: an async
         // reply can land after the active document has changed under it,
         // and parking focus on a title that can never commit would hold the

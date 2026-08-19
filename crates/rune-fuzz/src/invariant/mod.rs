@@ -20,13 +20,14 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 43 invariants total, one domain per file:
+//! 44 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
 //!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`
 //! - `palette` — `PALETTE-FOCUS-STABLE`, `PALETTE-GUARD`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
-//! - `pane` — `PANE-NO-BLEED`, `LAYOUT-FITS`, `LAYOUT-TILES`
+//! - `pane` — `PANE-NO-BLEED`, `OVERLAY-TITLE-EXCLUSIVE`, `LAYOUT-FITS`,
+//!   `LAYOUT-TILES`
 //! - `render` — `SYNC-IDEMPOTENT`, `CELL-OFFSET`, `CELL-NO-EOL`,
 //!   `CELL-ORDER`, `TABLE-ROW-WIDTH`, `TABLE-SYNTHETIC-DECORATIVE`
 //! - `wrap` — `WRAP-RT`
@@ -72,7 +73,7 @@ pub use merge::{
 };
 pub use nav::nav_bounds;
 pub use palette::{palette_focus_stable, palette_guard};
-pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
+pub use pane::{layout_fits, layout_tiles, overlay_title_exclusive, pane_no_bleed};
 pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,
     table_row_width, table_synthetic_decorative,
@@ -158,6 +159,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| table_synthetic_decorative(next))
         .or_else(|| redo_clear(prev, next))
         .or_else(|| pane_no_bleed(prev, next, ctx))
+        .or_else(|| overlay_title_exclusive(next))
         .or_else(|| layout_fits(next))
         .or_else(|| layout_tiles(next))
         .or_else(|| save_inflight_sm(prev, next, ctx))

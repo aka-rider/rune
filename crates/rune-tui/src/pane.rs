@@ -81,7 +81,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     app.blur_title(effects);
 
     match bar_policy(cmd) {
-        BarPolicy::CloseBars => close_modal_bars(app, effects),
+        BarPolicy::CloseBars => app.close_all_overlays(effects),
         BarPolicy::ToggleSearch => close_filesearch(app, effects),
         BarPolicy::LeaveOpen => {}
     }
@@ -117,7 +117,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             );
         }
         GlobalCommand::Help => pane_global::help(app, effects),
-        GlobalCommand::QuitChord(key) => handle_quit_key(app, key),
+        GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
         // Routes through the one close chokepoint regardless of which pane
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
@@ -204,26 +204,7 @@ fn bar_policy(cmd: GlobalCommand) -> BarPolicy {
     }
 }
 
-/// Closes both modal overlays — the in-file search bar and the fuzzy file
-/// finder — for every global that moves focus, switches the active
-/// document, or opens another surface. The finder closes via
-/// `filesearch::cancel` rather than a bare `app.filesearch = None`, so its
-/// own focus/return-to restore stays coherent instead of leaving `App::
-/// focus` wherever the caller's own arm is about to move it. Private —
-/// called only from this module's own `handle_global_command` above.
-fn close_modal_bars(app: &mut App, effects: &mut Effects) {
-    crate::search::close(app);
-    close_filesearch(app, effects);
-    close_palette(app);
-}
-
-fn close_palette(app: &mut App) {
-    if app.palette().is_some() {
-        crate::palette::close(app);
-    }
-}
-
-/// The finder-only half of [`close_modal_bars`] — `ToggleSearch`'s own arm
+/// The finder-only half of [`App::close_all_overlays`] — `ToggleSearch`'s own arm
 /// needs this without the search-bar half, since pre-closing the bar there
 /// would make its own open/close branch always see it closed and reopen
 /// instead of ever closing.
@@ -266,7 +247,7 @@ pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mu
 /// 2s window. `pub(crate)` — moved out of `app.rs` (500-line
 /// budget); `handle_global_command` above is its only caller now that quit
 /// chords resolve at the global pipeline stage.
-pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey) {
+pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
     // Quit is an implicit Esc for an active OR
     // pending merge — exited/cancelled BEFORE the dirty-guard scan below,
     // so that scan (and the guard prompt it may raise) sees the reverted
@@ -297,6 +278,7 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey) {
                 kind: GuardKind::DirtyQuit,
             },
             "quit confirmation dropped \u{2014} a prompt is already showing",
+            effects,
         );
         return;
     }
@@ -357,6 +339,10 @@ mod tests {
 
     fn app() -> App {
         App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
+    }
+
+    fn fx() -> Effects {
+        Effects::default()
     }
 
     /// A live, non-degraded app-level `Db` (mirrors `db_ack.rs::tests::
@@ -471,8 +457,8 @@ mod tests {
             "test setup: no db binding"
         );
 
-        handle_quit_key(&mut app, QuitKey::CtrlC);
-        handle_quit_key(&mut app, QuitKey::CtrlC);
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut fx());
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut fx());
 
         assert!(
             !app.should_quit,
@@ -506,9 +492,9 @@ mod tests {
         );
         app.db = Some(live_db());
 
-        handle_quit_key(&mut app, QuitKey::CtrlC);
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut fx());
         assert!(!app.should_quit, "the first press only arms the confirm");
-        handle_quit_key(&mut app, QuitKey::CtrlC);
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut fx());
         assert!(app.should_quit, "the second matching press quits");
     }
 
@@ -540,12 +526,13 @@ mod tests {
                     doc: other_doc,
                     kind: GuardKind::DiskConflict,
                 },
+                &mut fx()
             ),
             crate::guard::GuardRaise::Raised,
             "test setup: pre-arm a foreign guard"
         );
 
-        handle_quit_key(&mut app, QuitKey::CtrlC);
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut fx());
 
         assert!(!app.should_quit);
         assert!(
@@ -596,7 +583,7 @@ mod tests {
             GlobalCommand::Merge,
         ] {
             let mut app = app();
-            crate::search::open(&mut app);
+            crate::search::open(&mut app, &mut fx());
             assert!(app.search().is_some(), "test setup: bar is open");
 
             let mut effects = Effects::default();

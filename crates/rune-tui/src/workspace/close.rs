@@ -47,6 +47,7 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
                 kind: GuardKind::DirtyClose,
             },
             "close confirmation dropped \u{2014} a prompt is already showing",
+            effects,
         );
     } else if app
         .doc(id)

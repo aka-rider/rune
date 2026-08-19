@@ -84,8 +84,7 @@ pub(crate) fn trash(app: &mut App, effects: &mut Effects) {
 
 /// `GlobalCommand::ToggleSearch` — open creates a fresh, focused, empty
 /// draft; close saves it as `App::last_search_query` and clears the
-/// highlight overlay (`search::open`/`close`, the chokepoints — neither
-/// touches `App::focus`, since the bar was never a `Pane`). Refused while a
+/// highlight overlay (`search::open`/`close`, the chokepoints). Refused while a
 /// merge is active on the active document — same precondition
 /// `focus_title` already refuses on — since the resolver claims every
 /// editor key for itself and a bar opening on top of it would steal keys
@@ -97,7 +96,7 @@ pub(crate) fn toggle_search(app: &mut App, effects: &mut Effects) {
     {
         messages::info(app, "finish the merge first (^M)");
     } else {
-        crate::search::open(app);
+        crate::search::open(app, effects);
         // Kicks off the ONE history load this bar-open needs, off-thread
         // through a cloned `ReaderQuery` — never gated on `Db::degraded` (a
         // write-path flag; reads run on their own connection, unaffected

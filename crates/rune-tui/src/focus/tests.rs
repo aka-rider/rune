@@ -23,7 +23,7 @@ fn target_checks_the_search_bar_before_falling_back_to_the_pane() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
     assert_eq!(target(&app), FocusTarget::Editor);
 
-    crate::search::open(&mut app);
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     assert_eq!(target(&app), FocusTarget::SearchField);
 
     crate::search::close(&mut app);
