@@ -207,7 +207,7 @@ pub(crate) fn trigger_save(
             SAVE_CONFIRM_TIMEOUT,
             Msg::Timer {
                 key: crate::runtime::TimerKey::SaveConfirm,
-                generation,
+                generation: generation.raw(),
             },
         );
         return SaveStart::Refused;

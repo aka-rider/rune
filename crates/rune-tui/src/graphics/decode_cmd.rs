@@ -113,7 +113,7 @@ pub(super) fn decode_image_cmd(
     doc: DocumentId,
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
-    generation: crate::generation::Generation,
+    generation: crate::generation::ImageDecodeGen,
 ) -> Cmd {
     Cmd::image_decode(move || {
         let result = read_and_decode(vfs.as_ref(), &path);
@@ -163,7 +163,7 @@ pub(super) fn decode_embed_cmd(
 pub(crate) fn handle_image_decoded(
     app: &mut App,
     id: DocumentId,
-    generation: crate::generation::Generation,
+    generation: crate::generation::ImageDecodeGen,
     result: Result<rune_image::decode::Decoded, CmdError>,
     effects: &mut Effects,
 ) {

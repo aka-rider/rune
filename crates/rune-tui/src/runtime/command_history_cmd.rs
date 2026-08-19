@@ -2,7 +2,7 @@ use super::{Cmd, CmdError, Msg};
 
 pub fn load_command_history_cmd(
     reader: rune_db::ReaderQuery,
-    generation: crate::generation::Generation,
+    generation: crate::generation::PaletteGen,
 ) -> Cmd {
     Cmd::search_history(move || {
         let result = load(&reader);

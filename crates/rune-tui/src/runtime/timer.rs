@@ -292,7 +292,7 @@ mod tests {
             Duration::from_millis(60),
             Msg::Timer {
                 key: TimerKey::QuitConfirm,
-                generation: crate::generation::Generation::from_raw(1),
+                generation: 1,
             },
         );
 

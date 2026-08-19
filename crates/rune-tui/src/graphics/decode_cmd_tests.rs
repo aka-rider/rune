@@ -15,8 +15,8 @@ use super::*;
 
 const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
-fn mint_gen(raw: u64) -> crate::generation::Generation {
-    crate::generation::Generation::from_raw(raw)
+fn mint_gen(raw: u64) -> crate::generation::ImageDecodeGen {
+    crate::generation::ImageDecodeGen::from_raw(raw)
 }
 
 fn app_with_pending_image(kitty: bool) -> (App, DocumentId) {

@@ -54,7 +54,7 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             if let rune_tui::app::QuitNegotiation::ConfirmArmed(_, generation) = state.app.quit {
                 let msg = Msg::Timer {
                     key: TimerKey::QuitConfirm,
-                    generation,
+                    generation: generation.raw(),
                 };
                 let tag = MsgTag::ConfirmTimeout {
                     generation: generation.raw() as u32,
@@ -70,7 +70,7 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             // production race this variant exists to exercise.
             let msg = Msg::Timer {
                 key: TimerKey::QuitConfirm,
-                generation: rune_tui::generation::Generation::from_raw(u64::from(generation)),
+                generation: u64::from(generation),
             };
             let tag = MsgTag::ConfirmTimeout { generation };
             step_and_check(state, prev, msg, tag, None, outcome);

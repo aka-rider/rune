@@ -1,5 +1,5 @@
 use crate::document::DocumentId;
-use crate::generation::Generation;
+use crate::generation::MergeGen as Generation;
 
 use super::session::MergeSession;
 

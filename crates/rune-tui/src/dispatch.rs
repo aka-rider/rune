@@ -65,6 +65,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         // since) is ignored in every arm below.
         Msg::Timer { key, generation } => match key {
             TimerKey::QuitConfirm => {
+                let generation = crate::generation::QuitGen::from_raw(generation);
                 if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
                     && pending_gen == generation
                 {
@@ -72,6 +73,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 }
             }
             TimerKey::SaveConfirm => {
+                let generation = crate::generation::SaveConfirmGen::from_raw(generation);
                 if app
                     .pending_save_confirm
                     .is_some_and(|(_, g)| g == generation)
@@ -80,6 +82,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 }
             }
             TimerKey::MessagesCollapse => {
+                let generation = crate::generation::MessagesCollapseGen::from_raw(generation);
                 if crate::messages::is_armed(app, generation) {
                     crate::messages::collapse(app);
                     crate::focus::reconcile(app, effects);
@@ -202,7 +205,7 @@ pub(crate) fn after_update(
             crate::messages::AUTO_COLLAPSE,
             Msg::Timer {
                 key: TimerKey::MessagesCollapse,
-                generation,
+                generation: generation.raw(),
             },
         );
     }

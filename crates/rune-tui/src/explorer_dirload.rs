@@ -54,7 +54,7 @@ pub(crate) fn handle_dir_loaded(
     root: PathBuf,
     entries: Vec<DirEntry>,
     cause: DirCause,
-    generation: crate::generation::Generation,
+    generation: crate::generation::DirLoadGen,
 ) {
     if generation != app.explorer.request_generation {
         return;

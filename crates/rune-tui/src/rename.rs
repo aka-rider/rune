@@ -61,7 +61,7 @@ use rune_vfs::Stat;
 
 use crate::app::App;
 use crate::document::DocumentId;
-use crate::generation::Generation;
+use crate::generation::RenameGen as Generation;
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::messages;
 use crate::runtime::{CmdError, Effects};

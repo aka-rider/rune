@@ -336,7 +336,7 @@ fn an_info_post_arms_exactly_one_timeout_cmd_and_the_matching_msg_collapses_the_
         session.app_mut(),
         Msg::Timer {
             key: TimerKey::MessagesCollapse,
-            generation: rune_tui::generation::Generation::ZERO,
+            generation: 0,
         },
         &mut effects2,
     );
@@ -364,7 +364,7 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
         session.app_mut(),
         Msg::Timer {
             key: TimerKey::MessagesCollapse,
-            generation: rune_tui::generation::Generation::ZERO,
+            generation: 0,
         },
         &mut stale_effects,
     );
@@ -378,7 +378,7 @@ fn a_stale_generation_is_ignored_and_a_fresh_one_supersedes_it() {
         session.app_mut(),
         Msg::Timer {
             key: TimerKey::MessagesCollapse,
-            generation: rune_tui::generation::Generation::from_raw(1),
+            generation: 1,
         },
         &mut fresh_effects,
     );

@@ -20,7 +20,7 @@ use rune_tui::app::App;
 use rune_tui::document::{DocumentId, ReadOnly};
 use rune_tui::focus::{self, FocusTarget};
 use rune_tui::footer;
-use rune_tui::generation::Generation;
+use rune_tui::generation::QuitGen;
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::QuitKey;
 use rune_tui::layout::{self, Geometry};
@@ -48,7 +48,7 @@ pub struct Snapshot {
     pub journal_len: usize,
     pub journal_tip_strip_run: usize,
     pub save_in_flight: bool,
-    pub pending_quit: Option<(QuitKey, Generation)>,
+    pub pending_quit: Option<(QuitKey, QuitGen)>,
     pub should_quit: bool,
     pub status: String,
     /// `app.focus` — which chrome region owns the next keystroke (`pane::

@@ -28,7 +28,7 @@ pub fn load_filesearch_recents_cmd(
     reader: rune_db::ReaderQuery,
     vfs: Arc<dyn Vfs + Send + Sync>,
     root: PathBuf,
-    generation: crate::generation::Generation,
+    generation: crate::generation::FileSearchGen,
 ) -> Cmd {
     Cmd::search_history(move || {
         let result = load(&reader, vfs.as_ref(), &root);

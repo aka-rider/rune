@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::field::TextField;
-use crate::generation::Generation;
+use crate::generation::PaletteGen as Generation;
 use crate::listnav;
 use crate::registry::{Availability, CommandId};
 use crate::runtime::{CmdError, Effects};

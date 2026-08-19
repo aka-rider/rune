@@ -82,12 +82,12 @@ pub struct MessageLog {
     /// `None` while none is armed — set by [`arm_auto_collapse`],
     /// cleared by anything that must suppress or restart the countdown
     /// (posting, focusing the pane, collapsing).
-    armed: Option<crate::generation::Generation>,
+    armed: Option<crate::generation::MessagesCollapseGen>,
     /// Mints [`arm_auto_collapse`]'s next generation. Monotonic for the
     /// app's lifetime, so a superseded timer's `Msg` (an older generation
     /// arriving after a newer one was armed) is always distinguishable
     /// from the current one.
-    generation: crate::generation::GenCounter,
+    generation: crate::generation::GenCounter<crate::generation::MessagesCollapse>,
     /// Whether [`sync`] should pin `viewport.scroll_row` to the tail of the
     /// log rather than leave it where it last settled. Starts (and every
     /// [`post`] resets it back to) `true` — a message the user cannot see
@@ -434,7 +434,7 @@ pub fn should_arm_auto_collapse(app: &App) -> bool {
 /// with and push into `effects.cmds` — the same "hand the caller the token,
 /// let it push the `Cmd`" shape as `save::trigger_save`'s degraded-confirm
 /// arm.
-pub fn arm_auto_collapse(app: &mut App) -> crate::generation::Generation {
+pub fn arm_auto_collapse(app: &mut App) -> crate::generation::MessagesCollapseGen {
     let generation = app.messages.generation.mint();
     app.messages.armed = Some(generation);
     generation
@@ -443,7 +443,7 @@ pub fn arm_auto_collapse(app: &mut App) -> crate::generation::Generation {
 /// Whether `generation` is still the currently armed one — `false` for a
 /// superseded or already-cleared timer, which the caller must then treat as
 /// a no-op.
-pub fn is_armed(app: &App, generation: crate::generation::Generation) -> bool {
+pub fn is_armed(app: &App, generation: crate::generation::MessagesCollapseGen) -> bool {
     app.messages.armed == Some(generation)
 }
 

@@ -129,7 +129,7 @@ fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
 fn trash_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
-    generation: crate::generation::Generation,
+    generation: crate::generation::TrashGen,
 ) -> Cmd {
     Cmd::trash(move || {
         let result = vfs.trash(&path).map_err(CmdError::from);
@@ -160,7 +160,7 @@ fn trash_cmd(
 /// prompt for a document that no longer exists.
 pub(crate) fn handle_trash_done(
     app: &mut App,
-    generation: crate::generation::Generation,
+    generation: crate::generation::TrashGen,
     path: &Path,
     result: Result<(), CmdError>,
     effects: &mut Effects,

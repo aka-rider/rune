@@ -159,7 +159,7 @@ pub enum Msg {
     /// generation-is-ignored shape, dispatched by matching on `key`.
     Timer {
         key: crate::runtime::TimerKey,
-        generation: crate::generation::Generation,
+        generation: u64,
     },
     /// The 2s snapshot-autosave debounce timer — a stale
     /// generation (a later journal mutation already rescheduled) is
@@ -199,7 +199,7 @@ pub enum Msg {
         root: PathBuf,
         entries: Vec<DirEntry>,
         cause: DirCause,
-        generation: crate::generation::Generation,
+        generation: crate::generation::DirLoadGen,
     },
     /// A rename/draft-create `Cmd` completed (the no-store route). Carries
     /// its own `generation` so a reply to a rename the user has since
@@ -207,7 +207,7 @@ pub enum Msg {
     /// one — `spawn_cmd` has no cancellation, so this echo is the only
     /// thing standing between a late reply and a corrupted state.
     RenameDone {
-        generation: crate::generation::Generation,
+        generation: crate::generation::RenameGen,
         result: Result<rune_db::RenameOutcome, CmdError>,
     },
     /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
@@ -217,7 +217,7 @@ pub enum Msg {
     /// `App::trash_gen` before this one lands) is dropped rather than
     /// applied to the fresh one.
     TrashDone {
-        generation: crate::generation::Generation,
+        generation: crate::generation::TrashGen,
         path: PathBuf,
         result: Result<(), CmdError>,
     },
@@ -264,7 +264,7 @@ pub enum Msg {
     /// reply whose generation no longer matches is dropped silently.
     ImageDecoded {
         doc: DocumentId,
-        generation: crate::generation::Generation,
+        generation: crate::generation::ImageDecodeGen,
         result: Result<rune_image::decode::Decoded, CmdError>,
     },
     EmbedDecoded {
@@ -288,7 +288,7 @@ pub enum Msg {
     /// `Msg::Error`, so a stale reply is discarded exactly like a fresh one
     /// instead of always surfacing a message regardless of generation.
     SearchHistory {
-        generation: crate::generation::Generation,
+        generation: crate::generation::SearchHistoryGen,
         result: Result<Vec<String>, CmdError>,
     },
     /// The fuzzy file finder's recents load, requested once per finder-open
@@ -303,7 +303,7 @@ pub enum Msg {
     /// like a fresh one instead of always surfacing a message regardless of
     /// generation.
     FileSearchRecentsLoaded {
-        generation: crate::generation::Generation,
+        generation: crate::generation::FileSearchGen,
         result: Result<Vec<crate::filesearch::Candidate>, CmdError>,
     },
     /// The fuzzy file finder's ignore-aware workspace walk completed —
@@ -318,11 +318,11 @@ pub enum Msg {
     /// is discarded exactly like a stale success instead of always
     /// surfacing a message nobody's still waiting on.
     FileSearchScanned {
-        generation: crate::generation::Generation,
+        generation: crate::generation::FileSearchGen,
         result: Result<crate::filesearch::walk::ScanResult, String>,
     },
     PaletteRecentsLoaded {
-        generation: crate::generation::Generation,
+        generation: crate::generation::PaletteGen,
         result: Result<Vec<String>, CmdError>,
     },
     Quit,
@@ -366,7 +366,7 @@ pub fn load_dir_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     root: PathBuf,
     cause: DirCause,
-    generation: crate::generation::Generation,
+    generation: crate::generation::DirLoadGen,
 ) -> Cmd {
     Cmd::read_dir(move || match vfs.read_dir(&root) {
         Ok(entries) => Some(Msg::DirLoaded {
@@ -416,7 +416,7 @@ pub fn read_file_cmd(
 /// reply nobody's still waiting on.
 pub fn load_search_history_cmd(
     reader: rune_db::ReaderQuery,
-    generation: crate::generation::Generation,
+    generation: crate::generation::SearchHistoryGen,
 ) -> Cmd {
     Cmd::search_history(move || {
         let result = reader

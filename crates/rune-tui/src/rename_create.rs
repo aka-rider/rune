@@ -66,7 +66,7 @@ pub(crate) fn rename_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     from: PathBuf,
     to: PathBuf,
-    generation: crate::generation::Generation,
+    generation: crate::generation::RenameGen,
 ) -> Cmd {
     Cmd::rename(move || {
         let result = match vfs.rename_excl(&from, &to) {
@@ -144,7 +144,7 @@ fn create_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
     bytes: Vec<u8>,
-    generation: crate::generation::Generation,
+    generation: crate::generation::RenameGen,
 ) -> Cmd {
     Cmd::rename(move || {
         let result = match rune_vfs::put(

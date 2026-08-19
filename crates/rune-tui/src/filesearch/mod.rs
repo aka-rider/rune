@@ -68,7 +68,7 @@ pub struct ResultRow {
 pub struct FileSearchState {
     pub query: String,
     pub nav: listnav::List,
-    pub generation: crate::generation::Generation,
+    pub generation: crate::generation::FileSearchGen,
     pub return_to: DocumentId,
     /// The workspace walk's own root, resolved once at [`open`] (A4's own
     /// ladder: `app.root` when resolved, else `explorer::initial_root`)
@@ -251,7 +251,7 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
 /// MRU-ordered by `recent_paths`' own `last_seen_at DESC`.
 pub(crate) fn handle_recents_loaded(
     app: &mut App,
-    generation: crate::generation::Generation,
+    generation: crate::generation::FileSearchGen,
     result: Result<Vec<Candidate>, CmdError>,
     effects: &mut Effects,
 ) {
@@ -398,7 +398,7 @@ fn list_all(state: &mut FileSearchState) {
 /// `mru_rank`, stays the sole entry for it.
 pub(crate) fn handle_scanned(
     app: &mut App,
-    generation: crate::generation::Generation,
+    generation: crate::generation::FileSearchGen,
     result: Result<walk::ScanResult, String>,
     effects: &mut Effects,
 ) {
