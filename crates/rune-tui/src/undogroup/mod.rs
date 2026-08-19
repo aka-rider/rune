@@ -31,7 +31,10 @@ pub fn tier_for(press_index: usize) -> Tier {
 }
 
 fn is_isolated(kind: EditKind) -> bool {
-    matches!(kind, EditKind::Paste | EditKind::Cut)
+    matches!(
+        kind,
+        EditKind::Paste | EditKind::Cut | EditKind::StripTrailingWhitespace
+    )
 }
 
 fn step_text(step: &Step) -> String {

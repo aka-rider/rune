@@ -14,7 +14,7 @@ use crate::keymap::{KeyCode, KeyInput};
 use crate::merge::{MergeIntent, MergeState};
 use crate::messages;
 use crate::runtime::Effects;
-use crate::save::{self, SaveMode, SaveStart};
+use crate::save::{self, SaveMode, SaveOrigin, SaveStart};
 use crate::workspace;
 
 /// Whether [`set_guard`] actually raised its prompt. `#[must_use]` because a
@@ -293,7 +293,7 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
 fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     if DIRTY_CLOSE_SAVE.answers(key) {
         clear_guard(app);
-        let _ = save::trigger_save(app, doc, SaveMode::Normal, effects);
+        let _ = save::trigger_save(app, doc, SaveMode::Normal, SaveOrigin::Guard, effects);
         if app
             .doc(doc)
             .is_some_and(super::document::Document::save_in_flight)
@@ -352,7 +352,7 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
     let docs = crate::pane::unpreserved_dirty_docs(app);
     let mut pending = BTreeMap::new();
     for id in docs {
-        match save::trigger_save(app, id, SaveMode::Normal, effects) {
+        match save::trigger_save(app, id, SaveMode::Normal, SaveOrigin::Guard, effects) {
             SaveStart::InFlight => {
                 if let Some(version) = app
                     .doc(id)
@@ -415,7 +415,7 @@ fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effec
         let already_in_flight = app
             .doc(doc)
             .is_some_and(super::document::Document::save_in_flight);
-        let start = save::trigger_save(app, doc, SaveMode::Force, effects);
+        let start = save::trigger_save(app, doc, SaveMode::Force, SaveOrigin::Guard, effects);
         if !already_in_flight && matches!(start, SaveStart::InFlight) {
             clear_guard(app);
         }

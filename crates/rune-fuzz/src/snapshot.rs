@@ -14,6 +14,7 @@ use std::ops::Range;
 use ratatui::layout::Rect;
 use rune_core::coords::DisplayRow;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 use rune_syntax::element::ByteRange;
 use rune_tui::app::App;
 use rune_tui::document::{DocumentId, ReadOnly};
@@ -45,6 +46,7 @@ pub struct Snapshot {
     pub line_ends: Vec<usize>,
     pub journal_pos: usize,
     pub journal_len: usize,
+    pub newest_applied_edit_kind: Option<EditKind>,
     pub save_in_flight: bool,
     pub pending_quit: Option<(QuitKey, Generation)>,
     pub should_quit: bool,
@@ -338,6 +340,12 @@ impl Snapshot {
             line_ends,
             journal_pos: doc.journal.pos(),
             journal_len: doc.journal.len(),
+            newest_applied_edit_kind: doc
+                .journal
+                .pos()
+                .checked_sub(1)
+                .and_then(|newest| doc.journal.steps().get(newest))
+                .map(|step| step.kind),
             save_in_flight: doc.save_in_flight(),
             pending_quit: match app.quit {
                 rune_tui::app::QuitNegotiation::ConfirmArmed(key, generation) => {

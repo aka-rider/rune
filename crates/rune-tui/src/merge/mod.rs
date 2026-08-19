@@ -314,6 +314,10 @@ pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -
     true
 }
 
+pub(crate) fn is_active_on(app: &App, target: crate::document::DocumentId) -> bool {
+    matches!(app.merge, MergeState::Active { doc, .. } if doc == target)
+}
+
 /// `GlobalCommand::Merge`'s handler: `^M` starts a merge
 /// attempt when none is active, or exits an already-`Active` one in place —
 /// a natural toggle. `exit_in_place` also has other callers (the

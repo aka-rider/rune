@@ -264,7 +264,13 @@ fn force_save_single_press_when_degraded() {
     let mut effects = Effects::default();
 
     assert_eq!(
-        save::trigger_save(&mut app, doc, SaveMode::Force, &mut effects),
+        save::trigger_save(
+            &mut app,
+            doc,
+            SaveMode::Force,
+            SaveOrigin::Guard,
+            &mut effects
+        ),
         SaveStart::InFlight
     );
     assert!(
@@ -287,7 +293,13 @@ fn normal_save_still_arms_the_degraded_confirm_gate() {
     let mut effects = Effects::default();
 
     assert_eq!(
-        save::trigger_save(&mut app, doc, SaveMode::Normal, &mut effects),
+        save::trigger_save(
+            &mut app,
+            doc,
+            SaveMode::Normal,
+            SaveOrigin::Interactive,
+            &mut effects
+        ),
         SaveStart::Refused
     );
     assert!(!app.doc(doc).unwrap().save_in_flight());
@@ -307,13 +319,25 @@ fn force_save_bypasses_not_dirty() {
     let mut effects = Effects::default();
 
     assert_eq!(
-        save::trigger_save(&mut app, doc, SaveMode::Normal, &mut effects),
+        save::trigger_save(
+            &mut app,
+            doc,
+            SaveMode::Normal,
+            SaveOrigin::Interactive,
+            &mut effects
+        ),
         SaveStart::NotDirty
     );
 
     let mut effects = Effects::default();
     assert_eq!(
-        save::trigger_save(&mut app, doc, SaveMode::Force, &mut effects),
+        save::trigger_save(
+            &mut app,
+            doc,
+            SaveMode::Force,
+            SaveOrigin::Guard,
+            &mut effects
+        ),
         SaveStart::InFlight
     );
     assert!(app.doc(doc).unwrap().save_in_flight());

@@ -7,6 +7,7 @@
 //! first — must never mutate the active document behind it.
 
 use ratatui::layout::Rect;
+use rune_core::undo::EditKind;
 use rune_tui::pane::Pane;
 
 use super::{Violation, trunc};
@@ -25,10 +26,15 @@ use crate::step::{MsgTag, StepCtx};
 /// `switch_to`; `^w` closing the active tab via `close_now`) — this
 /// checker simply never fires on those, because it's scoped to the
 /// no-active-document-change case. The paths that keep the active
-/// document unchanged (`⌘S`, a focus/toggle chord, a quit chord, a failed
+/// document unchanged (a focus/toggle chord, a quit chord, a failed
 /// open posting a message, `^w` arming the Guard, closing a
 /// non-active tab) never touch a buffer byte either, so they're silent
-/// here too.
+/// here too. The one exception is the save chord, global by design so it
+/// keeps working while chrome holds focus: a save strips trailing
+/// whitespace as one journaled buffer edit before it captures content.
+/// That step — and only a step carrying `EditKind::StripTrailingWhitespace`
+/// — is exempt, so a stray key bleeding into the buffer from chrome is
+/// still caught whichever chord produced it.
 ///
 /// Scoped to `MsgTag::Key` deliberately: `Msg::Paste`/`Msg::ClipboardRead`
 /// route by live focus/captured target (which may land in the title, not
@@ -42,7 +48,7 @@ pub fn pane_no_bleed(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
     if prev.modal_open || prev.focus == Pane::Editor {
         return None;
     }
-    if prev.active != next.active {
+    if prev.active != next.active || appended_a_strip(prev, next) {
         return None;
     }
     let content_changed = prev.content != next.content;
@@ -65,6 +71,11 @@ pub fn pane_no_bleed(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
             next.journal_len
         ),
     ))
+}
+
+fn appended_a_strip(prev: &Snapshot, next: &Snapshot) -> bool {
+    next.newest_applied_edit_kind == Some(EditKind::StripTrailingWhitespace)
+        && next.journal_pos == prev.journal_pos.saturating_add(1)
 }
 
 /// True when `inner` lies entirely inside `outer`. A zero-area `inner` is

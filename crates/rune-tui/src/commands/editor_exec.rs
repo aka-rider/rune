@@ -75,7 +75,13 @@ pub(crate) fn run(
         Command::Cut => clipboard::cut(app, app.active, effects),
         Command::Paste => clipboard::paste(effects, PasteTarget::Document(app.active)),
         Command::Save => {
-            let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
+            let _ = save::trigger_save(
+                app,
+                app.active,
+                save::SaveMode::Normal,
+                save::SaveOrigin::Interactive,
+                effects,
+            );
         }
         Command::FollowLink => navigate::follow(app, effects),
         Command::Reload => {

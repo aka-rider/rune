@@ -32,6 +32,7 @@ Prefer a Tolerable halt — a surfaced error that keeps the buffer — over any 
 ## 3. Bytes
 
 - Load, edit, save is byte-identical outside the user's own edits — no normalization: line endings, trailing newline, BOM, and encoding all pass through verbatim.
+- Trailing-whitespace stripping at save time is the sole exception: a journaled, undoable buffer edit applied before content capture, never a byte-boundary rewrite. It preserves the line terminator.
 - Invalid UTF-8 is refused at load, never repaired.
 - Edit, cursor, and journal offsets are bytes; display width is measured in terminal cells over whole grapheme clusters, through one width chokepoint — never a byte count, never a char count.
 - Refuse, don't guess, at the buffer boundary; clamp only at the caller's boundary.

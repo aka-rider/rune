@@ -80,6 +80,8 @@
 //!   bytes it was constructed with.
 //! - `SAVE-CLEAN-MATCHES-DISK` — once clean with a delivered save and none
 //!   pending, disk bytes byte-equal the current content.
+//! - `SAVE-NO-TRAILING-WS` — once clean with a delivered save and none
+//!   pending, no line of the bytes on disk ends in a tab or a space.
 //! - `CLIP-OSC52` — a `Copy`/`Cut` over a non-empty selection emits an OSC
 //!   52 raw chunk whose decoded payload byte-equals the selected text.
 //! - `UNDO-TOTAL` — pressing undo down to `journal_pos == 0` restores the

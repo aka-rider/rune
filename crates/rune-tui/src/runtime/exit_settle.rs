@@ -40,7 +40,7 @@ mod tests {
     use crate::db::{Db, DbBridge};
     use crate::document::SavePhase;
     use crate::runtime::{CmdKind, Effects, Msg};
-    use crate::save::{SaveMode, SaveStart};
+    use crate::save::{SaveMode, SaveOrigin, SaveStart};
     use crate::workspace;
 
     use super::settle_pending_materialize;
@@ -70,7 +70,13 @@ mod tests {
         drain_db_ops(&mut app, &bridge, &mut effects);
         crate::commands::edit::insert_char(&mut app, id, 'X');
         assert_eq!(
-            crate::save::trigger_save(&mut app, id, SaveMode::Normal, &mut effects),
+            crate::save::trigger_save(
+                &mut app,
+                id,
+                SaveMode::Normal,
+                SaveOrigin::Interactive,
+                &mut effects
+            ),
             SaveStart::InFlight
         );
         drain_db_ops(&mut app, &bridge, &mut effects);

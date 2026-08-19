@@ -4,6 +4,7 @@
 //! is focused, when a modal owns the keyboard, when the active document
 //! itself changed, and on any non-`Key` message.
 
+use rune_core::undo::EditKind;
 use rune_fuzz::invariant::pane_no_bleed;
 use rune_fuzz::step::MsgTag;
 use rune_tui::keymap::{KeyCode, Mods};
@@ -81,4 +82,54 @@ fn silent_on_a_non_key_message() {
     next.journal_len = 1;
     let ctx = base_ctx(); // MsgTag::Resize
     assert_eq!(pane_no_bleed(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn silent_when_a_save_strips_trailing_whitespace_behind_a_title_focused_key() {
+    let mut prev = base_snapshot("# \n\n\n");
+    prev.focus = Pane::Title;
+    prev.journal_pos = 5;
+    prev.journal_len = 5;
+    let mut next = base_snapshot("#\n\n\n");
+    next.focus = Pane::Title;
+    next.version = 2;
+    next.journal_pos = 6;
+    next.journal_len = 6;
+    next.newest_applied_edit_kind = Some(EditKind::StripTrailingWhitespace);
+    assert_eq!(pane_no_bleed(&prev, &next, &key_ctx()), None);
+}
+
+#[test]
+fn fires_on_an_ordinary_insert_behind_a_title_focused_key() {
+    let mut prev = base_snapshot("abc");
+    prev.focus = Pane::Title;
+    prev.journal_pos = 5;
+    prev.journal_len = 5;
+    let mut next = base_snapshot("abcd");
+    next.focus = Pane::Title;
+    next.version = 2;
+    next.journal_pos = 6;
+    next.journal_len = 6;
+    next.newest_applied_edit_kind = Some(EditKind::Insert);
+    let v = pane_no_bleed(&prev, &next, &key_ctx())
+        .expect("a plain insert behind a Title-focused key must still trip PANE-NO-BLEED");
+    assert_eq!(v.id, "PANE-NO-BLEED");
+}
+
+#[test]
+fn fires_when_a_strip_kind_is_claimed_without_a_new_journal_step() {
+    let mut prev = base_snapshot("abc  ");
+    prev.focus = Pane::Explorer;
+    prev.journal_pos = 5;
+    prev.journal_len = 5;
+    let mut next = base_snapshot("abc");
+    next.focus = Pane::Explorer;
+    next.version = 2;
+    next.journal_pos = 5;
+    next.journal_len = 5;
+    next.newest_applied_edit_kind = Some(EditKind::StripTrailingWhitespace);
+    let v = pane_no_bleed(&prev, &next, &key_ctx()).expect(
+        "a mutation that journalled nothing is a bleed however the newest step is labelled",
+    );
+    assert_eq!(v.id, "PANE-NO-BLEED");
 }

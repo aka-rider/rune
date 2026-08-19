@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 42 invariants total, one domain per file:
+//! 43 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
 //!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`
@@ -33,7 +33,8 @@
 //! - `undo` — `REDO-CLEAR`, `UNDO-TOTAL`, `REDO-TOTAL`
 //! - `session` — `SAVE-INFLIGHT-SM`, `QUIT-CHORD`, `CONFIRM-GEN`,
 //!   `GUARD-ANSWERED` (plan WP2)
-//! - `save` — `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`
+//! - `save` — `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`,
+//!   `SAVE-NO-TRAILING-WS`
 //! - `clipboard` — `PASTE-VERBATIM`, `CLIP-OSC52`
 //! - `highlight` — `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW` (plan WP7)
 //! - `merge` — `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
@@ -76,7 +77,7 @@ pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,
     table_row_width, table_synthetic_decorative,
 };
-pub use save::{save_clean_matches_disk, save_verbatim};
+pub use save::{save_clean_matches_disk, save_no_trailing_ws, save_verbatim};
 pub use session::{confirm_gen, guard_answered, quit_chord, save_inflight_sm};
 pub use undo::{redo_clear, redo_total, undo_total};
 pub use wrap::{wrap_line_lens, wrap_rt};
@@ -166,6 +167,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| paste_verbatim(prev, next, ctx))
         .or_else(|| save_verbatim(ctx))
         .or_else(|| save_clean_matches_disk(next, ctx))
+        .or_else(|| save_no_trailing_ws(next, ctx))
         .or_else(|| clip_osc52(prev, ctx))
         .or_else(|| hl_clamped(next))
         .or_else(|| hl_stale_drop(prev, next, ctx))

@@ -20,9 +20,11 @@
 use std::fmt;
 
 mod lineindex;
+mod trailing;
 
 use lineindex::LineStarts;
 pub use lineindex::line_starts;
+pub use trailing::trailing_whitespace_edits;
 
 pub(crate) fn check_char_boundary(content: &str, offset: usize) -> Result<(), BufferError> {
     if content.is_char_boundary(offset) {

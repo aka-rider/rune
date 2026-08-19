@@ -1,6 +1,6 @@
 //! WP6.S5 detection tests: `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`.
 
-use rune_fuzz::invariant::{save_clean_matches_disk, save_verbatim};
+use rune_fuzz::invariant::{save_clean_matches_disk, save_no_trailing_ws, save_verbatim};
 use rune_fuzz::step::MsgTag;
 
 use crate::support::{base_active_id, base_ctx};
@@ -143,4 +143,88 @@ fn save_clean_matches_disk_still_catches_a_stale_disk_read_on_a_writable_documen
     let v = save_clean_matches_disk(&next, &ctx)
         .expect("a writable, clean document with a stale disk read must still trip the invariant");
     assert_eq!(v.id, "SAVE-CLEAN-MATCHES-DISK");
+}
+
+// ---------------------------------------------------------------------
+// SAVE-NO-TRAILING-WS
+// ---------------------------------------------------------------------
+
+fn clean_after_one_save(
+    content: &str,
+    disk: &[u8],
+) -> (rune_fuzz::snapshot::Snapshot, rune_fuzz::step::StepCtx) {
+    let mut next = crate::support::base_snapshot(content);
+    next.is_dirty = false;
+    let mut ctx = base_ctx();
+    ctx.saves_delivered_ok = 1;
+    ctx.pending_save_bytes = None;
+    ctx.disk = Some(disk.to_vec());
+    (next, ctx)
+}
+
+#[test]
+fn save_no_trailing_ws_detects_a_line_ending_in_a_space() {
+    let (next, ctx) = clean_after_one_save("alpha \nbeta\n", b"alpha \nbeta\n");
+    let v = save_no_trailing_ws(&next, &ctx)
+        .expect("a saved line ending in a space must trip SAVE-NO-TRAILING-WS");
+    assert_eq!(v.id, "SAVE-NO-TRAILING-WS");
+    assert!(v.message.contains("line 1"), "{}", v.message);
+    assert!(v.message.contains("<SP>"), "{}", v.message);
+}
+
+#[test]
+fn save_no_trailing_ws_detects_a_tab_before_a_crlf() {
+    let (next, ctx) = clean_after_one_save("one\r\ntwo\t\r\n", b"one\r\ntwo\t\r\n");
+    let v = save_no_trailing_ws(&next, &ctx)
+        .expect("a tab before a CRLF must trip SAVE-NO-TRAILING-WS");
+    assert!(v.message.contains("line 2"), "{}", v.message);
+    assert!(v.message.contains("<TAB>"), "{}", v.message);
+}
+
+#[test]
+fn save_no_trailing_ws_detects_a_final_line_with_no_terminator() {
+    let (next, ctx) = clean_after_one_save("head\ntail  ", b"head\ntail  ");
+    let v = save_no_trailing_ws(&next, &ctx)
+        .expect("an unterminated final line ending in spaces must trip SAVE-NO-TRAILING-WS");
+    assert!(v.message.contains("line 2"), "{}", v.message);
+}
+
+#[test]
+fn save_no_trailing_ws_accepts_preserved_crlf_terminators() {
+    let (next, ctx) = clean_after_one_save("one\r\ntwo\r\n", b"one\r\ntwo\r\n");
+    assert_eq!(save_no_trailing_ws(&next, &ctx), None);
+}
+
+#[test]
+fn save_no_trailing_ws_accepts_a_blank_line_between_two_stripped_lines() {
+    let (next, ctx) = clean_after_one_save("one\n\ntwo\n", b"one\n\ntwo\n");
+    assert_eq!(save_no_trailing_ws(&next, &ctx), None);
+}
+
+#[test]
+fn save_no_trailing_ws_is_inert_before_any_save_is_delivered() {
+    let (next, mut ctx) = clean_after_one_save("alpha \n", b"alpha \n");
+    ctx.saves_delivered_ok = 0;
+    assert_eq!(save_no_trailing_ws(&next, &ctx), None);
+}
+
+#[test]
+fn save_no_trailing_ws_is_inert_while_a_save_is_still_pending() {
+    let (next, mut ctx) = clean_after_one_save("alpha \n", b"alpha \n");
+    ctx.pending_save_bytes = Some(b"alpha\n".to_vec());
+    assert_eq!(save_no_trailing_ws(&next, &ctx), None);
+}
+
+#[test]
+fn save_no_trailing_ws_is_inert_while_dirty() {
+    let (mut next, ctx) = clean_after_one_save("alpha \n", b"alpha \n");
+    next.is_dirty = true;
+    assert_eq!(save_no_trailing_ws(&next, &ctx), None);
+}
+
+#[test]
+fn save_no_trailing_ws_is_inert_when_the_active_document_is_not_the_seeded_one() {
+    let (next, mut ctx) = clean_after_one_save("", b"alpha \n");
+    ctx.active_is_seed_doc = false;
+    assert_eq!(save_no_trailing_ws(&next, &ctx), None);
 }

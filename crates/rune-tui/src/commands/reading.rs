@@ -52,6 +52,14 @@ pub fn toggle(app: &mut App) {
     }
 }
 
+pub(crate) fn leave_reading(app: &mut App, id: crate::document::DocumentId) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    if doc.read_only == ReadOnly::Reading {
+        doc.read_only = ReadOnly::No;
+        doc.reading_link_focus = None;
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

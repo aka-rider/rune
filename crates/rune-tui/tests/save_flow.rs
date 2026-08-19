@@ -249,6 +249,38 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
 }
 
 #[test]
+fn save_strips_trailing_whitespace_and_keeps_crlf_bom_and_a_missing_final_newline() {
+    for (typed, expected) in [
+        ("a \r\nb\t\r\n", "a\r\nb\r\n"),
+        ("\u{feff}hello  ", "\u{feff}hello"),
+        ("no trailing newline\t", "no trailing newline"),
+    ] {
+        let vfs = Arc::new(Mem::new());
+        let path = PathBuf::from("/doc.md");
+        let mut app = App::new(
+            Buffer::new(""),
+            Some(path.clone()),
+            Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+            None,
+        );
+        let id = app.active;
+        edit::insert_text(&mut app, id, typed, EditKind::Insert);
+
+        let effects = press_save(&mut app);
+        assert_eq!(effects.cmds.len(), 1, "one save Cmd must be spawned");
+        settle_cmds(&mut app, effects);
+
+        let saved = vfs.read(&path).expect("save must have written the file");
+        assert_eq!(
+            saved,
+            expected.as_bytes(),
+            "the save must strip trailing tabs and spaces and change nothing else"
+        );
+        assert!(!app.dirty_for_render());
+    }
+}
+
+#[test]
 fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
     let vfs = Arc::new(Mem::new());
     vfs.fail_next_save(std::io::ErrorKind::Other);

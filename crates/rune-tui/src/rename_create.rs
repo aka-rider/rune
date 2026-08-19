@@ -107,6 +107,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         return;
     }
 
+    crate::commands::strip_trailing::leave_reading_then_strip(app, id);
     let bytes = app
         .doc(id)
         .map(|d| d.buffer.content().as_bytes().to_vec())

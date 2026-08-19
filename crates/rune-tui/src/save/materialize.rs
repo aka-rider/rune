@@ -149,6 +149,8 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     if doc.save_in_flight() {
         return;
     }
+    crate::commands::strip_trailing::leave_reading_then_strip(app, id);
+    let Some(doc) = app.doc(id) else { return };
     let version = doc.buffer.version();
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;

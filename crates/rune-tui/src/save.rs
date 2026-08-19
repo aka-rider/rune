@@ -16,7 +16,8 @@ use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
 use crate::app::App;
-use crate::document::DocumentId;
+use crate::commands::strip_trailing;
+use crate::document::{DocumentId, ReadOnly};
 use crate::materialize_ack;
 use crate::messages;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
@@ -45,6 +46,12 @@ pub(crate) enum SaveMode {
     /// blob regardless of any hash comparison — the disk-conflict Guard's
     /// `[S]ave anyway` must never refuse a second time.
     Force,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SaveOrigin {
+    Interactive,
+    Guard,
 }
 
 /// What a `trigger_save` attempt actually did — replaces the old
@@ -92,6 +99,7 @@ pub(crate) fn trigger_save(
     app: &mut App,
     id: DocumentId,
     mode: SaveMode,
+    origin: SaveOrigin,
     effects: &mut Effects,
 ) -> SaveStart {
     let Some(kind) = app.doc(id).map(|d| d.kind) else {
@@ -147,6 +155,16 @@ pub(crate) fn trigger_save(
     // `refuses_save` posts its own count-carrying status.
     if crate::merge::refuses_save(app, id) {
         return SaveStart::Refused;
+    }
+    match origin {
+        SaveOrigin::Interactive => {
+            if let Some(message) = reading_refusal(app, id) {
+                messages::warn(app, message);
+                return SaveStart::Refused;
+            }
+            strip_trailing::strip_trailing_whitespace(app, id);
+        }
+        SaveOrigin::Guard => strip_trailing::leave_reading_then_strip(app, id),
     }
     // Re-derived, not read from the cache: a transition-quality
     // answer, exactly like the close/quit guards' own `is_dirty_now` calls.
@@ -246,6 +264,15 @@ pub(crate) fn trigger_save(
 
     materialize_now(app, id, path, version, mode, effects);
     SaveStart::InFlight
+}
+
+fn reading_refusal(app: &App, id: DocumentId) -> Option<&'static str> {
+    let doc = app.doc(id)?;
+    if doc.read_only == ReadOnly::Reading {
+        doc.read_only.refusal_message()
+    } else {
+        None
+    }
 }
 
 /// The off-thread save I/O itself: an unconditional `rune_vfs::put`

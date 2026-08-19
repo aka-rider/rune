@@ -92,3 +92,47 @@ pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violati
         ),
     ))
 }
+
+pub fn save_no_trailing_ws(next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
+    if !ctx.active_is_seed_doc
+        || next.is_dirty
+        || ctx.saves_delivered_ok == 0
+        || ctx.pending_save_bytes.is_some()
+    {
+        return None;
+    }
+    let (line_number, line) = trailing_whitespace_line(ctx.disk.as_deref()?)?;
+    Some(Violation::new(
+        "SAVE-NO-TRAILING-WS",
+        format!(
+            "line {line_number} on disk ends in whitespace: {}",
+            visible(&line)
+        ),
+    ))
+}
+
+fn trailing_whitespace_line(disk: &[u8]) -> Option<(usize, Vec<u8>)> {
+    disk.split(|byte| *byte == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .enumerate()
+        .find(|(_, line)| matches!(line.last(), Some(b'\t' | b' ')))
+        .map(|(index, line)| (index + 1, line.to_vec()))
+}
+
+fn visible(line: &[u8]) -> String {
+    let run = line
+        .iter()
+        .rev()
+        .take_while(|byte| matches!(byte, b'\t' | b' '))
+        .count();
+    let head_len = line.len().saturating_sub(run);
+    let head = line.get(..head_len).unwrap_or(line);
+    let mut out = trunc(
+        &String::from_utf8_lossy(head).escape_debug().to_string(),
+        60,
+    );
+    for byte in line.iter().skip(head_len) {
+        out.push_str(if *byte == b'\t' { "<TAB>" } else { "<SP>" });
+    }
+    out
+}

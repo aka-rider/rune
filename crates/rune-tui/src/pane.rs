@@ -108,7 +108,13 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // nothing to lazily fetch off-thread.
         GlobalCommand::FocusTabs => pane_global::focus_tabs(app, effects),
         GlobalCommand::Save => {
-            let _ = save::trigger_save(app, app.active, save::SaveMode::Normal, effects);
+            let _ = save::trigger_save(
+                app,
+                app.active,
+                save::SaveMode::Normal,
+                save::SaveOrigin::Interactive,
+                effects,
+            );
         }
         GlobalCommand::Help => pane_global::help(app, effects),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key),

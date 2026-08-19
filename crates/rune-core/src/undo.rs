@@ -200,6 +200,7 @@ pub enum EditKind {
     DeleteRight,
     Paste,
     Cut,
+    StripTrailingWhitespace,
     #[default]
     Other,
 }

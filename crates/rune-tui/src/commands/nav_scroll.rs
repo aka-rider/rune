@@ -126,7 +126,6 @@ fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
         .map(|&c| move_row(&settled, &doc.buffer, c, delta, extend))
         .collect();
     doc.cursors = CursorSet::new_from(&final_pass);
-
 }
 
 pub fn line_up(doc: &mut Document, extend: Extend) {

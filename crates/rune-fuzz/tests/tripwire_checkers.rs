@@ -107,6 +107,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         line_ends,
         journal_pos: 0,
         journal_len: 0,
+        newest_applied_edit_kind: None,
         save_in_flight: false,
         pending_quit: None,
         should_quit: false,
