@@ -16,7 +16,7 @@ use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
 use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
 use rune_tui::workspace;
-use rune_vfs::Vfs;
+use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
     app_with, bound_session, commit_name, ctrl, plain, plain_key, rename_to, seeded_vfs, send,
