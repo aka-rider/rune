@@ -1,119 +1,25 @@
-//! The global chord table — the bindings resolved before any pane's own
-//! keymap. Split out of `keymap.rs` to bring that file under the
-//! 500-line budget; `keymap` re-exports `GlobalCommand`/`GLOBAL_BINDINGS`
-//! so no import path downstream changed.
-
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{KeyCode, Mods, QuitKey};
 
-/// The global chord table's command set: the `Pane` focus discriminant
-/// plus these chrome-level actions. Resolved BEFORE any pane's
-/// own keymap, so every variant fires regardless of focus — including the
-/// quit chords and Save, which must keep working while the Explorer/Tabs
-/// stub panes own it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlobalCommand {
-    /// The single left-column toggle (Enter/Escape rework): painted this
-    /// frame (`LayoutMode::Split`/`ExplorerOnly`) ⇒ hide it and focus the
-    /// Editor; not painted ⇒ show it, focus the Explorer, and land the
-    /// cursor on the active document's own file. Never a dead key — every
-    /// press changes what is on screen (`pane::handle_global_command`).
     ToggleLeft,
-    /// Focuses the Open Tabs pane. Explorer/Tabs are separate panes, so
-    /// this needs its own binding, distinct from Explorer's own focus
-    /// chord. Shows the left column too, pairing show with focus exactly like
-    /// `ToggleLeft`'s show branch does, so the tab list is actually visible
-    /// the moment it's focused.
     FocusTabs,
-    /// Focuses the title field so the active document can be renamed (`^r`
-    /// — free across `GLOBAL_BINDINGS`, `resolve_char`, `TABS_BINDINGS` and
-    /// `EXPLORER_BINDINGS`). Global rather than editor-scoped so a rename is
-    /// reachable from any pane, exactly like Save.
     FocusTitle,
     Save,
     Help,
     QuitChord(QuitKey),
-    /// Closes the active document from any pane focus — routed through the
-    /// one close chokepoint (`workspace::request_close`) so a dirty document
-    /// still arms its Guard regardless of which pane the chord was pressed
-    /// from, exactly like `Save` already does for materialize.
     CloseFile,
-    /// Mints a new durable untitled draft, activates it, and focuses the
-    /// title field so it can be named on the spot — the same mint the
-    /// close-then-reopen-empty path already uses, reached directly instead
-    /// of via `CloseFile`.
     NewDocument,
-    /// Switches to the tab at this zero-based position; out of range is a
-    /// silent no-op. The digit is already resolved into the payload by
-    /// `GLOBAL_BINDINGS` below, so the digit-to-index mapping lives in
-    /// exactly one place rather than being re-derived at the call site.
     TabSwitch(usize),
-    /// Toggles the active document between `ReadOnly::No` and `ReadOnly::
-    /// Reading` — the same chord both enters and leaves reading
-    /// view. Refused with a status message on `ReadOnly::Always`, which has
-    /// no editable form to return to.
     ToggleReadOnly,
-    /// Toggles merge mode: starts a merge attempt against the active
-    /// document's diverged/disk-ahead disk fact, or exits an already-active
-    /// one in place. `^M` only, unlike this table's other paired rows —
-    /// Ghostty steals `⌘M` for window minimize before the app ever sees it,
-    /// so that chord is dropped rather than bound and silently unreachable.
-    /// `^M` is safe here specifically because this app requests
-    /// `DISAMBIGUATE_ESCAPE_CODES` (the kitty CSI-u protocol) at startup:
-    /// under that protocol `termina` decodes Ctrl+M as `Char('m')` with
-    /// `CONTROL` set, a distinct event from `Enter` (code 13). A legacy
-    /// terminal that never negotiates the protocol still reports `^M` as a
-    /// plain `Enter` keypress — this binding then simply never fires there,
-    /// rather than colliding with real Enter.
     Merge,
-    /// Toggles the message-log pane above the footer: closed ->
-    /// open + focus; open + focused -> collapse + focus the Editor; open +
-    /// unfocused -> focus. `^E`/`⌘E` — free across every binding table (the
-    /// former `GlobalCommand::FocusEditor` these keys used to name was
-    /// deleted in `84a83f5`).
     ToggleMessages,
-    /// Moves the Explorer-selected file or the active document's file to
-    /// the OS Trash, behind a confirm guard — `⌘⌫`/`^⌫` (`ticket #19`).
     Trash,
-    /// Toggles the in-file search bar: closed -> open, focused, empty
-    /// draft; open -> `search::close` (saves the draft as the last query,
-    /// drops the state, clears the highlights). `^F`/`⌘F` — free across
-    /// every binding table (see the guard test below).
     ToggleSearch,
-    /// Steps to the next match without opening the bar: with the bar
-    /// already open, identical to Enter; with it closed, recomputes matches
-    /// from `App::last_search_query` on demand, applies the same
-    /// concealed-skip and read-only scroll, and jumps — painting no
-    /// highlights (decision A2: those exist only while the bar is open).
-    /// No last query is reported through the message pane rather than
-    /// swallowed silently. `^g`/`⌘g` — bound as the PLAIN char: the shifted
-    /// row below is what makes the two chords distinguishable (see its own
-    /// doc for why).
     SearchNext,
-    /// The `SearchNext` mirror, stepping backward. Bound as
-    /// `Char('G')+CTRL`/`Char('G')+SUP` — the SHIFTED char with `SHIFT`
-    /// itself cleared, not `Char('g')` with a `SHIFT` bit set: this crate
-    /// requests `REPORT_ALTERNATE_KEYS`, under which a shifted chord
-    /// arrives as the shifted character with `SHIFT` cleared, so a
-    /// `CTRL|SHIFT` row could never fire (see the guard test below and
-    /// `TODO.md` for a pre-existing binding that made exactly that
-    /// mistake).
     SearchPrev,
-    /// Toggles the pin on the active tab, marking it exempt from the
-    /// tab-cap LRU eviction; refused on a preview tab. `^j` — `^g`/`⌘g` was
-    /// the tab-cap plan's original choice (unclaimed at the time), but the
-    /// in-file search feature claimed it for `SearchNext` first; `^j` is
-    /// unclaimed across every binding table instead (see the guard test
-    /// below).
     TogglePin,
-    /// Opens/closes the fuzzy file finder overlay: closed -> open, the left
-    /// column widens and takes over the Explorer's content with a
-    /// type-to-filter query; open -> `filesearch::cancel` (closes it and
-    /// restores the document that was active before it opened). `^F`/`⌘F`
-    /// is already `ToggleSearch`'s, so this binds the SHIFTED char with
-    /// `SHIFT` itself cleared (`Char('F')`), not `Char('f')` with a `SHIFT`
-    /// bit set — the shape `REPORT_ALTERNATE_KEYS` actually delivers a
-    /// shifted chord in (see `SearchPrev`'s own doc for the same reasoning).
     ToggleFileSearch,
     TogglePalette,
     NavBack,
@@ -133,37 +39,6 @@ const SUP: Mods = Mods {
     sup: true,
 };
 
-/// The focus/chrome commands each get a ⌘ and a `^` chord (the leader they
-/// used to share is gone — a terminal cannot report the spacebar's physical
-/// state in-band, so a prefix chord can never be told apart from plain
-/// text; see the module removed at `keystate.rs`). One form of each pair is
-/// marked `secondary: true` so the footer's hint row names the command once
-/// while the Help doc still lists both; which form stays canonical keeps
-/// the shorter `^` glyph in the footer. Ghostty intercepts some ⌘ chords
-/// before the app ever sees them (⌘T in particular), so `^` is the form
-/// guaranteed to arrive — both are bound regardless, since a different
-/// terminal may pass the ⌘ form through.
-///
-/// `Save`'s `⌘S` form and the two quit chords overlap combos the later
-/// tables (`EDITOR_BINDINGS`, `QuitKey::from_key`) also bind — resolving
-/// them here changes only WHEN they're seen (before, not after, a
-/// pane's own keymap), not which chord activates them. `^S` has no
-/// later-table counterpart: this table is its only home. `KeyPattern`'s
-/// exact-modifier match narrows `resolve_char`'s `'s' if m.sup && !m.ctrl`
-/// guard (which also tolerated shift/alt held) to the one precise combo
-/// below — the loosely-matched variants were never a documented,
-/// intentional binding.
-///
-/// A ctrl chord that duplicates its ⌘ counterpart (or, for `^d`, another
-/// quit chord) is marked `secondary: true` so the footer's hint row skips it,
-/// since showing both would just repeat the same action twice. `F1` has no
-/// counterpart, so it is not one — hiding it would remove it from the
-/// footer entirely rather than leave a shorter, still-complete hint row.
-///
-/// INVARIANT: every row's `KeyPattern` requires `ctrl` or `sup` — see
-/// `every_printable_binding_requires_a_modifier` below. A printable key with no
-/// modifier here would shadow ordinary text input, which is exactly the
-/// defect this table replaced the leader to avoid.
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         key: KeyPattern::new(KeyCode::Char('b'), CTRL),
@@ -189,15 +64,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "tabs",
         secondary: true,
     },
-    // `⌘R` deliberately has NO row here, unlike the other four focus
-    // commands' pairs: `EDITOR_BINDINGS`' `RELOAD` chord already claims
-    // `⌘R` (reload the active image/embeds — `dispatch::Command::Reload`
-    // refuses with a status message when neither is present). This table's
-    // rows are resolved unconditionally at stage 2, before any pane
-    // (including the editor) ever sees the key, so adding `⌘R` here would
-    // shadow Reload entirely and make it unreachable by keyboard. `^R` is
-    // unaffected — nothing else in this crate binds it — so `FocusTitle`
-    // keeps only its `^` form.
     Binding {
         key: KeyPattern::new(KeyCode::Char('r'), CTRL),
         cmd: GlobalCommand::FocusTitle,
@@ -252,12 +118,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "new",
         secondary: true,
     },
-    // `^1`-`^9` switch to the tab at that position; `^0` is the TENTH tab,
-    // matching what the tab strip itself prints for the first ten tabs
-    // (`opentabs::draw`'s `(idx + 1) % 10` shortcut digit). Ten near-identical
-    // hints would flood the footer's hint row, so all ten stay `secondary: true`
-    // — still fully discoverable through the F1 Help doc, just not repeated
-    // ten times in the footer.
     Binding {
         key: KeyPattern::new(KeyCode::Char('1'), CTRL),
         cmd: GlobalCommand::TabSwitch(0),
@@ -318,12 +178,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "tab 10",
         secondary: true,
     },
-    // `^p`/`⌘p` are unclaimed across all six binding tables (`GLOBAL`,
-    // `EDITOR`, `VIM`, `TABS`, `EXPLORER`, `EXPLORER_SEARCH` — see
-    // `global_p_binding_is_not_already_bound_in_any_pane_table` below).
-    // The label stays "reading" in both directions (unlike the quit/tab
-    // rows above, which differ) so the footer's hint row never jumps as
-    // the state flips.
     Binding {
         key: KeyPattern::new(KeyCode::Char('p'), CTRL),
         cmd: GlobalCommand::ToggleReadOnly,
@@ -336,8 +190,12 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "reading",
         secondary: true,
     },
-    // `^M` only — see the `Merge` variant's own doc for why `⌘M` has no row
-    // (Ghostty steals it) and why `^M` doesn't collide with Enter here.
+    // `^M` only, no `⌘M`: Ghostty steals `⌘M` for window minimize before
+    // the app ever sees it. `^M` is safe because this app requests the
+    // kitty CSI-u protocol, under which `termina` decodes Ctrl+M as
+    // `Char('m')` with `CONTROL` set, distinct from `Enter` (code 13); a
+    // terminal that never negotiates the protocol reports `^M` as plain
+    // `Enter`, so this binding simply never fires there.
     Binding {
         key: KeyPattern::new(KeyCode::Char('m'), CTRL),
         cmd: GlobalCommand::Merge,
@@ -380,12 +238,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "search",
         secondary: true,
     },
-    // Next/prev step through the current match list without needing the
-    // bar open. `g`/`G` are the plain and shifted forms of the SAME
-    // physical key, not two independently-modified chords — see
-    // `GlobalCommand::SearchPrev`'s own doc for why `G`+ctrl, not
-    // `g`+ctrl|shift, is what actually fires under this crate's kitty
-    // protocol request.
     Binding {
         key: KeyPattern::new(KeyCode::Char('g'), CTRL),
         cmd: GlobalCommand::SearchNext,
@@ -398,6 +250,10 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "next match",
         secondary: true,
     },
+    // This crate requests `REPORT_ALTERNATE_KEYS`, under which a shifted
+    // chord arrives as the shifted character with `SHIFT` itself cleared
+    // — so `SearchPrev`/`ToggleFileSearch` below bind the shifted char
+    // (`'G'`/`'F'`), not the base char with a `SHIFT` bit set.
     Binding {
         key: KeyPattern::new(KeyCode::Char('G'), CTRL),
         cmd: GlobalCommand::SearchPrev,
@@ -434,12 +290,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "command palette",
         secondary: true,
     },
-    // Appended after `messages`/`trash` deliberately: the footer's
-    // whole-hint truncation drops entries from the tail first, so this new
-    // hint (and `back`/`forward` below) are the ones clipped under width
-    // pressure, not `^E messages`. `^j`, not the tab-cap plan's original
-    // `^g` — the in-file search feature claimed `^g` for `SearchNext` first
-    // (see `GlobalCommand::TogglePin`'s own doc).
     Binding {
         key: KeyPattern::new(KeyCode::Char('j'), CTRL),
         cmd: GlobalCommand::TogglePin,
@@ -472,11 +322,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     },
 ];
 
-/// The canonical (non-secondary) chord glyph for `cmd` paired with the
-/// command's own help text, for chrome that names a command instead of
-/// iterating the table — the footer's `^S` hint, the breadcrumb's
-/// navigation controls. Rebinding a command moves its glyph everywhere at
-/// once; no chrome spells a chord out by hand.
 pub fn hint_for(cmd: GlobalCommand) -> Option<(String, &'static str)> {
     canonical(cmd).map(|b| (b.label(), b.help))
 }
@@ -492,452 +337,5 @@ fn canonical(cmd: GlobalCommand) -> Option<&'static Binding<GlobalCommand>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `^M` resolves to `GlobalCommand::Merge`, and `⌘M` binds nothing at
-    /// all — Ghostty steals it, so it was dropped rather than bound, unlike
-    /// this table's other paired rows.
-    #[test]
-    fn ctrl_m_resolves_to_merge_and_sup_m_binds_nothing() {
-        use crate::binding::resolve_in;
-        use crate::keymap::KeyInput;
-
-        let ctrl_m = KeyInput {
-            code: KeyCode::Char('m'),
-            mods: CTRL,
-        };
-        let sup_m = KeyInput {
-            code: KeyCode::Char('m'),
-            mods: SUP,
-        };
-
-        assert_eq!(
-            resolve_in(GLOBAL_BINDINGS, ctrl_m),
-            Some(GlobalCommand::Merge)
-        );
-        assert_eq!(resolve_in(GLOBAL_BINDINGS, sup_m), None);
-        assert!(
-            GLOBAL_BINDINGS.iter().all(|b| !b.key.matches(sup_m)),
-            "no row should match sup+m"
-        );
-    }
-
-    /// Structural proof of the invariant the module doc above states: a
-    /// `Char` row (the only kind of row a printable keystroke could ever
-    /// match — `F1` and any other non-`Char` `KeyCode` can never be typed
-    /// as text, so they are exempt) always requires ctrl or sup. This is
-    /// what makes "every printable keystroke is text" true by construction
-    /// rather than by convention — the exact property the deleted held-
-    /// space leader violated.
-    #[test]
-    fn every_printable_binding_requires_a_modifier() {
-        use crate::binding::KeyMatch;
-        for binding in GLOBAL_BINDINGS {
-            let key = binding.key;
-            if !matches!(key.key, KeyMatch::Code(KeyCode::Char(_))) {
-                continue;
-            }
-            assert!(
-                key.mods.ctrl || key.mods.sup,
-                "{:?} has no ctrl/sup modifier and could shadow text input",
-                key
-            );
-        }
-    }
-
-    /// There is no cross-table keymap-union guard in this
-    /// codebase — `index::validate` runs per-table only, and a
-    /// `GLOBAL_BINDINGS` row resolves at stage 2, before any pane's own
-    /// keymap ever sees the key (`resolve_in` never consults `when`), so a
-    /// global row can silently shadow a pane binding with nothing to catch
-    /// it. Modelled on `editor_bindings::reload_key_is_not_already_bound_
-    /// elsewhere_in_the_editor_table`'s `⌘R` guard, widened across every
-    /// pane table this crate has: every guard test below funnels through
-    /// this ONE helper (instead of three near-identical copies each
-    /// defining their own), so a table added here covers every
-    /// guard the next time this list grows.
-    ///
-    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
-    /// structural equality on `keys` — a pane row does not need to equal
-    /// `⌃P`/`⌘P` to steal them, it only needs to MATCH them, and
-    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
-    /// any non-control `Char` under equal `Mods` without ever equaling a
-    /// specific `KeyPattern`. Structural equality would stay green while
-    /// that wildcard silently shadowed this exact chord at dispatch.
-    fn claimants<C: Copy + 'static>(
-        table: &[Binding<C>],
-        key: crate::keymap::KeyInput,
-    ) -> Vec<&'static str> {
-        table
-            .iter()
-            .filter(|b| b.key.matches(key))
-            .map(|b| b.help)
-            .collect()
-    }
-
-    fn claimants_across_established_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
-        use crate::explorer_keys::EXPLORER_BINDINGS;
-        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
-        use crate::filesearch::keys::FILESEARCH_BINDINGS;
-        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
-        use crate::keymap::vim::VIM_BINDINGS;
-        use crate::opentabs::TABS_BINDINGS;
-
-        [
-            claimants(EDITOR_BINDINGS, key),
-            claimants(VIM_BINDINGS, key),
-            claimants(TABS_BINDINGS, key),
-            claimants(EXPLORER_BINDINGS, key),
-            claimants(EXPLORER_SEARCH_BINDINGS, key),
-            claimants(FILESEARCH_BINDINGS, key),
-        ]
-        .concat()
-    }
-
-    fn claimants_across_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
-        use crate::diff_view::keys::DIFF_BINDINGS;
-
-        [
-            claimants_across_established_pane_tables(key),
-            claimants(DIFF_BINDINGS, key),
-        ]
-        .concat()
-    }
-
-    fn assert_unclaimed_by_any_pane_table(keys: &[crate::keymap::KeyInput]) {
-        for key in keys {
-            let found = claimants_across_pane_tables(*key);
-            assert!(
-                found.is_empty(),
-                "{key:?} is already bound in a pane table: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn diff_bindings_are_unclaimed_by_the_global_table_and_every_pane_table() {
-        use crate::binding::KeyMatch;
-        use crate::diff_view::keys::DIFF_BINDINGS;
-        use crate::keymap::KeyInput;
-
-        for binding in DIFF_BINDINGS {
-            let pattern = binding.key;
-            let key = match pattern.key {
-                KeyMatch::Code(code) => KeyInput {
-                    code,
-                    mods: pattern.mods,
-                },
-                KeyMatch::Printable => continue,
-            };
-            let global_claimants: Vec<&'static str> = GLOBAL_BINDINGS
-                .iter()
-                .filter(|b| b.key.matches(key))
-                .map(|b| b.help)
-                .collect();
-            assert!(
-                global_claimants.is_empty(),
-                "GLOBAL_BINDINGS would shadow diff key {key:?}: {global_claimants:?}"
-            );
-            let pane_claimants = claimants_across_established_pane_tables(key);
-            assert!(
-                pane_claimants.is_empty(),
-                "a pane table would shadow diff key {key:?}: {pane_claimants:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn global_p_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_p = KeyInput {
-            code: KeyCode::Char('p'),
-            mods: CTRL,
-        };
-        let sup_p = KeyInput {
-            code: KeyCode::Char('p'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_p, sup_p]);
-    }
-
-    /// `^M` (`GlobalCommand::Merge`) is the one row in this table bound
-    /// only as `ctrl`, so only that form needs checking here.
-    #[test]
-    fn global_m_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_m = KeyInput {
-            code: KeyCode::Char('m'),
-            mods: CTRL,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_m]);
-    }
-
-    /// `^S` only — the `⌘S` form deliberately coexists with
-    /// `EDITOR_BINDINGS`' own `SAVE` row, so only the ctrl form needs
-    /// checking here.
-    #[test]
-    fn global_s_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_s = KeyInput {
-            code: KeyCode::Char('s'),
-            mods: CTRL,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_s]);
-    }
-
-    /// `label_for` returns an empty string when a command has no canonical
-    /// row — this pins that `Save` always has one, labelled `^S`, so the
-    /// footer/message chrome that names the save chord can never render
-    /// blank.
-    #[test]
-    fn save_has_a_canonical_row_labelled_ctrl_s() {
-        assert_eq!(
-            hint_for(GlobalCommand::Save),
-            Some(("^S".to_string(), "save"))
-        );
-    }
-
-    #[test]
-    fn global_e_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_e = KeyInput {
-            code: KeyCode::Char('e'),
-            mods: CTRL,
-        };
-        let sup_e = KeyInput {
-            code: KeyCode::Char('e'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_e, sup_e]);
-    }
-
-    /// `^F`/`⌘F` (`GlobalCommand::ToggleSearch`).
-    #[test]
-    fn global_f_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_f = KeyInput {
-            code: KeyCode::Char('f'),
-            mods: CTRL,
-        };
-        let sup_f = KeyInput {
-            code: KeyCode::Char('f'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_f, sup_f]);
-    }
-
-    /// `^g`/`⌘g` (`SearchNext`) and their shifted forms `^G`/`⌘G`
-    /// (`SearchPrev`) — all four rows, since the plain and shifted chars
-    /// are entirely separate `KeyCode::Char` values from `KeyPattern`'s own
-    /// point of view.
-    #[test]
-    fn global_g_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_g = KeyInput {
-            code: KeyCode::Char('g'),
-            mods: CTRL,
-        };
-        let sup_g = KeyInput {
-            code: KeyCode::Char('g'),
-            mods: SUP,
-        };
-        let ctrl_cap_g = KeyInput {
-            code: KeyCode::Char('G'),
-            mods: CTRL,
-        };
-        let sup_cap_g = KeyInput {
-            code: KeyCode::Char('G'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_g, sup_g, ctrl_cap_g, sup_cap_g]);
-    }
-
-    /// A guard test only proves ABSENCE from the pane tables — it can't
-    /// prove the row actually fires in `GLOBAL_BINDINGS` itself. This is
-    /// the positive half: the
-    /// SHIFTED char with `SHIFT` cleared (`Char('G')+CTRL`), not a
-    /// `CTRL|SHIFT` row on the plain char, is what resolves to `SearchPrev`
-    /// — exactly the delivery shape `REPORT_ALTERNATE_KEYS` produces.
-    #[test]
-    fn ctrl_shifted_g_resolves_to_search_prev() {
-        use crate::binding::resolve_in;
-        use crate::keymap::KeyInput;
-
-        let ctrl_cap_g = KeyInput {
-            code: KeyCode::Char('G'),
-            mods: CTRL,
-        };
-        assert_eq!(
-            resolve_in(GLOBAL_BINDINGS, ctrl_cap_g),
-            Some(GlobalCommand::SearchPrev)
-        );
-    }
-
-    /// The same cross-table guard as `global_p_binding_...`
-    /// above, for `^N`/`⌘N` (`GlobalCommand::NewDocument`).
-    #[test]
-    fn global_n_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_n = KeyInput {
-            code: KeyCode::Char('n'),
-            mods: CTRL,
-        };
-        let sup_n = KeyInput {
-            code: KeyCode::Char('n'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_n, sup_n]);
-    }
-
-    /// The same cross-table guard as `global_p_binding_...` above, for
-    /// `⌘⌫`/`^⌫` (`GlobalCommand::Trash`).
-    #[test]
-    fn global_backspace_chords_are_not_already_bound_in_any_pane_table() {
-        use crate::explorer_keys::EXPLORER_BINDINGS;
-        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
-        use crate::keymap::KeyInput;
-        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
-        use crate::keymap::vim::VIM_BINDINGS;
-        use crate::opentabs::TABS_BINDINGS;
-
-        let sup_backspace = KeyInput {
-            code: KeyCode::Backspace,
-            mods: SUP,
-        };
-        let ctrl_backspace = KeyInput {
-            code: KeyCode::Backspace,
-            mods: CTRL,
-        };
-
-        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
-            table
-                .iter()
-                .filter(|b| b.key.matches(key))
-                .map(|b| b.help)
-                .collect()
-        }
-
-        for key in [sup_backspace, ctrl_backspace] {
-            assert!(
-                claimants(EDITOR_BINDINGS, key).is_empty(),
-                "EDITOR_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(VIM_BINDINGS, key).is_empty(),
-                "VIM_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(TABS_BINDINGS, key).is_empty(),
-                "TABS_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_BINDINGS, key).is_empty(),
-                "EXPLORER_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
-                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
-            );
-        }
-    }
-
-    /// The same cross-table guard as `global_p_binding_...` above, for `^J`
-    /// (`GlobalCommand::TogglePin`) — CTRL only, like `Merge`, there is no
-    /// `⌘J` row.
-    #[test]
-    fn global_j_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_j = KeyInput {
-            code: KeyCode::Char('j'),
-            mods: CTRL,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_j]);
-    }
-
-    /// `^F`/`⌘F` — the SHIFTED char (`Char('F')`) with the modifier itself
-    /// cleared, not `Char('f')` with a `SHIFT` bit set — is what
-    /// `GlobalCommand::ToggleFileSearch` actually resolves under this
-    /// crate's kitty protocol request; `ToggleSearch`'s own `^f`/`⌘f` rows
-    /// bind the plain (unshifted) char, so the two chords are distinct
-    /// `KeyCode::Char` values from `KeyPattern`'s own point of view.
-    #[test]
-    fn filesearch_chords_are_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_cap_f = KeyInput {
-            code: KeyCode::Char('F'),
-            mods: CTRL,
-        };
-        let sup_cap_f = KeyInput {
-            code: KeyCode::Char('F'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_cap_f, sup_cap_f]);
-    }
-
-    #[test]
-    fn ctrl_shifted_f_resolves_to_toggle_filesearch() {
-        use crate::binding::resolve_in;
-        use crate::keymap::KeyInput;
-
-        let ctrl_cap_f = KeyInput {
-            code: KeyCode::Char('F'),
-            mods: CTRL,
-        };
-        assert_eq!(
-            resolve_in(GLOBAL_BINDINGS, ctrl_cap_f),
-            Some(GlobalCommand::ToggleFileSearch)
-        );
-    }
-
-    #[test]
-    fn palette_chords_are_not_already_bound_in_any_pane_table() {
-        use crate::keymap::KeyInput;
-
-        let ctrl_cap_p = KeyInput {
-            code: KeyCode::Char('P'),
-            mods: CTRL,
-        };
-        let sup_cap_p = KeyInput {
-            code: KeyCode::Char('P'),
-            mods: SUP,
-        };
-        assert_unclaimed_by_any_pane_table(&[ctrl_cap_p, sup_cap_p]);
-    }
-
-    #[test]
-    fn ctrl_shifted_p_resolves_to_toggle_palette() {
-        use crate::binding::resolve_in;
-        use crate::keymap::KeyInput;
-
-        let ctrl_cap_p = KeyInput {
-            code: KeyCode::Char('P'),
-            mods: CTRL,
-        };
-        assert_eq!(
-            resolve_in(GLOBAL_BINDINGS, ctrl_cap_p),
-            Some(GlobalCommand::TogglePalette)
-        );
-    }
-
-    #[test]
-    fn ctrl_shifted_p_reaches_toggle_palette_through_from_termina() {
-        use termina::event::{KeyCode as TerminaKeyCode, KeyEvent, Modifiers};
-
-        let event = KeyEvent::new(TerminaKeyCode::Char('P'), Modifiers::CONTROL);
-        let input = crate::keymap::from_termina(event);
-        assert_eq!(
-            input.and_then(|key| crate::binding::resolve_in(GLOBAL_BINDINGS, key)),
-            Some(GlobalCommand::TogglePalette)
-        );
-    }
-}
+#[path = "global_tests.rs"]
+mod tests;
