@@ -89,7 +89,7 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
         );
 
         assert_eq!(
-            effects.raw,
+            effects.raw_bytes(),
             vec![osc52_copy(b"hello world")],
             "the pane must respond to the {pattern:?} chord EDITOR_BINDINGS \
              declares for Copy"
@@ -110,7 +110,7 @@ fn pane_rect(session: &Session) -> Rect {
 /// Sends one raw mouse event through the real `update`, returning the
 /// `Effects` it produced — mirrors `splitter_drag.rs`'s own `send` helper,
 /// except this one hands back `Effects` (these tests assert on
-/// `effects.raw`, the OSC-52 clipboard write) instead of resyncing for a
+/// `effects.raw_bytes()`, the OSC-52 clipboard write) instead of resyncing for a
 /// later geometry read.
 fn mouse(session: &mut Session, kind: MouseKind, column: u16, row: u16) -> Effects {
     let mut effects = Effects::default();
@@ -165,7 +165,7 @@ fn dragging_inside_the_pane_selects_and_copies_on_release() {
     let effects = mouse(&mut session, MouseKind::Up(MouseButton::Left), end_col, row);
 
     assert_eq!(
-        effects.raw,
+        effects.raw_bytes(),
         vec![osc52_copy(b"hello world")],
         "release must copy exactly the dragged selection"
     );
@@ -202,7 +202,7 @@ fn a_drag_released_outside_the_pane_still_clears_the_drag_and_still_copies() {
     let effects = mouse(&mut session, MouseKind::Up(MouseButton::Left), 0, 0);
 
     assert_eq!(
-        effects.raw,
+        effects.raw_bytes(),
         vec![osc52_copy(b"hello world")],
         "a release outside the pane must still copy the drag's selection"
     );
@@ -211,7 +211,7 @@ fn a_drag_released_outside_the_pane_still_clears_the_drag_and_still_copies() {
     // again.
     let effects_again = mouse(&mut session, MouseKind::Up(MouseButton::Left), 0, 0);
     assert!(
-        effects_again.raw.is_empty(),
+        effects_again.raw_bytes().is_empty(),
         "the drag must be cleared after its first release"
     );
 }
@@ -252,7 +252,7 @@ fn a_drag_in_the_editor_never_touches_the_log_documents_cursor() {
     app::update(session.app_mut(), super_c(), &mut copy_effects);
 
     assert!(
-        copy_effects.raw.is_empty(),
+        copy_effects.raw_bytes().is_empty(),
         "an editor drag must never leave a selection on the log document"
     );
 }
@@ -302,7 +302,7 @@ fn an_over_cap_selection_posts_an_error_instead_of_writing_raw() {
     let release = mouse(&mut session, MouseKind::Up(MouseButton::Left), col, row);
 
     assert!(
-        release.raw.is_empty(),
+        release.raw_bytes().is_empty(),
         "an over-cap selection must never reach the OSC-52 raw output"
     );
     assert!(

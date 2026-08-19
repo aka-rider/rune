@@ -108,8 +108,8 @@ pub(crate) fn handle_embed_decoded(
     let img_id = state.id;
     state.status = if kitty {
         match rune_image::fit_and_encode(&decoded, img_id.get(), cells.cols, cells.rows, cell) {
-            Ok(bytes) => {
-                effects.raw.push(bytes.into_bytes());
+            Ok(transmit) => {
+                effects.transmit(transmit);
                 ImageStatus::Live { decoded, cells }
             }
             Err(e) => ImageStatus::Failed(e.to_string()),

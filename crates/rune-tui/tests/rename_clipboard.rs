@@ -47,7 +47,7 @@ fn cmd_c_in_the_title_copies_the_window_not_the_whole_name() {
     let effects = send(&mut app, sup('c'));
 
     assert_eq!(
-        effects.raw,
+        effects.raw_bytes(),
         vec![osc52_copy(b"a")],
         "locked, ⌘C must copy the stem alone, never 'a.md'"
     );
@@ -91,7 +91,7 @@ fn cmd_c_then_cmd_x_then_cmd_v_round_trips_the_name_unchanged() {
 
     let copy_effects = send(&mut app, sup('c'));
     assert_eq!(
-        copy_effects.raw,
+        copy_effects.raw_bytes(),
         vec![osc52_copy(expected.as_bytes())],
         "⌘C must copy exactly the window"
     );

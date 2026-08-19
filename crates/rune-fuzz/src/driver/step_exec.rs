@@ -316,6 +316,7 @@ pub(super) fn step_and_check(
     // blind to the exact G9 violation it exists to catch (CODE-REVIEW.md
     // rune-fuzz finding 3). A second in-flight save `Cmd` is therefore a
     // violation in its own right, not a silent overwrite.
+    let raw_bytes = effects.raw_bytes();
     for cmd in effects.cmds {
         // Exhaustive over every `CmdKind`: a future variant this driver has
         // no policy for yet fails to COMPILE here rather than falling
@@ -417,7 +418,7 @@ pub(super) fn step_and_check(
     let ctx = StepCtx {
         step: step_index,
         msg: tag,
-        raw: effects.raw,
+        raw: raw_bytes,
         disk,
         pending_save_bytes,
         delivered_save_bytes,

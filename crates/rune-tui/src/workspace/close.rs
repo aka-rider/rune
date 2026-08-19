@@ -158,9 +158,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if app.graphics.kitty
         && let Some(image) = app.doc(id).and_then(|d| d.image())
     {
-        effects
-            .raw
-            .push(rune_image::encode_delete(image.id.get()).into_bytes());
+        effects.write(rune_image::encode_delete(image.id.get()).into_bytes());
     }
     let mut active_changed = false;
     if app.documents.len() == 1 {
@@ -261,7 +259,7 @@ mod tests {
     const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
     /// Closing a `Live`-or-not image document pushes
-    /// `encode_delete(id)` into `effects.raw` when the terminal is Kitty-
+    /// `encode_delete(id)` into `effects.raw_bytes()` when the terminal is Kitty-
     /// capable, and never does when it isn't.
     #[test]
     fn closing_an_image_document_emits_encode_delete_when_kitty_is_on() {
@@ -278,9 +276,9 @@ mod tests {
         let mut effects = Effects::default();
         let _ = close_now(&mut app, image_id, &mut effects);
 
-        assert_eq!(effects.raw.len(), 1);
+        assert_eq!(effects.raw_bytes().len(), 1);
         assert_eq!(
-            effects.raw[0],
+            effects.raw_bytes()[0],
             rune_image::encode_delete(expected_id.get()).into_bytes()
         );
     }
@@ -299,7 +297,7 @@ mod tests {
         let mut effects = Effects::default();
         let _ = close_now(&mut app, image_id, &mut effects);
 
-        assert!(effects.raw.is_empty());
+        assert!(effects.raw_bytes().is_empty());
     }
 
     #[test]
@@ -313,7 +311,7 @@ mod tests {
         let mut effects = Effects::default();
         let _ = close_now(&mut app, extra, &mut effects);
 
-        assert!(effects.raw.is_empty());
+        assert!(effects.raw_bytes().is_empty());
     }
 
     /// Closing the ONLY open document does not refuse —

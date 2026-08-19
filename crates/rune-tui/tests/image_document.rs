@@ -318,17 +318,16 @@ fn scrolling_a_live_image_document_clips_through_visible_rows() {
 
 /// Applying
 /// `Msg::ImageDecoded` through the real `update` loop with Kitty enabled
-/// pushes a non-empty `effects.raw` whose first element starts with the
-/// Kitty APC intro; with Kitty disabled the same sequence produces no raw
-/// output at all.
+/// pushes a transmit whose first chunk starts with the Kitty APC intro;
+/// with Kitty disabled the same sequence produces no output at all.
 #[test]
 fn the_decode_reply_transmits_only_when_kitty_is_enabled() {
     let (mut app, id) = app_with_image();
     app.graphics.kitty = true;
     app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
     let effects = decode_x_png_via_update(&mut app, id);
-    assert!(!effects.raw.is_empty());
-    assert!(effects.raw[0].starts_with(b"\x1b_G"));
+    assert_eq!(effects.transmits().len(), 1);
+    assert!(effects.transmits()[0].chunks()[0].starts_with(b"\x1b_G"));
     assert!(matches!(
         app.doc(id).unwrap().image().unwrap().status,
         ImageStatus::Live { .. }
@@ -338,12 +337,12 @@ fn the_decode_reply_transmits_only_when_kitty_is_enabled() {
     app2.graphics.kitty = false;
     app2.doc_mut(id2).expect("doc").viewport.set_size(40, 10);
     let effects2 = decode_x_png_via_update(&mut app2, id2);
-    assert!(effects2.raw.is_empty());
+    assert!(effects2.out.is_empty());
 }
 
 /// Driven through the real `^w` key rather than
 /// calling `close_now` directly: closing an image document pushes
-/// `encode_delete(id)` into `effects.raw` when Kitty is available.
+/// `encode_delete(id)` into `effects.raw_bytes()` when Kitty is available.
 #[test]
 fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
     let (mut app, id) = app_with_image();
@@ -373,7 +372,7 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
     );
     assert!(
         effects
-            .raw
+            .raw_bytes()
             .iter()
             .any(|bytes| *bytes == rune_image::encode_delete(image_id.get()).into_bytes())
     );
@@ -381,8 +380,8 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
 
 /// Driven through the real `⌘R` key rather than
 /// calling `graphics::reload_image` directly: reloading a live image
-/// document re-emits a transmit escape into `effects.raw` and forces a
-/// redraw, under the exact same allocated id as the original open.
+/// document re-emits a transmit and forces a redraw, under the exact same
+/// allocated id as the original open.
 #[test]
 fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
     let (mut app, id) = app_with_image();
@@ -416,9 +415,9 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
 
     assert!(
         reply_effects
-            .raw
+            .transmits()
             .iter()
-            .any(|bytes| bytes.starts_with(b"\x1b_G")),
+            .any(|transmit| transmit.chunks()[0].starts_with(b"\x1b_G")),
         "reload must retransmit"
     );
     assert!(
@@ -461,7 +460,14 @@ fn super_r_on_a_non_image_document_refuses_with_a_message() {
         &mut effects,
     );
 
-    assert!(effects.raw.is_empty(), "nothing to decode or retransmit");
+    assert!(
+        effects.raw_bytes().is_empty(),
+        "nothing to decode or retransmit"
+    );
+    assert!(
+        effects.transmits().is_empty(),
+        "nothing to decode or retransmit"
+    );
     assert_eq!(
         rune_tui::messages::newest_text(&app),
         Some("nothing to reload")

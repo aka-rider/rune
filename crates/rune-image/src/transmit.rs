@@ -54,6 +54,25 @@ const CONTINUATION_FLAG: &str = "m=1";
 const CONTINUATION_OPTIONS: &str = "q=2,m=1";
 const FINAL_CHUNK_OPTIONS: &str = "q=2,m=0";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transmit {
+    chunks: Vec<Vec<u8>>,
+}
+
+impl Transmit {
+    pub fn chunks(&self) -> &[Vec<u8>] {
+        &self.chunks
+    }
+
+    pub fn into_chunks(self) -> Vec<Vec<u8>> {
+        self.chunks
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.chunks.concat()
+    }
+}
+
 /// PNG-encodes `img`, base64s it, and frames it as one or more Kitty
 /// transmit-and-put APC escapes addressed to Unicode virtual placement
 /// (`U=1`) at `cols` x `rows` terminal cells. See the module docs for the
@@ -63,7 +82,7 @@ pub fn encode_transmit(
     id: u32,
     cols: usize,
     rows: usize,
-) -> Result<String, ImageError> {
+) -> Result<Transmit, ImageError> {
     let mut png_bytes = Vec::new();
     {
         use image::ImageEncoder;
@@ -85,33 +104,30 @@ pub fn encode_transmit(
 /// multiple-of-[`MAX_CHUNK_SIZE`] boundary can be exercised with a
 /// synthetic payload rather than having to locate a real image whose PNG
 /// encoding happens to land on it.
-fn frame_transmit(payload: &str, id: u32, cols: usize, rows: usize) -> String {
+fn frame_transmit(payload: &str, id: u32, cols: usize, rows: usize) -> Transmit {
     let full_options = format!("f=100,{QUIET_QUERY},i={id},U=1,c={cols},r={rows},a=T");
     let mut remaining = payload;
-    let mut out = String::new();
+    let mut chunks: Vec<Vec<u8>> = Vec::new();
     let mut wrote_full_chunk = false;
     let mut is_first = true;
 
     while let Some((chunk, rest)) = remaining.split_at_checked(MAX_CHUNK_SIZE) {
         if is_first {
-            out.push_str(&frame(
-                &format!("{full_options},{CONTINUATION_FLAG}"),
-                chunk,
-            ));
+            chunks.push(frame(&format!("{full_options},{CONTINUATION_FLAG}"), chunk).into_bytes());
             is_first = false;
         } else {
-            out.push_str(&frame(CONTINUATION_OPTIONS, chunk));
+            chunks.push(frame(CONTINUATION_OPTIONS, chunk).into_bytes());
         }
         wrote_full_chunk = true;
         remaining = rest;
     }
 
     if wrote_full_chunk {
-        out.push_str(&frame(FINAL_CHUNK_OPTIONS, remaining));
+        chunks.push(frame(FINAL_CHUNK_OPTIONS, remaining).into_bytes());
     } else {
-        out.push_str(&frame(&full_options, remaining));
+        chunks.push(frame(&full_options, remaining).into_bytes());
     }
-    out
+    Transmit { chunks }
 }
 
 /// Frames one APC: `ESC _ G` + options + (`;` + payload, only if
@@ -146,7 +162,7 @@ pub fn fit_and_encode(
     cols: usize,
     rows: usize,
     cell: CellSize,
-) -> Result<String, ImageError> {
+) -> Result<Transmit, ImageError> {
     let fitted = fit_box(
         PixelSize {
             w: decoded.width,
@@ -192,6 +208,14 @@ pub fn encode_delete_all() -> String {
     delete_apc(&format!("{QUIET_QUERY},d=A,a=d"))
 }
 
+/// The empty final chunk of a chunked transmit. A writer that abandons an
+/// image after its first `m=1` chunk MUST send this: until the terminal
+/// reads an `m=0`, every further graphics escape belongs to the open
+/// transfer instead of being obeyed.
+pub fn encode_transmit_terminator() -> String {
+    frame(FINAL_CHUNK_OPTIONS, "")
+}
+
 fn delete_apc(options: &str) -> String {
     format!("{APC_INTRO}{options}{APC_OUTRO}")
 }
@@ -200,6 +224,37 @@ fn delete_apc(options: &str) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    fn flat(transmit: &Transmit) -> String {
+        String::from_utf8(transmit.to_bytes()).expect("utf-8")
+    }
+
+    #[test]
+    fn every_chunk_is_one_self_contained_apc_and_they_concatenate_to_the_stream() {
+        let payload = "A".repeat(MAX_CHUNK_SIZE * 2 + 7);
+        let transmit = frame_transmit(&payload, 3, 2, 2);
+        let flattened = flat(&transmit);
+
+        assert_eq!(
+            transmit.chunks().len(),
+            flattened.matches(APC_INTRO).count()
+        );
+        for chunk in transmit.chunks() {
+            let text = std::str::from_utf8(chunk).expect("utf-8");
+            assert_eq!(text.matches(APC_INTRO).count(), 1);
+            assert!(text.starts_with(APC_INTRO));
+            assert!(text.ends_with(APC_OUTRO));
+        }
+        assert_eq!(transmit.chunks().concat(), flattened.as_bytes());
+    }
+
+    #[test]
+    fn the_terminator_is_the_same_empty_final_chunk_a_full_transmit_ends_with() {
+        let payload = "A".repeat(MAX_CHUNK_SIZE);
+        let flattened = flat(&frame_transmit(&payload, 1, 1, 1));
+        assert_eq!(encode_transmit_terminator(), "\x1b_Gq=2,m=0\x1b\\");
+        assert!(flattened.ends_with(&encode_transmit_terminator()));
+    }
 
     #[test]
     fn encode_delete_matches_reference_bytes() {
@@ -214,7 +269,7 @@ mod tests {
     #[test]
     fn single_chunk_transmit_carries_no_m_key() {
         let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
-        let seq = encode_transmit(&img, 7, 1, 1).expect("encode");
+        let seq = flat(&encode_transmit(&img, 7, 1, 1).expect("encode"));
         assert!(seq.starts_with("\x1b_Gf=100,q=2,i=7,U=1,c=1,r=1,a=T;"));
         assert!(seq.ends_with("\x1b\\"));
         assert!(!seq.contains(",m="));
@@ -223,7 +278,7 @@ mod tests {
     #[test]
     fn exact_multiple_of_chunk_size_emits_trailing_empty_apc() {
         let payload = "A".repeat(MAX_CHUNK_SIZE);
-        let seq = frame_transmit(&payload, 1, 1, 1);
+        let seq = flat(&frame_transmit(&payload, 1, 1, 1));
         assert!(seq.ends_with("\x1b_Gq=2,m=0\x1b\\"));
         // The first chunk carries the full option set plus m=1 and the
         // whole synthetic payload.
@@ -233,7 +288,7 @@ mod tests {
     #[test]
     fn two_exact_chunks_emit_two_data_apcs_and_a_trailing_empty_one() {
         let payload = "A".repeat(MAX_CHUNK_SIZE * 2);
-        let seq = frame_transmit(&payload, 1, 1, 1);
+        let seq = flat(&frame_transmit(&payload, 1, 1, 1));
         let apc_count = seq.matches(APC_INTRO).count();
         assert_eq!(apc_count, 3);
         assert!(seq.ends_with("\x1b_Gq=2,m=0\x1b\\"));
@@ -242,7 +297,7 @@ mod tests {
     #[test]
     fn a_payload_just_over_one_chunk_carries_the_remainder_on_the_last_apc() {
         let payload = "A".repeat(MAX_CHUNK_SIZE + 10);
-        let seq = frame_transmit(&payload, 1, 1, 1);
+        let seq = flat(&frame_transmit(&payload, 1, 1, 1));
         let apc_count = seq.matches(APC_INTRO).count();
         assert_eq!(apc_count, 2);
         assert!(seq.ends_with(&format!("\x1b_Gq=2,m=0;{}\x1b\\", "A".repeat(10))));
@@ -250,7 +305,7 @@ mod tests {
 
     #[test]
     fn empty_payload_is_a_single_chunk_with_no_payload_and_no_m_key() {
-        let seq = frame_transmit("", 1, 1, 1);
+        let seq = flat(&frame_transmit("", 1, 1, 1));
         assert_eq!(seq, "\x1b_Gf=100,q=2,i=1,U=1,c=1,r=1,a=T\x1b\\");
     }
 
@@ -296,7 +351,7 @@ mod tests {
             format: crate::decode::Format::Png,
         };
         let cell = CellSize { w: 8, h: 16 };
-        let seq = fit_and_encode(&decoded, 1, 1000, 1000, cell).expect("encode");
+        let seq = flat(&fit_and_encode(&decoded, 1, 1000, 1000, cell).expect("encode"));
         assert!(seq.contains(";"));
         // A solid-colour source compresses far below the near-incompressible
         // worst case — this only proves the ceiling was reached at all
@@ -317,7 +372,7 @@ mod tests {
         // A 4x4 source asked to fill a much larger cell box must not
         // upscale — `fit_box` inside `fit_and_encode` floors the resize at
         // the source's own size.
-        let seq = fit_and_encode(&decoded, 7, 10, 5, cell).expect("encode");
+        let seq = flat(&fit_and_encode(&decoded, 7, 10, 5, cell).expect("encode"));
         assert!(seq.starts_with("\x1b_Gf=100,q=2,i=7,U=1,c=10,r=5,a=T"));
     }
 }

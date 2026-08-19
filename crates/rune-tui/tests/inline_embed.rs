@@ -309,10 +309,10 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     );
     assert!(
         effects2
-            .raw
+            .raw_bytes()
             .iter()
             .any(|bytes| bytes.starts_with(b"\x1b_Gq=2,")),
-        "despawning must push an encode_delete escape into effects.raw"
+        "despawning must push an encode_delete escape into effects.raw_bytes()"
     );
 }
 
