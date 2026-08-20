@@ -66,6 +66,11 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
             focus_link(app, LinkStep::Prev);
             return true;
         }
+        Command::Motion(Motion::MatchBracket, _) => {
+            let read_only = app.active_doc().read_only;
+            app.refuse_if_read_only(read_only);
+            return true;
+        }
         _ => {}
     }
 

@@ -6,7 +6,9 @@ RC ?= 512
 # Optional PROPTEST_RNG_SEED for a pinned re-run. Empty = fresh OS entropy.
 RS ?=
 
-.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars
+.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars dist-mac
+
+SDK_CACHE := $(HOME)/.cache/rune/MacOSX14.5.sdk
 
 build:
 	$(CARGO) build --workspace
@@ -46,6 +48,8 @@ perf-guard:
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_many_fence_markdown_document
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 bootstrap_first_draw_stays_bounded_on_a_large_document
 
 # `--test human_session` + `--exact` for the same reason as perf-guard.
@@ -60,3 +64,14 @@ test-fuzz:
 # non-ignored smoke test runs on every `make test`.
 test-grammars:
 	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1
+
+dist-mac:
+	command -v nix >/dev/null || { echo "dist-mac needs nix on PATH (NixOS/macOS with nix installed)"; exit 1; }
+	[ -d $(SDK_CACHE) ] || { \
+	    mkdir -p $(HOME)/.cache/rune; \
+	    curl -fL https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz \
+	        | tar -xJ -C $(HOME)/.cache/rune; \
+	}
+	nix shell nixpkgs#rustup nixpkgs#gcc nixpkgs#zig nixpkgs#cargo-zigbuild -c \
+	    sh -c 'rustup target add aarch64-apple-darwin && \
+	        SDKROOT=$(SDK_CACHE) cargo zigbuild --target aarch64-apple-darwin --release --bin rune'

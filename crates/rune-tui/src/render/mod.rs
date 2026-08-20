@@ -19,6 +19,7 @@
 //! own chokepoint instead.
 
 mod blit;
+mod bracket;
 mod cell;
 mod code_bg;
 pub(crate) mod decor;
@@ -123,6 +124,8 @@ pub fn build_rows(
         crate::highlight::visible_spans(doc, range)
     });
     overlay::apply_highlight_spans(&mut rows, &spans, &app.theme);
+
+    bracket::apply_bracket_match(&mut rows, doc, &app.theme);
 
     // The search bar's live match highlight: painted AFTER
     // the token overlay (so a match's background sits under, not over, a

@@ -48,6 +48,9 @@ pub(crate) fn run(
         Command::Motion(Motion::PageDown, extend) => {
             nav_scroll::page_down(app.active_doc_mut(), extend)
         }
+        Command::Motion(Motion::MatchBracket, extend) => {
+            nav::match_bracket(app.active_doc_mut(), extend)
+        }
         Command::SelectAll => nav::select_all(app.active_doc_mut()),
         Command::ScrollLineUp => nav_scroll::scroll_line_up(app.active_doc_mut()),
         Command::ScrollLineDown => nav_scroll::scroll_line_down(app.active_doc_mut()),

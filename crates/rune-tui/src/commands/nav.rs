@@ -35,6 +35,7 @@
 //! `Document::scroll_to_cursor`, invoked exactly once per settled batch via
 //! `Document::sync`/`App::sync_view` — never from inside a single command.
 
+use rune_core::bracket::{bracket_pair, jump_origin};
 use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
@@ -320,6 +321,20 @@ pub fn word_left(doc: &mut Document, extend: Extend) {
 pub fn word_right(doc: &mut Document, extend: Extend) {
     move_cursors(doc, extend, |view, buf, c, extend| {
         handle_right(view, buf, c, extend, word_right_offset)
+    });
+}
+
+pub fn match_bracket(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        let text = buf.content();
+        let Some(origin) = jump_origin(text, c.position) else {
+            return c;
+        };
+        let Some((open, close)) = bracket_pair(text, origin) else {
+            return c;
+        };
+        let target = if open == origin { close } else { open };
+        update_horizontal(view, buf, c, target, extend)
     });
 }
 

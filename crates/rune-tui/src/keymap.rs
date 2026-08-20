@@ -46,6 +46,7 @@ pub enum Motion {
     LineEnd,
     PageUp,
     PageDown,
+    MatchBracket,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

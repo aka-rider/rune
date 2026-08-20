@@ -372,3 +372,83 @@ fn bootstrap_first_draw_stays_bounded_on_a_large_document() {
         BOOTSTRAP_FRAME_BUDGET.as_secs_f64() * 1_000.0
     );
 }
+
+/// The worst case of the per-frame bracket-match scan: an UNMATCHED bracket
+/// under the caret near the top of the document, so the scan runs to EOF on
+/// every frame and this budget is compared against the whole 5k-line file
+/// rather than the 40-row window. Same shape as the two budgets above —
+/// roughly 4x a measurement (0.50 ms per frame, against 0.08 ms for the same
+/// document with the caret off any bracket), wide enough not to flake and
+/// tight enough to catch an order-of-magnitude regression.
+const UNMATCHED_BRACKET_FRAME_BUDGET: Duration = Duration::from_micros(2_000);
+
+fn press(app: &mut App, code: KeyCode) {
+    let mut effects = Effects::default();
+    app::update(
+        app,
+        Msg::Key(KeyInput {
+            code,
+            mods: Mods::NONE,
+        }),
+        &mut effects,
+    );
+    effects.cmds.clear();
+    app.sync_view();
+}
+
+#[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
+            release invocation in Make (rust-perf-guard). It is inherently \
+            flaky inside ordinary parallel debug `cargo test` and is marked \
+            #[ignore] for that reason."]
+#[test]
+fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {
+    let fixture = format!(
+        "//! A large synthetic Rust fixture for the keystroke perf guard.\n\n\
+         let unmatched = (\n{}",
+        build_5k_line_rust_fixture()
+    );
+    let mut app = app_for(&fixture, "/x/big.rs");
+    settle_highlights(&mut app);
+
+    // The caret walks to the bracket through the real update seam:
+    // `settle_highlights` leaves it at end-of-buffer, so page back to the
+    // top first, then two rows down onto the `let` line, to its end, and one
+    // step left onto the `(`.
+    let mut pages = 0usize;
+    while app.active_doc().cursors.primary().position > 0 {
+        press(&mut app, KeyCode::PageUp);
+        pages += 1;
+        assert!(pages <= 500, "the caret never paged back to the top");
+    }
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::End);
+    press(&mut app, KeyCode::Left);
+
+    let doc = app.active_doc();
+    let at = doc.cursors.primary().position;
+    assert_eq!(
+        doc.buffer.byte(at),
+        Some(b'('),
+        "the caret must sit ON the unmatched bracket, or this gate measures nothing"
+    );
+    assert!(
+        doc.has_insertion_point(),
+        "the bracket pass is gated on an insertion point, or this gate measures nothing"
+    );
+    assert_eq!(
+        rune_core::bracket::bracket_pair(doc.buffer.content(), at),
+        None,
+        "the fixture's bracket must stay unmatched — that is the scan-to-EOF worst case"
+    );
+
+    let per_frame = average_frame_cost(&app);
+
+    assert!(
+        per_frame < UNMATCHED_BRACKET_FRAME_BUDGET,
+        "average render::build_rows cost with the caret on an unmatched bracket in a \
+         5k-line code document was {:.3} ms over {RENDER_FRAMES} frames (budget: {:.3} ms)",
+        per_frame.as_secs_f64() * 1_000.0,
+        UNMATCHED_BRACKET_FRAME_BUDGET.as_secs_f64() * 1_000.0
+    );
+}

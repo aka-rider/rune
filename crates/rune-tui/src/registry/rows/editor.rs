@@ -185,6 +185,18 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         "select page down",
         false,
     ),
+    edit_row(
+        Command::Motion(Motion::MatchBracket, Extend::No),
+        "jump to matching bracket",
+        "jump to matching bracket",
+        false,
+    ),
+    edit_row(
+        Command::Motion(Motion::MatchBracket, Extend::Yes),
+        "select to matching bracket",
+        "select to matching bracket",
+        false,
+    ),
     edit_row(Command::DeleteLeft, "delete left", "delete left", false),
     edit_row(
         Command::DeleteWordLeft,

@@ -308,3 +308,54 @@ tail paragraph\n";
         "the caret must land exactly on the cursor's own byte offset"
     );
 }
+
+fn bracket_match_bg(content: &str, cursor_offset: usize) -> Option<ratatui::style::Color> {
+    let session = app_for(content, cursor_offset, true);
+    session.app().theme.chrome.bracket_match_bg.bg
+}
+
+fn cell_bg_at(rows: &[Vec<render::Cell>], offset: usize) -> Option<ratatui::style::Color> {
+    let cell = rows
+        .iter()
+        .flatten()
+        .find(|c| c.buf_offset == Some(offset as u32));
+    assert!(cell.is_some(), "no cell renders byte {offset}");
+    cell.expect("asserted present just above").style.bg
+}
+
+/// Only the FAR endpoint of the pair is painted: the near one IS the caret
+/// cell, where the caret's own reverse video would invert the tint into an
+/// illegible grey.
+#[test]
+fn the_caret_on_a_bracket_paints_only_its_far_partner() {
+    let content = "(x)";
+    let rows = rows_for(content, 0, true);
+    let expected = bracket_match_bg(content, 0);
+
+    assert_eq!(
+        cell_bg_at(&rows, 2),
+        expected,
+        "the matching `)` must be lit"
+    );
+    assert_ne!(
+        cell_bg_at(&rows, 0),
+        expected,
+        "the caret's own `(` must not"
+    );
+    assert_ne!(cell_bg_at(&rows, 1), expected, "nor anything between them");
+}
+
+#[test]
+fn a_caret_off_any_bracket_paints_no_bracket_match_at_all() {
+    let content = "(x)";
+    let rows = rows_for(content, 1, true);
+    let expected = bracket_match_bg(content, 1);
+
+    for offset in 0..content.len() {
+        assert_ne!(
+            cell_bg_at(&rows, offset),
+            expected,
+            "byte {offset} was lit while the caret sat off every bracket"
+        );
+    }
+}

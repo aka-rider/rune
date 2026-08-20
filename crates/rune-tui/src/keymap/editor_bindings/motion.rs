@@ -101,6 +101,13 @@ pub(crate) const WORD_RIGHT_F: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const MATCH_BRACKET_M: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('m'), ALT),
+    cmd: Command::Motion(Motion::MatchBracket, Extend::No),
+    help: "jump to matching bracket",
+    secondary: false,
+};
+
 // Viewport-only scroll commands — vim/Helix parity, see
 // `keymap::resolve`'s doc comments on each arm for the exact rationale.
 pub(crate) const SCROLL_LINE_UP: Binding<Command> = Binding {

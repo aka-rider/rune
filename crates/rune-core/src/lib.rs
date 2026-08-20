@@ -11,6 +11,7 @@
 //! opts in via that crate's own `strict-invariants` feature) treats the
 //! violation as fatal.
 
+pub mod bracket;
 pub mod buffer;
 pub mod coords;
 pub mod cursor;

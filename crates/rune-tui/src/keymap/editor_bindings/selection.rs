@@ -71,6 +71,20 @@ pub(crate) const SELECT_WORD_RIGHT_F_ALT: Binding<Command> = Binding {
     secondary: true,
 };
 
+pub(crate) const SELECT_MATCH_BRACKET_M: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('m'), SHIFT_ALT),
+    cmd: Command::Motion(Motion::MatchBracket, Extend::Yes),
+    help: "select to matching bracket",
+    secondary: false,
+};
+
+pub(crate) const SELECT_MATCH_BRACKET_M_ALT: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('M'), ALT),
+    cmd: Command::Motion(Motion::MatchBracket, Extend::Yes),
+    help: "select to matching bracket",
+    secondary: true,
+};
+
 pub(crate) const SELECT_LINE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Up, SHIFT),
     cmd: Command::Motion(Motion::LineUp, Extend::Yes),

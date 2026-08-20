@@ -297,3 +297,52 @@ fn leaving_the_reading_view_does_not_move_the_caret() {
         "a caret must be visible after leaving reading view"
     );
 }
+
+/// A reading-view document has no caret to jump with, so `⌥M` must be
+/// consumed with the same refusal the rest of read-only rejection uses —
+/// never fall through to a cursor move nobody can see.
+#[test]
+fn alt_m_in_reading_view_refuses_instead_of_moving_an_invisible_caret() {
+    let content: String = std::iter::once("(a)\n".to_string())
+        .chain((0..100).map(|i| format!("line {i}\n")))
+        .collect();
+    let mut app = app_basic(&content);
+    send(&mut app, ctrl('p'));
+    assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
+
+    let scroll_before = app.active_doc().viewport.scroll_row;
+    let caret_before = app.active_doc().cursors.primary().position;
+    assert_eq!(
+        content.as_bytes()[caret_before],
+        b'(',
+        "the fixture must park the caret on a bracket, or this proves nothing"
+    );
+
+    send(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('m'),
+            mods: Mods {
+                alt: true,
+                ..Mods::NONE
+            },
+        }),
+    );
+    app.sync_view();
+
+    assert_eq!(
+        app.active_doc().cursors.primary().position,
+        caret_before,
+        "⌥M must not move a caret the reader cannot see"
+    );
+    assert_eq!(
+        app.active_doc().viewport.scroll_row,
+        scroll_before,
+        "⌥M must not scroll a reading-view document"
+    );
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        ReadOnly::Reading.refusal_message(),
+        "a consumed-but-inapplicable key must still give the user feedback"
+    );
+}

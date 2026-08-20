@@ -83,6 +83,7 @@ pub struct ChromeStyles {
     /// selection can both be on screen at once and must read as visually
     /// distinct.
     pub search_match_bg: Style,
+    pub bracket_match_bg: Style,
     /// The keyboard cursor row's background in the left column's panes,
     /// painted in the focused pane only. Its own field rather than reusing
     /// `selection_bg`: a left-column cursor row and an editor text
@@ -149,6 +150,7 @@ impl Theme {
             merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
+            bracket_match_bg: Style::new().bg(c(blend(p.surface0, p.sky, 0.45))),
             row_cursor_bg: Style::new().bg(c(p.surface2)),
             row_active_bg: Style::new().bg(c(p.surface0)),
             diff_word_ours: Style::new().bg(c(blend(p.surface0, p.green, 0.6))),
