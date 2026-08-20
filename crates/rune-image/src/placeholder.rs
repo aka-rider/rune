@@ -1,14 +1,7 @@
-//! The Unicode placeholder rune and the row/column-encoding diacritics used
-//! by the Kitty graphics protocol's virtual-placement mode. See
-//! https://sw.kovidgoyal.net/kitty/graphics-protocol/#unicode-placeholders.
-
-/// The Unicode placeholder rune (U+10EEEE) for virtual placement.
+// Kitty graphics protocol virtual-placement mode:
+// https://sw.kovidgoyal.net/kitty/graphics-protocol/#unicode-placeholders
 pub const PLACEHOLDER: char = '\u{10EEEE}';
 
-/// The 297-entry row/column diacritic table defined by the Kitty graphics
-/// protocol's virtual-placement mode (see the module docs), copied
-/// verbatim and in order, matching the committed golden expectations
-/// byte-for-byte.
 static DIACRITICS: [char; 297] = [
     '\u{0305}',
     '\u{030D}',
@@ -309,15 +302,10 @@ static DIACRITICS: [char; 297] = [
     '\u{1D244}',
 ];
 
-/// Returns the diacritic rune at index `i`. An out-of-range index returns
-/// `DIACRITICS[0]` (U+0305) rather than erroring, matching the reference
-/// implementation.
 pub fn diacritic(i: usize) -> char {
     DIACRITICS.get(i).copied().unwrap_or(PLACEHOLDER_FALLBACK)
 }
 
-/// `DIACRITICS[0]` (U+0305), named so [`diacritic`]'s fallback never indexes
-/// the table directly.
 const PLACEHOLDER_FALLBACK: char = '\u{0305}';
 
 #[cfg(test)]

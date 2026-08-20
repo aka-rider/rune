@@ -1,6 +1,3 @@
-//! Fitting a source pixel box into a destination pixel box (`fit_box`), and
-//! resampling pixels to an exact target size.
-
 use crate::cellsize::PixelSize;
 
 pub fn fit_box(src: PixelSize, max: PixelSize) -> PixelSize {
@@ -21,9 +18,6 @@ pub fn fit_box(src: PixelSize, max: PixelSize) -> PixelSize {
     }
 }
 
-/// Scales `src` to exactly `w` x `h` using a high-quality CatmullRom
-/// kernel. A non-positive `w`/`h` yields a 1x1 image rather than
-/// propagating a degenerate size into the resampler.
 pub fn resize(src: &image::RgbaImage, w: usize, h: usize) -> image::RgbaImage {
     if w == 0 || h == 0 {
         return image::RgbaImage::new(1, 1);

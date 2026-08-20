@@ -1,6 +1,3 @@
-//! Tests for `bootstrap`/`launch` — split out to keep the parent under the
-//! file-size ceiling, the same shape `decode_cmd_tests.rs` (rune-tui)
-//! already uses elsewhere in the workspace.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
@@ -12,13 +9,6 @@ mod image_first;
 mod launch_basics;
 mod panic_and_diff;
 
-/// Counts every [`Vfs::read`] and [`Vfs::resolve`] call made against ANY
-/// path, wrapping a real [`Mem`] for everything else — the TOCTOU pin: a
-/// launch's first positional must be read off disk exactly once (never once
-/// for the buffer and again for the recovery store's own CAS baseline) AND
-/// resolved exactly once (never once by `open_launch` and again inside
-/// `rune_vfs::get`, which would reopen the symlink-swap TOCTOU window
-/// between the two).
 struct CountingReadVfs {
     inner: Mem,
     reads: AtomicU32,

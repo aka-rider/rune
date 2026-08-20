@@ -1,9 +1,3 @@
-//! Glyph sets for line decorations (heading icons, list bullets, quote
-//! bars, thematic-break rules). Plain data only: this crate stays
-//! terminal-free, so choosing WHICH set applies is the caller's job.
-
-/// One coherent set of decoration glyphs. `headings` is indexed by
-/// heading level minus one; `bullets` cycles by list-nesting depth.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IconSet {
     pub headings: [&'static str; 6],
@@ -13,9 +7,6 @@ pub struct IconSet {
 }
 
 impl IconSet {
-    /// Nerd-font tier: Material Design heading icons (a digit inside a
-    /// rounded box), private-use-area codepoints that require a Nerd Font
-    /// or a terminal with system font fallback.
     pub fn nerd() -> IconSet {
         IconSet {
             headings: [
@@ -32,8 +23,6 @@ impl IconSet {
         }
     }
 
-    /// Plain-Unicode tier: BMP-only glyphs that render in any terminal
-    /// font. The default when nerd-font support is unknown.
     pub fn unicode() -> IconSet {
         IconSet {
             headings: [

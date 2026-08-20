@@ -1,11 +1,5 @@
 use super::*;
 
-/// The property that separates a missing-path launch from an untitled
-/// draft: `file_path` stays `Some(the path)`, not `None`. Multi-positional
-/// on purpose (a real, existing second file) so this also pins that the
-/// `DocDb` lands on the FIRST positional's document — the one bootstrap
-/// actually binds a scratch row to — and not on the extra tab that opens
-/// through the ordinary async `Load` path.
 #[test]
 fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
     let vfs = Mem::new();
@@ -52,12 +46,6 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
     );
 }
 
-/// The plan's deliberate rejection of a `gc_empty_scratch` sweep inside
-/// `bootstrap_new_file`: a second concurrent launch sharing this `$HOME`
-/// must never sweep away another (still-running) session's freshly minted,
-/// not-yet-journaled scratch row. Seeds exactly that row directly, without
-/// going through `bootstrap` at all, then confirms a missing-path launch
-/// leaves it standing.
 #[test]
 fn launch_missing_first_positional_never_sweeps_another_sessions_empty_scratch_row() {
     let home = ScratchHome::new("missing-path-no-gc");
@@ -171,11 +159,6 @@ fn bare_launch_never_sweeps_another_sessions_empty_scratch_row() {
     );
 }
 
-/// The scratch row a no-positional launch binds to must actually
-/// survive: typing into the default document, then relaunching against
-/// the SAME `$HOME` with no positional files again, must come back with
-/// that text already in the buffer (crash recovery for the untitled
-/// draft, not just a live journal nobody ever reads back).
 #[test]
 fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     let home = ScratchHome::new("untitled-recover");
@@ -187,10 +170,6 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
         .join("rune")
         .join(rune_db::db_file_name(rune_db::SCHEMA_VERSION));
 
-    // First "session": open the store directly (bypassing the whole app)
-    // and journal an edit under it, exactly as typing into the default
-    // untitled document would — then drop it without ever naming the
-    // document, simulating a crash/quit that left the draft unsaved.
     {
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
         let bridge = rune_tui::db::DbBridge::bootstrap();
@@ -209,10 +188,6 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
             other => panic!("expected a CreateScratch ack, got {other:?}"),
         };
 
-        // A bare recovery-anchor snapshot is enough on its own: it
-        // carries this session's own `session_id`, which is all
-        // `most_recent_session_for_doc`/`recover_document` need to find
-        // and replay it — no separate journaled edit required.
         let snapshot_op = store
             .create_snapshot(rune_db::DocId(doc_id), "unsaved draft from a dead session")
             .expect("enqueue create_snapshot");
@@ -226,12 +201,6 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
         store.shutdown();
     }
 
-    // Both "sessions" above and below run in this SAME test process, so
-    // the first session's own pid is trivially still alive by the time
-    // the second bootstrap runs — stamp its `sessions` row with an
-    // unambiguously-dead pid (`is_process_alive`'s own `pid <= 0` guard)
-    // directly through a raw connection, the only way to simulate a
-    // truly dead prior process without spawning a real second one.
     {
         let raw =
             rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
@@ -239,9 +208,6 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
             .expect("mark every recorded session dead");
     }
 
-    // Second "session": a plain no-positional launch against the SAME
-    // `$HOME` — the prior session's process is now unambiguously dead,
-    // so `reconstruct_scratch` must find it and recover the draft.
     let vfs = Mem::new();
     let app = bootstrap(
         &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
@@ -258,12 +224,6 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     );
 }
 
-/// Marks every recorded session's `pid` unambiguously dead
-/// (`is_process_alive`'s own `pid <= 0` guard) directly through a raw
-/// connection — both "sessions" in these tests run in this SAME test
-/// process, so the prior one's real pid is trivially still alive by the
-/// time the next bootstrap runs; this is the only way to simulate a truly
-/// dead prior process without spawning a real second one.
 fn mark_every_session_dead(db_path: &Path) {
     let raw =
         rune_db::open_raw_connection_at_path_for_test(db_path).expect("open db file directly");
@@ -278,13 +238,6 @@ fn db_path_under(home: &Path) -> PathBuf {
         .join(rune_db::db_file_name(rune_db::SCHEMA_VERSION))
 }
 
-/// The main Task B recovery pin: `rune notes.md` for a path that does not
-/// exist on disk, typed into and killed without ever materializing, must be
-/// found and adopted — SAME content, SAME underlying row — by a LATER `rune
-/// notes.md` launch, not silently orphaned the way a bare `path=''`-only
-/// scratch lookup would leave it (a positional launch never lists among
-/// `recoverable_scratch`'s candidates, which is exactly why this needs its
-/// own `intended_path`-keyed lookup).
 #[test]
 fn named_positional_dead_session_draft_is_recovered_on_relaunch_of_the_same_path() {
     let home = ScratchHome::new("named-positional-recover");
@@ -348,9 +301,6 @@ fn named_positional_dead_session_draft_is_recovered_on_relaunch_of_the_same_path
     );
 }
 
-/// A DIFFERENT positional must never adopt another path's draft — the whole
-/// point of keying the lookup on `intended_path` rather than "any unbound
-/// scratch with history".
 #[test]
 fn named_positional_draft_is_not_adopted_by_a_different_positional() {
     let home = ScratchHome::new("named-positional-different-path");
@@ -407,20 +357,12 @@ fn named_positional_draft_is_not_adopted_by_a_different_positional() {
     );
 }
 
-/// A still-alive session's own named draft must never be stolen by a
-/// concurrent launch of the same positional — the multi-instance safety
-/// requirement: `reconstruct_scratch`'s liveness check (the same one
-/// `bootstrap_untitled_db`'s bare-launch recovery already relies on) must
-/// refuse it exactly as it would for the untitled case.
 #[test]
 fn named_positional_draft_of_a_live_session_is_not_stolen() {
     let home = ScratchHome::new("named-positional-live-session");
     let db_path = db_path_under(&home.0);
     let intended_path = "/vault/notes.md";
 
-    // First "session" stays open (never shut down) so its `sessions` row
-    // keeps this test process's own, still-very-much-alive pid — no
-    // `mark_every_session_dead` call on this test.
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let bridge = rune_tui::db::DbBridge::bootstrap();
     let (store, _warning) =

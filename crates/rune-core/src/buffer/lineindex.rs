@@ -1,7 +1,3 @@
-//! `Buffer`'s line-index / coordinate-conversion side: the `line_starts`
-//! index itself, offset<->`BufferPoint` conversion, and the incremental
-//! rebuild `apply_edits` drives on every edit.
-
 use super::{Buffer, Edit};
 use crate::coords::BufferPoint;
 
@@ -44,13 +40,10 @@ impl Buffer {
         self.line_starts.len()
     }
 
-    /// `None` when `n` is not a valid line index — `0` used to double as
-    /// both "line 0 starts at byte 0" and "no such line".
     pub fn line_start(&self, n: usize) -> Option<usize> {
         self.line_starts.get(n)
     }
 
-    /// `None` when `n` is not a valid line index (see `line_start`).
     pub fn line_end(&self, n: usize) -> Option<usize> {
         let count = self.line_starts.len();
         if n >= count {
@@ -106,9 +99,6 @@ impl Buffer {
         super::snap_char_boundary(&self.content, offset)
     }
 
-    /// An incremental `line_starts` rebuild scanning `edits` right-to-left
-    /// (descending `start`), so each edit only touches the portion of
-    /// `line_starts` it actually displaces.
     pub(super) fn update_line_starts(&self, edits: &[Edit]) -> LineStarts {
         let mut line_starts = self.line_starts.to_full();
         for e in edits {
@@ -135,7 +125,6 @@ impl Buffer {
     }
 }
 
-/// A line ends at `\n`, nothing else.
 pub fn line_starts(content: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in content.bytes().enumerate() {
@@ -156,8 +145,6 @@ fn compute_added_starts(base_offset: usize, text: &str) -> Vec<usize> {
     starts
 }
 
-/// The line index `i` such that `starts[i] <= offset < starts[i+1]` (or the
-/// last line if `offset` is at or past the final line start).
 fn find_line(starts: &[usize], offset: usize) -> usize {
     if starts.is_empty() {
         return 0;
@@ -180,7 +167,7 @@ mod tests {
         assert_eq!(b.line_count(), 3);
         assert_eq!(b.line(0), "line 1");
 
-        let bp = b.offset_to_line_col(10); // "line 1\nlin|e 2"
+        let bp = b.offset_to_line_col(10);
         assert_eq!(bp, BufferPoint { line: 1, col: 3 });
 
         let offset = b.line_col_to_offset(bp);
@@ -197,15 +184,9 @@ mod tests {
         assert_eq!(b.line_end(0), Some(9));
     }
 
-    /// [rune-core 15]: the incremental `update_line_starts` rebuild has a
-    /// subtle boundary when an edit's `end` lands EXACTLY on an existing
-    /// `line_starts[m]` — `find_line` must treat that boundary consistently
-    /// on both sides of the edit so no line start is duplicated or dropped.
     #[test]
     fn update_line_starts_when_edit_end_lands_on_a_line_start_boundary() {
         let b = Buffer::new("aa\nbb\ncc");
-        // line_starts == [0, 3, 6]. Replace exactly [0, 3) — end lands on
-        // the second line start — with a two-line replacement.
         let replaced = b.replace(0, 3, "xx\nyy\n").expect("edit should apply");
         assert_eq!(replaced.content(), "xx\nyy\nbb\ncc");
         assert_eq!(replaced.line_count(), 4);

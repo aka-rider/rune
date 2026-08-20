@@ -1,25 +1,8 @@
-//! Vector rasterization: parse an SVG document with `usvg` and rasterize it
-//! into an RGBA raster via `resvg`'s re-exported `tiny_skia`. Feature-gated
-//! (`svg`) — this module does not exist in the crate at all when the
-//! feature is off, keeping SVG support severable.
-
 use crate::decode::Decoded;
 use crate::decode::Format;
 
-/// The largest axis this crate will rasterize an SVG to, in pixels. Guards
-/// against a pathological or hostile `width`/`height`/viewBox turning into
-/// an unbounded allocation.
 const MAX_AXIS: u32 = 4096;
 
-/// Parses and rasterizes an SVG document.
-///
-/// usvg resolves the viewBox during parsing and exposes no public
-/// `view_box()` accessor — it also supplies a default size when the SVG
-/// declares none, so there is no "no usable viewBox" failure case to
-/// surface here, unlike a raster-only decoder. Dimensions come from
-/// [`usvg::Tree::size`], rounded up and clamped to [`MAX_AXIS`] on each
-/// axis. A malformed attribute degrades (usvg's own tolerant parser drops
-/// or defaults it) rather than aborting the render.
 pub fn decode_svg(data: &[u8]) -> Result<Decoded, SvgError> {
     let opt = usvg::Options::default();
     let tree = usvg::Tree::from_data(data, &opt).map_err(SvgError::Parse)?;
@@ -46,7 +29,6 @@ pub fn decode_svg(data: &[u8]) -> Result<Decoded, SvgError> {
     })
 }
 
-/// Failure decoding an SVG document.
 #[derive(Debug)]
 pub enum SvgError {
     Parse(usvg::Error),

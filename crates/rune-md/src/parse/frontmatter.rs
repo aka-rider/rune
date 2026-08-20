@@ -1,27 +1,12 @@
-//! Frontmatter's own parse: the delimiter that opens it, the language that
-//! delimiter implies, and the split of a comrak `FrontMatter` node into its
-//! two delimiter lines and the body between them.
-
 use super::ScanHint;
 use crate::element::block::FrontmatterM;
 use comrak::{Arena, parse_document};
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
-/// The one spelling of the frontmatter delimiter. comrak is configured with
-/// it and the closing-line check below compares against it — a second
-/// literal would let the two drift apart silently.
 pub(crate) const DELIMITER: &str = "---";
 
-/// The language a `DELIMITER`-opened block is written in. Implied by the
-/// delimiter alone: frontmatter carries no info string a document could
-/// tag, so this is never read from the document.
 pub(crate) const LANGUAGE: &str = "yaml";
 
-/// True if `range`'s own last line — as comrak (via our conversion)
-/// reports it — is genuinely a closing `DELIMITER` line: the sanity check
-/// `frontmatter_extension_is_safe` uses to decide whether a `FrontMatter`
-/// node's reported range can be trusted at all (see that function's docs
-/// for the comrak-internal desync it exists to detect).
 pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> bool {
     let Some(text) = content.get(range.start..range.end) else {
         return false;
@@ -30,22 +15,6 @@ pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> boo
     trimmed.rsplit('\n').next() == Some(DELIMITER)
 }
 
-/// Split a `FrontMatter` node into its opening delimiter line, its body
-/// lines, and its closing delimiter line.
-///
-/// Frontmatter, unlike a fence, has no unterminated shape to guard against:
-/// comrak emits a `FrontMatter` node only once it has matched a closing
-/// delimiter, and `is_valid_frontmatter_close` independently re-verifies
-/// that the node's own last line IS that delimiter before the extension's
-/// output is trusted at all. Only with BOTH of those holding does a last
-/// line distinct from the first prove a closing delimiter line exists —
-/// relax either and this starts claiming an arbitrary last line as a
-/// delimiter.
-///
-/// The node's range stops at the last byte of the closing delimiter — the
-/// newline after it belongs to no block — so every line strictly between
-/// the two delimiters is body. A degenerate single-line node yields no
-/// close, so its one line can never be claimed twice.
 pub(super) fn build(
     content: &str,
     starts: &[usize],
@@ -67,9 +36,9 @@ pub(super) fn build(
     }
 }
 
-/// Mirrors comrak's own opening check (`split_off_front_matter`): a leading
-/// BOM is skipped, then the document must start with `DELIMITER`
-/// immediately followed by `\n` or `\r\n`.
+// Mirrors comrak's own opening check (`split_off_front_matter`): a leading
+// BOM is skipped, then the document must start with `DELIMITER` immediately
+// followed by `\n` or `\r\n`.
 pub(super) fn shadow_may_open_frontmatter(shadow: &str) -> bool {
     let rest = shadow
         .strip_prefix('\u{feff}')
@@ -78,29 +47,13 @@ pub(super) fn shadow_may_open_frontmatter(shadow: &str) -> bool {
     matches!(rest, Some(rest) if rest.starts_with('\n') || rest.starts_with("\r\n"))
 }
 
-/// True unless comrak's frontmatter extension has desynced its OWN
-/// internal line count on this specific document (verification round 5
-/// CLASS A fallout, found by the widened fuzz alphabet — NOT part of the
-/// reviewer's original CLASS A/B reports). Verified empirically: comrak's
-/// frontmatter extension appears to search for its closing `"---"`
-/// delimiter using `\n`-only line splitting internally, but then reports
-/// `Sourcepos` through the OUTER, CR/LF/CRLF-aware line counter that the
-/// REST of comrak's block parser keeps counting from afterward — the
-/// same "one internal scan, a DIFFERENT reported line basis" shape as
-/// round 4's wikilink-extension desync, but with a DOCUMENT-WIDE blast
-/// radius here (frontmatter parsing runs first, so every later block's
-/// sourcepos comes out wrong too) rather than one paragraph's siblings.
-/// Detected by the one cheap, reliable signal available: a genuine
-/// frontmatter block's own (correctly converted) range always ends on a
-/// closing `"---"` line; if it doesn't, comrak's internal state for the
-/// rest of this document can't be trusted at all. `parse()` reacts by
-/// re-parsing the WHOLE document with the extension turned off — the
-/// `"---...---"` blob degrades to ordinary paragraphs/thematic breaks
-/// (unknown syntax degrades to visible raw text, never lost), which
-/// this crate's other producers are already proven safe against.
-///
-/// Skips the reparse entirely — `shadow` cannot start a `FrontMatter` node
-/// at all — for every document `shadow_may_open_frontmatter` rejects.
+// comrak's frontmatter extension searches for its closing "---" using
+// `\n`-only line splitting internally, but reports `Sourcepos` through the
+// outer CR/LF/CRLF-aware line counter the rest of the block parser uses —
+// on a document with `\r\n`, every sourcepos after the frontmatter block
+// comes out wrong. Detected by checking that the FrontMatter node's own
+// range ends on a closing "---" line; if it doesn't, the whole document is
+// re-parsed with the extension disabled.
 pub(super) fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) -> bool {
     if !shadow_may_open_frontmatter(shadow) {
         return true;

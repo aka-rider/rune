@@ -1,9 +1,3 @@
-//! Byte-accounting invariants over `emit` output: every buffer byte is
-//! either visible in exactly one span or accounted for as hidden, and
-//! `SyntaxSnapshot`'s coordinate maps stay monotonic and round-trip
-//! stable. Gated behind `fuzz-hooks` (and test builds) — see that
-//! feature's own docs in `Cargo.toml` — so a consumer that only needs
-//! these checks is not forced to also arm `strict-invariants`.
 #![allow(clippy::indexing_slicing)]
 
 use rune_core::buffer::Buffer;
@@ -31,10 +25,6 @@ fn synced_at(
     (buf, doc)
 }
 
-/// The invariant BLOCKER 1 violated: per line, the sum of every span's
-/// buffer-byte length plus every hidden range's byte length must equal the
-/// line's exact byte length. A per-LINE `touched` bool couldn't distinguish
-/// a partially-covered line from a fully-covered one; this checks BYTES.
 pub fn assert_full_line_coverage(buf: &Buffer, lines: &[SyntaxLine], snap: &SyntaxSnapshot) {
     for line in 0..buf.line_count() {
         let expected_len = buf.line(line).len();
@@ -61,7 +51,7 @@ pub fn assert_no_duplicate_content(content: &str) {
     assert_no_duplicate_content_at(content, &[0], 80);
 }
 
-#[allow(clippy::needless_range_loop)] // `line` also indexes buf.line()/snap.hidden_byte_count(), not just `lines`
+#[allow(clippy::needless_range_loop)]
 pub fn assert_no_duplicate_content_at(content: &str, cursor_offsets: &[usize], width: u16) {
     for &focused in &[true, false] {
         let (buf, doc) = synced_at(content, cursor_offsets, focused, width);
@@ -72,8 +62,6 @@ pub fn assert_no_duplicate_content_at(content: &str, cursor_offsets: &[usize], w
             let line_len = buf.line(line).len();
             let l = &lines[line];
 
-            // No two spans on this line may claim overlapping buffer
-            // bytes — the literal "content duplicated" shape.
             for i in 0..l.spans.len() {
                 for j in (i + 1)..l.spans.len() {
                     let a = &l.spans[i];
@@ -86,16 +74,6 @@ pub fn assert_no_duplicate_content_at(content: &str, cursor_offsets: &[usize], w
                 }
             }
 
-            // When nothing on this line is hidden, the emitted text must
-            // equal the exact buffer bytes — not longer (duplicated
-            // content) or shorter (dropped content). A rendered table row
-            // is the one documented exception (plan architectural decision
-            // 6, "Table lines emit no hidden ranges"): it substitutes a
-            // wholly different, box-drawn string for the same claimed byte
-            // RANGE while hiding nothing, so `hidden_byte_count == 0` no
-            // longer implies "text is verbatim" once `l.table` is `Some`
-            // (`assert_full_line_coverage` above already covers the byte-
-            // accounting side of that same row via `range()`, not `text()`).
             if snap.hidden_byte_count(line) == 0 && l.table.is_none() {
                 let joined: String = l.spans.iter().map(|s| s.text(content)).collect();
                 assert_eq!(
@@ -125,8 +103,6 @@ pub fn assert_no_duplicate_content_at(content: &str, cursor_offsets: &[usize], w
                     "round-trip stability failed (focused={focused}) at line {line} col {col}: bp={bp:?} sp={sp:?} bp2={bp2:?} sp2={sp2:?}"
                 );
 
-                // The reported symptom: syntax_to_buffer mapping past the
-                // buffer line's own end.
                 assert!(
                     bp2.col <= line_len,
                     "syntax_to_buffer mapped past end-of-line (focused={focused}) at line {line} col {col}: bp2={bp2:?} line_len={line_len}"
