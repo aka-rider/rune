@@ -1,29 +1,10 @@
-//! Silent workspace-root discovery: walks up looking for a
-//! marker, with no consent prompt. The recovery store lives entirely
-//! outside the user's tree (`production_db_path()`), so there is nothing to
-//! create and nothing to consent to — this module only ever answers "where
-//! is the nearest project/vault root", never prompts, and can never fail
-//! the app (a `read_dir` error just means "no markers here", not a halt).
-
 use std::path::{Path, PathBuf};
 
 use rune_vfs::Vfs;
 
-/// Marker names scanned for at each directory level, matched BY NAME ONLY.
-/// A git worktree or submodule's `.git` is a *file*, not a directory, so
-/// this never tests `is_dir`.
 const MARKER_GIT: &str = ".git";
 const MARKER_OBSIDIAN: &str = ".obsidian";
 
-/// Resolves the workspace root by walking up from `cwd` (and, if that finds
-/// nothing, from `file_hint`'s parent) looking for a `.git`/`.obsidian`
-/// marker. Returns the nearest ancestor directory holding a marker, or
-/// `cwd` itself when neither walk finds one.
-///
-/// Exactly one `vfs.read_dir` call is made per directory level visited on
-/// each walk — a `read_dir` error is treated as "no markers here" and the
-/// walk keeps climbing rather than stopping (discovery must never halt the
-/// app).
 pub fn resolve(
     vfs: &dyn Vfs,
     cwd: &Path,
@@ -42,9 +23,6 @@ pub fn resolve(
     cwd.to_path_buf()
 }
 
-/// One bottom-up walk from `start` to its ceiling (S2: `home` inclusive when
-/// `start` is under `home`, otherwise `/`), returning the nearest ancestor
-/// (including `start` itself) that carries a `.git`/`.obsidian` marker.
 fn climb(vfs: &dyn Vfs, start: &Path, home: Option<&Path>) -> Option<PathBuf> {
     let ceiling = ceiling_for(start, home);
 
@@ -61,15 +39,11 @@ fn climb(vfs: &dyn Vfs, start: &Path, home: Option<&Path>) -> Option<PathBuf> {
         if dir == ceiling {
             return None;
         }
-        // Reached the filesystem root without hitting the ceiling.
         let parent = dir.parent()?;
         dir = parent.to_path_buf();
     }
 }
 
-/// S2's ceiling rule: if `start` is `home` or a descendant of it, the climb
-/// stops at `home` inclusive; otherwise it climbs all the way to `/`. An
-/// absent `home` behaves like "not under home" — the ceiling is `/`.
 fn ceiling_for(start: &Path, home: Option<&Path>) -> PathBuf {
     match home {
         Some(home) if start.starts_with(home) => home.to_path_buf(),
@@ -101,9 +75,6 @@ mod tests {
         assert_eq!(root, PathBuf::from("/home/user/proj"));
     }
 
-    /// A git worktree/submodule's `.git` is a FILE, not a directory —
-    /// `save_atomic` here writes `.git` itself as a file (not a path
-    /// underneath it), and the marker must still be found by name alone.
     #[test]
     fn git_marker_as_a_file_not_a_directory_still_counts() {
         let mem = Mem::new();
@@ -125,8 +96,6 @@ mod tests {
         assert_eq!(root, PathBuf::from("/home/user/scratch"));
     }
 
-    /// A marker sitting above `home` must never be found: the climb stops
-    /// at `home` inclusive.
     #[test]
     fn the_home_ceiling_stops_the_climb() {
         let mem = Mem::new();
@@ -140,8 +109,6 @@ mod tests {
         assert_eq!(root, PathBuf::from("/home/user/proj"));
     }
 
-    /// `cwd` outside `home` entirely climbs all the way to `/` instead of
-    /// stopping at (or being bounded by) `home`.
     #[test]
     fn cwd_outside_home_climbs_to_root() {
         let mem = Mem::new();
@@ -156,7 +123,6 @@ mod tests {
         assert_eq!(root, PathBuf::from("/mnt/vault"));
     }
 
-    /// The `file_hint` retry only fires when the `cwd` walk found nothing.
     #[test]
     fn file_hint_retry_fires_only_when_cwd_walk_finds_nothing() {
         let mem = Mem::new();
@@ -165,8 +131,6 @@ mod tests {
         mem.save_atomic(Path::new("/mnt/other/.git/HEAD"), b"x")
             .unwrap();
 
-        // cwd walk finds its own marker first — the hint's project must be
-        // ignored even though it exists.
         let root = resolve(
             &mem,
             Path::new("/home/user/cwdproj"),
@@ -191,8 +155,6 @@ mod tests {
         assert_eq!(root, PathBuf::from("/mnt/other"));
     }
 
-    /// The retry must not fire at all when `file_hint` is `None` — the walk
-    /// just falls back to `cwd`.
     #[test]
     fn file_hint_retry_does_not_fire_when_hint_is_none() {
         let mem = Mem::new();

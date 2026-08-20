@@ -1,8 +1,3 @@
-//! Reacts to `Msg::DirLoaded`, routed from `app::update_inner` through
-//! `explorer::handle_dir_loaded` (a re-export of `handle_dir_loaded` below —
-//! every other module keeps calling it through `explorer::`, unaware it
-//! moved here (500-line budget).
-
 use std::path::{Path, PathBuf};
 
 use rune_vfs::{DirEntry, FileKind, Link};
@@ -11,14 +6,6 @@ use crate::app::App;
 use crate::explorer::ensure_visible;
 use crate::runtime::DirCause;
 
-/// Prepends a synthetic `..` row to `entries` when `root` has a parent — a
-/// REAL `DirEntry` carrying the real parent path, not a render-time overlay.
-/// Because it's a genuine list element, `open_selected`'s existing
-/// directory branch (resolve, then `request_dir`) already does exactly what
-/// `go_to_parent` does when the user presses Enter on it — no `".."`
-/// special case anywhere, and `listnav::List`'s cursor keeps addressing the
-/// one real list it's always addressed, never an N+1 rendered one. A root
-/// with no parent (a filesystem root) gets no such row.
 fn with_parent_entry(root: &Path, mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
     let Some(parent) = root.parent() else {
         return entries;
@@ -35,20 +22,6 @@ fn with_parent_entry(root: &Path, mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
     entries
 }
 
-/// A `generation` that no longer matches `app.explorer.request_generation`
-/// is a reply to a SUPERSEDED request (a later `ReadDir` was already
-/// issued — `request_dir`/the initial `^x` load bump the generation at
-/// every issue site) and is ignored outright, never adopted over whatever
-/// a newer, still-in-flight (or already-landed) request produced. `Nav`
-/// always adopts the new root/entries and resets the cursor to the top;
-/// `Refresh` keeps the currently selected entry selected BY NAME when it's
-/// still present in the new listing (falling back to the top otherwise) —
-/// this is exactly what `refresh_for` (`explorer.rs`) issues on every
-/// successful rename that lands inside the current Explorer root, so the
-/// branch has a real production caller, not just this file's own tests;
-/// it's also the shape a later fsnotify-driven reload would use. A pending
-/// reveal (`Explorer::pending_reveal`, set by `explorer_reveal::reveal`)
-/// wins over both, landing the cursor on its own target instead.
 pub(crate) fn handle_dir_loaded(
     app: &mut App,
     root: PathBuf,
@@ -60,7 +33,7 @@ pub(crate) fn handle_dir_loaded(
         return;
     }
 
-    crate::explorer_search::clear_search(app); // a new listing outdates any query
+    crate::explorer_search::clear_search(app);
     let entries = with_parent_entry(&root, entries);
 
     let reveal_target = app.explorer.pending_reveal.take();
@@ -125,7 +98,6 @@ mod tests {
             crate::generation::Generation::ZERO,
         );
         assert_eq!(app.explorer.nav.cursor, 0);
-        // "/root" has a parent ("/"), so a synthetic ".." row is prepended.
         assert_eq!(app.explorer.entries.len(), 3);
     }
 
@@ -139,7 +111,7 @@ mod tests {
             DirCause::Nav,
             crate::generation::Generation::ZERO,
         );
-        app.explorer.nav.cursor = 3; // "c", shifted one place by the leading ".." row
+        app.explorer.nav.cursor = 3;
 
         handle_dir_loaded(
             &mut app,
@@ -161,7 +133,7 @@ mod tests {
             DirCause::Nav,
             crate::generation::Generation::ZERO,
         );
-        app.explorer.nav.cursor = 2; // "gone", shifted one place by the leading ".." row
+        app.explorer.nav.cursor = 2;
 
         handle_dir_loaded(
             &mut app,
@@ -173,10 +145,6 @@ mod tests {
         assert_eq!(app.explorer.nav.cursor, 0);
     }
 
-    /// A `DirLoaded` reply whose `generation` no longer matches the
-    /// Explorer's current `request_generation` (a later request already
-    /// superseded it) must be ignored outright — the review fix for two
-    /// in-flight `ReadDir` Cmds landing out of order.
     #[test]
     fn a_stale_generation_reply_is_ignored() {
         let mut app = app();
@@ -189,7 +157,7 @@ mod tests {
             PathBuf::from("/elsewhere"),
             entries(&[("stale", false)]),
             DirCause::Nav,
-            crate::generation::Generation::from_raw(4), // superseded — the live generation is 5
+            crate::generation::Generation::from_raw(4),
         );
 
         assert_eq!(
@@ -200,7 +168,6 @@ mod tests {
         assert_eq!(app.explorer.entries, entries(&[("a", false)]));
     }
 
-    /// The reply carrying the CURRENT generation is applied normally.
     #[test]
     fn the_current_generation_reply_is_applied() {
         let mut app = app();
@@ -215,7 +182,6 @@ mod tests {
         );
 
         assert_eq!(app.explorer.root, PathBuf::from("/fresh"));
-        // "/fresh" has a parent ("/"), so a synthetic ".." row leads the list.
         let mut expected = entries(&[("fresh", false)]);
         expected.insert(
             0,

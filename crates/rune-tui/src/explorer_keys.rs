@@ -1,15 +1,3 @@
-//! `Pane::Explorer`-focused key handling (split out of `explorer.rs` per
-//! the 500-line budget): `ExplorerCommand`'s binding table and `handle_key`,
-//! called from `app::handle_key`'s stage-3 dispatch. Directory
-//! loading/listing state stays in `explorer.rs`; `move_selection`/
-//! `open_selected`/`go_to_parent` below reach back into it
-//! (`explorer::ensure_visible`/`request_dir`) for the pieces
-//! `handle_dir_loaded` also needs to share. Type-to-search (no wall clock)
-//! is a sibling module, `explorer_search`, split out to keep this file
-//! under the 500-line budget —
-//! it owns `ExplorerSearchCommand`/`EXPLORER_SEARCH_BINDINGS`/
-//! `handle_search`, and `handle_key` below consults it FIRST.
-
 use crate::app::App;
 use crate::explorer::{self, ensure_visible};
 use crate::explorer_preview;
@@ -19,8 +7,6 @@ use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
 
-/// The Explorer's own commands — resolved via `EXPLORER_
-/// BINDINGS`, mirroring `keymap::GlobalCommand`'s shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplorerCommand {
     Up,
@@ -32,10 +18,6 @@ pub enum ExplorerCommand {
     Leave,
 }
 
-/// Arrow keys move one entry; Home/End jump to the ends; Enter opens the
-/// selected entry (a file activates it, a directory navigates into it);
-/// Backspace navigates to the parent of the CURRENT root (not the selected
-/// entry).
 pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     Binding {
         key: KeyPattern::new(KeyCode::Up, Mods::NONE),
@@ -73,10 +55,6 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
         help: "up dir",
         secondary: false,
     },
-    // Only reached when `EXPLORER_SEARCH_BINDINGS`'s own Escape row didn't
-    // already claim the key (`handle_key`'s `is_some()` gate below) — a
-    // live search's first Escape ends the search; this row is what a
-    // SECOND Escape (search already clear) falls through to.
     Binding {
         key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: ExplorerCommand::Leave,
@@ -85,26 +63,6 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     },
 ];
 
-/// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
-/// `app.focus() == Pane::Explorer`. `effects` is needed (unlike the plan's
-/// literal `handle_key(app, key) -> KeyOutcome` sketch) because `Open`/
-/// `ParentDir` must enqueue a `ReadDir` `Cmd` — a Vfs read can never run
-/// inline in `update` — the same reason `app::handle_editor_key`
-/// this mirrors already threads `effects` through for `Save`/clipboard.
-///
-/// Type-to-search (`explorer_search::EXPLORER_SEARCH_BINDINGS`) is checked
-/// FIRST, and only while a search is already running OR the just-typed key
-/// is the `Type` row: this is the whole "there is no key that enters search
-/// mode" story from the design — the very first printable keystroke both
-/// starts the query and supplies its first character, so it must win over
-/// `EXPLORER_BINDINGS` before that table ever sees the key (a plain letter
-/// isn't bound there anyway, but Esc/Backspace ARE, and while a search is
-/// live they must mean "edit the query", not "cancel"/"go to parent dir").
-/// Once a normal `ExplorerCommand` fires, `clear_search` runs first — every
-/// nav/open command exits a stale search, matching the design's "leaving
-/// the Explorer / loading a new directory -> search cleared" list (blur and
-/// directory-reload are the other two clear points, `app::set_focus` and
-/// `explorer::handle_dir_loaded`).
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     if let Some(cmd) = resolve_in(EXPLORER_SEARCH_BINDINGS, key)
         && (app.explorer_find().is_some() || cmd == explorer_search::ExplorerSearchCommand::Type)
@@ -164,31 +122,6 @@ fn dangling_report(vfs: &dyn rune_vfs::Vfs, link: &std::path::Path) -> (String, 
     }
 }
 
-/// Opens the currently selected entry: a file activates it through
-/// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
-/// the Explorer into it; a broken symlink opens nothing and reports the
-/// dangling target with the exact `io::Error` behind it — the listing's
-/// three-way vocabulary does not distinguish a missing target from a loop
-/// or a refused permission, so this is where the user learns which it is. The target
-/// path comes straight from `entry.path` — the byte-exact path `Vfs::
-/// read_dir` returned — never rejoined from `entry.name`
-/// onto `app.explorer.root`: `name` is lossy-decoded for display, and
-/// rejoining it would let a byte the user's filename actually has silently
-/// become U+FFFD in the path the app opens. The directory branch
-/// resolves the candidate root through `workspace::resolve` first,
-/// same as `initial_root`/`open_path` already do — a plain `join` would let
-/// an unresolved (e.g. symlinked) path become the Explorer's new root,
-/// unlike every other root-changing path in this module. Reports and
-/// aborts the navigation on a `resolve` error, rather than opening a
-/// directory listing under an unnormalized spelling the identity of which
-/// is not actually known.
-///
-/// The file branch blurs the title BEFORE calling `open_path` (decision 8:
-/// `open_path`'s own reactivation branch switches synchronously, and
-/// `rename::begin` resolves its subject from the live `app.active`), then
-/// lands focus on the Editor only when `open_path` actually returns an id —
-/// a read failure raises the error banner instead and must not ALSO steal
-/// the keyboard from a user still arrowing the Explorer list.
 pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some((target, is_dir, link, name)) =
         app.explorer.entries.get(app.explorer.nav.cursor).map(|e| {
@@ -219,12 +152,6 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
     }
     let departed = crate::navhistory::departure_origin(app);
 
-    // The cursor's own preview already loaded this exact file: promote it
-    // in place rather than re-reading it through `open_path` — same
-    // document, same id, just no longer `Preview`. A preview still in
-    // flight (or skipped outright — a search was live, the read hasn't
-    // landed yet) falls through to the ordinary synchronous open below,
-    // exactly as before this module existed.
     if let Some(id) = app.explorer.preview
         && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(target.as_path())
     {
@@ -235,21 +162,12 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
     }
 
     app.blur_title(effects);
-    // `open_path_checked` reports a read failure (via `open_path`) or a
-    // full tab strip (via the limit gate) through the message log itself
-    // before returning `None` — discarding the `Option` here drops only
-    // the opened id, never an unsurfaced error.
     if workspace::open_path_checked(app, &target, effects).is_some() {
         app.set_focus_pane(Pane::Editor, effects);
         crate::navhistory::record_departure_if_moved(app, departed);
     }
 }
 
-/// Escape off the Explorer promotes the live preview, so it commits the
-/// browse exactly like Enter does — but only once focus has actually
-/// landed on the Editor: a frame too narrow to paint both panes
-/// (`LayoutMode::ExplorerOnly`) resolves the Editor back to the Explorer,
-/// leaving the preview live and the user exactly where they were.
 fn leave(app: &mut App, effects: &mut Effects) {
     let departed = crate::navhistory::departure_origin(app);
     app.set_focus_pane(Pane::Editor, effects);
@@ -259,12 +177,6 @@ fn leave(app: &mut App, effects: &mut Effects) {
     crate::navhistory::record_departure_if_moved(app, departed);
 }
 
-/// Backspace navigates to the CURRENT root's own parent — a no-op at a
-/// filesystem root (`Path::parent` returns `None`), never a Cmd for a
-/// nonexistent target. Resolved through `workspace::resolve` before use (see
-/// `open_selected`'s docs) — a plain `Path::parent` is pure path arithmetic
-/// that never consults the filesystem, unlike `initial_root`'s own root
-/// resolution.
 fn go_to_parent(app: &mut App, effects: &mut Effects) {
     let Some(parent) = app.explorer.root.parent() else {
         return;
@@ -369,8 +281,6 @@ mod tests {
                 KeyOutcome::Consumed
             );
         }
-        // Entries are [.., a, b, c] now that "/root" has a parent — index 3
-        // is the bottom, one past where it was before the leading ".." row.
         assert_eq!(app.explorer.nav.cursor, 3, "clamped at the bottom");
     }
 }

@@ -1,16 +1,3 @@
-//! `⌘⌫`/`^⌫` — moves the Explorer-selected file or the active document's
-//! file to the OS Trash, behind a `guard::GuardKind::Trash` confirm
-//! prompt. `request_trash` resolves the target and raises the guard;
-//! `confirm` enqueues the off-thread `vfs.trash` call once the user answers
-//! `[Y]es`; `handle_trash_done` reacts to its reply.
-//!
-//! An Explorer row is trashed at its LITERAL path, never resolved first:
-//! trashing a symlink removes the link and leaves the document it points at
-//! untouched, the way every file manager and `rm` behaves. This is the one
-//! deliberate exception to the workspace's resolve-everywhere rule, and the
-//! reason a link whose target is open keeps that tab open — the target
-//! still exists.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,11 +13,6 @@ use crate::pane::Pane;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 use crate::workspace;
 
-/// The single-flight state machine `request_trash`/`confirm`/
-/// `handle_trash_done` drive — mirrors `RenameState`/`MergeState`'s own
-/// shape rather than a loose generation-plus-`Option<PathBuf>` pair, so a
-/// stray read of one field can never disagree with the other about whether
-/// a trash is in flight.
 #[derive(Default)]
 pub(crate) enum TrashState {
     #[default]
@@ -38,13 +20,6 @@ pub(crate) enum TrashState {
     Pending { generation: TrashGen },
 }
 
-/// Resolves the trash target from the current focus and raises the confirm
-/// guard. Explorer focus reads the selection the way `explorer_keys::
-/// open_selected` does; any other focus targets the active document's own
-/// file. Refuses (with a `messages::error`, never a silent no-op) a
-/// directory selection, a pathless draft, and a dirty open document — the
-/// last re-checked again at `confirm` and once more when the reply lands,
-/// since the user can keep typing between each of these points.
 pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
     if !matches!(app.trash, TrashState::Idle) {
         messages::error(app, "a trash is already in progress");
@@ -101,11 +76,6 @@ fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
     }
 }
 
-/// The trash guard's `[Y]es` answer: refuses a second commit while one is
-/// already in flight (mirrors `rename::begin`'s `in_flight` refusal),
-/// re-runs the dirty refusal (the user may have edited the open document
-/// between the chord and the confirm), then enqueues the off-thread `vfs.
-/// trash` call under a freshly minted generation and arms `app.trash`.
 pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
     if !matches!(app.trash, TrashState::Idle) {
         messages::error(app, "a trash is already in progress");
@@ -121,9 +91,6 @@ pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
         .push(trash_cmd(Arc::clone(&app.vfs), path, generation));
 }
 
-/// Refuses (with a `messages::error`) a trash target whose document is open
-/// and dirty right now — shared by `request_trash`'s initial check and
-/// `confirm`'s re-check, since the user can keep typing between the two.
 fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
     if let Some(id) = workspace::existing_document_for(app, path)
         && app.doc(id).is_some_and(Document::is_dirty)
@@ -134,8 +101,6 @@ fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
     false
 }
 
-/// The off-thread `vfs.trash` call — mirrors `rename_create::rename_cmd`'s
-/// shape.
 fn trash_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     path: PathBuf,
@@ -151,23 +116,6 @@ fn trash_cmd(
     })
 }
 
-/// `Msg::TrashDone`'s handler. A reply that doesn't name `app.trash`'s own
-/// `Pending` generation (a fresh trash request started and finished before
-/// this one's reply lands, or this one simply already landed once) is
-/// dropped on arrival, before anything is touched — under single-flight
-/// enforcement (`request_trash`/`confirm` both refuse while `app.trash`
-/// isn't `Idle`) that can only happen for a reply that owns no state left to
-/// clear. Once a reply IS for the current `Pending`, `app.trash` returns to
-/// `Idle` unconditionally — before the `Ok`/`Err` match, so neither outcome
-/// can leave the next request refused forever. `Err` is
-/// reported and closes nothing. `Ok` re-derives dirtiness one last time
-/// (assumption A4): a document that became dirty while the Cmd was in
-/// flight keeps its tab open (the file is gone, but the unsaved words are
-/// not) and a single Warn message says so; otherwise the tab is closed and
-/// a single Info message says so — exactly one message per outcome. Any
-/// Guard still live for the closing document (`close_now` does not sweep
-/// `app.guard`) is cleared first, or the footer would go on rendering a
-/// prompt for a document that no longer exists.
 pub(crate) fn handle_trash_done(
     app: &mut App,
     generation: crate::generation::TrashGen,
@@ -211,8 +159,6 @@ pub(crate) fn handle_trash_done(
     }
 }
 
-/// Clears a live Guard prompting for `doc` before it is closed out from
-/// under the user — `close_now` never sweeps `app.guard` itself.
 fn sweep_live_guard(app: &mut App, doc: DocumentId) {
     if app.guard.as_ref().is_some_and(|p| p.doc == doc) {
         guard::clear_guard(app);
@@ -220,9 +166,6 @@ fn sweep_live_guard(app: &mut App, doc: DocumentId) {
     }
 }
 
-/// The display name for a trash target: the file name, or the whole path
-/// when it has none (e.g. a root). Shared by the guard footer's prompt and
-/// this module's own `Ok`/`Err` messages.
 pub(crate) fn display_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.to_string_lossy().into_owned(),
@@ -266,16 +209,6 @@ mod tests {
         );
     }
 
-    /// The trash chord, resolved through `App::update`'s real `Msg::Key`
-    /// dispatch, never reaches `request_trash` at all while a Guard is
-    /// already showing (`dispatch::handle_key`'s Stage 1 routes every key
-    /// to the existing prompt first) — so a foreign Guard already up is
-    /// exercised by calling `request_trash` directly, exactly the real
-    /// entry point `GlobalCommand::Trash` resolves to; the two paths only
-    /// ever differ by that already-showing-prompt short circuit, never by
-    /// what `request_trash` itself does. Raising `Trash` against an
-    /// occupied slot must warn and leave the original prompt alone, rather
-    /// than silently dropping the trash intent.
     #[test]
     fn trash_chord_while_a_different_guard_is_up_warns_and_preserves_it() {
         let mut app = app();
