@@ -1,3 +1,4 @@
+
 mod graphics;
 mod replica;
 mod save_state;
@@ -16,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rune_core::buffer::{Buffer, Edit, SortedEdits};
+use rune_core::buffer::{Buffer, Edit, SortedEdits, clamp_to_char_boundary};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{EditKind, Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
@@ -241,7 +242,12 @@ impl Document {
         self.save.pending_version()
     }
 
-    pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
+    pub fn hydrate(
+        &mut self,
+        disk_content: &str,
+        recovered: &str,
+        journaled_cursors: &[Cursor],
+    ) -> Hydration {
         if recovered == disk_content {
             return Hydration::NoChange;
         }
@@ -258,9 +264,9 @@ impl Document {
         let Ok((new_buffer, applied)) = self.buffer.apply_edits(&edit) else {
             return Hydration::Refused("recovered draft failed to apply to the buffer");
         };
-        self.cursors = self.cursors.map(|c| {
-            let position = recovered.floor_char_boundary(c.position.min(recovered.len()));
-            let anchor = recovered.floor_char_boundary(c.anchor.min(recovered.len()));
+        let seat = |c: Cursor| {
+            let position = clamp_to_char_boundary(recovered, c.position);
+            let anchor = clamp_to_char_boundary(recovered, c.anchor);
             Cursor {
                 position,
                 anchor,
@@ -271,7 +277,13 @@ impl Document {
                 },
                 ..c
             }
-        });
+        };
+        self.cursors = if journaled_cursors.is_empty() {
+            self.cursors.map(seat)
+        } else {
+            let seated: Vec<Cursor> = journaled_cursors.iter().copied().map(seat).collect();
+            CursorSet::new_from(&seated)
+        };
         self.buffer = new_buffer;
         self.journal.push(Step {
             edits: applied,
