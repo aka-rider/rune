@@ -1,14 +1,3 @@
-//! Static session-generation data, split out of `generate` (500-line
-//! budget): the four string palettes and the fixed `KeyInput`s/`KeyInput`
-//! slices
-//! every `cluster_*` strategy in `cluster.rs` draws from.
-//!
-//! The document corpus (`SEEDS`, `MARKDOWN_FRAGMENTS`, `PASTE_PALETTE`,
-//! `TYPE_PALETTE`) lives in `palette_doc.rs`; the input corpus (key/chord
-//! palettes, `CMDPAL_*` constants) lives in `palette_input.rs`. Both are
-//! re-exported here so every consumer keeps importing from `palette`
-//! unchanged.
-
 mod palette_doc;
 mod palette_input;
 

@@ -1,11 +1,3 @@
-//! Exec-probes against the REAL compiled `rune` binary:
-//! the only reliable way to assert on a process exit code,
-//! since `std::process::ExitCode` (what `main`/`launch` return in-process)
-//! is deliberately opaque and can't be inspected by a unit test. Every case
-//! here is an EARLY-EXIT path (`--help`/`--version`, a rejected command
-//! line, a load failure) — none of them ever reach the interactive run
-//! loop, so none of them hang waiting on a terminal.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::env;
@@ -20,9 +12,6 @@ fn rune() -> Command {
     Command::new(env!("CARGO_BIN_EXE_rune"))
 }
 
-/// A real, throwaway directory under the OS temp dir for the file-based
-/// probes below — `rune` talks to the real filesystem (`Disk`), so these
-/// need actual files, not `Mem`.
 struct ScratchDir(PathBuf);
 
 impl ScratchDir {
@@ -115,9 +104,6 @@ fn launch_non_unicode_argv_exits_usage_not_a_panic() {
 
     let bad_arg = std::ffi::OsStr::from_bytes(&[0xff, 0xfe]);
     let output = rune().arg(bad_arg).output().expect("run rune <bad argv>");
-    // Exit 64 (EX_USAGE), never 101 (the default Rust panic exit code) —
-    // `env::args()` used to panic on non-UTF-8 argv before `env::args_os()`
-    // replaced it.
     assert_ne!(
         output.status.code(),
         Some(101),
@@ -126,8 +112,6 @@ fn launch_non_unicode_argv_exits_usage_not_a_panic() {
     assert_eq!(output.status.code(), Some(EX_USAGE));
 }
 
-/// The exit-code matrix: every early-exit code this binary can produce,
-/// from one process launch each.
 #[test]
 fn launch_exit_code_matrix() {
     let cases: &[(&[&str], i32)] = &[
@@ -152,9 +136,6 @@ fn launch_exit_code_matrix() {
     let output = rune().arg(&file).output().expect("run rune <bad file>");
     assert_eq!(output.status.code(), Some(EX_DATAERR));
 
-    // Not part of the matrix's cases above (would need a live terminal to
-    // run to completion): a directory as the target path exits IO_ERR
-    // before ever reaching the run loop.
     let output = rune().arg(&scratch.0).output().expect("run rune <dir>");
     assert_ne!(
         output.status.code(),

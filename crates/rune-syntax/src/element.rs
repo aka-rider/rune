@@ -1,25 +1,8 @@
-//! The producer-agnostic reveal vocabulary (WP3): `RevealState`/`RevealSm`/
-//! `RevealGrant`/`InheritCtx`/`ByteRange`/`CursorProbe`, moved out of
-//! `rune-md`'s own element module so a future tree-sitter producer can emit
-//! and consume the same types without depending on `rune-md`. `Block`,
-//! `Inline` and `DocMachine` stay in `rune-md` — they're markdown-specific.
-//!
-//! `RevealMode` and `WrapState` move here too (not in the plan's original
-//! five-type list, which named only the types textually defined
-//! alongside them in `rune-md`): `InheritCtx::wrap` is typed by the latter,
-//! and `InheritCtx` cannot compile standalone in this crate without its own
-//! field types coming along. Both are producer-agnostic — reveal mode and
-//! wrap width aren't markdown concepts — so this is the smallest move that
-//! actually unblocks the extraction. `rune-md`'s `DocMachine` (which stays
-//! put) imports them back from here.
-
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::CursorSet;
 use std::ops::Range;
 
-/// Whether a concealable element is showing its rendered (folded, styled)
-/// form or its raw revealed markdown.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RevealState {
     #[default]
@@ -27,11 +10,6 @@ pub enum RevealState {
     Revealed,
 }
 
-/// Embedded in every concealable element. `transition` is the ONLY writer of
-/// `state` in the crate (the single-transition-writer pattern: one
-/// `transition`, callers never assign the field directly). Returns true
-/// iff the state actually changed, so callers can OR it into a dirty flag
-/// without a separate equality check.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RevealSm {
     state: RevealState,
@@ -46,11 +24,6 @@ impl RevealSm {
         self.state
     }
 
-    /// The single writer of `state` for this machine kind. Every other
-    /// machine in the crate reaches this through a method call
-    /// (`self.sm.transition(..)`), never by assigning `.state` itself — the
-    /// WP3 single-transition-writer test greps for the literal write and
-    /// expects to find it exactly once, right here.
     pub fn transition(&mut self, next: RevealState) -> bool {
         if self.state == next {
             return false;
@@ -60,12 +33,6 @@ impl RevealSm {
     }
 }
 
-/// Parent -> child reveal directive: the reveal-inheritance carrier. A
-/// parent that is itself concealed (`Rendered`) forces every descendant
-/// concealed too (`ForceRendered`); a parent that is revealed hands its
-/// children `ForceRevealed` (an open bold span reveals its nested link as a
-/// unit); `Decide` means "consult your own policy" — only ever handed out by
-/// the document root when focused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RevealGrant {
     Decide,
@@ -74,12 +41,6 @@ pub enum RevealGrant {
 }
 
 impl RevealGrant {
-    /// The chokepoint every per-element Decide policy (the reveal-policy
-    /// table in the plan Context) routes through: resolve a grant to a
-    /// concrete `RevealState`, calling `decide` only when the grant itself
-    /// doesn't already force an outcome. Keeps the three-armed
-    /// `ForceRendered`/`ForceRevealed`/`Decide` match in exactly one place
-    /// instead of copy-pasted into every machine's `sync`.
     pub fn resolve(self, decide: impl FnOnce() -> bool) -> RevealState {
         match self {
             RevealGrant::ForceRendered => RevealState::Rendered,
@@ -95,7 +56,6 @@ impl RevealGrant {
     }
 }
 
-/// A half-open, absolute-byte range: `[start, end)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ByteRange {
     pub start: usize,
@@ -123,12 +83,6 @@ impl ByteRange {
         offset >= self.start && offset <= self.end
     }
 
-    /// Clamp this range into `[0, len]`, keeping `start <= end`. Every range
-    /// derived from comrak sourcepos or line arithmetic funnels through this
-    /// before being stored on an element — the chokepoint that keeps
-    /// `&content[a..b]` accesses downstream valid without sprinkling ad-hoc
-    /// `min()` at every call site (Gotchas: "every `&content[a..b]` must come
-    /// from validated/clamped ranges").
     pub fn clamp(&self, len: usize) -> ByteRange {
         let start = self.start.min(len);
         let end = self.end.min(len).max(start);
@@ -174,10 +128,6 @@ impl LineLocal {
     }
 }
 
-/// Precomputed once per `sync_cursors` from `Buffer` + `CursorSet`: every
-/// cursor's byte offset and its `BufferPoint` (line/col), so the reveal
-/// policies (the `Decide` arm) never re-walk the cursor set or re-run
-/// `offset_to_line_col` per element.
 #[derive(Clone, Debug, Default)]
 pub struct CursorProbe {
     offsets: Vec<usize>,
@@ -206,12 +156,6 @@ impl CursorProbe {
     }
 }
 
-/// Whether the document root grants `Decide` to its children at all. `Never`
-/// forces every descendant `ForceRendered` — an unfocused document forces
-/// every element rendered; `AtCursor` lets each element's own policy
-/// consult the cursor. The document root picks this from whether it has a
-/// live insertion point to reveal at — not from focus alone, since a
-/// focused-but-read-only document has no insertion point either.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RevealMode {
     Never,
@@ -228,9 +172,6 @@ impl From<bool> for RevealMode {
     }
 }
 
-/// Root-owned wrap state; only a document-root machine (`rune-md`'s
-/// `DocMachine`) mutates it. Downstream elements read it through
-/// `InheritCtx::wrap`, never own a copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WrapState {
     pub width: u16,
@@ -242,19 +183,6 @@ impl Default for WrapState {
     }
 }
 
-/// The inherited context every parent hands its children. Downstream
-/// elements NEVER own wrap state — they read the root's through this (plan
-/// directive: "downstream inherits upstream state").
-///
-/// `grant` is Phase 1's only ACTIVELY CONSUMED channel: every element's
-/// `sync` reads it (via `RevealGrant::resolve`) to decide its own reveal
-/// state, and `InheritCtx::child` is what recomputes it going down the
-/// tree. `wrap` is carried context for elements that don't exist yet — no
-/// Phase-1 block or inline machine reads it (a Phase-5 table machine will
-/// read `wrap.width` to lay out columns). It stays on this struct now
-/// rather than being bolted on later, since every element already receives
-/// `&InheritCtx` — adding a field here is free; adding it after the fact
-/// would touch every `sync` signature in the crate.
 #[derive(Clone, Copy)]
 pub struct InheritCtx<'a> {
     pub wrap: &'a WrapState,
@@ -263,10 +191,6 @@ pub struct InheritCtx<'a> {
 }
 
 impl<'a> InheritCtx<'a> {
-    /// THE "downstream inherits upstream state" rule, in one function: a
-    /// concealed (`Rendered`) parent forces every descendant concealed; a
-    /// revealed parent forces its descendants revealed (nesting reveals as a
-    /// unit); an already-forced grant from further up always wins.
     pub fn child(&self, own: RevealState) -> InheritCtx<'a> {
         let own_grant = match own {
             RevealState::Revealed => RevealGrant::ForceRevealed,

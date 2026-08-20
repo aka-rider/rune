@@ -1,22 +1,3 @@
-//! Immutable, value-semantics text buffer keyed by BYTE offsets.
-//!
-//! Type-driven invariants (each removes an illegal state rather than
-//! guarding it at runtime):
-//! - `Edit`/`AppliedEdit` offsets are `usize` — a negative offset is
-//!   unrepresentable.
-//! - `Edit::insert` is a Rust `String`, so UTF-8 validity is enforced by
-//!   the type itself.
-//! - Every access that would need `[]` indexing goes through
-//!   `.get()`/`.get_mut()` instead, per the workspace's
-//!   `clippy::indexing_slicing` lint — every `&content[a..b]` must come
-//!   from a validated/clamped range, and the buffer's own methods ARE
-//!   those clamping helpers, so nothing downstream ever indexes `content`
-//!   directly.
-//! - An out-of-range `slice`/`byte` access returns an empty/`None`
-//!   fallback instead of panicking, per the workspace's
-//!   `clippy::panic`/`unwrap_used` deny-lints — a panic would take the
-//!   unsaved buffer down with it.
-
 use std::fmt;
 
 mod lineindex;
@@ -38,7 +19,6 @@ pub(crate) fn snap_char_boundary(content: &str, offset: usize) -> usize {
     content.floor_char_boundary(offset)
 }
 
-/// One requested edit: replace the byte range `[start, end)` with `insert`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {
     pub start: usize,
@@ -46,8 +26,6 @@ pub struct Edit {
     pub insert: String,
 }
 
-/// The edit actually applied, in POST-edit coordinates, with the displaced
-/// text kept for inversion (undo).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppliedEdit {
     pub start: usize,
@@ -56,30 +34,16 @@ pub struct AppliedEdit {
     pub insert: String,
 }
 
-/// Why an edit batch was rejected. `ApplyEdits` never panics — every
-/// rejected edit surfaces one of these instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BufferError {
-    /// `Buffer::from_bytes` was given bytes that are not valid UTF-8.
     InvalidUtf8,
-    /// The edit batch was not sorted descending by `start` and
-    /// non-overlapping.
     EditsNotSortedOrOverlapping,
-    /// An edit's range does not fit the live buffer.
     OutOfBounds {
         start: usize,
         end: usize,
         len: usize,
     },
-    /// An edit's `start` or `end` falls inside a multi-byte UTF-8 character.
     SplitsRune { offset: usize },
-    /// Two edits in the batch computed the identical post-edit `start` —
-    /// the corruption path where a batch that is individually valid
-    /// (non-overlapping, sorted) still collapses two `AppliedEdit`s onto
-    /// one position once shifts are applied (e.g. two adjacent one-byte
-    /// deletes). Refused here — at the one place both the write path
-    /// (persisted journal rows) and the read-back path (`undo::reapply`)
-    /// share — rather than left for a replayer to silently misorder.
     DuplicateEditStart { start: usize },
 }
 
@@ -105,9 +69,6 @@ impl fmt::Display for BufferError {
 
 impl std::error::Error for BufferError {}
 
-/// An immutable snapshot of document content. Every mutation returns a new
-/// `Buffer`; the receiver is untouched (fuzz-proven in
-/// `tests/buffer_roundtrip.rs`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Buffer {
     content: String,
@@ -132,7 +93,6 @@ impl Buffer {
         }
     }
 
-    /// Refuses non-UTF-8 bytes — the load-time refusal point.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Buffer, BufferError> {
         let content = String::from_utf8(bytes).map_err(|_| BufferError::InvalidUtf8)?;
         Ok(Buffer::new(content))
@@ -150,13 +110,6 @@ impl Buffer {
         self.version
     }
 
-    /// Advances this buffer's version to be strictly greater than `floor`,
-    /// touching no byte of its content — for a caller that replaces one
-    /// buffer's content with another's under the SAME identity (a document
-    /// id kept across the swap) and needs every consumer gated on
-    /// `version()` to see that as a genuine change, even when both buffers
-    /// independently started at version 1. A no-op once this buffer's own
-    /// version already exceeds `floor`.
     pub fn advance_past(mut self, floor: u64) -> Buffer {
         self.version = self.version.max(floor.saturating_add(1));
         self
@@ -166,14 +119,6 @@ impl Buffer {
         &self.content
     }
 
-    /// Returns `None` instead of panicking when `[start, end)` is not a
-    /// valid range on `content` — out of bounds, reversed (`start > end`),
-    /// or splitting a multi-byte char — consistent with `byte`/`rune_at`
-    /// below (see module docs). Deliberately NOT `""` on failure: an empty
-    /// string is indistinguishable from a legitimately empty slice, and a
-    /// caller recording displaced bytes must never mistake a lost range for
-    /// an intentional no-op — a `None` they mishandle is at least a visible
-    /// bug, not a silent "nothing was displaced".
     pub fn slice(&self, start: usize, end: usize) -> Option<&str> {
         self.content.get(start..end)
     }
@@ -182,8 +127,6 @@ impl Buffer {
         self.content.as_bytes().get(offset).copied()
     }
 
-    /// The rune starting at `offset` and its UTF-8 byte width, or `None` if
-    /// `offset` is not a valid char boundary within the content.
     pub fn rune_at(&self, offset: usize) -> Option<(char, usize)> {
         let c = self.content.get(offset..)?.chars().next()?;
         Some((c, c.len_utf8()))
@@ -197,13 +140,6 @@ impl Buffer {
         self.replace(start, end, "")
     }
 
-    /// Convenience single-edit wrapper over `apply_edits`, used by
-    /// `insert`/`delete`, tests, and programmatic edits that already know
-    /// the range is valid. Surfaces `apply_edits`' error instead of
-    /// silently returning the receiver unchanged — a caller that ignores
-    /// the rejection can no longer mistake "nothing happened" for success.
-    /// A reversed `start`/`end` is rejected by `apply_edits` as
-    /// `OutOfBounds`, same as any other malformed range.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> Result<Buffer, BufferError> {
         let edit = Edit {
             start,
@@ -214,10 +150,6 @@ impl Buffer {
         Ok(new_buf)
     }
 
-    /// Apply a batch of edits atomically. `edits` proves its own sort order
-    /// and non-overlap by construction ([`SortedEdits`]) — this no longer
-    /// re-derives that invariant on every call, only the per-edit bounds
-    /// and char-boundary checks that a proven sort order cannot imply.
     pub fn apply_edits(
         &self,
         edits: &SortedEdits,
@@ -338,19 +270,10 @@ fn validate_edit_batch(content: &str, edits: &[Edit]) -> Result<(), BufferError>
     Ok(())
 }
 
-/// The one place `insert_len - deleted_len` is computed — how many bytes a
-/// single edit adds (negative for a net deletion). Takes plain lengths
-/// rather than an `Edit`/`AppliedEdit` so both crate-side derivations (a
-/// range's `end - start`, or an already-known `deleted.len()`) share it.
 pub fn edit_delta(deleted_len: usize, insert_len: usize) -> isize {
     insert_len as isize - deleted_len as isize
 }
 
-/// The first `AppliedEdit::start` shared by more than one entry in
-/// `applied`, if any — the corruption shape `BufferError::DuplicateEditStart`
-/// exists to refuse: a batch that is individually valid (non-overlapping,
-/// sorted) can still collapse two edits onto the identical post-edit
-/// position (e.g. two adjacent one-byte deletes).
 pub(crate) fn duplicate_applied_start(applied: &[AppliedEdit]) -> Option<usize> {
     let mut starts: Vec<usize> = applied.iter().map(|a| a.start).collect();
     starts.sort_unstable();
@@ -367,23 +290,12 @@ fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     })
 }
 
-/// `sort_by` is stable — ties break deterministically for any
-/// distinguishable `(start, end)` pair.
 fn clone_and_sort_edits_descending(edits: &[Edit]) -> Vec<Edit> {
     let mut cloned = edits.to_vec();
     cloned.sort_by(|a, b| b.start.cmp(&a.start).then(b.end.cmp(&a.end)));
     cloned
 }
 
-/// An edit batch proven sorted descending by `start` and non-overlapping —
-/// [`Buffer::apply_edits`]'s only accepted input shape. The two
-/// constructors are the only way to obtain one: [`SortedEdits::sort`] sorts
-/// arbitrary edits into that order (always non-overlapping input is still
-/// the caller's job — coalescing touching/overlapping ranges before this
-/// point, as `rune-tui`'s `edit_core::coalesce_touching_edits` does), while
-/// [`SortedEdits::validate`] checks rather than assumes, for a batch
-/// arriving from outside this process's own edit construction — a
-/// persisted journal row, most notably.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SortedEdits(Vec<Edit>);
 
@@ -506,11 +418,6 @@ mod tests {
         assert_eq!(sorted[1].start, 0);
     }
 
-    /// [rune-core 1]: a batch that is individually valid (non-overlapping,
-    /// sorted descending) but whose two edits compute the identical
-    /// post-edit `start` — two adjacent one-byte deletes — is rejected by
-    /// `apply_edits` itself rather than handed to a caller (`undo::reapply`,
-    /// a replayed journal row) that would have to notice on its own.
     #[test]
     fn apply_edits_rejects_a_batch_whose_edits_collide_on_post_edit_start() {
         let b = Buffer::new("ab");

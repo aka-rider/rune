@@ -1,9 +1,3 @@
-//! rune-image: pixel decode/resize/encode for inline terminal image
-//! rendering (Kitty graphics protocol). Terminal-free — this crate must
-//! never depend on `ratatui`, `termina`, or any `rune-tui` type, mirroring
-//! the equivalent rule stated in `rune-md`. It deals only in image bytes,
-//! pixels, and escape-sequence strings.
-
 pub mod anim;
 pub mod cellsize;
 pub mod decode;

@@ -1,8 +1,3 @@
-//! WP7 tests for `Inline::Image` parsing (`![alt](url)` and `![[target]]`)
-//! and the standalone-image-line predicate — split out of `parse::tests`
-//! to keep that module (and this crate's `parse/mod.rs`) under the
-//! 500-line budget.
-
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

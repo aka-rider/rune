@@ -1,11 +1,7 @@
-//! Decoding still images into pixels, and sniffing what format a blob of
-//! bytes is without decoding it fully.
-
 use std::io::Cursor;
 
 pub use image::ImageError;
 
-/// The result of decoding a single still image.
 #[derive(Debug)]
 pub struct Decoded {
     pub image: image::RgbaImage,
@@ -14,7 +10,6 @@ pub struct Decoded {
     pub format: Format,
 }
 
-/// A still-image format `rune-image` can decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Png,
@@ -26,11 +21,6 @@ pub enum Format {
     Svg,
 }
 
-/// The extensions treated as images, derived from the decoder set actually
-/// compiled in — the single source of truth, replacing the reference
-/// implementation's separately hand-maintained table. SVG is present only
-/// when the `svg` feature actually wires a decoder for it, so this stays an
-/// honest reflection of what `decode_still` can actually decode.
 pub fn extensions() -> &'static [&'static str] {
     #[cfg(feature = "svg")]
     {
@@ -44,10 +34,6 @@ pub fn extensions() -> &'static [&'static str] {
     }
 }
 
-/// Inspects the leading bytes of `data` and reports a best-effort format.
-/// Routes SVG/XML prefixes to [`Format::Svg`] and otherwise defers to the
-/// standard image format registry. Returns `None` when the format is
-/// unknown.
 pub fn sniff_format(data: &[u8]) -> Option<Format> {
     if looks_like_svg(data) {
         return Some(Format::Svg);
@@ -68,9 +54,6 @@ fn from_image_format(format: image::ImageFormat) -> Option<Format> {
     }
 }
 
-/// Reports whether `data` appears to be an SVG document. Tolerates a
-/// leading UTF-8 BOM, whitespace, an XML declaration, and a
-/// DOCTYPE/comment preamble before the root `<svg>` element.
 fn looks_like_svg(data: &[u8]) -> bool {
     let without_bom = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(data);
     let Ok(text) = std::str::from_utf8(without_bom) else {
@@ -90,14 +73,6 @@ fn looks_like_svg(data: &[u8]) -> bool {
     false
 }
 
-/// Decodes `data` into a single still image. Empty input is an error. No
-/// `catch_unwind` wrapper: `spawn_cmd` already contains decoder panics on
-/// the caller side.
-///
-/// When the `svg` feature is enabled, SVG input is routed to the vector
-/// rasterizer; its error is folded into [`ImageError::IoError`] so this
-/// function keeps one return type regardless of format — there is no
-/// separate raster-vs-vector call site for callers to branch on.
 pub fn decode_still(data: &[u8]) -> Result<Decoded, ImageError> {
     if data.is_empty() {
         return Err(ImageError::IoError(std::io::Error::new(
@@ -126,7 +101,6 @@ pub fn decode_still(data: &[u8]) -> Result<Decoded, ImageError> {
     })
 }
 
-/// Header-only dimension probe, for an info card when a full decode fails.
 pub fn probe_dimensions(data: &[u8]) -> Option<(usize, usize, Format)> {
     let format = sniff_format(data)?;
     let reader = image::ImageReader::new(Cursor::new(data))
@@ -201,9 +175,6 @@ mod tests {
         }
     }
 
-    /// A real webp fixture (lossless, opaque) — the only test anywhere in
-    /// the workspace that decodes actual webp bytes rather than merely
-    /// asserting the string `"webp"` appears in `extensions()`.
     const WEBP: &[u8] = include_bytes!("../../../testdata/assets/z.webp");
 
     #[test]

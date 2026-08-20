@@ -1,22 +1,3 @@
-//! The session generator. WP3 shipped a UNIFORM `prop_oneof!` over every
-//! `Action` variant that existed then (a stale "eight" here used to claim a
-//! fixed count for a growing enum — CODE-REVIEW.md rune-fuzz finding 16;
-//! never restate the count, since `Action` has grown every time a later
-//! work package added a synthesized-reply shape). WP6 replaces it with the
-//! user-approved "normal human session" weighted table (a `prop_oneof!`
-//! over the `cluster_*` strategies in `cluster.rs` instead of bare
-//! actions) without changing `arb_session`'s signature — every caller (the
-//! fuzz target, the tripwire round-trip test, the replay test) keeps
-//! working unmodified.
-//!
-//! Each cluster is a `Strategy<Value = Vec<Action>>`; a whole session is
-//! `vec(cluster, 1..=40).prop_map(|v| v.concat())`, truncated to 120 actions
-//! and paired with a `(path, content)` seed from `SEEDS` (plan Assumption
-//! A3, extended by WP7.S3 to include non-markdown paths). The static
-//! palette data lives in `palette.rs` and the `cluster_*` strategies in
-//! `cluster.rs` (500-line budget) — this file is left with just the
-//! public entry point tying the two together.
-
 mod arb;
 mod cluster;
 mod palette;

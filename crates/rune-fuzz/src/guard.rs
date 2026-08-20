@@ -1,12 +1,3 @@
-//! The one panic chokepoint every driver window runs through: it catches
-//! the unwind, names the site the panic came from, and hands back a
-//! `NO-PANIC` `Violation` the session can record like any other.
-//!
-//! The hook installed here CHAINS to whatever hook was already in place
-//! (libtest's, or the default one) instead of replacing it — the stderr
-//! `panicked at` line an operator reads is evidence in its own right and
-//! must survive being caught.
-
 use std::any::Any;
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
@@ -15,8 +6,6 @@ use std::sync::Once;
 
 use crate::invariant::Violation;
 
-/// Where a caught panic came from, as the panic hook saw it — the caught
-/// payload alone names only the assertion text, never its producer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PanicSite {
     pub location: String,
@@ -47,9 +36,6 @@ fn install_chained_hook() {
     });
 }
 
-/// Runs `f` under `catch_unwind`, turning any panic into the `NO-PANIC`
-/// violation the session records — with the location and backtrace the
-/// chained hook captured on the way out.
 pub fn catching_panic<T>(f: impl FnOnce() -> T) -> Result<T, Violation> {
     install_chained_hook();
     LAST_SITE.with(|slot| slot.replace(None));
@@ -62,8 +48,6 @@ pub fn catching_panic<T>(f: impl FnOnce() -> T) -> Result<T, Violation> {
     }
 }
 
-/// The same downcast ladder proptest itself uses to render a caught panic's
-/// payload.
 fn downcast_panic(payload: Box<dyn Any + Send>) -> String {
     let payload = match payload.downcast::<&str>() {
         Ok(s) => return (*s).to_string(),

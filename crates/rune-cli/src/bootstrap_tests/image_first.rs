@@ -1,8 +1,5 @@
 use super::*;
 
-/// An image-first launch must still open the session-wide store — later
-/// markdown opens depend on it, even though the image document itself
-/// binds no `DocDb`.
 #[test]
 fn launch_image_first_still_opens_the_session_store() {
     let vfs = Mem::new();
@@ -31,11 +28,6 @@ fn launch_image_first_still_opens_the_session_store() {
     );
 }
 
-/// The degraded mirror of the above: an image-first launch whose store
-/// fails to open (no usable `$HOME`, the same trigger every other bootstrap
-/// shape's own degraded test uses) must still open the editor, with `db:
-/// None` and the recovery-disabled banner carried through — never silently
-/// dropped just because there was no document to `Load`.
 #[test]
 fn launch_image_first_with_an_unopenable_store_banners() {
     let vfs = Mem::new();
@@ -63,11 +55,6 @@ fn launch_image_first_with_an_unopenable_store_banners() {
     );
 }
 
-/// The end-to-end payoff: after an image-first launch, opening a markdown
-/// file through the workspace (the same path the Explorer uses) must
-/// actually enqueue journaling work against the now-live session store —
-/// without an image-first launch opening it, nothing journaled for the
-/// rest of the session.
 #[test]
 fn launch_image_first_then_opening_markdown_enqueues_journaling() {
     let vfs = Mem::new();

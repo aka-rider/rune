@@ -1,31 +1,11 @@
-//! Producer-selection vocabulary (plan WP4): which producer a document's
-//! content goes through. `Markdown` is comrak's; `Code` is a tree-sitter
-//! language, identified by `LangId`; `Plain` has no producer at all and
-//! renders every line verbatim. Lives here, not duplicated in `rune-md`
-//! and `rune-tui`, because this crate is already the producer-agnostic
-//! layer both depend on.
-
 use crate::lang::LangId;
 
-/// Which producer a document's content is parsed by. `#[default]` is
-/// `Markdown` so a document that never explicitly picks a kind (an
-/// untitled draft, the help document) keeps today's behaviour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DocumentKind {
     #[default]
     Markdown,
-    /// A code document bound to a language (`rune_ts::lang::resolve`'s
-    /// output) — a fenced code block's info string or a file extension.
     Code(LangId),
-    /// No known producer: rendered verbatim, exactly like `Code`, but with
-    /// no language to highlight against.
     Plain,
-    /// A read-only image document (plan WP4): content is never comrak- or
-    /// verbatim-parsed at all — the producer synthesizes display rows
-    /// directly (`rune_md::element::doc::DocMachine`'s `Image` branch)
-    /// rather than deriving them from a buffer, since the buffer itself
-    /// stays permanently empty (image bytes never live in a `Buffer` — it
-    /// is UTF-8 by type).
     Image,
 }
 
@@ -34,9 +14,6 @@ impl DocumentKind {
         matches!(self, DocumentKind::Markdown)
     }
 
-    /// The language name to highlight against, or `None` for `Markdown`
-    /// (comrak owns fenced-code highlighting choices), `Plain` (no language
-    /// at all), and `Image` (no text to highlight at all).
     pub fn language(&self) -> Option<&'static str> {
         match self {
             DocumentKind::Code(lang) => Some(lang.name()),

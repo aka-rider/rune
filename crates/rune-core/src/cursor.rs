@@ -1,7 +1,3 @@
-//! Multi-cursor byte-offset primitives with anchor/position selection.
-//! Phase 1 runs a single cursor; `CursorSet` is built to grow into the
-//! multi-cursor future.
-
 use std::fmt;
 use std::num::NonZeroU32;
 
@@ -47,16 +43,10 @@ impl TryFrom<u32> for CursorId {
     }
 }
 
-/// One cursor: `position` is the head (blinks), `anchor` is the tail
-/// (`position == anchor` means no selection).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
-    /// Byte offset — the "head" (where the cursor blinks).
     pub position: usize,
-    /// Byte offset — the "tail". Equals `position` when there is no
-    /// selection.
     pub anchor: usize,
-    /// Preserved column for vertical movement (Syntax Space).
     pub desired_col: usize,
     pub id: CursorId,
 }
@@ -119,15 +109,6 @@ pub struct CursorSpec {
     pub desired_col: usize,
 }
 
-/// An ordered, non-overlapping set of cursors. `merge()` is the
-/// invariant-preserving chokepoint every constructor and mutator routes
-/// through.
-///
-/// Invariant: `cursors` is never empty — every public constructor produces
-/// at least one cursor, and `merge` only ever coalesces cursors together,
-/// never down to zero. A derived `#[derive(Default)]` would produce
-/// `cursors: vec![]`, so `CursorSet` gets a manual `Default` below that
-/// routes through `CursorSet::new(0)` instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorSet {
     cursors: Vec<Cursor>,
@@ -195,10 +176,6 @@ impl CursorSet {
         CursorSet::new_from_specs(&specs)
     }
 
-    /// The first (lowest-`selection_start`) cursor. `cursors` is never
-    /// empty (see the struct invariant above) — checked here rather than
-    /// silently falling back to a look-alike cursor, so a future change
-    /// that breaks the invariant is caught in tests.
     pub fn primary(&self) -> Cursor {
         assert_invariant!(!self.cursors.is_empty(), || {
             "CursorSet::cursors must never be empty".to_string()
@@ -240,13 +217,6 @@ impl CursorSet {
         }
     }
 
-    /// Sort by `(selection_start, selection_end, id)`, then coalesce any
-    /// cursors whose selections touch or overlap into their lower-id
-    /// survivor. The survivor carries the merged id and column, but the
-    /// merged DIRECTION comes from a cursor that actually has a selection:
-    /// an empty cursor is never `reversed()`, so letting an empty survivor
-    /// decide would face the result downward and strand the caret at the
-    /// far end of a selection the user built by reaching up.
     pub fn merge(&self) -> CursorSet {
         if self.cursors.len() <= 1 {
             return self.clone();

@@ -1,15 +1,3 @@
-//! Writes one failure bundle for the MINIMAL failing case: `script.rune`
-//! (directly loadable by a later work package's `tests/replay.rs`) plus
-//! `report.txt` (the frozen `Snapshot`/`StepCtx`, human-readable).
-//!
-//! The bundle directory is named `<id-lowercased>-<hash>`, where `<hash>`
-//! is a deterministic 8-hex-digit FNV-1a of the encoded script — never a
-//! timestamp — so re-running the same catch overwrites in place instead of
-//! accumulating one directory per run.
-//!
-//! No `unwrap`/`expect`/`panic!`/unchecked indexing in this file (G17):
-//! every fallible step is a plain `io::Result`.
-
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
@@ -23,12 +11,6 @@ use crate::hash::fnv1a32;
 use crate::invariant::Violation;
 use crate::script;
 
-/// Writes the failure bundle under `dir_root` and returns its directory.
-/// `path` (plan WP7.S2) is the document path the session that produced
-/// `result` was opened at — carried into the encoded `script.rune` so a
-/// non-default-path catch (a code document, a fenced-language document)
-/// replays against the SAME `DocumentKind`, not silently against the
-/// markdown default.
 pub fn write(
     dir_root: &Path,
     v: &Violation,
@@ -47,11 +29,6 @@ pub fn write(
     Ok(dir)
 }
 
-/// Re-runs the failing case under the panic guard and writes its bundle —
-/// the one path from "this input fails" to an artifact on disk, so a panic
-/// during the re-run still produces the bundle instead of unwinding past
-/// the write. `fallback` names the violation to record when the re-run
-/// itself reports none.
 pub fn capture(
     dir_root: &Path,
     path: &str,
@@ -131,9 +108,6 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
     out
 }
 
-/// One line per row, joining each `Cell.text` (a whole grapheme cluster,
-/// not necessarily one codepoint) — the rendered frame at the violating
-/// step.
 fn render_frame(cells: &[Vec<Cell>]) -> String {
     let mut out = String::new();
     for row in cells {
@@ -144,9 +118,6 @@ fn render_frame(cells: &[Vec<Cell>]) -> String {
     out
 }
 
-/// `None` means never saved (`Mem::read`'s `ErrorKind::NotFound`, G16) —
-/// rendered as the literal `<never saved>`, never an empty byte string,
-/// so a report can't be misread as "saved empty content".
 fn render_disk(disk: Option<&[u8]>) -> String {
     disk.map_or_else(
         || "<never saved>".to_string(),
@@ -219,7 +190,6 @@ mod tests {
             result.final_content
         );
 
-        // Re-running the same catch overwrites rather than accumulating.
         let dir2 = must(
             write(scratch, &violation, path, content, &actions, &result),
             "write again",
