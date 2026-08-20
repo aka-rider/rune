@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rune_db::{MaterializeOutcome, ObsOrigin, StatFacts, SyncKind};
-use rune_vfs::Vfs;
+use rune_db::{MaterializeOutcome, ObsOrigin, SyncKind};
+use rune_vfs::{PutOutcome, Vfs};
 
 use crate::app::App;
 use crate::document::{DocumentId, PublishParams, SaveTicket};
@@ -104,14 +104,12 @@ fn refuse_divergent_publish(app: &mut App, id: DocumentId, kind: SyncKind, effec
 }
 
 /// What the caller-side `vfs` work ([`save::run_materialize_vfs`])
-/// concluded — every disk-sourced fact [`handle_materialize_vfs_done`]
-/// needs, carried so this module never has to call `vfs` a second time to
-/// re-derive any of it.
+/// concluded. `Put` carries the real `rune_vfs::PutOutcome` through
+/// untranslated, alongside the resolved target path that `PutOutcome`
+/// itself never carries. `PathDisagreement`/`Error` are pre-`vfs::put`
+/// refusals `PutOutcome` has no variant for.
 #[derive(Debug)]
 pub enum MaterializeVfsOutcome {
-    /// The overwrite target no longer exists (overwrite publishes only) —
-    /// never silently (re)create.
-    Missing,
     /// The caller's own target disagrees with the document's bound path —
     /// a caller-bug guard, not an ordinary CAS race. No `vfs` write was
     /// attempted.
@@ -120,42 +118,11 @@ pub enum MaterializeVfsOutcome {
     /// this outcome — nothing happened worth recording, and the failure is
     /// specific to this document's save, not the store.
     Error(String),
-    /// The live target (or, for a create-only publish, a concurrent
-    /// creator's file)
-    /// didn't match `expect` — no write was attempted; `data`/`stat`
-    /// describe whatever is actually on disk now. `confirmed` is the
-    /// bracketed read's own verdict — a racer caught mid-external-rewrite
-    /// must never masquerade as a stable fact.
-    Conflict {
-        data: Vec<u8>,
-        origin: ObsOrigin,
-        stat: StatFacts,
-        confirmed: bool,
+    /// The `vfs` write was attempted and concluded — `outcome` is exactly
+    /// what `rune_vfs::put` reported.
+    Put {
         resolved_path: PathBuf,
-    },
-    /// The write committed with no race. `confirmed` is the post-publish
-    /// stat's own verdict; `durable: false` means the publish took effect
-    /// but its durability confirmation failed — still a success, surfaced
-    /// as a warning.
-    Committed {
-        data: Vec<u8>,
-        stat: StatFacts,
-        confirmed: bool,
-        resolved_path: PathBuf,
-        durable: bool,
-        stray_temp: Option<PathBuf>,
-    },
-    /// The write committed AND a racer's displaced bytes were captured in
-    /// the same atomic-swap window. `confirmed` describes `stat` only.
-    Raced {
-        data: Vec<u8>,
-        stat: StatFacts,
-        confirmed: bool,
-        displaced: Vec<u8>,
-        displaced_stat: StatFacts,
-        resolved_path: PathBuf,
-        stray_temp: Option<PathBuf>,
-        durable: bool,
+        outcome: Box<PutOutcome>,
     },
 }
 
@@ -221,11 +188,6 @@ pub(crate) fn handle_materialize_vfs_done(
         .doc(id)
         .is_some_and(|d| d.save_ticket() == Some(ticket) && d.is_publishing());
     match outcome {
-        MaterializeVfsOutcome::Missing => {
-            if live {
-                super::reactions::resolve_missing_ack(app, id);
-            }
-        }
         MaterializeVfsOutcome::PathDisagreement => {
             super::on_store_failure(
                 app,
@@ -237,40 +199,64 @@ pub(crate) fn handle_materialize_vfs_done(
                 fail_materialize_locally(app, id, format!("save failed: {e}"));
             }
         }
-        MaterializeVfsOutcome::Conflict {
-            data,
-            origin,
-            stat,
-            confirmed,
+        MaterializeVfsOutcome::Put {
             resolved_path,
-        } => {
+            outcome,
+        } => handle_put_outcome(
+            app,
+            id,
+            live,
+            RecordTarget {
+                db_id,
+                seq,
+                content,
+                resolved_path: &resolved_path,
+            },
+            *outcome,
+        ),
+    }
+}
+
+fn handle_put_outcome(
+    app: &mut App,
+    id: DocumentId,
+    live: bool,
+    target: RecordTarget<'_>,
+    outcome: PutOutcome,
+) {
+    let RecordTarget {
+        db_id,
+        seq,
+        content,
+        resolved_path,
+    } = target;
+    match outcome {
+        PutOutcome::Missing => {
+            if live {
+                super::reactions::resolve_missing_ack(app, id);
+            }
+        }
+        PutOutcome::Conflict { current, .. } => {
             if live {
                 record_outcome(
                     app,
                     id,
-                    RecordTarget {
-                        db_id,
-                        seq,
-                        content,
-                        resolved_path: &resolved_path,
-                    },
+                    target,
                     MaterializeOutcome::Conflict {
-                        data,
-                        origin,
-                        stat,
-                        confirmed,
+                        confirmed: current.sighted.is_confirmed(),
+                        stat: rune_db::stat_facts_from(current.sighted.stat()),
+                        origin: ObsOrigin::Probe,
+                        data: current.bytes,
                     },
                     false,
                 );
             }
         }
-        MaterializeVfsOutcome::Committed {
-            data,
-            stat,
-            confirmed,
-            resolved_path,
+        PutOutcome::Committed {
+            sighted,
             durable,
             stray_temp,
+            ..
         } => {
             if !durable {
                 messages::warn(app, super::DURABILITY_UNCONFIRMED_WARNING);
@@ -279,36 +265,22 @@ pub(crate) fn handle_materialize_vfs_done(
                 messages::warn(app, super::stray_temp_warning(temp));
             }
             let outcome = MaterializeOutcome::Committed {
-                data,
-                stat,
-                confirmed,
+                data: content.as_bytes().to_vec(),
+                confirmed: sighted.is_confirmed(),
+                stat: rune_db::stat_facts_from(sighted.stat()),
             };
             if live {
-                record_outcome(
-                    app,
-                    id,
-                    RecordTarget {
-                        db_id,
-                        seq,
-                        content,
-                        resolved_path: &resolved_path,
-                    },
-                    outcome,
-                    true,
-                );
+                record_outcome(app, id, target, outcome, true);
             } else {
-                record_orphan_outcome(app, db_id, seq, &resolved_path, outcome);
+                record_orphan_outcome(app, db_id, seq, resolved_path, outcome);
             }
         }
-        MaterializeVfsOutcome::Raced {
-            data,
-            stat,
-            confirmed,
-            displaced,
-            displaced_stat,
-            resolved_path,
+        PutOutcome::Raced {
+            sighted,
             durable,
+            displaced,
             stray_temp,
+            ..
         } => {
             if !durable {
                 messages::warn(app, super::DURABILITY_UNCONFIRMED_WARNING);
@@ -317,27 +289,16 @@ pub(crate) fn handle_materialize_vfs_done(
                 messages::warn(app, super::stray_temp_warning(temp));
             }
             let outcome = MaterializeOutcome::Raced {
-                data,
-                stat,
-                confirmed,
-                displaced,
-                displaced_stat,
+                data: content.as_bytes().to_vec(),
+                confirmed: sighted.is_confirmed(),
+                stat: rune_db::stat_facts_from(sighted.stat()),
+                displaced_stat: rune_db::stat_facts_from(displaced.sighted.stat()),
+                displaced: displaced.bytes,
             };
             if live {
-                record_outcome(
-                    app,
-                    id,
-                    RecordTarget {
-                        db_id,
-                        seq,
-                        content,
-                        resolved_path: &resolved_path,
-                    },
-                    outcome,
-                    true,
-                );
+                record_outcome(app, id, target, outcome, true);
             } else {
-                record_orphan_outcome(app, db_id, seq, &resolved_path, outcome);
+                record_orphan_outcome(app, db_id, seq, resolved_path, outcome);
             }
         }
     }

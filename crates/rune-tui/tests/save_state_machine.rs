@@ -132,7 +132,10 @@ fn stale_vfs_done_never_promotes() {
             db_id,
             seq: 0,
             content: Arc::from("an attacker's stale bytes"),
-            outcome: rune_tui::materialize_ack::MaterializeVfsOutcome::Missing,
+            outcome: rune_tui::materialize_ack::MaterializeVfsOutcome::Put {
+                resolved_path: std::path::PathBuf::from("/doc.md"),
+                outcome: Box::new(rune_vfs::PutOutcome::Missing),
+            },
         },
     );
 

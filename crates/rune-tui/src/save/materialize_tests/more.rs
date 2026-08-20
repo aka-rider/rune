@@ -26,9 +26,15 @@ fn an_unconfirmed_hash_equal_disk_refuses_the_save_as_a_conflict() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Conflict { confirmed, .. } => {
-            assert!(!confirmed, "a churning bracket must never confirm");
-        }
+        MaterializeVfsOutcome::Put { outcome, .. } => match *outcome {
+            PutOutcome::Conflict { current, .. } => {
+                assert!(
+                    !current.sighted.is_confirmed(),
+                    "a churning bracket must never confirm"
+                );
+            }
+            other => panic!("expected a conflict refusal, got {other:?}"),
+        },
         other => panic!("expected a conflict refusal, got {other:?}"),
     }
     assert_eq!(
@@ -63,9 +69,15 @@ fn a_flapping_post_publish_stat_commits_unconfirmed() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Committed { confirmed, .. } => {
-            assert!(!confirmed, "a churning post-publish stat must not confirm");
-        }
+        MaterializeVfsOutcome::Put { outcome, .. } => match *outcome {
+            PutOutcome::Committed { sighted, .. } => {
+                assert!(
+                    !sighted.is_confirmed(),
+                    "a churning post-publish stat must not confirm"
+                );
+            }
+            other => panic!("expected a committed save, got {other:?}"),
+        },
         other => panic!("expected a committed save, got {other:?}"),
     }
     assert_eq!(vfs.read(path).unwrap(), b"new content");
@@ -93,9 +105,12 @@ fn a_post_publish_durability_failure_still_commits_with_durable_false() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Committed { durable, .. } => {
-            assert!(!durable, "the durability confirmation failed");
-        }
+        MaterializeVfsOutcome::Put { outcome, .. } => match *outcome {
+            PutOutcome::Committed { durable, .. } => {
+                assert!(!durable, "the durability confirmation failed");
+            }
+            other => panic!("expected a committed save, got {other:?}"),
+        },
         other => panic!("expected a committed save, got {other:?}"),
     }
     assert_eq!(
@@ -122,10 +137,11 @@ fn two_saves_of_one_file_back_to_back_never_collide_on_temp_names() {
         None,
         SaveMode::Normal,
     );
-    assert!(
-        matches!(first, MaterializeVfsOutcome::Committed { .. }),
-        "first save must commit, got {first:?}"
+    let first_committed = matches!(
+        &first,
+        MaterializeVfsOutcome::Put { outcome, .. } if matches!(**outcome, PutOutcome::Committed { .. })
     );
+    assert!(first_committed, "first save must commit, got {first:?}");
 
     let second = run_materialize_vfs(
         &vfs,
@@ -136,10 +152,11 @@ fn two_saves_of_one_file_back_to_back_never_collide_on_temp_names() {
         None,
         SaveMode::Normal,
     );
-    assert!(
-        matches!(second, MaterializeVfsOutcome::Committed { .. }),
-        "second save must commit, got {second:?}"
+    let second_committed = matches!(
+        &second,
+        MaterializeVfsOutcome::Put { outcome, .. } if matches!(**outcome, PutOutcome::Committed { .. })
     );
+    assert!(second_committed, "second save must commit, got {second:?}");
     assert_eq!(vfs.read(path).unwrap(), b"second tab's content");
 }
 

@@ -25,11 +25,13 @@ pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, 
             Some((msg, tag, Some(bytes)))
         }
         Msg::MaterializeVfsDone { id, outcome, .. } => {
-            let committed = matches!(
-                outcome,
-                rune_tui::materialize_ack::MaterializeVfsOutcome::Committed { .. }
-                    | rune_tui::materialize_ack::MaterializeVfsOutcome::Raced { .. }
-            );
+            let committed = match outcome {
+                rune_tui::materialize_ack::MaterializeVfsOutcome::Put { outcome, .. } => matches!(
+                    outcome.as_ref(),
+                    rune_vfs::PutOutcome::Committed { .. } | rune_vfs::PutOutcome::Raced { .. }
+                ),
+                _ => false,
+            };
             let tag = MsgTag::MaterializeVfsDone { id: *id, committed };
             Some((msg, tag, None))
         }
