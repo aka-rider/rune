@@ -1,21 +1,8 @@
-//! Pinning marks a tab the upcoming tab-cap eviction must never pick. The
-//! toggle refuses previews because a preview is a transient the user never
-//! opened.
-//!
-//! [`ensure_room`] keeps every INTERACTIVE open within the digit-chord
-//! range (`^1`-`^0` only ever names ten tabs): once the strip is full it
-//! evicts the least-recently-active eligible tab through the ordinary
-//! close chokepoint, or refuses outright when nothing is eligible.
-//! Bootstrap and recovery adoption never call this — recovered or launch-
-//! requested work must never be turned away for a tab.
-
 use crate::app::App;
 use crate::document::{Document, DocumentId};
 use crate::guard::{GuardKind, GuardPrompt};
 use crate::runtime::Effects;
 
-/// Flips the active document's pin, refusing (with its own warn message) on
-/// a preview tab.
 pub fn toggle_pin(app: &mut App, id: DocumentId) {
     if app.refuse_if_preview(id) {
         return;
@@ -25,15 +12,8 @@ pub fn toggle_pin(app: &mut App, id: DocumentId) {
     }
 }
 
-/// The interactive-open ceiling — matches the ten digit-chord slots
-/// `^1`-`^0` can ever address.
 pub const MAX_TABS: usize = 10;
 
-/// Whether the strip has room for one more interactive tab: occupied slots
-/// (`documents.order()`'s length, minus one when a live Explorer preview
-/// still holds a place) under [`MAX_TABS`]. A preview is displaced by the very
-/// switch that lands whatever open is about to proceed, so it never holds a
-/// lasting slot and must not count toward the cap.
 fn room_available(app: &App) -> bool {
     let occupied = app.documents.order().len();
     let occupied = if app.explorer.preview.is_some_and(|id| app.doc(id).is_some()) {
@@ -44,13 +24,6 @@ fn room_available(app: &App) -> bool {
     occupied < MAX_TABS
 }
 
-/// Makes room for one more interactive tab, evicting if necessary.
-/// Returns `true` when the strip already has room (accounting for a
-/// displaceable live preview) or an eviction just freed a slot; `false`
-/// when the open must be refused — either because nothing was eligible,
-/// because a foreign guard already occupies the one prompt slot an
-/// eviction would need, or because the eviction candidate turned out to
-/// be dirty and now has its own close prompt in the way.
 pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
     if room_available(app) {
         return true;
@@ -78,27 +51,12 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
     if let Some(victim) = clean.or_else(|| eligible.first().copied()) {
         if clean.is_none() {
             if had_guard {
-                // The single guard slot is already taken, so the close
-                // below is guaranteed to refuse arming its own — switching
-                // the active document over for an eviction that cannot
-                // happen would only hijack focus (and auto-exit a live
-                // merge session) for an open that gets refused anyway.
                 crate::messages::warn(app, "Tab limit reached — close or unpin a tab");
                 return false;
             }
-            // The DirtyClose prompt must cover the document the user can
-            // see; arming it for a background tab invites a [D]iscard
-            // aimed at the wrong buffer.
             crate::workspace::switch_to(app, victim);
         }
         crate::workspace::request_close(app, victim, effects);
-        // A pre-existing foreign guard would also leave `app.guard` `Some`
-        // here — the `had_guard` snapshot plus a victim match is the only
-        // way to tell "this eviction just armed its own prompt" apart from
-        // "something else already had the guard". Checked BEFORE the room
-        // re-check below: a guard now covering `victim` must refuse the
-        // open even if `victim`'s own removal would otherwise have freed a
-        // slot, because the prompt still needs to land on a visible tab.
         let armed_for_victim = !had_guard
             && matches!(&app.guard, Some(GuardPrompt { doc, kind: GuardKind::DirtyClose }) if *doc == victim);
         if armed_for_victim {
@@ -168,20 +126,10 @@ mod tests {
         );
     }
 
-    /// Builds an `App` with `n` file-bound tabs, none pinned, dirty, or
-    /// preview — the initial document (index 0, `app.active`) plus `n - 1`
-    /// more opened straight through `App::open_document`, matching how
-    /// bootstrap/recovery adoption bind a path without ever touching
-    /// `ensure_room`. Returns the ids in open (= mru, at this point) order.
     fn filled_app(n: usize) -> (App, Vec<DocumentId>) {
         filled_app_with(Arc::new(Mem::new()), n)
     }
 
-    /// Same as [`filled_app`], but binds the documents' paths inside a
-    /// caller-supplied `Mem` rather than a private, unseeded one — needed
-    /// by any test that also seeds file content for a later real `Vfs`
-    /// read (an already-open reactivation never reads; a fresh open —
-    /// `open_path_checked`, an Explorer preview — does).
     fn filled_app_with(mem: Arc<Mem>, n: usize) -> (App, Vec<DocumentId>) {
         let mut app = App::new(Buffer::new("hello"), None, mem, None);
         app.active_doc_mut().viewport.set_size(80, 23);
@@ -335,9 +283,6 @@ mod tests {
         let newest_before = messages::newest_text(&app).map(str::to_string);
 
         let mut effects = Effects::default();
-        // The Explorer entry list is prefixed with a synthetic ".."
-        // parent row (`with_parent_entry`), so the never-opened
-        // "eleventh.md" row sits one past `MAX_TABS`, not at it.
         app.explorer.nav.cursor = MAX_TABS + 1;
         crate::explorer_preview::after_cursor_move(&mut app, &mut effects);
         let cmds = std::mem::take(&mut effects.cmds);

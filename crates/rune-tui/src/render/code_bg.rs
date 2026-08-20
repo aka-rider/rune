@@ -1,39 +1,3 @@
-//! Paints a code region's background as a RECTANGLE (500-line budget split of the
-//! render module): every display row belonging to a `CodeRegion` is filled
-//! with `Theme::chrome.code_bg` from the end of its own decoration prefix to
-//! the right edge of the pane.
-//!
-//! A background carried on a `SyntaxSpan` cannot do this. A span's `bg` can
-//! only colour cells that EXIST, and cells are emitted only for real span
-//! text, so the tint stopped at each line's last character, vanished
-//! entirely on a blank line inside a block (an empty content range emits no
-//! span and therefore no cell), and never appeared behind a whole code
-//! document, whose text carries no fence scope at all. Region membership is
-//! a property of the LINE, not of the bytes on it, so the fill is driven off
-//! `CodeRegion::rows` — the one definition of code — and the missing columns
-//! are appended as real padding cells, since the blit writes nothing past a
-//! row's last cell.
-//!
-//! Two properties are load-bearing and deliberately structural rather than
-//! checked after the fact:
-//!
-//! - The fill is a pure function of the display snapshot, the regions, and
-//!   the pane width. It never consults highlight state, so a `Msg::
-//!   Highlighted` step cannot change any row's cell count (`HL-NO-REFLOW`)
-//!   and two message-free renders of the same state agree cell for cell
-//!   (`SYNC-IDEMPOTENT`).
-//! - It starts at the row's own decoration width, so a fence inside a
-//!   blockquote paints AFTER the quote bar and never under it; and it skips
-//!   every table, synthetic and image row outright, so it can never grow a
-//!   boxed table row by a cell (`TABLE-ROW-WIDTH`) nor disturb a placeholder
-//!   row whose style smuggles an image id.
-//!
-//! Padding cells carry the `None` "no buffer correspondence" marker every
-//! other decorative cell uses: they claim no byte for the caret, selection
-//! or click hit-testing to resolve to, and they stay out of the min/max
-//! `buf_offset` hull the per-frame highlight query window is derived from,
-//! which a real offset would silently widen.
-
 use ratatui::style::{Color, Style};
 
 use rune_core::coords::DisplayRow;
@@ -43,20 +7,6 @@ use rune_md::element::doc::ViewSnapshots;
 use super::Cell;
 use super::decor::decor_cell_width;
 
-/// Fills `[decor_cell_width(row), width)` with `bg` on every row of `rows`
-/// whose source (model) line falls inside some region's `rows` span.
-///
-/// `rows` is positional: `rows[i]` is display row `scroll_row + i`, the same
-/// window `build_rows` itself sliced. A row's source line comes from the
-/// wrap segment it was built from; `WrapSegment::model_line` is constant
-/// across a wrapped line's continuation segments, so a wrapped code line's
-/// continuation rows are covered without a special case.
-///
-/// The regions come from `view` itself rather than from a separate argument:
-/// they are a pure function of the same document state the rest of the
-/// snapshot describes, computed once when that state changes, so the paint
-/// can never disagree with the geometry it paints onto and this per-frame
-/// path never walks the block tree.
 pub(super) fn paint_code_background(
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,
@@ -74,12 +24,6 @@ pub(super) fn paint_code_background(
         let Some(row) = display_rows.get((scroll_row + i).0) else {
             continue;
         };
-        // A synthesised table border has no source line to belong to a
-        // region, an image row's cells are placeholders whose geometry the
-        // image protocol depends on, and a table content row shares one
-        // summed width with every other row in its box. Code regions
-        // contain none of these — skipping them is what makes that true by
-        // construction instead of by assumption.
         if row.synthetic || row.image.is_some() {
             continue;
         }
@@ -99,14 +43,6 @@ pub(super) fn paint_code_background(
     }
 }
 
-/// Backgrounds `cells` from column `start_col` to `width`, appending
-/// single-cell padding for every column past the last emitted cell.
-///
-/// Columns before `start_col` are the row's decoration prefix and keep their
-/// own style untouched — that is what puts a blockquote's bar in front of
-/// the background rather than under it. The column walk sums `Cell::width`
-/// (terminal CELLS), never a byte or `char` count, so a wide glyph
-/// advances the cursor by the columns it actually occupies.
 fn fill_row(cells: &mut Vec<Cell>, start_col: usize, width: usize, bg: Color) {
     let mut col = 0usize;
     for cell in cells.iter_mut() {
@@ -181,9 +117,6 @@ mod tests {
         assert_eq!(cells.len(), 5);
     }
 
-    /// A wide glyph advances the column cursor by the CELLS it occupies, so
-    /// the row still ends exactly at the pane width rather than one column
-    /// past it.
     #[test]
     fn a_wide_glyph_advances_by_its_cell_width_not_by_one() {
         let bg = Color::Rgb(1, 2, 3);
@@ -193,8 +126,6 @@ mod tests {
         assert_eq!(total, 4);
     }
 
-    /// A row already at or past the pane width gains nothing — the fill
-    /// never widens a row beyond the pane.
     #[test]
     fn a_full_row_gains_no_padding() {
         let bg = Color::Rgb(1, 2, 3);

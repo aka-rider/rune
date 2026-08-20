@@ -1,12 +1,3 @@
-//! Preview-parity tests: the fuzzy file finder's nav-driven preview
-//! rides the SAME `explorer_preview` machinery the Explorer itself uses
-//! (`app.explorer.preview`, `Msg::FileOpened` -> `maybe_consume_reply`) —
-//! these tests drive that shared round trip through the finder's own entry
-//! points (`open`, `handle_recents_loaded`, `keys::handle_key`) rather than
-//! the Explorer's, and cover both Esc-restore shapes: after arrowing onto
-//! an already-open document (no preview ever minted) and after previewing
-//! a not-yet-open file (a real preview to discard).
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::PathBuf;
@@ -42,11 +33,6 @@ fn candidate(path: &str) -> Candidate {
     }
 }
 
-/// Drains and runs every queued `Cmd`, feeding a `Msg::FileOpened` reply
-/// back through the real production entry point — the same round trip
-/// `explorer_preview/tests.rs::run_cmds` drives for the Explorer's own
-/// nav, proving the finder rides the identical reply path rather than a
-/// parallel one.
 fn run_cmds(app: &mut App, effects: &mut Effects) {
     let cmds = std::mem::take(&mut effects.cmds);
     for cmd in cmds {
@@ -82,8 +68,6 @@ fn enter_key() -> KeyInput {
     }
 }
 
-/// The nav cursor landing on a not-yet-open candidate queues a preview
-/// read `Cmd` — never run inline.
 #[test]
 fn cursor_move_onto_an_unopened_candidate_queues_a_read_file_cmd() {
     let mut app = seeded_app(&[("/root/a.md", "a"), ("/root/b.md", "b")]);
@@ -96,8 +80,6 @@ fn cursor_move_onto_an_unopened_candidate_queues_a_read_file_cmd() {
         Ok(vec![candidate("/root/a.md"), candidate("/root/b.md")]),
         &mut effects,
     );
-    // The load itself already requested row 0's own preview; only the
-    // Down move below is under test.
     effects.cmds.clear();
 
     let _ = keys::handle_key(&mut app, down_key(), &mut effects);
@@ -108,9 +90,6 @@ fn cursor_move_onto_an_unopened_candidate_queues_a_read_file_cmd() {
     );
 }
 
-/// A hand-delivered reply lands as a real `ReadOnly::Preview` document,
-/// switched onto — the same outcome `explorer_preview`'s own tests pin for
-/// the Explorer, now reached through the finder instead.
 #[test]
 fn hand_delivered_preview_reply_lands_as_a_readonly_preview_document() {
     let mut app = seeded_app(&[("/root/a.md", "content")]);
@@ -134,10 +113,6 @@ fn hand_delivered_preview_reply_lands_as_a_readonly_preview_document() {
     );
 }
 
-/// Moving off a path before its reply lands drops that reply as stale —
-/// the finder's own selection is what `is_current_target` now consults,
-/// so a late reply for a path the cursor left must not overwrite what the
-/// cursor moved onto.
 #[test]
 fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
     let mut app = seeded_app(&[("/root/a.md", "a"), ("/root/b.md", "b")]);
@@ -153,7 +128,7 @@ fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
     let stale_cmd = effects.cmds.pop().expect("a.md's own preview Cmd queued");
 
     let _ = keys::handle_key(&mut app, down_key(), &mut effects);
-    run_cmds(&mut app, &mut effects); // resolves b.md first
+    run_cmds(&mut app, &mut effects);
 
     let shown_after_fresh = app
         .explorer
@@ -182,9 +157,6 @@ fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
     );
 }
 
-/// `Enter` on a row whose own live preview already loaded promotes it in
-/// place — `read_only` drops to `No` and the recovery store's own load is
-/// enqueued, rather than a redundant re-open.
 #[test]
 fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
@@ -230,18 +202,12 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     );
 }
 
-/// The B4 case: arrowing onto an ALREADY-OPEN document mints no preview at
-/// all (`request_preview`'s `existing_document_for` branch switches
-/// directly) — Esc must still restore `return_to`.
 #[test]
 fn esc_after_arrowing_onto_an_already_open_document_restores_return_to() {
     let mut app = seeded_app(&[("/root/a.md", "a"), ("/root/b.md", "b")]);
     let return_to = app.active;
     let opened = crate::workspace::open_path(&mut app, std::path::Path::new("/root/b.md"))
         .expect("open b.md as a real tab");
-    // `open_path` switches onto what it just opened — park back on the
-    // ORIGINAL document first, so `open` below captures ITS `return_to`,
-    // not b.md's own id.
     crate::workspace::switch_to(&mut app, return_to);
     assert_eq!(app.active, return_to, "test setup: parked back off b.md");
     let mut effects = Effects::default();
@@ -268,10 +234,6 @@ fn esc_after_arrowing_onto_an_already_open_document_restores_return_to() {
     assert_eq!(app.focus(), Pane::Editor);
 }
 
-/// The other Esc-restore shape: previewing a NOT-yet-open file mints a
-/// real preview document — Esc must restore `return_to` AND discard it
-/// (`workspace::switch_to`'s own `discard_if_switching_away` hook, fired
-/// because `cancel` switches to a document other than the preview).
 #[test]
 fn esc_after_previewing_a_not_open_file_restores_return_to_and_discards_the_preview() {
     let mut app = seeded_app(&[("/root/a.md", "content")]);

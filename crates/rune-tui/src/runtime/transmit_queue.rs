@@ -1,13 +1,7 @@
-//! Two ordering rules the Kitty graphics protocol forces on this queue: the
-//! chunks of one transmit must reach the terminal in order, and no other
-//! graphics escape may appear between them ("the client must finish sending
-//! all chunks for a single image before sending any other graphics related
-//! escape codes"). A strict FIFO over whole entries gives both, and any
-//! plain escape enqueued while a transmit is mid-flight keeps its place in
-//! that same FIFO rather than cutting in.
-
 use std::collections::VecDeque;
 
+// Kitty graphics protocol: chunks of one image transmit must arrive in
+// order, and no other graphics escape may appear between them.
 pub const DRAIN_BUDGET_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -83,10 +77,8 @@ impl TransmitQueue {
     ) -> Result<(), E> {
         for queued in std::mem::take(&mut self.pending) {
             if queued.is_image {
-                // A started image has sent `m=1` chunks only: without the
-                // empty final chunk the terminal keeps reading every later
-                // escape as more of this transfer — the delete-all on quit
-                // included.
+                // Without a final empty chunk, the terminal keeps reading
+                // every later escape as more of this Kitty image transfer.
                 if queued.started {
                     write(rune_image::encode_transmit_terminator().as_bytes())?;
                 }
@@ -236,8 +228,6 @@ mod tests {
 
         assert_eq!(sink, vec![b"osc-first".to_vec(), b"osc-second".to_vec()]);
         assert!(!queue.is_pending());
-        // Neither image was ever pumped, so neither opened a transfer that
-        // would need terminating.
     }
 
     #[test]

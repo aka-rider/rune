@@ -1,9 +1,3 @@
-//! ↑/↓ history-browsing tests for `search/keys.rs` — split out of the
-//! sibling `tests` module (500-line budget); basic keystroke editing has
-//! its own further sibling, `editing_tests`. A child module of `keys`, so
-//! every private item there stays reachable through `use super::*;`
-//! exactly as if this were still inline.
-
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
@@ -56,9 +50,6 @@ fn up_filters_history_against_the_currently_typed_draft() {
 
     let _ = handle_key(&mut app, up_key(), &mut effects);
 
-    // "needle" has no "h" at all, so it's filtered out; "hay" is the
-    // MRU-most surviving entry, so the first ↑ lands there rather than
-    // "haystack".
     assert_eq!(app.search().unwrap().draft, "hay");
 }
 
@@ -73,8 +64,6 @@ fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
     assert_eq!(app.search().unwrap().draft, "one");
     let _ = handle_key(&mut app, up_key(), &mut effects);
     assert_eq!(app.search().unwrap().draft, "two");
-    // Already at the oldest entry — a further ↑ clamps rather than
-    // wrapping back around to "one".
     let _ = handle_key(&mut app, up_key(), &mut effects);
     assert_eq!(app.search().unwrap().draft, "two");
 }

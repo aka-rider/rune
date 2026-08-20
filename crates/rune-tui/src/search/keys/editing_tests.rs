@@ -1,10 +1,3 @@
-//! Basic keystroke-editing tests for `search/keys.rs` — typing, erasing,
-//! closing, pasting, and an unbound chord — split out of the sibling `tests` module
-//! (500-line budget); ↑/↓ history browsing has its own further sibling,
-//! `history_tests`. A child module of `keys`, so every private item there
-//! stays reachable through `use super::*;` exactly as if this were still
-//! inline.
-
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
@@ -178,7 +171,6 @@ fn paste_appends_to_the_draft_and_never_touches_the_buffer() {
 
     paste(&mut app, "wor\nld");
 
-    // First line only, and it lands in the draft, not the document.
     assert_eq!(app.search().unwrap().draft, "wor");
     assert_eq!(app.active_doc().buffer.content(), before);
 }

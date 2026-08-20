@@ -1,10 +1,3 @@
-//! The messages pane's own row builder: one separator row (styled by
-//! whether the pane holds focus), then the log document's rows through the
-//! SAME `render::build_rows` the editor uses — required for mouse
-//! hit-testing to ever land correctly, since the old `banner` module's own
-//! row walk built a different row space that hit-testing couldn't reuse —
-//! with one extra pass tinting each entry's byte range by its severity.
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -50,11 +43,6 @@ fn severity_style(theme: &Theme, severity: Severity) -> Option<Style> {
     }
 }
 
-/// Mirrors `render::overlay::highlight_selection`'s shape: walk every real
-/// cell and, if its byte offset falls inside one of `ranges`, patch in that
-/// entry's severity style. `ranges` is small (capped by `MAX_ENTRIES`), so a
-/// linear scan per cell is cheap against a pane that only ever shows a
-/// handful of rows at once.
 fn apply_severity_colours(
     rows: &mut [Vec<Cell>],
     theme: &Theme,

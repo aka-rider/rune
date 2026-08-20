@@ -1,14 +1,3 @@
-//! Renders the title row: `<name>` in `theme.chrome.title_text`, its
-//! extension de-emphasised via `theme.chrome.subtle`, plus (unfocused
-//! only) the trailing dirty dot; or, while the title holds focus, the same
-//! layout with a live selection background and a reverse-video cursor cell
-//! layered on top.
-//!
-//! Split out from `title.rs` (500-line budget): this module owns every span this row
-//! ever paints, reading `TitleField` only through its public accessors —
-//! it is a SIBLING of `title`, not a descendant (unlike `title::keys`), so
-//! it has no access to the field's own private shape.
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -21,10 +10,6 @@ use crate::pane::Pane;
 use crate::theme::Theme;
 use crate::title::ext_split;
 
-/// Pure function of `&App`: drawing twice produces identical
-/// output. Unfocused, `name` is the active document's own file name;
-/// focused, it is whatever the user has typed so far — [`TitleField::text`]
-/// (`crate::title::TitleField`).
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let focused = app.focus() == Pane::Title;
     let theme = &app.theme;
@@ -64,12 +49,6 @@ pub fn draw_left(name: &str, area: Rect, theme: &Theme, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Builds the styled spans for `name`. `always_bright` is true only when
-/// the title is focused AND its extension gate is unlocked — every other
-/// case dims everything from `split` onward. `selection` is
-/// `(selection_start, selection_end, cursor)` while the title holds focus,
-/// `None` otherwise: the caret and selection background are drawn only
-/// while editing.
 fn build_spans(
     name: &str,
     split: usize,
@@ -111,8 +90,6 @@ fn build_spans(
         spans.push(Span::styled(text.to_string(), style));
     }
 
-    // A cursor sitting at end-of-text has no grapheme of its own to carry
-    // the reverse-video cell, so one synthetic space stands in for it.
     if let Some((_, _, cursor)) = selection
         && cursor == len
     {
@@ -124,9 +101,6 @@ fn build_spans(
     spans
 }
 
-/// `theme.chrome.title_text` below `split`, `theme.chrome.subtle` at or
-/// above it — unless `always_bright`, in which case the whole name reads
-/// as `title_text`.
 fn base_style(at: usize, split: usize, always_bright: bool, theme: &Theme) -> Style {
     if always_bright || at < split {
         theme.chrome.title_text
@@ -135,9 +109,6 @@ fn base_style(at: usize, split: usize, always_bright: bool, theme: &Theme) -> St
     }
 }
 
-/// The byte offset just past the cursor's own grapheme cluster — a
-/// combining mark stays glued to its base character under reverse video,
-/// unlike a `char`-only step (`next_rune_offset` would split it).
 fn next_grapheme_end(name: &str, at: usize) -> usize {
     let at = at.min(name.len());
     name.get(at..)
@@ -170,8 +141,6 @@ mod tests {
         let theme = theme();
         let split = ext_split("lessrc.md");
         let spans = build_spans("lessrc.md", split, false, None, &theme);
-        // The stem stays `title_text`; everything from the split onward
-        // (the dot and extension) uses the dim `subtle` colour instead.
         let stem_span = spans.iter().find(|s| s.content == "lessrc").unwrap();
         assert_eq!(stem_span.style, theme.chrome.title_text);
         let ext_span = spans.iter().find(|s| s.content == ".md").unwrap();
@@ -193,7 +162,6 @@ mod tests {
         let theme = theme();
         let name = "lessrc.md";
         let split = ext_split(name);
-        // Select "less" (0..4).
         let spans = build_spans(name, split, false, Some((0, 4, 4)), &theme);
         let selected = spans.iter().find(|s| s.content == "less").unwrap();
         assert_eq!(selected.style.bg, Some(theme.chrome.selection_bg));

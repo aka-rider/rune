@@ -11,10 +11,6 @@ fn app() -> App {
     app
 }
 
-/// The load-bearing ordering: opening on a fresh app whose left column
-/// was never shown must still land the finder open with the Explorer
-/// focused — this pins that `app.filesearch` is assigned BEFORE
-/// `set_focus_pane` runs.
 #[test]
 fn open_on_a_never_shown_left_column_still_opens_and_focuses_explorer() {
     let mut app = app();
@@ -90,9 +86,6 @@ fn candidate(path: &str, in_tree: bool) -> Candidate {
     }
 }
 
-/// Pins the plan's own empty-query ordering: in-tree recents first (MRU
-/// order preserved), then out-of-tree recents (MRU order preserved) —
-/// even though the reply itself arrives with the two interleaved.
 #[test]
 fn recents_loaded_orders_in_tree_before_out_of_tree_preserving_mru() {
     let mut app = app();
@@ -129,9 +122,6 @@ fn recents_loaded_orders_in_tree_before_out_of_tree_preserving_mru() {
     );
 }
 
-/// A close-then-reopen mints a fresh generation (`open`'s own contract);
-/// a reply still carrying the OLD generation must never populate the
-/// new session's `recents`.
 #[test]
 fn recents_loaded_reply_is_dropped_after_a_close_then_reopen_mints_a_new_generation() {
     let mut app = app();
@@ -209,7 +199,7 @@ fn handle_scanned_drops_a_reply_whose_generation_no_longer_matches() {
     open(&mut app, &mut effects);
     let stale_generation = app.filesearch().expect("open").generation;
     cancel(&mut app, &mut effects);
-    open(&mut app, &mut effects); // mints a fresh generation
+    open(&mut app, &mut effects);
 
     handle_scanned(
         &mut app,
@@ -310,14 +300,6 @@ fn handle_scanned_error_clears_pending_and_posts_a_message() {
     );
 }
 
-/// A basename match outranks a buried, non-boundary substring match —
-/// pins the ACTUAL `match_paths` behaviour (verified against
-/// nucleo-matcher 0.3.1 directly: `Pattern::score` gives a query starting
-/// right after a `/` a boundary bonus a query starting mid-word does not
-/// get, regardless of which path segment either sits in — "notes/a.md"
-/// and "a/note.md" score IDENTICALLY for query "note", both starting at a
-/// boundary, so an intuitive "basename vs. buried" pair is not what
-/// actually distinguishes rank here).
 #[test]
 fn a_basename_match_outranks_a_buried_mid_word_match() {
     let mut app = app();
@@ -368,9 +350,6 @@ fn a_basename_match_outranks_a_buried_mid_word_match() {
     );
 }
 
-/// At equal score, an in-tree candidate ranks ahead of an out-of-tree
-/// one — the partition happens BEFORE the score-descending sort within
-/// each partition.
 #[test]
 fn in_tree_beats_out_of_tree_at_equal_score() {
     let mut app = app();
@@ -406,10 +385,6 @@ fn in_tree_beats_out_of_tree_at_equal_score() {
     );
 }
 
-/// MRU rank breaks a score tie — the two candidates below have
-/// the identical display string (so an identical score), differing only
-/// in `mru_rank`; the more recently used one (the lower rank) must sort
-/// first, and `Some` must always outrank `None`.
 #[test]
 fn mru_rank_breaks_a_score_tie() {
     let mut app = app();
@@ -425,8 +400,6 @@ fn mru_rank_breaks_a_score_tie() {
         ]),
         &mut effects,
     );
-    // `handle_recents_loaded` assigns `mru_rank` by ARRIVAL order — the
-    // first candidate above (`b/note.md`) is rank 0, the more-recent one.
     if let Some(state) = app.filesearch_mut() {
         for c in &mut state.recents {
             c.display = "note.md".to_string();
@@ -449,10 +422,6 @@ fn mru_rank_breaks_a_score_tie() {
     );
 }
 
-/// Finding 3: a late data reply (the walk landing here) must not steal the
-/// cursor away from a row the user already arrowed onto and is reading the
-/// preview of — it re-finds the SAME PATH in the freshly rebuilt list
-/// rather than snapping back to row 0.
 #[test]
 fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_same_path() {
     let mut app = app();
@@ -503,9 +472,6 @@ fn a_walk_reply_landing_with_the_cursor_on_row_two_keeps_the_selection_on_the_sa
     );
 }
 
-/// Finding 3: a query edit is the opposite case — it always resets the
-/// cursor to the top of the freshly filtered list, even though a data
-/// reply (above) must not.
 #[test]
 fn a_query_edit_recompute_resets_the_cursor_to_the_top() {
     let mut app = app();
@@ -535,14 +501,6 @@ fn a_query_edit_recompute_resets_the_cursor_to_the_top() {
     );
 }
 
-/// Finding 6: `recompute` must fire the preview request only when the
-/// selected PATH actually changed — two consecutive query edits whose top
-/// hit is the same path must push exactly one preview `Cmd` total, not one
-/// per keystroke. `preview_awaiting` is cleared by hand between the two
-/// edits specifically so `explorer_preview`'s own in-flight dedup can't
-/// mask a `recompute` that (incorrectly) fires on every keystroke — this
-/// test exercises `recompute`'s OWN changed-path gate, not the downstream
-/// one.
 #[test]
 fn two_query_edits_with_the_same_top_hit_push_exactly_one_preview_cmd_total() {
     let mut app = app();

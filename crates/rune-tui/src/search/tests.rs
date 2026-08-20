@@ -1,8 +1,3 @@
-//! Unit tests for the pure match engine and the state chokepoints in
-//! `search/mod.rs` — split into its own file (500-line budget); a child
-//! module of `search`, so every private item there stays reachable through
-//! `use super::*;` exactly as if this were still inline.
-
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
@@ -27,9 +22,7 @@ fn compute_matches_finds_ascii_case_insensitive_hits() {
 
 #[test]
 fn compute_matches_snaps_expanding_fold_to_whole_original_char() {
-    // 'İ' U+0130 folds to "i\u{0307}" (two chars) under `to_lowercase`;
-    // matching just "i" must still return the whole original char's
-    // byte range, not a byte offset that lands mid-expansion.
+    // 'İ' U+0130 folds to two chars ("i\u{0307}") under `to_lowercase`.
     let haystack = "\u{0130}stanbul";
     let matches = compute_matches(haystack, "i");
     assert_eq!(matches, vec![0.."\u{0130}".len()]);
@@ -37,9 +30,6 @@ fn compute_matches_snaps_expanding_fold_to_whole_original_char() {
 
 #[test]
 fn compute_matches_finds_hit_after_a_multibyte_char() {
-    // 'é' folds to a single already-lowercase char but is 2 bytes in UTF-8;
-    // the fold map must advance by that many bytes or every match after it
-    // in the haystack indexes into the wrong place.
     let haystack = "café needle";
     assert_eq!(compute_matches(haystack, "needle"), vec![6..12]);
     assert_eq!(&haystack[6..12], "needle");
@@ -64,8 +54,8 @@ fn compute_matches_handles_non_ascii_query() {
 
 #[test]
 fn compute_matches_is_non_overlapping() {
-    // `str::match_indices` semantics: overlapping occurrences are not
-    // all reported, only the non-overlapping left-to-right ones.
+    // `str::match_indices` semantics: overlapping occurrences are not all
+    // reported, only the non-overlapping left-to-right ones.
     let matches = compute_matches("aaaa", "aa");
     assert_eq!(matches, vec![0..2, 2..4]);
 }
@@ -98,9 +88,6 @@ fn concealed_ranges_coalesces_adjacent_substituted_spans() {
 
 #[test]
 fn concealed_ranges_never_includes_identical_folded_text() {
-    // The delimiters around `**bold**` are substituted away, but "bold"
-    // itself is an `Identical` span sliced verbatim from the buffer and
-    // must stay navigable.
     let content = "**bold**\n";
     let wrap = wrap_for(content);
     let ranges = concealed_ranges(&wrap);
@@ -117,8 +104,6 @@ fn concealed_ranges_never_includes_identical_folded_text() {
 
 #[test]
 fn a_match_straddling_a_concealed_table_border_edge_is_not_skipped() {
-    // Real markdown-derived concealed ranges (a rendered table border), not
-    // hand-built internals — only the straddling MATCH range is synthetic.
     let content = "| a | b |\n|---|---|\n| a | c |\n";
     let wrap = wrap_for(content);
     let concealed = concealed_ranges(&wrap);
@@ -232,11 +217,8 @@ fn open_creates_a_focused_empty_draft_and_close_is_a_no_op_when_already_closed()
 
     close(&mut app);
     assert!(app.search().is_none());
-    // An empty query never overwrites `last_search_query` (there is
-    // nothing to navigate back to).
     assert_eq!(app.last_search_query, None);
 
-    // Closing an already-closed bar is a harmless no-op.
     close(&mut app);
     assert!(app.search().is_none());
 }
@@ -262,19 +244,11 @@ fn switching_the_active_document_resets_the_match_set() {
 
     let other = app.open_document(Buffer::new("no match in this one"));
     app.active = other;
-    // `sync` (App::sync_view`'s own hook) is what notices the active
-    // document changed underneath an already-open bar — nothing here
-    // calls `recompute` directly, unlike a draft edit.
     sync(&mut app);
 
     assert!(app.search().unwrap().matches.is_empty());
 }
 
-/// A `Msg::RecentsLoaded` search reply whose generation no longer
-/// matches the CURRENTLY open bar's own `history_generation` — a
-/// close-then-reopen since the load was issued — is dropped outright,
-/// mirroring `explorer_dirload::handle_dir_loaded`'s own stale-generation
-/// check.
 #[test]
 fn a_stale_generation_history_reply_is_discarded() {
     let mut app = app_with("hello");
@@ -297,8 +271,6 @@ fn a_stale_generation_history_reply_is_discarded() {
     assert!(app.search().unwrap().history.is_empty());
 }
 
-/// The matching positive case: a reply whose generation DOES match the
-/// still-open bar adopts its entries.
 #[test]
 fn a_matching_generation_history_reply_populates_history() {
     let mut app = app_with("hello");
@@ -313,9 +285,6 @@ fn a_matching_generation_history_reply_populates_history() {
     );
 }
 
-/// A reader failure degrades history to empty and reports
-/// through the message log, but never closes the bar or otherwise disables
-/// it — the search bar itself must keep working.
 #[test]
 fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
     let mut app = app_with("hello");

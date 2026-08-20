@@ -1,41 +1,9 @@
-//! Re-fitting a live image document's footprint on `Msg::Resize`:
-//! a pane resize (or a cell-geometry re-derivation with no pane
-//! resize at all — a Retina-aware terminal reporting new pixel dimensions
-//! at the SAME cols/rows) can change the fit-to-width `(cols, rows)` an
-//! already-decoded image occupies. Retransmitting is only worth doing when
-//! that footprint actually changed — re-encoding and re-writing identical
-//! escape bytes on every keystroke-adjacent resize would be wasted work —
-//! but whenever it does, ratatui's own diffing cannot be trusted to notice:
-//! the placeholder cells stay byte-identical (same id, same diacritics)
-//! across a footprint that only changed which cells' PIXELS the terminal
-//! shows, so the retransmit is paired with a forced full redraw
-//! (`Effects::force_redraw`) or the terminal would keep showing the stale
-//! placement.
-
 use std::sync::Arc;
 
 use crate::app::App;
 use crate::graphics::ImageStatus;
 use crate::runtime::Effects;
 
-/// Called from `dispatch::update_inner`'s `Msg::Resize` arm, AFTER
-/// `App::relayout` has already sized the active document's `Viewport` —
-/// the footprint math needs that pane width to be current. A no-op unless
-/// the active document is a `Live` image document AND the recomputed
-/// `(cols, rows)` actually differs from what's already reserved.
-///
-/// `app.graphics.cell` itself, in contrast, is NOT yet current for the
-/// resize event that triggered this call: `runtime::apply` re-derives it
-/// from the terminal's own reported pixel dimensions only AFTER the whole
-/// message (including this dispatch) has run. A resize that changes cell
-/// PIXEL geometry (not column/row count — a Retina-aware terminal
-/// reporting different pixel dimensions at the same cols/rows) therefore
-/// lags by one resize event before this re-fit sees the new geometry —
-/// self-correcting on the very next `Msg::Resize`, which is frequent
-/// during an interactive drag-resize and otherwise harmless (the pane's
-/// COLUMN width, the dominant factor in fit-to-width, is already current).
-/// Reordering `runtime::apply` to detect graphics before dispatching is
-/// out of this package's scope.
 pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     let id = app.active;
     let Some(doc) = app.doc(id) else { return };
@@ -155,7 +123,6 @@ mod tests {
     fn a_footprint_change_retransmits_and_forces_a_redraw() {
         let (mut app, id) = app_with_live_image();
         let before = live_cells(&app, id);
-        // Narrow the pane so the fit-to-width footprint must shrink.
         app.doc_mut(id).expect("doc").viewport.set_size(4, 24);
 
         let mut effects = Effects::default();
@@ -191,9 +158,6 @@ mod tests {
     fn an_unchanged_footprint_neither_retransmits_nor_redraws() {
         let (mut app, id) = app_with_live_image();
         let _ = id;
-        // The viewport is still exactly the size it was when the image
-        // went live — the footprint is already correct, so no resize
-        // happened at all from this function's point of view.
 
         let mut effects = Effects::default();
         refit_on_resize(&mut app, &mut effects);
