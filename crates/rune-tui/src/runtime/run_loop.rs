@@ -38,10 +38,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
     let flushed = sink
         .transmits
         .flush_escapes_abandoning_images(|bytes| sink.guard.write_raw(bytes));
-    for handle in save_handles.drain(..) {
-        let _ = handle.join();
-    }
-    exit_settle::settle_pending_materialize(app, &rx);
+    exit_settle::join_save_handles(app, &rx, &mut save_handles);
 
     fatal.and(flushed)
 }

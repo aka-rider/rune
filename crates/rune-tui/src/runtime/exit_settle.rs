@@ -1,13 +1,31 @@
 use std::sync::mpsc::Receiver;
+use std::thread::{self, JoinHandle};
 
 use crate::app::App;
 
 use super::Msg;
 
-/// Must run after every `CmdKind::Save` handle is joined — the join is what
-/// guarantees an in-flight publish's `MaterializeVfsDone` reply has already
-/// been sent, so this bounded drain settles its bookkeeping before the
-/// process exits instead of orphaning a write that already reached disk.
+pub(crate) fn join_save_handles(
+    app: &mut App,
+    rx: &Receiver<Msg>,
+    handles: &mut Vec<JoinHandle<()>>,
+) {
+    while !handles.is_empty() {
+        settle_pending_materialize(app, rx);
+        let (finished, still_running): (Vec<_>, Vec<_>) = std::mem::take(handles)
+            .into_iter()
+            .partition(JoinHandle::is_finished);
+        *handles = still_running;
+        for handle in finished {
+            let _ = handle.join();
+        }
+        if !handles.is_empty() {
+            thread::yield_now();
+        }
+    }
+    settle_pending_materialize(app, rx);
+}
+
 pub(crate) fn settle_pending_materialize(app: &mut App, rx: &Receiver<Msg>) {
     while let Ok(msg) = rx.try_recv() {
         if let Msg::MaterializeVfsDone {
@@ -43,7 +61,7 @@ mod tests {
     use crate::save::{SaveMode, SaveOrigin, SaveStart};
     use crate::workspace;
 
-    use super::settle_pending_materialize;
+    use super::{join_save_handles, settle_pending_materialize};
 
     fn drain_db_ops(app: &mut App, bridge: &DbBridge, effects: &mut Effects) {
         while !app.db_ops.is_empty() {
@@ -118,6 +136,80 @@ mod tests {
             mem.read(Path::new("/doc.md")).expect("read doc.md"),
             b"Xhello",
             "the publish itself already committed"
+        );
+    }
+
+    #[test]
+    fn a_save_thread_finishing_after_the_join_starts_still_lands_its_reply() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/doc.md"), b"hello")
+            .expect("seed doc.md");
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+        let bridge = DbBridge::bootstrap();
+        let clock: rune_db::ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = rune_db::Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event())
+            .expect("open store");
+        let db = Db::new(store, Arc::clone(&bridge), false);
+        let mut app = App::new(Buffer::new(""), None, vfs, Some(db));
+        let id = workspace::open_path(&mut app, Path::new("/doc.md")).expect("open doc.md");
+
+        let mut effects = Effects::default();
+        drain_db_ops(&mut app, &bridge, &mut effects);
+        crate::commands::edit::insert_char(&mut app, id, 'X');
+        assert_eq!(
+            crate::save::trigger_save(
+                &mut app,
+                id,
+                SaveMode::Normal,
+                SaveOrigin::Interactive,
+                &mut effects
+            ),
+            SaveStart::InFlight
+        );
+        drain_db_ops(&mut app, &bridge, &mut effects);
+        let vfs_cmd = effects
+            .cmds
+            .drain(..)
+            .find(|cmd| cmd.kind() == CmdKind::Save)
+            .expect("the prepare ack spawns the publish Cmd");
+        let reply = vfs_cmd.run().expect("the publish Cmd replies");
+        assert!(matches!(reply, Msg::MaterializeVfsDone { .. }));
+
+        let (tx, rx) = mpsc::channel();
+        let (gate_tx, gate_rx) = mpsc::channel::<()>();
+        let save_thread = std::thread::spawn(move || {
+            gate_rx.recv().expect("the test opens the gate");
+            tx.send(reply).expect("the shutdown loop is still draining");
+        });
+        let mut handles = vec![save_thread];
+
+        let (result_tx, result_rx) = mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            join_save_handles(&mut app, &rx, &mut handles);
+            result_tx
+                .send(app)
+                .expect("the test thread is still waiting for the result");
+        });
+
+        assert!(
+            !shutdown.is_finished(),
+            "the shutdown join must still be waiting: the save thread is \
+             gated shut and has not sent its reply yet"
+        );
+
+        gate_tx.send(()).expect("release the gated save thread");
+        shutdown.join().expect("the shutdown thread must not panic");
+
+        let app = result_rx
+            .recv()
+            .expect("join_save_handles must return once the late save thread lands");
+        assert!(
+            matches!(
+                app.doc(id).expect("doc open").save_phase(),
+                SavePhase::Recording { published: true }
+            ),
+            "a save thread that finishes only after the join loop starts \
+             must still have its reply applied before shutdown proceeds"
         );
     }
 }
