@@ -229,7 +229,12 @@ fn undo_pos_error_is_doc_scoped() {
         .as_ref()
         .unwrap()
         .store
-        .move_undo_pos(rune_db::DocId(db_id), 999)
+        .move_undo_pos(
+            rune_db::DocId(db_id),
+            rune_db::BindingToken::next(),
+            rune_db::Seq(0),
+            999,
+        )
         .expect("enqueue the unresolvable move");
     session
         .app_mut()

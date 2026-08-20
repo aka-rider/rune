@@ -105,19 +105,119 @@ fn send_append(
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;
     };
+    let resolved_edits = resolve_drift(app, id, db_id, edits);
+    let Some(doc) = app.doc(id) else { return };
+    let Some(doc_db) = doc.doc_db() else { return };
+    let token = doc_db.token;
+    let token_base_seq = doc_db.token_base_seq;
     let Some(db) = app.db.as_ref() else { return };
-    let result = db
-        .store
-        .append_edit(rune_db::DocId(db_id), edits, cursors_before, cursors_after);
+    let result = db.store.append_edit(
+        rune_db::DocId(db_id),
+        token,
+        token_base_seq,
+        &resolved_edits,
+        cursors_before,
+        cursors_after,
+    );
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::append(id));
-            if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.doc_db_mut()) {
-                doc_db.appends_sent += 1;
-            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
+}
+
+/// Detects and neutralizes drift between `id`'s own buffer coordinates and
+/// what `db_id`'s row actually, durably reconstructs to — the mechanism
+/// behind both #119 (a sibling binding's own edits land in between) and
+/// #120 (an external reload the buffer never adopted): a binding whose
+/// buffer no longer matches the shared truth must never journal an edit at
+/// coordinates computed against its own stale view, or the edit lands at
+/// the wrong offset (or, worse, at a coincidentally valid but wrong one) in
+/// the row's real reconstruction.
+///
+/// Cheap in the ordinary case (`needs_check` false — a lone, never-diverged
+/// binding, the overwhelming common shape) — no content clone happens at
+/// all. Once a binding has diverged (or a sibling is bound to the same
+/// row), a PURE single-edit insertion is re-targeted to the tail of the
+/// row's own current content (an "append what I just typed" merge — the
+/// only translation with an unambiguous meaning without a real
+/// operational-transform engine); anything else (a delete, a replace, a
+/// multi-edit batch) falls back to one whole-content replace-all, exactly
+/// the same safety net `pending_rebase`'s eager bridge already uses for a
+/// fresh bind — content-correct always, fully surgical only when it can be.
+fn resolve_drift(
+    app: &mut App,
+    id: DocumentId,
+    db_id: i64,
+    edits: &[AppliedEdit],
+) -> Vec<AppliedEdit> {
+    let needs_check = app
+        .doc(id)
+        .and_then(crate::document::Document::doc_db)
+        .is_some_and(|d| d.diverged)
+        || app.documents_bound_to(db_id).len() > 1;
+    if !needs_check {
+        return edits.to_vec();
+    }
+
+    let new_buffer_content = app
+        .doc(id)
+        .map(|d| d.buffer.content().to_string())
+        .unwrap_or_default();
+    let mut diverged = app
+        .doc(id)
+        .and_then(crate::document::Document::doc_db)
+        .is_some_and(|d| d.diverged);
+    let shared = app
+        .file_binding(db_id)
+        .map(|f| f.shared_content.clone())
+        .unwrap_or_default();
+    if !diverged {
+        let synced = app
+            .doc(id)
+            .and_then(crate::document::Document::doc_db)
+            .map(|d| d.synced_content.clone())
+            .unwrap_or_default();
+        diverged = synced != shared;
+    }
+
+    let (result, new_shared) = if !diverged {
+        (edits.to_vec(), new_buffer_content.clone())
+    } else if let [edit] = edits
+        && edit.deleted.is_empty()
+    {
+        let pos = shared.len();
+        let new_shared = format!("{shared}{}", edit.insert);
+        (
+            vec![AppliedEdit {
+                start: pos,
+                end: pos + edit.insert.len(),
+                deleted: String::new(),
+                insert: edit.insert.clone(),
+            }],
+            new_shared,
+        )
+    } else {
+        (
+            vec![AppliedEdit {
+                start: 0,
+                end: shared.len(),
+                deleted: shared.clone(),
+                insert: new_buffer_content.clone(),
+            }],
+            new_buffer_content.clone(),
+        )
+    };
+
+    if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.doc_db_mut()) {
+        doc_db.diverged = diverged;
+        doc_db.synced_content = new_shared.clone();
+    }
+    if let Some(fb) = app.file_binding_mut(db_id) {
+        fb.shared_content = new_shared;
+    }
+    result
 }
 
 /// The one place a local journal count enters the writer's `i64` position
@@ -148,24 +248,23 @@ pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<Replica
 /// locally — called immediately after `Journal::move_pos` at
 /// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
 /// position just committed (`Journal::move_pos`'s own argument), mapped
-/// through `DocDb::undo_offset` into the writer thread's own numbering —
-/// carried to the writer thread AS-IS from there, never further
-/// resolved to a durable seq here: only the writer thread, which has
-/// already executed every `AppendEdit` this session enqueued ahead of this
-/// op, can resolve it exactly (see `rune_db::OpKind::MoveUndoPos`'s doc
-/// comment). A position mapping outside the writer's own numbering —
-/// below `DocDb::undo_floor` (a state that predates a rebind's re-base
-/// bridge) or above `DocDb::appends_sent` (an entry the writer never ran)
+/// through `DocDb::undo_offset` into `token`'s own numbering — carried to
+/// the writer thread AS-IS from there, never further resolved to a durable
+/// seq here: only the writer thread, which has already executed every
+/// `AppendEdit` this token enqueued ahead of this op, can resolve it
+/// exactly (see `rune_db::OpKind::MoveUndoPos`'s doc comment). A position
+/// mapping BELOW `DocDb::undo_floor` predates this token's own numbering
+/// entirely (the local journal position `token` was minted at, or before)
 /// — cannot be sent as an exact position: mis-resolving it lands
 /// `current_seq` on another lineage's seq and recovery silently truncates
 /// or resurrects content. Such a move is journaled as a FORWARD re-base
 /// instead: one replace-all `AppendEdit` from `pre_content` (the buffer as
 /// it stood before this undo/redo committed, which is exactly what the
-/// durable replica reconstructs to) to the post-move buffer, after which
-/// the mapping re-anchors and later moves resolve exactly again. This op
-/// is doc-scoped (`PendingOp::doc_scoped`): a resolution failure is a fact
-/// about ONE document's undo position, never a reason to degrade the whole
-/// store.
+/// durable replica reconstructs to) to the post-move buffer, after which a
+/// FRESH token re-anchors the mapping and later moves resolve exactly
+/// again. This op is doc-scoped (`PendingOp::doc_scoped`): a resolution
+/// failure is a fact about ONE document's undo position, never a reason to
+/// degrade the whole store.
 pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_content: &str) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -181,13 +280,17 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_conten
     let Some(doc) = app.doc(id) else { return };
     let Some(doc_db) = doc.doc_db() else { return };
     let db_id = doc_db.db_id;
+    let token = doc_db.token;
+    let token_base_seq = doc_db.token_base_seq;
     let resolved_pos = journal_i64(local_pos) - doc_db.undo_offset;
-    if resolved_pos < doc_db.undo_floor || resolved_pos > doc_db.appends_sent {
+    if resolved_pos < doc_db.undo_floor {
         rebase_move(app, id, pre_content);
         return;
     }
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.move_undo_pos(rune_db::DocId(db_id), resolved_pos);
+    let result = db
+        .store
+        .move_undo_pos(rune_db::DocId(db_id), token, token_base_seq, resolved_pos);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::move_undo_pos(id));
@@ -196,17 +299,29 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_conten
     }
 }
 
-/// Journals an undo/redo the writer's numbering cannot express as one
-/// forward replace-all `AppendEdit` (`move_undo_pos`'s own doc comment),
-/// then re-anchors the mapping on the position the replica now sits at:
-/// every position at or above it resolves exactly from here on, and any
-/// later move back below lands here again.
+/// Journals an undo/redo the current token's numbering cannot express as
+/// one forward replace-all `AppendEdit` (`move_undo_pos`'s own doc
+/// comment): mints a FRESH [`rune_db::BindingToken`] for `id`'s binding —
+/// exactly the same "start numbering over" a rebind performs — sends the
+/// bridge as that token's own first append (when the buffer actually
+/// changed), then re-anchors `undo_offset`/`undo_floor` on the position the
+/// replica now sits at: every position at or above it resolves exactly
+/// from here on under the new token, and any later move back below lands
+/// here again.
 fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
     let current = match app.doc(id) {
         Some(doc) => doc.buffer.content().to_string(),
         None => return,
     };
-    if pre_content != current {
+    let bridged = pre_content != current;
+    let Some(doc_db) = app.doc_mut(id).and_then(|d| d.doc_db_mut()) else {
+        return;
+    };
+    doc_db.token = rune_db::BindingToken::next();
+    doc_db.token_base_seq = doc_db.last_known_seq;
+    doc_db.diverged = false;
+    doc_db.synced_content = pre_content.to_string();
+    if bridged {
         send_append(
             app,
             id,
@@ -225,8 +340,8 @@ fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
     let Some(doc_db) = doc.doc_db_mut() else {
         return;
     };
-    doc_db.undo_offset = pos - doc_db.appends_sent;
-    doc_db.undo_floor = doc_db.appends_sent;
+    doc_db.undo_floor = i64::from(bridged);
+    doc_db.undo_offset = pos - doc_db.undo_floor;
 }
 
 /// Enqueues a `Load` op hydrating `id` (already bound to `path`, an
@@ -308,12 +423,7 @@ fn load_document_inner(
     let Some(db) = app.db.as_ref() else {
         return false;
     };
-    let enqueued = match purpose {
-        LoadPurpose::Rebaseline {
-            expect_row: Some(row),
-        } => db.store.load_rebaseline(path, rune_db::DocId(row)),
-        _ => db.store.load(path),
-    };
+    let enqueued = db.store.load(path);
     match enqueued {
         Ok(op_id) => {
             app.db_ops
