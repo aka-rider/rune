@@ -205,3 +205,7 @@ pub fn sync_with_theirs(
 #[cfg(test)]
 #[path = "sync_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sync_merge_resolve_tests.rs"]
+mod merge_resolve_tests;

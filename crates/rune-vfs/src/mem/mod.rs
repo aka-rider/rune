@@ -14,23 +14,10 @@ use std::time::{Duration, UNIX_EPOCH};
 use crate::path_util::{classify, follow_links, kind_at, lexically_normalize, not_found};
 use crate::{DirEntry, FileKind, Identity, Link, Stat, Vfs, sort_dir_entries, temp_name};
 
-/// The `Vfs` operation a `Mem::fail_next`/`Mem::fail_after` injection
-/// targets.
 #[cfg(any(test, feature = "fault-injection"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum OpKind {
-    Read,
-    WriteDurable,
-    Exchange,
-    RenameExcl,
-    Remove,
-    Trash,
-    Stat,
-    Resolve,
-    MkdirAll,
-    ReadDir,
-    ReadLink,
-}
+mod fault;
+#[cfg(any(test, feature = "fault-injection"))]
+pub use fault::OpKind;
 
 pub(crate) struct MemFile {
     data: Vec<u8>,
@@ -61,36 +48,7 @@ struct MemState {
 pub struct Mem {
     state: Mutex<MemState>,
     #[cfg(any(test, feature = "fault-injection"))]
-    fail_next: Mutex<Option<(OpKind, io::Error)>>,
-    /// WP1.S5: the counterpart to `fail_next`. `fail_next` intercepts a call
-    /// before it touches `state`; `fail_after` lets a mutating op (currently
-    /// `Exchange`/`RenameExcl`, the two publish primitives) complete its
-    /// mutation and THEN fail, reproducing "the swap/rename already took
-    /// effect, but the operation still reported failure" — the phase
-    /// `WrappedIo::published` distinguishes, and which `fail_next` cannot
-    /// express at all.
-    #[cfg(any(test, feature = "fault-injection"))]
-    fail_after: Mutex<Option<(OpKind, io::Error)>>,
-    /// WP-A: a one-shot mutation that fires the NEXT time `Vfs::stat(path)`
-    /// is called, applied AFTER that call has already computed its answer —
-    /// reproducing "the file changed in the gap between two stat calls that
-    /// bracket a read": the bracket's first stat sees the state as it was,
-    /// its second stat (or the read in between) sees the state after.
-    #[cfg(any(test, feature = "fault-injection"))]
-    mutate_after_stat: Mutex<Option<(PathBuf, Vec<u8>)>>,
-    /// WP-A: paths currently in "churn" mode — EVERY `Vfs::stat` call
-    /// mutates content+identity right after computing its answer, forever,
-    /// rather than the one-shot `mutate_after_stat`. Reproduces a file that
-    /// never stops changing: no bracket around it can ever settle, since
-    /// even its own retry attempts each see a fresh mutation mid-bracket.
-    #[cfg(any(test, feature = "fault-injection"))]
-    churning: Mutex<std::collections::HashSet<PathBuf>>,
-    /// Paths `Mem::resolve` refuses permanently, set via `Mem::fail_resolve`
-    /// — an unreadable/missing ancestor or a symlink loop, unlike
-    /// `fail_next(OpKind::Resolve, ..)`'s one-shot, path-blind trigger,
-    /// which cannot target one path across a test that resolves several.
-    #[cfg(any(test, feature = "fault-injection"))]
-    resolve_failures: Mutex<std::collections::HashSet<PathBuf>>,
+    faults: fault::Faults,
 }
 
 impl Mem {
@@ -102,15 +60,7 @@ impl Mem {
                 tick: 0,
             }),
             #[cfg(any(test, feature = "fault-injection"))]
-            fail_next: Mutex::new(None),
-            #[cfg(any(test, feature = "fault-injection"))]
-            fail_after: Mutex::new(None),
-            #[cfg(any(test, feature = "fault-injection"))]
-            mutate_after_stat: Mutex::new(None),
-            #[cfg(any(test, feature = "fault-injection"))]
-            churning: Mutex::new(std::collections::HashSet::new()),
-            #[cfg(any(test, feature = "fault-injection"))]
-            resolve_failures: Mutex::new(std::collections::HashSet::new()),
+            faults: fault::Faults::new(),
         }
     }
 
@@ -121,6 +71,7 @@ impl Mem {
     pub fn fail_next(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_next({op:?}) triggered"));
         let mut guard = self
+            .faults
             .fail_next
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -144,7 +95,7 @@ impl Mem {
     pub fn fail_after(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_after({op:?}) triggered"));
         let mut guard = self
-            .fail_after
+            .faults.fail_after
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((op, err));
@@ -156,7 +107,7 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     fn take_failure(&self, op: OpKind) -> io::Result<()> {
         let mut guard = self
-            .fail_next
+            .faults.fail_next
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match guard.as_ref() {
@@ -175,6 +126,7 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     fn take_after_failure(&self, op: OpKind, context: impl Into<String>) -> Option<io::Error> {
         let mut guard = self
+            .faults
             .fail_after
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -232,7 +184,7 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub fn mutate_after_next_stat(&self, path: &Path, bytes: Vec<u8>) {
         let mut guard = self
-            .mutate_after_stat
+            .faults.mutate_after_stat
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((path.to_path_buf(), bytes));
@@ -249,7 +201,7 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub fn set_churning(&self, path: &Path, churning: bool) {
         let mut guard = self
-            .churning
+            .faults.churning
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if churning {
@@ -283,7 +235,7 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     fn apply_pending_mutation(&self, path: &Path) {
         let is_churning = self
-            .churning
+            .faults.churning
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(path);
@@ -294,7 +246,7 @@ impl Mem {
         }
         let armed = {
             let mut guard = self
-                .mutate_after_stat
+                .faults.mutate_after_stat
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match guard.as_ref() {
@@ -351,7 +303,7 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_resolve(&self, path: &Path) {
         let mut guard = self
-            .resolve_failures
+            .faults.resolve_failures
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.insert(lexically_normalize(path));
@@ -601,7 +553,7 @@ impl Vfs for Mem {
         #[cfg(any(test, feature = "fault-injection"))]
         {
             let failing = self
-                .resolve_failures
+                .faults.resolve_failures
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if failing.contains(&normalized) {
