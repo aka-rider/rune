@@ -25,13 +25,6 @@ pub(crate) fn is_divergent(doc: &Document) -> bool {
     doc.last_sync.is_some_and(SyncKind::is_disk_divergent)
 }
 
-/// `^M`: a fast pre-check against `Document.last_sync`
-/// (render/hint state only) before ever enqueueing a
-/// `MergePrep` — refuses immediately, with feedback, when there is
-/// obviously nothing to merge, without waiting on a round trip to confirm
-/// what the hint already rules out. The fresh `MergePrep` landing
-/// (`landing::handle_merge_prep_ack`) re-checks authoritatively before
-/// actually installing anything.
 pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) {
     let id = app.active;
     let Some(doc) = app.doc(id) else { return };
@@ -39,13 +32,6 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         messages::warn(app, "merge already preparing");
         return;
     }
-    // A save's multi-hop materialize dance is still in flight for this
-    // document: a `MergePrep` enqueued now could land AFTER the save's
-    // commit ack and rebase `DocDb::expect_obs` backwards to the pre-save
-    // disk observation, making the very next ^S CAS-refuse against a file
-    // the session itself just wrote. `save_in_flight` spans the whole dance
-    // — trigger through the same ack that advances `expect_obs` — unlike
-    // any single pending-op entry, so it is the one check with no window.
     if doc.save_in_flight() {
         messages::warn(app, "save in progress — merge after it completes");
         return;
@@ -82,16 +68,6 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
     }
 }
 
-/// The exit-in-place chokepoint: Esc exits an active merge in place, with
-/// no abort-restore. A no-op outside `Active` — checked BEFORE
-/// ever taking `app.merge` (review fix F3): a `Pending` attempt has no
-/// `saved_display_name`/blocks to restore or count, and taking it
-/// unconditionally used to silently cancel it with no feedback at all,
-/// contradicting this very doc's "no-op outside `Active`" — see
-/// `cancel_pending` below for `Pending`'s own exit path, with its own
-/// status. `pub(crate)` because callers besides `^M` toggling off an
-/// already-`Active` merge by hand also reach it: auto-exit on tab
-/// switch/close/quit, the resolver's own Esc, and fully-resolved auto-exit.
 pub(crate) fn exit_in_place(app: &mut App) {
     if !matches!(app.merge, MergeState::Active { .. }) {
         return;
@@ -105,31 +81,12 @@ pub(crate) fn exit_in_place(app: &mut App) {
         if let Some(d) = app.doc_mut(doc) {
             d.display_name = session.saved_display_name;
         }
-        // A completed merge leaves the buffer strictly ahead
-        // of the disk bytes it just reconciled with — recording that
-        // here is what retires the disk-changed banner/hint instead of
-        // re-inviting a merge forever. Esc-out with unresolved blocks
-        // leaves `last_sync` untouched: the document is still
-        // truthfully diverged and the affordances must return.
         set_last_sync(app, doc, SyncKind::BufferAhead);
-        // Completion is the terminal success: only NOW has the user
-        // genuinely reconciled the buffer with the disk bytes the merge
-        // read, so only now does the save-CAS baseline advance to them.
         landing::advance_expect_obs(app, doc, session.theirs_obs);
         persist::enqueue_merge_close(app, doc, rune_db::MergeCloseState::Completed);
         let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
         messages::info(app, format!("merge complete — {save_key} to save"));
     } else {
-        // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
-        // quit auto-exit) retracts the entry-time resolve observation:
-        // without this, the resolve row at the journal head makes the very
-        // next probe classify the unresolved working form as reconciled —
-        // retiring every divergence affordance and making `begin` refuse
-        // with "no divergence to merge" while the conflict is anything but
-        // resolved. Abandoning restores the pre-merge baseline so the
-        // document classifies `Diverged` again and `^M` re-enters a real
-        // merge. The save-CAS baseline was never advanced on this path,
-        // so a ^S still CAS-refuses into the disk-conflict guard.
         abandon_active(
             app,
             doc,
@@ -139,11 +96,6 @@ pub(crate) fn exit_in_place(app: &mut App) {
     }
 }
 
-/// The shared unresolved-retirement path: restores the document's display
-/// name, retracts the entry-time resolve observation, and posts `message`.
-/// Used by [`exit_in_place`] (Esc, `^M` toggle-off, an unresolved auto-exit)
-/// and by [`retract_active_on_convergence`] (nothing resolved yet, and a
-/// later probe says the divergence that prompted the merge is gone).
 fn abandon_active(
     app: &mut App,
     doc: crate::document::DocumentId,
@@ -159,14 +111,6 @@ fn abandon_active(
     messages::info(app, message);
 }
 
-/// Extends the entry-time "file on disk matches — nothing to merge"
-/// check (`landing::handle_merge_prep_ack`) to an already-`Active` merge:
-/// when nothing has been resolved yet and a later probe finds disk no
-/// longer diverged from this session's own reconstruction, whatever
-/// prompted the merge is gone — a clean exit beats leaving a stale
-/// conflict UI up, and there is no resolver progress to lose. A no-op
-/// once any block has been resolved, or for any document other than the
-/// one `Active` names.
 pub(crate) fn retract_active_on_convergence(
     app: &mut App,
     doc: crate::document::DocumentId,
@@ -201,9 +145,6 @@ pub(crate) fn retract_active_on_convergence(
     );
 }
 
-/// Installs the resolver's "name: editor <-> disk" display title on `doc`
-/// and returns the display name it replaced, for `MergeState::Active` to
-/// carry until exit restores it.
 fn install_resolver_display_name(
     app: &mut App,
     doc: crate::document::DocumentId,
@@ -219,22 +160,12 @@ fn install_resolver_display_name(
     saved_display_name
 }
 
-/// The one place merge outcomes record a document's fresh sync
-/// classification — render/hint state only, never the CAS baseline (that is
-/// `landing::advance_expect_obs`'s job, gated on terminal success). A no-op
-/// for a document that vanished mid-ack.
 fn set_last_sync(app: &mut App, doc: crate::document::DocumentId, kind: SyncKind) {
     if let Some(d) = app.doc_mut(doc) {
         d.last_sync = Some(kind);
     }
 }
 
-/// Enqueues the store-side retraction of an abandoned merge's entry-time
-/// resolve observation — the writer deletes the `origin='resolve'` row and
-/// restores the baseline it superseded, so the next probe classifies the
-/// still-diverged document truthfully. Mirrors the adopt enqueue's shape: a
-/// store-less/degraded document simply skips it (there is no observation to
-/// retract there either), and a failed enqueue degrades the whole store.
 fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
     let Some(db_id) = app.doc_db_id(doc) else {
         return;
@@ -254,16 +185,6 @@ fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
     }
 }
 
-/// Cancels a `Pending` merge attempt with feedback (review fix F3) — the
-/// disk-state round trip it was waiting on hasn't landed yet, so there is
-/// no working form to restore and no `exit_in_place` contract to reuse; a
-/// no-op outside `Pending`. Called from the same auto-exit transition sites
-/// as `exit_in_place` (`workspace::switch_to`/`close_now`) when the
-/// transitioning document has a merge attempt still `Pending` rather than
-/// `Active`. The eventual `MergePrep` ack this cancels ahead of is not lost
-/// track of — `handle_merge_prep_ack`'s own generation/doc ticket check
-/// already treats an ack against a no-longer-`Pending` `app.merge` as stale
-/// and drops it, exactly like a superseding `^M` would.
 pub(crate) fn cancel_pending(app: &mut App) {
     if !matches!(app.merge, MergeState::Pending { .. }) {
         return;
@@ -275,10 +196,6 @@ pub(crate) fn cancel_pending(app: &mut App) {
     );
 }
 
-/// Dispatches `exit_in_place`/`cancel_pending` by `app.merge`'s current
-/// state (review fix F3) — the one place the auto-exit transition sites
-/// (`workspace::switch_to`/`close_now`) need to call, rather than each
-/// re-deriving which of the two applies. A no-op on `Inactive`.
 pub(crate) fn auto_exit(app: &mut App) {
     match &app.merge {
         MergeState::Active { .. } => exit_in_place(app),
@@ -287,15 +204,6 @@ pub(crate) fn auto_exit(app: &mut App) {
     }
 }
 
-/// The save gate: while the resolver is active ON
-/// the document being saved with unresolved blocks remaining, saving is
-/// refused with the count — a reflexive save mid-merge must not publish a
-/// half-resolved working form with zero friction. A rung in
-/// `save::trigger_save`'s refusal ladder, so every save entry point (^S,
-/// the guards' [S] answers, the quit fan-out) hits it structurally rather
-/// than each call site remembering to ask. One rule, no content sniffing:
-/// after exit or full resolution the document is ordinary dirty text and
-/// saves normally.
 pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -> bool {
     if matches!(&app.merge, MergeState::Pending { doc, .. } if *doc == target) {
         let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
@@ -326,10 +234,6 @@ pub(crate) fn is_active_on(app: &App, target: crate::document::DocumentId) -> bo
     matches!(app.merge, MergeState::Active { doc, .. } if doc == target)
 }
 
-/// `GlobalCommand::Merge`'s handler: `^M` starts a merge
-/// attempt when none is active, or exits an already-`Active` one in place —
-/// a natural toggle. `exit_in_place` also has other callers (the
-/// resolver's own Esc, auto-exit) besides this one.
 pub(crate) fn toggle(app: &mut App, effects: &mut Effects) {
     if matches!(app.merge, MergeState::Active { .. }) {
         exit_in_place(app);
@@ -372,8 +276,6 @@ mod tests {
         }
     }
 
-    /// A probe finding disk still diverged is not convergence — the
-    /// `Active` merge, and any blocks resolved so far, are untouched.
     #[test]
     fn retract_active_on_convergence_is_a_noop_while_still_divergent() {
         let mut app = app_with("hello");
@@ -392,9 +294,6 @@ mod tests {
         assert!(matches!(app.merge, MergeState::Active { .. }));
     }
 
-    /// Any block already resolved means there is resolver progress to
-    /// lose — convergence must not silently discard it, even once disk
-    /// stops looking diverged.
     #[test]
     fn retract_active_on_convergence_is_a_noop_once_anything_is_resolved() {
         let mut app = app_with("hello");
@@ -420,10 +319,6 @@ mod tests {
         assert!(matches!(app.merge, MergeState::Active { .. }));
     }
 
-    /// Nothing resolved yet, and a later probe says disk no longer
-    /// diverges: the merge exits cleanly with its own explanatory
-    /// message, restoring the display name exactly like `exit_in_place`'s
-    /// own unresolved-retirement path does.
     #[test]
     fn retract_active_on_convergence_exits_cleanly_with_nothing_resolved() {
         let mut app = app_with("hello");
@@ -453,8 +348,6 @@ mod tests {
         );
     }
 
-    /// A convergence probe for a DIFFERENT document must never touch this
-    /// one's active merge.
     #[test]
     fn retract_active_on_convergence_ignores_a_different_document() {
         let mut app = app_with("hello");

@@ -1,11 +1,3 @@
-//! One embed's decode `Cmd` and reply handler, the `EmbedSet`
-//! sibling of `graphics::decode_cmd`'s whole-image-document pair.
-//! `generation` alone is enough to find the right `EmbedState`:
-//! `EmbedSet::next_generation` mints a value unique across EVERY embed in
-//! one document (not just within one), so `handle_embed_decoded` can
-//! recover the target key by scanning for `in_flight == Some(generation)`
-//! without the `Msg` itself naming it.
-
 use std::sync::Arc;
 
 use crate::app::App;
@@ -13,10 +5,6 @@ use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
-/// Spawns a decode for the embed named `target` in document `id`, iff one
-/// isn't already in flight for it. A no-op if the target isn't tracked at
-/// all (the reconciler always inserts the `EmbedState` before calling this,
-/// but a defensive miss here is cheaper than a panic).
 pub(crate) fn schedule_embed_decode(
     app: &mut App,
     id: DocumentId,

@@ -1,22 +1,3 @@
-//! The image document's decode `Cmd`, its scheduling
-//! chokepoint, and the reply handler that turns a finished decode into a
-//! live footprint plus (Kitty only) a transmit escape.
-//!
-//! Mirrors `highlight::schedule_highlight`'s shape deliberately: an
-//! `in_flight` generation guards against a second decode for the same
-//! document racing the first, and a reply whose generation no longer
-//! matches is dropped silently with no further `Cmd` — `spawn_cmd` has no
-//! cancellation, so this echo is the only thing standing between a stale
-//! reply and a corrupted `ImageState`.
-//!
-//! The fit computation (`footprint::fit`) deliberately runs in the REPLY
-//! handler, not in the `Cmd` closure: a document can become active (and
-//! this decode spawned) before its own `Viewport` has ever been sized by
-//! `App::relayout` — the CLI's synchronous bootstrap open in particular has
-//! no `Msg::Resize` behind it yet at spawn time. By the time an async
-//! reply lands, at least one `sync_view`/`relayout` has already run for
-//! this document, so its `viewport.width` is trustworthy.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,15 +10,6 @@ use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
-/// Spawns a decode for `id` if — and only if — it is an image document
-/// still waiting on its very first decode: `status == Pending` (a prior
-/// success moved it to `Live`, a prior failure to `Failed`, and this
-/// function adds no retry path of its own — that's `reload_image`'s job)
-/// and no decode is
-/// already `in_flight` for it. A no-op for every other document, so every
-/// call site (the `App::update` active-change hook, `runtime::bootstrap`'s
-/// startup kick) can call this unconditionally without checking `kind`
-/// itself first.
 pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let Some(image) = doc.image() else { return };
@@ -47,27 +19,6 @@ pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut
     spawn_decode(app, id, effects);
 }
 
-/// The reload command: re-reads
-/// and re-decodes an already-open image document on demand, through the
-/// very same `Vfs`/decode `Cmd` `schedule_image_decode` uses — the only
-/// difference is this function does NOT check `status`, since reload's
-/// whole point is recovering a `Failed` document or refreshing an already-
-/// `Live` one, not just filling in a `Pending` one. Unlike `schedule_image_
-/// decode`, it does NOT refuse when a decode is already `in_flight`: it
-/// abandons it instead — `spawn_decode` mints a strictly greater generation
-/// than any this document has issued before, so the abandoned reply is
-/// later dropped by `handle_image_decoded`'s own `in_flight != Some(
-/// generation)` guard rather than accepted as if it belonged to the fresh
-/// decode. This is the recovery path for a reply that is ever lost (a
-/// panicked decode thread, a failed channel send): with no timeout or
-/// reaper anywhere in this pipeline, an explicit reload is the only way
-/// out of a wedge, so it must always be able to spawn a new attempt. A
-/// no-op for any non-image document, so the editor table's `⌘R` binding can
-/// never do anything harmful even on a document `dispatch::Command::
-/// Reload`'s own gate somehow let through. `ImageState::id` is never
-/// reallocated across this call, so the eventual transmit (`handle_
-/// image_decoded`) necessarily retransmits under the SAME deterministic id
-/// the document opened with.
 pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     if doc.image().is_none() {
@@ -76,14 +27,6 @@ pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects)
     spawn_decode(app, id, effects);
 }
 
-/// The shared spawn chokepoint both `schedule_image_decode` and `reload_
-/// image` fall through to once their own gate has already passed: mints a
-/// generation strictly greater than any this document has ever issued
-/// (`ImageState::next_generation`, not derived from `in_flight`:
-/// `in_flight` goes back to `None` once a decode finishes or is abandoned,
-/// so deriving from it would let a later spawn collide with an earlier,
-/// still-outstanding one), snapshots the path and `Vfs` handle, marks
-/// `in_flight`, and pushes the decode `Cmd`.
 fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let Some(image) = doc.image() else { return };
@@ -101,11 +44,6 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
         .push(decode_image_cmd(id, vfs, path, generation));
 }
 
-/// Reads `path` off-thread via `vfs.read` and decodes it — the off-thread
-/// half of both a whole image document's decode and one embed's: decode is
-/// CPU work, and a large/degraded-filesystem image must never block the
-/// main loop. No `catch_unwind` of its own: `spawn_cmd` already contains a
-/// decoder panic on malformed input.
 fn read_and_decode(vfs: &dyn Vfs, path: &Path) -> Result<rune_image::decode::Decoded, CmdError> {
     let sighting = rune_vfs::get(vfs, path, None)?;
     Ok(rune_image::decode_still(&sighting.bytes)?)
@@ -181,10 +119,6 @@ pub(crate) fn handle_image_decoded(
     let cell = app.graphics.cell;
     let kitty = app.graphics.kitty;
     let img_id = image.id;
-    // Only a RETRANSMIT needs the diff invalidated: its placeholder cells can
-    // be byte-identical to the ones already on screen while the pixels behind
-    // them changed, so the renderer would skip them. A first transmit replaces
-    // the info card with placeholder cells, which the diff sees on its own.
     let was_live = matches!(image.status, ImageStatus::Live { .. });
 
     let Some(doc) = app.doc_mut(id) else { return };

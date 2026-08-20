@@ -14,10 +14,6 @@ fn app_with(content: &str) -> App {
     App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
 }
 
-/// Review fix F2: `discard_install`'s own signature carries no
-/// ancestor at all — it cannot read what it was never given — so a
-/// Discard always installs `theirs` verbatim, provably independent of
-/// whatever the ancestor blob would (or wouldn't) have decoded to.
 #[test]
 fn discard_install_replaces_the_buffer_with_theirs_verbatim_and_never_touches_ancestor() {
     let mut app = app_with("ours text the discard replaces\n");
@@ -35,10 +31,6 @@ fn discard_install_replaces_the_buffer_with_theirs_verbatim_and_never_touches_an
     assert_eq!(messages::newest_text(&app), Some("disk changes adopted"));
 }
 
-/// Review fix F4: `sync.kind` claiming `Diverged` (or `DiskAhead`) with
-/// no `theirs`/`theirs_obs` at all is an inconsistency `classify_sync`
-/// should never produce — the landing must refuse cleanly, with a
-/// status, rather than unwrap past it.
 #[test]
 fn ack_refuses_cleanly_when_sync_claims_diverged_but_theirs_is_absent() {
     let mut app = app_with("hello");
@@ -102,11 +94,6 @@ fn diverged_prep(theirs: &[u8], theirs_obs: ObsId) -> MergePrepResult {
     }
 }
 
-/// An absent ancestor (`prep.ancestor: None`) must be presented
-/// honestly — a message-pane notice explaining there is no saved
-/// ancestor — and must not degrade to a whole-file conflict: the
-/// no-ancestor 2-way path still localizes on whatever `ours` and
-/// `theirs` share.
 #[test]
 fn absent_ancestor_notifies_and_localizes_via_the_2way_path() {
     let mut app = app_with("shared-start\nours-only\nshared-end\n");
@@ -193,9 +180,6 @@ fn a_save_in_flight_cancels_the_landing_instead_of_installing_a_resolver() {
     );
 }
 
-/// A "nothing to merge" refusal still carries a fresh authoritative
-/// classification — the landing must keep it on `last_sync`, or the
-/// stale hint that invited the attempt would re-invite it forever.
 #[test]
 fn nothing_to_merge_refusal_records_the_fresh_classification() {
     let mut app = app_with("hello");
@@ -234,8 +218,6 @@ fn nothing_to_merge_refusal_records_the_fresh_classification() {
     assert_eq!(app.doc(doc).unwrap().last_sync, Some(SyncKind::Clean));
 }
 
-/// A successful Discard leaves the buffer byte-equal to the disk bytes
-/// it just installed — `last_sync` must say `Clean`.
 #[test]
 fn discard_install_success_marks_the_document_clean() {
     let mut app = app_with("ours");
@@ -252,9 +234,6 @@ fn discard_install_success_marks_the_document_clean() {
     assert_eq!(app.merge, MergeState::Inactive);
 }
 
-/// A failed install (a read-only document refuses the whole-range edit)
-/// must leave both the CAS baseline and the sync classification exactly
-/// as they were — nothing was reconciled, so nothing may claim it was.
 #[test]
 fn failed_install_leaves_expect_obs_and_last_sync_untouched() {
     let mut app = app_with("hello");
@@ -299,9 +278,6 @@ fn failed_install_leaves_expect_obs_and_last_sync_untouched() {
     );
 }
 
-/// `begin` refuses while a save's materialize dance is still in flight
-/// for the document — a `MergePrep` ack landing after the save's commit
-/// ack would rebase the CAS baseline backwards.
 #[test]
 fn begin_refuses_while_a_save_is_in_flight() {
     let mut app = app_with("hello");
@@ -324,9 +300,6 @@ fn begin_refuses_while_a_save_is_in_flight() {
     );
 }
 
-/// Review fix F9: the install's single resulting cursor lands at
-/// `cursor_at`, not at the edit's end (the whole document) —
-/// `install_whole_range`'s own contract.
 #[test]
 fn install_whole_range_places_the_cursor_at_the_requested_offset() {
     let mut app = app_with("old content");

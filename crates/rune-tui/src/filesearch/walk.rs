@@ -1,68 +1,29 @@
-//! The fuzzy file finder's own Vfs-only, ignore-aware recursive walk:
-//! composed entirely from `Vfs::read_dir`/`Vfs::read` rather than the
-//! `ignore` crate's own walker, which reads the real filesystem directly
-//! and bypasses the injected `Vfs` — fenced off by the workspace's own
-//! `disallowed-types` clippy config. Iterative, not recursive: an explicit
-//! work stack carries enter/leave steps so a per-directory gitignore
-//! matcher can be pushed on entry and popped on leave without recursion
-//! depth ever touching the real call stack.
-
 use std::path::{Path, PathBuf};
 
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rune_vfs::{DirEntry, FileKind, Link, Vfs};
 
-/// Past this many collected files, or this many directory levels below
-/// `root`, the walk stops early rather than risking a multi-second `Cmd`
-/// against a huge or deeply nested tree — [`ScanResult::truncated`] tells
-/// the caller a cap was hit rather than silently under-reporting.
 pub const MAX_SCAN_FILES: usize = 10_000;
 pub const MAX_SCAN_DEPTH: usize = 32;
 
-/// Directory names skipped outright, in addition to every hidden entry
-/// (name starts with `.`) — dependency/build trees nobody fuzzy-opens into,
-/// common enough to hardcode rather than wait on a `.gitignore` that may
-/// not mention them.
 const SKIP_DIRS: [&str; 2] = ["node_modules", "target"];
 
-/// The walk's own result: every file path found, and whether a cap
-/// ([`MAX_SCAN_FILES`]/[`MAX_SCAN_DEPTH`]) cut it short.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanResult {
     pub files: Vec<PathBuf>,
     pub truncated: bool,
 }
 
-/// One step of the explicit DFS work stack: `Enter` reads a directory and
-/// pushes its own gitignore matcher before its children are visited;
-/// `Leave` pops that matcher once every child (and its whole subtree) has
-/// been. Ordinary recursion would do this implicitly on the call stack —
-/// keeping an explicit one instead means a workspace nested deeper than any
-/// reasonable stack limit still just hits [`MAX_SCAN_DEPTH`].
 enum Step {
     Enter(PathBuf, usize),
     Leave,
 }
 
-/// Lists every file under `root`, skipping hidden entries, [`SKIP_DIRS`],
-/// and anything a gitignore-syntax file marks ignored — any entry whose
-/// name starts with `.` and ends with `ignore` (`.gitignore`,
-/// `.dockerignore`, …) is read and compiled for its own directory rather
-/// than treated as a candidate itself. Ignore files compile into one
-/// matcher per directory (`GitignoreBuilder` + `add_line`, never
-/// `WalkBuilder`); a line that fails to parse is skipped, never fatal.
-/// Nested directories stack their matchers: the deepest directory's own
-/// matcher is checked first, and the first definitive verdict (ignore, or a
-/// `!`-negated whitelist) wins, so a child `.gitignore` can override a
-/// parent's rule exactly like git itself.
 pub fn scan(vfs: &dyn Vfs, root: &Path) -> ScanResult {
     scan_with_caps(vfs, root, MAX_SCAN_FILES, MAX_SCAN_DEPTH)
 }
 
-/// [`scan`]'s real body, with the file/depth caps as parameters so tests can
-/// pin cap-boundary behavior (exactly-at-cap vs. one-over) without building
-/// `MAX_SCAN_FILES`-sized trees.
 fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize) -> ScanResult {
     let mut files = Vec::new();
     let mut truncated = false;
@@ -77,8 +38,6 @@ fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize
             }
             Step::Enter(dir, depth) => (dir, depth),
         };
-        // An unreadable directory (permission denied, vanished mid-walk)
-        // drops only its own subtree, never the whole walk.
         let Ok(entries) = vfs.read_dir(&dir) else {
             continue;
         };
@@ -92,7 +51,7 @@ fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize
             }
             let entry_is_dir = entry.kind == FileKind::Dir;
             if is_ignore_file(&entry.name) {
-                continue; // consumed into the matcher above, never a candidate
+                continue;
             }
             if is_hidden(&entry.name) || is_skiplisted(&entry.name, entry_is_dir) {
                 continue;
@@ -113,8 +72,6 @@ fn scan_with_caps(vfs: &dyn Vfs, root: &Path, max_files: usize, max_depth: usize
                 break 'walk;
             }
         }
-        // Pushed in reverse so the LIFO stack still visits them in
-        // `vfs.read_dir`'s own dirs-first, case-sensitive order.
         for child in children.into_iter().rev() {
             stack.push(Step::Enter(child, depth + 1));
         }
@@ -135,12 +92,9 @@ fn is_skiplisted(name: &str, is_dir: bool) -> bool {
     is_dir && SKIP_DIRS.contains(&name)
 }
 
-/// Deepest-first, first-verdict-wins: `matchers` is ordered root-to-leaf
-/// (the current directory's own matcher was pushed last), so walking it in
-/// reverse checks the most specific matcher first. Always `Gitignore::
-/// matched`, never `matched_path_or_any_parents` (documented to panic on a
-/// path outside its own root).
 fn is_ignored(matchers: &[Gitignore], path: &Path, is_dir: bool) -> bool {
+    // `Gitignore::matched_path_or_any_parents` is documented to panic on a
+    // path outside its own root; `matched` per-matcher (deepest first) avoids it.
     for matcher in matchers.iter().rev() {
         match matcher.matched(path, is_dir) {
             Match::Ignore(_) => return true,
@@ -151,12 +105,6 @@ fn is_ignored(matchers: &[Gitignore], path: &Path, is_dir: bool) -> bool {
     false
 }
 
-/// Compiles `dir`'s own gitignore-syntax files into one matcher rooted at
-/// `dir`. I/O-free by construction: `GitignoreBuilder::new`/`add_line`
-/// never touch disk themselves — only this function's own `vfs.read` does,
-/// through the injected `Vfs`, never the real filesystem directly. A file
-/// that fails to read, isn't valid UTF-8, or contributes a line that fails
-/// to parse is skipped rather than aborting the whole directory's matcher.
 fn build_matcher(vfs: &dyn Vfs, dir: &Path, entries: &[DirEntry]) -> Gitignore {
     let mut builder = GitignoreBuilder::new(dir);
     for entry in entries {

@@ -1,17 +1,7 @@
-//! Terminal graphics capability detection — an
-//! environment-only sniff, plus the measured cell pixel geometry an image
-//! needs to size itself in columns and rows.
-
-/// A source of environment variables, so [`detect`] is unit-testable
-/// without mutating the real process environment (`std::env::var` is
-/// process-global — a test that set/unset a variable directly would race
-/// every other test in this binary running concurrently).
 pub trait EnvSource {
     fn var(&self, key: &str) -> Option<String>;
 }
 
-/// Reads from the real process environment — the only production
-/// implementation of [`EnvSource`].
 pub struct ProcessEnv;
 
 impl EnvSource for ProcessEnv {
@@ -20,9 +10,6 @@ impl EnvSource for ProcessEnv {
     }
 }
 
-/// This process's view of the terminal's graphics support: whether the
-/// Kitty graphics protocol is usable, and the measured (or fallback) pixel
-/// size of one terminal cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GraphicsCaps {
     pub kitty: bool,
@@ -30,10 +17,6 @@ pub struct GraphicsCaps {
 }
 
 impl Default for GraphicsCaps {
-    /// No Kitty support, `rune_image::DEFAULT_CELL_SIZE` geometry — so
-    /// every existing test constructor (`App::new`/`App::new_untitled`)
-    /// keeps compiling unchanged, and the fuzzer stays deterministic
-    /// exactly like `App::space_probe`'s `NullProbe` default.
     fn default() -> Self {
         GraphicsCaps {
             kitty: false,
@@ -42,32 +25,16 @@ impl Default for GraphicsCaps {
     }
 }
 
-/// Detects graphics capability from the environment and the terminal's
-/// reported window geometry — not the prose summary an earlier plan
-/// revision gave (that description was wrong); follow the exact logic
-/// below.
-///
-/// `window` is `(cols, rows, pixel_width, pixel_height)`, as reported by
-/// the backend's own dimensions query.
 pub fn detect(env: &impl EnvSource, window: Option<(u16, u16, u16, u16)>) -> GraphicsCaps {
     let term_program = env.var("TERM_PROGRAM").unwrap_or_default().to_lowercase();
     let term = env.var("TERM").unwrap_or_default().to_lowercase();
 
-    // First match wins: `kitty` in TERM_PROGRAM wins outright; otherwise
-    // `ghostty` in either TERM_PROGRAM or TERM (Ghostty implements the
-    // Kitty graphics protocol, including the Unicode-placeholder
-    // virtual-placement extension).
     let mut kitty = if term_program.contains("kitty") {
         true
     } else {
         term_program.contains("ghostty") || term.contains("ghostty")
     };
 
-    // Then, unconditionally: KITTY_WINDOW_ID promotes to Kitty when no
-    // protocol was detected above. This promotion arm has NO TERM_PROGRAM
-    // allow-list — that gate exists only on the (out-of-scope here)
-    // WEZTERM_PANE/ITERM_SESSION_ID arms — so `TERM_PROGRAM=vscode` with
-    // `KITTY_WINDOW_ID` set still promotes.
     if !kitty {
         let non_empty_window_id = env.var("KITTY_WINDOW_ID").is_some_and(|id| !id.is_empty());
         if non_empty_window_id {
@@ -75,9 +42,6 @@ pub fn detect(env: &impl EnvSource, window: Option<(u16, u16, u16, u16)>) -> Gra
         }
     }
 
-    // Truecolor is a hard gate on the whole result: the smuggled image id
-    // IS a 24-bit colour. Reuse `theme::probe`'s COLORTERM decision rather
-    // than duplicating it.
     let truecolor =
         crate::theme::probe::colorterm_claims_truecolor(env.var("COLORTERM").as_deref());
     let kitty = kitty && truecolor;
@@ -88,12 +52,9 @@ pub fn detect(env: &impl EnvSource, window: Option<(u16, u16, u16, u16)>) -> Gra
     }
 }
 
-/// `(pixel_width / cols, pixel_height / rows)`, falling back to
-/// `rune_image::DEFAULT_CELL_SIZE` when any of the four inputs is `0` or
-/// either quotient is `0`. termina always reports `Some(0)` rather than
-/// `None` when the kernel doesn't fill in `ws_xpixel`/`ws_ypixel`, so `0`
-/// must be treated as "unavailable" alongside a missing `window` entirely.
 fn measure_cell(window: Option<(u16, u16, u16, u16)>) -> rune_image::CellSize {
+    // termina reports Some(0) rather than None when the kernel doesn't fill
+    // in ws_xpixel/ws_ypixel, so 0 must be treated as "unavailable" too.
     window
         .and_then(|(cols, rows, pixel_width, pixel_height)| {
             if cols == 0 || rows == 0 || pixel_width == 0 || pixel_height == 0 {
@@ -155,9 +116,6 @@ mod tests {
         assert!(detect(&env, None).kitty);
     }
 
-    /// The `KITTY_WINDOW_ID` promotion arm carries no
-    /// `TERM_PROGRAM` allow-list, unlike the (out-of-scope)
-    /// WEZTERM_PANE/ITERM_SESSION_ID arms.
     #[test]
     fn kitty_window_id_with_vscode_term_program_is_still_kitty() {
         let env = FakeEnv::new(&[

@@ -1,13 +1,3 @@
-//! Keystroke handling for the fuzzy file finder overlay — reached from
-//! `dispatch::handle_key`'s stage 3 whenever `focus::target` resolves to
-//! `FocusTarget::FileSearch`, ahead of the ordinary chrome-level `Pane`
-//! match, since the finder is never itself a `Pane`.
-//!
-//! Every path returns [`KeyOutcome::Consumed`] — the same discipline the
-//! in-file search bar's own key handling uses (`search::keys`), so a
-//! keystroke aimed at the finder never falls through and mutates the
-//! document buffer underneath it.
-
 use std::path::PathBuf;
 
 use crate::app::App;
@@ -29,9 +19,6 @@ const SHIFT: Mods = Mods {
 
 pub type FileSearchCommand = ListCommand;
 
-/// The finder's own key table. Two printable rows (`Mods::NONE`, `SHIFT`)
-/// let the very first keystroke both start filtering and supply its first
-/// character, mirroring `EXPLORER_SEARCH_BINDINGS`'s own `Type` row.
 pub const FILESEARCH_BINDINGS: &[Binding<FileSearchCommand>] = &[
     Binding {
         key: KeyPattern::printable(Mods::NONE),
@@ -134,20 +121,6 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
     }
 }
 
-/// `Enter`: opens the selected candidate. If the nav cursor's own live
-/// preview already loaded this exact file (`app.explorer.preview`, the
-/// SAME slot the Explorer's own preview uses — the finder rides that
-/// machinery rather than inventing a second one), promotes it in place
-/// instead of re-reading it, mirroring `explorer_keys::open_selected`'s own
-/// promote branch. Otherwise opens through the same tab-cap-respecting
-/// chokepoint the Explorer's own `Open` uses (`workspace::
-/// open_path_checked`) — [`close`] runs only AFTER that succeeds, never
-/// before: closing first and reading second would strand the user with the
-/// finder gone, focus wherever `close` happened to leave it, and `return_to`
-/// lost the moment a read fails. A read failure is already reported by
-/// `open_path_checked` itself and leaves the finder open so the user can
-/// pick another candidate; nothing selected (an empty result list, the
-/// cursor past the end) reports through the message log the same way.
 fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some(path) = selected_path(app) else {
         crate::messages::info(app, "no file selected");
@@ -176,10 +149,6 @@ fn selected_path(app: &App) -> Option<PathBuf> {
     super::selected_candidate(app).map(|c| c.path.clone())
 }
 
-/// Erases one GRAPHEME CLUSTER, not one `char` — the same reasoning
-/// `search::keys::erase`/`explorer_search::handle_search`'s own `Erase` arm
-/// apply, so a combining mark popped alone never desyncs what's on screen
-/// from what the query actually holds.
 fn erase(app: &mut App) {
     let Some(state) = app.filesearch_mut() else {
         return;
@@ -206,11 +175,6 @@ fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
     after_cursor_move(app, effects);
 }
 
-/// The finder's visible result-row count, read straight from
-/// `layout::geometry`'s `explorer_inner` (the rect the finder replaces the
-/// Explorer's own content in) minus the one row the query bar occupies —
-/// same derivation shape as `explorer::visible_rows`. `pub(super)`: also
-/// `recompute_core`'s own follow-the-cursor scroll math (`mod.rs`) needs it.
 pub(super) fn page_amount(app: &App) -> isize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     (crate::layout::geometry(area, app).explorer_inner.height as isize)
@@ -218,11 +182,6 @@ pub(super) fn page_amount(app: &App) -> isize {
         .max(1)
 }
 
-/// Appends pasted text to the query — the finder's counterpart of
-/// `search::keys::paste`. Dropped outright once the finder has since
-/// closed: a reply landing after Escape has nowhere left to append to.
-/// Sanitized the same way ordinary typing is, first line only — the query
-/// is rendered as a single row.
 pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
     if app.filesearch().is_none() {
         return;
@@ -306,9 +265,6 @@ mod tests {
         assert_eq!(focus::target(&app), FocusTarget::Editor);
     }
 
-    /// The plan's own acceptance test, driven through the real `App::
-    /// update` seam: Esc closes the finder, restores the document that was
-    /// active before it opened, and focuses the Editor.
     #[test]
     fn escape_through_app_update_restores_the_previously_active_document() {
         let mut app = app();
@@ -386,11 +342,6 @@ mod tests {
         assert_eq!(crate::messages::newest_text(&app), Some("no file selected"));
     }
 
-    /// Finding 11: a candidate whose path fails to read must not strand the
-    /// user — the finder must stay open (its own `return_to` still intact)
-    /// with the read failure reported, rather than closing before the read
-    /// is even attempted and leaving focus wherever `close` happened to
-    /// land it.
     #[test]
     fn enter_on_a_candidate_that_fails_to_read_leaves_the_finder_open_with_a_message() {
         let mut app = app();

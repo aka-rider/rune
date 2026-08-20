@@ -1,21 +1,9 @@
-//! Non-empty-query ranking for the fuzzy file finder: scores
-//! every candidate against the live query with the session's own
-//! long-lived `Matcher`, partitions in-tree above out-of-tree, and orders
-//! each partition by score, then MRU rank, then display width, then
-//! alphabetically — all of it here, inside `update`'s own call chain,
-//! never in render. Highlight indices are computed in a second pass, over
-//! only the rows that survive the cap, since a row nothing ever displays
-//! needs none.
-
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 
 use crate::fuzzymatch;
 
 use super::{Candidate, FileSearchState, RESULT_CAP, ResultRow, candidate_by};
 
-/// One scored candidate, kept only long enough to sort and cap — the
-/// display string is resolved back through `candidate_by` when the sort
-/// comparator needs it, rather than cloned into this struct up front.
 struct Scored {
     candidate_idx: usize,
     score: u32,
@@ -24,7 +12,6 @@ struct Scored {
     width: usize,
 }
 
-/// Replaces `state.results` with the live query's fuzzy-ranked matches.
 pub(super) fn rank(state: &mut FileSearchState) {
     let pattern = Pattern::parse(&state.query, CaseMatching::Smart, Normalization::Smart);
     let FileSearchState {
@@ -86,11 +73,6 @@ fn score_all(
         .collect()
 }
 
-/// The matched-grapheme indices `render::filesearch` bolds, for the one
-/// candidate `idx` names. `Pattern::indices` never clears its own output
-/// vec, so the raw per-atom indices it appends are sorted and deduped here
-/// — `Pattern::indices`'s own doc: multi-atom output is appended per atom,
-/// not pre-sorted or deduped.
 fn indices_for(
     idx: usize,
     recents: &[Candidate],
@@ -99,6 +81,8 @@ fn indices_for(
     matcher: &mut nucleo_matcher::Matcher,
     charbuf: &mut Vec<char>,
 ) -> Vec<u32> {
+    // `Pattern::indices` appends per-atom output without sorting or
+    // deduping it, so multi-atom results are sorted/deduped here.
     candidate_by(recents, walk, idx)
         .map(|c| fuzzymatch::indices(&c.display, pattern, matcher, charbuf))
         .unwrap_or_default()
@@ -108,9 +92,6 @@ fn display_of<'a>(recents: &'a [Candidate], walk: &'a [Candidate], idx: usize) -
     candidate_by(recents, walk, idx).map_or("", |c| c.display.as_str())
 }
 
-/// `Some` ranks before `None`, ascending within `Some` — `Option<usize>`'s
-/// own `Ord` puts `None` first, the opposite of what MRU tie-breaking
-/// needs, so this remaps `None` to a sentinel past every real rank instead.
 fn mru_key(rank: Option<usize>) -> usize {
     rank.unwrap_or(usize::MAX)
 }

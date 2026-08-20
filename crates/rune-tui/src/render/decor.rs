@@ -1,18 +1,3 @@
-//! Renders a `SnapshotRow`'s own line decoration (heading icon / list bullet
-//! / quote bar / hr rule, `rune_syntax::wrap::decor::SegDecor`) into the
-//! prefix `Cell`s `build_rows` prepends to that row before any overlay
-//! walk runs (500-line budget split of the render module). A decoration cell carries no
-//! buffer position (`buf_offset: None`, the same "no buffer byte" the table layout's
-//! synthetic border cells already use) — decoration is metadata carried
-//! alongside a wrap segment, never a substitute for the segment's own
-//! spans, so it never claims a byte the caret, selection, or click
-//! hit-testing could resolve to.
-//!
-//! Decoration also marks where a row's CONTENT begins: the code-region
-//! background rectangle fills from `decor_cell_width` rightwards, which is
-//! what puts a blockquoted fence's background after the quote bar rather
-//! than under it.
-
 use unicode_segmentation::UnicodeSegmentation;
 
 use rune_md::snapshot::SnapshotRow;
@@ -22,13 +7,6 @@ use crate::theme::Theme;
 
 use super::Cell;
 
-/// Builds `row`'s decoration prefix as `Cell`s, one grapheme cluster at a
-/// time through the same width chokepoint every other cell walk in this
-/// module uses (`grapheme_width`, `push_grapheme_cells`'s docs) — an empty
-/// `Vec` when the row carries no decor. Each piece is styled through
-/// `Theme::scope_style` (never `overlay_scope_style`: a decoration cell has
-/// no base cell underneath it to preserve a background for, unlike an
-/// overlay patch onto already-emitted content).
 pub fn decor_row_cells(theme: &Theme, row: &SnapshotRow) -> Vec<Cell> {
     let Some(decor) = row.decor.as_ref() else {
         return Vec::new();
@@ -49,12 +27,6 @@ pub fn decor_row_cells(theme: &Theme, row: &SnapshotRow) -> Vec<Cell> {
     cells
 }
 
-/// `row`'s own decoration width in terminal cells — `0` for an undecorated
-/// row. The single source `apply_cursor_overlays` (shifting a caret's
-/// `visual_col` past the decor prefix), `commands::mouse::offset_at`
-/// (subtracting the same prefix before its cell walk) and the code-region
-/// background fill (starting at the first content column) all read, so none
-/// of them can disagree about how wide a given row's decoration rendered.
 pub fn decor_cell_width(row: &SnapshotRow) -> u16 {
     row.decor.as_ref().map_or(0, |d| d.cells as u16)
 }

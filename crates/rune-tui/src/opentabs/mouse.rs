@@ -26,10 +26,6 @@ fn scroll(app: &mut App, delta: isize) {
     app.tabs.nav.scroll_by(delta, len, super::entry_rows(rect));
 }
 
-/// The clicked row resolves BEFORE focus moves: landing focus on this pane
-/// discards a live Explorer preview, which removes a tab row — resolving
-/// afterwards would let a click on the preview's own row name a tab that no
-/// longer exists.
 fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let rect = pane_rect(app);
     let index = input

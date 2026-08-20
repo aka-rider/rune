@@ -1,6 +1,3 @@
-//! Tests for the image-document decode lifecycle — split out to keep the
-//! parent under the file-size ceiling, the same shape `resolve_tests.rs`
-//! and `layout_tests.rs` already use elsewhere in the workspace.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::Path;
@@ -43,10 +40,6 @@ fn is_live(app: &App, id: DocumentId) -> bool {
     )
 }
 
-/// Drives a pending image document all the way to `Live` through the
-/// real `schedule_image_decode` -> `Cmd::run` -> `handle_image_decoded`
-/// path, so reload tests get an already-open, already-transmitted image
-/// to reload from, not a hand-constructed one.
 fn app_with_live_image(kitty: bool) -> (App, DocumentId) {
     let (mut app, id) = app_with_pending_image(kitty);
     let mut effects = Effects::default();
@@ -197,7 +190,6 @@ fn a_stale_generation_is_dropped_with_no_effects() {
     let (mut app, id) = app_with_pending_image(true);
     app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(2));
     let mut effects = Effects::default();
-    // generation 1 no longer matches the live in_flight of 2.
     handle_image_decoded(&mut app, id, mint_gen(1), Ok(decode_x_png()), &mut effects);
 
     let image = app.doc(id).unwrap().image().unwrap();
@@ -213,13 +205,6 @@ fn a_stale_generation_is_dropped_with_no_effects() {
     assert!(effects.raw_bytes().is_empty());
 }
 
-/// A FIRST transmit must not ask for a forced redraw. `force_redraw` clears
-/// the terminal, and a clear issued from a decode reply was observed to block
-/// the main thread indefinitely — a hang needing an external kill. It is only
-/// ever needed for a retransmit, whose placeholder cells can be byte-identical
-/// to what is already on screen while the pixels behind them changed. A first
-/// transmit replaces the info card with placeholder cells, which the renderer's
-/// own diff already sees.
 #[test]
 fn a_first_transmit_does_not_force_a_redraw() {
     let (mut app, id) = app_with_pending_image(true);
@@ -326,11 +311,6 @@ fn reload_is_a_no_op_on_a_non_image_document() {
     assert!(effects.raw_bytes().is_empty());
 }
 
-/// Reload must preempt rather than refuse while `in_flight.is_some()`:
-/// refusing there is exactly what let a lost reply wedge a document
-/// forever, since the recovery command refused to run precisely when
-/// recovery was needed. It spawns a fresh decode anyway, abandoning
-/// whatever was in flight.
 #[test]
 fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
     let (mut app, id) = app_with_live_image(true);
@@ -345,15 +325,9 @@ fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
     );
 }
 
-/// The abandoned decode's eventual reply (stamped with the OLD
-/// generation) must be dropped without disturbing the document, once
-/// the fresh decode from a preempting reload has already landed.
 #[test]
 fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     let (mut app, id) = app_with_live_image(true);
-    // `app_with_live_image` already minted twice settling to `Live`
-    // (decode generation 0, then the encode it spawned, generation 1) —
-    // `mint_gen(0)` stands in for the abandoned decode's actual generation.
     app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(0));
 
     let mut effects = Effects::default();
@@ -365,8 +339,6 @@ fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
         "reload must mint a strictly greater generation than the abandoned one"
     );
 
-    // The abandoned decode's reply finally lands, still carrying the
-    // OLD generation.
     let mut stale_effects = Effects::default();
     handle_image_decoded(
         &mut app,
@@ -386,10 +358,6 @@ fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
     );
 }
 
-/// Two successive reloads must never collapse to the same generation —
-/// a prior bug had `spawn_decode` deriving the generation from
-/// `in_flight.unwrap_or(0)`, which is always exactly `1` from every
-/// caller that has already proven `in_flight.is_none()`.
 #[test]
 fn two_successive_reloads_produce_different_generations() {
     let (mut app, id) = app_with_live_image(true);
@@ -398,8 +366,6 @@ fn two_successive_reloads_produce_different_generations() {
     reload_image(&mut app, id, &mut first_effects);
     let first_generation = app.doc(id).unwrap().image().unwrap().in_flight;
 
-    // Land the first reload's reply before issuing the second reload,
-    // so the second is a genuinely fresh (non-preempting) spawn too.
     for cmd in first_effects.cmds {
         if let Some(Msg::ImageDecoded {
             doc,

@@ -1,5 +1,3 @@
-//! The tab display order and MRU activation order live on `DocumentMap`.
-
 use ratatui::layout::Rect;
 
 use crate::app::App;
@@ -34,7 +32,6 @@ impl Default for OpenTabs {
     }
 }
 
-/// The Tabs pane's own commands, resolved via `TABS_BINDINGS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabsCommand {
     Up,
@@ -43,12 +40,6 @@ pub enum TabsCommand {
     Leave,
 }
 
-/// Arrow keys move the cursor; Enter opens the selected tab
-/// (`workspace::switch_to` — Select is the ONLY way to switch
-/// tabs from a cursor row; jumping straight to a tab by digit, and closing
-/// the active document, both now resolve at the global pipeline stage
-/// (`^1`-`^0`, `^w` — `keymap::GLOBAL_BINDINGS`) so they work from any pane,
-/// not just this one.
 pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
     Binding {
         key: KeyPattern::new(KeyCode::Up, Mods::NONE),
@@ -76,18 +67,6 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
     },
 ];
 
-/// Stage 3 of the four-stage key pipeline, when
-/// `app.focus() == Pane::Tabs`. `Select` needs `Effects` because it
-/// blurs the title BEFORE the switch — `switch_to` reassigns `app.active`,
-/// and `rename::begin` resolves its subject from the live `app.active`, so
-/// blurring after would rename the tab just switched TO, not the one being
-/// renamed — then lands focus on the Editor unconditionally, since the
-/// target tab already exists (nothing here can fail). Closing the active
-/// document resolves at the global pipeline stage (`GlobalCommand::
-/// CloseFile`) instead of here, so it works from any pane, not just this
-/// one — a dirty tab's eventual save-then-close I/O is triggered later,
-/// from the Guard's OWN stage-1 key handling (`guard::handle_guard_key`),
-/// which already carries its own `Effects`.
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     let Some(cmd) = resolve_in(TABS_BINDINGS, key) else {
         return KeyOutcome::Ignored;
@@ -119,8 +98,6 @@ fn move_selection(app: &mut App, delta: isize) {
     select_index(app, app.tabs.nav.cursor);
 }
 
-/// Scrolls the Tabs pane's window to keep the cursor visible — same
-/// follow-margin convention as `explorer::ensure_visible`.
 fn ensure_visible(app: &mut App) {
     let len = app.documents.order().len();
     let height = visible_rows(app);
@@ -128,10 +105,6 @@ fn ensure_visible(app: &mut App) {
     app.tabs.nav.follow(len, height, margin, 0);
 }
 
-/// The Tabs pane's visible row count — same derivation as the Explorer's,
-/// read straight from `layout::geometry`'s `tabs_inner`, without the `-1`:
-/// the `Open` divider is its own rect outside `tabs_inner`, and there's no
-/// title row here (unlike Explorer's root-path row).
 fn visible_rows(app: &App) -> usize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     entry_rows(crate::layout::geometry(area, app).tabs_inner).max(1)
@@ -141,11 +114,6 @@ pub(crate) fn entry_rows(rect: Rect) -> usize {
     rect.height as usize
 }
 
-/// The rows the Tabs pane actually paints into `rect`, in paint order: the
-/// window's slice of `order`, minus any id with no document behind it. The
-/// one source both `render::draw` and [`entry_at`] read, so a skipped row
-/// can never leave the click mapping naming a different tab than the one
-/// under the pointer.
 pub(crate) fn painted_tabs(app: &App, rect: Rect) -> Vec<(usize, DocumentId, &Document)> {
     let order = app.documents.order();
     let window = app.tabs.nav.window(order.len(), entry_rows(rect));
@@ -217,8 +185,6 @@ mod tests {
         assert_eq!(app.tabs.nav.cursor, 2, "clamped at the bottom");
     }
 
-    /// `mru` and `order` must always share membership — just in different
-    /// orders — and switching a tab in moves it to the end of `mru`.
     #[test]
     fn mru_tracks_activation_order() {
         let mut app = app();
@@ -237,9 +203,6 @@ mod tests {
         assert_eq!(order_sorted, mru_sorted);
     }
 
-    /// `close_now` reseats `app.active` at the neighbor WITHOUT going
-    /// through `switch_to` — this pins that the reseated neighbor still
-    /// lands at the end of `mru`.
     #[test]
     fn closing_the_active_tab_touches_its_replacement() {
         let mut app = app();
@@ -260,9 +223,6 @@ mod tests {
         assert_eq!(order_sorted, mru_sorted);
     }
 
-    /// Discarding a live Explorer preview bypasses `close_now` entirely
-    /// (`explorer_preview::remove_preview_document`) — this pins that it
-    /// still keeps `mru` in lockstep with `order`.
     #[test]
     fn preview_discard_keeps_mru_in_lockstep() {
         let mut app = app();

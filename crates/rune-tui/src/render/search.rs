@@ -1,11 +1,3 @@
-//! Renders the search bar's one row: a leading prompt glyph (the bar's own
-//! focus affordance — ^F otherwise reads as the editor growing a blank row
-//! while the editor's own caret keeps blinking underneath it), the live
-//! draft with a trailing caret cell while focused, and a right-aligned
-//! readout (`i/N`, `N matches`, or `no matches`). A sibling of `search`
-//! (the state module), not a descendant — it reads `SearchState` only
-//! through the `pub(crate)` fields that module marks for exactly this.
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -16,16 +8,8 @@ use crate::app::App;
 use crate::theme::Theme;
 use crate::width::{display_width, truncate_to_width};
 
-/// The bar's own focus affordance, styled in `theme.chrome.active_border`
-/// — the same "this region holds focus" accent the messages pane's
-/// separator uses (`messages::render::draw`).
 const PROMPT: &str = "/ ";
 
-/// Pure function of `&App`: drawing twice produces identical output, the
-/// same guarantee `render::title::draw` makes. A no-op if the bar isn't
-/// open — `render::draw` already gates this call on `Geometry::search_bar`
-/// being `Some`, which itself requires `App::search` to be `Some`, but the
-/// guard stays here too rather than trusting that chain silently.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let Some(state) = app.search() else {
         return;
@@ -45,12 +29,6 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Builds the styled spans for one query row: `PROMPT`, then as much of
-/// `draft` as fits, a reversed-video caret cell while `focused`, padding,
-/// and finally `readout` right-aligned. Pure so it's testable without a
-/// `Frame` — the same split `render::title::build_spans` uses. `pub(crate)`:
-/// the fuzzy file finder's own query row (`render::filesearch`) reuses this
-/// exact chokepoint rather than forking the prompt/caret/readout logic.
 pub(crate) fn build_spans(
     draft: &str,
     readout: Option<&str>,
@@ -91,11 +69,6 @@ pub(crate) fn build_spans(
     spans
 }
 
-/// The bar's right-aligned status text: `i/N` once a match is selected
-/// (`current`), else `N matches` while any exist, else `no matches` for a
-/// non-empty query with zero hits, else nothing at all for an empty draft
-/// — matching an empty query never claims to have "no matches" for a
-/// search that hasn't started yet.
 fn readout_text(count: usize, current: Option<usize>, draft_empty: bool) -> Option<String> {
     if let Some(i) = current {
         Some(format!("{}/{count}", i + 1))

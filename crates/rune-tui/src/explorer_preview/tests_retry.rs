@@ -60,7 +60,7 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
     load_entries(&mut app, &["b.md", "bad.bin"]);
     let mut effects = Effects::default();
 
-    app.explorer.nav.move_by(2, app.explorer.entries.len()); // ".." -> "b.md" -> "bad.bin"
+    app.explorer.nav.move_by(2, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     assert_eq!(effects.cmds.len(), 1, "the first visit reads once");
     run_cmds(&mut app, &mut effects);
@@ -75,7 +75,7 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
         "sitting on the same failed entry must not re-read"
     );
 
-    app.explorer.nav.move_by(-1, app.explorer.entries.len()); // "b.md"
+    app.explorer.nav.move_by(-1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
     assert!(
@@ -83,7 +83,7 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
         "moving away clears it"
     );
 
-    app.explorer.nav.move_by(1, app.explorer.entries.len()); // back to "bad.bin"
+    app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     assert_eq!(
         effects.cmds.len(),
