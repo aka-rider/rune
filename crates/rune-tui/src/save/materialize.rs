@@ -355,8 +355,6 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
     );
 }
 
-// Kept in a sibling file: this module's own vfs dance stays under the
-// 500-line budget on its own merits.
 #[cfg(test)]
-#[path = "materialize_tests.rs"]
+#[path = "materialize_tests/mod.rs"]
 mod tests;
