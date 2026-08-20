@@ -1,20 +1,3 @@
-//! The editing core a single-line field reuses — cursor motion, selection,
-//! in-place editing, and an in-memory undo/redo journal, all keyed by BYTE
-//! offsets. Built directly on `rune_core::{Buffer, Cursor,
-//! undo::Journal}` so every mutation gets range clamping and UTF-8
-//! validation for free, and the `AppliedEdit`s that `undo::apply_inverse`/
-//! `reapply` invert.
-//!
-//! This `Journal` is in-memory only and is never replicated to the
-//! recovery store — that governs exactly what the title field needs: a
-//! rename is one atomic bind, and the field's own undo history plays no
-//! part in it.
-//!
-//! Every mutating method takes a `window: Range<usize>` — the caller's
-//! currently-editable sub-range of the field's text. `TextField` never
-//! stores a window itself; the caller recomputes it fresh on every call,
-//! so nothing here can drift out of sync with a caller-side gate.
-
 use std::ops::Range;
 
 use rune_core::buffer::{Buffer, Edit, SortedEdits};
@@ -24,11 +7,6 @@ use rune_core::undo::{self, EditKind, Journal, Step};
 use crate::commands::nav;
 use crate::keymap::{Command, Extend, KeyOutcome, Motion};
 
-/// A single-line, undoable text editing core. Holds the full text in one
-/// `Buffer` — never two separately-tracked strings — so a caller that
-/// wants to fence off part of the text (the title's extension gate) can
-/// derive the boundary from the live content instead of losing the
-/// ability to edit across it.
 pub struct TextField {
     buffer: Buffer,
     cursor: Cursor,
@@ -48,8 +26,6 @@ enum DeleteUnit {
 }
 
 impl TextField {
-    /// A field seeded with `text`, cursor at the end, no selection, empty
-    /// undo history.
     pub fn new(text: &str) -> TextField {
         let buffer = Buffer::new(text);
         let cursor = CursorSet::new(buffer.len()).primary();
@@ -76,9 +52,6 @@ impl TextField {
         self.cursor
     }
 
-    /// Full reset: replaces the text, moves the cursor to the end, and
-    /// discards the undo history — a stale `Undo` after this must be a
-    /// no-op, not a resurrection of the previous text.
     pub fn set_text(&mut self, text: &str) {
         let buffer = Buffer::new(text);
         let len = buffer.len();
@@ -93,8 +66,6 @@ impl TextField {
         self.journal = Journal::new();
     }
 
-    /// Places the cursor/selection directly, clamped into `0..=len` and
-    /// snapped to the nearest `char` boundary in both directions.
     pub fn set_cursor(&mut self, position: usize, anchor: usize) {
         let whole = 0..self.buffer.len();
         let id = self.cursor.id;
@@ -106,7 +77,6 @@ impl TextField {
         };
     }
 
-    /// The selected text, or `""` when `cursor` carries no selection.
     pub fn selected_text(&self) -> &str {
         if !self.cursor.has_selection() {
             return "";
@@ -115,10 +85,6 @@ impl TextField {
         self.buffer.slice(start, end).unwrap_or("")
     }
 
-    /// Runs one resolved editor `Command` against `window`, the caller's
-    /// live editable sub-range. Commands this field doesn't act on
-    /// (vertical motion, paging, clipboard, save, quit, ...) are the
-    /// caller's own responsibility and are ignored here.
     pub fn apply(&mut self, cmd: Command, window: Range<usize>) -> KeyOutcome {
         match cmd {
             Command::Motion(Motion::CharLeft, extend) => {
@@ -165,8 +131,6 @@ impl TextField {
         }
     }
 
-    /// Replaces the current selection (or inserts at the cursor when
-    /// there is none) with `text`, clamped into `window`.
     pub fn insert(&mut self, text: &str, window: Range<usize>) -> KeyOutcome {
         let (start, end) = if self.cursor.has_selection() {
             self.cursor.selection_range()
@@ -176,9 +140,6 @@ impl TextField {
         self.edit(start, end, text, &window)
     }
 
-    /// Deletes exactly `range` — the caller (a selection, or a computed
-    /// window-relative range) has already decided what should go, so this
-    /// clamps only into the live buffer, not into any further window.
     pub fn delete_range(&mut self, range: Range<usize>) -> KeyOutcome {
         let whole = 0..self.buffer.len();
         self.edit(range.start, range.end, "", &whole)
@@ -220,9 +181,6 @@ impl TextField {
         KeyOutcome::Consumed
     }
 
-    /// The anchor rule shared by every horizontal/line-start-end motion:
-    /// move the head to `offset`, and drag the tail along only when
-    /// `select` is false.
     fn move_to(&mut self, offset: usize, select: bool) {
         self.cursor.position = offset;
         if !select {
@@ -231,9 +189,6 @@ impl TextField {
         self.cursor.desired_col = 0;
     }
 
-    /// The range a bare (non-selection) delete targets: one rune or one
-    /// word, from the cursor toward `window`'s near edge. A live
-    /// selection always wins over the bare range.
     fn delete_bare(
         &mut self,
         window: &Range<usize>,
@@ -258,11 +213,6 @@ impl TextField {
         self.edit(start, end, "", window)
     }
 
-    /// The one place a mutation reaches `Buffer::apply_edits` — every
-    /// other method above funnels through this. An edit whose range
-    /// collapses entirely outside `window` clamps both ends to the same
-    /// point and lands as a no-op, rather than needing a special-cased
-    /// guard at the call site.
     fn edit(
         &mut self,
         start: usize,
@@ -282,7 +232,7 @@ impl TextField {
             insert: insert.to_string(),
         });
         let Ok((new_buf, applied)) = self.buffer.apply_edits(&edits) else {
-            return KeyOutcome::Ignored; // refuse an out-of-range edit rather than corrupt the buffer
+            return KeyOutcome::Ignored;
         };
         let landed = applied.last().map_or(start, |a| a.end);
         self.buffer = new_buf;
@@ -301,10 +251,6 @@ impl TextField {
         KeyOutcome::Consumed
     }
 
-    /// Peek-then-commit undo, mirroring the document editor's own
-    /// undo/redo commands: the buffer edit must succeed before the
-    /// journal position moves, so a failed inverse never runs the journal
-    /// ahead of the buffer.
     fn undo(&mut self) -> KeyOutcome {
         let Some((step, new_pos)) = self.journal.undo_peek() else {
             return KeyOutcome::Ignored;
@@ -320,7 +266,6 @@ impl TextField {
         KeyOutcome::Consumed
     }
 
-    /// Mirrors `undo` for redo.
     fn redo(&mut self) -> KeyOutcome {
         let Some((step, new_pos)) = self.journal.redo_peek() else {
             return KeyOutcome::Ignored;
@@ -336,10 +281,6 @@ impl TextField {
         KeyOutcome::Consumed
     }
 
-    /// Restores a recorded cursor, clamped into the (possibly now
-    /// shorter) buffer, with the field's own `id` preserved — never the
-    /// zero-`id` "not a real cursor" sentinel, even when `recorded` is
-    /// `None`.
     fn restore_cursor(&mut self, recorded: Option<Cursor>) {
         let len = self.buffer.len();
         let id = self.cursor.id;
@@ -353,9 +294,6 @@ impl TextField {
     }
 }
 
-/// Clamps `offset` into `window` and walks it down to the nearest `char`
-/// boundary — so a start/end derived from a caller-chosen window can
-/// never reach `Buffer::apply_edits` mid-codepoint.
 fn clamp_boundary(content: &str, offset: usize, window: &Range<usize>) -> usize {
     let clamped = offset.max(window.start).min(window.end);
     content.floor_char_boundary(clamped)
@@ -366,14 +304,6 @@ fn clamp_boundary(content: &str, offset: usize, window: &Range<usize>) -> usize 
 mod tests {
     use super::*;
 
-    /// `nav::word_left_offset`/`word_right_offset` classify a single `.`
-    /// between two letters as word-forming (Unicode's `MidNumLet` word-
-    /// break rule, the same one that keeps `example.com` one word) — so
-    /// `a.b` is one word and `c` is the other, not three tokens split on
-    /// the dot. Word motion over "a.b c" therefore has exactly two
-    /// forward stops (end of `a.b`, end of `c`) and two backward stops
-    /// (start of `c`, start of `a.b`); a further motion at either end is
-    /// idempotent.
     #[test]
     fn word_left_and_right_step_over_dot_and_space() {
         let mut field = TextField::new("a.b c");
@@ -413,8 +343,6 @@ mod tests {
         assert_eq!((field.cursor().anchor, field.cursor().position), (0, 2));
         assert_eq!(field.selected_text(), "he");
 
-        // Unshifted left with an active selection collapses to the
-        // selection's start instead of stepping one rune further left.
         let outcome = field.apply(
             Command::Motion(Motion::CharLeft, Extend::No),
             window.clone(),

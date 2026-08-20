@@ -1,16 +1,3 @@
-//! Explorer type-to-search: "just start typing to jump to a file", by
-//! design with no wall-clock inactivity reset — the buffer clears on blur
-//! instead. State lives on `Explorer::search` (`explorer.rs`); this
-//! module owns everything that reads or writes it: `clear_search`/
-//! `apply_search` (moved here from `explorer.rs` — also over the 500-line
-//! budget by the time this feature's own state landed), the keys that
-//! drive it (`ExplorerSearchCommand`'s table — a hand-maintained key
-//! list may not exist), and the handler `explorer_keys::handle_key`
-//! consults before its own `EXPLORER_BINDINGS`.
-//!
-//! Split out of `explorer_keys.rs` to keep that file under the 500-
-//! line budget once the search table and its own unit tests landed.
-
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern};
 use crate::explorer::ensure_visible;
@@ -19,28 +6,10 @@ use crate::keymap::{KeyCode, KeyInput, Mods};
 use crate::queryline;
 use crate::runtime::Effects;
 
-/// Ends a type-to-search, if one is running. `pub(crate)`, not private:
-/// `explorer_keys::handle_key` calls this from the sibling module the key
-/// handling lives in, `explorer::handle_dir_loaded` calls it before
-/// adopting a new listing, and `app::set_focus` calls it on blur — every
-/// one of the clear points the design lists (leaving the Explorer, a
-/// directory reload, Esc, an empty-query Backspace, or any ordinary
-/// nav/open command) funnels through this one setter rather than each
-/// writing `search = None` itself.
 pub(crate) fn clear_search(app: &mut App) {
     app.close_explorer_find();
 }
 
-/// Re-runs the live query against `entries` and moves the cursor to the
-/// first case-insensitive prefix match (plan "Explorer type-to-search",
-/// S2): the list is never filtered, only `nav.cursor` moves, then the
-/// existing `ensure_visible` scrolls it into view. The synthetic `..` row
-/// (`explorer::with_parent_entry`) participates like any other entry.
-///
-/// A no-op search still stands when nothing matches: the cursor is left
-/// wherever it was, NOT snapped back to the top, so a
-/// query that overshot ("read" typed past "readme.md") lets Backspace
-/// recover it rather than losing the user's place in the list.
 pub(crate) fn apply_search(app: &mut App) {
     let Some(query) = app.explorer_find() else {
         return;
@@ -64,10 +33,6 @@ const SHIFT: Mods = Mods {
     sup: false,
 };
 
-/// The three keys type-to-search itself recognises (plan S3).
-/// `explorer_keys::EXPLORER_BINDINGS` still owns every ordinary nav/open
-/// chord — this table exists ONLY for the keys search handling must
-/// intercept before that table ever sees them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplorerSearchCommand {
     Type,
@@ -75,20 +40,6 @@ pub enum ExplorerSearchCommand {
     Cancel,
 }
 
-/// Esc/Backspace are listed FIRST: while a search is running they must beat
-/// `EXPLORER_BINDINGS`'s own Esc/Backspace rows (Esc is unbound there;
-/// Backspace means `ParentDir`) — `explorer_keys::handle_key`'s own
-/// `is_some()` guard is what enforces that, checked before `EXPLORER_
-/// BINDINGS` is even consulted.
-///
-/// Binding two `Type` rows, `Mods::NONE` and `Mods::SHIFT`, is what lets a
-/// shifted capital letter (which arrives as `Char('A')` with `shift` set,
-/// not a lowercase `Char('a')` with a separate shift flag) match at all —
-/// `resolve_in` matches on one exact `KeyPattern`, so this can't be folded
-/// into one row that ignores `mods` the way `KeyPattern::matches`'s whole-
-/// `Mods` equality is deliberately never allowed to. The shift row is
-/// marked `secondary: true` so the footer's default hints don't advertise two
-/// chords for what a user experiences as the same "just type" affordance.
 pub const EXPLORER_SEARCH_BINDINGS: &[Binding<ExplorerSearchCommand>] = &[
     Binding {
         key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
@@ -116,10 +67,6 @@ pub const EXPLORER_SEARCH_BINDINGS: &[Binding<ExplorerSearchCommand>] = &[
     },
 ];
 
-/// Drives one `ExplorerSearchCommand` (called from `explorer_keys::
-/// handle_key`, already past its `resolve_in`/`is_some()` gate). `key` is
-/// only ever consulted by `Type` — `Erase`/`Cancel` need no more than the
-/// command they already resolved to.
 pub(crate) fn handle_search(
     app: &mut App,
     cmd: ExplorerSearchCommand,
@@ -128,9 +75,6 @@ pub(crate) fn handle_search(
 ) {
     match cmd {
         ExplorerSearchCommand::Type => {
-            // `resolve_in` already proved `key.code` matched a `Printable`
-            // pattern (a non-control `Char`) — any other shape is
-            // unreachable here, so there is nothing to push on a mismatch.
             if let KeyCode::Char(c) = key.code {
                 app.explorer_find_push(c);
                 apply_search(app);
@@ -145,11 +89,6 @@ pub(crate) fn handle_search(
                 None => false,
             };
             if emptied {
-                // Emptying the query EXITS search outright — this keystroke
-                // must not also fall through to `ParentDir` the way a bare
-                // Backspace would with no search running. Design: "clearing
-                // the search produces exactly one" preview of wherever the
-                // cursor landed while typing.
                 clear_search(app);
                 explorer_preview::after_cursor_move(app, effects);
             } else {
@@ -256,11 +195,6 @@ mod tests {
         app.explorer.nav.cursor = 1;
         let mut effects = Effects::default();
 
-        // Neither "x" nor "xx" prefixes any entry (or the synthetic ".."
-        // row), so this must never move the cursor from its setup value —
-        // unlike a query starting with "z" (which would match "zeta" on
-        // its very first character and move the cursor before the second,
-        // non-matching character was even typed).
         type_str(&mut app, &mut effects, "xx");
 
         assert_eq!(app.explorer_find(), Some("xx"));
@@ -318,18 +252,12 @@ mod tests {
             handle_key(&mut app, backspace, &mut effects),
             KeyOutcome::Consumed
         );
-        // The regression this guards: a `ParentDir` issues a `ReadDir` Cmd.
         assert!(
             !effects.cmds.is_empty(),
             "Backspace with no search running must still reach ParentDir"
         );
     }
 
-    /// A live search's first Escape ends the search only (`ExplorerSearch
-    /// Command::Cancel`, gated on `app.explorer_find().is_some()`); the
-    /// query is already clear by the time a second Escape arrives, so it
-    /// falls through to `EXPLORER_BINDINGS`'s own `Leave` row instead —
-    /// still consumed, this time landing focus on the Editor.
     #[test]
     fn esc_while_searching_clears_first_and_leaves_the_explorer_second() {
         let mut app = app();
