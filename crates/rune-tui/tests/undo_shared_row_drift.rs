@@ -121,7 +121,7 @@ fn restart_recovered(mem: &Arc<Mem>, db_path: &Path) -> String {
         DbEvent::Ok {
             result: OpOutcome::Load(load),
             ..
-        } => load.recovered,
+        } => load.recovered.content,
         other => panic!("a fresh session's load must not fail, got {other:?}"),
     }
 }
