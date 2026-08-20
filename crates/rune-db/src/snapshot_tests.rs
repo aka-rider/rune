@@ -307,8 +307,7 @@ fn an_empty_replay_range_reports_no_journaled_caret() {
     )
     .expect("append_edit");
     let seq = crate::journal::current_seq(&tx, session_id, doc_id).expect("seq");
-    create_snapshot(&tx, session_id, SystemTime::now(), doc_id, "anchored", seq)
-        .expect("snapshot");
+    create_snapshot(&tx, session_id, SystemTime::now(), doc_id, "anchored", seq).expect("snapshot");
 
     let got = recover_document(&tx, session_id, doc_id).expect("recover");
     assert_eq!(got.content, "anchored");

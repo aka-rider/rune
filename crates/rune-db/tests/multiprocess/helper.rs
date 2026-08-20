@@ -202,4 +202,6 @@ fn recv_seq(rx: &mpsc::Receiver<DbEvent>, id: u64) -> rune_db::Seq {
 
 #[path = "helper_lifecycle.rs"]
 mod helper_lifecycle;
-pub(crate) use helper_lifecycle::{edit_and_die, gc_editor, gc_sweeper, reload_diverged, save_and_die};
+pub(crate) use helper_lifecycle::{
+    edit_and_die, gc_editor, gc_sweeper, reload_diverged, save_and_die,
+};

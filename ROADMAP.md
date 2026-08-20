@@ -4,20 +4,20 @@ The shipped baseline is README's feature list; this is the delta on top of it,
 forward-looking and prioritized by user impact. Full detail on each item lives
 in `TODO/feature-gaps.md`.
 
-- [ ] **In-file search** — a toggleable search bar in the editor pane, live
+- [x] **In-file search** — a toggleable search bar in the editor pane, live
   highlight-as-you-type with a match readout, next/prev navigation, and
   durable search history.
 - [ ] **File watching + auto-adoption** — watch the open document's directory
   and auto-adopt a clean buffer's external changes; keep today's guard/merge
   flow for every divergent case.
-- [ ] **Trash** — delete a file from the explorer or editor via the macOS
+- [x] **Trash** — delete a file from the explorer or editor via the macOS
   Trash, guarded by a confirm prompt and refused while the document is dirty.
-- [ ] **New-file chord** — a key that creates a durable untitled draft and
+- [x] **New-file chord** — a key that creates a durable untitled draft and
   focuses the title for naming, without waiting for the last tab to close.
-- [ ] **Tab cap, eviction, and pinning** — bound open tabs to the ten
+- [x] **Tab cap, eviction, and pinning** — bound open tabs to the ten
   digit-addressable slots, evict least-recently-active non-pinned tabs, and
   let the user pin a tab against eviction.
-- [ ] **Hardlink-fork warning** — surface a warning when saving a hardlinked
+- [x] **Hardlink-fork warning** — surface a warning when saving a hardlinked
   file would fork it from its other names on disk; the underlying plumbing
   already tracks link count.
 - [ ] **Image paste** — write pasted image bytes to a content-addressed file
