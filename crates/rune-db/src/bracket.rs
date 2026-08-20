@@ -1,18 +1,3 @@
-//! A single successfully-returned read is evidence, never truth: every
-//! fresh disk read that produces an observation goes through
-//! `rune_vfs::get`'s stat/read/stat bracket ([`bracketed_read`] adapts its
-//! result into this crate's [`StatFacts`] vocabulary). [`observe_disk`] is
-//! the chokepoint every fresh "read the live file, then record what it
-//! said" call site (`probe::probe`, `load::load`) funnels through: it
-//! brackets the read, folds in the suspicious-shrink gate against the
-//! newest CONFIRMED observation already on file
-//! ([`confirm_against_history`]), then puts the bytes as a blob and records
-//! the referencing observation. Only a confirmed observation
-//! may short-circuit a probe, serve as a merge Theirs, or become a CAS
-//! baseline — an unconfirmed or unclassified observation
-//! decides nothing, though its blob is kept exactly like any other (blob
-//! retention is sacred).
-
 use std::io;
 use std::path::Path;
 use std::time::SystemTime;
@@ -57,12 +42,6 @@ pub(crate) fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<Bracketed
     }
 }
 
-/// The size a bracketed read's `confirmed` bracket result still must clear
-/// before it counts as confirmed: `doc_id`'s newest CONFIRMED observation's
-/// own recorded size, or `None` when there is no confirmed history yet to
-/// compare against. Deliberately ignores unconfirmed observations entirely —
-/// an unconfirmed fact decides nothing, including what counts as a
-/// suspicious shrink relative to it.
 fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: DocId) -> Result<Option<i64>, Error> {
     tx.query_row(
         "SELECT size FROM observations WHERE doc_id=?1 AND confirmed=1 ORDER BY id DESC LIMIT 1",
@@ -74,10 +53,6 @@ fn newest_confirmed_size(tx: &Transaction<'_>, doc_id: DocId) -> Result<Option<i
     .map_err(Error::from)
 }
 
-/// `doc_id`'s newest recorded observation's own blob hash, of ANY confirmed
-/// status — deliberately unlike [`newest_confirmed_size`], since a shrink
-/// hypothesis this function helps validate is itself recorded unconfirmed
-/// and must still be visible as "the thing sighted last time".
 fn newest_observation_hash(tx: &Transaction<'_>, doc_id: DocId) -> Result<Option<String>, Error> {
     tx.query_row(
         "SELECT blob_hash FROM observations WHERE doc_id=?1 ORDER BY id DESC LIMIT 1",
@@ -88,21 +63,6 @@ fn newest_observation_hash(tx: &Transaction<'_>, doc_id: DocId) -> Result<Option
     .map_err(Error::from)
 }
 
-/// Folds the suspicious-shrink gate into a bracket's own `confirmed` verdict:
-/// a bracket-stable read (`bracket_confirmed`) that is empty or radically
-/// shrunk relative to `doc_id`'s newest CONFIRMED observation does not
-/// automatically inherit that confirmation — the destructive-async-reset
-/// pattern a stable stat bracket alone cannot see, since the file's
-/// identity can legitimately change across an ordinary external rewrite.
-/// A shrink is a HYPOTHESIS the first time it's sighted (recorded
-/// unconfirmed, so nothing downstream trusts it yet) and VALIDATED the
-/// moment an independent bracketed read sights byte-identical content again
-/// (`new_hash` equal to the newest recorded observation's hash, whatever its
-/// own confirmed status) — a legitimate external rewrite that shrank the
-/// file settles on the same bytes across two separate reads, while a
-/// transient mid-rewrite artifact does not repeat identically. An unstable
-/// bracket is never upgraded by this check; it stays unconfirmed regardless
-/// of length.
 pub fn confirm_against_history(
     tx: &Transaction<'_>,
     doc_id: DocId,
@@ -120,28 +80,12 @@ pub fn confirm_against_history(
     Ok(newest_observation_hash(tx, doc_id)?.is_some_and(|prior| prior == new_hash))
 }
 
-/// The correlation/origin facts [`observe_disk`] needs —
-/// [`crate::observation::ObservationMeta`] minus `confirmed`, which
-/// `observe_disk` always derives for itself from the bracket and never
-/// accepts from a caller.
 #[derive(Clone, Copy, Debug)]
 pub struct ObserveDiskMeta {
-    /// The journal position this sighting correlates to; `None` means
-    /// uncorrelated (never ancestor-eligible).
     pub seq: Option<i64>,
     pub origin: ObsOrigin,
 }
 
-/// Brackets a fresh disk read for `doc_id` (via [`bracketed_read`]) and
-/// folds in the suspicious-shrink gate against the newest CONFIRMED
-/// observation already on file (via [`confirm_against_history`]), then puts
-/// the bytes as a blob and records the referencing observation, all in ONE
-/// transaction beyond the read itself (the blob put and its observation
-/// insert never split across two, closing the cross-process GC race
-/// [rune-db 2]) — the one chokepoint every fresh "read the live file, then
-/// record what it said" call site (`probe::probe`, `load::load`) funnels
-/// through, so a racer caught mid-external-rewrite can never masquerade as
-/// a stable, trusted fact.
 pub fn observe_disk(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -301,9 +245,6 @@ mod tests {
         .expect("seed confirmed observation");
     }
 
-    /// A shrink's FIRST sighting is a hypothesis, not a fact: even a
-    /// perfectly bracket-stable empty read against non-empty confirmed
-    /// history is downgraded to unconfirmed the first time it's seen.
     #[test]
     fn confirm_against_history_downgrades_the_first_sighting_of_a_shrink() {
         let mut conn = open();
@@ -323,11 +264,6 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// A shrink's SECOND identical sighting validates the hypothesis: once
-    /// an independent bracketed read has already recorded the shrunk
-    /// content once (however unconfirmed), a fresh read that sees the exact
-    /// same bytes again is a legitimate external rewrite settling, not a
-    /// transient artifact, and confirms.
     #[test]
     fn confirm_against_history_validates_a_second_identical_shrink_sighting() {
         let mut conn = open();
@@ -366,10 +302,6 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// A transient mid-rewrite empty read never confirms even when a LATER
-    /// read restores the original content — the restoration isn't a
-    /// shrink at all (so it confirms on its own, unrelated grounds), but
-    /// the earlier empty sighting itself is never revisited or upgraded.
     #[test]
     fn confirm_against_history_never_confirms_a_transient_empty_read_via_restoration() {
         let mut conn = open();

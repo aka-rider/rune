@@ -8,13 +8,6 @@ use crate::inherit::most_recent_session_for_doc;
 use crate::retry;
 use crate::session::parse_rfc3339_nanos;
 
-/// Runs once per `Store::open`. `is_alive` decides whether a recorded
-/// `(pid, proc_started_at)` pair still identifies a running process — the
-/// caller passes the real liveness check in production, a deterministic
-/// stand-in in tests. `boot` is the system boot time (`session::boot_time`
-/// in production, a fabricated instant in tests) — threaded in rather than
-/// read here so the reboot-death branch below is exercisable against a
-/// chosen instant instead of only ever the real machine's own boot time.
 pub fn reap_dead_sessions(
     conn: &mut Connection,
     is_alive: &dyn Fn(i64, &str) -> bool,
@@ -40,12 +33,6 @@ pub fn reap_dead_sessions(
     Ok(())
 }
 
-/// A legacy `proc_started_at=""` row is confirmed dead only when its own
-/// `opened_at` parses to an instant strictly before the current boot — no
-/// process can have survived a reboot to still be running it. An
-/// unparseable `opened_at`, or an unreadable `boot`, is never a positive
-/// death claim: fails toward alive, exactly like every other liveness
-/// ambiguity in this crate.
 fn predates_boot(opened_at: &str, boot: Option<std::time::SystemTime>) -> bool {
     match (parse_rfc3339_nanos(opened_at), boot) {
         (Some(opened), Some(boot)) => opened < boot,
@@ -53,9 +40,6 @@ fn predates_boot(opened_at: &str, boot: Option<std::time::SystemTime>) -> bool {
     }
 }
 
-/// Reports whether `session_id` is safe to reap: for EVERY `doc_id` it ever
-/// touched, some OTHER session must now hold the higher seq. A session that
-/// never touched any doc (vacuously true) is reapable.
 fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bool, Error> {
     let doc_ids: Vec<DocId> = {
         let mut stmt = tx.prepare(
@@ -73,7 +57,7 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bo
         if let Some(most_recent) = most_recent_session_for_doc(tx, doc_id)?
             && most_recent == session_id
         {
-            return Ok(false); // still the most-recent toucher of this doc
+            return Ok(false);
         }
     }
     Ok(true)
@@ -117,12 +101,6 @@ mod tests {
         DocId(conn.last_insert_rowid())
     }
 
-    /// Inserts a `sessions` row directly with a caller-chosen `pid`, rather
-    /// than `session::establish_session` (which always stamps the REAL
-    /// current process pid) — every test in this module runs in-process, so
-    /// two `establish_session` calls would be indistinguishable to
-    /// `is_alive`'s `(pid, started_at)` signature. Fabricated pids let each
-    /// test simulate distinct processes deterministically.
     fn seed_session(conn: &Connection, pid: i64) -> SessionId {
         conn.execute(
             "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES(?1, 'started', 'opened')",
@@ -206,9 +184,6 @@ mod tests {
         .expect("check")
     }
 
-    /// A dead session that is NOT the most-recent toucher of any doc it
-    /// touched has its footprint reaped; recording an observation keeps its
-    /// `sessions` row in place as that dead session's own provenance.
     #[test]
     fn reaper_deletes_footprint_but_spares_sessions_row_with_an_observation() {
         let mut conn = open();
@@ -217,11 +192,9 @@ mod tests {
         journal_one_edit(&mut conn, session_old, doc_id);
         seed_observation(&conn, session_old, doc_id);
 
-        // A later session supersedes session_old as the most-recent toucher.
         let session_new = seed_session(&conn, 222);
         journal_one_edit(&mut conn, session_new, doc_id);
 
-        // pid 111 (session_old) is dead; pid 222 (session_new) is alive.
         reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
 
         let old_events: i64 = conn
@@ -241,9 +214,6 @@ mod tests {
         );
     }
 
-    /// A superseded dead session that recorded NO observation has its
-    /// `sessions` row itself reaped alongside its footprint — there is no
-    /// provenance fact left for any other session to depend on.
     #[test]
     fn reaper_deletes_the_sessions_row_of_an_observation_free_superseded_dead_session() {
         let mut conn = open();
@@ -266,9 +236,6 @@ mod tests {
         );
     }
 
-    /// The reaper must SPARE a dead session that is still the most-recent
-    /// toucher of a doc — reaping it would destroy content a future
-    /// `find_inheritable_draft` still needs.
     #[test]
     fn reaper_spares_the_most_recent_dead_session() {
         let mut conn = open();
@@ -291,14 +258,12 @@ mod tests {
         );
     }
 
-    /// An alive session is never touched by the reaper at all.
     #[test]
     fn reaper_never_touches_a_live_session() {
         let mut conn = open();
         let session_id = seed_session(&conn, 111);
         let doc_id = seed_doc(&conn);
         journal_one_edit(&mut conn, session_id, doc_id);
-        // A later session supersedes it, but it's still reported alive.
         let session_new = seed_session(&conn, 222);
         journal_one_edit(&mut conn, session_new, doc_id);
 
@@ -314,14 +279,6 @@ mod tests {
         assert_eq!(events, 1, "a live session must never be reaped");
     }
 
-    /// The reaper runs in `Store::open`, BEFORE `load` — at that moment a
-    /// dead session that diverged content is still `most_recent_session_
-    /// for_doc`, so it's spared. But by the time the NEXT `load` bridges its
-    /// draft into a fresh session's own journal and returns, the dead
-    /// session is no longer most-recent — a LATER reap (the next process's
-    /// own `Store::open`) must not destroy the bridge target's content,
-    /// only the dead session's now-superseded footprint. Regression for the
-    /// data-loss bug this module's whole reap-scoping exists to prevent.
     #[test]
     fn diverged_load_bridge_survives_reaping_the_dead_session_it_inherited_from() {
         use rune_vfs::{Vfs, VfsTestExt};
@@ -348,7 +305,6 @@ mod tests {
         .expect("session a load")
         .doc_id;
 
-        // Session A types an unsaved edit, then "dies" without saving.
         {
             let tx = conn.transaction().expect("tx");
             crate::journal::append_edit(
@@ -369,14 +325,9 @@ mod tests {
             tx.commit().expect("commit");
         }
 
-        // Disk moves on independently — an external atomic-swap overwrite
-        // (`save_atomic`'s `exchange` path, mints a new inode) since session
-        // A's own last-known baseline.
         vfs.save_atomic(path, b"disk moved on independently")
             .expect("external atomic swap");
 
-        // Session B loads after A died — diverges, bridges A's own baseline
-        // forward to A's draft (B2/B3), landing it in B's own journal.
         let session_b =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
         let result = crate::load::load(
@@ -393,9 +344,6 @@ mod tests {
             "test setup: session b must have inherited a's bridged draft"
         );
 
-        // NOW force-reap: both sessions report dead, but the reaper must
-        // still spare session_b (the current most-recent toucher) and only
-        // clear session_a's now-superseded footprint.
         reap_dead_sessions(&mut conn, &|_pid, _started_at| false, None).expect("reap");
 
         let recovered = crate::snapshot::recover_document(&conn, session_b, doc_id)
