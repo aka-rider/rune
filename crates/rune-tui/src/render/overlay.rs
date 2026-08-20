@@ -333,18 +333,6 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed:
         buf_offset: synthetic_offset,
     });
 }
-
-/// Unit tests for [`apply_highlight_spans`] — hand-built
-/// `(rows, spans)` pairs, not a real document. `apply_highlight_spans` is
-/// `pub(super)` (this file's own encapsulation convention: every other
-/// overlay function here is `pub(super)` too, reached only through
-/// `render::build_rows`), so it is unreachable from the crate's external
-/// `tests/` integration tests — those exercise the SAME algorithm
-/// end-to-end instead, through a document's stored region highlight state
-/// (`HighlightState::regions`, queried by `highlight::visible_spans`) and
-/// `render::build_rows`/`testgrid`. This module covers the painter
-/// resolution itself directly.
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 #[path = "overlay_tests.rs"]
