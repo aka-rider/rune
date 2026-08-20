@@ -59,6 +59,7 @@ pub(crate) fn append_storm() {
         let _ = tx.send(evt);
     });
     let store = open_store(&path, on_event);
+    let token = rune_db::BindingToken::next();
 
     touch(&ready);
     wait_for_path(&go, MARKER_SAFETY_DEADLINE);
@@ -71,7 +72,7 @@ pub(crate) fn append_storm() {
             insert: format!("{i} "),
         };
         let id = store
-            .append_edit(doc_id, &[edit], &[], &[])
+            .append_edit(doc_id, token, rune_db::Seq(0), &[edit], &[], &[])
             .expect("enqueue append");
         expect_ok(&rx, id);
     }
@@ -102,6 +103,7 @@ pub(crate) fn append_storm_checkpoint() {
     });
     let store = open_store(&path, on_event);
     std::fs::write(&session_marker, store.session_id().to_string()).expect("write session marker");
+    let token = rune_db::BindingToken::next();
 
     for i in 0..count {
         let edit = AppliedEdit {
@@ -111,7 +113,7 @@ pub(crate) fn append_storm_checkpoint() {
             insert: format!("{i} "),
         };
         let id = store
-            .append_edit(doc_id, &[edit], &[], &[])
+            .append_edit(doc_id, token, rune_db::Seq(0), &[edit], &[], &[])
             .expect("enqueue append");
         expect_ok(&rx, id);
 
@@ -203,6 +205,7 @@ pub(crate) fn gc_editor() {
         let _ = tx.send(evt);
     });
     let store = open_store(&path, on_event);
+    let token = rune_db::BindingToken::next();
 
     touch(&ready);
     wait_for_path(&go, MARKER_SAFETY_DEADLINE);
@@ -216,7 +219,7 @@ pub(crate) fn gc_editor() {
             insert: content_a.clone(),
         };
         let id = store
-            .append_edit(doc_id, &[insert_a], &[], &[])
+            .append_edit(doc_id, token, rune_db::Seq(0), &[insert_a], &[], &[])
             .expect("enqueue append a");
         recv_seq(&rx, id);
 
@@ -226,7 +229,7 @@ pub(crate) fn gc_editor() {
         expect_ok(&rx, id);
 
         let id = store
-            .move_undo_pos(doc_id, 0)
+            .move_undo_pos(doc_id, token, rune_db::Seq(0), 0)
             .expect("enqueue move_undo_pos");
         expect_ok(&rx, id);
 
@@ -240,7 +243,7 @@ pub(crate) fn gc_editor() {
             insert: format!("round-{i}-b"),
         };
         let id = store
-            .append_edit(doc_id, &[insert_b], &[], &[])
+            .append_edit(doc_id, token, rune_db::Seq(0), &[insert_b], &[], &[])
             .expect("enqueue append b");
         expect_ok(&rx, id);
     }
@@ -282,7 +285,14 @@ pub(crate) fn edit_and_die() {
         insert: "UNSAVED ".to_string(),
     };
     let id = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(
+            doc_id,
+            rune_db::BindingToken::next(),
+            rune_db::Seq(0),
+            &[edit],
+            &[],
+            &[],
+        )
         .expect("enqueue append");
     expect_ok(&rx, id);
 
@@ -358,7 +368,14 @@ pub(crate) fn save_and_die() {
         insert: insert.clone(),
     };
     let id = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(
+            doc_id,
+            rune_db::BindingToken::next(),
+            rune_db::Seq(0),
+            &[edit],
+            &[],
+            &[],
+        )
         .expect("enqueue append");
     let seq = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {
@@ -369,7 +386,11 @@ pub(crate) fn save_and_die() {
     };
 
     let id = store
-        .materialize_prepare(doc_id, rune_db::MaterializeTarget::Existing { expect }, None)
+        .materialize_prepare(
+            doc_id,
+            rune_db::MaterializeTarget::Existing { expect },
+            None,
+        )
         .expect("enqueue materialize prepare");
     let prep = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {

@@ -17,7 +17,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
-use rune_db::{DbEvent, OnEvent, OpOutcome, Store};
+use rune_db::{BindingToken, DbEvent, OnEvent, OpOutcome, Seq, Store};
 use rune_vfs::Disk;
 
 fn temp_db_dir(label: &str) -> PathBuf {
@@ -78,12 +78,13 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     };
 
     let mut buf = String::new();
+    let token = BindingToken::next();
 
     // "alpha" — local position 1 — fully acked before anything else
     // happens.
     let edit = append_and_edit(&mut buf, "alpha");
     let op1 = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(doc_id, token, Seq(0), &[edit], &[], &[])
         .expect("enqueue append alpha");
     assert!(matches!(recv(&rx, op1), OpOutcome::Seq(_)));
 
@@ -92,11 +93,11 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     // whose acks haven't round-tripped yet.
     let edit = append_and_edit(&mut buf, "beta");
     let op2 = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(doc_id, token, Seq(0), &[edit], &[], &[])
         .expect("enqueue append beta");
     let edit = append_and_edit(&mut buf, "gamma");
     let op3 = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(doc_id, token, Seq(0), &[edit], &[], &[])
         .expect("enqueue append gamma");
 
     // Undo "gamma" only: local position 2 — enqueued while op2/op3's own
@@ -104,7 +105,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     // both (strict FIFO single connection), so it resolves this exactly,
     // with no dependency on this caller having drained anything yet.
     let op4 = store
-        .move_undo_pos(doc_id, 2)
+        .move_undo_pos(doc_id, token, Seq(0), 2)
         .expect("enqueue move_undo_pos");
     buf.truncate(buf.len() - "gamma".len());
 
@@ -114,7 +115,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     // have deleted events this session never actually undid.
     let edit = append_and_edit(&mut buf, "delta");
     let op5 = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(doc_id, token, Seq(0), &[edit], &[], &[])
         .expect("enqueue append delta");
 
     // Drain everything queued after "alpha", in FIFO arrival order —

@@ -1,10 +1,31 @@
 use std::fmt;
 use std::num::NonZeroI64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DocId(pub i64);
+
+/// A single document binding's own identity for undo-position numbering —
+/// minted fresh every time a `Document` binds (or rebinds) to a recovery
+/// row, never persisted or shared across two bindings. The writer thread
+/// keys its `DocUndoState` map by this instead of by [`DocId`]: two
+/// bindings sharing one row (unreachable via any real open path, but not
+/// structurally prevented) each get their own independent local-position
+/// numbering rather than racing to fill one shared sequence, and a rebind
+/// starting fresh numbering is just "mint a new token" rather than an
+/// explicit reset the writer has to be told about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BindingToken(u64);
+
+impl BindingToken {
+    /// Mints a fresh, process-wide-unique token.
+    pub fn next() -> BindingToken {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        BindingToken(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionId(pub i64);

@@ -97,7 +97,14 @@ fn a_second_bare_launch_never_disables_recovery_for_the_first_sessions_fresh_dra
         insert: "hello".to_string(),
     };
     let append_op = store_a
-        .append_edit(doc_a, &[edit], &[], &[])
+        .append_edit(
+            doc_a,
+            rune_db::BindingToken::next(),
+            rune_db::Seq(0),
+            &[edit],
+            &[],
+            &[],
+        )
         .expect("enqueue append_edit");
     match recv(&rx_a, append_op) {
         DbEvent::Ok { .. } => {}

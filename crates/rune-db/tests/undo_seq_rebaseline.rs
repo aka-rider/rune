@@ -1,9 +1,11 @@
-//! The re-baseline half of the writer's local-undo-position contract,
-//! through the PUBLIC `Store` API alone: `Store::load_rebaseline` naming the
-//! row a caller is already bound to keeps that row's numbering, so a deep
-//! undo issued afterwards still resolves to its own durable seq — while
-//! every other load restarts the numbering, and a re-baseline that lands on
-//! a DIFFERENT row than the one it named is one of those.
+//! The writer's local-undo-position contract, through the PUBLIC `Store`
+//! API alone, now that a caller's own [`rune_db::BindingToken`] is the
+//! numbering key: the SAME token keeps its numbering across however many
+//! `Load`s the caller enqueues against it (a reload, a re-baseline), so a
+//! deep undo issued afterwards still resolves to its own durable seq — while
+//! a caller minting a FRESH token for a binding starts that token's
+//! numbering over, and a position only the OLD token ever ran is refused
+//! outright rather than silently answered with some other token's seq.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -17,7 +19,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
-use rune_db::{DbEvent, DocId, OnEvent, OpOutcome, Store};
+use rune_db::{BindingToken, DbEvent, DocId, OnEvent, OpOutcome, Seq, Store};
 use rune_vfs::Disk;
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -74,11 +76,12 @@ fn bind(store: &Store, rx: &mpsc::Receiver<DbEvent>, path: &Path) -> DocId {
 }
 
 /// Types `text` at the end of `buf` and journals it, exactly as an editor
-/// appending at the caret does.
+/// appending at the caret does, under `token`'s own numbering.
 fn type_at_end(
     store: &Store,
     rx: &mpsc::Receiver<DbEvent>,
     doc_id: DocId,
+    token: BindingToken,
     buf: &mut String,
     text: &str,
 ) {
@@ -91,7 +94,7 @@ fn type_at_end(
         insert: text.to_string(),
     };
     let op = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(doc_id, token, Seq(0), &[edit], &[], &[])
         .expect("enqueue append");
     assert!(matches!(ok(rx, op), OpOutcome::Seq(_)));
 }
@@ -104,12 +107,13 @@ fn recovered_at(db_path: &Path, session_id: rune_db::SessionId, doc_id: DocId) -
         .content
 }
 
-/// A same-row re-baseline keeps the row's local-position numbering, so an
-/// undo reaching PAST the re-baseline still names its own durable seq — the
-/// caller's deep undo positions survive a save's lost-bookkeeping reload
-/// instead of degrading into forward replace-all re-bases.
+/// A caller reloading the SAME row under the SAME `BindingToken` keeps that
+/// token's numbering, so an undo reaching PAST the reload still names its
+/// own durable seq — the caller's deep undo positions survive a save's
+/// lost-bookkeeping reload instead of degrading into forward replace-all
+/// re-bases.
 #[test]
-fn a_same_row_rebaseline_keeps_deep_undo_positions_resolvable() {
+fn the_same_token_keeps_deep_undo_positions_resolvable_across_a_reload() {
     let dir = temp_dir("same-row");
     let db_path = dir.join("rune-v1.db");
     let doc_path = seed_file(&dir, "a.md", "seed");
@@ -117,36 +121,35 @@ fn a_same_row_rebaseline_keeps_deep_undo_positions_resolvable() {
     let session_id = store.session_id();
 
     let doc_id = bind(&store, &rx, &doc_path);
+    let token = BindingToken::next();
     let mut buf = String::from("seed");
-    type_at_end(&store, &rx, doc_id, &mut buf, "alpha");
-    type_at_end(&store, &rx, doc_id, &mut buf, "beta");
-    type_at_end(&store, &rx, doc_id, &mut buf, "gamma");
+    type_at_end(&store, &rx, doc_id, token, &mut buf, "alpha");
+    type_at_end(&store, &rx, doc_id, token, &mut buf, "beta");
+    type_at_end(&store, &rx, doc_id, token, &mut buf, "gamma");
 
-    let rebaseline = store
-        .load_rebaseline(&doc_path, doc_id)
-        .expect("enqueue re-baseline load");
-    match ok(&rx, rebaseline) {
+    let reload = store.load(&doc_path).expect("enqueue reload");
+    match ok(&rx, reload) {
         OpOutcome::Load(result) => assert_eq!(
             result.doc_id, doc_id,
-            "the re-baseline must resolve the very row it named"
+            "the reload must resolve the very row it named"
         ),
         other => panic!("expected a Load ack, got {other:?}"),
     }
 
-    // Local position 1 — "alpha" only, two entries deeper than the
-    // re-baseline. A restarted numbering has no entry there at all.
+    // Local position 1 — "alpha" only, two entries deeper than the reload.
+    // A restarted numbering (a fresh token) has no entry there at all.
     let undo = store
-        .move_undo_pos(doc_id, 1)
+        .move_undo_pos(doc_id, token, Seq(0), 1)
         .expect("enqueue move_undo_pos");
     assert!(
         matches!(ok(&rx, undo), OpOutcome::None),
-        "a preserved numbering must resolve a pre-re-baseline position"
+        "a preserved token's numbering must resolve a pre-reload position"
     );
     buf.truncate("seedalpha".len());
 
     // The append after the undo truncates the abandoned future — the step
     // that turns a mis-resolved position into lost or resurrected text.
-    type_at_end(&store, &rx, doc_id, &mut buf, "delta");
+    type_at_end(&store, &rx, doc_id, token, &mut buf, "delta");
     store.shutdown();
 
     assert_eq!(
@@ -157,33 +160,27 @@ fn a_same_row_rebaseline_keeps_deep_undo_positions_resolvable() {
     assert_eq!(buf, "seedalphadelta");
 }
 
-/// A re-baseline that resolves to a DIFFERENT row than the one it named is
-/// an ordinary bind for that row: its numbering restarts, so the caller's
-/// old positions no longer exist and are refused outright rather than
-/// silently answered with some other entry's seq.
+/// A caller minting a FRESH `BindingToken` for a binding it already had —
+/// exactly what a rebind that restarts numbering does — starts that token's
+/// numbering over: the old token's positions no longer exist under the new
+/// one and are refused outright rather than silently answered with some
+/// other token's seq.
 #[test]
-fn a_rebaseline_landing_on_another_row_restarts_that_rows_numbering() {
+fn a_fresh_token_refuses_a_position_only_the_old_token_ever_ran() {
     let dir = temp_dir("cross-row");
     let db_path = dir.join("rune-v1.db");
-    let path_a = seed_file(&dir, "a.md", "aaa");
     let path_b = seed_file(&dir, "b.md", "bbb");
     let (store, rx) = open_store(&db_path);
 
-    let doc_a = bind(&store, &rx, &path_a);
     let doc_b = bind(&store, &rx, &path_b);
+    let old_token = BindingToken::next();
     let mut buf_b = String::from("bbb");
-    type_at_end(&store, &rx, doc_b, &mut buf_b, "one");
+    type_at_end(&store, &rx, doc_b, old_token, &mut buf_b, "one");
 
-    let crossed = store
-        .load_rebaseline(&path_b, doc_a)
-        .expect("enqueue re-baseline load");
-    match ok(&rx, crossed) {
-        OpOutcome::Load(result) => assert_eq!(result.doc_id, doc_b),
-        other => panic!("expected a Load ack, got {other:?}"),
-    }
-
+    // A restart mints a brand-new token for the SAME row.
+    let fresh_token = BindingToken::next();
     let undo = store
-        .move_undo_pos(doc_b, 1)
+        .move_undo_pos(doc_b, fresh_token, Seq(0), 1)
         .expect("enqueue move_undo_pos");
     let refused =
         recv(&rx, undo).expect_err("a restarted numbering must refuse a position it never ran");
@@ -195,12 +192,13 @@ fn a_rebaseline_landing_on_another_row_restarts_that_rows_numbering() {
 }
 
 /// The lineage hazard: two documents journaling into ONE session interleave
-/// their durable seqs, so an undo resolved one entry off lands on the other
-/// document's seq. Across a re-baseline of one of them, every undo must
-/// still resolve inside its own document's lineage — proved by both
-/// documents' recovery, since a wrong seq truncates the wrong tail.
+/// their durable seqs, so a numbering keyed by document alone would resolve
+/// an undo one entry off into the OTHER document's seq. Keyed by
+/// `BindingToken` instead, every undo still resolves inside its own token's
+/// own lineage regardless of interleaving — proved by both documents'
+/// recovery, since a wrong seq truncates the wrong tail.
 #[test]
-fn a_rebaselined_undo_never_resolves_into_another_documents_lineage() {
+fn an_undo_never_resolves_into_another_documents_lineage() {
     let dir = temp_dir("lineage");
     let db_path = dir.join("rune-v1.db");
     let path_a = seed_file(&dir, "a.md", "A:");
@@ -210,29 +208,29 @@ fn a_rebaselined_undo_never_resolves_into_another_documents_lineage() {
 
     let doc_a = bind(&store, &rx, &path_a);
     let doc_b = bind(&store, &rx, &path_b);
+    let token_a = BindingToken::next();
+    let token_b = BindingToken::next();
     let mut buf_a = String::from("A:");
     let mut buf_b = String::from("B:");
 
     // Interleaved, so no two consecutive seqs belong to the same document:
     // an off-by-one resolution can only land on the other lineage.
-    type_at_end(&store, &rx, doc_a, &mut buf_a, "1");
-    type_at_end(&store, &rx, doc_b, &mut buf_b, "1");
-    type_at_end(&store, &rx, doc_a, &mut buf_a, "2");
-    type_at_end(&store, &rx, doc_b, &mut buf_b, "2");
-    type_at_end(&store, &rx, doc_a, &mut buf_a, "3");
-    type_at_end(&store, &rx, doc_b, &mut buf_b, "3");
+    type_at_end(&store, &rx, doc_a, token_a, &mut buf_a, "1");
+    type_at_end(&store, &rx, doc_b, token_b, &mut buf_b, "1");
+    type_at_end(&store, &rx, doc_a, token_a, &mut buf_a, "2");
+    type_at_end(&store, &rx, doc_b, token_b, &mut buf_b, "2");
+    type_at_end(&store, &rx, doc_a, token_a, &mut buf_a, "3");
+    type_at_end(&store, &rx, doc_b, token_b, &mut buf_b, "3");
 
-    let rebaseline = store
-        .load_rebaseline(&path_a, doc_a)
-        .expect("enqueue re-baseline load");
-    assert!(matches!(ok(&rx, rebaseline), OpOutcome::Load(_)));
+    let reload = store.load(&path_a).expect("enqueue reload");
+    assert!(matches!(ok(&rx, reload), OpOutcome::Load(_)));
 
     let undo = store
-        .move_undo_pos(doc_a, 1)
+        .move_undo_pos(doc_a, token_a, Seq(0), 1)
         .expect("enqueue move_undo_pos");
     assert!(matches!(ok(&rx, undo), OpOutcome::None));
     buf_a.truncate("A:1".len());
-    type_at_end(&store, &rx, doc_a, &mut buf_a, "4");
+    type_at_end(&store, &rx, doc_a, token_a, &mut buf_a, "4");
     store.shutdown();
 
     assert_eq!(

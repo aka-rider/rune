@@ -10,7 +10,7 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_vfs::Stat;
 
-use crate::ids::{BlobHash, DocId, ObsId, SessionId};
+use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
 use crate::load::LoadResult;
 use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
 use crate::merge_prep::MergePrepResult;
@@ -76,7 +76,11 @@ pub(crate) enum OpKind {
     #[cfg(feature = "test-support")]
     KillWriterForTest,
     /// On success, the completion's `DbEvent::Ok.result` carries the
-    /// journal seq of the inserted (or coalesced) event.
+    /// journal seq of the inserted (or coalesced) event. `token` is the
+    /// enqueuing binding's own [`BindingToken`] — the writer thread's
+    /// `DocUndoState` map key (`crate::writer::DocUndoState`'s own doc
+    /// comment); `token_base_seq` seeds a not-yet-seen token's local
+    /// position `0` the first time any op names it, whichever op that is.
     AppendEdit {
         session_id: SessionId,
         now: SystemTime,
@@ -84,20 +88,28 @@ pub(crate) enum OpKind {
         edits: Vec<AppliedEdit>,
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
+        token: BindingToken,
+        token_base_seq: Seq,
     },
-    /// `local_pos` is the enqueuing session's own LOCAL undo-journal
-    /// position (`rune_core::undo::Journal::pos()` after the move) — never a
+    /// `local_pos` is the enqueuing binding's own LOCAL undo-journal
+    /// position (`rune_core::undo::Journal::pos()` after the move,
+    /// adjusted by the app's own fixed per-binding offset) — never a
     /// pre-resolved durable seq. This writer thread resolves it to the exact
-    /// durable seq itself, at execution time, using the per-doc undo-state
-    /// it has been building from every `AppendEdit` it has already run for
-    /// this doc (`DocUndoState`) — by the time this op reaches
-    /// the front of the writer's single FIFO queue, every `AppendEdit`
-    /// enqueued ahead of it has already committed, so the mapping is always
-    /// exact, never a guess at an unacknowledged in-flight op the way
-    /// resolving it app-side (before this rework) had to.
+    /// durable seq itself, at execution time, using the per-token
+    /// undo-state it has been building from every `AppendEdit` it has
+    /// already run for `token` (`DocUndoState`) — by the time this op
+    /// reaches the front of the writer's single FIFO queue, every
+    /// `AppendEdit` enqueued ahead of it under the same `token` has already
+    /// committed, so the mapping is always exact, never a guess at an
+    /// unacknowledged in-flight op the way resolving it app-side (before
+    /// this rework) had to. `token_base_seq` mirrors `AppendEdit`'s own —
+    /// this op can be `token`'s very first sighting too (e.g. an undo
+    /// pressed before any edit lands under a freshly re-anchored token).
     MoveUndoPos {
         session_id: SessionId,
         doc_id: DocId,
+        token: BindingToken,
+        token_base_seq: Seq,
         local_pos: i64,
     },
     /// On success, the completion's `DbEvent::Ok.result` carries the new
@@ -188,20 +200,14 @@ pub(crate) enum OpKind {
     /// already-taken caller-side sighting (`LoadSource::Taken`,
     /// `crate::load::load_from_read`) — the single-sighting fix: a caller
     /// that already read `path` once must never have this op read it again.
-    /// `rebaseline_of` names the document row the caller is ALREADY bound
-    /// to and means to stay bound to: that row's local undo-position
-    /// numbering (`crate::writer::DocUndoState`) survives this load when —
-    /// and only when — this load resolves `path` to exactly that row. Every
-    /// other load (`None`, or a row that turned out to be a different one)
-    /// restarts the numbering, because the caller's own mapping restarts
-    /// with it.
+    /// Undo-position numbering is entirely the app's own concern now
+    /// (`BindingToken`) — this op carries none of it.
     Load {
         session_id: SessionId,
         liveness_check: LivenessCheckFn,
         path: PathBuf,
         now: SystemTime,
         source: LoadSource,
-        rebaseline_of: Option<DocId>,
     },
     /// Rename `from` → `to` with no clobber (`rename::rename_bind`). A
     /// collision comes back as `RenameOutcome::Collided` — a refusal, not
