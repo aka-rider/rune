@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rune_vfs::{DirEntry, Mem, Stat, Vfs};
+use rune_vfs::{DirEntry, Mem, PutOutcome, Stat, Vfs};
 
 use crate::db::PublishMode;
 
@@ -106,7 +106,8 @@ fn a_transient_cas_mismatch_that_closes_on_the_second_read_proceeds_to_commit() 
     );
 
     match outcome {
-        MaterializeVfsOutcome::Committed { .. } => {}
+        MaterializeVfsOutcome::Put { outcome, .. }
+            if matches!(*outcome, PutOutcome::Committed { .. }) => {}
         other => panic!("expected a transient mismatch to still commit, got {other:?}"),
     }
 }
@@ -132,15 +133,16 @@ fn a_stable_cas_mismatch_reports_a_confirmed_conflict() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Conflict {
-            data, confirmed, ..
-        } => {
-            assert_eq!(data, b"external content, never ours");
-            assert!(
-                confirmed,
-                "a quiescent Mem read must bracket-confirm even though it conflicts"
-            );
-        }
+        MaterializeVfsOutcome::Put { outcome, .. } => match *outcome {
+            PutOutcome::Conflict { current, .. } => {
+                assert_eq!(current.bytes, b"external content, never ours");
+                assert!(
+                    current.sighted.is_confirmed(),
+                    "a quiescent Mem read must bracket-confirm even though it conflicts"
+                );
+            }
+            other => panic!("expected a stable conflict, got {other:?}"),
+        },
         other => panic!("expected a stable conflict, got {other:?}"),
     }
 }
@@ -166,7 +168,10 @@ fn an_ordinary_commit_reports_confirmed() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Committed { confirmed, .. } => assert!(confirmed),
+        MaterializeVfsOutcome::Put { outcome, .. } => match *outcome {
+            PutOutcome::Committed { sighted, .. } => assert!(sighted.is_confirmed()),
+            other => panic!("expected a plain commit, got {other:?}"),
+        },
         other => panic!("expected a plain commit, got {other:?}"),
     }
 }
@@ -189,10 +194,11 @@ fn a_force_save_of_a_missing_destination_commits_as_a_fresh_create() {
         SaveMode::Force,
     );
 
-    match outcome {
-        MaterializeVfsOutcome::Committed { data, .. } => assert_eq!(data, b"new content"),
-        other => panic!("expected a fresh-create commit, got {other:?}"),
-    }
+    let committed = matches!(
+        &outcome,
+        MaterializeVfsOutcome::Put { outcome, .. } if matches!(**outcome, PutOutcome::Committed { .. })
+    );
+    assert!(committed, "expected a fresh-create commit, got {outcome:?}");
     assert_eq!(vfs.read(Path::new("/doc.md")).unwrap(), b"new content");
 }
 
@@ -217,7 +223,8 @@ fn a_force_save_over_the_unchanged_baseline_commits_without_a_race() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Committed { .. } => {}
+        MaterializeVfsOutcome::Put { outcome, .. }
+            if matches!(*outcome, PutOutcome::Committed { .. }) => {}
         other => panic!("expected a raceless force commit, got {other:?}"),
     }
     assert_eq!(vfs.read(path).unwrap(), b"new content");
@@ -244,9 +251,12 @@ fn a_force_save_over_foreign_bytes_races_and_captures_the_displaced_bytes() {
     );
 
     match outcome {
-        MaterializeVfsOutcome::Raced { displaced, .. } => {
-            assert_eq!(displaced, b"foreign bytes");
-        }
+        MaterializeVfsOutcome::Put { outcome, .. } => match *outcome {
+            PutOutcome::Raced { displaced, .. } => {
+                assert_eq!(displaced.bytes, b"foreign bytes");
+            }
+            other => panic!("expected a genuine race, got {other:?}"),
+        },
         other => panic!("expected a genuine race, got {other:?}"),
     }
     assert_eq!(vfs.read(path).unwrap(), b"new content");

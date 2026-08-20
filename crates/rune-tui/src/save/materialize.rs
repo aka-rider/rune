@@ -251,7 +251,7 @@ pub(crate) fn run_materialize_vfs(
             return MaterializeVfsOutcome::Error(e.to_string());
         }
         let outcome = rune_vfs::put(vfs, &resolved, data, PutCondition::IfAbsent);
-        return map_put_outcome(outcome, data, resolved);
+        return wrap_put_outcome(outcome, resolved);
     }
 
     if let Some(bound) = bound_path {
@@ -282,51 +282,17 @@ pub(crate) fn run_materialize_vfs(
         }
     };
     let outcome = rune_vfs::put(vfs, &resolved, data, condition);
-    map_put_outcome(outcome, data, resolved)
+    wrap_put_outcome(outcome, resolved)
 }
 
-fn map_put_outcome(
+fn wrap_put_outcome(
     outcome: std::io::Result<PutOutcome>,
-    data: &[u8],
     resolved_path: PathBuf,
 ) -> MaterializeVfsOutcome {
     match outcome {
-        Ok(PutOutcome::Missing) => MaterializeVfsOutcome::Missing,
-        Ok(PutOutcome::Conflict { current, .. }) => MaterializeVfsOutcome::Conflict {
-            data: current.bytes,
-            origin: rune_db::ObsOrigin::Probe,
-            stat: rune_db::stat_facts_from(current.sighted.stat()),
-            confirmed: current.sighted.is_confirmed(),
+        Ok(outcome) => MaterializeVfsOutcome::Put {
             resolved_path,
-        },
-        Ok(PutOutcome::Committed {
-            sighted,
-            durable,
-            stray_temp,
-            ..
-        }) => MaterializeVfsOutcome::Committed {
-            data: data.to_vec(),
-            confirmed: sighted.is_confirmed(),
-            stat: rune_db::stat_facts_from(sighted.stat()),
-            resolved_path,
-            durable,
-            stray_temp,
-        },
-        Ok(PutOutcome::Raced {
-            sighted,
-            durable,
-            displaced,
-            stray_temp,
-            ..
-        }) => MaterializeVfsOutcome::Raced {
-            data: data.to_vec(),
-            confirmed: sighted.is_confirmed(),
-            stat: rune_db::stat_facts_from(sighted.stat()),
-            displaced: displaced.bytes,
-            stray_temp,
-            displaced_stat: rune_db::stat_facts_from(displaced.sighted.stat()),
-            resolved_path,
-            durable,
+            outcome: Box::new(outcome),
         },
         Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
     }
