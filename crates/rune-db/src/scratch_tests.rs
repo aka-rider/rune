@@ -1,8 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
+use crate::journal_append::EditBatch;
 use crate::test_support::{always_dead, open};
 use rune_core::buffer::AppliedEdit;
+use rune_core::undo::EditKind;
 use std::time::SystemTime;
 
 fn always_alive(_pid: i64, _started_at: &str) -> bool {
@@ -33,9 +35,12 @@ fn scratch_with_history_from_a_dead_session_is_recoverable_and_reconstructs() {
             dead_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("unsaved draft"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("unsaved draft"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -62,11 +67,9 @@ fn empty_scratch_is_gc_d_but_the_kept_id_and_history_bearing_rows_survive() {
         crate::session::establish_session(&conn, SystemTime::now()).expect("owner session");
     let keep_id = create_scratch_with_intent(&mut conn, owner_session, SystemTime::now(), None)
         .expect("keep");
-    let empty_id =
-        create_scratch_with_intent(&mut conn, owner_session, SystemTime::now(), None)
-            .expect("empty");
-    let session_id =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let empty_id = create_scratch_with_intent(&mut conn, owner_session, SystemTime::now(), None)
+        .expect("empty");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
     let with_history_id =
         create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
             .expect("with history");
@@ -77,9 +80,12 @@ fn empty_scratch_is_gc_d_but_the_kept_id_and_history_bearing_rows_survive() {
             session_id,
             SystemTime::now(),
             with_history_id,
-            &text_insert("x"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("x"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -110,8 +116,8 @@ fn gc_spares_a_draft_claimed_by_a_live_session() {
         crate::session::establish_session(&conn, SystemTime::now()).expect("live session");
     let draft_id = create_scratch_with_intent(&mut conn, live_session, SystemTime::now(), None)
         .expect("live session's draft");
-    let keep_id = create_scratch_with_intent(&mut conn, live_session, SystemTime::now(), None)
-        .expect("keep");
+    let keep_id =
+        create_scratch_with_intent(&mut conn, live_session, SystemTime::now(), None).expect("keep");
 
     let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_alive).expect("gc");
     assert_eq!(
@@ -136,8 +142,8 @@ fn gc_sweeps_a_draft_whose_claiming_session_is_dead() {
         crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
     let draft_id = create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None)
         .expect("dead session's draft");
-    let keep_id = create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None)
-        .expect("keep");
+    let keep_id =
+        create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None).expect("keep");
 
     let deleted = gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
     assert_eq!(deleted, 1);
@@ -166,8 +172,7 @@ fn evicted_bound_row_is_neither_offered_nor_gc_d() {
     )
     .expect("seed evicted-but-bound row");
     let evicted_id = conn.last_insert_rowid();
-    let session_id =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
     {
         let tx = conn.transaction().expect("tx");
         crate::journal::append_edit(
@@ -175,9 +180,12 @@ fn evicted_bound_row_is_neither_offered_nor_gc_d() {
             session_id,
             SystemTime::now(),
             DocId(evicted_id),
-            &text_insert("real file content"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("real file content"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -189,8 +197,8 @@ fn evicted_bound_row_is_neither_offered_nor_gc_d() {
         "an evicted bound row must never be offered as a recoverable draft"
     );
 
-    let keep_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
-        .expect("keep");
+    let keep_id =
+        create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None).expect("keep");
     gc_empty_scratch(&mut conn, keep_id.0, &always_dead).expect("gc");
     let still_present: bool = conn
         .query_row(
@@ -208,8 +216,7 @@ fn evicted_bound_row_is_neither_offered_nor_gc_d() {
 #[test]
 fn reconstruct_scratch_finds_nothing_for_a_still_alive_session() {
     let mut conn = open();
-    let session_id =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
     let doc_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
         .expect("create scratch");
     {
@@ -219,9 +226,12 @@ fn reconstruct_scratch_finds_nothing_for_a_still_alive_session() {
             session_id,
             SystemTime::now(),
             doc_id,
-            &text_insert("still being edited"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("still being edited"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -235,8 +245,7 @@ fn reconstruct_scratch_finds_nothing_for_a_still_alive_session() {
 #[test]
 fn reconstruct_scratch_finds_nothing_for_a_brand_new_scratch() {
     let mut conn = open();
-    let session_id =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
     let doc_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
         .expect("create scratch");
     let reconstructed =
@@ -263,9 +272,12 @@ fn find_named_scratch_surfaces_a_dead_sessions_named_draft() {
             dead_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("typed before the crash"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("typed before the crash"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -299,9 +311,12 @@ fn find_named_scratch_ignores_a_different_intended_path() {
             dead_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("typed before the crash"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("typed before the crash"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -330,9 +345,12 @@ fn find_named_scratch_lists_a_live_sessions_row_but_reconstruct_refuses_to_steal
             live_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("still being typed"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("still being typed"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");

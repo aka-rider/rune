@@ -160,10 +160,12 @@ mod tests {
     use std::time::SystemTime;
 
     use rune_core::buffer::AppliedEdit;
+    use rune_core::undo::EditKind;
 
     use super::*;
     use crate::adopt;
     use crate::confirmation::Confirmation;
+    use crate::journal_append::EditBatch;
     use crate::obs_origin::ObsOrigin;
     use crate::test_support::{always_dead, open};
 
@@ -226,14 +228,17 @@ mod tests {
                 session_a,
                 SystemTime::now(),
                 doc_id,
-                &[AppliedEdit {
-                    start: 0,
-                    end: 0,
-                    deleted: String::new(),
-                    insert: "UNSAVED ".to_string(),
-                }],
-                &[],
-                &[],
+                EditBatch {
+                    edits: &[AppliedEdit {
+                        start: 0,
+                        end: 0,
+                        deleted: String::new(),
+                        insert: "UNSAVED ".to_string(),
+                    }],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
             )
             .expect("append_edit");
             tx.commit().expect("commit");
@@ -310,14 +315,17 @@ mod tests {
                 session_a,
                 SystemTime::now(),
                 doc_id,
-                &[AppliedEdit {
-                    start: 0,
-                    end: 0,
-                    deleted: String::new(),
-                    insert: "UNSAVED ".to_string(),
-                }],
-                &[],
-                &[],
+                EditBatch {
+                    edits: &[AppliedEdit {
+                        start: 0,
+                        end: 0,
+                        deleted: String::new(),
+                        insert: "UNSAVED ".to_string(),
+                    }],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
             )
             .expect("append_edit");
             tx.commit().expect("commit");
@@ -423,14 +431,17 @@ mod tests {
                 session_a,
                 SystemTime::now(),
                 doc_id,
-                &[AppliedEdit {
-                    start: 0,
-                    end: 0,
-                    deleted: String::new(),
-                    insert: "UNSAVED ".to_string(),
-                }],
-                &[],
-                &[],
+                EditBatch {
+                    edits: &[AppliedEdit {
+                        start: 0,
+                        end: 0,
+                        deleted: String::new(),
+                        insert: "UNSAVED ".to_string(),
+                    }],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
             )
             .expect("append_edit");
             tx.commit().expect("commit");

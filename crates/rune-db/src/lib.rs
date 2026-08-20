@@ -95,6 +95,7 @@ pub use error::Error;
 pub use ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
 #[cfg(feature = "test-support")]
 pub use journal::{append_edit, current_seq, move_undo_pos, redo_peek, undo_peek};
+pub use journal_append::EditBatch;
 pub use load::LoadResult;
 pub use materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
 pub use merge_prep::{MergePrepOutcome, MergePrepResult};

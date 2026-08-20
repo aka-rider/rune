@@ -6,7 +6,8 @@ use std::sync::mpsc;
 use rusqlite::params;
 
 use rune_core::buffer::AppliedEdit;
-use rune_db::{DbEvent, OnEvent, Store};
+use rune_core::undo::EditKind;
+use rune_db::{DbEvent, EditBatch, OnEvent, Store};
 
 use crate::support::{
     MARKER_SAFETY_DEADLINE, seed_schema_and_docs, spawn_helper, temp_dir, touch,
@@ -113,9 +114,12 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
             doc_id,
             rune_db::BindingToken::next(),
             rune_db::Seq(0),
-            &[edit],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[edit],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("enqueue append");
     match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
@@ -339,9 +343,12 @@ fn a_second_processs_real_save_is_a_real_divergence_for_merge_prep() {
             doc_id,
             rune_db::BindingToken::next(),
             rune_db::Seq(0),
-            &[edit],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[edit],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("enqueue session A's edit");
     match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {

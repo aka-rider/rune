@@ -4,8 +4,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
+use crate::journal_append::EditBatch;
 use crate::test_support::open;
 use rune_core::buffer::AppliedEdit;
+use rune_core::undo::EditKind;
 use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {
@@ -113,14 +115,17 @@ fn same_session_reopen_with_unsaved_edits_stays_diverged() {
             session_id,
             SystemTime::now(),
             doc_id,
-            &[AppliedEdit {
-                start: 0,
-                end: 0,
-                deleted: String::new(),
-                insert: "UNSAVED ".to_string(),
-            }],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "UNSAVED ".to_string(),
+                }],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append_edit");
         tx.commit().expect("commit");

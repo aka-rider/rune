@@ -9,6 +9,7 @@ use crate::db::{DocDb, LoadPurpose, PublishMode};
 use crate::document::{DocumentId, Replica, ReplicaStep};
 use crate::messages;
 use rune_core::buffer::AppliedEdit;
+use rune_core::undo::EditKind;
 #[cfg(test)]
 use rune_db::BlobHash;
 use rune_db::LoadResult;
@@ -347,6 +348,7 @@ fn bind_document_row(
                     }],
                     &[],
                     &[],
+                    EditKind::Other,
                 ));
                 doc_db.undo_floor = 1;
                 bridged = 1;

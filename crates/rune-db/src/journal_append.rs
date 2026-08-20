@@ -7,30 +7,48 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 
 use crate::Error;
 use crate::ids::{DocId, Seq, SessionId};
-use crate::payload::{cursors_to_json, edits_to_json};
+use crate::payload::{cursors_to_json, edit_kind_to_text, edits_to_json};
 use crate::session::format_rfc3339_nanos;
 
+/// One journaled edit's full payload — bundled (rather than threaded as
+/// four separate parameters) so `append_edit` and `Store::append_edit`
+/// stay under clippy's argument-count lint without resorting to
+/// `#[allow(clippy::too_many_arguments)]` (repo rule: no such allow outside
+/// test code); mirrors `rune_core::undo::Step`'s own four fields, since
+/// this is exactly the durable half of one in-memory `Step`.
+pub struct EditBatch<'a> {
+    pub edits: &'a [AppliedEdit],
+    pub cursors_before: &'a [Cursor],
+    pub cursors_after: &'a [Cursor],
+    pub kind: EditKind,
+}
+
 /// Records an edit event in the durable journal for `doc_id`, tagged with
-/// `session_id`. A no-op (`Ok(0)`) if `edits` is empty. If this session's
-/// `current_seq` is non-NULL (it has undone some of its own events), future
-/// events AND snapshots past that position are truncated before inserting
-/// the new one, and `current_seq` resets to NULL. Every call inserts a
-/// fresh row — one `events` row per local `Journal::push`, always — so the
-/// writer seam's own `local_seq` mapping can assert a strict
-/// 1:1 correspondence rather than tolerate a coalesced seq reused across
-/// two pushes. Returns the journal seq of the inserted event.
+/// `session_id`. A no-op (`Ok(0)`) if `batch.edits` is empty. If this
+/// session's `current_seq` is non-NULL (it has undone some of its own
+/// events), future events AND snapshots past that position are truncated
+/// before inserting the new one, and `current_seq` resets to NULL. Every
+/// call inserts a fresh row — one `events` row per local `Journal::push`,
+/// always — so the writer seam's own `local_seq` mapping can assert a
+/// strict 1:1 correspondence rather than tolerate a coalesced seq reused
+/// across two pushes. Returns the journal seq of the inserted event.
 pub fn append_edit(
     tx: &Transaction<'_>,
     session_id: SessionId,
     now: SystemTime,
     doc_id: DocId,
-    edits: &[AppliedEdit],
-    cursors_before: &[Cursor],
-    cursors_after: &[Cursor],
+    batch: EditBatch<'_>,
 ) -> Result<Seq, Error> {
+    let EditBatch {
+        edits,
+        cursors_before,
+        cursors_after,
+        kind,
+    } = batch;
     if edits.is_empty() {
         return Ok(Seq(0));
     }
@@ -74,14 +92,15 @@ pub fn append_edit(
     let after_json = cursors_to_json(cursors_after)?;
 
     let new_seq: i64 = tx.query_row(
-        "INSERT INTO events(doc_id, session_id, edits, cursors_before, cursors_after, at) \
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6) RETURNING seq",
+        "INSERT INTO events(doc_id, session_id, edits, cursors_before, cursors_after, kind, at) \
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7) RETURNING seq",
         params![
             doc_id,
             session_id,
             edits_json,
             before_json,
             after_json,
+            edit_kind_to_text(kind),
             now_str
         ],
         |r| r.get(0),
@@ -107,6 +126,15 @@ mod tests {
         }]
     }
 
+    fn edit_batch(edits: &[AppliedEdit]) -> EditBatch<'_> {
+        EditBatch {
+            edits,
+            cursors_before: &[],
+            cursors_after: &[],
+            kind: EditKind::Other,
+        }
+    }
+
     /// Every `append_edit` call lands its own row, even a run of adjacent
     /// single-character inserts inside what v1's coalescing window used to
     /// fold together — the 1:1 events-row-to-push mapping this deletion
@@ -120,11 +148,23 @@ mod tests {
         let doc_id = insert_test_document(&tx);
 
         let t0 = SystemTime::now();
-        let seq1 = append_edit(&tx, session_id, t0, doc_id, &insert_char(0, "a"), &[], &[])
-            .expect("append a");
+        let seq1 = append_edit(
+            &tx,
+            session_id,
+            t0,
+            doc_id,
+            edit_batch(&insert_char(0, "a")),
+        )
+        .expect("append a");
         let t1 = t0 + Duration::from_millis(200);
-        let seq2 = append_edit(&tx, session_id, t1, doc_id, &insert_char(1, "b"), &[], &[])
-            .expect("append b");
+        let seq2 = append_edit(
+            &tx,
+            session_id,
+            t1,
+            doc_id,
+            edit_batch(&insert_char(1, "b")),
+        )
+        .expect("append b");
 
         assert_ne!(seq2, seq1, "each insert must land its own row");
 
@@ -155,11 +195,13 @@ mod tests {
         let doc_id = insert_test_document(&tx);
 
         let mut t = SystemTime::now();
-        append_edit(&tx, session_id, t, doc_id, &insert_char(0, "a"), &[], &[]).expect("append a");
+        append_edit(&tx, session_id, t, doc_id, edit_batch(&insert_char(0, "a")))
+            .expect("append a");
         t += Duration::from_millis(50);
-        append_edit(&tx, session_id, t, doc_id, &insert_char(1, "b"), &[], &[]).expect("append b");
+        append_edit(&tx, session_id, t, doc_id, edit_batch(&insert_char(1, "b")))
+            .expect("append b");
         t += Duration::from_millis(50);
-        let seq_c = append_edit(&tx, session_id, t, doc_id, &insert_char(2, "c"), &[], &[])
+        let seq_c = append_edit(&tx, session_id, t, doc_id, edit_batch(&insert_char(2, "c")))
             .expect("append c");
 
         // One local undo step == one durable event, since every push landed
@@ -198,7 +240,8 @@ mod tests {
 
         let mut t = SystemTime::now();
         for ch in ["x", "y", "z"] {
-            append_edit(&tx, session_id, t, doc_id, &insert_char(0, ch), &[], &[]).expect("append");
+            append_edit(&tx, session_id, t, doc_id, edit_batch(&insert_char(0, ch)))
+                .expect("append");
             t += Duration::from_millis(400);
         }
 
@@ -215,7 +258,7 @@ mod tests {
         );
 
         t += Duration::from_millis(400);
-        let seq_w = append_edit(&tx, session_id, t, doc_id, &insert_char(0, "w"), &[], &[])
+        let seq_w = append_edit(&tx, session_id, t, doc_id, edit_batch(&insert_char(0, "w")))
             .expect("append w");
         assert_eq!(
             current_seq(&tx, session_id, doc_id).expect("current_seq"),

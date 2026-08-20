@@ -13,6 +13,7 @@ use rusqlite::Connection;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
@@ -41,6 +42,7 @@ pub(crate) struct AppendEditArgs {
     pub(crate) edits: Vec<AppliedEdit>,
     pub(crate) cursors_before: Vec<Cursor>,
     pub(crate) cursors_after: Vec<Cursor>,
+    pub(crate) kind: EditKind,
     pub(crate) token: BindingToken,
     pub(crate) token_base_seq: Seq,
 }
@@ -56,9 +58,12 @@ pub(crate) fn append_edit(
             args.session_id,
             args.now,
             args.doc_id,
-            &args.edits,
-            &args.cursors_before,
-            &args.cursors_after,
+            crate::journal_append::EditBatch {
+                edits: &args.edits,
+                cursors_before: &args.cursors_before,
+                cursors_after: &args.cursors_after,
+                kind: args.kind,
+            },
         )
     })?;
     // A real edit batch (never empty — see `db_enqueue::append_edit`'s

@@ -8,6 +8,9 @@ use std::path::Path;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
+
+use rune_db::EditBatch;
 
 use crate::app::App;
 use crate::db::{LoadPurpose, PendingOp};
@@ -31,6 +34,7 @@ pub fn append_edit(
     edits: &[AppliedEdit],
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
+    kind: EditKind,
 ) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -39,13 +43,13 @@ pub fn append_edit(
     // `App::doc`'s docs.
     let Some(doc) = app.doc_mut(id) else { return };
     if let Replica::Binding { pending, .. } = &mut doc.replica {
-        pending.push(ReplicaStep::new(edits, cursors_before, cursors_after));
+        pending.push(ReplicaStep::new(edits, cursors_before, cursors_after, kind));
         return;
     }
     if !doc.replica.is_bound() {
         return;
     }
-    append_edit_bound(app, id, edits, cursors_before, cursors_after);
+    append_edit_bound(app, id, edits, cursors_before, cursors_after, kind);
 }
 
 /// The actual `AppendEdit` enqueue, shared by [`append_edit`]'s `Bound`
@@ -61,9 +65,10 @@ fn append_edit_bound(
     edits: &[AppliedEdit],
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
+    kind: EditKind,
 ) {
     flush_pending_rebase(app, id);
-    send_append(app, id, edits, cursors_before, cursors_after);
+    send_append(app, id, edits, cursors_before, cursors_after, kind);
 }
 
 /// Journals `id`'s deferred re-base bridge, if one is still pending
@@ -88,6 +93,7 @@ pub(crate) fn flush_pending_rebase(app: &mut App, id: DocumentId) {
         &step.edits,
         &step.cursors_before,
         &step.cursors_after,
+        step.kind,
     );
 }
 
@@ -97,6 +103,7 @@ fn send_append(
     edits: &[AppliedEdit],
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
+    kind: EditKind,
 ) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -115,9 +122,12 @@ fn send_append(
         rune_db::DocId(db_id),
         token,
         token_base_seq,
-        &resolved_edits,
-        cursors_before,
-        cursors_after,
+        EditBatch {
+            edits: &resolved_edits,
+            cursors_before,
+            cursors_after,
+            kind,
+        },
     );
     match result {
         Ok(op_id) => {
@@ -240,6 +250,7 @@ pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<Replica
             &step.edits,
             &step.cursors_before,
             &step.cursors_after,
+            step.kind,
         );
     }
 }
@@ -333,6 +344,7 @@ fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
             }],
             &[],
             &[],
+            EditKind::Other,
         );
     }
     let Some(doc) = app.doc_mut(id) else { return };

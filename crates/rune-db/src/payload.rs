@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::{Cursor, CursorId};
+use rune_core::undo::EditKind;
 
 use crate::Error;
 
@@ -124,6 +125,34 @@ pub(crate) fn cursors_from_json(json: &str) -> Result<Vec<Cursor>, Error> {
     payload.into_iter().map(Cursor::try_from).collect()
 }
 
+pub(crate) fn edit_kind_to_text(kind: EditKind) -> &'static str {
+    match kind {
+        EditKind::Insert => "Insert",
+        EditKind::DeleteLeft => "DeleteLeft",
+        EditKind::DeleteRight => "DeleteRight",
+        EditKind::Paste => "Paste",
+        EditKind::Cut => "Cut",
+        EditKind::StripTrailingWhitespace => "StripTrailingWhitespace",
+        EditKind::Other => "Other",
+    }
+}
+
+/// `None` (an old, pre-`kind`-column row) and any text this crate does not
+/// recognize both map to [`EditKind::Other`] — the same "ungrouped" default
+/// a row missing the column entirely already behaved as before this column
+/// existed, so a NULL row's recovered grouping cannot regress.
+pub(crate) fn edit_kind_from_text(text: Option<&str>) -> EditKind {
+    match text {
+        Some("Insert") => EditKind::Insert,
+        Some("DeleteLeft") => EditKind::DeleteLeft,
+        Some("DeleteRight") => EditKind::DeleteRight,
+        Some("Paste") => EditKind::Paste,
+        Some("Cut") => EditKind::Cut,
+        Some("StripTrailingWhitespace") => EditKind::StripTrailingWhitespace,
+        Some(_) | None => EditKind::Other,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
@@ -168,5 +197,27 @@ mod tests {
         let json = r#"[{"Position":0,"Anchor":0,"DesiredCol":0,"ID":0}]"#;
         let err = cursors_from_json(json).expect_err("id 0 must be refused");
         assert!(matches!(err, Error::CorruptPayload(_)));
+    }
+
+    #[test]
+    fn every_edit_kind_round_trips_through_its_text_encoding() {
+        for kind in [
+            EditKind::Insert,
+            EditKind::DeleteLeft,
+            EditKind::DeleteRight,
+            EditKind::Paste,
+            EditKind::Cut,
+            EditKind::StripTrailingWhitespace,
+            EditKind::Other,
+        ] {
+            let text = edit_kind_to_text(kind);
+            assert_eq!(edit_kind_from_text(Some(text)), kind);
+        }
+    }
+
+    #[test]
+    fn a_missing_or_unrecognized_edit_kind_maps_to_other() {
+        assert_eq!(edit_kind_from_text(None), EditKind::Other);
+        assert_eq!(edit_kind_from_text(Some("SomeFutureKind")), EditKind::Other);
     }
 }

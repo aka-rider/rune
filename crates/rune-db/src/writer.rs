@@ -274,6 +274,7 @@ fn execute_op(
             edits,
             cursors_before,
             cursors_after,
+            kind,
             token,
             token_base_seq,
         } => exec::append_edit(
@@ -286,6 +287,7 @@ fn execute_op(
                 edits,
                 cursors_before,
                 cursors_after,
+                kind,
                 token,
                 token_base_seq,
             },

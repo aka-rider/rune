@@ -8,6 +8,7 @@ use std::time::SystemTime;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 use rune_vfs::Stat;
 
 use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
@@ -88,6 +89,7 @@ pub(crate) enum OpKind {
         edits: Vec<AppliedEdit>,
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
+        kind: EditKind,
         token: BindingToken,
         token_base_seq: Seq,
     },

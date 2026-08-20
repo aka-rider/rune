@@ -27,12 +27,14 @@ use rusqlite::{Connection, Transaction};
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 
 use crate::Error;
 use crate::adopt;
 use crate::confirmation::Confirmation;
 use crate::ids::{DocId, Seq, SessionId};
 use crate::inherit::Inherited;
+use crate::journal_append::EditBatch;
 use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, StatFacts};
 use crate::retry;
@@ -122,9 +124,12 @@ fn bridge_edit_tx(
         ctx.session_id,
         ctx.now,
         ctx.doc_id,
-        &edit,
-        &[],
-        cursors_after,
+        EditBatch {
+            edits: &edit,
+            cursors_before: &[],
+            cursors_after,
+            kind: EditKind::Other,
+        },
     )
 }
 

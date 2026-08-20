@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::{AppliedEdit, Buffer};
-use rune_db::SyncKind;
+use rune_core::undo::EditKind;
+use rune_db::{EditBatch, SyncKind};
 use rune_fuzz::Session;
 use rune_fuzz::driver::wait_for_db_op;
 use rune_tui::app::App;
@@ -207,14 +208,17 @@ fn journaled_edit_past_the_install_abandons_the_merge_on_restart() {
             rune_db::DocId(db_id),
             rune_db::BindingToken::next(),
             rune_db::Seq(0),
-            &[AppliedEdit {
-                start: 0,
-                end: 0,
-                deleted: String::new(),
-                insert: "STRAY ".to_string(),
-            }],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "STRAY ".to_string(),
+                }],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("journal a stray edit past the install");
     shutdown(session_a);

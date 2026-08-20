@@ -21,8 +21,8 @@ use rusqlite::Connection;
 use rune_core::buffer::{Buffer, Edit, SortedEdits};
 use rune_core::undo::{EditKind, Journal, Step as CoreStep, apply_inverse, reapply};
 use rune_db::{
-    DocId, SessionId, append_edit, current_seq, move_undo_pos, recover_document, redo_peek,
-    undo_peek,
+    DocId, EditBatch, SessionId, append_edit, current_seq, move_undo_pos, recover_document,
+    redo_peek, undo_peek,
 };
 
 #[derive(Debug, Clone)]
@@ -129,7 +129,7 @@ proptest! {
                     });
 
                     let tx = conn.transaction().expect("begin tx");
-                    append_edit(&tx, session_id, now, doc_id, &applied, &[], &[])
+                    append_edit(&tx, session_id, now, doc_id, EditBatch { edits: &applied, cursors_before: &[], cursors_after: &[], kind: EditKind::Insert })
                         .expect("db append_edit (insert)");
                     tx.commit().expect("commit");
                 }
@@ -155,8 +155,8 @@ proptest! {
                     });
 
                     let tx = conn.transaction().expect("begin tx");
-                    append_edit(&tx, session_id, now, doc_id, &applied, &[], &[])
-                        .expect("db append_edit (delete)");
+                    append_edit(&tx, session_id, now, doc_id, EditBatch { edits: &applied, cursors_before: &[], cursors_after: &[], kind: EditKind::DeleteRight })
+                    .expect("db append_edit (delete)");
                     tx.commit().expect("commit");
                 }
                 Action::Undo => {
