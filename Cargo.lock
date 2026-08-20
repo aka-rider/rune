@@ -2217,7 +2217,7 @@ dependencies = [
 
 [[package]]
 name = "rune-cli"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "rune-core",
  "rune-db",
