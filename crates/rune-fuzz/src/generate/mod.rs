@@ -1,5 +1,8 @@
 mod arb;
 mod cluster;
+mod cluster_cmdpal;
+mod cluster_input;
+mod cluster_special;
 mod palette;
 
 use proptest::prelude::*;
