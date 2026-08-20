@@ -43,6 +43,8 @@ mod highlight;
 mod journal;
 #[path = "invariants/merge.rs"]
 mod merge;
+#[path = "invariants/merge_redivergence.rs"]
+mod merge_redivergence;
 #[path = "invariants/palette.rs"]
 mod palette;
 #[path = "invariants/pane.rs"]
