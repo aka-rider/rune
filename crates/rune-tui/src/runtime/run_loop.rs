@@ -43,11 +43,16 @@ pub fn run(app: &mut App) -> io::Result<()> {
     fatal.and(flushed)
 }
 
+pub const MAX_TURN_BATCH: usize = 256;
+
 pub fn drain_batch(rx: &mpsc::Receiver<Msg>) -> Option<Vec<Msg>> {
     let first = rx.recv().ok()?;
     let mut batch = vec![first];
-    while let Ok(msg) = rx.try_recv() {
-        batch.push(msg);
+    while batch.len() < MAX_TURN_BATCH {
+        match rx.try_recv() {
+            Ok(msg) => batch.push(msg),
+            Err(_) => break,
+        }
     }
     Some(batch)
 }

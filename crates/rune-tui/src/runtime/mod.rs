@@ -202,8 +202,8 @@ pub use effects::{Effects, Outbound};
 use effects::{Sink, discharge};
 
 mod run_loop;
+pub use run_loop::{MAX_TURN_BATCH, drain_batch, run};
 use run_loop::{apply, spawn_cmd, spawn_input_reader};
-pub use run_loop::{drain_batch, run};
 
 mod io_cmd;
 pub use io_cmd::{load_dir_cmd, load_search_history_cmd, read_file_cmd};

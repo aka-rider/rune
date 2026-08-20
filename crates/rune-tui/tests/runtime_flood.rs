@@ -8,7 +8,7 @@ use std::thread;
 
 use rune_tui::app;
 use rune_tui::messages::Severity;
-use rune_tui::runtime::{Effects, Msg, drain_batch};
+use rune_tui::runtime::{Effects, MAX_TURN_BATCH, Msg, drain_batch};
 use rune_tui::testgrid;
 
 use tui_edit_common::app_for;
@@ -121,5 +121,55 @@ fn a_flood_from_every_producer_drains_in_full_and_in_per_producer_order() {
         rendered.contains("hello"),
         "a draw must still succeed and show the document after a deep backlog \
          is drained:\n{rendered}"
+    );
+}
+
+#[test]
+fn no_single_turn_ever_applies_more_than_the_batch_cap() {
+    let (tx, rx) = mpsc::channel::<Msg>();
+
+    let producers: Vec<_> = (0..PRODUCERS)
+        .map(|p| {
+            let tx = tx.clone();
+            thread::spawn(move || {
+                for i in 0..PER_PRODUCER {
+                    tx.send(Msg::Posted {
+                        severity: Severity::Info,
+                        text: tag(p, i),
+                    })
+                    .expect("the receiver outlives every producer in this test");
+                }
+            })
+        })
+        .collect();
+    for handle in producers {
+        handle
+            .join()
+            .expect("a flood producer thread must not panic");
+    }
+    drop(tx);
+
+    let mut total_received = 0usize;
+    let mut turns = 0usize;
+    while let Some(batch) = drain_batch(&rx) {
+        turns += 1;
+        assert!(
+            batch.len() <= MAX_TURN_BATCH,
+            "one turn applied {} messages, over the {MAX_TURN_BATCH} cap meant \
+             to bound how long the last message in a backlog waits before a draw",
+            batch.len()
+        );
+        total_received += batch.len();
+    }
+
+    assert_eq!(
+        total_received,
+        PRODUCERS * PER_PRODUCER,
+        "capping the batch must never drop a message, only spread the same \
+         backlog over more turns"
+    );
+    assert!(
+        turns > 1,
+        "a backlog this deep must take more than one capped turn to drain"
     );
 }
