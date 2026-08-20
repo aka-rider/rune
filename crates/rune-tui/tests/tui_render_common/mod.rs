@@ -1,13 +1,15 @@
 //! Shared setup helpers for the headless render suite,
 //! split across `tui_render_basics.rs` (conceal, styling, and the raw
-//! `Cell` grid), `tui_render_text.rs` (control-safe glyphs, tabs, and
-//! grapheme clusters), `tui_render_bounds.rs` (degenerate backend sizes
-//! and `blit`'s own edge clipping), and `tui_render_focus.rs` (tables and
-//! the focus/read-only caret gate) — this is the 500-line-budget split of the original
-//! `tui_render.rs`. `tui_render_tables.rs` is a pre-existing sibling that
-//! already followed this naming. Every consumer pulls this in via
+//! `Cell` grid), `tui_render_text.rs` (control-safe glyphs and tabs),
+//! `tui_render_graphemes.rs` (grapheme clusters — the 500-line-budget
+//! re-split of the original `tui_render_text.rs`), `tui_render_bounds.rs`
+//! (degenerate backend sizes and `blit`'s own edge clipping), and
+//! `tui_render_focus.rs` (tables and the focus/read-only caret gate) —
+//! this is the 500-line-budget split of the original `tui_render.rs`.
+//! `tui_render_tables.rs` is a pre-existing sibling that already followed
+//! this naming. Every consumer pulls this in via
 //! `mod tui_render_common;` — integration test files are separate
-//! binaries, so this is the one place all four draw an identical
+//! binaries, so this is the one place all five draw an identical
 //! `rune_fuzz::Session` fixture from, rather than risking drift.
 #![allow(dead_code)]
 

@@ -1,10 +1,11 @@
 //! Shared setup helpers for the Open Tabs test suite, split across
-//! `opentabs.rs` (Tabs-pane-local rendering/switching, and the close
-//! guard's three resolutions) and `opentabs_global.rs` (the GLOBAL `^w`/
-//! `^1`-`^0` bindings, TODO.md's 500-line budget). Each file pulls this in via
+//! `opentabs.rs` (Tabs-pane-local rendering/switching), `opentabs_guard.rs`
+//! (the close guard's three resolutions — the 500-line-budget re-split of
+//! the original `opentabs.rs`), and `opentabs_global.rs` (the GLOBAL `^w`/
+//! `^1`-`^0` bindings). Each file pulls this in via
 //! `mod opentabs_common;` — integration test files are separate binaries,
-//! so this is the one place both draw an identical `Session` fixture from,
-//! rather than risking the two drifting apart.
+//! so this is the one place all three draw an identical `Session` fixture
+//! from, rather than risking drift.
 #![allow(dead_code)]
 
 use std::path::Path;
@@ -62,6 +63,10 @@ pub fn open_second(session: &mut Session) -> DocumentId {
 
 pub fn key(code: KeyCode, mods: Mods) -> KeyInput {
     KeyInput { code, mods }
+}
+
+pub fn plain(code: KeyCode) -> KeyInput {
+    key(code, Mods::NONE)
 }
 
 /// Renders `session`'s current frame and concatenates every row — the
