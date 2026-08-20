@@ -1,9 +1,3 @@
-//! The Adoption Contract — the only four verbs allowed to move
-//! `session_documents.saved_obs` (see the `observation` module doc):
-//! `materialize::commit_save` (inlined, since its move must commit in the
-//! SAME tx as its re-Bind), [`adopt_equal`], [`resolve_adopt`], and
-//! [`resolve_abandon`].
-
 use std::time::SystemTime;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -17,18 +11,6 @@ use crate::retry;
 use crate::confirmation::Confirmation;
 use crate::ids::{BlobHash, DocId, ObsId, SessionId};
 
-/// The shared one-tx BODY behind every path that moves `saved_obs` to a
-/// NEWLY-inserted observation: a fresh row is inserted (tagged
-/// `session_id`), `parent_a` is set to whatever `session_id`'s `saved_obs`
-/// held immediately before (`None` if none), `parent_b` is the caller's own
-/// second lineage edge (the disk-side observation a resolve/merge or a
-/// racing save reconciled against — `None` for an adoption with nothing to
-/// reconcile), and `session_documents.saved_obs` advances to the new row.
-/// Runs entirely inside the CALLER's already-open tx — `materialize::
-/// commit_save` calls this directly inside its own save tx (observation +
-/// saved_obs + re-Bind must commit atomically together there);
-/// [`record_adoption`] below wraps it in its own transaction for standalone
-/// callers.
 pub(crate) fn record_adoption_tx(
     tx: &Transaction<'_>,
     doc_id: DocId,
@@ -85,10 +67,6 @@ pub(crate) fn record_adoption_tx(
     })
 }
 
-/// The shared one-tx primitive behind every STANDALONE path that moves
-/// `saved_obs` to a newly-inserted observation — [`adopt_equal`],
-/// [`resolve_adopt`], and `load::load`'s own first-sighting/heal-adopt
-/// cases.
 pub(crate) fn record_adoption(
     conn: &mut Connection,
     doc_id: DocId,
@@ -104,13 +82,6 @@ pub(crate) fn record_adoption(
     })
 }
 
-/// Promotes a bare sighting (`obs`, already recorded — e.g. `probe::probe`'s
-/// bare `'probe'` observation) to a genuine adoption when its content
-/// hash-equals the journal-head reconstruction: a NEW `origin='resolve'`
-/// observation is inserted, correlated to `head_seq` (making it
-/// ancestor-eligible, unlike the bare sighting it promotes), and
-/// `saved_obs` advances to it. The crash-between-swap-and-ack recovery
-/// path — never used for an ordinary divergence.
 pub(crate) fn adopt_equal(
     conn: &mut Connection,
     session_id: SessionId,
@@ -129,9 +100,6 @@ pub(crate) fn adopt_equal(
             blob_hash: source.blob_hash.as_str(),
             seq: Some(head_seq),
             origin: ObsOrigin::Resolve,
-            // Copy-forward of `source`'s own confirmed status — this
-            // promotes a bare sighting to a genuine adoption, it does not
-            // re-read disk, so it has no fresher fact to derive one from.
             confirmed: source.confirmed,
         },
         &stat,
@@ -140,25 +108,6 @@ pub(crate) fn adopt_equal(
     )
 }
 
-/// Commits a [D]iscard/[M]erge resolution (or an explicit hash-equality
-/// adopt): re-tags `obs` as `origin='resolve'`, correlated to `edit_seq`
-/// (the seq of the journaled replace-all/merge-entry edit that resolved
-/// it), and advances `saved_obs` to it. Undo past `edit_seq` moves the
-/// journal position below this resolve observation, so `ancestor_at`
-/// automatically stops finding it and `sync` reports `Diverged` again — the
-/// guard re-raises with no bespoke unwind logic.
-///
-/// `edit_seq: None` means the caller (the merge-entry TUI flow, plan WP3
-/// Gotchas `[B3]`) could not learn the exact durable seq of its own install
-/// edit synchronously — `Store::append_edit`'s ack is asynchronous, and
-/// `update` may never block on it. The writer thread processes every op in
-/// strict FIFO order, so by the time THIS op runs, that install edit has
-/// already committed; resolving `journal::current_seq` fresh, inside this
-/// same transaction, yields exactly that edit's seq (the journal head at
-/// this instant) without the caller ever needing to wait for its ack. The
-/// new resolve row's `parent_b` is set to `obs` itself — the disk-side
-/// observation this resolution reconciled against — completing the
-/// two-parent join alongside `parent_a`'s prior `saved_obs` baseline.
 pub(crate) fn resolve_adopt(
     conn: &mut Connection,
     session_id: SessionId,
@@ -186,8 +135,6 @@ pub(crate) fn resolve_adopt(
             blob_hash: source.blob_hash.as_str(),
             seq: Some(seq),
             origin: ObsOrigin::Resolve,
-            // Copy-forward of `source`'s own confirmed status — see
-            // `adopt_equal`'s identical reasoning.
             confirmed: source.confirmed,
         },
         &stat,
@@ -211,7 +158,7 @@ pub(crate) fn resolve_abandon(
             .optional()?
             .flatten();
         let Some(current) = current else {
-            return Ok(()); // no session_documents row, or saved_obs NULL — nothing adopted yet
+            return Ok(());
         };
 
         let (parent_a, origin): (Option<ObsId>, ObsOrigin) = tx.query_row(
@@ -264,8 +211,6 @@ mod tests {
         DocId(conn.last_insert_rowid())
     }
 
-    /// `observations.blob_hash` is FK-constrained to `blobs.hash` — every
-    /// hand-seeded observation in these tests needs a real blob row first.
     fn seed_blob(conn: &Connection, content: &str) -> String {
         crate::blob::put_blob(conn, content.as_bytes()).expect("seed blob")
     }
@@ -286,7 +231,6 @@ mod tests {
         let doc_id = seed_doc(&conn);
         let hash_1 = seed_blob(&conn, "content 1");
 
-        // First: an ordinary save baseline.
         let first = record_adoption(
             &mut conn,
             doc_id,
@@ -303,7 +247,6 @@ mod tests {
         )
         .expect("first adoption");
 
-        // Then: a resolve adoption on top of it.
         let resolved = adopt_equal(
             &mut conn,
             session_id,
