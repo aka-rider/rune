@@ -19,7 +19,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
-use rune_db::{BindingToken, DbEvent, DocId, OnEvent, OpOutcome, Seq, Store};
+use rune_core::undo::EditKind;
+use rune_db::{BindingToken, DbEvent, DocId, EditBatch, OnEvent, OpOutcome, Seq, Store};
 use rune_vfs::Disk;
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -94,7 +95,17 @@ fn type_at_end(
         insert: text.to_string(),
     };
     let op = store
-        .append_edit(doc_id, token, Seq(0), &[edit], &[], &[])
+        .append_edit(
+            doc_id,
+            token,
+            Seq(0),
+            EditBatch {
+                edits: &[edit],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
+        )
         .expect("enqueue append");
     assert!(matches!(ok(rx, op), OpOutcome::Seq(_)));
 }

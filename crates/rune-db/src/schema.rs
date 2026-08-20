@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS events (
 	edits          BLOB NOT NULL,
 	cursors_before BLOB,
 	cursors_after  BLOB,
+	kind           TEXT,
 	at             TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_doc     ON events(doc_id, seq);

@@ -21,10 +21,11 @@ use rusqlite::{Transaction, params};
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 
 use crate::Error;
 use crate::ids::{DocId, Seq, SessionId};
-use crate::payload::{cursors_from_json, edits_from_json};
+use crate::payload::{cursors_from_json, edit_kind_from_text, edits_from_json};
 
 pub use crate::journal_append::append_edit;
 
@@ -37,15 +38,21 @@ pub struct Step {
     pub edits: Vec<AppliedEdit>,
     pub cursors: Vec<Cursor>,
     pub new_pos: Seq,
+    pub kind: EditKind,
 }
 
 /// One edit row tagged with the journal seq it was recorded at, plus the
-/// caret state the editing session held once the row's edits had landed.
+/// caret state the editing session held once the row's edits had landed and
+/// the [`EditKind`] it was journaled under — a row written before this
+/// column existed reads back [`EditKind::Other`], the same "ungrouped"
+/// behavior recovery already gave every row (`edit_kind_from_text`'s own
+/// doc comment).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EditRow {
     pub seq: Seq,
     pub edits: Vec<AppliedEdit>,
     pub cursors_after: Vec<Cursor>,
+    pub kind: EditKind,
 }
 
 /// Returns the most recent event at or before `session_id`'s current
@@ -63,15 +70,15 @@ pub fn undo_peek(
 ) -> Result<Option<Step>, Error> {
     let position = current_seq(tx, session_id, doc_id)?;
 
-    let row: Option<(i64, String, String)> = tx
+    let row: Option<(i64, String, String, Option<String>)> = tx
         .query_row(
-            "SELECT seq, edits, cursors_before FROM events \
+            "SELECT seq, edits, cursors_before, kind FROM events \
              WHERE doc_id=?1 AND session_id=?2 AND seq<=?3 ORDER BY seq DESC LIMIT 1",
             params![doc_id, session_id, position],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    let Some((seq, edits_json, cursors_json)) = row else {
+    let Some((seq, edits_json, cursors_json, kind_text)) = row else {
         return Ok(None);
     };
 
@@ -81,6 +88,7 @@ pub fn undo_peek(
         edits,
         cursors,
         new_pos: Seq(seq - 1),
+        kind: edit_kind_from_text(kind_text.as_deref()),
     }))
 }
 
@@ -96,15 +104,15 @@ pub fn redo_peek(
 ) -> Result<Option<Step>, Error> {
     let position = current_seq(tx, session_id, doc_id)?;
 
-    let row: Option<(i64, String, String)> = tx
+    let row: Option<(i64, String, String, Option<String>)> = tx
         .query_row(
-            "SELECT seq, edits, cursors_after FROM events \
+            "SELECT seq, edits, cursors_after, kind FROM events \
              WHERE doc_id=?1 AND session_id=?2 AND seq>?3 ORDER BY seq ASC LIMIT 1",
             params![doc_id, session_id, position],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    let Some((seq, edits_json, cursors_json)) = row else {
+    let Some((seq, edits_json, cursors_json, kind_text)) = row else {
         return Ok(None);
     };
 
@@ -114,6 +122,7 @@ pub fn redo_peek(
         edits,
         cursors,
         new_pos: Seq(seq),
+        kind: edit_kind_from_text(kind_text.as_deref()),
     }))
 }
 
@@ -172,7 +181,7 @@ pub(crate) fn edits_in_range(
     to_seq: Seq,
 ) -> Result<Vec<EditRow>, Error> {
     let mut stmt = conn.prepare(
-        "SELECT seq, edits, cursors_after FROM events \
+        "SELECT seq, edits, cursors_after, kind FROM events \
          WHERE doc_id=?1 AND session_id=?2 AND seq > ?3 AND seq <= ?4 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(params![doc_id, session_id, from_seq, to_seq], |r| {
@@ -180,11 +189,12 @@ pub(crate) fn edits_in_range(
             r.get::<_, Seq>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<String>>(3)?,
         ))
     })?;
 
     rows.map(|row| {
-        let (seq, edits_json, cursors_json) = row?;
+        let (seq, edits_json, cursors_json, kind_text) = row?;
         let edits = edits_from_json(&edits_json)?;
         let cursors = match cursors_json {
             Some(json) => cursors_from_json(&json)?,
@@ -194,6 +204,7 @@ pub(crate) fn edits_in_range(
             seq,
             edits,
             cursors_after: cursors,
+            kind: edit_kind_from_text(kind_text.as_deref()),
         })
     })
     .collect::<Result<Vec<_>, Error>>()

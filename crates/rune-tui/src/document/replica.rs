@@ -1,5 +1,6 @@
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_core::undo::EditKind;
 
 use crate::db::DocDb;
 
@@ -7,6 +8,7 @@ pub(crate) struct ReplicaStep {
     pub edits: Vec<AppliedEdit>,
     pub cursors_before: Vec<Cursor>,
     pub cursors_after: Vec<Cursor>,
+    pub kind: EditKind,
 }
 
 impl ReplicaStep {
@@ -14,11 +16,13 @@ impl ReplicaStep {
         edits: &[AppliedEdit],
         cursors_before: &[Cursor],
         cursors_after: &[Cursor],
+        kind: EditKind,
     ) -> ReplicaStep {
         ReplicaStep {
             edits: edits.to_vec(),
             cursors_before: cursors_before.to_vec(),
             cursors_after: cursors_after.to_vec(),
+            kind,
         }
     }
 }

@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
+use crate::journal_append::EditBatch;
 use crate::test_support::open;
+use rune_core::undo::EditKind;
 use rune_vfs::Mem;
 use std::path::Path;
 
@@ -129,14 +131,17 @@ fn probe_after_resolve_adopt_with_unchanged_disk_is_not_diverged() {
             session_id,
             SystemTime::now(),
             doc_id,
-            &[rune_core::buffer::AppliedEdit {
-                start: 0,
-                end: 3,
-                deleted: "one".to_string(),
-                insert: "merged".to_string(),
-            }],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[rune_core::buffer::AppliedEdit {
+                    start: 0,
+                    end: 3,
+                    deleted: "one".to_string(),
+                    insert: "merged".to_string(),
+                }],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append_edit");
         tx.commit().expect("commit");
@@ -261,14 +266,17 @@ fn probe_auto_adopts_when_disk_hash_equals_journal_head() {
             session_id,
             SystemTime::now(),
             doc_id,
-            &[rune_core::buffer::AppliedEdit {
-                start: 0,
-                end: 0,
-                deleted: String::new(),
-                insert: "hello".to_string(),
-            }],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[rune_core::buffer::AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "hello".to_string(),
+                }],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append_edit");
         tx.commit().expect("commit");

@@ -1,8 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
+use crate::journal_append::EditBatch;
 use crate::test_support::{always_dead, open};
 use rune_core::buffer::AppliedEdit;
+use rune_core::undo::EditKind;
 use std::time::SystemTime;
 
 fn always_alive(_pid: i64, _started_at: &str) -> bool {
@@ -33,9 +35,12 @@ fn scratch_with_history_from_a_dead_session_is_recoverable_and_reconstructs() {
             dead_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("unsaved draft"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("unsaved draft"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -75,9 +80,12 @@ fn empty_scratch_is_gc_d_but_the_kept_id_and_history_bearing_rows_survive() {
             session_id,
             SystemTime::now(),
             with_history_id,
-            &text_insert("x"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("x"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -172,9 +180,12 @@ fn evicted_bound_row_is_neither_offered_nor_gc_d() {
             session_id,
             SystemTime::now(),
             DocId(evicted_id),
-            &text_insert("real file content"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("real file content"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -215,9 +226,12 @@ fn reconstruct_scratch_finds_nothing_for_a_still_alive_session() {
             session_id,
             SystemTime::now(),
             doc_id,
-            &text_insert("still being edited"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("still being edited"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -258,9 +272,12 @@ fn find_named_scratch_surfaces_a_dead_sessions_named_draft() {
             dead_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("typed before the crash"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("typed before the crash"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -294,9 +311,12 @@ fn find_named_scratch_ignores_a_different_intended_path() {
             dead_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("typed before the crash"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("typed before the crash"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");
@@ -325,9 +345,12 @@ fn find_named_scratch_lists_a_live_sessions_row_but_reconstruct_refuses_to_steal
             live_session,
             SystemTime::now(),
             doc_id,
-            &text_insert("still being typed"),
-            &[],
-            &[],
+            EditBatch {
+                edits: &text_insert("still being typed"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("append edit");
         tx.commit().expect("commit");

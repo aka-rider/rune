@@ -9,6 +9,7 @@ use rune_vfs::Stat;
 
 use crate::Error;
 use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq};
+use crate::journal_append::EditBatch;
 use crate::materialize::MaterializeTarget;
 use crate::store::Store;
 use crate::writer::OpKind;
@@ -30,18 +31,17 @@ impl Store {
         doc_id: DocId,
         token: BindingToken,
         token_base_seq: Seq,
-        edits: &[rune_core::buffer::AppliedEdit],
-        cursors_before: &[rune_core::cursor::Cursor],
-        cursors_after: &[rune_core::cursor::Cursor],
+        batch: EditBatch<'_>,
     ) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::AppendEdit {
             session_id: self.session_id,
             now,
             doc_id,
-            edits: edits.to_vec(),
-            cursors_before: cursors_before.to_vec(),
-            cursors_after: cursors_after.to_vec(),
+            edits: batch.edits.to_vec(),
+            cursors_before: batch.cursors_before.to_vec(),
+            cursors_after: batch.cursors_after.to_vec(),
+            kind: batch.kind,
             token,
             token_base_seq,
         })

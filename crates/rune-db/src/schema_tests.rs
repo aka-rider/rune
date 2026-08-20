@@ -388,6 +388,86 @@ fn apply_on_a_file_missing_command_history_creates_it_without_disturbing_other_r
     assert_eq!(doc_count_after, 1);
 }
 
+const SCHEMA_BEFORE_EVENTS_KIND_COLUMN: &str = r#"
+CREATE TABLE IF NOT EXISTS documents (
+    id           INTEGER PRIMARY KEY,
+    path         TEXT    NOT NULL DEFAULT '',
+    inode        INTEGER,
+    device       INTEGER,
+    kind         TEXT    NOT NULL DEFAULT 'file' CHECK(kind IN ('file','scratch','chat')),
+    created_at   TEXT    NOT NULL,
+    last_seen_at TEXT    NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id              INTEGER PRIMARY KEY,
+    pid             INTEGER NOT NULL,
+    proc_started_at TEXT    NOT NULL,
+    opened_at       TEXT    NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id         INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    session_id     INTEGER NOT NULL REFERENCES sessions(id)  ON DELETE CASCADE,
+    edits          BLOB NOT NULL,
+    cursors_before BLOB,
+    cursors_after  BLOB,
+    at             TEXT NOT NULL
+);
+"#;
+
+#[test]
+fn apply_on_a_file_missing_the_events_kind_column_adds_it_without_disturbing_other_rows() {
+    let conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch(SCHEMA_BEFORE_EVENTS_KIND_COLUMN)
+        .expect("apply the shape missing events.kind");
+    conn.execute(
+        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('x', 'x', 'x')",
+        [],
+    )
+    .expect("seed doc");
+    let doc_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO sessions(pid, proc_started_at, opened_at) VALUES (1, 'x', 'x')",
+        [],
+    )
+    .expect("seed session");
+    let session_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO events(doc_id, session_id, edits, cursors_before, cursors_after, at) \
+         VALUES (?1, ?2, '[]', '[]', '[]', 'x')",
+        rusqlite::params![doc_id, session_id],
+    )
+    .expect("seed a row written before the kind column existed");
+
+    apply(&conn).expect("apply reconciles the missing column");
+
+    let read_kind = |conn: &Connection| -> Option<String> {
+        conn.query_row(
+            "SELECT kind FROM events WHERE doc_id = ?1",
+            [doc_id],
+            |row| row.get(0),
+        )
+        .expect("read back kind")
+    };
+    assert_eq!(read_kind(&conn), None);
+
+    let doc_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+        .expect("count documents");
+    assert_eq!(doc_count, 1);
+    let event_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+        .expect("count events");
+    assert_eq!(event_count, 1);
+
+    apply(&conn).expect("a second apply against an already-reconciled file is a no-op");
+    assert_eq!(read_kind(&conn), None);
+    let doc_count_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+        .expect("count documents again");
+    assert_eq!(doc_count_after, 1);
+}
+
 #[test]
 fn the_shipped_schema_ddl_carries_no_line_comments() {
     assert!(

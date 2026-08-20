@@ -4,6 +4,7 @@ use super::*;
 use crate::db::{Db, DbBridge, LoadPurpose};
 use crate::db_enqueue::append_edit;
 use rune_core::buffer::Buffer;
+use rune_core::undo::EditKind;
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
 use rune_vfs::{Mem, Vfs, VfsTestExt};
 use std::path::{Path, PathBuf};
@@ -37,8 +38,8 @@ fn db_event_acks_route_to_the_correct_document_via_db_ops() {
     app.doc_mut(id_b).expect("doc b exists").replica =
         Replica::Bound(DocDb::new(2, PublishMode::CreateOnly, rune_db::Seq(0)));
 
-    append_edit(&mut app, id_a, &[], &[], &[]);
-    append_edit(&mut app, id_b, &[], &[], &[]);
+    append_edit(&mut app, id_a, &[], &[], &[], EditKind::Other);
+    append_edit(&mut app, id_b, &[], &[], &[], EditKind::Other);
 
     assert_eq!(app.db_ops.len(), 2);
     let op_for_a = *app
@@ -96,7 +97,7 @@ fn handle_db_event_ok_seq_pops_db_ops_and_routes_to_the_right_document() {
     app.doc_mut(id_b).expect("doc b exists").replica =
         Replica::Bound(DocDb::new(2, PublishMode::CreateOnly, rune_db::Seq(0)));
 
-    append_edit(&mut app, id_a, &[], &[], &[]);
+    append_edit(&mut app, id_a, &[], &[], &[], EditKind::Other);
     let op_for_a = *app
         .db_ops
         .iter()
@@ -148,8 +149,8 @@ fn handle_db_event_fatal_clears_every_in_flight_db_op() {
     app.doc_mut(id_b).expect("doc b exists").replica =
         Replica::Bound(DocDb::new(2, PublishMode::CreateOnly, rune_db::Seq(0)));
 
-    append_edit(&mut app, id_a, &[], &[], &[]);
-    append_edit(&mut app, id_b, &[], &[], &[]);
+    append_edit(&mut app, id_a, &[], &[], &[], EditKind::Other);
+    append_edit(&mut app, id_b, &[], &[], &[], EditKind::Other);
     assert_eq!(app.db_ops.len(), 2, "test setup: two ops in flight");
 
     let mut effects = crate::runtime::Effects::default();

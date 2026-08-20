@@ -11,7 +11,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
-use rune_db::{DbEvent, OnEvent, OpOutcome, Store};
+use rune_core::undo::EditKind;
+use rune_db::{DbEvent, EditBatch, OnEvent, OpOutcome, Store};
 use rune_vfs::Disk;
 
 fn temp_db_dir(label: &str) -> PathBuf {
@@ -101,9 +102,12 @@ fn a_second_bare_launch_never_disables_recovery_for_the_first_sessions_fresh_dra
             doc_a,
             rune_db::BindingToken::next(),
             rune_db::Seq(0),
-            &[edit],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[edit],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("enqueue append_edit");
     match recv(&rx_a, append_op) {

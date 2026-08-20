@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use rune_core::buffer::AppliedEdit;
-use rune_db::{DbEvent, OnEvent, Store};
+use rune_core::undo::EditKind;
+use rune_db::{DbEvent, EditBatch, OnEvent, Store};
 
 use crate::support::{MARKER_SAFETY_DEADLINE, touch, wait_for_path};
 
@@ -72,7 +73,17 @@ pub(crate) fn append_storm() {
             insert: format!("{i} "),
         };
         let id = store
-            .append_edit(doc_id, token, rune_db::Seq(0), &[edit], &[], &[])
+            .append_edit(
+                doc_id,
+                token,
+                rune_db::Seq(0),
+                EditBatch {
+                    edits: &[edit],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
+            )
             .expect("enqueue append");
         expect_ok(&rx, id);
     }
@@ -113,7 +124,17 @@ pub(crate) fn append_storm_checkpoint() {
             insert: format!("{i} "),
         };
         let id = store
-            .append_edit(doc_id, token, rune_db::Seq(0), &[edit], &[], &[])
+            .append_edit(
+                doc_id,
+                token,
+                rune_db::Seq(0),
+                EditBatch {
+                    edits: &[edit],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
+            )
             .expect("enqueue append");
         expect_ok(&rx, id);
 
@@ -219,7 +240,17 @@ pub(crate) fn gc_editor() {
             insert: content_a.clone(),
         };
         let id = store
-            .append_edit(doc_id, token, rune_db::Seq(0), &[insert_a], &[], &[])
+            .append_edit(
+                doc_id,
+                token,
+                rune_db::Seq(0),
+                EditBatch {
+                    edits: &[insert_a],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
+            )
             .expect("enqueue append a");
         recv_seq(&rx, id);
 
@@ -243,7 +274,17 @@ pub(crate) fn gc_editor() {
             insert: format!("round-{i}-b"),
         };
         let id = store
-            .append_edit(doc_id, token, rune_db::Seq(0), &[insert_b], &[], &[])
+            .append_edit(
+                doc_id,
+                token,
+                rune_db::Seq(0),
+                EditBatch {
+                    edits: &[insert_b],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
+            )
             .expect("enqueue append b");
         expect_ok(&rx, id);
     }
@@ -289,9 +330,12 @@ pub(crate) fn edit_and_die() {
             doc_id,
             rune_db::BindingToken::next(),
             rune_db::Seq(0),
-            &[edit],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[edit],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("enqueue append");
     expect_ok(&rx, id);
@@ -372,9 +416,12 @@ pub(crate) fn save_and_die() {
             doc_id,
             rune_db::BindingToken::next(),
             rune_db::Seq(0),
-            &[edit],
-            &[],
-            &[],
+            EditBatch {
+                edits: &[edit],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
         )
         .expect("enqueue append");
     let seq = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {

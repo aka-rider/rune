@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use rune_core::buffer::AppliedEdit;
+use rune_core::undo::EditKind;
 
 fn open_ready_connection() -> Connection {
     crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
@@ -106,6 +107,7 @@ fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
                 }],
                 cursors_before: vec![],
                 cursors_after: vec![],
+                kind: EditKind::Other,
                 token: crate::ids::BindingToken::next(),
                 token_base_seq: Seq(0),
             },

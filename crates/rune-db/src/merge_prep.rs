@@ -168,8 +168,10 @@ fn resolve_ancestor(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::journal_append::EditBatch;
     use crate::obs_origin::ObsOrigin;
     use crate::test_support::open;
+    use rune_core::undo::EditKind;
     use rune_vfs::{Mem, VfsTestExt};
     use std::path::Path;
 
@@ -276,14 +278,17 @@ mod tests {
                 session_id,
                 SystemTime::now(),
                 doc_id,
-                &[rune_core::buffer::AppliedEdit {
-                    start: 0,
-                    end: 0,
-                    deleted: String::new(),
-                    insert: "ours content".to_string(),
-                }],
-                &[],
-                &[],
+                EditBatch {
+                    edits: &[rune_core::buffer::AppliedEdit {
+                        start: 0,
+                        end: 0,
+                        deleted: String::new(),
+                        insert: "ours content".to_string(),
+                    }],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
             )
             .expect("append_edit");
             tx.commit().expect("commit");
@@ -387,14 +392,17 @@ mod tests {
                 session_id,
                 SystemTime::now(),
                 doc_id,
-                &[rune_core::buffer::AppliedEdit {
-                    start: 0,
-                    end: 0,
-                    deleted: String::new(),
-                    insert: "ours content".to_string(),
-                }],
-                &[],
-                &[],
+                EditBatch {
+                    edits: &[rune_core::buffer::AppliedEdit {
+                        start: 0,
+                        end: 0,
+                        deleted: String::new(),
+                        insert: "ours content".to_string(),
+                    }],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
             )
             .expect("append_edit");
             tx.commit().expect("commit");

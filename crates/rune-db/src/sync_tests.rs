@@ -6,7 +6,9 @@
 )]
 
 use super::*;
+use crate::journal_append::EditBatch;
 use crate::test_support::open;
+use rune_core::undo::EditKind;
 use std::time::SystemTime;
 
 fn seed_doc(tx: &Transaction<'_>) -> DocId {
@@ -59,14 +61,17 @@ fn type_text(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId, text: &
         session_id,
         SystemTime::now(),
         doc_id,
-        &[rune_core::buffer::AppliedEdit {
-            start: end,
-            end,
-            deleted: String::new(),
-            insert: text.to_string(),
-        }],
-        &[],
-        &[],
+        EditBatch {
+            edits: &[rune_core::buffer::AppliedEdit {
+                start: end,
+                end,
+                deleted: String::new(),
+                insert: text.to_string(),
+            }],
+            cursors_before: &[],
+            cursors_after: &[],
+            kind: EditKind::Other,
+        },
     )
     .expect("append_edit")
 }
