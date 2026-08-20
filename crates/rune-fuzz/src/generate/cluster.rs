@@ -7,26 +7,23 @@ use proptest::prelude::*;
 
 use crate::action::Action;
 
-mod cluster_input;
-mod cluster_special;
-mod cluster_cmdpal;
 
 #[cfg(test)]
 pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
 
-pub(super) use cluster_input::{
+pub(super) use super::cluster_input::{
     cluster_type_prose, cluster_navigate, cluster_selection, cluster_delete, cluster_undo_redo,
     cluster_caret_history, cluster_advance_clock, cluster_markdown_write, cluster_save,
     cluster_clipboard, cluster_monkey_burst, cluster_highlight, cluster_highlight_tree,
     cluster_async_deliver,
 };
 
-pub(super) use cluster_special::{
+pub(super) use super::cluster_special::{
     cluster_chrome, cluster_multicursor, cluster_mouse, cluster_confirm_stale, cluster_quit_guard,
     cluster_merge,
 };
 
-pub(super) use cluster_cmdpal::{
+pub(super) use super::cluster_cmdpal::{
     cluster_cmdpal,
 };
 
