@@ -105,7 +105,11 @@ pub fn handle_load_ack(
     let hydration = {
         let Some(doc) = app.doc_mut(id) else { return };
         if issued_version == Some(doc.buffer.version()) {
-            Some(doc.hydrate(&load_result.disk_content, &load_result.recovered))
+            Some(doc.hydrate(
+                &load_result.disk_content,
+                &load_result.recovered.content,
+                &load_result.recovered.cursors,
+            ))
         } else {
             None
         }
@@ -189,7 +193,7 @@ fn install_doc_db(
         PublishMode::OverwriteExisting,
         load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
     );
-    bind_document_row(app, id, doc_db, &load_result.recovered, mode)
+    bind_document_row(app, id, doc_db, &load_result.recovered.content, mode)
 }
 
 /// What the writer thread did to the bound row's local undo-position
@@ -438,7 +442,13 @@ pub fn bind_scratch_doc(app: &mut App, id: DocumentId, row_id: i64) {
 /// synthetic bridge `Step` so post-restart undo reaches the recovered text
 /// in one step, and a refusal surfaced as a status rather than silently
 /// applied.
-pub fn adopt_scratch_doc(app: &mut App, id: DocumentId, row_id: i64, recovered: &str) {
+pub fn adopt_scratch_doc(
+    app: &mut App,
+    id: DocumentId,
+    row_id: i64,
+    recovered: &str,
+    journaled_cursors: &[rune_core::cursor::Cursor],
+) {
     // Hydrated BEFORE binding: the bind chokepoint compares the buffer
     // against what the row reconstructs to (nothing, for a scratch row this
     // session has never journaled to) and computes the re-base bridge that
@@ -449,7 +459,9 @@ pub fn adopt_scratch_doc(app: &mut App, id: DocumentId, row_id: i64, recovered: 
         && let Some(doc) = app.doc_mut(id)
     {
         let disk_content = doc.buffer.content().to_string();
-        if let crate::document::Hydration::Refused(reason) = doc.hydrate(&disk_content, recovered) {
+        if let crate::document::Hydration::Refused(reason) =
+            doc.hydrate(&disk_content, recovered, journaled_cursors)
+        {
             messages::error(app, format!("crash recovery: {reason}"));
         }
     }

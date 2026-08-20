@@ -233,7 +233,13 @@ pub(crate) fn open_untitled(
 /// chokepoint every store bind funnels through, so the launch-time path
 /// can never drift from the async-ack one.
 fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: &ScratchDoc) {
-    rune_tui::db_ack::adopt_scratch_doc(app, id, scratch.db_id, &scratch.content);
+    rune_tui::db_ack::adopt_scratch_doc(
+        app,
+        id,
+        scratch.db_id,
+        &scratch.recovered.content,
+        &scratch.recovered.cursors,
+    );
 }
 
 /// The first positional is already open (in `bootstrap`) and stays the
@@ -290,7 +296,10 @@ mod tests {
             id,
             &ScratchDoc {
                 db_id: 1,
-                content: "recovered draft text".to_string(),
+                recovered: rune_db::Recovered {
+                    content: "recovered draft text".to_string(),
+                    cursors: Vec::new(),
+                },
             },
         );
 

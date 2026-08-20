@@ -99,7 +99,9 @@ fn type_at_end(
 fn recovered_at(db_path: &Path, session_id: rune_db::SessionId, doc_id: DocId) -> String {
     let conn =
         rune_db::open_raw_connection_at_path_for_test(db_path).expect("open db file directly");
-    rune_db::recover_document(&conn, session_id, doc_id).expect("recover_document")
+    rune_db::recover_document(&conn, session_id, doc_id)
+        .expect("recover_document")
+        .content
 }
 
 /// A same-row re-baseline keeps the row's local-position numbering, so an

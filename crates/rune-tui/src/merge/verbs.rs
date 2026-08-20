@@ -55,7 +55,7 @@ fn position_status(session: &MergeSession, idx: usize) -> String {
 
 fn caret_to(app: &mut App, doc: DocumentId, byte: usize) {
     if let Some(d) = app.doc_mut(doc) {
-        let clamped = byte.min(d.buffer.len());
+        let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer.content(), byte);
         d.cursors = CursorSet::new(clamped);
     }
 }

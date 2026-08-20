@@ -31,7 +31,7 @@ pub(crate) struct DbBootstrap {
     /// read straight off disk) — `main` runs this through the same
     /// `Document::hydrate` chokepoint `db::handle_load_ack` uses, once
     /// `App::new` exists to hold the result.
-    pub(crate) recovered_content: Option<String>,
+    pub(crate) recovered_content: Option<rune_db::Recovered>,
     /// This `Load`'s [`rune_db::SyncKind`] (see `Document::last_sync`'s
     /// own doc comment) — render/hint state only, `main` installs it onto
     /// the active document the same way `db_ack::handle_load_ack` does for
@@ -273,7 +273,7 @@ pub(crate) fn bootstrap_db(
 /// would otherwise be re-offered on every later launch forever.
 pub(crate) struct ScratchDoc {
     pub(crate) db_id: i64,
-    pub(crate) content: String,
+    pub(crate) recovered: rune_db::Recovered,
 }
 
 /// The result of [`bootstrap_untitled_db`] — the no-positional-launch
@@ -349,8 +349,10 @@ pub(crate) fn bootstrap_untitled_db(
     let mut scratch_docs = Vec::new();
     for db_id in recoverable_ids {
         match blocking_call(&bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
-            Ok(OpOutcome::Reconstructed(Some(content))) if !content.trim().is_empty() => {
-                scratch_docs.push(ScratchDoc { db_id, content });
+            Ok(OpOutcome::Reconstructed(Some(recovered)))
+                if !recovered.content.trim().is_empty() =>
+            {
+                scratch_docs.push(ScratchDoc { db_id, recovered });
             }
             // No prior session ever touched it, its owning session is still
             // alive, or its reconstruction is empty/whitespace-only — never
@@ -370,7 +372,7 @@ pub(crate) fn bootstrap_untitled_db(
         match blocking_call(&bridge, || store.create_scratch()) {
             Ok(OpOutcome::ScratchDocId(id)) => scratch_docs.push(ScratchDoc {
                 db_id: id.0,
-                content: String::new(),
+                recovered: rune_db::Recovered::default(),
             }),
             Ok(_) => {
                 return degrade_untitled(
@@ -496,7 +498,7 @@ fn find_named_draft(
     bridge: &DbBridge,
     store: &Store,
     intended_path: &str,
-) -> Result<Option<(i64, String)>, String> {
+) -> Result<Option<(i64, rune_db::Recovered)>, String> {
     let candidate_ids = match blocking_call(bridge, || store.find_named_scratch(intended_path)) {
         Ok(OpOutcome::Ids(ids)) => ids,
         Ok(_) => {
@@ -507,8 +509,10 @@ fn find_named_draft(
 
     for db_id in candidate_ids {
         match blocking_call(bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
-            Ok(OpOutcome::Reconstructed(Some(content))) if !content.trim().is_empty() => {
-                return Ok(Some((db_id, content)));
+            Ok(OpOutcome::Reconstructed(Some(recovered)))
+                if !recovered.content.trim().is_empty() =>
+            {
+                return Ok(Some((db_id, recovered)));
             }
             Ok(OpOutcome::Reconstructed(_)) => {}
             Ok(_) => {

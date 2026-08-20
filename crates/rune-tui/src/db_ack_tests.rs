@@ -186,7 +186,10 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
         doc_id: rune_db::DocId(1),
         renamed_from: None,
         disk_content: "on disk".to_string(),
-        recovered: "recovered draft".to_string(),
+        recovered: rune_db::Recovered {
+            content: "recovered draft".to_string(),
+            cursors: Vec::new(),
+        },
         has_history: true,
         sync: rune_db::SyncState {
             kind: rune_db::SyncKind::BufferAhead,
@@ -245,7 +248,10 @@ fn binding_only_load_does_not_rehydrate() {
         doc_id: rune_db::DocId(7),
         renamed_from: None,
         disk_content: "on disk".to_string(),
-        recovered: "a stale recovery row".to_string(),
+        recovered: rune_db::Recovered {
+            content: "a stale recovery row".to_string(),
+            cursors: Vec::new(),
+        },
         has_history: true,
         sync: rune_db::SyncState {
             kind: rune_db::SyncKind::Clean,

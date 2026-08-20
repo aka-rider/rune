@@ -26,6 +26,7 @@ use std::time::SystemTime;
 use rusqlite::{Connection, Transaction};
 
 use rune_core::buffer::AppliedEdit;
+use rune_core::cursor::Cursor;
 
 use crate::Error;
 use crate::adopt;
@@ -35,12 +36,13 @@ use crate::inherit::Inherited;
 use crate::obs_origin::ObsOrigin;
 use crate::observation::{self, StatFacts};
 use crate::retry;
+use crate::snapshot::Recovered;
 
 /// What the `!has_history` branch of `load` needs back: the content the
 /// caller's buffer should adopt, and the durable journal seq of the bridge
 /// edit that produced it (`None` when nothing was bridged).
 pub(crate) struct AnchorOutcome {
-    pub(crate) recovered: String,
+    pub(crate) recovered: Recovered,
     pub(crate) bridge_seq: Option<Seq>,
 }
 
@@ -107,6 +109,7 @@ fn bridge_edit_tx(
     ctx: &LoadContext<'_>,
     from: &str,
     to: &str,
+    cursors_after: &[Cursor],
 ) -> Result<Seq, Error> {
     let edit = vec![AppliedEdit {
         start: 0,
@@ -114,7 +117,15 @@ fn bridge_edit_tx(
         deleted: from.to_string(),
         insert: to.to_string(),
     }];
-    crate::journal::append_edit(tx, ctx.session_id, ctx.now, ctx.doc_id, &edit, &[], &[])
+    crate::journal::append_edit(
+        tx,
+        ctx.session_id,
+        ctx.now,
+        ctx.doc_id,
+        &edit,
+        &[],
+        cursors_after,
+    )
 }
 
 /// Re-anchors on the dead session's own baseline (`H0`), bridges `H0` to
@@ -134,7 +145,7 @@ fn bridge_edit_tx(
 fn anchor_diverged(
     conn: &mut Connection,
     ctx: &LoadContext<'_>,
-    draft: &str,
+    draft: &Recovered,
     baseline: &observation::Observation,
 ) -> Result<Option<AnchorOutcome>, Error> {
     retry::with_retry(conn, |tx| {
@@ -173,7 +184,7 @@ fn anchor_diverged(
             None,
         )?;
 
-        let bridge_seq = bridge_edit_tx(tx, ctx, &h0_content, draft)?;
+        let bridge_seq = bridge_edit_tx(tx, ctx, &h0_content, &draft.content, &draft.cursors)?;
 
         // Recorded LAST, uncorrelated (`seq: None`) — `newest_observation`
         // must report H1, never the H0 adoption just recorded above. Stat
@@ -194,7 +205,7 @@ fn anchor_diverged(
         )?;
 
         Ok(Some(AnchorOutcome {
-            recovered: draft.to_string(),
+            recovered: draft.clone(),
             bridge_seq: Some(bridge_seq),
         }))
     })
@@ -216,7 +227,7 @@ pub(crate) fn reanchor_clean_reload_tx(
     to: &str,
 ) -> Result<AnchorOutcome, Error> {
     retry::with_retry(conn, |tx| {
-        let bridge_seq = bridge_edit_tx(tx, ctx, from, to)?;
+        let bridge_seq = bridge_edit_tx(tx, ctx, from, to, &[])?;
         adopt::record_adoption_tx(
             tx,
             ctx.doc_id,
@@ -232,7 +243,10 @@ pub(crate) fn reanchor_clean_reload_tx(
             None,
         )?;
         Ok(AnchorOutcome {
-            recovered: to.to_string(),
+            recovered: Recovered {
+                content: to.to_string(),
+                cursors: Vec::new(),
+            },
             bridge_seq: Some(bridge_seq),
         })
     })
@@ -263,14 +277,17 @@ pub(crate) fn anchor_first_load(
         anchor_on_disk_tx(tx, ctx, content, ctx.disk_hash)?;
         match inherited {
             Inherited::Bridged { draft } | Inherited::Diverged { draft, .. } => {
-                let bridge_seq = bridge_edit_tx(tx, ctx, content, draft)?;
+                let bridge_seq = bridge_edit_tx(tx, ctx, content, &draft.content, &draft.cursors)?;
                 Ok(AnchorOutcome {
                     recovered: draft.clone(),
                     bridge_seq: Some(bridge_seq),
                 })
             }
             Inherited::Disk => Ok(AnchorOutcome {
-                recovered: content.to_string(),
+                recovered: Recovered {
+                    content: content.to_string(),
+                    cursors: Vec::new(),
+                },
                 bridge_seq: None,
             }),
         }
@@ -364,14 +381,17 @@ mod tests {
             &ctx,
             disk_content,
             &Inherited::Diverged {
-                draft: draft.to_string(),
+                draft: Recovered {
+                    content: draft.to_string(),
+                    cursors: Vec::new(),
+                },
                 baseline: Box::new(baseline),
             },
         )
         .expect("anchor_first_load must succeed via the disk-anchored fallback");
 
         assert_eq!(
-            outcome.recovered, draft,
+            outcome.recovered.content, draft,
             "the draft must survive even without H0"
         );
         let bridge_seq = outcome

@@ -30,6 +30,11 @@ const END: KeyInput = KeyInput {
     mods: Mods::NONE,
 };
 
+const HOME: KeyInput = KeyInput {
+    code: KeyCode::Home,
+    mods: Mods::NONE,
+};
+
 const UNDO: KeyInput = KeyInput {
     code: KeyCode::Char('z'),
     mods: Mods {
@@ -125,6 +130,78 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     );
 }
 
+/// The caret the crashed session last journaled comes back with the text:
+/// the restart seats it where the user was typing, not at offset 0 and not
+/// at the end of the recovered content.
+#[test]
+fn restart_restores_the_caret_the_crashed_session_journaled() {
+    let dir = temp_db_dir("restart-caret");
+    let db_path = dir.join("rune-v1.db");
+    let mem = Arc::new(Mem::new());
+    publish(mem.as_ref(), Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+
+    let (store_a, bridge_a) = store_at(&db_path, Arc::clone(&vfs));
+    let mut session_a = Session::open_with_db(
+        "/doc.md",
+        Arc::clone(&mem),
+        Db::new(store_a, bridge_a, false),
+    );
+    assert!(session_a.key(END).is_none());
+    assert!(session_a.type_(" world").is_none());
+    assert!(session_a.key(HOME).is_none());
+    assert!(session_a.type_("X").is_none());
+    assert_eq!(session_a.snapshot().content, "Xhello world");
+    assert_eq!(session_a.snapshot().cursors[0].position, 1);
+    assert!(session_a.deliver_db_all().is_none());
+    session_a
+        .app_mut()
+        .db
+        .take()
+        .expect("session A has a store")
+        .shutdown();
+    drop(session_a);
+
+    let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
+    let mut session_b = Session::open_with_db(
+        "/doc.md",
+        Arc::clone(&mem),
+        Db::new(store_b, bridge_b, false),
+    );
+
+    assert_eq!(session_b.snapshot().content, "Xhello world");
+    assert_eq!(
+        session_b.snapshot().cursors[0].position,
+        1,
+        "the restart must seat the caret where the crashed session left it"
+    );
+}
+
+/// A journaled caret from a document that has since shrunk (or that lands
+/// mid-UTF-8) must be clamped onto the recovered content, never panic.
+#[test]
+fn a_journaled_caret_outside_the_recovered_content_is_clamped() {
+    let mut app = App::new(Buffer::new("aaaaaaaaaa"), None, Arc::new(Mem::new()), None);
+    let id = app.active;
+    let doc = app.doc_mut(id).expect("active doc");
+
+    let outcome = doc.hydrate(
+        "aaaaaaaaaa",
+        "\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}",
+        &[rune_core::cursor::Cursor {
+            position: usize::MAX,
+            anchor: 3,
+            desired_col: 0,
+            id: rune_core::cursor::CursorId::try_from(1).expect("non-zero"),
+        }],
+    );
+
+    assert!(matches!(outcome, rune_tui::document::Hydration::Adopted));
+    let cursor = app.doc(id).expect("active doc").cursors.primary();
+    assert_eq!(cursor.position, 10);
+    assert_eq!(cursor.anchor, 2);
+}
+
 /// The `Load` ack installs `Document::db` as `Some` once it lands.
 #[test]
 fn load_ack_installs_document_db_as_some() {
@@ -214,7 +291,10 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
         doc_id: rune_db::DocId(1),
         renamed_from: None,
         disk_content: "hello".to_string(),
-        recovered: "hello".to_string(),
+        recovered: rune_db::Recovered {
+            content: "hello".to_string(),
+            cursors: Vec::new(),
+        },
         has_history: false,
         sync: SyncState {
             kind: SyncKind::Clean,

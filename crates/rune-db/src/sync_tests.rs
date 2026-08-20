@@ -45,7 +45,9 @@ fn open_document(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId, dis
 }
 
 fn type_text(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId, text: &str) -> Seq {
-    let ours = crate::snapshot::recover_document(tx, session_id, doc_id).expect("recover");
+    let ours = crate::snapshot::recover_document(tx, session_id, doc_id)
+        .expect("recover")
+        .content;
     let end = ours.len();
     crate::journal::append_edit(
         tx,

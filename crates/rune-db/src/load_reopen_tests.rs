@@ -63,7 +63,7 @@ fn same_session_reopen_with_no_edit_adopts_the_new_disk_content() {
     );
     assert_eq!(result.disk_content, "rewritten externally");
     assert_eq!(
-        result.recovered, "rewritten externally",
+        result.recovered.content, "rewritten externally",
         "a session that never edited leaves nothing to inherit — the reopen must adopt disk"
     );
     assert_ne!(
@@ -77,7 +77,7 @@ fn same_session_reopen_with_no_edit_adopts_the_new_disk_content() {
     })
     .expect("recover_document");
     assert_eq!(
-        reconstructed, result.recovered,
+        reconstructed.content, result.recovered.content,
         "this session's own journal must reconstruct to exactly what its buffer holds"
     );
 }
@@ -140,7 +140,7 @@ fn same_session_reopen_with_unsaved_edits_stays_diverged() {
     .expect("reopen");
 
     assert_eq!(
-        result.recovered, "UNSAVED original content",
+        result.recovered.content, "UNSAVED original content",
         "unsaved edits must survive a reopen even when disk moved on"
     );
     assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
@@ -150,7 +150,7 @@ fn same_session_reopen_with_unsaved_edits_stays_diverged() {
     })
     .expect("recover_document");
     assert_eq!(
-        reconstructed, result.recovered,
+        reconstructed.content, result.recovered.content,
         "this session's own journal must reconstruct to exactly what its buffer holds"
     );
 }

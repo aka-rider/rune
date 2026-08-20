@@ -38,7 +38,10 @@ fn refused_hydration_detaches() {
         doc_id: rune_db::DocId(db_id),
         renamed_from: None,
         disk_content: REFUSING_DISK.to_string(),
-        recovered: REFUSING_RECOVERED.to_string(),
+        recovered: rune_db::Recovered {
+            content: REFUSING_RECOVERED.to_string(),
+            cursors: Vec::new(),
+        },
         has_history: true,
         sync: rune_db::SyncState {
             kind: rune_db::SyncKind::Clean,

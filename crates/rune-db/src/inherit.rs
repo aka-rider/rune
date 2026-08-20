@@ -11,6 +11,7 @@ use crate::ids::Seq;
 use crate::ids::{DocId, SessionId};
 use crate::observation::{self, Observation};
 use crate::retry;
+use crate::snapshot::Recovered;
 
 /// The session_id attached to whichever row — across `doc_id`'s events and
 /// snapshots together — carries the highest seq. Ties break by higher
@@ -71,13 +72,13 @@ pub(crate) enum Inherited {
     /// The dead session's baseline agrees with what's on disk right now (or
     /// it never recorded one) — safe to bridge disk content straight to
     /// `draft`, exactly like today's anchor-on-disk flow.
-    Bridged { draft: String },
+    Bridged { draft: Recovered },
     /// The dead session's own baseline (`H0`) no longer matches disk (`H1`)
     /// — disk moved on independently. `draft` is still genuinely unsaved
     /// content worth keeping, but it must be bridged from `H0`, not `H1`, so
     /// the newer disk content is never silently discarded.
     Diverged {
-        draft: String,
+        draft: Recovered,
         baseline: Box<Observation>,
     },
 }
@@ -130,10 +131,10 @@ pub(crate) fn find_inheritable_draft(
     let Some(recovered_draft) = recovered_draft else {
         return Ok(Inherited::Disk);
     };
-    if observation::hash_bytes(recovered_draft.as_bytes()) == disk_hash {
+    if observation::hash_bytes(recovered_draft.content.as_bytes()) == disk_hash {
         return Ok(Inherited::Disk); // never actually diverged from disk
     }
-    if !unsaved_against(other_baseline.as_ref(), &recovered_draft) {
+    if !unsaved_against(other_baseline.as_ref(), &recovered_draft.content) {
         return Ok(Inherited::Disk);
     }
 
@@ -248,7 +249,7 @@ mod tests {
 
         match inherited {
             Inherited::Diverged { draft, baseline } => {
-                assert_eq!(draft, "UNSAVED session A's content");
+                assert_eq!(draft.content, "UNSAVED session A's content");
                 assert_eq!(
                     baseline.blob_hash.as_str(),
                     observation::hash_bytes(b"session A's content"),
@@ -325,7 +326,7 @@ mod tests {
         let inherited = find_inheritable_draft(&mut conn, &always_dead, doc_id, &disk_hash)
             .expect("find_inheritable_draft");
         match inherited {
-            Inherited::Bridged { draft } => assert_eq!(draft, "UNSAVED shared content"),
+            Inherited::Bridged { draft } => assert_eq!(draft.content, "UNSAVED shared content"),
             _ => panic!("disk unchanged since the dead session's baseline -> expected Bridged"),
         }
     }
@@ -438,7 +439,9 @@ mod tests {
         let inherited = find_inheritable_draft(&mut conn, &always_dead, doc_id, &disk_hash)
             .expect("find_inheritable_draft");
         match inherited {
-            Inherited::Bridged { draft } => assert_eq!(draft, "UNSAVED session A's content"),
+            Inherited::Bridged { draft } => {
+                assert_eq!(draft.content, "UNSAVED session A's content")
+            }
             _ => {
                 panic!("no recorded baseline must still be treated as unsaved -> expected Bridged")
             }

@@ -16,6 +16,7 @@ use crate::ids::{DocId, SessionId};
 use crate::inherit::{is_session_alive, most_recent_session_for_doc};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
+use crate::snapshot::Recovered;
 
 /// Mints a brand-new unbound scratch `documents` row. `intended_path` is
 /// `Some` when this scratch names a launch positional that does not exist
@@ -160,7 +161,7 @@ pub fn reconstruct_scratch(
     conn: &mut Connection,
     liveness_check: &dyn Fn(i64, &str) -> bool,
     doc_id: DocId,
-) -> Result<Option<String>, Error> {
+) -> Result<Option<Recovered>, Error> {
     let other_session_id = retry::with_retry(conn, |tx| most_recent_session_for_doc(tx, doc_id))?;
     let Some(other_session_id) = other_session_id else {
         return Ok(None);
@@ -225,7 +226,10 @@ mod tests {
 
         let reconstructed =
             reconstruct_scratch(&mut conn, &always_dead, doc_id).expect("reconstruct_scratch");
-        assert_eq!(reconstructed.as_deref(), Some("unsaved draft"));
+        assert_eq!(
+            reconstructed.map(|r| r.content).as_deref(),
+            Some("unsaved draft")
+        );
     }
 
     #[test]
@@ -460,7 +464,7 @@ mod tests {
         let reconstructed = reconstruct_scratch(&mut conn, &always_dead, doc_id)
             .expect("reconstruct_scratch")
             .expect("must reconstruct the dead session's typed content");
-        assert_eq!(reconstructed, "typed before the crash");
+        assert_eq!(reconstructed.content, "typed before the crash");
     }
 
     /// A DIFFERENT intended path must never match — the whole point of

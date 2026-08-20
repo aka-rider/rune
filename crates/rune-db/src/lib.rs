@@ -107,6 +107,7 @@ pub use reaper::reap_dead_sessions;
 pub use rename::RenameOutcome;
 #[cfg(feature = "test-support")]
 pub use session::is_process_alive;
+pub use snapshot::Recovered;
 #[cfg(feature = "test-support")]
 pub use snapshot::recover_document;
 pub use store::{ClockFn, DEGRADED_WARNING, Store};

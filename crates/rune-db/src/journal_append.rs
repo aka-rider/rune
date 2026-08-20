@@ -175,8 +175,9 @@ mod tests {
         );
         move_undo_pos(&tx, session_id, doc_id, step.new_pos).expect("move_undo_pos");
 
-        let recovered =
-            crate::snapshot::recover_document(&tx, session_id, doc_id).expect("recover_document");
+        let recovered = crate::snapshot::recover_document(&tx, session_id, doc_id)
+            .expect("recover_document")
+            .content;
         assert_eq!(
             recovered, "ab",
             "undoing the last of three single-char inserts must leave exactly the first two"

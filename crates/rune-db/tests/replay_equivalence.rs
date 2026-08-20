@@ -200,7 +200,9 @@ proptest! {
             }
 
             let tx = conn.transaction().expect("begin tx (verify)");
-            let db_content = recover_document(&tx, session_id, doc_id).expect("recover_document");
+            let db_content = recover_document(&tx, session_id, doc_id)
+                .expect("recover_document")
+                .content;
             let db_pos = current_seq(&tx, session_id, doc_id).expect("db current_seq");
             tx.commit().expect("commit");
 

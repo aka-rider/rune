@@ -28,6 +28,7 @@ use crate::load_anchor::{LoadContext, anchor_first_load, reanchor_clean_reload_t
 use crate::obs_origin::ObsOrigin;
 use crate::observation;
 use crate::retry;
+use crate::snapshot::Recovered;
 use crate::sync::SyncState;
 
 /// The outcome of [`load`]: the raw disk bytes, the journal-reconstructed
@@ -38,7 +39,7 @@ pub struct LoadResult {
     pub doc_id: DocId,
     pub renamed_from: Option<String>,
     pub disk_content: String,
-    pub recovered: String,
+    pub recovered: Recovered,
     pub has_history: bool,
     pub sync: SyncState,
     /// Hard-link count observed at load (0 if stat failed or the platform
@@ -203,7 +204,7 @@ pub fn load_from_read(
         let recovered = retry::with_retry(conn, |tx| {
             crate::snapshot::recover_document(tx, session_id, doc_id)
         })?;
-        let recovered_hash = observation::hash_bytes(recovered.as_bytes());
+        let recovered_hash = observation::hash_bytes(recovered.content.as_bytes());
         if hash == recovered_hash {
             // Reload, hash-equality: heal-adopt only when there is something to
             // heal (an ordinary clean tab switch also lands here).
@@ -249,7 +250,7 @@ pub fn load_from_read(
                     live_stat: &stat,
                     now,
                 };
-                let outcome = reanchor_clean_reload_tx(conn, &ctx, &recovered, &content)?;
+                let outcome = reanchor_clean_reload_tx(conn, &ctx, &recovered.content, &content)?;
                 bridge_seq = outcome.bridge_seq;
                 outcome.recovered
             } else {
@@ -276,7 +277,7 @@ pub fn load_from_read(
         }
     };
 
-    let recovered_hash = observation::hash_bytes(recovered.as_bytes());
+    let recovered_hash = observation::hash_bytes(recovered.content.as_bytes());
     let resumable_merge = retry::with_retry(conn, |tx| {
         crate::merge_state::resume_candidate(tx, liveness_check, doc_id, &recovered_hash)
     })?;

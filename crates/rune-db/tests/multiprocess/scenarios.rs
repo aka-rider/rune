@@ -230,8 +230,9 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
         rune_db::open_raw_connection_at_path_for_test(&path).expect("verify connection");
     let recovered = {
         let tx = verify.transaction().expect("tx");
-        let content =
-            rune_db::recover_document(&tx, killed_session_id, doc_id).expect("recover_document");
+        let content = rune_db::recover_document(&tx, killed_session_id, doc_id)
+            .expect("recover_document")
+            .content;
         tx.commit().expect("commit");
         content
     };
