@@ -4,8 +4,8 @@
 //! off by the bridge entry it never learns about). Both drive a bare `App`
 //! over a real file-backed `Store` so a restart proves what crash recovery
 //! actually reconstructs — the same idiom `db_wiring_undo_rebase.rs` uses.
-//! Neither test asserts on `DocDb`'s private counters (`undo_offset`/
-//! `undo_floor`/`appends_sent` are `pub(crate)`, unreachable from here
+//! Neither test asserts on `DocDb`'s private bookkeeping (`token`/
+//! `undo_offset`/`undo_floor` are `pub(crate)`, unreachable from here
 //! anyway): both assert on what a restarted session recovers, which is the
 //! only way a wrong undo resolution is ever user-visible.
 #![allow(
@@ -136,7 +136,6 @@ fn restart_recovered(mem: &Arc<Mem>, db_path: &Path) -> String {
 /// second edit; it must never resolve to a state that has dropped A's own
 /// first edit too, durable history from before it included or not.
 #[test]
-#[ignore = "reproduces #119"]
 fn undo_in_one_tab_never_resolves_past_its_own_first_edit_when_a_sibling_tab_shares_the_row() {
     let dir = temp_db_dir("shared-row-undo-drift");
     let db_path = dir.join("rune-v1.db");
@@ -196,7 +195,6 @@ fn undo_in_one_tab_never_resolves_past_its_own_first_edit_when_a_sibling_tab_sha
 /// actual bridged reconstruction, so it lands at the wrong offset in the
 /// durable history — a silent splice, not the edit the user made.
 #[test]
-#[ignore = "reproduces #120"]
 fn an_edit_right_after_a_clean_external_reload_lands_at_the_wrong_offset_in_recovery() {
     let dir = temp_db_dir("clean-reload-bridge-drift");
     let db_path = dir.join("rune-v1.db");

@@ -446,6 +446,23 @@ impl crate::app::App {
         self.file_bindings.get(&db_id)
     }
 
+    /// Refreshes `db_id`'s shared [`FileBinding::shared_content`] to
+    /// `content` — the row's true content as of a bind that just read it —
+    /// creating the binding (with no CAS baseline seeded yet) if this is
+    /// the very first sighting of `db_id`. Called from
+    /// `db_ack::bind_document_row` on every bind, ahead of (or behind, for
+    /// a scratch bind) `install_or_join_file_binding`'s own seeding of
+    /// `expect_obs` — the two never race in practice: every scratch-bind
+    /// call site passes `install_or_join_file_binding` a `None` baseline
+    /// too, so whichever runs first, the other finds an already-vacant
+    /// baseline to (not) seed either way.
+    pub(crate) fn set_shared_content(&mut self, db_id: i64, content: &str) {
+        self.file_bindings
+            .entry(db_id)
+            .or_insert_with(|| FileBinding::new(None))
+            .shared_content = content.to_string();
+    }
+
     pub fn file_binding_mut(&mut self, db_id: i64) -> Option<&mut FileBinding> {
         self.file_bindings.get_mut(&db_id)
     }

@@ -109,7 +109,14 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
         insert: "NEW".to_string(),
     };
     let id = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(
+            doc_id,
+            rune_db::BindingToken::next(),
+            rune_db::Seq(0),
+            &[edit],
+            &[],
+            &[],
+        )
         .expect("enqueue append");
     match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok { id: got, .. }) if got == id => {}
@@ -328,7 +335,14 @@ fn a_second_processs_real_save_is_a_real_divergence_for_merge_prep() {
         insert: "A ".to_string(),
     };
     let id = store
-        .append_edit(doc_id, &[edit], &[], &[])
+        .append_edit(
+            doc_id,
+            rune_db::BindingToken::next(),
+            rune_db::Seq(0),
+            &[edit],
+            &[],
+            &[],
+        )
         .expect("enqueue session A's edit");
     match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {

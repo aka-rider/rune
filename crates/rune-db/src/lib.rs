@@ -92,7 +92,7 @@ pub use conn::{
     open_recovery_store_at_path_for_test, open_recovery_store_in_memory_for_test,
 };
 pub use error::Error;
-pub use ids::{BlobHash, DocId, ObsId, Seq, SessionId};
+pub use ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
 #[cfg(feature = "test-support")]
 pub use journal::{append_edit, current_seq, move_undo_pos, redo_peek, undo_peek};
 pub use load::LoadResult;

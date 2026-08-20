@@ -92,7 +92,7 @@ pub fn handle_load_ack(
         let mode = if writer_kept_numbering {
             BindMode::Preserved
         } else {
-            BindMode::Restarted { adopted: false }
+            BindMode::Restarted
         };
         let pending = install_doc_db(app, id, &load_result, mode);
         crate::db_enqueue::replay_pending(app, id, pending);
@@ -152,7 +152,7 @@ pub fn handle_load_ack(
     // join itself never touches `id`'s own document, so there is no reason
     // to interleave it with the borrow that does.
     app.install_or_join_file_binding(load_result.doc_id.0, Some(expect_obs));
-    let pending = install_doc_db(app, id, &load_result, BindMode::Restarted { adopted });
+    let pending = install_doc_db(app, id, &load_result, BindMode::Restarted);
     crate::db_enqueue::replay_pending(app, id, pending);
     let Some(doc) = app.doc_mut(id) else { return };
     // Render/hint state only (see `Document::last_sync`'s own doc comment)
@@ -196,15 +196,15 @@ fn install_doc_db(
     bind_document_row(app, id, doc_db, &load_result.recovered.content, mode)
 }
 
-/// What the writer thread did to the bound row's local undo-position
-/// numbering, which this side must mirror. `adopted` is whether this load's
-/// own hydration adopted the recovered content — the extra local journal
-/// entry the writer never sees. Under `Preserved` the existing mapping is
-/// still the true one; re-deriving it would name a different entry than the
-/// writer resolves.
+/// Whether this bind keeps `id`'s existing [`rune_db::BindingToken`]
+/// (`Preserved` — a same-row re-baseline that touched neither the buffer
+/// nor the durable journal) or mints a fresh one (`Restarted` — every other
+/// bind, including an ordinary reload of an already-bound row). Under
+/// `Preserved` the existing mapping is still the true one; re-deriving it
+/// would name a different entry than the writer resolves.
 #[derive(Clone, Copy)]
 enum BindMode {
-    Restarted { adopted: bool },
+    Restarted,
     Preserved,
 }
 
@@ -212,40 +212,48 @@ enum BindMode {
 /// tell a same-row re-baseline from a rebind), its lagging durable-head
 /// estimate, any still-unflushed re-base bridge, and the undo mapping —
 /// which is carried only into a [`BindMode::Preserved`] bind, the one bind
-/// the writer thread does not restart the row's numbering at.
+/// that keeps `id`'s existing [`rune_db::BindingToken`] instead of minting
+/// a fresh one.
 struct PriorBinding {
     db_id: i64,
     last_known_seq: rune_db::Seq,
     pending_rebase: Option<ReplicaStep>,
+    token: rune_db::BindingToken,
+    token_base_seq: rune_db::Seq,
     undo_offset: i64,
     undo_floor: i64,
-    appends_sent: i64,
+    diverged: bool,
+    synced_content: String,
 }
 
 /// The one chokepoint every fresh `Replica::Bound` install funnels through
 /// (`install_doc_db` above, [`bind_scratch_doc`]/[`adopt_scratch_doc`] and
 /// [`bind_loaded_doc`] below). `row_content` is what the bound row's
 /// durable journal reconstructs to at this instant — a `Load`'s
-/// `recovered`, the empty string for a freshly minted scratch row.
+/// `recovered`, the empty string for a freshly minted scratch row. Every
+/// bind refreshes the shared [`crate::db::FileBinding::shared_content`] to
+/// `row_content` — the row's true content as of a read this side just took.
 ///
-/// The writer thread restarts a row's local-position numbering at every
-/// bind EXCEPT the same-row re-baseline it was asked to preserve
-/// ([`BindMode`]), so a `Restarted` bind re-derives the undo mapping here
-/// from the facts on the ground: the writer's entries after this
-/// bind are the appends still in flight past a same-row re-baseline
-/// (counted off `app.db_ops`), plus the re-base bridge and window steps
-/// about to be enqueued; `undo_offset` is the local journal position none
-/// of those cover, and `undo_floor` marks where exact resolution ends and
-/// `db_enqueue::move_undo_pos`'s forward re-base takes over
-/// (`DocDb::undo_offset`/`undo_floor`/`appends_sent`'s own doc comments).
-/// For a `Restarted` same-row re-baseline, writer position 0 is
-/// `bridge_seq` or `0` — a heal-adopt reload journals no bridge, so
-/// position 0 does NOT reconstruct to the buffer and the floor starts at 1.
+/// `doc_db` already carries a FRESH [`rune_db::BindingToken`]
+/// (`DocDb::new`'s own doc comment) — this function's job is deciding
+/// whether to KEEP it (`BindMode`).
 ///
-/// A `Preserved` bind carries the whole mapping across instead: the local
-/// journal gained nothing across such a load, so re-deriving would renumber
-/// positions the writer still resolves the old way and a deep undo would
-/// land on a neighbouring seq rather than its own.
+/// A `Preserved` bind (a same-row re-baseline that touched neither the
+/// buffer nor the durable journal) carries the prior `DocDb`'s whole
+/// mapping across instead, discarding the fresh token: the local journal
+/// gained nothing across such a load, so switching tokens would abandon a
+/// numbering the writer still holds and can still resolve exactly.
+///
+/// A `Restarted` bind on the SAME row (an ordinary reload of an
+/// already-bound document — `id`'s buffer may now differ from
+/// `row_content`, e.g. #120's external-reload-under-a-clean-tab) keeps the
+/// fresh token and sets `id`'s `diverged`/`synced_content` from a direct
+/// comparison against `row_content`: `db_enqueue::resolve_drift` is what
+/// actually keeps every future edit's coordinates correct against the
+/// row's real reconstruction from here on, never this bind itself — no
+/// eager bridge is journaled, so `undo_offset`/`undo_floor` are the
+/// trivial identity (position `0` under the fresh token IS this bind's own
+/// `token_base_seq`, exactly what `row_content` already is).
 ///
 /// Binding to a DIFFERENT row — a first bind, or a hand-off rebind whose
 /// buffer content never flowed through the new row's journal — must
@@ -256,7 +264,9 @@ struct PriorBinding {
 /// synthetic replace-all bridge is computed and DEFERRED onto
 /// `DocDb::pending_rebase` (its own doc comment: journaling it eagerly
 /// would rewrite a reconstruction a never-edited re-baseline bind must
-/// leave intact). The window steps replay verbatim only while they still
+/// leave intact) — `undo_floor` becomes `1`, since that bridge, once
+/// flushed, occupies the fresh token's own first entry, one ahead of
+/// position `0`. The window steps replay verbatim only while they still
 /// mirror the whole local journal; a journal that moved underneath them
 /// (an undo inside the `Binding` window, or a window opened over an
 /// existing journal) makes their coordinates unreplayable, so they are
@@ -273,12 +283,7 @@ fn bind_document_row(
     mode: BindMode,
 ) -> Vec<ReplicaStep> {
     let new_db_id = doc_db.db_id;
-    let in_flight_appends = crate::db_enqueue::journal_i64(
-        app.db_ops
-            .values()
-            .filter(|op| op.doc == id && op.is_append)
-            .count(),
-    );
+    app.set_shared_content(new_db_id, row_content);
     let Some(doc) = app.doc_mut(id) else {
         return Vec::new();
     };
@@ -286,9 +291,12 @@ fn bind_document_row(
         db_id: db.db_id,
         last_known_seq: db.last_known_seq,
         pending_rebase: db.pending_rebase.take(),
+        token: db.token,
+        token_base_seq: db.token_base_seq,
         undo_offset: db.undo_offset,
         undo_floor: db.undo_floor,
-        appends_sent: db.appends_sent,
+        diverged: db.diverged,
+        synced_content: db.synced_content.clone(),
     });
     let window = doc.replica.take_window();
     let mut pending = window.pending;
@@ -297,14 +305,18 @@ fn bind_document_row(
         Some(prior) if prior.db_id == new_db_id => {
             match mode {
                 BindMode::Preserved => {
-                    doc_db.appends_sent = prior.appends_sent;
+                    doc_db.token = prior.token;
+                    doc_db.token_base_seq = prior.token_base_seq;
                     doc_db.undo_offset = prior.undo_offset;
                     doc_db.undo_floor = prior.undo_floor;
+                    doc_db.diverged = prior.diverged;
+                    doc_db.synced_content = prior.synced_content;
                 }
-                BindMode::Restarted { adopted } => {
-                    doc_db.appends_sent = in_flight_appends;
-                    doc_db.undo_offset = pos - in_flight_appends;
-                    doc_db.undo_floor = if adopted { in_flight_appends + 1 } else { 1 };
+                BindMode::Restarted => {
+                    doc_db.diverged = doc.buffer.content() != row_content;
+                    doc_db.synced_content = row_content.to_string();
+                    doc_db.undo_offset = pos;
+                    doc_db.undo_floor = 0;
                 }
             }
             doc_db.last_known_seq = doc_db.last_known_seq.max(prior.last_known_seq);
@@ -339,6 +351,7 @@ fn bind_document_row(
                 doc_db.undo_floor = 1;
                 bridged = 1;
             }
+            doc_db.synced_content = row_content.to_string();
             let replayed = crate::db_enqueue::journal_i64(pending.len());
             doc_db.undo_offset = pos - replayed - bridged;
             doc.replica = Replica::Bound(doc_db);
@@ -429,7 +442,7 @@ pub fn bind_scratch_doc(app: &mut App, id: DocumentId, row_id: i64) {
         id,
         DocDb::new(row_id, PublishMode::CreateOnly, rune_db::Seq(0)),
         "",
-        BindMode::Restarted { adopted: false },
+        BindMode::Restarted,
     );
     app.install_or_join_file_binding(row_id, None);
     crate::db_enqueue::replay_pending(app, id, pending);
@@ -475,13 +488,7 @@ pub fn adopt_scratch_doc(
 /// bootstrap `Load` reported the row reconstructs to (`recovered`), so an
 /// un-adopted divergence still gets its re-base bridge.
 pub fn bind_loaded_doc(app: &mut App, id: DocumentId, doc_db: DocDb, row_content: &str) {
-    let pending = bind_document_row(
-        app,
-        id,
-        doc_db,
-        row_content,
-        BindMode::Restarted { adopted: false },
-    );
+    let pending = bind_document_row(app, id, doc_db, row_content, BindMode::Restarted);
     crate::db_enqueue::replay_pending(app, id, pending);
 }
 

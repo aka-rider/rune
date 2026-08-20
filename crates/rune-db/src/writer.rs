@@ -42,26 +42,29 @@ use rune_vfs::Vfs;
 use crate::Error;
 #[cfg(test)]
 use crate::ids::SessionId;
-use crate::ids::{DocId, Seq};
+use crate::ids::{BindingToken, DocId, Seq};
 use crate::writer_exec as exec;
 use crate::writer_lifecycle::{IDLE_TIMEOUT, fatal, run_idle_maintenance};
 pub(crate) use crate::writer_ops::OpKind;
 pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
 
-/// This writer thread's own record of one bound document's LOCAL
+/// This writer thread's own record of one [`BindingToken`]'s LOCAL
 /// undo-position numbering, scoped to THIS process's session (never shared
-/// or persisted — a fresh `writer_loop` starts every doc over from an empty
-/// map, exactly matching a fresh session's own `rune_core::undo::Journal`
-/// starting at position 0). `base_seq` is the durable seq local position `0`
-/// resolves to (this session's durable journal head at the moment `doc_id`
-/// was bound — a cross-session inheritance bridge edit if one was journaled
-/// at load, else the position this session found the doc at); `local_seq[i]`
-/// is the durable seq the `(i + 1)`-th `AppendEdit` THIS writer thread has
-/// run for `doc_id` landed at, in the order they ran. Rebuilding this table
-/// from ops this thread has ALREADY executed — rather than trusting a value
-/// carried in from the app, which can only know an op's outcome once its ack
-/// has round-tripped — is what makes `OpKind::MoveUndoPos`'s resolution
-/// exact instead of a guess at an in-flight ack.
+/// or persisted). A token is minted fresh by the app on every bind/rebind
+/// (`rune-tui`'s `DocDb::new`), so this map starts every token over from an
+/// empty entry, exactly matching a fresh binding's own `rune_core::undo::
+/// Journal` starting at local position 0 — and two tokens sharing one
+/// [`DocId`] (unreachable via any real open path, but not structurally
+/// prevented) each get their own independent entry rather than racing to
+/// fill one shared sequence. `base_seq` is the durable seq local position
+/// `0` resolves to (the app's own `token_base_seq`, carried on every op that
+/// might be this token's first); `local_seq[i]` is the durable seq the
+/// `(i + 1)`-th `AppendEdit` THIS writer thread has run for this token
+/// landed at, in the order they ran. Rebuilding this table from ops this
+/// thread has ALREADY executed — rather than trusting a value carried in
+/// from the app, which can only know an op's outcome once its ack has
+/// round-tripped — is what makes `OpKind::MoveUndoPos`'s resolution exact
+/// instead of a guess at an in-flight ack.
 #[derive(Default)]
 pub(crate) struct DocUndoState {
     pub(crate) base_seq: Seq,
@@ -70,12 +73,11 @@ pub(crate) struct DocUndoState {
 
 impl DocUndoState {
     /// The durable seq LOCAL undo position `local_pos` resolves to, or
-    /// `None` if this state has no entry for it — either `doc_id` was never
-    /// bound (no `Load`/`CreateScratch` this writer thread ever ran for it)
-    /// or `local_pos` is deeper than any `AppendEdit` this thread has
-    /// actually run, both of which are invariant violations the writer's
-    /// single FIFO queue should make unreachable (see `OpKind::MoveUndoPos`'s
-    /// doc comment) — never silently approximated.
+    /// `None` if this state has no entry for it — `local_pos` is deeper than
+    /// any `AppendEdit` this thread has actually run for this token, an
+    /// invariant violation the writer's single FIFO queue should make
+    /// unreachable (see `OpKind::MoveUndoPos`'s doc comment) — never
+    /// silently approximated.
     pub(crate) fn resolve(&self, local_pos: i64) -> Option<Seq> {
         if local_pos == 0 {
             return Some(self.base_seq);
@@ -93,6 +95,21 @@ impl DocUndoState {
         });
         self.local_seq.push(seq);
     }
+}
+
+/// Looks up `token`'s [`DocUndoState`], seeding it with `base_seq` on first
+/// sight — the lazy counterpart to the old design's `Load`/`CreateScratch`-
+/// time seeding: a token's numbering starts the instant its first op
+/// reaches the front of the writer's queue, whichever op that is.
+pub(crate) fn ensure_token_state(
+    undo_state: &mut HashMap<BindingToken, DocUndoState>,
+    token: BindingToken,
+    base_seq: Seq,
+) -> &mut DocUndoState {
+    undo_state.entry(token).or_insert_with(|| DocUndoState {
+        base_seq,
+        local_seq: Vec::new(),
+    })
 }
 
 /// One write operation queued to the writer thread.
@@ -172,7 +189,7 @@ fn writer_loop(
 ) {
     // Owned by this thread alone, alongside `conn` — see `DocUndoState`'s
     // own doc comment.
-    let mut undo_state: HashMap<DocId, DocUndoState> = HashMap::new();
+    let mut undo_state: HashMap<BindingToken, DocUndoState> = HashMap::new();
     loop {
         match receiver.recv_timeout(idle_timeout) {
             Ok(op) => {
@@ -237,7 +254,7 @@ fn execute_op(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     kind: OpKind,
-    undo_state: &mut HashMap<DocId, DocUndoState>,
+    undo_state: &mut HashMap<BindingToken, DocUndoState>,
 ) -> Result<OpOutcome, Error> {
     match kind {
         #[cfg(test)]
@@ -257,6 +274,8 @@ fn execute_op(
             edits,
             cursors_before,
             cursors_after,
+            token,
+            token_base_seq,
         } => exec::append_edit(
             conn,
             undo_state,
@@ -267,13 +286,25 @@ fn execute_op(
                 edits,
                 cursors_before,
                 cursors_after,
+                token,
+                token_base_seq,
             },
         ),
         OpKind::MoveUndoPos {
             session_id,
             doc_id,
+            token,
+            token_base_seq,
             local_pos,
-        } => exec::move_undo_pos(conn, undo_state, session_id, doc_id, local_pos),
+        } => exec::move_undo_pos(
+            conn,
+            undo_state,
+            session_id,
+            doc_id,
+            token,
+            token_base_seq,
+            local_pos,
+        ),
         OpKind::CreateSnapshot {
             session_id,
             now,
@@ -383,18 +414,15 @@ fn execute_op(
             path,
             now,
             source,
-            rebaseline_of,
         } => exec::load(
             conn,
             vfs,
-            undo_state,
             exec::LoadArgs {
                 session_id,
                 liveness_check,
                 path,
                 now,
                 source,
-                rebaseline_of,
             },
         ),
         OpKind::ResolveAdopt {
@@ -411,7 +439,7 @@ fn execute_op(
             session_id,
             now,
             intended_path,
-        } => exec::create_scratch(conn, undo_state, session_id, now, intended_path),
+        } => exec::create_scratch(conn, session_id, now, intended_path),
         OpKind::GcEmptyScratch {
             keep_id,
             liveness_check,

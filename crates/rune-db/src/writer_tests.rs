@@ -106,6 +106,8 @@ fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
                 }],
                 cursors_before: vec![],
                 cursors_after: vec![],
+                token: crate::ids::BindingToken::next(),
+                token_base_seq: Seq(0),
             },
         })
         .expect("enqueue AppendEdit");

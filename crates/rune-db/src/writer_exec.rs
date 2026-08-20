@@ -11,17 +11,16 @@ use std::time::SystemTime;
 
 use rusqlite::Connection;
 
-use rune_core::assert_invariant;
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
-use crate::ids::{BlobHash, DocId, ObsId, SessionId};
+use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
 use crate::materialize::{MaterializeOutcome, MaterializeTarget};
 use crate::retry;
 use crate::store::LivenessCheckFn;
-use crate::writer::DocUndoState;
+use crate::writer::{DocUndoState, ensure_token_state};
 use crate::writer_ops::{LoadSource, OpOutcome};
 
 // ---------------------------------------------------------------------
@@ -42,11 +41,13 @@ pub(crate) struct AppendEditArgs {
     pub(crate) edits: Vec<AppliedEdit>,
     pub(crate) cursors_before: Vec<Cursor>,
     pub(crate) cursors_after: Vec<Cursor>,
+    pub(crate) token: BindingToken,
+    pub(crate) token_base_seq: Seq,
 }
 
 pub(crate) fn append_edit(
     conn: &mut Connection,
-    undo_state: &mut HashMap<DocId, DocUndoState>,
+    undo_state: &mut HashMap<BindingToken, DocUndoState>,
     args: AppendEditArgs,
 ) -> Result<OpOutcome, Error> {
     let seq = retry::with_retry(conn, |tx| {
@@ -62,28 +63,29 @@ pub(crate) fn append_edit(
     })?;
     // A real edit batch (never empty — see `db_enqueue::append_edit`'s
     // caller) always lands a genuine row, so `seq` is always > 0
-    // here; recording it extends this doc's local-position mapping
+    // here; recording it extends this token's local-position mapping
     // by exactly one entry, matching the ONE local `Journal::push`
     // this `AppendEdit` replicates. With coalescing gone, every
     // `append_edit` call lands a fresh row, so `seq` is now always
     // strictly greater than the previous entry — a violation would
     // mean the journal grew a coalescing path again without
     // updating this mapping.
-    let state = undo_state.entry(args.doc_id).or_default();
+    let state = ensure_token_state(undo_state, args.token, args.token_base_seq);
     state.push_seq(args.doc_id, seq);
     Ok(OpOutcome::Seq(seq))
 }
 
 pub(crate) fn move_undo_pos(
     conn: &mut Connection,
-    undo_state: &HashMap<DocId, DocUndoState>,
+    undo_state: &mut HashMap<BindingToken, DocUndoState>,
     session_id: SessionId,
     doc_id: DocId,
+    token: BindingToken,
+    token_base_seq: Seq,
     local_pos: i64,
 ) -> Result<OpOutcome, Error> {
-    let target_seq = undo_state
-        .get(&doc_id)
-        .and_then(|state| state.resolve(local_pos))
+    let target_seq = ensure_token_state(undo_state, token, token_base_seq)
+        .resolve(local_pos)
         .ok_or_else(|| {
             Error::NotFound(format!(
                 "move_undo_pos: doc {doc_id} has no durable seq for local position {local_pos}"
@@ -298,13 +300,11 @@ pub(crate) struct LoadArgs {
     pub(crate) path: PathBuf,
     pub(crate) now: SystemTime,
     pub(crate) source: LoadSource,
-    pub(crate) rebaseline_of: Option<DocId>,
 }
 
 pub(crate) fn load(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    undo_state: &mut HashMap<DocId, DocUndoState>,
     args: LoadArgs,
 ) -> Result<OpOutcome, Error> {
     let result = match args.source {
@@ -333,33 +333,6 @@ pub(crate) fn load(
             )?
         }
     };
-    // Every load but a preserved same-row re-baseline is a fresh binding —
-    // this document's LOCAL undo-journal position
-    // `0` (no local pushes yet this binding) durably predates
-    // `bridge_seq` if this load journaled a cross-session
-    // inheritance bridge edit, else it predates whatever this
-    // session already found at `doc_id` (0 for a genuinely fresh
-    // document). Replaces, never merges with, any stale entry a
-    // PRIOR binding of this same `doc_id` left behind (a close then
-    // reopen within one process resets local position numbering
-    // right along with it).
-    let same_row_rebaseline = args.rebaseline_of == Some(result.doc_id);
-    let known = undo_state.contains_key(&result.doc_id);
-    assert_invariant!(!same_row_rebaseline || known, || {
-        format!(
-            "load doc {}: asked to preserve a local numbering this thread never started",
-            result.doc_id
-        )
-    });
-    if !(same_row_rebaseline && known) {
-        undo_state.insert(
-            result.doc_id,
-            DocUndoState {
-                base_seq: result.bridge_seq.unwrap_or(crate::ids::Seq(0)),
-                local_seq: Vec::new(),
-            },
-        );
-    }
     Ok(OpOutcome::Load(Box::new(result)))
 }
 
@@ -386,7 +359,6 @@ pub(crate) fn resolve_abandon(
 
 pub(crate) fn create_scratch(
     conn: &mut Connection,
-    undo_state: &mut HashMap<DocId, DocUndoState>,
     session_id: SessionId,
     now: SystemTime,
     intended_path: Option<String>,
@@ -397,9 +369,6 @@ pub(crate) fn create_scratch(
         now,
         intended_path.as_deref(),
     )?;
-    // A brand-new row, never bound before — local position `0`
-    // starts at durable seq `0`, same as `Load`'s doc comment.
-    undo_state.insert(id, DocUndoState::default());
     Ok(OpOutcome::ScratchDocId(id))
 }
 

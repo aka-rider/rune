@@ -8,7 +8,7 @@ use std::path::Path;
 use rune_vfs::Stat;
 
 use crate::Error;
-use crate::ids::{BlobHash, DocId, ObsId};
+use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq};
 use crate::materialize::MaterializeTarget;
 use crate::store::Store;
 use crate::writer::OpKind;
@@ -21,10 +21,15 @@ impl Store {
     /// produced arrives asynchronously as `DbEvent::Ok.result` on the
     /// `on_event` callback this `Store` was constructed with; this method
     /// only returns the op id used to correlate that completion. See
-    /// `journal::append_edit` for the transaction itself.
+    /// `journal::append_edit` for the transaction itself. `token`/
+    /// `token_base_seq` are the caller's own `BindingToken` and the durable
+    /// seq that token's local position `0` resolves to — see
+    /// `OpKind::AppendEdit`'s own doc comment.
     pub fn append_edit(
         &self,
         doc_id: DocId,
+        token: BindingToken,
+        token_base_seq: Seq,
         edits: &[rune_core::buffer::AppliedEdit],
         cursors_before: &[rune_core::cursor::Cursor],
         cursors_after: &[rune_core::cursor::Cursor],
@@ -37,6 +42,8 @@ impl Store {
             edits: edits.to_vec(),
             cursors_before: cursors_before.to_vec(),
             cursors_after: cursors_after.to_vec(),
+            token,
+            token_base_seq,
         })
     }
 
@@ -45,11 +52,20 @@ impl Store {
     /// after the corresponding buffer edit has already succeeded. The
     /// writer thread resolves `local_pos` to the exact durable seq itself
     /// at execution time (`OpKind::MoveUndoPos`'s own doc comment) — this
-    /// method never resolves it.
-    pub fn move_undo_pos(&self, doc_id: DocId, local_pos: i64) -> Result<u64, Error> {
+    /// method never resolves it. `token`/`token_base_seq` mirror
+    /// `append_edit`'s own.
+    pub fn move_undo_pos(
+        &self,
+        doc_id: DocId,
+        token: BindingToken,
+        token_base_seq: Seq,
+        local_pos: i64,
+    ) -> Result<u64, Error> {
         self.enqueue(OpKind::MoveUndoPos {
             session_id: self.session_id,
             doc_id,
+            token,
+            token_base_seq,
             local_pos,
         })
     }
@@ -280,22 +296,10 @@ impl Store {
     /// Enqueues a `Load` op reading `path` fresh from disk. This `Store`'s
     /// currently-installed liveness check (`set_liveness_check`) travels
     /// with the op so the writer thread never needs to touch `Store`'s own
-    /// mutex.
+    /// mutex. Also the re-baseline load's own enqueue: undo-position
+    /// numbering is entirely the app's own `BindingToken` concern now, so a
+    /// re-baseline `Load` needs nothing different from an ordinary one.
     pub fn load(&self, path: &Path) -> Result<u64, Error> {
-        self.enqueue_fresh_load(path, None)
-    }
-
-    /// Enqueues a `Load` op re-baselining a document this caller is ALREADY
-    /// bound to: `expect_doc` is that binding's row, and naming it here is
-    /// what keeps the row's local undo-position numbering alive across the
-    /// load (`OpKind::Load::rebaseline_of`). A load that resolves `path` to
-    /// some OTHER row restarts the numbering exactly like [`Store::load`]
-    /// does — the caller re-derives its own mapping in that case too.
-    pub fn load_rebaseline(&self, path: &Path, expect_doc: DocId) -> Result<u64, Error> {
-        self.enqueue_fresh_load(path, Some(expect_doc))
-    }
-
-    fn enqueue_fresh_load(&self, path: &Path, rebaseline_of: Option<DocId>) -> Result<u64, Error> {
         let now = self.now();
         let liveness_check = self.liveness_check();
         self.enqueue(OpKind::Load {
@@ -304,7 +308,6 @@ impl Store {
             path: path.to_path_buf(),
             now,
             source: crate::writer_ops::LoadSource::Fresh,
-            rebaseline_of,
         })
     }
 
@@ -322,7 +325,6 @@ impl Store {
             path: path.to_path_buf(),
             now,
             source: crate::writer_ops::LoadSource::Taken(sighting),
-            rebaseline_of: None,
         })
     }
 
