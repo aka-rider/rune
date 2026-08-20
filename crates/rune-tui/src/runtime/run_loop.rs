@@ -24,12 +24,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
 
     let mut fatal: io::Result<()> = Ok(());
 
-    while let Ok(first) = rx.recv() {
-        let mut batch = vec![first];
-        while let Ok(msg) = rx.try_recv() {
-            batch.push(msg);
-        }
-
+    while let Some(batch) = drain_batch(&rx) {
         match turn(app, batch, &mut sink, &tx, &mut save_handles) {
             Ok(Turn::Continue) => {}
             Ok(Turn::Quit) => break,
@@ -43,12 +38,23 @@ pub fn run(app: &mut App) -> io::Result<()> {
     let flushed = sink
         .transmits
         .flush_escapes_abandoning_images(|bytes| sink.guard.write_raw(bytes));
-    for handle in save_handles.drain(..) {
-        let _ = handle.join();
-    }
-    exit_settle::settle_pending_materialize(app, &rx);
+    exit_settle::join_save_handles(app, &rx, &mut save_handles);
 
     fatal.and(flushed)
+}
+
+pub const MAX_TURN_BATCH: usize = 256;
+
+pub fn drain_batch(rx: &mpsc::Receiver<Msg>) -> Option<Vec<Msg>> {
+    let first = rx.recv().ok()?;
+    let mut batch = vec![first];
+    while batch.len() < MAX_TURN_BATCH {
+        match rx.try_recv() {
+            Ok(msg) => batch.push(msg),
+            Err(_) => break,
+        }
+    }
+    Some(batch)
 }
 
 enum Turn {

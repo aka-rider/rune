@@ -202,7 +202,7 @@ pub use effects::{Effects, Outbound};
 use effects::{Sink, discharge};
 
 mod run_loop;
-pub use run_loop::run;
+pub use run_loop::{MAX_TURN_BATCH, drain_batch, run};
 use run_loop::{apply, spawn_cmd, spawn_input_reader};
 
 mod io_cmd;
