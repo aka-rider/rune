@@ -221,4 +221,3 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
         keyword: keyword.to_string(),
     })
 }
-

@@ -15,7 +15,9 @@ pub enum Graphics {
     Embeds(EmbedSet),
 }
 
-pub(crate) use decode_cmd::{handle_image_decoded, handle_image_encoded, reload_image, schedule_image_decode};
+pub(crate) use decode_cmd::{
+    handle_image_decoded, handle_image_encoded, reload_image, schedule_image_decode,
+};
 pub(crate) use embed::{handle_embed_decoded, handle_embed_encoded, reload_embeds, sync_embeds};
 pub(crate) use resize_refit::refit_on_resize;
 

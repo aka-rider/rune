@@ -135,7 +135,10 @@ fn a_successful_decode_spawns_an_encode_cmd_and_stays_in_flight() {
         image.in_flight.is_some(),
         "the encode is now the outstanding async op"
     );
-    assert!(effects.transmits().is_empty(), "no transmit until encode replies");
+    assert!(
+        effects.transmits().is_empty(),
+        "no transmit until encode replies"
+    );
     assert_eq!(effects.cmds.len(), 1);
     assert_eq!(effects.cmds[0].kind(), CmdKind::ImageEncode);
 }
@@ -401,7 +404,10 @@ fn a_stale_encode_reply_is_dropped_without_disturbing_the_live_image() {
     let mut effects = Effects::default();
     reload_image(&mut app, id, &mut effects);
     let fresh_generation = app.doc(id).unwrap().image().unwrap().in_flight;
-    assert!(fresh_generation.is_some(), "test setup: reload must be in flight");
+    assert!(
+        fresh_generation.is_some(),
+        "test setup: reload must be in flight"
+    );
 
     let mut stale_effects = Effects::default();
     handle_image_encoded(
@@ -409,8 +415,14 @@ fn a_stale_encode_reply_is_dropped_without_disturbing_the_live_image() {
         id,
         mint_gen(0),
         true,
-        Ok(rune_image::fit_and_encode(&decode_x_png(), 1, live_cells.cols, live_cells.rows, CellSize { w: 8, h: 16 })
-            .expect("encode")),
+        Ok(rune_image::fit_and_encode(
+            &decode_x_png(),
+            1,
+            live_cells.cols,
+            live_cells.rows,
+            CellSize { w: 8, h: 16 },
+        )
+        .expect("encode")),
         &mut stale_effects,
     );
 

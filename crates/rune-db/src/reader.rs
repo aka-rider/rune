@@ -9,18 +9,10 @@ use crate::Error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderRequestKind {
     Ping,
-    GetBlob {
-        hash: String,
-    },
-    RecentSearches {
-        limit: u32,
-    },
-    RecentDocuments {
-        limit: u32,
-    },
-    RecentCommands {
-        limit: u32,
-    },
+    GetBlob { hash: String },
+    RecentSearches { limit: u32 },
+    RecentDocuments { limit: u32 },
+    RecentCommands { limit: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

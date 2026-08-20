@@ -28,9 +28,7 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                     let declared = usize::from(cell.width);
                     let ratatui_width = cell.text.cell_width() as usize;
                     declared == ratatui_width
-                        || (declared == 1
-                            && ratatui_width == 0
-                            && cell.text.chars().count() > 1)
+                        || (declared == 1 && ratatui_width == 0 && cell.text.chars().count() > 1)
                 },
                 || {
                     format!(

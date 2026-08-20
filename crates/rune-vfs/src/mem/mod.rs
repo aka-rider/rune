@@ -281,7 +281,8 @@ impl Vfs for Mem {
         #[cfg(any(test, feature = "fault-injection"))]
         {
             let failing = self
-                .faults.resolve_failures
+                .faults
+                .resolve_failures
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if failing.contains(&normalized) {

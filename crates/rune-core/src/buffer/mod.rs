@@ -47,8 +47,12 @@ pub enum BufferError {
         end: usize,
         len: usize,
     },
-    SplitsRune { offset: usize },
-    DuplicateEditStart { start: usize },
+    SplitsRune {
+        offset: usize,
+    },
+    DuplicateEditStart {
+        start: usize,
+    },
 }
 
 impl fmt::Display for BufferError {

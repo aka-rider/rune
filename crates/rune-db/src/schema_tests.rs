@@ -326,8 +326,7 @@ fn column_source_segment_ignores_a_comma_sitting_inside_a_line_comment() {
 fn column_source_segment_locates_a_columns_own_definition_in_the_real_schema() {
     let canonical = Connection::open_in_memory().expect("open");
     canonical.execute_batch(SCHEMA).expect("apply real schema");
-    let create_sql =
-        table_create_sql(&canonical, "observations").expect("read real create sql");
+    let create_sql = table_create_sql(&canonical, "observations").expect("read real create sql");
 
     let segment = column_source_segment(&create_sql, "parent_a")
         .expect("a column's own definition must be found in the schema this crate ships");

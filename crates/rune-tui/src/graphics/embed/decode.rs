@@ -106,9 +106,9 @@ pub(crate) fn handle_embed_decoded(
         decoded: Arc::clone(&decoded),
         cells,
     };
-    effects
-        .cmds
-        .push(encode_embed_cmd(id, decoded, img_id, cells, cell, generation));
+    effects.cmds.push(encode_embed_cmd(
+        id, decoded, img_id, cells, cell, generation,
+    ));
 }
 
 pub(crate) fn handle_embed_encoded(

@@ -89,7 +89,13 @@ mod tests {
                     result,
                 }) => {
                     let mut effects = Effects::default();
-                    crate::graphics::handle_image_decoded(app, doc, generation, result, &mut effects);
+                    crate::graphics::handle_image_decoded(
+                        app,
+                        doc,
+                        generation,
+                        result,
+                        &mut effects,
+                    );
                     settle_cmds(app, effects.cmds);
                 }
                 Some(crate::runtime::Msg::ImageEncoded {
@@ -192,7 +198,14 @@ mod tests {
             unreachable!("expected an ImageEncoded reply");
         };
         let mut stale_reply = Effects::default();
-        crate::graphics::handle_image_encoded(&mut app, doc, generation, was_live, result, &mut stale_reply);
+        crate::graphics::handle_image_encoded(
+            &mut app,
+            doc,
+            generation,
+            was_live,
+            result,
+            &mut stale_reply,
+        );
 
         assert!(
             stale_reply.transmits().is_empty(),

@@ -20,13 +20,12 @@ fn seed_blob(tx: &Transaction<'_>, content: &str) -> String {
 #[test]
 fn get_observation_missing_id_is_an_error_not_a_default() {
     let mut conn = open();
-    let session_id =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
     let tx = conn.transaction().expect("tx");
     let doc_id = seed_doc(&tx);
     let _ = session_id;
-    let err = get_observation(&tx, ObsId::new(999).expect("nonzero"))
-        .expect_err("missing id must error");
+    let err =
+        get_observation(&tx, ObsId::new(999).expect("nonzero")).expect_err("missing id must error");
     assert!(matches!(err, Error::NotFound(_)));
     let _ = doc_id;
 }
@@ -34,10 +33,8 @@ fn get_observation_missing_id_is_an_error_not_a_default() {
 #[test]
 fn newest_observation_is_unscoped_across_sessions() {
     let mut conn = open();
-    let session_a =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
-    let session_b =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+    let session_a = crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+    let session_b = crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
     let tx = conn.transaction().expect("tx");
     let doc_id = seed_doc(&tx);
     let hash_a = seed_blob(&tx, "content a");
@@ -87,8 +84,7 @@ fn newest_observation_is_unscoped_across_sessions() {
 #[test]
 fn ancestor_at_self_reference_guard_excludes_only_at_exact_seq() {
     let mut conn = open();
-    let session_id =
-        crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
     let tx = conn.transaction().expect("tx");
     let doc_id = seed_doc(&tx);
     let hash = seed_blob(&tx, "content");

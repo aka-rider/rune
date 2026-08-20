@@ -3,8 +3,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::path_util::{lexically_normalize, not_found};
 use crate::FileKind;
+use crate::path_util::{lexically_normalize, not_found};
 
 use super::{Mem, MemFile};
 
@@ -75,7 +75,8 @@ impl Mem {
     pub fn fail_after(&self, op: OpKind, kind: io::ErrorKind) {
         let err = io::Error::new(kind, format!("fail_after({op:?}) triggered"));
         let mut guard = self
-            .faults.fail_after
+            .faults
+            .fail_after
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((op, err));
@@ -87,7 +88,8 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub(super) fn take_failure(&self, op: OpKind) -> io::Result<()> {
         let mut guard = self
-            .faults.fail_next
+            .faults
+            .fail_next
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match guard.as_ref() {
@@ -162,7 +164,8 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub fn mutate_after_next_stat(&self, path: &Path, bytes: Vec<u8>) {
         let mut guard = self
-            .faults.mutate_after_stat
+            .faults
+            .mutate_after_stat
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some((path.to_path_buf(), bytes));
@@ -179,7 +182,8 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub fn set_churning(&self, path: &Path, churning: bool) {
         let mut guard = self
-            .faults.churning
+            .faults
+            .churning
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if churning {
@@ -213,7 +217,8 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub(super) fn apply_pending_mutation(&self, path: &Path) {
         let is_churning = self
-            .faults.churning
+            .faults
+            .churning
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(path);
@@ -224,7 +229,8 @@ impl Mem {
         }
         let armed = {
             let mut guard = self
-                .faults.mutate_after_stat
+                .faults
+                .mutate_after_stat
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match guard.as_ref() {
@@ -281,7 +287,8 @@ impl Mem {
     #[cfg(any(test, feature = "fault-injection"))]
     pub fn fail_resolve(&self, path: &Path) {
         let mut guard = self
-            .faults.resolve_failures
+            .faults
+            .resolve_failures
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.insert(lexically_normalize(path));

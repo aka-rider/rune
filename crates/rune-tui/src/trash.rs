@@ -17,7 +17,9 @@ use crate::workspace;
 pub(crate) enum TrashState {
     #[default]
     Idle,
-    Pending { generation: TrashGen },
+    Pending {
+        generation: TrashGen,
+    },
 }
 
 pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
@@ -123,7 +125,10 @@ pub(crate) fn handle_trash_done(
     result: Result<(), CmdError>,
     effects: &mut Effects,
 ) {
-    let TrashState::Pending { generation: expected } = &app.trash else {
+    let TrashState::Pending {
+        generation: expected,
+    } = &app.trash
+    else {
         return;
     };
     if generation != *expected {

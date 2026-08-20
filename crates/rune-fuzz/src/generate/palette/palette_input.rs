@@ -494,5 +494,3 @@ pub(in crate::generate) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
         sup: true,
     },
 };
-
-

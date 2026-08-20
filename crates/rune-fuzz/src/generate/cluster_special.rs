@@ -6,12 +6,14 @@ use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 
 use crate::action::Action;
 
-use super::arb::{arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_mouse_button, arb_mouse_cell, arb_mouse_input, arb_resize};
+use super::arb::{
+    arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_mouse_button, arb_mouse_cell,
+    arb_mouse_input, arb_resize,
+};
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL,
-    FILESEARCH_KEY_SUP, MERGE_KEY, MERGE_RESOLVE_KEYS,
-    TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE,
+    FILESEARCH_KEY_SUP, MERGE_KEY, MERGE_RESOLVE_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE,
 };
 
 pub(super) fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
