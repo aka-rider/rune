@@ -9,6 +9,9 @@ pub mod lang;
 pub mod registry;
 
 pub use detect::{Detected, detect};
-pub use highlight::{HighlightResult, MAX_SPANS, ParsedTree, highlight, highlight_range, parse};
+pub use highlight::{
+    HighlightResult, MAX_SPANS, ParsedTree, capture_is_accounted_for, declared_capture_names,
+    highlight, highlight_range, parse,
+};
 pub use lang::resolve;
 pub use registry::registry;

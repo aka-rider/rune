@@ -14,9 +14,8 @@
 //! on the render path once per frame, scoped to whatever byte range is
 //! currently visible.
 
-use std::collections::HashSet;
 use std::ops::{ControlFlow, Range};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use rune_core::assert_invariant;
@@ -38,108 +37,77 @@ pub const MAX_SPANS: usize = 100_000;
 /// both.
 static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
 
-/// Capture names a grammar's bundled query already used before this
-/// mechanism existed, that the closed scope table has no entry (or
-/// dotted-prefix ancestor) for. [`note_unresolved_capture`] records every
-/// occurrence in [`UNRESOLVED_CAPTURES`] regardless, but only asserts on a
-/// pair that is NOT here — real source text hits this debt constantly (an
-/// `@escape` inside almost any string literal, for instance), so treating
-/// every occurrence as a hard failure would turn ordinary highlighting into
-/// a crash. Extending the closed vocabulary to cover one of these is a
-/// theming decision (it also needs a `Style` wherever `rune-tui`'s theme
-/// builds its `scopes` vector), not a mechanical one — deleting an entry
-/// here without doing that work would silently regress highlighting for
-/// whatever capture it names.
-pub const KNOWN_UNRESOLVED_CAPTURES: &[(&str, &str)] = &[
-    ("rust", "escape"),
-    ("json", "escape"),
-    ("bash", "embedded"),
-    ("python", "embedded"),
-    ("python", "escape"),
-    ("javascript", "embedded"),
-    ("go", "escape"),
-    ("c", "delimiter"),
-    ("typescript", "embedded"),
-    ("tsx", "embedded"),
-    ("csharp", "module"),
-    ("php", "module"),
-    ("php", "module.builtin"),
-    ("ruby", "embedded"),
-    ("ruby", "escape"),
-    ("sql", "conditional"),
-    ("sql", "field"),
-    ("sql", "float"),
-    ("sql", "parameter"),
-    ("sql", "spell"),
-    ("sql", "storageclass"),
-    ("kotlin", "_class"),
-    ("kotlin", "_function"),
-    ("kotlin", "character"),
-    ("kotlin", "conditional"),
-    ("kotlin", "exception"),
-    ("kotlin", "float"),
-    ("kotlin", "include"),
-    ("kotlin", "namespace"),
-    ("kotlin", "none"),
-    ("kotlin", "parameter"),
-    ("kotlin", "repeat"),
-    ("swift", "character.special"),
-    ("swift", "spell"),
+// Grammar crates ship Neovim-convention capture names the closed scope
+// vocabulary never registers; each one maps onto the scope it means.
+const CAPTURE_ALIASES: &[(&str, &str)] = &[
+    ("escape", "string.escape"),
+    ("module", "type"),
+    ("module.builtin", "type.builtin"),
+    ("namespace", "type"),
+    ("parameter", "variable.parameter"),
+    ("field", "variable.member"),
+    ("float", "number"),
+    ("conditional", "keyword"),
+    ("repeat", "keyword"),
+    ("exception", "keyword"),
+    ("include", "keyword"),
+    ("storageclass", "keyword"),
+    ("character", "string"),
+    ("character.special", "string.escape"),
+    ("delimiter", "punctuation.delimiter"),
 ];
 
-/// Every `(language, capture name)` pair already reported by
-/// [`note_unresolved_capture`] — the set that turns a per-keystroke flood
-/// into a one-time signal. A grammar's query is fixed for the process's
-/// lifetime (compiled once by `registry()` and never recompiled), so a
-/// capture that fails to resolve today will fail identically on every later
-/// call; recording it once is exactly as informative as recording it every
-/// time and immeasurably cheaper.
-static UNRESOLVED_CAPTURES: LazyLock<Mutex<HashSet<(LangId, String)>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+// Deliberately unstyled: spell is a spellcheck hint, embedded marks an
+// injected-language region, none is an explicit no-style marker, and a
+// leading `_` marks a query-internal capture.
+const IGNORED_CAPTURES: &[&str] = &["spell", "embedded", "none"];
 
-/// Called whenever a query capture name resolves to `None` against
-/// [`SCOPES`] — a query (whether bundled by a grammar crate or hand-authored
-/// in this crate's `queries/`) using a scope outside the closed vocabulary
-/// [`rune_syntax::scope`] defines. The guard test over every
-/// [`crate::lang::LANGUAGES`] entry's compiled query exists to catch a
-/// brand-new instance of this before a grammar bump ships one.
-///
-/// The highlight path runs on a background thread at keystroke rate, so
-/// this cannot log or panic unconditionally without either adding a logging
-/// dependency this crate has never needed or turning routine highlighting
-/// of pre-existing debt into a crash loop. Instead: every occurrence is
-/// recorded once per `(language, name)` pair in [`UNRESOLVED_CAPTURES`], so
-/// a caller (a test, or future diagnostics plumbing) can observe that it
-/// happened without polling a log — and the first occurrence of a pair
-/// outside [`KNOWN_UNRESOLVED_CAPTURES`] also trips [`assert_invariant`], a
-/// hard failure under `cargo test` and any `strict-invariants` build,
-/// silent in an ordinary release build.
-fn note_unresolved_capture(lang: LangId, name: &str) {
-    let mut seen = UNRESOLVED_CAPTURES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if seen.insert((lang, name.to_string())) {
-        let known = KNOWN_UNRESOLVED_CAPTURES.contains(&(lang.name(), name));
-        assert_invariant!(known, || format!(
-            "unresolved tree-sitter capture @{name} for language {:?}: the \
-             closed ScopeTable vocabulary has no entry (or dotted prefix) \
-             for it, and it is not in KNOWN_UNRESOLVED_CAPTURES",
-            lang.name()
-        ));
+enum CaptureResolution {
+    Scope(ScopeId),
+    Ignored,
+    Unknown,
+}
+
+fn classify_capture(name: &str) -> CaptureResolution {
+    if let Some(id) = SCOPES.resolve(name) {
+        return CaptureResolution::Scope(id);
+    }
+    if name.starts_with('_') {
+        return CaptureResolution::Ignored;
+    }
+    let mut candidate = name;
+    loop {
+        if let Some((_, target)) = CAPTURE_ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == candidate)
+        {
+            return match SCOPES.resolve(target) {
+                Some(id) => CaptureResolution::Scope(id),
+                None => CaptureResolution::Unknown,
+            };
+        }
+        if IGNORED_CAPTURES.contains(&candidate) {
+            return CaptureResolution::Ignored;
+        }
+        let Some(pos) = candidate.rfind('.') else {
+            return CaptureResolution::Unknown;
+        };
+        let Some(next) = candidate.get(..pos) else {
+            return CaptureResolution::Unknown;
+        };
+        candidate = next;
     }
 }
 
-/// The `(language, capture name)` pairs seen so far by
-/// [`note_unresolved_capture`] — every capture, once ever, that a query
-/// asked [`SCOPES`] to resolve and got `None` back. Exposed for tests: the
-/// production highlight path only ever inserts into this set, never reads
-/// it back.
-#[cfg(test)]
-pub(crate) fn unresolved_captures() -> HashSet<(LangId, String)> {
-    UNRESOLVED_CAPTURES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+pub fn declared_capture_names() -> impl Iterator<Item = &'static str> {
+    CAPTURE_ALIASES
+        .iter()
+        .map(|(alias, _)| *alias)
+        .chain(IGNORED_CAPTURES.iter().copied())
+}
+
+pub fn capture_is_accounted_for(name: &str) -> bool {
+    !matches!(classify_capture(name), CaptureResolution::Unknown)
 }
 
 /// One [`highlight`]/[`highlight_range`] call's outcome: its spans in
@@ -327,8 +295,16 @@ fn run_query(
         let Some(capture_name) = query.capture_names().get(capture.index as usize) else {
             continue;
         };
-        let Some(scope_id) = SCOPES.resolve(capture_name) else {
-            note_unresolved_capture(lang, capture_name);
+        let resolution = classify_capture(capture_name);
+        assert_invariant!(
+            !matches!(resolution, CaptureResolution::Unknown),
+            || format!(
+                "unresolved tree-sitter capture @{capture_name} for language {}: not a \
+                 registered scope, not in CAPTURE_ALIASES, and not in IGNORED_CAPTURES",
+                lang.name()
+            )
+        );
+        let CaptureResolution::Scope(scope_id) = resolution else {
             continue;
         };
         let node_range = capture.node.byte_range();
@@ -369,15 +345,26 @@ fn painter_order(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_known_unresolved_capture_is_recorded_without_panicking() {
-        let rust = LangId::from_name("rust").expect("rust is a known LangId");
-        let source = r#"fn main() { let _s = "a\nb"; }"#;
-        let _ = highlight(rust.name(), source, Duration::from_secs(1));
-        assert!(unresolved_captures().contains(&(rust, "escape".to_string())));
+    fn every_capture_alias_targets_a_registered_scope() {
+        for (alias, target) in CAPTURE_ALIASES {
+            assert!(
+                SCOPES.iter().any(|(_, name)| name == *target),
+                "CAPTURE_ALIASES maps @{alias} to {target}, which is not a registered scope name"
+            );
+        }
+    }
+
+    #[test]
+    fn no_capture_alias_key_is_already_reachable() {
+        for (alias, _) in CAPTURE_ALIASES {
+            assert!(
+                SCOPES.resolve(alias).is_none(),
+                "CAPTURE_ALIASES key @{alias} already resolves on its own, so its entry is dead"
+            );
+        }
     }
 }

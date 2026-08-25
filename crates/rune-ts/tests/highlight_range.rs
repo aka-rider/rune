@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use rune_syntax::scope::scope_table;
 use rune_ts::{highlight, highlight_range, parse};
 
 const BUDGET: Duration = Duration::from_secs(5);
@@ -110,5 +111,51 @@ fn highlight_range_scopes_to_viewport() {
             .iter()
             .any(|(r, _)| r.start < window.start && r.end > window.start),
         "a construct starting before the window must still be yielded when it intersects it"
+    );
+}
+
+fn spans_of(lang: &str, source: &str) -> Vec<(std::ops::Range<usize>, rune_syntax::ScopeId)> {
+    highlight(lang, source, BUDGET)
+        .expect("highlight succeeds")
+        .spans
+}
+
+#[test]
+fn rust_string_escape_is_captured() {
+    let source = "fn f() { let s = \"a\\nb\"; }";
+    let escape = scope_table()
+        .resolve("string.escape")
+        .expect("string.escape scope");
+    let at = source.find("\\n").expect("escape present");
+    assert!(
+        spans_of("rust", source)
+            .iter()
+            .any(|(range, id)| *id == escape && range.start == at && range.end == at + 2),
+        "the backslash-n escape must carry the string.escape scope"
+    );
+}
+
+#[test]
+fn kotlin_conditional_keyword_is_captured() {
+    let source = "if (x) {}";
+    let keyword = scope_table().resolve("keyword").expect("keyword scope");
+    assert!(
+        spans_of("kotlin", source)
+            .iter()
+            .any(|(range, id)| *id == keyword && range.start == 0 && range.end == 2),
+        "kotlin's if must carry the keyword scope"
+    );
+}
+
+#[test]
+fn kotlin_float_literal_is_captured_as_a_number() {
+    let source = "val x = 1.5";
+    let number = scope_table().resolve("number").expect("number scope");
+    let at = source.find("1.5").expect("literal present");
+    assert!(
+        spans_of("kotlin", source)
+            .iter()
+            .any(|(range, id)| *id == number && range.start == at && range.end == at + 3),
+        "kotlin's float literal must carry the number scope"
     );
 }

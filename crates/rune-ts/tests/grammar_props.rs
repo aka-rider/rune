@@ -4,12 +4,7 @@
 //! cap, and stay in painter order. Every language is walked exhaustively
 //! (a random sample could silently skip one); the *source text* fed to each
 //! is what proptest randomizes.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::ops::Range;
 use std::time::Duration;
@@ -18,10 +13,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
 use rune_syntax::ScopeId;
-use rune_syntax::scope::scope_table;
-use rune_ts::highlight::KNOWN_UNRESOLVED_CAPTURES;
 use rune_ts::lang::LANGUAGES;
-use rune_ts::registry::registry;
 use rune_ts::{MAX_SPANS, highlight};
 
 /// Generous enough that a real failure means the grammar hung, not that the
@@ -132,73 +124,6 @@ fn every_grammar_survives_a_handful_of_cases() {
                 .expect("source strategy generation");
             check_language(def.name, &tree.current());
         }
-    }
-}
-
-/// Guards the closed scope vocabulary against a future grammar or query
-/// bump: every capture name every one of the 22 compiled queries actually
-/// uses (bundled by a grammar crate, or hand-authored in this crate's
-/// `queries/`, such as `terraform.scm`) must resolve against the same
-/// closed [`ScopeTable`] the highlight path resolves against at runtime —
-/// unless it is one of [`KNOWN_UNRESOLVED_CAPTURES`], a gap that predates
-/// this test. An unresolved capture outside that list means a grammar
-/// update introduced a scope name this crate's vocabulary doesn't cover —
-/// it must fail this test instead of silently dropping a highlight at
-/// runtime.
-///
-/// [`ScopeTable`]: rune_syntax::ScopeTable
-#[test]
-fn every_compiled_query_capture_resolves_against_the_closed_scope_table() {
-    let scopes = scope_table();
-    let reg = registry();
-    let mut checked = 0usize;
-    for def in LANGUAGES {
-        let id = rune_ts::resolve(def.name)
-            .unwrap_or_else(|| panic!("{}: not resolvable via rune_ts::resolve", def.name));
-        let (_language, query) = reg.get(id).unwrap_or_else(|| {
-            panic!(
-                "{}: query failed to compile: {:?}",
-                def.name,
-                reg.failures()
-            )
-        });
-        for name in query.capture_names() {
-            checked += 1;
-            if scopes.resolve(name).is_none() {
-                assert!(
-                    KNOWN_UNRESOLVED_CAPTURES.contains(&(def.name, name)),
-                    "{}: capture @{name} does not resolve against the closed scope table \
-                     and is not in KNOWN_UNRESOLVED_CAPTURES",
-                    def.name
-                );
-            }
-        }
-    }
-    assert!(checked > 0, "no capture names were checked");
-}
-
-/// Keeps [`KNOWN_UNRESOLVED_CAPTURES`] from silently drifting: every listed
-/// pair must still name a capture the relevant query actually contains, and
-/// that capture must still fail to resolve — otherwise the entry is stale
-/// (the grammar dropped the capture, or the scope table grew to cover it)
-/// and should be deleted rather than left to mask a real regression later.
-#[test]
-fn known_unresolved_captures_are_still_accurate() {
-    let scopes = scope_table();
-    let reg = registry();
-    for (lang, capture) in KNOWN_UNRESOLVED_CAPTURES {
-        let id = rune_ts::resolve(lang).unwrap_or_else(|| panic!("{lang}: unresolvable"));
-        let (_language, query) = reg
-            .get(id)
-            .unwrap_or_else(|| panic!("{lang}: query failed to compile"));
-        assert!(
-            query.capture_names().contains(capture),
-            "{lang}: KNOWN_UNRESOLVED_CAPTURES lists @{capture} but the query no longer uses it"
-        );
-        assert!(
-            scopes.resolve(capture).is_none(),
-            "{lang}: KNOWN_UNRESOLVED_CAPTURES lists @{capture} but it now resolves — remove the entry"
-        );
     }
 }
 
