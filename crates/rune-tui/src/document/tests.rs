@@ -212,6 +212,47 @@ fn hydrate_keeps_a_cursor_offset_within_the_recovered_content() {
 }
 
 #[test]
+fn undoing_a_hydration_restores_the_pre_hydration_cursors_and_content() {
+    let mut app = crate::app::App::new(
+        Buffer::new("on disk"),
+        None,
+        std::sync::Arc::new(Mem::new()),
+        None,
+    );
+    let id = app.active;
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(4);
+
+    let outcome = app
+        .doc_mut(id)
+        .unwrap()
+        .hydrate("on disk", "recovered draft", &[]);
+    assert!(matches!(outcome, Hydration::Adopted));
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "recovered draft");
+
+    crate::commands::edit::undo(&mut app, id);
+
+    let doc = app.doc(id).unwrap();
+    assert_eq!(
+        doc.buffer.content(),
+        "on disk",
+        "undoing the hydration must revert the buffer to its pre-hydration content"
+    );
+    assert!(
+        !doc.cursors.is_empty(),
+        "undo must never leave an empty cursor set"
+    );
+    assert!(
+        doc.cursors.primary().position <= doc.buffer.len(),
+        "the restored cursor must be in-bounds for the reverted buffer"
+    );
+    assert_eq!(
+        doc.cursors.primary().position,
+        4,
+        "undo must restore the actual pre-hydration cursor, not a synthesized offset-zero one"
+    );
+}
+
+#[test]
 fn begin_recording_reports_failure_instead_of_silently_wedging_when_not_publishing() {
     let mut doc = Document::new(Buffer::new("hello"));
     assert_eq!(doc.save_phase(), SavePhase::Idle);

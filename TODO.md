@@ -74,12 +74,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: allocate whole-document IDs through a terminal-global probing allocator, not a content hash.
 - **Confidence**: confirmed (mechanism).
 
-#### `Document::hydrate` journals crash-recovery adoption with empty cursor sets
-- **Where**: `crates/rune-tui/src/document/mod.rs:287-292` — `cursors_before: Vec::new(), cursors_after: Vec::new()`.
-- **Wrong**: after crash recovery the first ⌘Z undoes the hydration and, because `cursors_before` is empty, restores a cursor set built from nothing. The empty cursor vectors are clearly wrong even if the buffer revert is intended.
-- **Instead**: record the real cursor sets on the hydration step.
-- **Confidence**: plausible.
-
 ### MINOR
 
 - **Unbounded `rune_vfs::get(path, None)` cluster** (`max_bytes: None` disables the 64 MiB gate). Beyond the image-open OOM above, three more sites read attacker-growable files whole into memory: `crates/rune-vfs/src/publish.rs:39` (`current_sighting`, the *worst* placement — the CAS read during a save, buffer unsaved), `crates/rune-tui/src/filesearch/walk.rs:113` (every `.gitignore`-family file in the scan, then copied again by `String::from_utf8`), and `crates/rune-db/src/bracket.rs:35` (probe re-read). Make `max_bytes` non-optional so each caller must name a limit.

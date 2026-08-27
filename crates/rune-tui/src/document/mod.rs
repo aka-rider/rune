@@ -264,6 +264,7 @@ impl Document {
         let Ok((new_buffer, applied)) = self.buffer.apply_edits(&edit) else {
             return Hydration::Refused("recovered draft failed to apply to the buffer");
         };
+        let cursors_before = self.cursors.all().to_vec();
         let seat = |c: Cursor| {
             let position = clamp_to_char_boundary(recovered, c.position);
             let anchor = clamp_to_char_boundary(recovered, c.anchor);
@@ -285,10 +286,11 @@ impl Document {
             CursorSet::new_from(&seated)
         };
         self.buffer = new_buffer;
+        let cursors_after = self.cursors.all().to_vec();
         self.journal.push(Step {
             edits: applied,
-            cursors_before: Vec::new(),
-            cursors_after: Vec::new(),
+            cursors_before,
+            cursors_after,
             kind: EditKind::Other,
         });
         Hydration::Adopted
