@@ -7,6 +7,7 @@ use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 
 use super::effects::{RedrawLatch, Sink};
+use super::pool::Pool;
 use super::transmit_queue::TransmitQueue;
 use crate::app::App;
 use crate::document::DocumentId;
@@ -24,10 +25,13 @@ pub(crate) struct Bootstrap {
 }
 
 pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
+    let (tx, rx) = mpsc::channel::<Msg>();
+
     let mut sink = Sink {
         guard: Guard::new()?,
         transmits: TransmitQueue::default(),
         redraw: RedrawLatch::default(),
+        pool: Pool::new(super::pool::size(), tx.clone()),
     };
 
     app.theme = crate::theme::Theme::catppuccin_mocha(!crate::theme::probe::supports_truecolor());
@@ -40,7 +44,6 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         std::env::var("TERM").ok().as_deref(),
     );
 
-    let (tx, rx) = mpsc::channel::<Msg>();
     super::spawn_input_reader(sink.guard.event_reader(), tx.clone());
 
     if let Some(db) = &app.db {
@@ -87,7 +90,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
             app.icons(),
             doc.kind,
         );
-        super::spawn_cmd(cmd, tx.clone(), &mut save_handles);
+        super::spawn_cmd(cmd, tx.clone(), &mut save_handles, &sink.pool);
     }
 
     sink.redraw_before_draw();

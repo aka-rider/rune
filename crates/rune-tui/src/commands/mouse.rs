@@ -60,6 +60,34 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         }
     }
 
+    // A latched palette-row drag owns the pointer the same way: each tick
+    // moves the selection to whatever row is under the pointer, and a
+    // release just ends the gesture — the palette itself is never closed
+    // or executed by a drag, only by a click or Enter.
+    if let Some(Drag::Palette) = app.pointer.drag {
+        match input.kind {
+            MouseKind::Drag(MouseButton::Left) => {
+                let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+                let geo = crate::layout::geometry(area, app);
+                if let Some(rect) = geo.palette
+                    && let Some(row) = palette_row_at(app, rect, input)
+                {
+                    crate::palette::keys::drag_hover(app, row);
+                }
+                return;
+            }
+            MouseKind::Up(MouseButton::Left) => {
+                app.pointer.drag = None;
+                return;
+            }
+            MouseKind::Down(_)
+            | MouseKind::Up(_)
+            | MouseKind::Drag(_)
+            | MouseKind::ScrollUp
+            | MouseKind::ScrollDown => app.pointer.drag = None,
+        }
+    }
+
     // A latched text-selection drag owns the pointer the same way, and for
     // the same reason: routed by the gesture's OWN pane, not by whichever
     // rect the pointer currently sits over, so a drag that has wandered
@@ -106,9 +134,28 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         let inside = geo.palette.is_some_and(|rect| {
             rect.contains(ratatui::layout::Position::new(input.column, input.row))
         });
-        if !inside {
-            crate::palette::close(app);
+        match (inside, geo.palette) {
+            (true, Some(rect)) => handle_palette_down(app, rect, input, effects),
+            _ => crate::palette::close(app),
         }
+        return;
+    }
+
+    // Wheel and drag ticks landing inside the open palette drive its own
+    // row navigation instead of falling through to whatever pane sits
+    // underneath it — the same containment test the click branch above
+    // already runs. Only INSIDE the rect: a wheel tick elsewhere while the
+    // palette happens to be open keeps its prior fallthrough behavior,
+    // unchanged by this.
+    if let (MouseKind::ScrollUp | MouseKind::ScrollDown, Some(rect)) = (input.kind, geo.palette)
+        && rect.contains(ratatui::layout::Position::new(input.column, input.row))
+    {
+        let delta = if matches!(input.kind, MouseKind::ScrollUp) {
+            -WHEEL_ROWS
+        } else {
+            WHEEL_ROWS
+        };
+        crate::palette::keys::nav_move(app, delta);
         return;
     }
 
@@ -168,6 +215,49 @@ fn handle_filesearch_click(
         return;
     };
     filesearch::click_row(app, visible_row as usize, effects);
+}
+
+/// A left-press landing inside the open palette's own rect (the caller
+/// already ran the containment test): latches a `Drag::Palette` gesture —
+/// so a drag that follows lands on [`handle`]'s own top-of-function latch
+/// branch instead of falling through here again — and, when the press
+/// itself resolved to a real row, runs it immediately, mirroring
+/// `handle_filesearch_click`'s row-click.
+fn handle_palette_down(
+    app: &mut App,
+    rect: ratatui::layout::Rect,
+    input: MouseInput,
+    effects: &mut Effects,
+) {
+    app.pointer.drag = Some(Drag::Palette);
+    if let Some(row) = palette_row_at(app, rect, input) {
+        crate::palette::keys::click_row(app, row, effects);
+    }
+}
+
+/// Resolves an on-screen point inside the palette's bordered `rect` to an
+/// absolute row index in `state.rows`/`state.arg_rows` — `None` for the
+/// border, the query bar, an open refusal line, the recents separator, or
+/// blank space past the last row. `content_rows` (the render side's own
+/// chrome count, borders included) is the single source both this and
+/// `render::palette::draw` read, so the two can never drift apart on where
+/// the list actually starts.
+fn palette_row_at(app: &App, rect: ratatui::layout::Rect, input: MouseInput) -> Option<usize> {
+    let state = app.palette()?;
+    let local_row = input.row.checked_sub(rect.y)?;
+    if local_row == 0 {
+        return None;
+    }
+    let inner_row = local_row - 1;
+    if inner_row >= rect.height.saturating_sub(2) {
+        return None;
+    }
+    let chrome = crate::palette::content_rows(state).saturating_sub(2);
+    let row_in_window = usize::from(inner_row.checked_sub(chrome)?);
+    let height = crate::palette::row_capacity(app);
+    let window = state.nav.window(state.active_len(), height);
+    let absolute = window.start.checked_add(row_in_window)?;
+    (absolute < window.end).then_some(absolute)
 }
 
 fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {
@@ -377,3 +467,7 @@ fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
 #[cfg(test)]
 #[path = "mouse_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "palette_mouse_tests.rs"]
+mod palette_mouse_tests;

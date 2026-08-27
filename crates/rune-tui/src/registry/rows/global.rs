@@ -4,7 +4,7 @@ use crate::keymap::QuitKey;
 
 use super::super::{
     ArgKind, Availability, CommandId, CommandSpec, PaletteCommand, always, merge, preview_locked,
-    toggle_read_only,
+    rename, save, toggle_read_only,
 };
 
 pub(crate) fn adapt(cmd: GlobalCommand) -> CommandId {
@@ -63,13 +63,8 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         &["sidebar"],
     ),
     row(GlobalCommand::FocusTabs, "tabs", "tabs"),
-    availability_row(
-        GlobalCommand::FocusTitle,
-        "rename",
-        "rename",
-        preview_locked,
-    ),
-    aliased_row(GlobalCommand::Save, "save", "save", &["write"]),
+    availability_row(GlobalCommand::FocusTitle, "rename", "rename", rename),
+    full_row(GlobalCommand::Save, "save", "save", &["write"], save),
     row(GlobalCommand::Help, "help", "help"),
     aliased_row(
         GlobalCommand::QuitChord(QuitKey::CtrlC),

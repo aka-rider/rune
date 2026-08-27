@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use rune_vfs::Vfs;
 
-use super::{Cmd, CmdError, DirCause, Msg, RecentsKind, RecentsResult};
+use super::{Cmd, CmdError, DirCause, Msg, RecentsResult};
 
 /// Reads `root`'s children off-thread via `vfs.read_dir` and
 /// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
@@ -52,7 +52,7 @@ pub fn read_file_cmd(
     anchor: Option<rune_nav::Anchor>,
 ) -> Cmd {
     Cmd::read_file(move || {
-        let result = rune_vfs::get(vfs.as_ref(), &path, Some(rune_vfs::MAX_DOCUMENT_BYTES))
+        let result = rune_vfs::get(vfs.as_ref(), &path, rune_vfs::MAX_DOCUMENT_BYTES)
             .map(|sighting| sighting.bytes)
             .map_err(CmdError::from);
         Some(Msg::FileOpened {
@@ -67,8 +67,8 @@ pub fn read_file_cmd(
 /// Loads the search bar's MRU history off-thread through a cloned
 /// `ReaderQuery` — the reader thread's own connection, never
 /// the writer's, so this can never contend with or block on an in-flight
-/// recovery write. Always replies with `Msg::RecentsLoaded { kind:
-/// RecentsKind::Search, .. }`, `generation` carried through unchanged: a
+/// recovery write. Always replies with `Msg::RecentsLoaded { result:
+/// RecentsResult::Search(..), .. }`, `generation` carried through unchanged: a
 /// query failure becomes `result: Err(..)` rather than `Msg::Error`/
 /// `Msg::Warning` directly, so `search::handle_history_loaded` can apply
 /// the same stale-generation check to a failure as to a success instead of
@@ -86,9 +86,8 @@ pub fn load_search_history_cmd(
             })
             .map_err(CmdError::from);
         Some(Msg::RecentsLoaded {
-            kind: RecentsKind::Search,
             generation: generation.raw(),
-            result: RecentsResult::Strings(result),
+            result: RecentsResult::Search(result),
         })
     })
 }

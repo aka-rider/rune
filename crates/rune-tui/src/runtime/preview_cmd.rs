@@ -28,7 +28,7 @@ pub fn read_preview_cmd(
 ) -> Cmd {
     Cmd::read_file(move || {
         let result = (|| -> Result<Vec<u8>, CmdError> {
-            let bytes = match rune_vfs::get(vfs.as_ref(), &path, Some(MAX_PREVIEW_BYTES)) {
+            let bytes = match rune_vfs::get(vfs.as_ref(), &path, MAX_PREVIEW_BYTES) {
                 Ok(sighting) => sighting.bytes,
                 Err(rune_vfs::GetRefusal::TooLarge { .. }) => {
                     return Err(CmdError::Refused("too large to preview".to_string()));

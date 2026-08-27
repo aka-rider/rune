@@ -66,16 +66,16 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // press there shows rather than uselessly re-hiding an already
         // invisible column.
         GlobalCommand::ToggleLeft => pane_global::toggle_left(app, left_painted_before, effects),
-        // Entering the title needs no `Effects` — it can never itself
-        // leave any. Reseeds from the document that is actually
-        // showing, every time: the field must never present a stale name
-        // from a previous document or a previously abandoned edit (no
-        // shadow state).
-        GlobalCommand::FocusTitle => app.focus_title(),
+        // Entering the title needs no `Effects` (it never leaves one) —
+        // reseeded from the document actually showing, every time, so it
+        // can never present a stale name from a previous or abandoned edit.
+        GlobalCommand::FocusTitle => {
+            run_if_available(app, cmd, effects, |app, _| app.focus_title())
+        }
         // No dir-load side effect needed here — unlike Explorer, Tabs has
         // nothing to lazily fetch off-thread.
         GlobalCommand::FocusTabs => pane_global::focus_tabs(app, effects),
-        GlobalCommand::Save => {
+        GlobalCommand::Save => run_if_available(app, cmd, effects, |app, effects| {
             let _ = save::trigger_save(
                 app,
                 app.active,
@@ -83,59 +83,63 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 save::SaveOrigin::Interactive,
                 effects,
             );
-        }
+        }),
         GlobalCommand::Help => pane_global::help(app, effects),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
         // Routes through the one close chokepoint regardless of which pane
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
-        GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active, effects),
+        GlobalCommand::CloseFile => run_if_available(app, cmd, effects, |app, effects| {
+            crate::workspace::request_close(app, app.active, effects);
+        }),
         GlobalCommand::NewDocument => pane_global::new_document(app, effects),
         GlobalCommand::TabSwitch(idx) => pane_global::tab_switch(app, idx, effects),
-        // No focus change and no manual view invalidation needed — the
-        // toggle's geometry change is absorbed by the next `view()` call
-        // (`commands::reading`'s own docs).
+        // No focus change or manual view invalidation needed — the
+        // toggle's geometry change is absorbed by the next `view()` call.
         GlobalCommand::ToggleReadOnly => {
-            if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
-                messages::warn(app, reason);
-            } else {
-                crate::commands::reading::toggle(app);
-            }
+            run_if_available(app, cmd, effects, |app, _| {
+                crate::commands::reading::toggle(app)
+            });
         }
         // Starts a merge attempt, or exits an already-active
         // one in place — see `merge::toggle`'s own docs.
-        GlobalCommand::Merge => {
-            if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
-                messages::warn(app, reason);
-            } else {
-                crate::merge::toggle(app, effects);
-            }
-        }
+        GlobalCommand::Merge => run_if_available(app, cmd, effects, crate::merge::toggle),
         // The message log pane's own open/focus/collapse state
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
         GlobalCommand::Trash => pane_global::trash(app, effects),
-        GlobalCommand::TogglePin => {
-            if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
-                messages::warn(app, reason);
-            } else {
-                crate::opentabs::limit::toggle_pin(app, app.active);
-            }
-        }
+        GlobalCommand::TogglePin => run_if_available(app, cmd, effects, |app, _| {
+            crate::opentabs::limit::toggle_pin(app, app.active);
+        }),
         GlobalCommand::ToggleSearch => pane_global::toggle_search(app, effects),
-        // Reuses the same cursor-jump `advance` Enter/Shift+Enter already
-        // drive: with the bar open, this chord behaves exactly like
-        // Enter/Shift+Enter would; with it closed, `advance_closed`
-        // recomputes matches from `App::last_search_query` on demand and
-        // jumps without painting highlights.
-        // Nothing to navigate with is reported, never swallowed silently.
+        // Reuses the cursor-jump `advance` Enter/Shift+Enter already drive:
+        // open, this behaves like Enter/Shift+Enter; closed, `advance_closed`
+        // recomputes matches from `last_search_query` and jumps without
+        // painting highlights. Nothing to navigate with is never swallowed.
         GlobalCommand::SearchNext => search_step(app, true),
         GlobalCommand::SearchPrev => search_step(app, false),
         GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
         GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
         GlobalCommand::NavForward => crate::navhistory::forward(app, effects),
+    }
+}
+
+/// The chokepoint every registry-gated arm above shares: consults `cmd`'s
+/// own registry row first, posting its `Unavailable` reason through the
+/// same poster the palette's greyed row would show, and running `action`
+/// only once the row reads `Available`.
+fn run_if_available(
+    app: &mut App,
+    cmd: GlobalCommand,
+    effects: &mut Effects,
+    action: impl FnOnce(&mut App, &mut Effects),
+) {
+    if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
+        messages::error(app, reason);
+    } else {
+        action(app, effects);
     }
 }
 

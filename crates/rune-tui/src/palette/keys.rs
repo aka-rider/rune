@@ -235,13 +235,36 @@ pub(crate) fn paste(app: &mut App, text: &str) {
     recompute(app);
 }
 
-fn nav_move(app: &mut App, delta: isize) {
+pub(crate) fn nav_move(app: &mut App, delta: isize) {
     let height = row_capacity(app).max(1);
     let Some(state) = app.palette_mut() else {
         return;
     };
     let len = state.active_len();
     state.nav.move_and_follow(delta, len, height);
+}
+
+/// A left-click on a palette row: lands the cursor there and runs it —
+/// the mouse equivalent of arrowing to a row and pressing Enter. `absolute`
+/// is already resolved against the current scroll window by the caller
+/// (`commands::mouse`'s own hit test), so this only has to move the cursor
+/// and hand off to the exact same `enter` this module's own Enter binding
+/// uses — one execution path for both input devices.
+pub(crate) fn click_row(app: &mut App, absolute: usize, effects: &mut Effects) {
+    let Some(state) = app.palette_mut() else {
+        return;
+    };
+    state.nav.cursor = absolute;
+    enter(app, effects);
+}
+
+/// A left-drag over the palette's row list: moves the selection to whatever
+/// row is under the pointer, without running it — `absolute` is already
+/// resolved by the caller exactly like [`click_row`]'s.
+pub(crate) fn drag_hover(app: &mut App, absolute: usize) {
+    if let Some(state) = app.palette_mut() {
+        state.nav.cursor = absolute;
+    }
 }
 
 fn nav_edge(app: &mut App, top: bool) {

@@ -9,7 +9,7 @@ use rune_vfs::Vfs;
 
 use crate::filesearch::Candidate;
 
-use super::{Cmd, CmdError, Msg, RecentsKind, RecentsResult};
+use super::{Cmd, CmdError, Msg, RecentsResult};
 
 /// Loads the finder's MRU document list off-thread through a cloned
 /// `ReaderQuery` — the reader thread's own connection, never the writer's,
@@ -19,7 +19,7 @@ use super::{Cmd, CmdError, Msg, RecentsKind, RecentsResult};
 /// fuzz-driver exemption that comes with it (the session fuzzer's step
 /// executor classifies neither kind as reachable, so a finder-recents reply
 /// stays unexercised there exactly like search history's own). Always
-/// replies with `Msg::RecentsLoaded { kind: RecentsKind::FileSearch, .. }`,
+/// replies with `Msg::RecentsLoaded { result: RecentsResult::FileSearch(..), .. }`,
 /// `generation` carried through unchanged — an unexpected reader reply
 /// variant folds into an `Err` on the SAME `Msg` rather than a silently
 /// empty list, so a mis-wiring surfaces in the message pane instead of an
@@ -33,9 +33,8 @@ pub fn load_filesearch_recents_cmd(
     Cmd::search_history(move || {
         let result = load(&reader, vfs.as_ref(), &root);
         Some(Msg::RecentsLoaded {
-            kind: RecentsKind::FileSearch,
             generation: generation.raw(),
-            result: RecentsResult::Candidates(result),
+            result: RecentsResult::FileSearch(result),
         })
     })
 }

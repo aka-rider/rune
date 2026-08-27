@@ -1,4 +1,4 @@
-use super::{Cmd, CmdError, Msg, RecentsKind, RecentsResult};
+use super::{Cmd, CmdError, Msg, RecentsResult};
 
 pub fn load_command_history_cmd(
     reader: rune_db::ReaderQuery,
@@ -7,9 +7,8 @@ pub fn load_command_history_cmd(
     Cmd::search_history(move || {
         let result = load(&reader);
         Some(Msg::RecentsLoaded {
-            kind: RecentsKind::Palette,
             generation: generation.raw(),
-            result: RecentsResult::Strings(result),
+            result: RecentsResult::Palette(result),
         })
     })
 }

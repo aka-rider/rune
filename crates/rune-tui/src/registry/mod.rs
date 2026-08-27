@@ -21,7 +21,8 @@ pub(crate) mod rows;
 mod tests;
 
 pub(crate) use avail::{
-    always, language, merge, preview_locked, read_only_edit, reload, tab_switch, toggle_read_only,
+    always, language, merge, preview_locked, read_only_edit, reload, rename, save, tab_switch,
+    toggle_read_only,
 };
 pub(crate) use exec::{ExecOutcome, ResolvedArg, execute};
 

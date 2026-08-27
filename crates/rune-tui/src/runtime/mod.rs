@@ -104,7 +104,7 @@ pub enum Msg {
         detail: SaveOutcomeDetail,
     },
     Timer {
-        key: crate::runtime::TimerKey,
+        key: crate::runtime::TimerMsgKey,
         generation: u64,
     },
     SnapshotDue {
@@ -178,7 +178,6 @@ pub enum Msg {
         text: String,
     },
     RecentsLoaded {
-        kind: RecentsKind,
         generation: u64,
         result: RecentsResult,
     },
@@ -189,17 +188,17 @@ pub enum Msg {
     Quit,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RecentsKind {
-    Search,
-    FileSearch,
-    Palette,
-}
-
+/// One arm per legal `Msg::RecentsLoaded` producer — folding the load's
+/// origin into the result itself, rather than carrying a separate `kind`
+/// field alongside a same-shaped `result`, makes the `kind`/`result`
+/// mismatch `update_inner` used to guard against with an `unreachable!`
+/// unrepresentable: there is no way to construct e.g. `FileSearch` paired
+/// with a `String` list.
 #[derive(Debug)]
 pub enum RecentsResult {
-    Strings(Result<Vec<String>, CmdError>),
-    Candidates(Result<Vec<crate::filesearch::Candidate>, CmdError>),
+    Search(Result<Vec<String>, CmdError>),
+    FileSearch(Result<Vec<crate::filesearch::Candidate>, CmdError>),
+    Palette(Result<Vec<String>, CmdError>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,6 +226,7 @@ pub use preview_cmd::{MAX_PREVIEW_BYTES, read_preview_cmd};
 
 mod bootstrap;
 mod exit_settle;
+mod pool;
 
 mod transmit_queue;
 pub use transmit_queue::{Pumped, TransmitQueue};
@@ -240,7 +240,7 @@ pub use highlight_cmd::{PARSE_BUDGET, PASS_BUDGET};
 mod md_fence;
 
 mod timer;
-pub use timer::{TimerKey, TimerService};
+pub use timer::{TimerKey, TimerMsgKey, TimerService};
 
 mod filesearch_recents_cmd;
 pub use filesearch_recents_cmd::load_filesearch_recents_cmd;

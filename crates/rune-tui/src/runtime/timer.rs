@@ -11,9 +11,27 @@ use super::Msg;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TimerKey {
     Snapshot(DocumentId),
+    Msg(TimerMsgKey),
+}
+
+/// The keys that pair with `Msg::Timer` — every `TimerKey` variant EXCEPT
+/// `Snapshot`, which fires its own dedicated `Msg::SnapshotDue` instead.
+/// A distinct type from `TimerKey` itself so `Msg::Timer`'s own `key` field
+/// can carry this narrower type: the illegal `Msg::Timer{ key: TimerKey::
+/// Snapshot(_), .. }` pairing dispatch's `update_inner` used to have to
+/// guard against with an `unreachable!` becomes unrepresentable instead —
+/// there is no `TimerMsgKey::Snapshot` variant to construct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TimerMsgKey {
     SaveConfirm,
     QuitConfirm,
     MessagesCollapse,
+}
+
+impl From<TimerMsgKey> for TimerKey {
+    fn from(key: TimerMsgKey) -> TimerKey {
+        TimerKey::Msg(key)
+    }
 }
 
 struct TimerState {
@@ -225,10 +243,10 @@ mod tests {
             },
         );
         timer.arm(
-            TimerKey::QuitConfirm,
+            TimerKey::from(TimerMsgKey::QuitConfirm),
             Duration::from_millis(60),
             Msg::Timer {
-                key: TimerKey::QuitConfirm,
+                key: TimerMsgKey::QuitConfirm,
                 generation: 1,
             },
         );

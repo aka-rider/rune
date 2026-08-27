@@ -48,12 +48,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: replace the two `usize::MAX` orderings with explicit `Option`-aware comparisons in the typed-newtypes pass.
 - **Done when**: no site encodes "absent" as `usize::MAX`.
 
-### Unbounded thread-per-Cmd in `spawn_cmd`
-- **Where**: `crates/rune-tui/src/runtime/mod.rs` (`spawn_cmd`)
-- **Wrong**: `spawn_cmd` spawns one OS thread per `Cmd` with no pool bound; `Highlight`/`ImageDecode` issue at keystroke rate. (The sleep-based confirm/collapse timeouts are gone — all deadlines route through the keyed `TimerService`.)
-- **Instead**: bound the worker pool.
-- **Done when**: `spawn_cmd` is bounded.
-
 ### A generation counter's type doesn't say which feature it belongs to
 - **Where**: `crates/rune-tui/src/generation.rs`'s `Generation`/`GenCounter` — one shared type now minted by every counter (`next_rename_gen`, `next_merge_gen`, `next_save_confirm_gen`, `next_quit_gen`, `next_trash_gen`, `next_filesearch_gen`, `next_search_history_gen`, `Explorer::next_request_gen`, `MessageLog::generation`, `ImageState::next_generation`); each is compared against a bare `generation: Generation` field carried by its own `Msg` reply.
 - **Wrong**: every counter and every `Msg` field that answers it share the exact same `Generation` type. Nothing stops a future edit from comparing one feature's counter against another feature's reply — reading `next_quit_gen` where `next_rename_gen` belongs, say — and the mistake still compiles.
@@ -73,18 +67,6 @@ constitution and the entry is deleted in the same commit.
 - **Wrong**: no `ByteOffset` or `SyntaxCol` newtype exists anywhere in the crate, so `position`, `anchor`, and `desired_col` are all just `usize`. A future edit that threads a byte offset through code expecting a Syntax-Space column, or the reverse, compiles without complaint.
 - **Instead**: introduce typed wrappers for the two coordinate spaces — a `ByteOffset` for `position`/`anchor`, a `SyntaxCol` or similar for `desired_col` — so mixing them becomes a compile error. Do this together with the next change to `crates/rune-db/src/payload.rs`'s cursor schema, since typing `desired_col` crosses the on-disk cursor payload and any schema change already forces a review of that boundary.
 - **Done when**: `Cursor`'s three fields have distinct types for their two coordinate spaces, and `CursorPayload`'s fields mirror that typing (or the entry records why the persisted form deliberately stays untyped).
-
-### Command palette: remaining imperative refusals not yet on the registry predicate
-- **Where**: `crates/rune-tui/src/pane.rs`'s `handle_global_command` (`Trash`), `crates/rune-tui/src/rename.rs` (rename-in-flight), `crates/rune-tui/src/save.rs`/`workspace/close.rs` (save-in-flight, close-while-saving) — every one still refuses through its own inline `messages::warn`/`messages::info` call rather than a `registry::avail` predicate the palette can grey a row against.
-- **Wrong**: a palette row for `trash`, `rename`, or `close` shows `Available` right up until Enter, then refuses with wording the palette never previewed — the same gap WP3 closed for Merge/ToggleReadOnly/TogglePin/Reload/read-only edits, just not closed everywhere yet.
-- **Instead**: migrate arm-by-arm, one `registry/avail.rs` predicate per imperative refusal, following the WP3 pattern (predicate consulted at the top of the arm, same reason string old and new).
-- **Done when**: no `GlobalCommand`/`keymap::Command` arm posts a refusal that isn't first visible as `Availability::Unavailable` on its registry row.
-
-### Command palette: no in-palette mouse support
-- **Where**: `crates/rune-tui/src/commands/mouse.rs`, `crates/rune-tui/src/palette/` — mouse routing only closes the palette on a click outside `geo.palette`; a wheel or drag while the palette is open falls through to the editor pane underneath instead of scrolling or selecting the palette's own row list.
-- **Wrong**: the palette is otherwise fully keyboard-driven, but a mouse user scrolling or dragging over the open overlay edits the hidden document instead.
-- **Instead**: route wheel/drag events landing inside `geo.palette` to the palette's row navigation instead of the editor.
-- **Done when**: a wheel or drag inside the open palette moves its own selection/window rather than the editor underneath.
 
 ## Mechanical
 

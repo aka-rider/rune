@@ -185,6 +185,10 @@ pub enum Drag {
     /// cell and the splitter's own edge, so the splitter never jumps to
     /// the pointer on the first drag event.
     Splitter { which: Splitter, grab_delta: i32 },
+    /// Dragging across the open command palette's own row list: each tick
+    /// moves the selection to the row under the pointer, never executing
+    /// it — only a click (or Enter) does that.
+    Palette,
 }
 
 /// The click-aggregation + drag state a left-button gesture needs across

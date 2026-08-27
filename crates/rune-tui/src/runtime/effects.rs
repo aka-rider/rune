@@ -2,6 +2,7 @@ use std::io;
 use std::sync::mpsc;
 use std::thread;
 
+use super::pool::Pool;
 use super::transmit_queue::TransmitQueue;
 use super::{Cmd, Msg, spawn_cmd};
 use crate::term::Guard;
@@ -70,6 +71,7 @@ pub(crate) struct Sink {
     pub guard: Guard,
     pub transmits: TransmitQueue,
     pub redraw: RedrawLatch,
+    pub pool: Pool,
 }
 
 impl Sink {
@@ -96,7 +98,7 @@ pub(crate) fn discharge(
         }
     }
     for cmd in effects.cmds.drain(..) {
-        spawn_cmd(cmd, tx.clone(), save_handles);
+        spawn_cmd(cmd, tx.clone(), save_handles, &sink.pool);
     }
     if effects.force_redraw {
         sink.redraw.request();

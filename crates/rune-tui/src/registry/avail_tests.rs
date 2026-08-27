@@ -171,6 +171,89 @@ fn reload_refusal_matches_between_the_chord_and_the_palette() {
 }
 
 #[test]
+fn save_in_flight_refusal_matches_between_chord_and_palette() {
+    let mut app = app_with("hello");
+    let mut effects = Effects::default();
+    let version = app.active_doc().buffer.version();
+    let content: Arc<str> = Arc::from(app.active_doc().buffer.content());
+    app.active_doc_mut().begin_save(version, content);
+
+    let ctrl_s = KeyInput {
+        code: KeyCode::Char('s'),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    };
+    crate::dispatch::handle_key(&mut app, ctrl_s, &mut effects);
+    let chord_reason = crate::messages::newest_text(&app)
+        .expect("the chord must post a refusal")
+        .to_string();
+    assert_eq!(chord_reason, "a save is already in progress");
+
+    let predicate_reason = unavailable_reason(super::availability(
+        &app,
+        CommandId::Global(GlobalCommand::Save),
+    ));
+    assert_eq!(chord_reason, predicate_reason);
+
+    crate::palette::open(&mut app, &mut effects);
+    let palette_reason = unavailable_reason(row_availability(&app, "save"));
+    assert_eq!(chord_reason, palette_reason);
+}
+
+#[test]
+fn focus_title_stays_available_while_a_rename_is_in_flight() {
+    let mut app = app_with("hello");
+    let doc = app.active;
+    app.rename = crate::rename::RenameState::Committing {
+        doc,
+        from: std::path::PathBuf::from("/a.md"),
+        to: std::path::PathBuf::from("/b.md"),
+        ticket: crate::rename::Ticket::Cmd(app.next_rename_gen.mint()),
+        draft_baseline: None,
+    };
+
+    assert!(matches!(
+        super::availability(&app, CommandId::Global(GlobalCommand::FocusTitle)),
+        crate::registry::Availability::Available
+    ));
+}
+
+/// A save in flight defers a close (queues it for the ack) rather than
+/// refusing it outright — unlike rename/save's own in-flight rungs, this is
+/// not a hard refusal, so it must NOT be reachable through the same
+/// registry-predicate short-circuit `CloseFile`'s arm now runs: `close`'s
+/// row only mirrors the preview lock, exactly as before this change.
+#[test]
+fn close_while_saving_still_defers_instead_of_refusing() {
+    let mut app = app_with("hello");
+    let mut effects = Effects::default();
+    let version = app.active_doc().buffer.version();
+    let content: Arc<str> = Arc::from(app.active_doc().buffer.content());
+    app.active_doc_mut().begin_save(version, content);
+
+    let ctrl_w = KeyInput {
+        code: KeyCode::Char('w'),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    };
+    crate::dispatch::handle_key(&mut app, ctrl_w, &mut effects);
+
+    assert!(
+        app.doc(app.active).is_some(),
+        "the close must wait for the save's ack"
+    );
+    assert_eq!(app.pending_close_on_save, Some(app.active));
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        Some("save in progress \u{2014} closing once it completes")
+    );
+}
+
+#[test]
 fn palette_availability_goes_stale_free_when_a_stage_two_chord_flips_read_only() {
     let mut app = app_with("hello world");
     let mut effects = Effects::default();
