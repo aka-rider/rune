@@ -18,7 +18,7 @@
 //! `Document::snap_cursor_to_row` is the sole `Independent`-mode writer of
 //! the cursor (see `document.rs`'s docs).
 
-use rune_core::coords::{DisplayRow, WrapPoint, WrapRow};
+use rune_core::coords::{BufferOffset, DisplayRow, WrapPoint, WrapRow};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
@@ -47,7 +47,7 @@ fn move_row(
     delta: isize,
     extend: Extend,
 ) -> Cursor {
-    let origin_row = wrap_row_at(view, buf, c.position);
+    let origin_row = wrap_row_at(view, buf, c.position.get());
     let target_row = origin_row as isize + delta;
 
     let total = view.wrap.total_rows();
@@ -66,13 +66,13 @@ fn move_row(
         let row = target_row as usize;
         let col = view
             .wrap
-            .byte_col_from_visual(buf.content(), row, c.desired_col);
+            .byte_col_from_visual(buf.content(), row, c.desired_col.0);
         WrapPoint { row, col }
     };
 
     let sp2 = view.wrap.wrap_to_syntax(buf.content(), wp2);
     let bp2 = view.syntax.syntax_to_buffer(sp2);
-    let offset2 = buf.line_col_to_offset(bp2);
+    let offset2 = BufferOffset(buf.line_col_to_offset(bp2));
 
     Cursor {
         position: offset2,
@@ -151,7 +151,7 @@ pub fn page_down(doc: &mut Document, extend: Extend) {
 /// where to put `scroll_row`.
 fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
     let primary = doc.cursors.primary();
-    let bp = doc.buffer.offset_to_line_col(primary.position);
+    let bp = doc.buffer.offset_to_line_col(primary.position.get());
     let sp = view.syntax.buffer_to_syntax(bp);
     WrapRow(view.wrap.syntax_to_wrap(sp).row)
 }

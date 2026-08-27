@@ -15,10 +15,10 @@ use crate::snapshot::Snapshot;
 /// its own `content` — never compared to another document.
 pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
     for c in &snap.cursors {
-        if c.position > snap.content.len()
-            || c.anchor > snap.content.len()
-            || !snap.content.is_char_boundary(c.position)
-            || !snap.content.is_char_boundary(c.anchor)
+        if c.position.get() > snap.content.len()
+            || c.anchor.get() > snap.content.len()
+            || !snap.content.is_char_boundary(c.position.get())
+            || !snap.content.is_char_boundary(c.anchor.get())
         {
             return Some(Violation::new(
                 "CUR-BOUNDS",
@@ -159,7 +159,7 @@ pub fn cur_cell_sync(snap: &Snapshot) -> Option<Violation> {
         return None;
     }
     for cursor in &snap.cursors {
-        let Ok(target) = u32::try_from(cursor.position) else {
+        let Ok(target) = u32::try_from(cursor.position.get()) else {
             continue;
         };
         let position_rendered = snap

@@ -72,9 +72,9 @@ pub(crate) fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
 fn copy_text_for_cursor(buf: &Buffer, c: &Cursor) -> String {
     if c.has_selection() {
         let (start, end) = c.selection_range();
-        buf.slice(start, end).unwrap_or("").to_string()
+        buf.slice(start.get(), end.get()).unwrap_or("").to_string()
     } else {
-        copy_entire_line(buf, c.position)
+        copy_entire_line(buf, c.position.get())
     }
 }
 
@@ -372,7 +372,10 @@ mod tests {
         handle_paste_content(&mut app, id, "b");
 
         assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
-        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 2);
+        assert_eq!(
+            app.doc(id).unwrap().cursors.primary().position,
+            rune_core::coords::BufferOffset(2)
+        );
         assert_eq!(app.doc(id).unwrap().journal.len(), 1);
     }
 
@@ -462,8 +465,7 @@ mod tests {
 
         for pane in [Pane::Explorer, Pane::Tabs, Pane::Messages] {
             let mut app = app_with("ac", 1);
-            app.frame_width = 120;
-            app.frame_height = 34;
+            app.frame = Some(crate::app::FrameSize::new(120, 34));
             app.splits.left.show();
             if pane == Pane::Messages {
                 crate::messages::toggle(&mut app, &mut Effects::default());

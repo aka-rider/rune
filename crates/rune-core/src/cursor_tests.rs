@@ -12,28 +12,31 @@ fn id(n: u32) -> CursorId {
 fn new_single_cursor_has_id_one() {
     let cs = CursorSet::new(5);
     assert_eq!(cs.len(), 1);
-    assert_eq!(cs.primary().position, 5);
+    assert_eq!(cs.primary().position, BufferOffset(5));
     assert_eq!(cs.primary().id, CursorId::FIRST);
 }
 
 #[test]
 fn merge_coalesces_overlapping_selections() {
     let a = Cursor {
-        position: 5,
-        anchor: 0,
-        desired_col: 0,
+        position: BufferOffset(5),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(0),
         id: id(1),
     };
     let b = Cursor {
-        position: 3,
-        anchor: 8,
-        desired_col: 0,
+        position: BufferOffset(3),
+        anchor: BufferOffset(8),
+        desired_col: VisualCol(0),
         id: id(2),
     };
     let cs = CursorSet::new_from(&[a, b]);
     assert_eq!(cs.len(), 1);
     let merged = cs.primary();
-    assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
+    assert_eq!(
+        (merged.selection_start(), merged.selection_end()),
+        (BufferOffset(0), BufferOffset(8))
+    );
 }
 
 /// An empty cursor has no direction — `reversed()` is false for it
@@ -44,23 +47,27 @@ fn merge_coalesces_overlapping_selections() {
 #[test]
 fn merge_takes_its_direction_from_the_cursor_that_has_a_selection() {
     let clamped_at_top = Cursor {
-        position: 0,
-        anchor: 0,
-        desired_col: 0,
+        position: BufferOffset(0),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(0),
         id: id(1),
     };
     let reaching_up = Cursor {
-        position: 0,
-        anchor: 8,
-        desired_col: 0,
+        position: BufferOffset(0),
+        anchor: BufferOffset(8),
+        desired_col: VisualCol(0),
         id: id(2),
     };
     let cs = CursorSet::new_from(&[clamped_at_top, reaching_up]);
     assert_eq!(cs.len(), 1);
     let merged = cs.primary();
-    assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
     assert_eq!(
-        merged.position, 0,
+        (merged.selection_start(), merged.selection_end()),
+        (BufferOffset(0), BufferOffset(8))
+    );
+    assert_eq!(
+        merged.position,
+        BufferOffset(0),
         "merging an empty cursor with a selection reaching up must keep the head at the top"
     );
 }
@@ -72,16 +79,16 @@ fn merge_takes_its_direction_from_the_cursor_that_has_a_selection() {
 fn merge_survivor_keeps_the_reversed_flag_of_the_lower_id_cursor() {
     // `a` (id 1, survivor) is NOT reversed: position is its selection end.
     let a = Cursor {
-        position: 8,
-        anchor: 0,
-        desired_col: 0,
+        position: BufferOffset(8),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(0),
         id: id(1),
     };
     // `b` (id 2) IS reversed and sorts first by selection_start.
     let b = Cursor {
-        position: 3,
-        anchor: 6,
-        desired_col: 0,
+        position: BufferOffset(3),
+        anchor: BufferOffset(6),
+        desired_col: VisualCol(0),
         id: id(2),
     };
     let merged = CursorSet::new_from(&[a, b]).primary();
@@ -91,21 +98,24 @@ fn merge_survivor_keeps_the_reversed_flag_of_the_lower_id_cursor() {
         "the survivor's own reversed flag (id 1, not reversed) must win, \
          not the other cursor's"
     );
-    assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
+    assert_eq!(
+        (merged.selection_start(), merged.selection_end()),
+        (BufferOffset(0), BufferOffset(8))
+    );
 }
 
 #[test]
 fn new_from_specs_assigns_distinct_fresh_ids() {
     let specs = [
         CursorSpec {
-            position: 0,
-            anchor: 0,
-            desired_col: 0,
+            position: BufferOffset(0),
+            anchor: BufferOffset(0),
+            desired_col: VisualCol(0),
         },
         CursorSpec {
-            position: 20,
-            anchor: 20,
-            desired_col: 0,
+            position: BufferOffset(20),
+            anchor: BufferOffset(20),
+            desired_col: VisualCol(0),
         },
     ];
     let cs = CursorSet::new_from_specs(&specs);
@@ -120,15 +130,15 @@ fn new_from_specs_assigns_distinct_fresh_ids() {
 #[test]
 fn new_from_does_not_dedupe_non_touching_duplicate_ids() {
     let a = Cursor {
-        position: 0,
-        anchor: 0,
-        desired_col: 0,
+        position: BufferOffset(0),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(0),
         id: id(7),
     };
     let b = Cursor {
-        position: 50,
-        anchor: 50,
-        desired_col: 0,
+        position: BufferOffset(50),
+        anchor: BufferOffset(50),
+        desired_col: VisualCol(0),
         id: id(7),
     };
     let cs = CursorSet::new_from(&[a, b]);
@@ -156,31 +166,31 @@ fn cursor_id_zero_display_is_a_nonempty_message() {
 #[test]
 fn selection_range_normalizes_a_reversed_selection() {
     let c = Cursor {
-        position: 2,
-        anchor: 8,
-        desired_col: 0,
+        position: BufferOffset(2),
+        anchor: BufferOffset(8),
+        desired_col: VisualCol(0),
         id: CursorId::FIRST,
     };
-    assert_eq!(c.selection_range(), (2, 8));
+    assert_eq!(c.selection_range(), (BufferOffset(2), BufferOffset(8)));
 }
 
 #[test]
 fn selection_range_leaves_a_forward_selection_as_is() {
     let c = Cursor {
-        position: 8,
-        anchor: 2,
-        desired_col: 0,
+        position: BufferOffset(8),
+        anchor: BufferOffset(2),
+        desired_col: VisualCol(0),
         id: CursorId::FIRST,
     };
-    assert_eq!(c.selection_range(), (2, 8));
+    assert_eq!(c.selection_range(), (BufferOffset(2), BufferOffset(8)));
 }
 
 #[test]
 fn reversed_is_false_when_position_equals_anchor() {
     let c = Cursor {
-        position: 5,
-        anchor: 5,
-        desired_col: 0,
+        position: BufferOffset(5),
+        anchor: BufferOffset(5),
+        desired_col: VisualCol(0),
         id: CursorId::FIRST,
     };
     assert!(!c.reversed());
@@ -189,9 +199,9 @@ fn reversed_is_false_when_position_equals_anchor() {
 #[test]
 fn reversed_is_true_when_position_precedes_anchor() {
     let c = Cursor {
-        position: 2,
-        anchor: 8,
-        desired_col: 0,
+        position: BufferOffset(2),
+        anchor: BufferOffset(8),
+        desired_col: VisualCol(0),
         id: CursorId::FIRST,
     };
     assert!(c.reversed());
@@ -200,27 +210,27 @@ fn reversed_is_true_when_position_precedes_anchor() {
 #[test]
 fn new_from_continues_ids_past_the_highest_existing_one() {
     let a = Cursor {
-        position: 0,
-        anchor: 0,
-        desired_col: 0,
+        position: BufferOffset(0),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(0),
         id: id(1),
     };
     let b = Cursor {
-        position: 10,
-        anchor: 10,
-        desired_col: 0,
+        position: BufferOffset(10),
+        anchor: BufferOffset(10),
+        desired_col: VisualCol(0),
         id: id(3),
     };
     let cs = CursorSet::new_from(&[a, b]);
     let added = cs.add(CursorSpec {
-        position: 20,
-        anchor: 20,
-        desired_col: 0,
+        position: BufferOffset(20),
+        anchor: BufferOffset(20),
+        desired_col: VisualCol(0),
     });
     let new_cursor = added
         .all()
         .iter()
-        .find(|c| c.position == 20)
+        .find(|c| c.position == BufferOffset(20))
         .expect("added cursor present");
     assert_eq!(
         new_cursor.id,
@@ -233,7 +243,7 @@ fn new_from_continues_ids_past_the_highest_existing_one() {
 fn new_from_positions_builds_one_cursor_per_position() {
     let cs = CursorSet::new_from_positions(&[3, 7]);
     assert_eq!(cs.len(), 2);
-    let positions: Vec<usize> = cs.all().iter().map(|c| c.position).collect();
+    let positions: Vec<usize> = cs.all().iter().map(|c| c.position.get()).collect();
     assert_eq!(positions, vec![3, 7]);
 }
 
@@ -253,9 +263,9 @@ fn is_multi_is_false_for_one_cursor_true_for_two() {
 fn add_appends_a_new_cursor() {
     let cs = CursorSet::new(0);
     let added = cs.add(CursorSpec {
-        position: 50,
-        anchor: 50,
-        desired_col: 0,
+        position: BufferOffset(50),
+        anchor: BufferOffset(50),
+        desired_col: VisualCol(0),
     });
     assert_eq!(added.len(), 2);
 }
@@ -266,11 +276,11 @@ fn collapse_to_keeps_only_the_given_cursor() {
     let target = *cs
         .all()
         .iter()
-        .find(|c| c.position == 5)
+        .find(|c| c.position == BufferOffset(5))
         .expect("cursor at 5 exists");
     let collapsed = cs.collapse_to(target);
     assert_eq!(collapsed.len(), 1);
-    assert_eq!(collapsed.primary().position, 5);
+    assert_eq!(collapsed.primary().position, BufferOffset(5));
 }
 
 /// Two cursors sharing the same selection start but a DIFFERENT end sort
@@ -281,20 +291,21 @@ fn collapse_to_keeps_only_the_given_cursor() {
 #[test]
 fn merge_orders_same_start_cursors_by_end_not_by_id() {
     let short_selection = Cursor {
-        position: 8,
-        anchor: 5,
-        desired_col: 100,
+        position: BufferOffset(8),
+        anchor: BufferOffset(5),
+        desired_col: VisualCol(100),
         id: id(2),
     };
     let long_selection = Cursor {
-        position: 20,
-        anchor: 5,
-        desired_col: 200,
+        position: BufferOffset(20),
+        anchor: BufferOffset(5),
+        desired_col: VisualCol(200),
         id: id(1),
     };
     let merged = CursorSet::new_from(&[short_selection, long_selection]).primary();
     assert_eq!(
-        merged.desired_col, 200,
+        merged.desired_col,
+        VisualCol(200),
         "the lower-id survivor's desired_col must survive the merge, \
          not the earlier-by-end cursor's"
     );
@@ -307,21 +318,22 @@ fn merge_orders_same_start_cursors_by_end_not_by_id() {
 #[test]
 fn merge_survivor_keeps_the_desired_col_of_the_lower_id_cursor() {
     let a = Cursor {
-        position: 8,
-        anchor: 0,
-        desired_col: 100,
+        position: BufferOffset(8),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(100),
         id: id(1),
     };
     let b = Cursor {
-        position: 3,
-        anchor: 6,
-        desired_col: 200,
+        position: BufferOffset(3),
+        anchor: BufferOffset(6),
+        desired_col: VisualCol(200),
         id: id(2),
     };
     let merged = CursorSet::new_from(&[a, b]).primary();
     assert_eq!(merged.id, id(1), "lower id survives");
     assert_eq!(
-        merged.desired_col, 100,
+        merged.desired_col,
+        VisualCol(100),
         "the survivor's own desired_col (id 1) must win, not the other cursor's"
     );
 }
@@ -334,5 +346,5 @@ fn map_transforms_every_cursor() {
         anchor: c.position + 1,
         ..c
     });
-    assert_eq!(mapped.primary().position, 6);
+    assert_eq!(mapped.primary().position, BufferOffset(6));
 }

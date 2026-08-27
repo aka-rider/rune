@@ -8,8 +8,7 @@ use crate::app::App;
 
 fn app_with(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(crate::app::FrameSize::new(80, 24));
     app.sync_view();
     app
 }

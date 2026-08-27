@@ -8,6 +8,37 @@ pub struct BufferPoint {
 pub struct VisualCol(pub usize);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BufferOffset(pub usize);
+
+impl BufferOffset {
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl std::ops::Add<usize> for BufferOffset {
+    type Output = BufferOffset;
+
+    fn add(self, rhs: usize) -> BufferOffset {
+        BufferOffset(self.0.saturating_add(rhs))
+    }
+}
+
+impl std::ops::Sub<usize> for BufferOffset {
+    type Output = BufferOffset;
+
+    fn sub(self, rhs: usize) -> BufferOffset {
+        BufferOffset(self.0.saturating_sub(rhs))
+    }
+}
+
+impl std::fmt::Display for BufferOffset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SyntaxOffset(pub usize);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]

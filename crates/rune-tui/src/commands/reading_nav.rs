@@ -142,7 +142,7 @@ fn link_sites(catalogue: &[Ref]) -> impl Iterator<Item = ByteRange> + '_ {
 fn focus_link(app: &mut App, step: LinkStep) {
     let doc = app.active_doc();
     let bound = doc.reading_link_focus.map(|site| site.start);
-    let caret = doc.cursors.primary().position;
+    let caret = doc.cursors.primary().position.get();
     let sites: Vec<ByteRange> = link_sites(&doc.catalogue).collect();
 
     let target = match step {

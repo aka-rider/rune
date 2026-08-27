@@ -16,7 +16,7 @@
 //! did not ask for.
 
 use rune_core::buffer::Buffer;
-use rune_core::coords::{BufferPoint, VisualCol, WrapPoint};
+use rune_core::coords::{BufferOffset, BufferPoint, VisualCol, WrapPoint};
 use rune_core::cursor::CursorSpec;
 use rune_md::element::doc::ViewSnapshots;
 
@@ -40,7 +40,7 @@ fn add_cursor(doc: &mut Document, dir: isize) {
         }
     }
 
-    let bp: BufferPoint = doc.buffer.offset_to_line_col(extreme.position);
+    let bp: BufferPoint = doc.buffer.offset_to_line_col(extreme.position.get());
     if dir < 0 && bp.line == 0 {
         return;
     }
@@ -59,18 +59,18 @@ fn add_cursor(doc: &mut Document, dir: isize) {
     // the target line's bytes-per-cell ratio differs from the source
     // line's (e.g. CJK on one line, ASCII on the other).
     let view = doc.view();
-    let desired = if extreme.desired_col == 0 {
+    let desired = if extreme.desired_col == VisualCol(0) {
         cell_col_at(&view, &doc.buffer, bp)
     } else {
-        VisualCol(extreme.desired_col)
+        extreme.desired_col
     };
     let new_bp = visual_col_on_line(&view, &doc.buffer, target_line, desired);
     let new_offset = doc.buffer.line_col_to_offset(new_bp);
 
     let new_cursor = CursorSpec {
-        position: new_offset,
-        anchor: new_offset,
-        desired_col: desired.0,
+        position: BufferOffset(new_offset),
+        anchor: BufferOffset(new_offset),
+        desired_col: desired,
     };
 
     doc.cursors = doc.cursors.add(new_cursor);
@@ -144,8 +144,8 @@ mod tests {
         add_cursor_below(&mut doc);
         assert_eq!(doc.cursors.len(), 2);
         let all = doc.cursors.all();
-        assert_eq!(doc.buffer.offset_to_line_col(all[1].position).line, 1);
-        assert_eq!(doc.buffer.offset_to_line_col(all[1].position).col, 1);
+        assert_eq!(doc.buffer.offset_to_line_col(all[1].position.get()).line, 1);
+        assert_eq!(doc.buffer.offset_to_line_col(all[1].position.get()).col, 1);
     }
 
     #[test]
@@ -154,7 +154,7 @@ mod tests {
         add_cursor_above(&mut doc);
         assert_eq!(doc.cursors.len(), 2);
         let all = doc.cursors.all();
-        assert_eq!(doc.buffer.offset_to_line_col(all[0].position).line, 1);
+        assert_eq!(doc.buffer.offset_to_line_col(all[0].position.get()).line, 1);
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
         add_cursor_above(&mut doc);
         let all = doc.cursors.all();
         // Line 0 ("ab") is only 2 bytes long — the new cursor clamps to it.
-        assert_eq!(all[0].position, 2);
+        assert_eq!(all[0].position, BufferOffset(2));
     }
 
     #[test]
@@ -191,9 +191,9 @@ mod tests {
         let mut doc = doc_with("x\n日本CDEFGH", 0);
         // 5 CELLS: "日"(2) + "本"(2) + "C"(1).
         doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
-            position: 0,
-            anchor: 0,
-            desired_col: 5,
+            position: BufferOffset(0),
+            anchor: BufferOffset(0),
+            desired_col: VisualCol(5),
         }]);
 
         add_cursor_below(&mut doc);
@@ -206,7 +206,7 @@ mod tests {
         // Treating `5` as a raw byte column instead (the pre-fix behavior)
         // lands inside "本" (bytes 3..6) and snaps down to its start (byte
         // 3) — a different, wrong character.
-        assert_eq!(new_cursor.position, line1_start + 7);
+        assert_eq!(new_cursor.position, BufferOffset(line1_start + 7));
     }
 
     #[test]
@@ -216,9 +216,9 @@ mod tests {
         // (adjacent to the topmost).
         let mut doc = doc_with("aaa\nbbb\nccc\nddd", 0);
         doc.cursors = doc.cursors.add(CursorSpec {
-            position: "aaa\n".len(),
-            anchor: "aaa\n".len(),
-            desired_col: 0,
+            position: BufferOffset("aaa\n".len()),
+            anchor: BufferOffset("aaa\n".len()),
+            desired_col: VisualCol(0),
         });
         assert_eq!(doc.cursors.len(), 2, "fixture must hold two cursors");
         add_cursor_below(&mut doc);
@@ -227,7 +227,7 @@ mod tests {
             .cursors
             .all()
             .iter()
-            .map(|c| doc.buffer.offset_to_line_col(c.position).line)
+            .map(|c| doc.buffer.offset_to_line_col(c.position.get()).line)
             .collect();
         assert_eq!(lines, vec![0, 1, 2]);
     }

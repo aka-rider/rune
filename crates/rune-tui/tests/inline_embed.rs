@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{CursorSet, CursorSpec};
 use rune_tui::app::update;
 use rune_tui::graphics::ImageStatus;
@@ -110,9 +111,9 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
     {
         let doc = app.doc_mut(id).expect("doc");
         doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
-            position: end_of_line,
-            anchor: end_of_line,
-            desired_col: 0,
+            position: BufferOffset(end_of_line),
+            anchor: BufferOffset(end_of_line),
+            desired_col: VisualCol(0),
         }]);
     }
     app.sync_view();
@@ -193,9 +194,9 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     {
         let doc = app.doc_mut(id).expect("doc");
         doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
-            position: image_line_start + 2,
-            anchor: image_line_start + 2,
-            desired_col: 0,
+            position: BufferOffset(image_line_start + 2),
+            anchor: BufferOffset(image_line_start + 2),
+            desired_col: VisualCol(0),
         }]);
     }
     let mut effects = Effects::default();

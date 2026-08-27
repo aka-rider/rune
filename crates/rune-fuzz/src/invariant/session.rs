@@ -5,6 +5,7 @@
 
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::{Command, GLOBAL_BINDINGS, GlobalCommand, KeyCode, QuitKey, resolve_in};
+use rune_tui::pane::Pane;
 
 use super::Violation;
 use crate::snapshot::Snapshot;
@@ -75,13 +76,28 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
                 MsgTag::Key { input, .. }
                     if matches!(input.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'s'))
             );
-        if !armed_by_save_key && !armed_by_guard_save_key {
+        // `title::keys::handle_key`'s `Enter`/`Down` arm ALWAYS blurs the
+        // title regardless of modifiers, and that blur is the one commit
+        // chokepoint for a pathless draft's name (`save::bind_new_now`,
+        // reached through both `rename::begin` and `rename_create::commit`)
+        // — a legitimate `save_in_flight` arming with no `Command::Save`/
+        // global-chord tag of its own, since the key that caused it was
+        // Enter, not a save chord. Scoped to `prev.focus == Title` so an
+        // ordinary editor-pane Enter (which never arms a save) can't spend
+        // this exemption.
+        let armed_by_title_commit_key = prev.focus == Pane::Title
+            && matches!(
+                ctx.msg,
+                MsgTag::Key { input, .. }
+                    if matches!(input.code, KeyCode::Enter | KeyCode::Down)
+            );
+        if !armed_by_save_key && !armed_by_guard_save_key && !armed_by_title_commit_key {
             return Some(Violation::new(
                 "SAVE-INFLIGHT-SM",
                 format!(
                     "save_in_flight went false->true on {:?}, not a save key in either the \
-                     editor or the global chord table (and no modal was up for a Guard save \
-                     key either)",
+                     editor or the global chord table, no modal was up for a Guard save key, \
+                     and the title didn't hold focus for a bind_new_now commit either",
                     ctx.msg
                 ),
             ));

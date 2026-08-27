@@ -4,15 +4,14 @@ use super::*;
 use crate::pointer::ManualClock;
 use crate::runtime::Msg;
 use rune_core::buffer::Buffer;
-use rune_core::coords::DisplayRow;
+use rune_core::coords::{BufferOffset, DisplayRow};
 use rune_vfs::Mem;
 use std::sync::Arc;
 
 fn app_with(content: &str, width: u16, height: u16) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.clock = Arc::new(ManualClock::new());
-    app.frame_width = width;
-    app.frame_height = height + 1; // + footer row
+    app.frame = Some(crate::app::FrameSize::new(width, height + 1)); // + footer row
     app.sync_view();
     app
 }
@@ -24,7 +23,7 @@ fn app_with(content: &str, width: u16, height: u16) -> App {
 /// test can never silently click the border/title row instead of the
 /// editor content.
 fn editor_origin(app: &App) -> (u16, u16) {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = crate::layout::geometry(area, app).editor;
     (editor.x, editor.y)
 }
@@ -60,7 +59,7 @@ fn click_modified(app: &mut App, kind: MouseKind, col: u16, row: u16, modifiers:
 fn plain_click_positions_the_caret() {
     let mut app = app_with("hello world\n", 40, 10);
     click(&mut app, MouseKind::Down(MouseButton::Left), 6, 0);
-    assert_eq!(app.active_doc().cursors.primary().position, 6);
+    assert_eq!(app.active_doc().cursors.primary().position, BufferOffset(6));
     assert!(!app.active_doc().cursors.primary().has_selection());
 }
 
@@ -70,7 +69,7 @@ fn double_click_selects_the_word() {
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 0);
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 0);
     let c = app.active_doc().cursors.primary();
-    assert_eq!(c.selection_range(), (0, 5)); // "hello"
+    assert_eq!(c.selection_range(), (BufferOffset(0), BufferOffset(5))); // "hello"
 }
 
 #[test]
@@ -86,7 +85,10 @@ fn triple_click_on_a_wrapped_line_selects_the_whole_logical_line() {
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 1);
     let c = app.active_doc().cursors.primary();
     let expected_end = "aaaaaaaaaa bbbbbbbbbb cccccccccc\n".len();
-    assert_eq!(c.selection_range(), (0, expected_end));
+    assert_eq!(
+        c.selection_range(),
+        (BufferOffset(0), BufferOffset(expected_end))
+    );
 }
 
 #[test]
@@ -107,7 +109,7 @@ fn drag_after_a_plain_click_extends_the_selection() {
     click(&mut app, MouseKind::Drag(MouseButton::Left), 4, 2);
     let c = app.active_doc().cursors.primary();
     assert!(c.has_selection());
-    assert_eq!(c.selection_start(), 0);
+    assert_eq!(c.selection_start(), BufferOffset(0));
 }
 
 #[test]
@@ -142,7 +144,7 @@ fn shift_click_extends_the_selection() {
         },
     );
     let c = app.active_doc().cursors.primary();
-    assert_eq!(c.selection_range(), (0, 5));
+    assert_eq!(c.selection_range(), (BufferOffset(0), BufferOffset(5)));
 }
 
 #[test]
@@ -171,8 +173,7 @@ fn click_on_a_synthetic_table_border_row_does_not_move_the_cursor() {
     let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.clock = Arc::new(ManualClock::new());
-    app.frame_width = 40;
-    app.frame_height = 21; // + footer row
+    app.frame = Some(crate::app::FrameSize::new(40, 21)); // + footer row
     let cursor_offset = content.find("tail").expect("fixture has a tail paragraph");
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset);
@@ -212,7 +213,7 @@ fn drag_that_wanders_into_the_diff_left_pane_is_a_no_op() {
     click(&mut app, MouseKind::Down(MouseButton::Left), 5, 0);
     let cursor_before = app.active_doc().cursors.primary();
 
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let geo = crate::layout::geometry(area, &app);
     let diff_left = geo
         .diff_left
@@ -249,14 +250,20 @@ fn drag_that_wanders_into_the_diff_left_pane_is_a_no_op() {
 fn place_click_cursor_and_extend_drag_cursor_are_document_agnostic() {
     let mut doc = crate::document::Document::new(Buffer::new("hello world\n"));
     assert!(place_click_cursor(&mut doc, 6, 6, 1));
-    assert_eq!(doc.cursors.primary().position, 6);
+    assert_eq!(doc.cursors.primary().position, BufferOffset(6));
     assert!(!place_click_cursor(&mut doc, 6, 6, 2));
-    assert_eq!(doc.cursors.primary().selection_range(), (6, 11));
+    assert_eq!(
+        doc.cursors.primary().selection_range(),
+        (BufferOffset(6), BufferOffset(11))
+    );
     assert!(!place_click_cursor(&mut doc, 6, 6, 3));
-    assert_eq!(doc.cursors.primary().selection_range(), (0, 12));
+    assert_eq!(
+        doc.cursors.primary().selection_range(),
+        (BufferOffset(0), BufferOffset(12))
+    );
     extend_drag_cursor(&mut doc, 0, 5, 5);
     let c = doc.cursors.primary();
-    assert_eq!((c.anchor, c.position), (0, 5));
+    assert_eq!((c.anchor, c.position), (BufferOffset(0), BufferOffset(5)));
 }
 
 fn app_with_filesearch_open(files: &[(&str, &str)]) -> App {
@@ -268,8 +275,7 @@ fn app_with_filesearch_open(files: &[(&str, &str)]) -> App {
     let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(mem);
     let mut app = App::new(Buffer::new("hello"), None, vfs, None);
     app.clock = Arc::new(ManualClock::new());
-    app.frame_width = 120;
-    app.frame_height = 34;
+    app.frame = Some(crate::app::FrameSize::new(120, 34));
     app.root = Some(std::path::PathBuf::from("/root"));
     let mut effects = crate::runtime::Effects::default();
     crate::filesearch::open(&mut app, &mut effects);
@@ -286,7 +292,7 @@ fn filesearch_candidate(path: &str) -> crate::filesearch::Candidate {
 }
 
 fn explorer_inner(app: &App) -> ratatui::layout::Rect {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     crate::layout::geometry(area, app).explorer_inner
 }
 
@@ -356,7 +362,7 @@ fn clicking_outside_the_filesearch_rect_still_cancels_it() {
         &mut effects,
     );
 
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = crate::layout::geometry(area, &app).editor;
     click_at(&mut app, editor.x, editor.y);
 

@@ -71,7 +71,7 @@ fn handle_move_to(
     extend: Extend,
     step: impl Fn(&Buffer, usize) -> usize,
 ) -> Cursor {
-    let offset = step(buf, c.position);
+    let offset = step(buf, c.position.get());
     update_horizontal(view, buf, c, offset, extend)
 }
 

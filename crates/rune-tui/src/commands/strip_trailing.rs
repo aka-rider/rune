@@ -1,4 +1,5 @@
 use rune_core::buffer::{Edit, trailing_whitespace_edits};
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 
@@ -33,8 +34,11 @@ pub(crate) fn strip_trailing_whitespace(app: &mut App, id: DocumentId) {
             carried
                 .iter()
                 .map(|cursor| Cursor {
-                    position: offset_after_deletions(cursor.position, &deletions),
-                    anchor: offset_after_deletions(cursor.anchor, &deletions),
+                    position: BufferOffset(offset_after_deletions(
+                        cursor.position.get(),
+                        &deletions,
+                    )),
+                    anchor: BufferOffset(offset_after_deletions(cursor.anchor.get(), &deletions)),
                     ..*cursor
                 })
                 .collect()

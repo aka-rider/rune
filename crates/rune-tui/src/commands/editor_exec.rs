@@ -118,7 +118,7 @@ pub(crate) fn run(
 
 fn at_buffer_top(app: &App) -> bool {
     let doc = app.active_doc();
-    let offset = doc.cursors.primary().position;
+    let offset = doc.cursors.primary().position.get();
     doc.buffer.offset_to_line_col(offset).line == 0
 }
 

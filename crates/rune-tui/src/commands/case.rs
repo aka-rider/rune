@@ -19,7 +19,7 @@ fn has_actionable_range(app: &App, id: DocumentId) -> bool {
             let (start, end) = c.selection_range();
             start != end
         } else {
-            let (start, end) = nav::word_range_at(&doc.buffer, c.position);
+            let (start, end) = nav::word_range_at(&doc.buffer, c.position.get());
             start != end && nav::is_word_at(&doc.buffer, start)
         }
     })
@@ -36,9 +36,10 @@ fn apply_case(app: &mut App, id: DocumentId, op: CaseOp) {
         EditKind::Other,
         move |_i, c, buf| {
             let (start, end) = if c.has_selection() {
-                c.selection_range()
+                let (s, e) = c.selection_range();
+                (s.get(), e.get())
             } else {
-                nav::word_range_at(buf, c.position)
+                nav::word_range_at(buf, c.position.get())
             };
             let text = buf.slice(start, end).unwrap_or("");
             match op {
@@ -47,7 +48,7 @@ fn apply_case(app: &mut App, id: DocumentId, op: CaseOp) {
             }
         },
         |buf, c| {
-            let (start, end) = nav::word_range_at(buf, c.position);
+            let (start, end) = nav::word_range_at(buf, c.position.get());
             if start == end || !nav::is_word_at(buf, start) {
                 None
             } else {
@@ -71,6 +72,7 @@ mod tests {
     use std::sync::Arc;
 
     use rune_core::buffer::Buffer;
+    use rune_core::coords::{BufferOffset, VisualCol};
     use rune_core::cursor::{CursorSet, CursorSpec};
     use rune_vfs::Mem;
 
@@ -112,9 +114,9 @@ mod tests {
         let mut app = app_with("foo bar", 1);
         let id = app.active;
         let two = CursorSet::new(1).add(CursorSpec {
-            position: 5,
-            anchor: 5,
-            desired_col: 0,
+            position: BufferOffset(5),
+            anchor: BufferOffset(5),
+            desired_col: VisualCol(0),
         });
         app.doc_mut(id).unwrap().cursors = two;
 
@@ -128,9 +130,9 @@ mod tests {
         let mut app = app_with("hello world", 2);
         let id = app.active;
         let two = CursorSet::new(2).add(CursorSpec {
-            position: 3,
-            anchor: 3,
-            desired_col: 0,
+            position: BufferOffset(3),
+            anchor: BufferOffset(3),
+            desired_col: VisualCol(0),
         });
         app.doc_mut(id).unwrap().cursors = two;
 

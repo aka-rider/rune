@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use rune_core::buffer::AppliedEdit;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 
@@ -71,9 +72,9 @@ struct CursorPayload {
 impl From<&Cursor> for CursorPayload {
     fn from(c: &Cursor) -> Self {
         CursorPayload {
-            position: c.position,
-            anchor: c.anchor,
-            desired_col: c.desired_col,
+            position: c.position.get(),
+            anchor: c.anchor.get(),
+            desired_col: c.desired_col.0,
             id: c.id.get(),
         }
     }
@@ -87,9 +88,9 @@ impl TryFrom<CursorPayload> for Cursor {
             Error::CorruptPayload(crate::error::CorruptPayloadReason::InvalidCursorId { id: p.id })
         })?;
         Ok(Cursor {
-            position: p.position,
-            anchor: p.anchor,
-            desired_col: p.desired_col,
+            position: BufferOffset(p.position),
+            anchor: BufferOffset(p.anchor),
+            desired_col: VisualCol(p.desired_col),
             id,
         })
     }
@@ -175,9 +176,9 @@ mod tests {
     #[test]
     fn cursor_round_trips_through_json() {
         let cursors = vec![Cursor {
-            position: 5,
-            anchor: 2,
-            desired_col: 1,
+            position: BufferOffset(5),
+            anchor: BufferOffset(2),
+            desired_col: VisualCol(1),
             id: CursorId::try_from(3).expect("test id is non-zero"),
         }];
         let json = cursors_to_json(&cursors).expect("serialize");

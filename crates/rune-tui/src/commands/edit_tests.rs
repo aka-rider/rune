@@ -1,5 +1,6 @@
 use super::*;
 use crate::commands::test_support::selecting;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::CursorSpec;
 use rune_vfs::Mem;
 use std::sync::Arc;
@@ -66,9 +67,9 @@ fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
     let mut app = app_with("abcd", 0);
     let id = app.active;
     let two = CursorSet::new(0).add(CursorSpec {
-        position: 1,
-        anchor: 1,
-        desired_col: 0,
+        position: BufferOffset(1),
+        anchor: BufferOffset(1),
+        desired_col: VisualCol(0),
     });
     assert_eq!(
         two.len(),

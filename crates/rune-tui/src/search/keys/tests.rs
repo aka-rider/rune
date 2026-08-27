@@ -8,8 +8,7 @@ use crate::app::App;
 
 fn app_with(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(crate::app::FrameSize::new(80, 24));
     app.sync_view();
     app
 }
@@ -49,10 +48,10 @@ fn enter_wraps_from_the_last_match_to_the_first() {
     assert_eq!(app.search().unwrap().current, Some(1));
     let _ = handle_key(&mut app, enter_key(), &mut effects);
     assert_eq!(app.search().unwrap().current, Some(2));
-    assert_eq!(app.active_doc().cursors.primary().position, 6);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 6);
     let _ = handle_key(&mut app, enter_key(), &mut effects);
     assert_eq!(app.search().unwrap().current, Some(0));
-    assert_eq!(app.active_doc().cursors.primary().position, 0);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
 }
 
 #[test]
@@ -67,7 +66,7 @@ fn shift_enter_wraps_from_the_first_match_to_the_last() {
     let _ = handle_key(&mut app, shift_enter_key(), &mut effects);
     let state = app.search().unwrap();
     assert_eq!(state.current, Some(2));
-    assert_eq!(app.active_doc().cursors.primary().position, 6);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 6);
 }
 
 #[test]
@@ -238,7 +237,7 @@ fn enter_after_a_coalesced_doc_switch_recomputes_instead_of_jumping_into_the_old
         "the new document has no \"needle\" — the stale match list must not survive"
     );
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors.primary().position.get(),
         0,
         "no jump into the wrong document's byte ranges"
     );
@@ -295,20 +294,20 @@ fn closed_bar_next_steps_and_wraps_using_the_last_query() {
         crate::keymap::GlobalCommand::SearchNext,
         &mut effects,
     );
-    assert_eq!(app.active_doc().cursors.primary().position, 3);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 3);
     crate::pane::handle_global_command(
         &mut app,
         crate::keymap::GlobalCommand::SearchNext,
         &mut effects,
     );
-    assert_eq!(app.active_doc().cursors.primary().position, 6);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 6);
     crate::pane::handle_global_command(
         &mut app,
         crate::keymap::GlobalCommand::SearchNext,
         &mut effects,
     );
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors.primary().position.get(),
         0,
         "next wraps from the last match back to the first"
     );
@@ -338,7 +337,7 @@ fn closed_bar_prev_wraps_from_the_first_match_to_the_last() {
         &mut effects,
     );
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors.primary().position.get(),
         6,
         "prev from the first match wraps to the last"
     );
@@ -366,7 +365,7 @@ fn last_query_survives_closing_and_reopening_the_bar() {
         crate::keymap::GlobalCommand::SearchNext,
         &mut effects,
     );
-    assert_eq!(app.active_doc().cursors.primary().position, 3);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 3);
 }
 
 #[test]

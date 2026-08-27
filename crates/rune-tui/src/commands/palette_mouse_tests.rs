@@ -12,8 +12,7 @@ use crate::runtime::Msg;
 fn app_with_palette_open(content: &str, width: u16, height: u16) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.clock = Arc::new(ManualClock::new());
-    app.frame_width = width;
-    app.frame_height = height;
+    app.frame = Some(crate::app::FrameSize::new(width, height));
     app.sync_view();
     let mut effects = crate::runtime::Effects::default();
     crate::palette::open(&mut app, &mut effects);
@@ -21,7 +20,7 @@ fn app_with_palette_open(content: &str, width: u16, height: u16) -> App {
 }
 
 fn palette_rect(app: &App) -> ratatui::layout::Rect {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     crate::layout::geometry(area, app)
         .palette
         .expect("palette must be open")
@@ -79,7 +78,7 @@ fn wheel_outside_the_open_palette_still_falls_through() {
     let tall_content = "line\n".repeat(200);
     let mut app = app_with_palette_open(&tall_content, 120, 34);
     let scroll_before = app.active_doc().viewport.scroll_row;
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = crate::layout::geometry(area, &app).editor;
 
     mouse_event(&mut app, MouseKind::ScrollDown, editor.x, editor.y);
@@ -150,7 +149,7 @@ fn clicking_the_palette_query_bar_does_nothing() {
 #[test]
 fn clicking_outside_the_palette_rect_still_cancels_it() {
     let mut app = app_with_palette_open("hello", 120, 34);
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = crate::layout::geometry(area, &app).editor;
 
     mouse_event(

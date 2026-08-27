@@ -2,6 +2,7 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use crate::assert_invariant;
+use crate::coords::{BufferOffset, VisualCol};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct CursorId(NonZeroU32);
@@ -45,17 +46,17 @@ impl TryFrom<u32> for CursorId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
-    pub position: usize,
-    pub anchor: usize,
-    pub desired_col: usize,
+    pub position: BufferOffset,
+    pub anchor: BufferOffset,
+    pub desired_col: VisualCol,
     pub id: CursorId,
 }
 
 impl Cursor {
     const FALLBACK: Cursor = Cursor {
-        position: 0,
-        anchor: 0,
-        desired_col: 0,
+        position: BufferOffset(0),
+        anchor: BufferOffset(0),
+        desired_col: VisualCol(0),
         id: CursorId::FIRST,
     };
 
@@ -72,15 +73,15 @@ impl Cursor {
         self.position != self.anchor
     }
 
-    pub fn selection_start(&self) -> usize {
+    pub fn selection_start(&self) -> BufferOffset {
         self.position.min(self.anchor)
     }
 
-    pub fn selection_end(&self) -> usize {
+    pub fn selection_end(&self) -> BufferOffset {
         self.position.max(self.anchor)
     }
 
-    pub fn selection_range(&self) -> (usize, usize) {
+    pub fn selection_range(&self) -> (BufferOffset, BufferOffset) {
         if self.position < self.anchor {
             (self.position, self.anchor)
         } else {
@@ -104,9 +105,9 @@ impl Cursor {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CursorSpec {
-    pub position: usize,
-    pub anchor: usize,
-    pub desired_col: usize,
+    pub position: BufferOffset,
+    pub anchor: BufferOffset,
+    pub desired_col: VisualCol,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,9 +125,9 @@ impl Default for CursorSet {
 impl CursorSet {
     pub fn new(offset: usize) -> CursorSet {
         CursorSet::new_from_specs(&[CursorSpec {
-            position: offset,
-            anchor: offset,
-            desired_col: 0,
+            position: BufferOffset(offset),
+            anchor: BufferOffset(offset),
+            desired_col: VisualCol(0),
         }])
     }
 
@@ -168,9 +169,9 @@ impl CursorSet {
         let specs: Vec<CursorSpec> = positions
             .iter()
             .map(|&p| CursorSpec {
-                position: p,
-                anchor: p,
-                desired_col: 0,
+                position: BufferOffset(p),
+                anchor: BufferOffset(p),
+                desired_col: VisualCol(0),
             })
             .collect();
         CursorSet::new_from_specs(&specs)

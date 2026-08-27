@@ -64,8 +64,8 @@ pub(crate) fn per_cursor_selection_edits(
         let edit = if c.has_selection() {
             let (start, end) = c.selection_range();
             Edit {
-                start,
-                end,
+                start: start.get(),
+                end: end.get(),
                 insert: text_for(i, c, buf),
             }
         } else if let Some((start, end)) = bare(buf, c) {
@@ -96,7 +96,7 @@ pub fn insert_text(app: &mut App, id: DocumentId, text: &str, kind: EditKind) {
         id,
         kind,
         move |_i, _c, _buf| text.to_string(),
-        |_buf, c| Some((c.position, c.position)),
+        |_buf, c| Some((c.position.get(), c.position.get())),
     );
 }
 
@@ -119,7 +119,7 @@ pub fn newline(app: &mut App, id: DocumentId) {
             } else {
                 c.position
             };
-            let bp = buf.offset_to_line_col(pos);
+            let bp = buf.offset_to_line_col(pos.get());
             let line = buf.line(bp.line);
             let indent: String = line
                 .chars()
@@ -127,7 +127,7 @@ pub fn newline(app: &mut App, id: DocumentId) {
                 .collect();
             format!("\n{indent}")
         },
-        |_buf, c| Some((c.position, c.position)),
+        |_buf, c| Some((c.position.get(), c.position.get())),
     );
 }
 
@@ -142,7 +142,7 @@ pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
         id,
         EditKind::Cut,
         |_i, _c, _buf| String::new(),
-        |buf, c| Some(nav_line::line_range_incl_newline(buf, c.position)),
+        |buf, c| Some(nav_line::line_range_incl_newline(buf, c.position.get())),
     );
 }
 
@@ -153,10 +153,13 @@ pub fn delete_left(app: &mut App, id: DocumentId) {
         EditKind::DeleteLeft,
         |_i, _c, _buf| String::new(),
         |buf, c| {
-            if c.position == 0 {
+            if c.position.get() == 0 {
                 None
             } else {
-                Some((nav::prev_rune_offset(buf, c.position), c.position))
+                Some((
+                    nav::prev_rune_offset(buf, c.position.get()),
+                    c.position.get(),
+                ))
             }
         },
     );
@@ -169,10 +172,13 @@ pub fn delete_right(app: &mut App, id: DocumentId) {
         EditKind::DeleteRight,
         |_i, _c, _buf| String::new(),
         |buf, c| {
-            if c.position >= buf.len() {
+            if c.position.get() >= buf.len() {
                 None
             } else {
-                Some((c.position, nav::next_rune_offset(buf, c.position)))
+                Some((
+                    c.position.get(),
+                    nav::next_rune_offset(buf, c.position.get()),
+                ))
             }
         },
     );
@@ -189,10 +195,13 @@ pub fn delete_word_left(app: &mut App, id: DocumentId) {
         EditKind::DeleteLeft,
         |_i, _c, _buf| String::new(),
         |buf, c| {
-            if c.position == 0 {
+            if c.position.get() == 0 {
                 None
             } else {
-                Some((nav::word_left_offset(buf, c.position), c.position))
+                Some((
+                    nav::word_left_offset(buf, c.position.get()),
+                    c.position.get(),
+                ))
             }
         },
     );
@@ -205,10 +214,13 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
         EditKind::DeleteRight,
         |_i, _c, _buf| String::new(),
         |buf, c| {
-            if c.position >= buf.len() {
+            if c.position.get() >= buf.len() {
                 None
             } else {
-                Some((c.position, nav::word_right_offset(buf, c.position)))
+                Some((
+                    c.position.get(),
+                    nav::word_right_offset(buf, c.position.get()),
+                ))
             }
         },
     );

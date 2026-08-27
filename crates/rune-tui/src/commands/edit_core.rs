@@ -8,6 +8,7 @@
 //! one journal push, one undo step.
 
 use rune_core::buffer::{AppliedEdit, Edit, SortedEdits};
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_core::undo::{EditKind, Step};
 
@@ -118,7 +119,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
             doc.buffer = new_buf;
             doc.cursors = CursorSet::new_from(&new_cursors);
             let cursors_after = doc.cursors.all().to_vec();
-            let caret = doc.cursors.primary().position;
+            let caret = doc.cursors.primary().position.get();
             doc.journal.push(Step {
                 edits: applied.clone(),
                 cursors_before: cursors_before.all().to_vec(),
@@ -260,9 +261,9 @@ pub(crate) fn commit_edit_batch(
             .iter()
             .zip(ids.iter())
             .map(|(ae, &cid)| Cursor {
-                position: ae.end,
-                anchor: ae.end,
-                desired_col: 0,
+                position: BufferOffset(ae.end),
+                anchor: BufferOffset(ae.end),
+                desired_col: VisualCol(0),
                 id: cid,
             })
             .collect()

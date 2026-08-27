@@ -37,7 +37,7 @@ fn clamp_u16(v: i32) -> u16 {
 /// bands could ever coincide it is the one the user actually sees and
 /// means to grab.
 pub fn begin(app: &mut App, input: MouseInput) -> bool {
-    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let geo = layout::geometry(area, app);
 
     if let (Some(left), Some(splitter)) = (geo.diff_left, geo.diff_splitter)
@@ -106,7 +106,7 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     if matches!(which, Splitter::LeftColumn) && app.filesearch().is_some() {
         return;
     }
-    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let geo = layout::geometry(area, app);
 
     match which {
@@ -153,8 +153,7 @@ mod tests {
 
     fn app_with_explorer_focused() -> App {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.frame_width = 100;
-        app.frame_height = 30;
+        app.frame = Some(crate::app::FrameSize::new(100, 30));
         app.splits.left.show();
         let mut effects = Effects::default();
         app.set_focus_pane(Pane::Explorer, &mut effects);

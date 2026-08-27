@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_vfs::{Mem, Vfs, VfsTestExt};
 
@@ -43,8 +44,8 @@ fn caret_at(app: &mut App, id: DocumentId, offset: usize) {
 fn select(app: &mut App, id: DocumentId, anchor: usize, position: usize) {
     let primary = app.doc(id).unwrap().cursors.primary();
     app.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[Cursor {
-        anchor,
-        position,
+        anchor: BufferOffset(anchor),
+        position: BufferOffset(position),
         ..primary
     }]);
 }
@@ -108,7 +109,10 @@ fn a_caret_past_one_stripped_run_moves_back_by_only_that_run() {
 
     assert_eq!(start, SaveStart::InFlight);
     assert_eq!(content(&app, id), "a\nb\nc");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 3);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(3)
+    );
 }
 
 #[test]
@@ -118,7 +122,10 @@ fn a_caret_inside_a_stripped_run_lands_where_the_run_began() {
 
     let (_start, _effects) = save_interactively(&mut app, id);
 
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 3);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(3)
+    );
 }
 
 #[test]
@@ -130,8 +137,8 @@ fn a_selection_spanning_stripped_lines_keeps_both_of_its_ends() {
 
     assert_eq!(content(&app, id), "alpha\nbeta\ngamma");
     let primary = app.doc(id).unwrap().cursors.primary();
-    assert_eq!(primary.anchor, 2);
-    assert_eq!(primary.position, 13);
+    assert_eq!(primary.anchor, BufferOffset(2));
+    assert_eq!(primary.position, BufferOffset(13));
 }
 
 #[test]

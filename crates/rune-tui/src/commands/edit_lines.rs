@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use rune_core::buffer::{Buffer, Edit};
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 
@@ -30,7 +31,7 @@ pub(crate) fn per_line_edits(
     let mut seen: HashSet<usize> = HashSet::new();
     for c in all {
         let Some(doc) = app.doc(id) else { return };
-        let bp = doc.buffer.offset_to_line_col(c.position);
+        let bp = doc.buffer.offset_to_line_col(c.position.get());
         if dedupe && !seen.insert(bp.line) {
             continue;
         }
@@ -44,9 +45,9 @@ pub(crate) fn per_line_edits(
 }
 
 fn selected_lines(c: &Cursor, buf: &Buffer) -> std::ops::RangeInclusive<usize> {
-    let first = buf.offset_to_line_col(c.selection_start()).line;
-    let mut last = buf.offset_to_line_col(c.selection_end()).line;
-    if last > first && buf.line_start(last) == Some(c.selection_end()) {
+    let first = buf.offset_to_line_col(c.selection_start().get()).line;
+    let mut last = buf.offset_to_line_col(c.selection_end().get()).line;
+    if last > first && buf.line_start(last) == Some(c.selection_end().get()) {
         last -= 1;
     }
     first..=last
@@ -116,9 +117,9 @@ fn per_selected_line_edits(
             before
                 .iter()
                 .map(|c| Cursor {
-                    position: shift_through(c.position, &shifts),
-                    anchor: shift_through(c.anchor, &shifts),
-                    desired_col: 0,
+                    position: BufferOffset(shift_through(c.position.get(), &shifts)),
+                    anchor: BufferOffset(shift_through(c.anchor.get(), &shifts)),
+                    desired_col: VisualCol(0),
                     id: c.id,
                 })
                 .collect()
@@ -265,7 +266,7 @@ mod tests {
         selecting(&mut app, id, 0, 3);
         indent(&mut app, id);
         let primary = app.doc(id).unwrap().cursors.primary();
-        assert_eq!((primary.anchor, primary.position), (0, 5));
+        assert_eq!((primary.anchor.get(), primary.position.get()), (0, 5));
     }
 
     #[test]
@@ -274,7 +275,7 @@ mod tests {
         let id = app.active;
         indent(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
-        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 3);
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position.get(), 3);
     }
 
     #[test]
@@ -292,7 +293,7 @@ mod tests {
         let id = app.active;
         outdent(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
-        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 0);
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position.get(), 0);
     }
 
     #[test]
@@ -304,7 +305,7 @@ mod tests {
         assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb");
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
         let primary = app.doc(id).unwrap().cursors.primary();
-        assert_eq!((primary.anchor, primary.position), (0, 3));
+        assert_eq!((primary.anchor.get(), primary.position.get()), (0, 3));
     }
 
     #[test]
@@ -325,9 +326,9 @@ mod tests {
         let id = app.active;
         let doc = app.doc_mut(id).unwrap();
         doc.cursors = doc.cursors.clone().add(CursorSpec {
-            position: 2,
-            anchor: 2,
-            desired_col: 0,
+            position: BufferOffset(2),
+            anchor: BufferOffset(2),
+            desired_col: VisualCol(0),
         });
         indent(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "\tab");

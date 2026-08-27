@@ -37,6 +37,7 @@
 
 use rune_core::bracket::{bracket_pair, jump_origin};
 use rune_core::buffer::Buffer;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 use unicode_segmentation::UnicodeSegmentation;
@@ -253,13 +254,13 @@ pub(crate) fn update_horizontal(
     let wp = view.wrap.syntax_to_wrap(sp);
     let desired_col = view.wrap.visual_col(buf.content(), wp.row, wp.col);
     Cursor {
-        position: offset,
+        position: BufferOffset(offset),
         anchor: if extend == Extend::Yes {
             c.anchor
         } else {
-            offset
+            BufferOffset(offset)
         },
-        desired_col,
+        desired_col: VisualCol(desired_col),
         id: c.id,
     }
 }
@@ -271,9 +272,9 @@ fn handle_left(
     extend: Extend,
     step: impl Fn(&Buffer, usize) -> usize,
 ) -> Cursor {
-    let mut offset = step(buf, c.position);
+    let mut offset = step(buf, c.position.get());
     if extend == Extend::No && c.has_selection() {
-        offset = c.selection_start();
+        offset = c.selection_start().get();
     }
     update_horizontal(view, buf, c, offset, extend)
 }
@@ -285,9 +286,9 @@ fn handle_right(
     extend: Extend,
     step: impl Fn(&Buffer, usize) -> usize,
 ) -> Cursor {
-    let mut offset = step(buf, c.position);
+    let mut offset = step(buf, c.position.get());
     if extend == Extend::No && c.has_selection() {
-        offset = c.selection_end();
+        offset = c.selection_end().get();
     }
     update_horizontal(view, buf, c, offset, extend)
 }
@@ -336,7 +337,7 @@ pub fn word_right(doc: &mut Document, extend: Extend) {
 pub fn match_bracket(doc: &mut Document, extend: Extend) {
     move_cursors(doc, extend, |view, buf, c, extend| {
         let text = buf.content();
-        let Some(origin) = jump_origin(text, c.position) else {
+        let Some(origin) = jump_origin(text, c.position.get()) else {
             return c;
         };
         let Some((open, close)) = bracket_pair(text, origin) else {
@@ -349,9 +350,9 @@ pub fn match_bracket(doc: &mut Document, extend: Extend) {
 
 pub fn select_all(doc: &mut Document) {
     let mut c = doc.cursors.primary();
-    c.position = doc.buffer.len();
-    c.anchor = 0;
-    c.desired_col = 0;
+    c.position = BufferOffset(doc.buffer.len());
+    c.anchor = BufferOffset(0);
+    c.desired_col = VisualCol(0);
     doc.cursors = CursorSet::new_from(&[c]);
 }
 
@@ -460,9 +461,9 @@ mod tests {
     fn doc_with(content: &str, anchor: usize, position: usize) -> Document {
         let mut doc = Document::new(Buffer::new(content));
         doc.cursors = CursorSet::new_from(&[Cursor {
-            position,
-            anchor,
-            desired_col: 0,
+            position: BufferOffset(position),
+            anchor: BufferOffset(anchor),
+            desired_col: VisualCol(0),
             id: CursorId::FIRST,
         }]);
         doc.viewport.set_size(80, 23);
@@ -473,27 +474,27 @@ mod tests {
     fn left_on_a_reversed_selection_collapses_to_its_low_edge() {
         let mut doc = doc_with("hello world", 5, 2);
         char_left(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, 2);
+        assert_eq!(doc.cursors.primary().position, BufferOffset(2));
     }
 
     #[test]
     fn left_on_a_forward_selection_collapses_to_its_low_edge() {
         let mut doc = doc_with("hello world", 2, 5);
         char_left(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, 2);
+        assert_eq!(doc.cursors.primary().position, BufferOffset(2));
     }
 
     #[test]
     fn right_on_a_reversed_selection_collapses_to_its_high_edge() {
         let mut doc = doc_with("hello world", 5, 0);
         char_right(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, 5);
+        assert_eq!(doc.cursors.primary().position, BufferOffset(5));
     }
 
     #[test]
     fn right_on_a_forward_selection_collapses_to_its_high_edge() {
         let mut doc = doc_with("hello world", 0, 5);
         char_right(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, 5);
+        assert_eq!(doc.cursors.primary().position, BufferOffset(5));
     }
 }

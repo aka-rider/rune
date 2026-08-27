@@ -121,7 +121,7 @@ fn jump(
     if matches.is_empty() {
         return None;
     }
-    let cursor_byte = app.active_doc().cursors.primary().position;
+    let cursor_byte = app.active_doc().cursors.primary().position.get();
     let idx = if forward {
         next_index(matches, cursor_byte, |r| is_concealed(concealed, r))
     } else {

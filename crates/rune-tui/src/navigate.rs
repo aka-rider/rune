@@ -29,7 +29,7 @@ use crate::workspace;
 /// on neither a link nor an embed is a silent
 /// no-op.
 pub fn follow(app: &mut App, effects: &mut Effects) {
-    let offset = app.active_doc().cursors.primary().position;
+    let offset = app.active_doc().cursors.primary().position.get();
     let Some(target) = link_target_at(&app.active_doc().catalogue, offset) else {
         return;
     };

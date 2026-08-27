@@ -220,12 +220,12 @@ fn paste_verbatim_detects_a_swallowed_filesearch_paste() {
     assert_eq!(v.id, "PASTE-VERBATIM");
 }
 
-/// `route_bracketed_paste` sends a bracketed paste into the document even
-/// when the Explorer or Tabs pane holds focus — neither owns an editable
-/// field of its own.
+/// `route_bracketed_paste` refuses a bracketed paste while a chrome pane
+/// (Explorer/Tabs/Messages) holds focus — the invariant flags a document
+/// that changed anyway and accepts one left untouched.
 #[test]
-fn paste_verbatim_checks_a_paste_landing_in_the_document_from_the_explorer_pane() {
-    let mut prev = base_snapshot("ac"); // cursor at 0
+fn paste_verbatim_flags_a_paste_landing_in_the_document_from_the_explorer_pane() {
+    let mut prev = base_snapshot("ac");
     prev.focus = Pane::Explorer;
     prev.focus_target = FocusTarget::Explorer;
     let mut next = base_snapshot("bac");
@@ -233,7 +233,14 @@ fn paste_verbatim_checks_a_paste_landing_in_the_document_from_the_explorer_pane(
     next.focus_target = FocusTarget::Explorer;
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Paste("b".to_string());
-    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+    let violation =
+        paste_verbatim(&prev, &next, &ctx).expect("a refused paste that lands must violate");
+    assert_eq!(violation.id, "PASTE-VERBATIM");
+
+    let mut untouched = base_snapshot("ac");
+    untouched.focus = Pane::Explorer;
+    untouched.focus_target = FocusTarget::Explorer;
+    assert_eq!(paste_verbatim(&prev, &untouched, &ctx), None);
 }
 
 #[test]

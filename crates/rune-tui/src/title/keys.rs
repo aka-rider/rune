@@ -114,7 +114,7 @@ fn selection_or_window(app: &App) -> Range<usize> {
     let cursor = app.title.field().cursor();
     if cursor.has_selection() {
         let (start, end) = cursor.selection_range();
-        start..end
+        start.get()..end.get()
     } else {
         app.title.window()
     }
@@ -190,7 +190,7 @@ fn try_unlock_extension(title: &mut TitleField) -> bool {
 /// predicate, so the hint can never promise a keypress that does nothing.
 pub(crate) fn can_unlock_extension(title: &TitleField) -> bool {
     let split = ext_split(title.field.text());
-    !title.ext_unlocked && split < title.field.len() && title.field.cursor().position == split
+    !title.ext_unlocked && split < title.field.len() && title.field.cursor().position.get() == split
 }
 
 /// The single commit chokepoint (decision 4/8): whether the title may

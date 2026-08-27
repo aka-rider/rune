@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use ratatui::layout::Rect;
 use rune_core::coords::DisplayRow;
 use rune_core::cursor::Cursor;
 use rune_core::undo::EditKind;
@@ -135,7 +134,7 @@ pub struct Snapshot {
     /// is therefore never an excuse for a bad span; it is carried so a
     /// failure report can still show whether the regions were current.
     pub highlight_version: u64,
-    /// `layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height),
+    /// `layout::geometry(app.frame_area(),
     /// app)` — every rect the frame is built from, captured once per step so
     /// `LAYOUT-FITS` (`invariant/pane.rs`) can check it as a plain function
     /// of `next` alone, with no live `App` reach-back.
@@ -321,7 +320,7 @@ impl Snapshot {
                 .map(|(range, _scope)| (range.start, range.end))
                 .collect();
         let highlight_version = doc.highlight.version;
-        let geometry = layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height), app);
+        let geometry = layout::geometry(app.frame_area(), app);
         let scroll_row = doc.viewport.scroll_row;
         Snapshot {
             content: doc.buffer.content().to_string(),

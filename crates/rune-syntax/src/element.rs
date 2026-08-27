@@ -136,7 +136,7 @@ pub struct CursorProbe {
 
 impl CursorProbe {
     pub fn new(buf: &Buffer, cursors: &CursorSet) -> CursorProbe {
-        let offsets: Vec<usize> = cursors.all().iter().map(|c| c.position).collect();
+        let offsets: Vec<usize> = cursors.all().iter().map(|c| c.position.get()).collect();
         let points: Vec<BufferPoint> = offsets.iter().map(|&o| buf.offset_to_line_col(o)).collect();
         CursorProbe { offsets, points }
     }

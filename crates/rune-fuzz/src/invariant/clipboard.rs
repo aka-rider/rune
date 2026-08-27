@@ -147,9 +147,10 @@ fn title_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option
 
     let cursor = prev.title_cursor;
     let (raw_start, raw_end) = if cursor.has_selection() {
-        cursor.selection_range()
+        let (s, e) = cursor.selection_range();
+        (s.get(), e.get())
     } else {
-        (cursor.position, cursor.position)
+        (cursor.position.get(), cursor.position.get())
     };
     let window = &prev.title_window;
     let start = prev
@@ -188,6 +189,7 @@ fn document_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Opt
         return None;
     };
     let (start, end) = cursor.selection_range();
+    let (start, end) = (start.get(), end.get());
     if end > prev.content.len()
         || !prev.content.is_char_boundary(start)
         || !prev.content.is_char_boundary(end)
@@ -267,7 +269,7 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
 
     let buf = Buffer::new(prev.content.clone());
     let (start, end) = cursor.selection_range();
-    let expected = buf.slice(start, end)?;
+    let expected = buf.slice(start.get(), end.get())?;
     if expected.is_empty() {
         return None;
     }

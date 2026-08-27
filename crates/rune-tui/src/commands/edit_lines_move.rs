@@ -7,6 +7,7 @@
 //! so those two call `edit_core::apply_edit_batch_with_cursors` directly.
 
 use rune_core::buffer::{Buffer, Edit};
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::Cursor;
 use rune_core::undo::EditKind;
 
@@ -83,7 +84,7 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
     let Some(c) = cursors_before.all().first() else {
         return;
     };
-    let bp = doc.buffer.offset_to_line_col(c.position);
+    let bp = doc.buffer.offset_to_line_col(c.position.get());
     if bp.line == 0 {
         return;
     }
@@ -109,8 +110,8 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
 
     let cid = c.id;
     let desired_col = c.desired_col;
-    let col = (c.position - line_start).min(cur_parts.text.len());
-    let new_pos = prev_start + col;
+    let col = (c.position.get() - line_start).min(cur_parts.text.len());
+    let new_pos = BufferOffset(prev_start + col);
     let edit = Edit {
         start: prev_start,
         end: edit_end,
@@ -141,7 +142,7 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
     let Some(c) = cursors_before.all().first() else {
         return;
     };
-    let bp = doc.buffer.offset_to_line_col(c.position);
+    let bp = doc.buffer.offset_to_line_col(c.position.get());
     let line_count = doc.buffer.line_count();
     if line_count == 0 || bp.line >= line_count - 1 {
         return;
@@ -165,8 +166,8 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
 
     let cid = c.id;
     let desired_col = c.desired_col;
-    let col = (c.position - line_start).min(cur_parts.text.len());
-    let new_pos = line_start + next_parts.text.len() + separator.len() + col;
+    let col = (c.position.get() - line_start).min(cur_parts.text.len());
+    let new_pos = BufferOffset(line_start + next_parts.text.len() + separator.len() + col);
     let edit = Edit {
         start: line_start,
         end: edit_end,
@@ -197,6 +198,7 @@ mod tests {
     use crate::commands::edit::undo;
     use crate::commands::edit_lines::{delete_line, indent, outdent};
     use rune_core::buffer::Buffer;
+    use rune_core::coords::VisualCol;
     use rune_core::cursor::{CursorSet, CursorSpec};
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -257,9 +259,9 @@ mod tests {
         let id = app.active;
         let doc = app.doc_mut(id).unwrap();
         doc.cursors = doc.cursors.clone().add(CursorSpec {
-            position: 7,
-            anchor: 7,
-            desired_col: 0,
+            position: BufferOffset(7),
+            anchor: BufferOffset(7),
+            desired_col: VisualCol(0),
         });
         assert_eq!(
             doc.cursors.len(),
@@ -284,7 +286,10 @@ mod tests {
         move_line_up(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "two\none\nthree");
         // Column within "two" (2 bytes in) is preserved on the moved line.
-        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 2);
+        assert_eq!(
+            app.doc(id).unwrap().cursors.primary().position,
+            BufferOffset(2)
+        );
     }
 
     #[test]

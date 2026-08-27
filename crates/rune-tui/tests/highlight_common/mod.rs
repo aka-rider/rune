@@ -45,7 +45,7 @@ fn place_caret(session: &mut Session, offset: usize) {
     let target = offset.min(len);
     let mut guard = 0usize;
     loop {
-        let position = session.app().active_doc().cursors.primary().position;
+        let position = session.app().active_doc().cursors.primary().position.get();
         if position == target {
             break;
         }

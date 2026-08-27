@@ -24,7 +24,7 @@
 
 mod messages_common;
 
-use rune_core::coords::WrapRow;
+use rune_core::coords::{BufferOffset, VisualCol, WrapRow};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_tui::app;
 use rune_tui::keymap::KeyCode;
@@ -153,7 +153,7 @@ fn pane_height_never_exceeds_forty_percent_of_the_frame() {
     messages::error(session.app_mut(), huge);
     session.app_mut().sync_view();
 
-    let frame_height = session.app().frame_height;
+    let frame_height = session.app().frame_height();
     let cap = (frame_height as usize * 2 / 5) as u16 + 1;
     assert!(
         messages::height(session.app(), frame_height) <= cap,
@@ -207,7 +207,7 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
     let view = doc.view.as_ref().expect("synced view");
     let buffer_point = doc
         .buffer
-        .offset_to_line_col(doc.cursors.primary().position);
+        .offset_to_line_col(doc.cursors.primary().position.get());
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
@@ -443,9 +443,9 @@ fn a_pane_with_a_selection_arms_nothing() {
     let mut session = app_for("hello");
     messages::info(session.app_mut(), "saved");
     messages::doc_mut(session.app_mut()).cursors = CursorSet::new_from(&[Cursor {
-        position: 0,
-        anchor: 3,
-        desired_col: 0,
+        position: BufferOffset(0),
+        anchor: BufferOffset(3),
+        desired_col: VisualCol(0),
         id: CursorId::FIRST,
     }]);
 

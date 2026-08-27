@@ -129,8 +129,7 @@ mod tests {
     #[test]
     fn toggle_refuses_while_the_file_finder_owns_focus_at_a_narrow_frame() {
         let mut app = app();
-        app.frame_width = 5;
-        app.frame_height = 5;
+        app.frame = Some(crate::app::FrameSize::new(5, 5));
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
         assert_eq!(app.focus(), Pane::Editor);

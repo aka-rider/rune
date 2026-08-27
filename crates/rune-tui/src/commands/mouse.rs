@@ -5,6 +5,7 @@
 //! scrolls 3 rows. `app::update` routes `Msg::Mouse` here directly, exactly
 //! like `app::handle_key` routes a resolved `Command` to `commands::nav`.
 
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorSet, CursorSpec};
 
 use crate::app::App;
@@ -67,7 +68,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     if let Some(Drag::Palette) = app.pointer.drag {
         match input.kind {
             MouseKind::Drag(MouseButton::Left) => {
-                let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+                let area = app.frame_area();
                 let geo = crate::layout::geometry(area, app);
                 if let Some(rect) = geo.palette
                     && let Some(row) = palette_row_at(app, rect, input)
@@ -122,7 +123,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         return;
     }
 
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let geo = crate::layout::geometry(area, app);
 
     if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
@@ -283,9 +284,9 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         // ctrl, never Super.
         let doc = app.active_doc_mut();
         doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
-            position: offset,
-            anchor: offset,
-            desired_col,
+            position: BufferOffset(offset),
+            anchor: BufferOffset(offset),
+            desired_col: VisualCol(desired_col),
         }]);
         app.pointer.drag = None;
         navigate::follow(app, effects);
@@ -299,9 +300,9 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         // Alt-click: add a cursor, never disturbing the existing set.
         let doc = app.active_doc_mut();
         doc.cursors = doc.cursors.add(CursorSpec {
-            position: offset,
-            anchor: offset,
-            desired_col,
+            position: BufferOffset(offset),
+            anchor: BufferOffset(offset),
+            desired_col: VisualCol(desired_col),
         });
         app.pointer.drag = None;
         return;
@@ -315,14 +316,14 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         let anchor = doc.cursors.primary().anchor;
         let id = doc.cursors.primary().id;
         let extended = Cursor {
-            position: offset,
+            position: BufferOffset(offset),
             anchor,
-            desired_col,
+            desired_col: VisualCol(desired_col),
             id,
         };
         doc.cursors = CursorSet::new_from(&[extended]);
         app.pointer.drag = Some(Drag::Text {
-            anchor,
+            anchor: anchor.get(),
             pane: Pane::Editor,
         });
         return;
@@ -370,9 +371,9 @@ fn diff_left_click_target(app: &App, row: u16, col: u16) -> Option<(DocumentId, 
 pub(crate) fn select_range(doc: &mut Document, start: usize, end: usize) {
     let id = doc.cursors.primary().id;
     let selected = Cursor {
-        position: end,
-        anchor: start,
-        desired_col: 0,
+        position: BufferOffset(end),
+        anchor: BufferOffset(start),
+        desired_col: VisualCol(0),
         id,
     };
     doc.cursors = CursorSet::new_from(&[selected]);
@@ -395,9 +396,9 @@ pub(crate) fn place_click_cursor(
     match count {
         1 => {
             doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
-                position: offset,
-                anchor: offset,
-                desired_col,
+                position: BufferOffset(offset),
+                anchor: BufferOffset(offset),
+                desired_col: VisualCol(desired_col),
             }]);
             true
         }
@@ -426,9 +427,9 @@ pub(crate) fn extend_drag_cursor(
 ) {
     let id = doc.cursors.primary().id;
     let extended = Cursor {
-        position: offset,
-        anchor,
-        desired_col,
+        position: BufferOffset(offset),
+        anchor: BufferOffset(anchor),
+        desired_col: VisualCol(desired_col),
         id,
     };
     doc.cursors = CursorSet::new_from(&[extended]);
@@ -441,7 +442,7 @@ pub(crate) fn extend_drag_cursor(
 /// pointer that has wandered outside the editor mid-drag is a no-op (the
 /// selection simply stops extending until it re-enters).
 fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let geo = crate::layout::geometry(area, app);
     let editor = geo.editor;
     // Containment against the editor's OWN rect, never `pane_at` — `pane_at`

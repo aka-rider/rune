@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use rune_core::buffer::{Buffer, Edit, SortedEdits};
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{self, EditKind, Journal, Step};
 
@@ -58,9 +59,9 @@ impl TextField {
         let id = self.cursor.id;
         self.buffer = buffer;
         self.cursor = Cursor {
-            position: len,
-            anchor: len,
-            desired_col: 0,
+            position: BufferOffset(len),
+            anchor: BufferOffset(len),
+            desired_col: VisualCol(0),
             id,
         };
         self.journal = Journal::new();
@@ -70,9 +71,9 @@ impl TextField {
         let whole = 0..self.buffer.len();
         let id = self.cursor.id;
         self.cursor = Cursor {
-            position: clamp_boundary(self.buffer.content(), position, &whole),
-            anchor: clamp_boundary(self.buffer.content(), anchor, &whole),
-            desired_col: 0,
+            position: BufferOffset(clamp_boundary(self.buffer.content(), position, &whole)),
+            anchor: BufferOffset(clamp_boundary(self.buffer.content(), anchor, &whole)),
+            desired_col: VisualCol(0),
             id,
         };
     }
@@ -82,7 +83,7 @@ impl TextField {
             return "";
         }
         let (start, end) = self.cursor.selection_range();
-        self.buffer.slice(start, end).unwrap_or("")
+        self.buffer.slice(start.get(), end.get()).unwrap_or("")
     }
 
     pub fn apply(&mut self, cmd: Command, window: Range<usize>) -> KeyOutcome {
@@ -108,9 +109,9 @@ impl TextField {
                 KeyOutcome::Consumed
             }
             Command::SelectAll => {
-                self.cursor.anchor = window.start;
-                self.cursor.position = window.end;
-                self.cursor.desired_col = 0;
+                self.cursor.anchor = BufferOffset(window.start);
+                self.cursor.position = BufferOffset(window.end);
+                self.cursor.desired_col = VisualCol(0);
                 KeyOutcome::Consumed
             }
             Command::DeleteLeft => {
@@ -137,7 +138,7 @@ impl TextField {
         } else {
             (self.cursor.position, self.cursor.position)
         };
-        self.edit(start, end, text, &window)
+        self.edit(start.get(), end.get(), text, &window)
     }
 
     pub fn delete_range(&mut self, range: Range<usize>) -> KeyOutcome {
@@ -152,9 +153,9 @@ impl TextField {
         step: impl Fn(&Buffer, usize) -> usize,
     ) -> KeyOutcome {
         let offset = if !select && self.cursor.has_selection() {
-            self.cursor.selection_start()
+            self.cursor.selection_start().get()
         } else {
-            step(&self.buffer, self.cursor.position)
+            step(&self.buffer, self.cursor.position.get())
         };
         self.move_to(
             clamp_boundary(self.buffer.content(), offset, window),
@@ -170,9 +171,9 @@ impl TextField {
         step: impl Fn(&Buffer, usize) -> usize,
     ) -> KeyOutcome {
         let offset = if !select && self.cursor.has_selection() {
-            self.cursor.selection_end()
+            self.cursor.selection_end().get()
         } else {
-            step(&self.buffer, self.cursor.position)
+            step(&self.buffer, self.cursor.position.get())
         };
         self.move_to(
             clamp_boundary(self.buffer.content(), offset, window),
@@ -182,11 +183,11 @@ impl TextField {
     }
 
     fn move_to(&mut self, offset: usize, select: bool) {
-        self.cursor.position = offset;
+        self.cursor.position = BufferOffset(offset);
         if !select {
-            self.cursor.anchor = offset;
+            self.cursor.anchor = BufferOffset(offset);
         }
-        self.cursor.desired_col = 0;
+        self.cursor.desired_col = VisualCol(0);
     }
 
     fn delete_bare(
@@ -196,19 +197,22 @@ impl TextField {
         unit: DeleteUnit,
     ) -> KeyOutcome {
         let (start, end) = if self.cursor.has_selection() {
-            self.cursor.selection_range()
+            let (s, e) = self.cursor.selection_range();
+            (s.get(), e.get())
         } else if direction == DeleteDirection::Backward {
             let target = match unit {
-                DeleteUnit::Word => nav::word_left_offset(&self.buffer, self.cursor.position),
-                DeleteUnit::Rune => nav::prev_rune_offset(&self.buffer, self.cursor.position),
+                DeleteUnit::Word => nav::word_left_offset(&self.buffer, self.cursor.position.get()),
+                DeleteUnit::Rune => nav::prev_rune_offset(&self.buffer, self.cursor.position.get()),
             };
-            (target, self.cursor.position)
+            (target, self.cursor.position.get())
         } else {
             let target = match unit {
-                DeleteUnit::Word => nav::word_right_offset(&self.buffer, self.cursor.position),
-                DeleteUnit::Rune => nav::next_rune_offset(&self.buffer, self.cursor.position),
+                DeleteUnit::Word => {
+                    nav::word_right_offset(&self.buffer, self.cursor.position.get())
+                }
+                DeleteUnit::Rune => nav::next_rune_offset(&self.buffer, self.cursor.position.get()),
             };
-            (self.cursor.position, target)
+            (self.cursor.position.get(), target)
         };
         self.edit(start, end, "", window)
     }
@@ -237,9 +241,9 @@ impl TextField {
         let landed = applied.last().map_or(start, |a| a.end);
         self.buffer = new_buf;
         self.cursor = Cursor {
-            position: landed,
-            anchor: landed,
-            desired_col: 0,
+            position: BufferOffset(landed),
+            anchor: BufferOffset(landed),
+            desired_col: VisualCol(0),
             id: before.id,
         };
         self.journal.push(Step {
@@ -286,9 +290,9 @@ impl TextField {
         let id = self.cursor.id;
         let restored = recorded.unwrap_or(self.cursor);
         self.cursor = Cursor {
-            position: restored.position.min(len),
-            anchor: restored.anchor.min(len),
-            desired_col: 0,
+            position: BufferOffset(restored.position.get().min(len)),
+            anchor: BufferOffset(restored.anchor.get().min(len)),
+            desired_col: VisualCol(0),
             id,
         };
     }
@@ -315,7 +319,7 @@ mod tests {
                 window.clone(),
             );
             assert_eq!(outcome, KeyOutcome::Consumed);
-            assert_eq!(field.cursor().position, expected);
+            assert_eq!(field.cursor().position.get(), expected);
         }
         for expected in [4, 0, 0] {
             let outcome = field.apply(
@@ -323,7 +327,7 @@ mod tests {
                 window.clone(),
             );
             assert_eq!(outcome, KeyOutcome::Consumed);
-            assert_eq!(field.cursor().position, expected);
+            assert_eq!(field.cursor().position.get(), expected);
         }
     }
 
@@ -340,7 +344,10 @@ mod tests {
             Command::Motion(Motion::CharRight, Extend::Yes),
             window.clone(),
         );
-        assert_eq!((field.cursor().anchor, field.cursor().position), (0, 2));
+        assert_eq!(
+            (field.cursor().anchor.get(), field.cursor().position.get()),
+            (0, 2)
+        );
         assert_eq!(field.selected_text(), "he");
 
         let outcome = field.apply(
@@ -348,7 +355,7 @@ mod tests {
             window.clone(),
         );
         assert_eq!(outcome, KeyOutcome::Consumed);
-        assert_eq!(field.cursor().position, 0);
+        assert_eq!(field.cursor().position.get(), 0);
         assert!(!field.cursor().has_selection());
     }
 
@@ -358,7 +365,10 @@ mod tests {
         field.set_cursor(3, 3);
         let outcome = field.apply(Command::SelectAll, 0..6);
         assert_eq!(outcome, KeyOutcome::Consumed);
-        assert_eq!((field.cursor().anchor, field.cursor().position), (0, 6));
+        assert_eq!(
+            (field.cursor().anchor.get(), field.cursor().position.get()),
+            (0, 6)
+        );
         assert_eq!(field.selected_text(), "lessrc");
     }
 
@@ -370,7 +380,7 @@ mod tests {
         let outcome = field.apply(Command::DeleteLeft, window);
         assert_eq!(outcome, KeyOutcome::Consumed);
         assert_eq!(field.text(), "caf");
-        assert_eq!(field.cursor().position, 3);
+        assert_eq!(field.cursor().position.get(), 3);
     }
 
     #[test]
@@ -380,7 +390,7 @@ mod tests {
         let outcome = field.apply(Command::DeleteLeft, 0..2);
         assert_eq!(outcome, KeyOutcome::Ignored);
         assert_eq!(field.text(), "ab.cd");
-        assert_eq!(field.cursor().position, 5);
+        assert_eq!(field.cursor().position.get(), 5);
     }
 
     #[test]

@@ -117,7 +117,7 @@ fn tab_focuses_the_first_link_at_or_after_the_caret() {
         Some(beta_site(&content))
     );
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors.primary().position.get(),
         beta_site(&content).start
     );
 }
@@ -248,7 +248,7 @@ fn enter_follows_the_focused_link() {
     let expected = heading_offset(&app, "Section-A");
     send(&mut app, plain(KeyCode::Enter));
 
-    assert_eq!(app.active_doc().cursors.primary().position, expected);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
 }
 
 #[test]

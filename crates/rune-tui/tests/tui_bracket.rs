@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::CursorSet;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -50,7 +51,7 @@ fn press(app: &mut App, code: KeyCode, mods: Mods) {
 }
 
 fn position(app: &App) -> usize {
-    app.active_doc().cursors.primary().position
+    app.active_doc().cursors.primary().position.get()
 }
 
 #[test]
@@ -101,8 +102,12 @@ fn sup_shift_backslash_extends_the_selection_to_the_match() {
     press(&mut app, KeyCode::Char('\\'), SUP_SHIFT);
 
     let c = app.active_doc().cursors.primary();
-    assert_eq!(c.anchor, 0, "extending must leave the anchor put");
-    assert_eq!(c.position, content.find(')').unwrap());
+    assert_eq!(
+        c.anchor,
+        BufferOffset(0),
+        "extending must leave the anchor put"
+    );
+    assert_eq!(c.position.get(), content.find(')').unwrap());
     assert!(c.has_selection());
 }
 
@@ -114,8 +119,8 @@ fn the_pipe_alternate_encoding_extends_exactly_like_sup_shift_backslash() {
     press(&mut app, KeyCode::Char('|'), SUP_SHIFT);
 
     let c = app.active_doc().cursors.primary();
-    assert_eq!(c.anchor, 0);
-    assert_eq!(c.position, content.find(')').unwrap());
+    assert_eq!(c.anchor, BufferOffset(0));
+    assert_eq!(c.position.get(), content.find(')').unwrap());
     assert!(c.has_selection());
 }
 
@@ -138,7 +143,7 @@ fn every_cursor_in_the_set_jumps_to_its_own_match() {
         .cursors
         .all()
         .iter()
-        .map(|c| c.position)
+        .map(|c| c.position.get())
         .collect();
     assert_eq!(positions, vec![2, 6]);
 }

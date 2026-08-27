@@ -95,7 +95,7 @@ const ENTER: KeyInput = KeyInput {
 };
 
 fn tabs_inner_rect(app: &App) -> Rect {
-    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     rune_tui::layout::geometry(area, app).tabs_inner
 }
 
@@ -180,8 +180,7 @@ impl Session {
 
         app.active = seed_doc;
         app.active_doc_mut().focused = true;
-        app.frame_width = 80;
-        app.frame_height = 24;
+        app.frame = Some(rune_tui::app::FrameSize::new(80, 24));
         app.relayout();
         app.sync_view();
         seed_doc

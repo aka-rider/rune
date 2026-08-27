@@ -5,6 +5,7 @@
 use super::*;
 use crate::commands::edit;
 use rune_core::buffer::Buffer;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::CursorSpec;
 use rune_vfs::Mem;
 use std::sync::Arc;
@@ -235,9 +236,9 @@ fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
     let id = app.active;
     let doc = app.doc_mut(id).expect("fixture doc must exist");
     doc.cursors = CursorSet::new(1).add(CursorSpec {
-        position: 2,
-        anchor: 2,
-        desired_col: 0,
+        position: BufferOffset(2),
+        anchor: BufferOffset(2),
+        desired_col: VisualCol(0),
     });
     assert_eq!(
         doc.cursors.len(),
@@ -429,9 +430,9 @@ fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
     let id = app.active;
     let doc = app.doc_mut(id).expect("doc");
     doc.cursors = CursorSet::new(1).add(CursorSpec {
-        position: 2,
-        anchor: 2,
-        desired_col: 0,
+        position: BufferOffset(2),
+        anchor: BufferOffset(2),
+        desired_col: VisualCol(0),
     });
     assert_eq!(doc.cursors.len(), 2, "fixture must hold two cursors");
 
