@@ -138,11 +138,7 @@ pub(crate) fn bracketed_stat<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> Sighted {
     sighted(false, last)
 }
 
-pub fn get<V: Vfs + ?Sized>(
-    vfs: &V,
-    path: &Path,
-    max_bytes: Option<u64>,
-) -> Result<Sighting, GetRefusal> {
+pub fn get<V: Vfs + ?Sized>(vfs: &V, path: &Path, max_bytes: u64) -> Result<Sighting, GetRefusal> {
     let resolved = vfs.resolve(path).map_err(as_not_found)?;
     get_resolved(vfs, &resolved, max_bytes)
 }
@@ -156,18 +152,16 @@ pub fn get<V: Vfs + ?Sized>(
 pub fn get_resolved<V: Vfs + ?Sized>(
     vfs: &V,
     resolved: &Path,
-    max_bytes: Option<u64>,
+    max_bytes: u64,
 ) -> Result<Sighting, GetRefusal> {
     let stat = vfs.stat(resolved).map_err(as_not_found)?;
     if stat.kind != FileKind::File {
         return Err(GetRefusal::NotAFile(stat.kind));
     }
-    if let Some(limit) = max_bytes
-        && stat.size > limit
-    {
+    if stat.size > max_bytes {
         return Err(GetRefusal::TooLarge {
             size: stat.size,
-            limit,
+            limit: max_bytes,
         });
     }
     let (bytes, sighted) = bracketed_get(vfs, resolved).map_err(GetRefusal::Io)?;
@@ -196,7 +190,7 @@ mod tests {
         let path = Path::new("/doc.md");
         publish(&vfs, path, b"hello");
 
-        let sighting = get(&vfs, path, None).expect("get");
+        let sighting = get(&vfs, path, MAX_DOCUMENT_BYTES).expect("get");
         assert!(sighting.sighted.is_confirmed());
         assert_eq!(sighting.bytes, b"hello");
         assert_eq!(sighting.etag, etag_of(b"hello"));
@@ -205,7 +199,7 @@ mod tests {
     #[test]
     fn get_of_a_missing_path_refuses_not_found() {
         let vfs = Mem::new();
-        let err = get(&vfs, Path::new("/gone.md"), None).expect_err("must refuse");
+        let err = get(&vfs, Path::new("/gone.md"), MAX_DOCUMENT_BYTES).expect_err("must refuse");
         assert!(matches!(err, GetRefusal::NotFound));
     }
 
@@ -214,7 +208,7 @@ mod tests {
         let vfs = Mem::new();
         publish(&vfs, Path::new("/a/b.md"), b"content");
 
-        let err = get(&vfs, Path::new("/a"), None).expect_err("must refuse");
+        let err = get(&vfs, Path::new("/a"), MAX_DOCUMENT_BYTES).expect_err("must refuse");
         assert!(matches!(err, GetRefusal::NotAFile(FileKind::Dir)));
     }
 
@@ -225,7 +219,7 @@ mod tests {
         vfs.set_kind(Path::new("/fifo"), FileKind::Other)
             .expect("set_kind");
 
-        let err = get(&vfs, Path::new("/fifo"), None).expect_err("must refuse");
+        let err = get(&vfs, Path::new("/fifo"), MAX_DOCUMENT_BYTES).expect_err("must refuse");
         assert!(matches!(err, GetRefusal::NotAFile(FileKind::Other)));
     }
 
@@ -235,7 +229,7 @@ mod tests {
         let path = Path::new("/doc.md");
         publish(&vfs, path, b"0123456789");
 
-        let err = get(&vfs, path, Some(5)).expect_err("must refuse");
+        let err = get(&vfs, path, 5).expect_err("must refuse");
         assert!(matches!(err, GetRefusal::TooLarge { size: 10, limit: 5 }));
     }
 
@@ -246,7 +240,7 @@ mod tests {
         publish(&vfs, path, b"before");
         vfs.set_churning(path, true);
 
-        let sighting = get(&vfs, path, None).expect("get");
+        let sighting = get(&vfs, path, MAX_DOCUMENT_BYTES).expect("get");
         assert!(!sighting.sighted.is_confirmed());
     }
 
@@ -313,7 +307,7 @@ mod tests {
             fail_on_call: 2,
         };
 
-        let sighting = get(&vfs, path, None).expect("get");
+        let sighting = get(&vfs, path, MAX_DOCUMENT_BYTES).expect("get");
         assert!(
             sighting.sighted.is_confirmed(),
             "the bracket's retry must recover once the transient failure is consumed"
@@ -327,7 +321,7 @@ mod tests {
         publish(&vfs, path, b"hello");
         vfs.mutate_after_next_stat(path, b"after".to_vec());
 
-        let sighting = get(&vfs, path, None).expect("get");
+        let sighting = get(&vfs, path, MAX_DOCUMENT_BYTES).expect("get");
         assert!(sighting.sighted.is_confirmed());
         assert_eq!(sighting.bytes, b"after");
     }
@@ -391,7 +385,7 @@ mod tests {
             stat_calls: std::sync::atomic::AtomicU32::new(0),
         };
 
-        let sighting = get(&vfs, Path::new("/doc.md"), None).expect("get");
+        let sighting = get(&vfs, Path::new("/doc.md"), MAX_DOCUMENT_BYTES).expect("get");
         assert!(!sighting.sighted.is_confirmed());
         assert!(sighting.sighted.stat().is_none());
     }

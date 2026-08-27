@@ -64,11 +64,7 @@ fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
         return ReadOutcome::Reactivated(id);
     }
 
-    match rune_vfs::get(
-        app.vfs.as_ref(),
-        &resolved,
-        Some(rune_vfs::MAX_DOCUMENT_BYTES),
-    ) {
+    match rune_vfs::get(app.vfs.as_ref(), &resolved, rune_vfs::MAX_DOCUMENT_BYTES) {
         Ok(sighting) => ReadOutcome::Read {
             resolved,
             bytes: sighting.bytes,
@@ -215,11 +211,46 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId 
     doc_id
 }
 
+/// The tab-dedup chokepoint: does some already-open document already name
+/// `path`? A raw `==` alone misses two spellings of the identical file (a
+/// relative CLI positional next to an Explorer's own absolute listing, say)
+/// whenever either document's `file_path` was bound before being resolved —
+/// nothing enforces that every binder pre-resolves, so this resolves both
+/// sides itself rather than trusting the caller. `resolve` only when the
+/// cheap raw comparison doesn't already settle it: the common case (a
+/// caller re-opening the exact spelling it opened before) never pays for
+/// it, and a resolve failure never manufactures a false match.
 pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
+    let resolved_target = resolve(app.vfs.as_ref(), path).ok();
     app.documents
         .iter()
-        .find(|(_, doc)| doc.file_path.as_deref() == Some(path))
+        .find(|(_, doc)| {
+            names_same_file(
+                app,
+                doc.file_path.as_deref(),
+                path,
+                resolved_target.as_deref(),
+            )
+        })
         .map(|(id, _)| *id)
+}
+
+fn names_same_file(
+    app: &App,
+    candidate: Option<&Path>,
+    path: &Path,
+    resolved_target: Option<&Path>,
+) -> bool {
+    let Some(candidate) = candidate else {
+        return false;
+    };
+    if candidate == path {
+        return true;
+    }
+    let Some(target) = resolved_target else {
+        return false;
+    };
+    resolve(app.vfs.as_ref(), candidate).is_ok_and(|resolved| resolved == target)
 }
 
 pub fn switch_to(app: &mut App, id: DocumentId) {
@@ -237,7 +268,12 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if let Some(idx) = app.documents.order().iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
-    crate::db_enqueue::probe(app, id);
+    if !crate::db_enqueue::probe(app, id) {
+        crate::messages::warn(
+            app,
+            "disk-sync check couldn't be scheduled for this file \u{2014} try switching tabs again",
+        );
+    }
 }
 
 /// Activates the tab at `idx`, or does nothing and reports `false` when no
@@ -337,6 +373,28 @@ mod tests {
 
         assert_eq!(app.documents.len(), after_first_open, "must not duplicate");
         assert_eq!(app.active, first_active);
+    }
+
+    /// A document whose `file_path` was bound with a relative spelling
+    /// (e.g. the way a CLI positional could land before it is ever resolved)
+    /// must still be recognized when the same file is opened again through
+    /// its resolved, absolute spelling — the tab-dedup chokepoint resolves
+    /// both sides rather than trusting a raw byte comparison.
+    #[test]
+    fn opening_the_absolute_spelling_of_a_relatively_bound_document_reactivates_it() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/note.md"), b"hello").unwrap();
+        let mut app = app_with_seed(&mem);
+        let id = app.active;
+        if let Some(doc) = app.doc_mut(id) {
+            doc.bind_path(PathBuf::from("note.md"));
+        }
+        let before = app.documents.len();
+
+        open_path(&mut app, Path::new("/note.md"));
+
+        assert_eq!(app.documents.len(), before, "must not duplicate");
+        assert_eq!(app.active, id);
     }
 
     #[test]

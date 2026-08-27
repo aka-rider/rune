@@ -32,7 +32,7 @@ pub(crate) struct BracketedRead {
 }
 
 pub(crate) fn bracketed_read(vfs: &dyn Vfs, path: &Path) -> io::Result<BracketedRead> {
-    match rune_vfs::get(vfs, path, None) {
+    match rune_vfs::get(vfs, path, rune_vfs::MAX_DOCUMENT_BYTES) {
         Ok(sighting) => Ok(BracketedRead {
             data: sighting.bytes,
             stat: stat_facts_from(sighting.sighted.stat()),

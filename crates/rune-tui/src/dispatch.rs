@@ -5,7 +5,7 @@ use crate::focus::FocusTarget;
 use crate::highlight::PassOutcome;
 use crate::keymap::{self, KeyCode, KeyInput, QuitKey};
 use crate::pane;
-use crate::runtime::{Effects, Msg, PasteTarget, TimerKey};
+use crate::runtime::{Effects, Msg, PasteTarget, TimerKey, TimerMsgKey};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs};
 
 pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
@@ -35,7 +35,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             detail,
         } => materialize_ack::handle_save_done(app, id, ticket, version, result, detail),
         Msg::Timer { key, generation } => match key {
-            TimerKey::QuitConfirm => {
+            TimerMsgKey::QuitConfirm => {
                 let generation = crate::generation::QuitGen::from_raw(generation);
                 if let crate::app::QuitNegotiation::ConfirmArmed(_, pending_gen) = app.quit
                     && pending_gen == generation
@@ -43,7 +43,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                     app.quit = crate::app::QuitNegotiation::Idle;
                 }
             }
-            TimerKey::SaveConfirm => {
+            TimerMsgKey::SaveConfirm => {
                 let generation = crate::generation::SaveConfirmGen::from_raw(generation);
                 if app
                     .pending_save_confirm
@@ -52,15 +52,12 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                     app.pending_save_confirm = None;
                 }
             }
-            TimerKey::MessagesCollapse => {
+            TimerMsgKey::MessagesCollapse => {
                 let generation = crate::generation::MessagesCollapseGen::from_raw(generation);
                 if crate::messages::is_armed(app, generation) {
                     crate::messages::collapse(app);
                     crate::focus::reconcile(app, effects);
                 }
-            }
-            TimerKey::Snapshot(_) => {
-                unreachable!("Msg::Timer never carries TimerKey::Snapshot")
             }
         },
         Msg::SnapshotDue { id, generation } => {
@@ -137,38 +134,26 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             result,
         } => crate::graphics::handle_embed_encoded(app, doc, generation, result, effects),
         Msg::Posted { severity, text } => crate::messages::post(app, severity, text),
-        Msg::RecentsLoaded {
-            kind,
-            generation,
-            result,
-        } => match (kind, result) {
-            (
-                crate::runtime::RecentsKind::Search,
-                crate::runtime::RecentsResult::Strings(result),
-            ) => crate::search::handle_history_loaded(
+        Msg::RecentsLoaded { generation, result } => match result {
+            crate::runtime::RecentsResult::Search(result) => crate::search::handle_history_loaded(
                 app,
                 crate::generation::SearchHistoryGen::from_raw(generation),
                 result,
             ),
-            (
-                crate::runtime::RecentsKind::FileSearch,
-                crate::runtime::RecentsResult::Candidates(result),
-            ) => crate::filesearch::handle_recents_loaded(
-                app,
-                crate::generation::FileSearchGen::from_raw(generation),
-                result,
-                effects,
-            ),
-            (
-                crate::runtime::RecentsKind::Palette,
-                crate::runtime::RecentsResult::Strings(result),
-            ) => crate::palette::handle_recents_loaded(
-                app,
-                crate::generation::PaletteGen::from_raw(generation),
-                result,
-            ),
-            (kind, result) => {
-                unreachable!("Msg::RecentsLoaded kind/result mismatch: {kind:?}/{result:?}")
+            crate::runtime::RecentsResult::FileSearch(result) => {
+                crate::filesearch::handle_recents_loaded(
+                    app,
+                    crate::generation::FileSearchGen::from_raw(generation),
+                    result,
+                    effects,
+                )
+            }
+            crate::runtime::RecentsResult::Palette(result) => {
+                crate::palette::handle_recents_loaded(
+                    app,
+                    crate::generation::PaletteGen::from_raw(generation),
+                    result,
+                )
             }
         },
         Msg::FileSearchScanned { generation, result } => {
@@ -202,10 +187,10 @@ pub(crate) fn after_update(
     if crate::messages::should_arm_auto_collapse(app) {
         let generation = crate::messages::arm_auto_collapse(app);
         app.timers.arm(
-            TimerKey::MessagesCollapse,
+            TimerKey::from(TimerMsgKey::MessagesCollapse),
             crate::messages::AUTO_COLLAPSE,
             Msg::Timer {
-                key: TimerKey::MessagesCollapse,
+                key: TimerMsgKey::MessagesCollapse,
                 generation: generation.raw(),
             },
         );

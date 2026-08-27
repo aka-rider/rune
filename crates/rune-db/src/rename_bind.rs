@@ -77,11 +77,13 @@ mod tests {
     }
 
     fn disk(vfs: &Mem, path: &Path) -> Vec<u8> {
-        rune_vfs::get(vfs, path, None).expect("disk content").bytes
+        rune_vfs::get(vfs, path, rune_vfs::MAX_DOCUMENT_BYTES)
+            .expect("disk content")
+            .bytes
     }
 
     fn gone(vfs: &Mem, path: &Path) -> bool {
-        rune_vfs::get(vfs, path, None).is_err()
+        rune_vfs::get(vfs, path, rune_vfs::MAX_DOCUMENT_BYTES).is_err()
     }
 
     fn publish(vfs: &Mem, path: &Path, bytes: &[u8]) {

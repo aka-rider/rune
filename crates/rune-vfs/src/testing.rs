@@ -1,6 +1,8 @@
 use std::io;
 use std::path::Path;
 
+use rune_core::assert_invariant;
+
 use crate::publish::{PutCondition, PutOutcome, put};
 use crate::{Vfs, wrap_io_published};
 
@@ -17,7 +19,10 @@ pub trait VfsTestExt: Vfs {
         let durable = match outcome {
             PutOutcome::Committed { durable, .. } | PutOutcome::Raced { durable, .. } => durable,
             PutOutcome::Conflict { .. } | PutOutcome::Missing => {
-                unreachable!("a Force put never conflicts or reports the destination missing")
+                assert_invariant!(false, || {
+                    "a Force put never conflicts or reports the destination missing".to_string()
+                });
+                false
             }
         };
         if durable {

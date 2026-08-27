@@ -1,7 +1,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::sighting::{GetRefusal, Sighted, Sighting, bracketed_stat, get_resolved};
+use crate::sighting::{
+    GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, bracketed_stat, get_resolved,
+};
 use crate::{Etag, FileKind, Vfs, etag_of, published_not_durable};
 
 pub(crate) use crate::put_result::{ForceOutcome, IfAbsentOutcome, Published};
@@ -53,7 +55,7 @@ fn resolve_or_missing<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<Optio
 /// `resolve_or_missing`. `resolved` MUST be that single resolution, never a
 /// fresh, independently-resolved path.
 fn current_sighting<V: Vfs + ?Sized>(vfs: &V, resolved: &Path) -> io::Result<Option<Sighting>> {
-    match get_resolved(vfs, resolved, None) {
+    match get_resolved(vfs, resolved, MAX_DOCUMENT_BYTES) {
         Ok(sighting) => Ok(Some(sighting)),
         Err(GetRefusal::NotFound) => Ok(None),
         Err(other) => Err(other.into()),

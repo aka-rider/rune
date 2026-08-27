@@ -45,7 +45,7 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
 }
 
 fn read_and_decode(vfs: &dyn Vfs, path: &Path) -> Result<rune_image::decode::Decoded, CmdError> {
-    let sighting = rune_vfs::get(vfs, path, Some(rune_image::MAX_IMAGE_BYTES))?;
+    let sighting = rune_vfs::get(vfs, path, rune_image::MAX_IMAGE_BYTES)?;
     Ok(rune_image::decode_still(&sighting.bytes)?)
 }
 

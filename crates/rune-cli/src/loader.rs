@@ -42,7 +42,7 @@ pub(crate) struct LoadedFile {
 /// a symlink-swap TOCTOU window: the identity the caller decided to open
 /// could stop being the identity this function reads.
 pub(crate) fn load_sighting(vfs: &dyn Vfs, path: &Path) -> Result<Option<LoadedFile>, LoadError> {
-    match rune_vfs::get_resolved(vfs, path, Some(MAX_DOCUMENT_BYTES)) {
+    match rune_vfs::get_resolved(vfs, path, MAX_DOCUMENT_BYTES) {
         Ok(sighting) => match String::from_utf8(sighting.bytes.clone()) {
             Ok(text) => Ok(Some(LoadedFile { sighting, text })),
             Err(_) => Err(LoadError::InvalidUtf8),

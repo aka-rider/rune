@@ -106,10 +106,10 @@ pub(crate) fn trigger_save(
             format!("recovery disabled for {name} \u{2014} press {save_key} again to save anyway"),
         );
         app.timers.arm(
-            crate::runtime::TimerKey::SaveConfirm,
+            crate::runtime::TimerKey::from(crate::runtime::TimerMsgKey::SaveConfirm),
             SAVE_CONFIRM_TIMEOUT,
             Msg::Timer {
-                key: crate::runtime::TimerKey::SaveConfirm,
+                key: crate::runtime::TimerMsgKey::SaveConfirm,
                 generation: generation.raw(),
             },
         );

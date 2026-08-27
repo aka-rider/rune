@@ -7,6 +7,12 @@ use rune_vfs::{DirEntry, FileKind, Link, Vfs};
 pub const MAX_SCAN_FILES: usize = 10_000;
 pub const MAX_SCAN_DEPTH: usize = 32;
 
+/// A `.gitignore`-family file is a handful of pattern lines, never a
+/// document — this caps the read well below `rune_vfs::MAX_DOCUMENT_BYTES`
+/// so a pathological ignore file can't balloon the walk's memory the way an
+/// unbounded read would.
+const MAX_GITIGNORE_BYTES: u64 = 1024 * 1024;
+
 const SKIP_DIRS: [&str; 2] = ["node_modules", "target"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +117,7 @@ fn build_matcher(vfs: &dyn Vfs, dir: &Path, entries: &[DirEntry]) -> Gitignore {
         if entry.kind == FileKind::Dir || !is_ignore_file(&entry.name) {
             continue;
         }
-        let Ok(sighting) = rune_vfs::get(vfs, &entry.path, None) else {
+        let Ok(sighting) = rune_vfs::get(vfs, &entry.path, MAX_GITIGNORE_BYTES) else {
             continue;
         };
         let Ok(text) = String::from_utf8(sighting.bytes) else {

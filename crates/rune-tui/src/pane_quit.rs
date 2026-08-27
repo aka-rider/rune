@@ -13,7 +13,7 @@ use crate::keymap::QuitKey;
 use crate::runtime::{Effects, Msg};
 
 /// The quit-confirm arm-to-quit window: the first press arms `App::timers`'
-/// `TimerKey::QuitConfirm` deadline, carrying the confirm generation.
+/// `TimerMsgKey::QuitConfirm` deadline, carrying the confirm generation.
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The quit-confirm state machine: the SAME
@@ -69,10 +69,10 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     let generation = app.next_quit_gen.mint();
     app.quit = crate::app::QuitNegotiation::ConfirmArmed(key, generation);
     app.timers.arm(
-        crate::runtime::TimerKey::QuitConfirm,
+        crate::runtime::TimerKey::from(crate::runtime::TimerMsgKey::QuitConfirm),
         CONFIRM_TIMEOUT,
         Msg::Timer {
-            key: crate::runtime::TimerKey::QuitConfirm,
+            key: crate::runtime::TimerMsgKey::QuitConfirm,
             generation: generation.raw(),
         },
     );

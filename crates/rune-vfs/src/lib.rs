@@ -19,6 +19,7 @@ mod path_util;
 mod publish;
 mod put_result;
 mod sighting;
+#[cfg(any(test, feature = "fault-injection"))]
 pub mod testing;
 
 use std::path::{Path, PathBuf};
@@ -33,6 +34,7 @@ pub use mem::Mem;
 pub use mem::OpKind;
 pub use publish::{PutCondition, PutOutcome, put};
 pub use sighting::{GetRefusal, MAX_DOCUMENT_BYTES, Sighted, Sighting, get, get_resolved};
+#[cfg(any(test, feature = "fault-injection"))]
 pub use testing::VfsTestExt;
 
 /// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping

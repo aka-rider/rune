@@ -9,6 +9,13 @@ rune-vfs = { path = "../rune-vfs" }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# Unifies in `fault-injection` for every test/dev target only — `VfsTestExt::
+# save_atomic` (this crate's own test seeding helper) lives behind that
+# feature in `rune-vfs`, and a plain `cfg(test)` there would only arm it for
+# `rune-vfs`'s own unit tests, never for this crate's `#[cfg(test)] mod
+# resolve_tests` or its `tests/resolve.rs` integration test, both of which
+# link the library as an ordinary (non-test) dependency.
+rune-vfs = { path = "../rune-vfs", features = ["fault-injection"] }
 
 [lints]
 workspace = true

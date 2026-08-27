@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Msg, PasteTarget, TimerKey};
+use rune_tui::runtime::{Msg, PasteTarget, TimerMsgKey};
 
 use crate::action::Action;
 use crate::guard;
@@ -51,7 +51,7 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
         Action::ConfirmTimeout => {
             if let rune_tui::app::QuitNegotiation::ConfirmArmed(_, generation) = state.app.quit {
                 let msg = Msg::Timer {
-                    key: TimerKey::QuitConfirm,
+                    key: TimerMsgKey::QuitConfirm,
                     generation: generation.raw(),
                 };
                 let tag = MsgTag::ConfirmTimeout {
@@ -62,7 +62,7 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
         }
         Action::StaleConfirmTimeout(generation) => {
             let msg = Msg::Timer {
-                key: TimerKey::QuitConfirm,
+                key: TimerMsgKey::QuitConfirm,
                 generation: u64::from(generation),
             };
             let tag = MsgTag::ConfirmTimeout { generation };

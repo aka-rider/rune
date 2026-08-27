@@ -27,7 +27,7 @@ pub(super) fn fixed_indent_ends(
         let line_end = line_end_at(content.len(), starts, line);
         let scan_start = hint.start_for_line(starts, line);
         let candidate_end = scan_start.saturating_add(width).min(line_end);
-        if candidate_end - scan_start != width {
+        if candidate_end.saturating_sub(scan_start) != width {
             continue;
         }
         let Some(prefix) = content.get(scan_start..candidate_end) else {
@@ -38,4 +38,31 @@ pub(super) fn fixed_indent_ends(
         }
     }
     ends
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune_syntax::element::ByteRange;
+
+    /// A hint whose `start_for_line` claims past a line's own end (`scan_start
+    /// > line_end`, the same overshooting shape `per_line_content`'s own
+    /// `per_line_content_clamps_a_hint_start_that_overshoots_its_own_line`
+    /// test pins against a sibling function) must skip that line rather than
+    /// underflow `candidate_end - scan_start`.
+    #[test]
+    fn a_hint_start_past_the_lines_end_is_skipped_not_underflowed() {
+        let content = "x".repeat(15);
+        let starts = vec![0, 5, 10];
+        let range = ByteRange::new(0, 15);
+        let hint = ScanHint::Nested {
+            marker_ends: std::collections::HashMap::from([(1, 12)]),
+            conceals_own_prefix: true,
+            parent: &ScanHint::Root,
+        };
+
+        let ends = fixed_indent_ends(&content, &starts, range, 3, &hint);
+
+        assert!(!ends.contains_key(&1));
+    }
 }
