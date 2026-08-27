@@ -197,6 +197,91 @@ fn coalesce_touching_deletes_never_merges_a_delete_with_a_pure_insert() {
     assert_eq!(merged, vec![(insert_edit, 'a'), (delete_edit, 'b')]);
 }
 
+/// The executed regression this fix closes: a forward batch pairing a
+/// pure insert with a replace, touching at the insert's zero-width point,
+/// is legally accepted going forward (the two `AppliedEdit`s land on
+/// distinct post-edit starts) — but its inverse used to pair a pure
+/// delete with a non-pure-delete edit that touches it, a shape the old
+/// `both_pure_deletes` condition refused to merge, so `apply_inverse`
+/// wrongly returned `DuplicateEditStart` for an undo the forward step
+/// itself had legitimately earned.
+#[test]
+fn apply_inverse_undoes_a_batch_pairing_a_pure_delete_inverse_with_a_replace() {
+    let buf = Buffer::new("x");
+    let (edited, applied) = buf
+        .apply_edits(&SortedEdits::sort(&[
+            Edit {
+                start: 0,
+                end: 0,
+                insert: "AB".to_string(),
+            },
+            Edit {
+                start: 0,
+                end: 1,
+                insert: "YYY".to_string(),
+            },
+        ]))
+        .expect("touching, non-overlapping edits with distinct post-edit starts must apply");
+    assert_eq!(applied.len(), 2);
+    assert_ne!(
+        applied[0].start, applied[1].start,
+        "the forward batch itself must not collide, or apply_edits should have refused it"
+    );
+
+    let restored = apply_inverse(&edited, &applied)
+        .expect("undo must succeed: the forward step it inverts was itself legal");
+    assert_eq!(restored.content(), "x");
+}
+
+/// Property-style regression for the same fix: over a bounded set of
+/// deterministically generated (fixed-seed, no wall-clock) small edit
+/// batches, whenever `Buffer::apply_edits` accepts a batch,
+/// `apply_inverse` must restore the exact pre-edit content.
+#[test]
+fn any_batch_apply_edits_accepts_undoes_back_to_the_original_content() {
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next_u64 = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let alphabet = *b"ab\n";
+
+    for _ in 0..500 {
+        let content_len = (next_u64() % 12) as usize;
+        let content: String = (0..content_len)
+            .map(|_| alphabet[(next_u64() % alphabet.len() as u64) as usize] as char)
+            .collect();
+        let buf = Buffer::new(content.clone());
+        let len = buf.len();
+
+        let batch_len = 1 + (next_u64() % 3) as usize;
+        let edits: Vec<Edit> = (0..batch_len)
+            .map(|_| {
+                let start = (next_u64() % (len as u64 + 1)) as usize;
+                let extra = (next_u64() % 4) as usize;
+                let end = (start + extra).min(len);
+                let insert_len = (next_u64() % 3) as usize;
+                let insert: String = (0..insert_len)
+                    .map(|_| alphabet[(next_u64() % alphabet.len() as u64) as usize] as char)
+                    .collect();
+                Edit { start, end, insert }
+            })
+            .collect();
+
+        if let Ok((edited, applied)) = buf.apply_edits(&SortedEdits::sort(&edits)) {
+            let restored = apply_inverse(&edited, &applied)
+                .expect("any batch apply_edits accepted must have an applicable inverse");
+            assert_eq!(
+                restored.content(),
+                content,
+                "undo must restore the exact pre-edit content for batch {edits:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn journal_commit_target_is_the_step_index_it_carries() {
     let mut journal = Journal::new();

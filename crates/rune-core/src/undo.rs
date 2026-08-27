@@ -4,8 +4,9 @@
 use crate::buffer::{AppliedEdit, Buffer, BufferError, Edit, SortedEdits, duplicate_applied_start};
 use crate::cursor::Cursor;
 
-/// Merge every pair of adjacent/overlapping PURE-DELETE edits (`insert`
-/// empty on BOTH) into one covering their union — the one shape
+/// Merge every pair of adjacent/overlapping edits where the EARLIER edit
+/// is a PURE DELETE (`insert` empty) into one covering their union,
+/// keeping the LATER edit's insert — the one shape
 /// `Buffer::apply_edits`' `DuplicateEditStart` guard exists to refuse
 /// downstream: two touching one-byte deletes are individually valid,
 /// non-overlapping edits, but collapse to the identical post-edit `start`
@@ -38,18 +39,12 @@ pub fn coalesce_touching_deletes<T>(
         return merged;
     };
     for next in iter {
-        let both_pure_deletes = current.0.insert.is_empty() && next.0.insert.is_empty();
-        if both_pure_deletes && current.0.end >= next.0.start {
+        if current.0.insert.is_empty() && current.0.end >= next.0.start {
             let start = current.0.start.min(next.0.start);
             let end = current.0.end.max(next.0.end);
-            current = (
-                Edit {
-                    start,
-                    end,
-                    insert: String::new(),
-                },
-                merge_meta(current.1, next.1),
-            );
+            let insert = next.0.insert;
+            let meta = merge_meta(current.1, next.1);
+            current = (Edit { start, end, insert }, meta);
         } else {
             merged.push(current);
             current = next;
