@@ -209,12 +209,10 @@ pub(crate) fn bootstrap_untitled_db(
     let mut scratch_docs = Vec::new();
     for db_id in recoverable_ids {
         match blocking_call(&bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
-            Ok(OpOutcome::Reconstructed(Some(recovered)))
-                if !recovered.content.trim().is_empty() =>
-            {
+            Ok(OpOutcome::Reconstructed(Some(recovered))) => {
                 scratch_docs.push(ScratchDoc { db_id, recovered });
             }
-            Ok(OpOutcome::Reconstructed(_)) => {}
+            Ok(OpOutcome::Reconstructed(None)) => {}
             Ok(_) => {
                 return degrade_untitled(
                     store,
@@ -331,12 +329,10 @@ fn find_named_draft(
 
     for db_id in candidate_ids {
         match blocking_call(bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
-            Ok(OpOutcome::Reconstructed(Some(recovered)))
-                if !recovered.content.trim().is_empty() =>
-            {
+            Ok(OpOutcome::Reconstructed(Some(recovered))) => {
                 return Ok(Some((db_id, recovered)));
             }
-            Ok(OpOutcome::Reconstructed(_)) => {}
+            Ok(OpOutcome::Reconstructed(None)) => {}
             Ok(_) => {
                 return Err("internal error: unexpected reply to ReconstructScratch".to_string());
             }

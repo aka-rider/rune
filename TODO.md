@@ -20,12 +20,6 @@ constitution and the entry is deleted in the same commit.
 
 ### DATA-LOSS
 
-#### A whitespace-only recovered draft is silently dropped and orphaned
-- **Where**: `crates/rune-cli/src/db_bootstrap.rs:213,335` — `if !recovered.content.trim().is_empty()`.
-- **Wrong**: after a crash, an untitled/named draft containing only whitespace/newlines is rejected by the `trim()` guard and never offered back; for the named case `bootstrap_new_file` then mints a fresh row, orphaning the old one permanently (scratch GC only sweeps rows with no events/snapshots, so the data survives in SQLite unreachable from the UI). Prime-directive-adjacent.
-- **Instead**: offer any recovered content back, whitespace included; distinguish "empty document" from "nothing recovered".
-- **Confidence**: confirmed.
-
 ### CRASH / DoS
 
 ### SECURITY

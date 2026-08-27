@@ -90,7 +90,7 @@ fn bootstrap_store_only_surfaces_the_degraded_banner() {
 }
 
 #[test]
-fn bootstrap_untitled_db_discards_a_whitespace_only_dead_session_draft() {
+fn bootstrap_untitled_db_offers_back_a_whitespace_only_dead_session_draft() {
     let home = ScratchHome::new("untitled-whitespace");
     let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
 
@@ -117,16 +117,52 @@ fn bootstrap_untitled_db_discards_a_whitespace_only_dead_session_draft() {
     assert_eq!(
         result.scratch_docs.len(),
         1,
-        "exactly one scratch doc must survive — a fresh one, since the recovered draft was blank"
+        "the whitespace-only draft is backed by a real snapshot and must be offered back, not orphaned"
     );
-    assert_ne!(
+    assert_eq!(
         result.scratch_docs[0].db_id, old_db_id,
-        "a whitespace-only recovered draft must never be adopted as the active document"
+        "the crashed session's own row must be adopted, never a fresh one copying nothing in"
+    );
+    assert_eq!(
+        result.scratch_docs[0].recovered.content, "   ",
+        "the whitespace the user's session actually journaled must round-trip verbatim"
     );
 }
 
 #[test]
-fn bootstrap_new_file_discards_a_whitespace_only_named_draft() {
+fn bootstrap_untitled_db_never_resurrects_a_row_with_no_journaled_history() {
+    let home = ScratchHome::new("untitled-never-edited");
+    let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
+
+    let old_db_id = {
+        let (bridge, store) = open_store_at(&home.0);
+        let create_op = store.create_scratch().expect("enqueue create_scratch");
+        let doc_id = match await_ack(&bridge, create_op) {
+            OpOutcome::ScratchDocId(id) => id.0,
+            other => panic!("expected a CreateScratch ack, got {other:?}"),
+        };
+        store.shutdown();
+        doc_id
+    };
+
+    mark_every_session_dead(&db_path);
+
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let result = bootstrap_untitled_db(vfs, Some(&home.0));
+
+    assert_eq!(
+        result.scratch_docs.len(),
+        1,
+        "a row with no snapshot and no edit ever journaled behind it has nothing to recover"
+    );
+    assert_ne!(
+        result.scratch_docs[0].db_id, old_db_id,
+        "a never-edited scratch row must never resurrect as if it carried real content"
+    );
+}
+
+#[test]
+fn bootstrap_new_file_offers_back_a_whitespace_only_named_draft() {
     let home = ScratchHome::new("named-draft-whitespace");
     let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
     let intended_path = Path::new("/vault/notes.md");
@@ -154,13 +190,51 @@ fn bootstrap_new_file_discards_a_whitespace_only_named_draft() {
     let result = bootstrap_new_file(vfs, intended_path, Some(&home.0));
 
     let doc_db = result.doc_db.expect("a scratch row must still be bound");
+    assert_eq!(
+        doc_db.db_id, old_db_id,
+        "the crashed session's whitespace-only draft is backed by a real snapshot and must be inherited, never orphaned under a fresh row"
+    );
+    assert_eq!(
+        result
+            .recovered_content
+            .expect("the journaled whitespace must be offered back as recovered_content")
+            .content,
+        "   "
+    );
+}
+
+#[test]
+fn bootstrap_new_file_never_resurrects_a_named_row_with_no_journaled_history() {
+    let home = ScratchHome::new("named-draft-never-edited");
+    let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
+    let intended_path = Path::new("/vault/notes.md");
+
+    let old_db_id = {
+        let (bridge, store) = open_store_at(&home.0);
+        let create_op = store
+            .create_named_scratch(&intended_path.to_string_lossy())
+            .expect("enqueue create_named_scratch");
+        let doc_id = match await_ack(&bridge, create_op) {
+            OpOutcome::ScratchDocId(id) => id.0,
+            other => panic!("expected a CreateScratch ack, got {other:?}"),
+        };
+        store.shutdown();
+        doc_id
+    };
+
+    mark_every_session_dead(&db_path);
+
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let result = bootstrap_new_file(vfs, intended_path, Some(&home.0));
+
+    let doc_db = result.doc_db.expect("a scratch row must still be bound");
     assert_ne!(
         doc_db.db_id, old_db_id,
-        "a whitespace-only draft must never be inherited as if it were real content"
+        "a never-edited named scratch row must never be inherited as if it carried real content"
     );
     assert!(
         result.recovered_content.is_none(),
-        "discarding a whitespace-only draft must not smuggle it back in as recovered_content"
+        "a fresh named scratch row has no journaled content to offer back"
     );
 }
 
