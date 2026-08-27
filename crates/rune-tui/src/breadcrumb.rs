@@ -26,7 +26,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::app::App;
 use crate::breadcrumb_layout::{build_controls, build_crumb, crumb_parts, spans_width};
 use crate::width::display_width;
-use rune_syntax::wrap::grapheme_width;
 
 const CONTROLS_LEAD: &str = "── ";
 const TAIL: &str = "──╯";
@@ -134,17 +133,28 @@ fn put_spans(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, spans: &[Sp
 /// nicety, since two glyphs would then appear to occupy the same visual
 /// span. Out-of-buffer writes are dropped by `cell_mut` returning `None`.
 fn put(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, cluster: &str, style: Style) {
-    if let Some(cell) = buf.cell_mut((*x, y)) {
-        cell.set_symbol(cluster);
-        cell.set_style(style);
-    }
-    let width = grapheme_width(cluster).max(1) as u16;
-    for dx in 1..width {
-        if let Some(cont) = buf.cell_mut((x.saturating_add(dx), y)) {
-            cont.reset();
+    // `crate::render::push_grapheme_cells` is the crate's one control-char
+    // policy (`render::cell::control_placeholder`) — a raw ESC/BEL/other
+    // control byte in a path component would otherwise reach `set_symbol`
+    // unfiltered and land in the terminal as live output, exactly the
+    // OSC-injection/`cell_width` debug-assert class every other direct
+    // buffer write in the crate already routes around this same way.
+    let mut cells = Vec::new();
+    let mut visual_col = 0usize;
+    crate::render::push_grapheme_cells(&mut cells, &mut visual_col, cluster, None, style);
+    for cell in &cells {
+        if let Some(target) = buf.cell_mut((*x, y)) {
+            target.set_symbol(&cell.text);
+            target.set_style(cell.style);
         }
+        let width = u16::from(cell.width);
+        for dx in 1..width {
+            if let Some(cont) = buf.cell_mut((x.saturating_add(dx), y)) {
+                cont.reset();
+            }
+        }
+        *x = x.saturating_add(width);
     }
-    *x = x.saturating_add(width);
 }
 
 #[cfg(test)]
@@ -153,6 +163,7 @@ mod tests {
     use super::*;
     use crate::testgrid;
     use rune_core::buffer::Buffer;
+    use rune_syntax::wrap::grapheme_width;
     use rune_vfs::Mem;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -335,6 +346,28 @@ mod tests {
             oracle_cell_width(&row),
             W as usize,
             "the row must fill its width with the family as one wide cluster"
+        );
+    }
+
+    /// A path component carrying a raw terminal escape sequence (here the
+    /// literal OSC title-spoof/clipboard-write payload from the ticket) must
+    /// never reach a cell's raw symbol: `put` routes every cluster through
+    /// the crate's one control-char policy exactly like every other direct
+    /// buffer write, so ESC/BEL surface only as their Unicode control-
+    /// picture placeholders, never as live escape bytes a terminal would
+    /// act on.
+    #[test]
+    fn a_control_byte_in_a_path_component_never_reaches_a_raw_cell_symbol() {
+        let malicious = "\u{1b}]0;pwned\u{7}";
+        let app = app_for("hello", Some(&format!("/a/{malicious}")));
+        let row = overlay_bottom_row(&app, 60, 3, true);
+        assert!(
+            !row.contains('\u{1b}') && !row.contains('\u{7}'),
+            "raw ESC/BEL bytes must never land in a rendered cell:\n{row:?}"
+        );
+        assert!(
+            row.contains('\u{241b}') && row.contains('\u{2407}'),
+            "ESC/BEL must render as their control-picture placeholders:\n{row:?}"
         );
     }
 

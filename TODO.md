@@ -54,12 +54,6 @@ constitution and the entry is deleted in the same commit.
 
 ### SECURITY
 
-#### Terminal escape injection via breadcrumb path components — raw `set_symbol` bypasses ratatui's control-char filter
-- **Where**: `crates/rune-tui/src/breadcrumb.rs:136-148` (`put`), fed by `:99-114` (`crumb_spans`/`put_spans`) and `crates/rune-tui/src/breadcrumb_layout.rs:41-61` (`crumb_parts`, `to_string_lossy`, no filtering).
-- **Wrong**: `crumb_parts` keeps `Component::Normal` path bytes verbatim; `put_spans` iterates graphemes and calls `cell.set_symbol(cluster)` directly on the ratatui buffer. `Cell::set_symbol` does no filtering, unlike `Buffer::set_stringn`/`Span::styled_graphemes`, which both drop control chars — so this is the one sink that escapes the crate's control-picture chokepoint (`render/cell.rs:30-36` `control_placeholder`). A hostile workspace with a directory literally named `a<ESC>]0;pwned<BEL>b` (legal on Unix), opened as `.../a<ESC>…/notes.md`, emits raw OSC/BEL to the terminal: window-title spoof and screen corruption at minimum, OSC-52 clipboard writes / title-report answerback on terminals that honor them. Debug builds instead panic at ratatui's `cell_width` `debug_assert!` (independently reproduced). The same name is harmless everywhere else in the UI because those paths go through `Span`/`Paragraph`.
-- **Instead**: route `put`'s cluster through `render::cell::control_placeholder`/`push_grapheme_cells` so every direct-`set_symbol` site shares one control-char policy.
-- **Confidence**: confirmed (executed, two reviewers).
-
 #### Hostile SVG reads arbitrary local files, bypassing the `Vfs` chokepoint
 - **Where**: `crates/rune-image/src/svg.rs:7` — `usvg::Options::default()`; routed to by content-sniffing at `crates/rune-image/src/decode.rs:37-43,84-89`.
 - **Wrong**: `Options::default()` installs usvg's default string href resolver, which with `resources_dir: None` reads an absolute href unchanged via `std::fs::read`. `sniff_format` routes any file whose content starts with `<svg`/`<?xml…<svg` into `decode_svg` regardless of extension, and a hostile `.md` `![](evil.svg)` auto-decodes on open (see the image-OOM entry). `evil.svg` with `<image href="/Users/victim/.ssh/id_rsa"/>` makes rune read that file off disk — a direct violation of the "all user-file disk access goes through the injected `Vfs`" invariant, plus a file-existence/readability oracle and a rendering side channel for anything that is a valid image.

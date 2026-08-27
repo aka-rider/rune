@@ -46,8 +46,8 @@ use crate::messages;
 use crate::pane::Pane;
 
 pub use blit::blit;
-pub(crate) use cell::paint_range;
 pub use cell::{Cell, segment_cells, segment_geometry, style_for};
+pub(crate) use cell::{paint_range, push_grapheme_cells};
 
 /// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: the DISPLAY
 /// rows (wrap rows plus synthesised table borders) in `[scroll_row,
