@@ -373,3 +373,7 @@ pub(crate) fn bootstrap_store_only(
         ..DbBootstrap::default()
     }
 }
+
+#[cfg(test)]
+#[path = "db_bootstrap_tests.rs"]
+mod tests;

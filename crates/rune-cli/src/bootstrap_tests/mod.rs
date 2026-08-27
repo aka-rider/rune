@@ -63,10 +63,10 @@ impl Vfs for CountingReadVfs {
     }
 }
 
-struct ScratchHome(PathBuf);
+pub(crate) struct ScratchHome(pub(crate) PathBuf);
 
 impl ScratchHome {
-    fn new(label: &str) -> ScratchHome {
+    pub(crate) fn new(label: &str) -> ScratchHome {
         let dir = env::temp_dir().join(format!(
             "rune-cli-launch-{label}-{}-{}",
             std::process::id(),

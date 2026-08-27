@@ -326,4 +326,49 @@ mod tests {
             .expect_err("a missing directory must error");
         assert!(matches!(err, CliError::WorkDirNotFound(p) if p == Path::new("/nope")));
     }
+
+    #[test]
+    fn validate_work_dir_accepts_an_existing_directory() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/vault/a.md"), b"hi")
+            .expect("seed a file so /vault stats as a (synthetic) directory");
+
+        validate_work_dir(&vfs, Path::new("/vault")).expect("an existing directory must validate");
+    }
+
+    #[test]
+    fn validate_work_dir_distinguishes_an_unreadable_directory_from_a_missing_one() {
+        let vfs = Mem::new();
+        vfs.fail_next(rune_vfs::OpKind::Stat, std::io::ErrorKind::PermissionDenied);
+
+        let err = validate_work_dir(&vfs, Path::new("/locked"))
+            .expect_err("a permission-denied stat must error");
+        let description = format!("{err:?}");
+        assert!(
+            matches!(err, CliError::WorkDirUnreadable(p, _) if p == Path::new("/locked")),
+            "a non-NotFound stat failure must report WorkDirUnreadable, not WorkDirNotFound: {description}"
+        );
+    }
+
+    #[test]
+    fn resolve_root_returns_the_explicit_work_dir_unchanged() {
+        let vfs = Mem::new();
+        let work_dir = Path::new("/explicit/work/dir");
+
+        let root = resolve_root(&vfs, Path::new("/cwd"), None, Some(work_dir), None);
+
+        assert_eq!(root, work_dir);
+    }
+
+    #[test]
+    fn open_untitled_without_home_still_banners() {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+
+        let (_app, db_bootstrap) = open_untitled(&vfs, None);
+
+        assert!(
+            db_bootstrap.banner.is_some(),
+            "a no-positional launch with no usable $HOME must still surface a banner"
+        );
+    }
 }

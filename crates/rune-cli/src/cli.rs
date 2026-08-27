@@ -374,6 +374,40 @@ mod tests {
     }
 
     #[test]
+    fn every_cli_error_displays_a_nonempty_message() {
+        let cases: Vec<CliError> = vec![
+            CliError::UnknownFlag("--bogus".to_string()),
+            CliError::MissingValue("-w"),
+            CliError::NonUnicodeArg(OsString::from("bad")),
+            CliError::EmptyPath,
+            CliError::NotADirectory(PathBuf::from("/some/file")),
+            CliError::WorkDirNotFound(PathBuf::from("/nope")),
+            CliError::WorkDirUnreadable(PathBuf::from("/nope"), "denied".to_string()),
+            CliError::DiffMissingArgument,
+            CliError::DiffExtraArguments,
+        ];
+        for err in cases {
+            let message = err.to_string();
+            assert!(
+                !message.is_empty(),
+                "{err:?}'s Display must never render as an empty message"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_error_display_carries_its_own_specific_text() {
+        assert_eq!(
+            CliError::NotADirectory(PathBuf::from("/some/file")).to_string(),
+            "not a directory: /some/file"
+        );
+        assert_eq!(
+            CliError::WorkDirNotFound(PathBuf::from("/nope")).to_string(),
+            "no such directory: /nope"
+        );
+    }
+
+    #[test]
     fn dash_dash_diff_combines_with_dash_w() {
         let action = parse(
             args(&["-w", "/work", "--diff", "/tmp/a.md", "/tmp/b.md"]),

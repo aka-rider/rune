@@ -256,6 +256,44 @@ fn launch_one_positional_reads_and_resolves_the_path_exactly_once() {
     );
 }
 
+/// `open_extra_files` must only re-switch to the first positional (and so
+/// re-probe it) when there WAS a later positional to come back from — a
+/// single-file call never left the first document, so a `switch_to` here
+/// would be a redundant re-switch that also fires an unwanted probe.
+/// Exercised against an already-fully-bootstrapped app (rather than through
+/// `bootstrap` itself) so the document's `doc_db` is already bound: called at
+/// its OWN place in `bootstrap`, the document isn't bound yet and
+/// `db_enqueue::probe` bails out on that alone, which would mask this
+/// exact regression.
+#[test]
+fn open_extra_files_with_exactly_one_file_never_reprobes_the_active_document() {
+    let vfs = Mem::new();
+    vfs.save_atomic(Path::new("/vault/a.md"), b"hello")
+        .expect("seed a.md");
+    let home = ScratchHome::new("open-extra-files-single");
+
+    let mut app = bootstrap(
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
+        vec![OsString::from("/vault/a.md")].into_iter(),
+        Path::new("/"),
+        Some(&home.0),
+    )
+    .expect("bootstrap should succeed");
+    assert!(
+        app.db_ops.is_empty(),
+        "sanity: nothing should be pending right after bootstrap"
+    );
+
+    let active = app.active;
+    open::open_extra_files(&mut app, &[PathBuf::from("/vault/a.md")], active);
+
+    assert!(
+        app.db_ops.is_empty(),
+        "open_extra_files given exactly one file must never re-switch to (and thus \
+         re-probe) the document that's already active"
+    );
+}
+
 #[test]
 fn launch_missing_positional_resolves_the_path_exactly_once() {
     let counting = Arc::new(CountingReadVfs::new(Mem::new()));

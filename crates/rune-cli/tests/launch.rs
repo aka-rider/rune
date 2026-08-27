@@ -7,6 +7,7 @@ use std::process::Command;
 const EX_USAGE: i32 = 64;
 const EX_DATAERR: i32 = 65;
 const EX_SOFTWARE: i32 = 70;
+const EX_IOERR: i32 = 74;
 
 fn rune() -> Command {
     Command::new(env!("CARGO_BIN_EXE_rune"))
@@ -110,6 +111,56 @@ fn launch_non_unicode_argv_exits_usage_not_a_panic() {
         "non-Unicode argv must be rejected, not panic"
     );
     assert_eq!(output.status.code(), Some(EX_USAGE));
+}
+
+#[test]
+fn diff_missing_left_file_reports_not_found() {
+    let scratch = ScratchDir::new("diff-left-missing");
+    let right = scratch.path("right.md");
+    std::fs::write(&right, b"right content").expect("seed right.md");
+    let left = scratch.path("no-such-left.md");
+
+    let output = rune()
+        .arg("--diff")
+        .arg(&left)
+        .arg(&right)
+        .output()
+        .expect("run rune --diff <missing> <right>");
+
+    assert_eq!(output.status.code(), Some(EX_IOERR));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "a missing --diff left file must say so, got: {stderr}"
+    );
+}
+
+#[test]
+fn diff_unreadable_left_file_reports_the_read_failure_not_not_found() {
+    let scratch = ScratchDir::new("diff-left-unreadable");
+    let right = scratch.path("right.md");
+    std::fs::write(&right, b"right content").expect("seed right.md");
+    let left_dir = scratch.path("a-directory.md");
+    std::fs::create_dir(&left_dir).expect("create a directory to use as the left path");
+
+    let output = rune()
+        .arg("--diff")
+        .arg(&left_dir)
+        .arg(&right)
+        .output()
+        .expect("run rune --diff <directory> <right>");
+
+    assert_eq!(output.status.code(), Some(EX_IOERR));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read"),
+        "a --diff left path that exists but can't be read as a file must report the \
+         underlying read failure, not the not-found message, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("not found"),
+        "a directory is not a missing file, got: {stderr}"
+    );
 }
 
 #[test]

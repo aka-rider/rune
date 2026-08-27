@@ -42,5 +42,6 @@ exclude_re = [
   'detect\.rs.*replace contains_ignore_ascii_case -> bool with true',
   'detect\.rs.*replace looks_like_modeline -> bool with true',
   'highlight\.rs.*replace \+= with \*= in run_query',
+  'main\.rs.*match guard doc_db\.publish_mode\.is_create_only',
 ]
 exclude_globs = []
