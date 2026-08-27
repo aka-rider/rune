@@ -273,7 +273,7 @@ impl CursorSet {
                 current = Cursor {
                     position: pos,
                     anchor: anc,
-                    desired_col: current.desired_col,
+                    desired_col: survivor.desired_col,
                     id: survivor_id,
                 };
             } else {

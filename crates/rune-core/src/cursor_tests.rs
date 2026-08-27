@@ -275,11 +275,9 @@ fn collapse_to_keeps_only_the_given_cursor() {
 
 /// Two cursors sharing the same selection start but a DIFFERENT end sort
 /// by that end (ascending) when the start ties, before the merge loop
-/// ever runs — the earlier-sorted cursor's own `desired_col` is what
-/// survives the merge. Flipping that comparator's `!=` to `==` falls
-/// through to comparing `id` instead, silently reordering the pair
-/// whenever id order disagrees with end order, and carrying over the
-/// wrong survivor's `desired_col`.
+/// ever runs — but the merged cursor's `desired_col` comes from the
+/// survivor (the lower id), not from whichever cursor the sort happened
+/// to place first.
 #[test]
 fn merge_orders_same_start_cursors_by_end_not_by_id() {
     let short_selection = Cursor {
@@ -296,8 +294,35 @@ fn merge_orders_same_start_cursors_by_end_not_by_id() {
     };
     let merged = CursorSet::new_from(&[short_selection, long_selection]).primary();
     assert_eq!(
+        merged.desired_col, 200,
+        "the lower-id survivor's desired_col must survive the merge, \
+         not the earlier-by-end cursor's"
+    );
+}
+
+/// [rune-core 14]: mirrors `merge_survivor_keeps_the_reversed_flag_of_the_
+/// lower_id_cursor` for `desired_col` — the merged cursor's `desired_col`
+/// must come from the survivor (lower id), not whichever cursor the merge
+/// loop happened to be holding as `current`.
+#[test]
+fn merge_survivor_keeps_the_desired_col_of_the_lower_id_cursor() {
+    let a = Cursor {
+        position: 8,
+        anchor: 0,
+        desired_col: 100,
+        id: id(1),
+    };
+    let b = Cursor {
+        position: 3,
+        anchor: 6,
+        desired_col: 200,
+        id: id(2),
+    };
+    let merged = CursorSet::new_from(&[a, b]).primary();
+    assert_eq!(merged.id, id(1), "lower id survives");
+    assert_eq!(
         merged.desired_col, 100,
-        "the shorter (earlier-by-end) selection's desired_col must survive the merge"
+        "the survivor's own desired_col (id 1) must win, not the other cursor's"
     );
 }
 

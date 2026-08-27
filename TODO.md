@@ -68,12 +68,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: dedup at render time from the merged set regardless of arrival order.
 - **Confidence**: plausible.
 
-#### `CursorSet::merge` takes `desired_col` from the wrong cursor
-- **Where**: `crates/rune-core/src/cursor.rs:256-277` — survivor chosen by lowest id at `:256`, but `:276` hardcodes `desired_col: current.desired_col`.
-- **Wrong**: when the survivor is `next`, the merged cursor keeps its own position/anchor/id but the *other* cursor's remembered column, so the next Up/Down lands in the wrong column. The sibling `reversed` flag was deliberately fixed to read from `survivor` (pinned test at `:372`); `desired_col` was missed by the same fix.
-- **Instead**: read `desired_col` from `survivor`.
-- **Confidence**: confirmed.
-
 #### Multi-cursor uppercase/lowercase refuses with "edit failed" and does nothing
 - **Where**: `crates/rune-tui/src/commands/case.rs:33-57`; root cause at `crates/rune-tui/src/commands/edit_core.rs:92-98,197-199`.
 - **Wrong**: two cursors inside the same word (e.g. alt-click at byte 2 and byte 3 of `"hello world"` — `CursorSet::merge` leaves them separate since `2 >= 3` is false) both resolve `word_range_at` to `(0,5)`, so `per_cursor_selection_edits` builds two *identical* `Edit{0,5,"HELLO"}`. `coalesce_touching_edits` merges only when both inserts are empty, so both survive; `SortedEdits::sort` does not check overlap (only `validate` does), so `build_edited_content`'s second pass calls `content.get(5..0)` → `OutOfBounds`. Executed: content unchanged, log `edit failed: edit out of bounds: [5,0) len=11`, journal length 0. `edit_core.rs`'s own doc names this class but the fix was scoped to pure deletions. Distinct from the undo-path entry above and from the forward-batch undo entry: this is the *forward* path with two identical non-delete edits, reachable from a live keystroke.
