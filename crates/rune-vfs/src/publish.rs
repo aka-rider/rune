@@ -250,3 +250,7 @@ mod tests;
 #[cfg(test)]
 #[path = "publish_conditions_tests.rs"]
 mod conditions_tests;
+
+#[cfg(test)]
+#[path = "publish_retry_tests.rs"]
+mod retry_tests;

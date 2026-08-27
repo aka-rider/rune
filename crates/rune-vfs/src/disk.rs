@@ -358,3 +358,54 @@ fn describe_trash_error(error: &trash::Error) -> String {
         _ => "trash operation failed".to_string(),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod describe_trash_error_tests {
+    use super::describe_trash_error;
+
+    #[test]
+    fn os_and_unknown_pass_their_description_through_verbatim() {
+        assert_eq!(
+            describe_trash_error(&trash::Error::Os {
+                code: 13,
+                description: "permission denied".to_string(),
+            }),
+            "permission denied"
+        );
+        assert_eq!(
+            describe_trash_error(&trash::Error::Unknown {
+                description: "something odd".to_string(),
+            }),
+            "something odd"
+        );
+    }
+
+    #[test]
+    fn could_not_access_names_the_target() {
+        assert_eq!(
+            describe_trash_error(&trash::Error::CouldNotAccess {
+                target: "/some/path".to_string(),
+            }),
+            "could not access /some/path"
+        );
+    }
+
+    #[test]
+    fn targeted_root_has_a_fixed_message() {
+        assert_eq!(
+            describe_trash_error(&trash::Error::TargetedRoot),
+            "refused to trash a root folder"
+        );
+    }
+
+    #[test]
+    fn canonicalize_path_names_the_original_path() {
+        assert_eq!(
+            describe_trash_error(&trash::Error::CanonicalizePath {
+                original: std::path::PathBuf::from("/weird/path"),
+            }),
+            "could not resolve path /weird/path"
+        );
+    }
+}

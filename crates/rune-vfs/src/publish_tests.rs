@@ -134,6 +134,35 @@ fn two_sequential_puts_to_one_path_never_collide_on_temp_names() {
 }
 
 #[test]
+fn force_over_existing_propagates_a_publish_failure_that_never_took_effect() {
+    let vfs = Mem::new();
+    let path = Path::new("/doc.md");
+    publish_direct(&vfs, path, b"original");
+    // A pre-publish failure (`fail_next`, not `fail_after`) fires before the
+    // exchange takes effect, so it must NOT carry the `published_not_durable`
+    // marker `finish_over_existing`'s guard checks for — it must propagate
+    // as a plain `Err`, never be folded into a `durable: false` commit.
+    vfs.fail_next(OpKind::Exchange, io::ErrorKind::PermissionDenied);
+
+    let err = put(
+        &vfs,
+        path,
+        b"updated",
+        PutCondition::Force {
+            expect: Some(etag_of(b"original")),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        vfs.read(path).unwrap(),
+        b"original",
+        "the publish never took effect: the destination must be untouched"
+    );
+}
+
+#[test]
 fn force_over_a_directory_refuses_and_leaves_it_intact() {
     let vfs = Mem::new();
     publish_direct(&vfs, Path::new("/notes/a.md"), b"content");

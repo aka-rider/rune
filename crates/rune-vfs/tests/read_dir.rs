@@ -113,6 +113,41 @@ fn disk_read_dir_not_recursive() {
     let _ = fs::remove_dir_all(&tmp);
 }
 
+/// A FIFO is neither a directory, a regular file, nor a symlink. It must
+/// fall through every `read_dir` classification arm to the generic
+/// `FileKind::Other`/`Link::No` case, never be misclassified as a symlink
+/// (which would wrongly stat through it via `fs::metadata` and report
+/// `Link::To`/`Link::Broken`).
+#[test]
+fn disk_read_dir_lists_a_fifo_as_other_with_no_link() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let tmp = std::env::temp_dir().join(format!("rune-vfs-readdir-fifo-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).expect("create temp dir");
+    let fifo = tmp.join("pipe");
+    let fifo_c = CString::new(fifo.as_os_str().as_bytes()).expect("fifo path has no NUL");
+    let made = unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) };
+    assert_eq!(made, 0, "mkfifo should succeed");
+
+    let vfs = Disk;
+    let entries = vfs.read_dir(&tmp).expect("read_dir should succeed");
+
+    let pipe = entries
+        .iter()
+        .find(|e| e.name == "pipe")
+        .expect("the fifo must be listed");
+    assert_eq!(pipe.kind, FileKind::Other);
+    assert_eq!(
+        pipe.link,
+        Link::No,
+        "a FIFO is not a symlink and must never be classified as one"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn disk_read_dir_missing_path_errors() {
     let tmp = std::env::temp_dir().join(format!("rune-vfs-readdir-missing-{}", std::process::id()));

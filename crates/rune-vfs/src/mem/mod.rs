@@ -455,6 +455,67 @@ mod tests {
     }
 
     #[test]
+    fn successive_write_durables_mint_distinct_identity_and_mod_tick() {
+        let vfs = Mem::new();
+
+        let t1 = vfs.write_durable(Path::new("/a"), b"1").unwrap();
+        let t2 = vfs.write_durable(Path::new("/b"), b"2").unwrap();
+
+        let s1 = vfs.stat(&t1).unwrap();
+        let s2 = vfs.stat(&t2).unwrap();
+        assert_ne!(
+            s1.identity.inode, s2.identity.inode,
+            "each write_durable must mint a fresh inode"
+        );
+        assert_ne!(
+            s1.mtime, s2.mtime,
+            "each write_durable must advance the shared mod tick"
+        );
+    }
+
+    #[test]
+    fn exchange_advances_the_shared_mod_tick_past_both_files_prior_values() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/a"), b"1").unwrap();
+        vfs.save_atomic(Path::new("/b"), b"2").unwrap();
+        let before_a = vfs.stat(Path::new("/a")).unwrap().mtime;
+        let before_b = vfs.stat(Path::new("/b")).unwrap().mtime;
+
+        vfs.exchange(Path::new("/a"), Path::new("/b")).unwrap();
+
+        let after_a = vfs.stat(Path::new("/a")).unwrap().mtime;
+        let after_b = vfs.stat(Path::new("/b")).unwrap().mtime;
+        assert!(after_a > before_a && after_a > before_b);
+        assert_eq!(
+            after_a, after_b,
+            "the swap must stamp both files with the same, newly advanced tick"
+        );
+    }
+
+    #[test]
+    fn stat_mtime_advances_forward_from_the_epoch() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/a"), b"1").unwrap();
+
+        let mtime = vfs.stat(Path::new("/a")).unwrap().mtime;
+
+        assert!(
+            mtime > std::time::UNIX_EPOCH,
+            "mod_tick must advance mtime forward from the epoch, never backward"
+        );
+    }
+
+    #[test]
+    fn fail_next_mkdir_all_makes_the_next_mkdir_all_call_fail() {
+        let vfs = Mem::new();
+        vfs.fail_next(OpKind::MkdirAll, io::ErrorKind::PermissionDenied);
+
+        let err = vfs.mkdir_all(Path::new("/anything")).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
     fn fail_next_trash_makes_the_next_trash_fail() {
         let vfs = Mem::new();
         vfs.save_atomic(Path::new("/a/b.md"), b"content").unwrap();

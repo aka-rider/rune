@@ -94,4 +94,17 @@ mod tests {
                 .contains("not a lowercase SHA-256 hex digest")
         );
     }
+
+    #[test]
+    fn from_stored_rejects_a_64_byte_string_with_a_non_hex_byte() {
+        let mut s = "0".repeat(64);
+        s.replace_range(0..1, "-");
+        assert!(Etag::from_stored(s).is_err());
+    }
+
+    #[test]
+    fn from_stored_rejects_an_all_hex_string_of_the_wrong_length() {
+        let s = "0".repeat(63);
+        assert!(Etag::from_stored(s).is_err());
+    }
 }

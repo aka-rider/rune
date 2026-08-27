@@ -81,5 +81,27 @@ exclude_re = [
   'hunks\.rs:219:64:.*replace < with == in overlaps',
   'hunks\.rs:219:64:.*replace < with > in overlaps',
   'hunks\.rs:219:64:.*replace < with <= in overlaps',
+  # rune-vfs, on Linux: these five mutate a macOS-only (`#[cfg(target_os =
+  # "macos")]`) function body. On this build target the function is not
+  # compiled in at all, so applying the mutation produces a byte-identical
+  # binary to baseline — no test, on any backend, can ever observe a
+  # difference. The platform-live counterpart of each (Disk::flagged_rename's
+  # Linux `renameat2` body, Mem-independent Disk::trash's Linux body,
+  # excl_flag's Linux body) is exercised by real tests and is not excluded.
+  'disk\.rs:41:9:.*replace Disk::flagged_rename',
+  'disk\.rs:46:16:.*replace == with != in Disk::flagged_rename',
+  'disk\.rs:224:9:.*Disk>::trash',
+  'disk\.rs:327:5:.*replace swap_flag',
+  'disk\.rs:332:5:.*replace excl_flag',
+  # rune-vfs: `Mem::symlink`'s own `inode`/`mod_tick` fields are write-only.
+  # `Vfs::stat` (the only reader of either field) always resolves a symlink
+  # path through `follow_links` before looking anything up, for every key
+  # that carries a `link_target` — so a symlink entry's own identity fields
+  # are never the ones a stat call returns, under any path that reaches
+  # them (direct stat, a chain hop, even swapping the entry onto another key
+  # via `exchange`, since the swapped-in entry is still flagged as a link and
+  # still gets resolved away). No public `Vfs` method can observe them.
+  'fault\.rs:311:20:.*replace \+= with \*= in Mem::symlink',
+  'fault\.rs:314:26:.*replace \+= with \*= in Mem::symlink',
 ]
 exclude_globs = []

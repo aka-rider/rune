@@ -198,6 +198,22 @@ fn a_quiescent_commit_reports_a_confirmed_post_publish_stat() {
 }
 
 #[test]
+fn if_absent_reports_durable_false_on_a_post_publish_durability_failure() {
+    let vfs = Mem::new();
+    let path = Path::new("/doc.md");
+    vfs.fail_after(OpKind::RenameExcl, io::ErrorKind::Other);
+
+    let outcome = put(&vfs, path, b"new", PutCondition::IfAbsent).unwrap();
+
+    assert!(
+        matches!(outcome, PutOutcome::Committed { durable: false, .. }),
+        "a publish that already took effect must commit with durable: false, \
+         not propagate as an error, got {outcome:?}"
+    );
+    assert_eq!(vfs.read(path).unwrap(), b"new");
+}
+
+#[test]
 fn if_absent_loser_gets_conflict_and_the_temp_is_removed() {
     let vfs = Mem::new();
     let path = Path::new("/doc.md");
