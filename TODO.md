@@ -35,12 +35,6 @@ constitution and the entry is deleted in the same commit.
 
 ## Architecture
 
-### Session-driver migration residue
-- **Where**: `crates/rune-tui/tests/rename_common/mod.rs` (kept App-layer fixtures: `seeded_vfs`, `app_with`, `app_with_store`, `unsaved_named_app_with_store`, `next_event`, the `wait_for_*` waits, `send`, `type_text`, `type_new_name`); its consumers are THIRTEEN test binaries, not six: `bind_new_named.rs`, `save_state_machine.rs`, `materialize_dead_writer_reentrancy.rs`, `materialize_fatal_two_docs.rs`, `refused_hydration_detach.rs`, `reading_view.rs`, `rename_gate.rs`, `rename_bind.rs`, `rename_refusals.rs`, `rename_collision.rs`, `rename_replace.rs`, `rename_clipboard.rs`, `rename_focus.rs`; `navhistory_common` (embeds `explorer_common` via `#[path]`, still builds bare `App`s) with consumers `navhistory.rs`/`navhistory_browse.rs`; `set_doc_db_for_test` (consumed by the kept fixtures, `materialize_fatal_two_docs.rs`, and `g7_shared_file_baseline.rs`).
-- **Wrong**: the 2026-08-13 migration moved nine `*_common` modules onto `rune_fuzz::Session`, but these binaries still construct bare `App`s through the duplicated fixture layer the migration exists to delete, so `rename_common` carries both layers side by side.
-- **Instead**: migrate the six binaries and `navhistory_common` onto `Session`, then delete the App layer and re-evaluate whether `set_doc_db_for_test` is orphaned. Known driver gaps that blocked full migration, to close in `rune-fuzz` first: no out-of-order db-op delivery through checked steps (`deliver_db` is oldest-first; `merge_common::deliver_op_unchecked` is the workaround); the redivergence tracker only learns of external writes via `Action::DivergeDisk`; `Effects::raw`/timer arming invisible through `Session`; `ReadDir`/`ReadFile` Cmds dropped by the driver; a single rename-Cmd slot; no targeted `ClipboardRead` action; `SAVE-INFLIGHT-SM` rejects the legitimate `bind_new_now` Enter-materialize flip.
-- **Done when**: no test binary constructs an `App` through a `*_common` fixture that duplicates `Session`, and the driver gaps above are either closed or individually recorded as deliberate.
-
 ## Mechanical
 
 ### O(file) per keystroke is the deliberate design ceiling
