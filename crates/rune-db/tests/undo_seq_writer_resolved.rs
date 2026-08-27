@@ -184,3 +184,104 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
         "recover_document must equal the caller's own buffer bytes exactly"
     );
 }
+
+/// The second truncation the writer's own `local_seq` mapping must also
+/// survive: typing past a truncating append (undo, then a fresh edit that
+/// deletes the abandoned redo tail durably), then undoing and redoing that
+/// very edit, then typing again — a `local_seq` entry left over from before
+/// the first truncation must never resolve `MoveUndoPos` to a durable seq
+/// the first truncation already deleted.
+#[test]
+fn edit_after_undo_then_redo_keeps_the_document_recoverable() {
+    let dir = temp_db_dir("undo-redo-retype");
+    let db_path = dir.join("rune-v1.db");
+
+    let (tx, rx) = mpsc::channel::<DbEvent>();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    let (store, warning) = Store::open(&db_path, Arc::new(Disk), on_event).expect("open store");
+    assert!(
+        warning.is_none(),
+        "must not degrade against a real temp path"
+    );
+    let session_id = store.session_id();
+
+    let scratch_op = store.create_scratch().expect("enqueue create_scratch");
+    let doc_id = match recv(&rx, scratch_op) {
+        OpOutcome::ScratchDocId(id) => id,
+        other => panic!("expected ScratchDocId from CreateScratch, got {other:?}"),
+    };
+
+    let mut buf = String::new();
+    let token = BindingToken::next();
+
+    let append = |store: &Store, buf: &mut String, text: &str| {
+        let edit = append_and_edit(buf, text);
+        store
+            .append_edit(
+                doc_id,
+                token,
+                Seq(0),
+                EditBatch {
+                    edits: &[edit],
+                    cursors_before: &[],
+                    cursors_after: &[],
+                    kind: EditKind::Other,
+                },
+            )
+            .expect("enqueue append")
+    };
+    let undo_to = |store: &Store, local_pos: i64| {
+        store
+            .move_undo_pos(doc_id, token, Seq(0), local_pos)
+            .expect("enqueue move_undo_pos")
+    };
+
+    // "a" (local position 1), "b" (2), "c" (3) — all typed at the head.
+    let op_a = append(&store, &mut buf, "a");
+    let op_b = append(&store, &mut buf, "b");
+    let op_c = append(&store, &mut buf, "c");
+
+    // Undo back to "a" only, local position 1.
+    let op_undo1 = undo_to(&store, 1);
+    buf.truncate("a".len());
+
+    // A fresh edit past that undo: durably truncates "b" and "c" out of the
+    // journal, the same as a real editor's type-after-undo. Local position
+    // is now 2 ("a", "d").
+    let op_d = append(&store, &mut buf, "d");
+
+    // Undo "d" (back to local position 1), then redo it (local position 2)
+    // — no new edit lands in between, so nothing durable should change; this
+    // is exactly the step the previous regression test never exercised.
+    let op_undo2 = undo_to(&store, 1);
+    buf.truncate("a".len());
+    let op_redo = undo_to(&store, 2);
+    buf.push('d');
+
+    // Typing again at local position 2 must land at local position 3 ("a",
+    // "d", "e") and must resolve against "d"'s own seq, never against the
+    // already-deleted "b"'s.
+    let op_e = append(&store, &mut buf, "e");
+
+    for op_id in [op_a, op_b, op_c, op_undo1, op_d, op_undo2, op_redo, op_e] {
+        match recv(&rx, op_id) {
+            OpOutcome::Seq(_) | OpOutcome::None => {}
+            other => panic!("op {op_id}: unexpected outcome {other:?}"),
+        }
+    }
+
+    store.shutdown();
+
+    let conn =
+        rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
+    let recovered = rune_db::recover_document(&conn, session_id, doc_id)
+        .expect("recover_document")
+        .content;
+    assert_eq!(
+        recovered, buf,
+        "recover_document must equal the caller's own buffer bytes exactly"
+    );
+    assert_eq!(buf, "ade");
+}

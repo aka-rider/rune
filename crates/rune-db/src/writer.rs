@@ -69,6 +69,7 @@ pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
 pub(crate) struct DocUndoState {
     pub(crate) base_seq: Seq,
     pub(crate) local_seq: Vec<Seq>,
+    pub(crate) pos: usize,
 }
 
 impl DocUndoState {
@@ -78,15 +79,19 @@ impl DocUndoState {
     /// invariant violation the writer's single FIFO queue should make
     /// unreachable (see `OpKind::MoveUndoPos`'s doc comment) — never
     /// silently approximated.
-    pub(crate) fn resolve(&self, local_pos: i64) -> Option<Seq> {
+    pub(crate) fn resolve(&mut self, local_pos: i64) -> Option<Seq> {
         if local_pos == 0 {
+            self.pos = 0;
             return Some(self.base_seq);
         }
         let idx = usize::try_from(local_pos - 1).ok()?;
-        self.local_seq.get(idx).copied()
+        let seq = *self.local_seq.get(idx)?;
+        self.pos = idx + 1;
+        Some(seq)
     }
 
     pub(crate) fn push_seq(&mut self, doc_id: DocId, seq: Seq) {
+        self.local_seq.truncate(self.pos);
         assert_invariant!(self.local_seq.last().is_none_or(|&last| seq > last), || {
             format!(
                 "append_edit doc {doc_id}: seq {seq} did not advance past local_seq.last() {:?}",
@@ -94,6 +99,7 @@ impl DocUndoState {
             )
         });
         self.local_seq.push(seq);
+        self.pos = self.local_seq.len();
     }
 }
 
@@ -109,6 +115,7 @@ pub(crate) fn ensure_token_state(
     undo_state.entry(token).or_insert_with(|| DocUndoState {
         base_seq,
         local_seq: Vec::new(),
+        pos: 0,
     })
 }
 
