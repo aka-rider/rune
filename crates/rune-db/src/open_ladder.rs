@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use rusqlite::Connection;
@@ -5,6 +6,8 @@ use rusqlite::Connection;
 use crate::Error;
 use crate::conn::{self, RecoveryTarget};
 use crate::store::DEGRADED_WARNING;
+
+const RECOVERY_DIR_MODE: u32 = 0o700;
 
 pub(crate) struct LadderResult {
     pub(crate) writer_conn: Connection,
@@ -23,6 +26,10 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
     // conversion failure here degrades to the next rung exactly like an
     // open failure would — `open_ladder` never hard-fails except at the
     // final in-memory rung.
+    if let Some(parent) = path.parent() {
+        secure_dir_if_present(parent);
+    }
+
     if let Ok(conn) = conn::open_recovery_store(RecoveryTarget::File(path))
         && let Ok(reader_target) = crate::paths::to_db_string(path)
     {
@@ -35,14 +42,17 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
 
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
-        && let Ok(conn) = conn::open_recovery_store(RecoveryTarget::File(path))
-        && let Ok(reader_target) = crate::paths::to_db_string(path)
     {
-        return Ok(LadderResult {
-            writer_conn: conn,
-            reader_target,
-            warning: None,
-        });
+        secure_dir_if_present(parent);
+        if let Ok(conn) = conn::open_recovery_store(RecoveryTarget::File(path))
+            && let Ok(reader_target) = crate::paths::to_db_string(path)
+        {
+            return Ok(LadderResult {
+                writer_conn: conn,
+                reader_target,
+                warning: None,
+            });
+        }
     }
 
     let uri = conn::memory_uri();
@@ -52,4 +62,18 @@ pub(crate) fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
         reader_target: uri,
         warning: Some(DEGRADED_WARNING.to_string()),
     })
+}
+
+fn secure_dir_if_present(dir: &Path) {
+    if !dir.is_dir() {
+        return;
+    }
+    if let Err(e) =
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(RECOVERY_DIR_MODE))
+    {
+        crate::diag::background_note(&format!(
+            "could not restrict {} to mode 0700: {e} — the recovery store directory may be readable by other local users",
+            dir.display()
+        ));
+    }
 }

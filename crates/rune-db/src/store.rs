@@ -405,6 +405,56 @@ mod tests {
         store.shutdown();
     }
 
+    #[test]
+    fn store_open_secures_directory_and_database_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("perm-fresh");
+        let path = dir.join("rune-v1.db");
+
+        let (store, _warning) =
+            Store::open(&path, test_vfs(), noop_on_event()).expect("open store");
+
+        let dir_mode = std::fs::metadata(&dir)
+            .expect("stat dir")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+
+        let file_mode = std::fs::metadata(&path)
+            .expect("stat db file")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600);
+
+        store.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_open_tightens_a_preexisting_world_readable_store_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("perm-repair-dir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("loosen dir");
+        let path = dir.join("rune-v1.db");
+
+        let (store, _warning) =
+            Store::open(&path, test_vfs(), noop_on_event()).expect("open store");
+
+        let dir_mode = std::fs::metadata(&dir)
+            .expect("stat dir")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+
+        store.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Pins the `SendError -> WriterGone` mapping the kill-writer test hook
     /// relies on: once the writer thread has dequeued
     /// `OpKind::KillWriterForTest` and dropped its receiver, every

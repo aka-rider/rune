@@ -132,12 +132,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: cap SVG input size and pin a repro test; if roxmltree's caps are relied on, assert them.
 - **Confidence**: plausible.
 
-#### Recovery store holding unsaved document plaintext is created world-readable
-- **Where**: `crates/rune-db/src/conn.rs:16` (`Connection::open`), directory at `crates/rune-db/src/open_ladder.rs:37` (`create_dir_all`).
-- **Wrong**: neither the SQLite file (default `0644`) nor its parent dir (`0755`) is followed by a `set_permissions`/`fchmod` — no `0o600`/`0o700` anywhere in `rune-db`. The store holds journal entries, full-content snapshots and blobs — the plaintext of every document edited, including files whose own mode is `0600`. On a multi-user machine with a traversable home, any local user reads the whole store plus its `-wal`/`-shm` sidecars; the user's `chmod 600 secrets.md` is silently undone.
-- **Instead**: create the dir `0700` and the db file `0600` (fchmod immediately after open, before writing).
-- **Confidence**: confirmed.
-
 #### Save opens the temp world-readable and can silently downgrade a private file's mode
 - **Where**: `crates/rune-vfs/src/disk.rs:116-141`.
 - **Wrong**: two defects in one window. (a) the temp is opened without `.mode(0o600)`, so it is `0644`, and the full document content is `write_all`'d into it before `:139-141` copies the destination's permissions — a real window in which a `0600` document's plaintext is world-readable beside it. (b) `let _ = fs::set_permissions(&temp, …)` discards its error; because publish is `RENAME_SWAP`/`RENAME_EXCHANGE`, the destination afterwards is the temp's inode, so a failed `set_permissions` permanently downgrades the user's `0600` file to `0644` with no message ("no hidden failure modes"). Related ledger note: the swap also discards the destination's ACLs/xattrs/Finder-tags/quarantine on every save, since the published inode is brand-new.

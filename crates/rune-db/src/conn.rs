@@ -1,9 +1,12 @@
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::{Connection, OpenFlags};
 
 use crate::Error;
+
+const RECOVERY_FILE_MODE: u32 = 0o600;
 
 #[derive(Clone, Copy)]
 pub(crate) enum RecoveryTarget<'a> {
@@ -13,7 +16,11 @@ pub(crate) enum RecoveryTarget<'a> {
 
 pub(crate) fn open_recovery_store(target: RecoveryTarget) -> Result<Connection, Error> {
     let conn = match target {
-        RecoveryTarget::File(path) => Connection::open(path)?,
+        RecoveryTarget::File(path) => {
+            let conn = Connection::open(path)?;
+            secure_recovery_files(path);
+            conn
+        }
         RecoveryTarget::Memory(uri) => Connection::open_with_flags(uri, memory_open_flags())?,
     };
     apply_pragmas(&conn)?;
@@ -22,6 +29,33 @@ pub(crate) fn open_recovery_store(target: RecoveryTarget) -> Result<Connection, 
     }
     crate::schema::apply(&conn)?;
     Ok(conn)
+}
+
+fn secure_recovery_files(path: &Path) {
+    secure_file(path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = with_suffix(path, suffix);
+        if sidecar.exists() {
+            secure_file(&sidecar);
+        }
+    }
+}
+
+fn secure_file(path: &Path) {
+    if let Err(e) =
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(RECOVERY_FILE_MODE))
+    {
+        crate::diag::background_note(&format!(
+            "could not restrict {} to mode 0600: {e} — the recovery store may be readable by other local users",
+            path.display()
+        ));
+    }
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(suffix);
+    PathBuf::from(os)
 }
 
 pub(crate) fn open_read_replica(target: &str) -> Result<Connection, Error> {
@@ -162,5 +196,58 @@ mod tests {
         let a = memory_uri();
         let b = memory_uri();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn recovery_store_db_file_is_mode_0600() {
+        let dir = test_temp_dir("perm-db-file");
+        let path = dir.join("rune-v1.db");
+        let conn = open_recovery_store(RecoveryTarget::File(&path)).expect("open recovery store");
+        let mode = std::fs::metadata(&path)
+            .expect("stat db file")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_store_tightens_preexisting_wal_and_shm_sidecars() {
+        let dir = test_temp_dir("perm-sidecars");
+        let path = dir.join("rune-v1.db");
+        let wal = dir.join("rune-v1.db-wal");
+        let shm = dir.join("rune-v1.db-shm");
+
+        let first = open_recovery_store(RecoveryTarget::File(&path)).expect("first open");
+        assert!(wal.exists(), "wal sidecar must exist once wal mode is on");
+
+        std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o644)).expect("loosen wal");
+        if shm.exists() {
+            std::fs::set_permissions(&shm, std::fs::Permissions::from_mode(0o644))
+                .expect("loosen shm");
+        }
+
+        let second = open_recovery_store(RecoveryTarget::File(&path)).expect("second open");
+
+        let wal_mode = std::fs::metadata(&wal)
+            .expect("stat wal")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(wal_mode, 0o600);
+        if shm.exists() {
+            let shm_mode = std::fs::metadata(&shm)
+                .expect("stat shm")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(shm_mode, 0o600);
+        }
+
+        drop(second);
+        drop(first);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
