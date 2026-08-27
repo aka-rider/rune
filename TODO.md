@@ -28,9 +28,6 @@ constitution and the entry is deleted in the same commit.
 
 ### MINOR
 
-
-- **`Cut`/`Paste` are ⌘-only with no ctrl fallback** — surfaced by the keyboard-flags probe work (2026-08-27): on a terminal that drops the Kitty disambiguation flags, every `⌘` chord is unreachable and the help now marks them `⚠`, but `Cut`/`Paste` have no `secondary` ctrl row at all, so those commands are entirely keyboard-unreachable there (palette only). Decide fallback chords or accept-and-document.
-
 ## Architecture
 
 ## Mechanical

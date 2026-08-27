@@ -117,7 +117,9 @@ fn at_buffer_top(app: &App) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::commands::test_support::selecting;
     use crate::document::ReadOnly;
+    use crate::keymap::{KeyCode, KeyInput, Mods};
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -127,6 +129,46 @@ mod tests {
         let id = app.active;
         app.doc_mut(id).expect("doc").viewport.set_size(80, 23);
         app
+    }
+
+    fn ctrl(ch: char) -> KeyInput {
+        KeyInput {
+            code: KeyCode::Char(ch),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        }
+    }
+
+    #[test]
+    fn ctrl_x_cuts_the_selection_through_the_real_dispatch_seam() {
+        let mut app = app_with("hello world");
+        let id = app.active;
+        selecting(&mut app, id, 0, 5);
+        let mut effects = Effects::default();
+
+        crate::dispatch::handle_key(&mut app, ctrl('x'), &mut effects);
+
+        assert_eq!(app.doc(id).expect("doc").buffer.content(), " world");
+        assert!(
+            !effects.raw_bytes().is_empty(),
+            "^X must still write the cut text to the system clipboard"
+        );
+    }
+
+    #[test]
+    fn ctrl_v_reaches_paste_through_the_real_dispatch_seam() {
+        let mut app = app_with("hello");
+        let mut effects = Effects::default();
+
+        crate::dispatch::handle_key(&mut app, ctrl('v'), &mut effects);
+
+        assert_eq!(
+            effects.cmds.len(),
+            1,
+            "^V must spawn exactly one pbpaste read"
+        );
     }
 
     #[test]

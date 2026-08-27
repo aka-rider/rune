@@ -31,9 +31,23 @@ pub(crate) const CUT: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const CUT_CTRL: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('x'), CTRL),
+    cmd: Command::Cut,
+    help: "cut",
+    secondary: true,
+};
+
 pub(crate) const PASTE: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('v'), SUP),
     cmd: Command::Paste,
     help: "paste",
     secondary: false,
+};
+
+pub(crate) const PASTE_CTRL: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('v'), CTRL),
+    cmd: Command::Paste,
+    help: "paste",
+    secondary: true,
 };
