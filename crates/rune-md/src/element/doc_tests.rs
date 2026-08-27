@@ -285,6 +285,99 @@ fn assert_all_revealed(blocks: &[crate::element::block::Block]) {
 }
 
 #[test]
+fn built_version_starts_at_zero_never_a_real_buffer_version() {
+    // `Buffer::version()` starts at 1 (see `DocMachine::new`'s own doc
+    // comment), so a fresh, never-synced machine reporting `0` is the only
+    // way `sync_content`'s "first call always reparses" guarantee holds —
+    // pinning this against the literal rather than reusing `sync_content`
+    // (whose asserted value, `buf.version()`, is itself `1` on a fresh
+    // buffer and so can't tell "the real field" from "a hardcoded 1" apart).
+    let doc = DocMachine::new();
+    assert_eq!(doc.built_version(), 0);
+}
+
+#[test]
+fn wrap_reports_the_real_width_not_a_fixed_default() {
+    let mut doc = DocMachine::new();
+    assert_eq!(doc.wrap(), rune_syntax::element::WrapState::default());
+    doc.set_width(40);
+    assert_eq!(doc.wrap().width, 40);
+}
+
+#[test]
+fn set_embed_dims_dirties_on_a_real_change_and_only_on_a_real_change() {
+    let mut doc = DocMachine::new();
+    doc.clear_dirty();
+    doc.set_embed_dims(ImageDims::new()); // already the machine's own default value
+    assert!(
+        !doc.is_dirty(),
+        "re-setting the SAME embed dims must not dirty the machine"
+    );
+
+    let mut changed = ImageDims::new();
+    changed.insert("x.png", 4, 2);
+    doc.set_embed_dims(changed);
+    assert!(
+        doc.is_dirty(),
+        "a genuine embed-dims change must dirty the machine"
+    );
+}
+
+#[test]
+fn set_image_document_dims_dirties_on_a_real_change_and_only_on_a_real_change() {
+    let mut doc = DocMachine::new();
+    doc.clear_dirty();
+    doc.set_image_document_dims(0, 1); // already the machine's own default (width, rows)
+    assert!(
+        !doc.is_dirty(),
+        "re-setting the SAME image-document dims must not dirty the machine"
+    );
+
+    doc.set_image_document_dims(80, 24);
+    assert!(
+        doc.is_dirty(),
+        "a genuine image-document dims change must dirty the machine"
+    );
+}
+
+#[test]
+fn invalidate_forces_the_next_sync_content_to_reparse() {
+    let mut doc = DocMachine::new();
+    let buf = Buffer::new("# hello\n");
+    doc.sync_content(&buf);
+    assert_eq!(doc.built_version(), buf.version());
+    doc.clear_dirty();
+
+    doc.invalidate();
+    assert_eq!(
+        doc.built_version(),
+        u64::MAX,
+        "invalidate must poison built_version so no real buffer version can ever match it again"
+    );
+    assert!(doc.is_dirty());
+}
+
+#[test]
+fn sync_cursors_marks_the_machine_dirty_when_its_one_block_transitions() {
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(RevealMode::AtCursor);
+    let buf = Buffer::new("# hello\n");
+    doc.sync_content(&buf);
+    doc.clear_dirty();
+
+    // The cursor sits on the heading's own line, so `HeadingM::sync` (the
+    // document's only block here) transitions Rendered -> Revealed and
+    // reports true — with nothing else already marking the machine dirty,
+    // `is_dirty()` afterward is exactly that block's own return value.
+    let cursors = CursorSet::new(2);
+    doc.sync_cursors(&buf, &cursors);
+    assert!(
+        doc.is_dirty(),
+        "a block's own dirty transition must propagate through sync_cursors's aggregation"
+    );
+}
+
+#[test]
 fn reveal_all_forces_every_block_revealed_with_no_cursor_input() {
     // Deliberately unfocused-shaped input (no `DocMachine`, no
     // `CursorSet` at all): a heading, a blockquote wrapping a nested

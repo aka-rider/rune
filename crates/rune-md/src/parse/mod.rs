@@ -322,6 +322,28 @@ mod tests {
         content.get(r.start..r.end).unwrap()
     }
 
+    /// `options_without_frontmatter` is `options()` with only the frontmatter
+    /// extension turned off — never a blank slate. A `Default::default()`
+    /// stand-in would silently drop strikethrough/tasklist/table/wikilink/
+    /// autolink support too, the one difference this pins directly: the
+    /// fallback this builds is only ever reached for a document shape no
+    /// currently-pinned `parse()` fixture can construct (see
+    /// `frontmatter::frontmatter_extension_is_safe`'s own docs on the
+    /// comrak CRLF quirk it exists to catch), so its own contract is pinned
+    /// here rather than through a full `parse()` round trip.
+    #[test]
+    fn options_without_frontmatter_disables_only_the_frontmatter_extension() {
+        let with = options();
+        let without = options_without_frontmatter();
+        assert!(with.extension.front_matter_delimiter.is_some());
+        assert!(without.extension.front_matter_delimiter.is_none());
+        assert!(without.extension.strikethrough);
+        assert!(without.extension.tasklist);
+        assert!(without.extension.table);
+        assert!(without.extension.wikilinks_title_after_pipe);
+        assert!(without.extension.autolink);
+    }
+
     #[test]
     fn heading_marker_and_text_are_byte_exact() {
         let content = "## heading\n";
@@ -370,6 +392,23 @@ mod tests {
         // every other per-line range in this crate.
         assert_eq!(cf.content_lines.len(), 1);
         assert_eq!(text_of(content, cf.content_lines[0]), "fn f() {}");
+    }
+
+    /// An UNTERMINATED fence (no closing ` ``` `) has no `close` line, so
+    /// `delimited::split`'s body range must still reach all the way to the
+    /// LAST line comrak's own range covers, inclusive — not stop one line
+    /// short of it.
+    #[test]
+    fn an_unterminated_fence_keeps_its_last_content_line() {
+        let content = "```rust\nline one\nline two\n";
+        let blocks = parse(content);
+        let Block::CodeFence(cf) = &blocks[0] else {
+            panic!("expected code fence");
+        };
+        assert!(cf.fence_close.is_none(), "fence must be unterminated");
+        assert_eq!(cf.content_lines.len(), 2);
+        assert_eq!(text_of(content, cf.content_lines[0]), "line one");
+        assert_eq!(text_of(content, cf.content_lines[1]), "line two");
     }
 
     #[test]

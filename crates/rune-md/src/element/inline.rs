@@ -268,3 +268,7 @@ fn range_is_whitespace_only(content: &str, r: &ByteRange) -> bool {
         .get(r.start..r.end)
         .is_some_and(|s| s.chars().all(char::is_whitespace))
 }
+
+#[cfg(test)]
+#[path = "inline_tests.rs"]
+mod tests;

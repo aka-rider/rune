@@ -130,6 +130,55 @@ fn revealed_image_on_its_own_line_is_not_standalone() {
     assert!(standalone(content, &p.inlines).is_empty());
 }
 
+/// Exercises every arithmetic combination `split_text_run_embeds`/
+/// `find_embeds_in_line` compute for one line: a LEADING gap before the
+/// first embed, a MID gap between two embeds (the only place `cursor` and
+/// `find_embeds_in_line`'s own scan cursor `i` are both non-zero going into
+/// a piece), and a TRAILING gap after the last embed — all on the SECOND
+/// buffer line, so `line_range.start` is non-zero too and no arithmetic
+/// mistake here can hide behind an accidental zero operand.
+#[test]
+fn embed_recovery_computes_every_gap_and_target_range_byte_exact() {
+    let content = "prose\nlead ![[a]] mid ![[b]] end\n";
+    let blocks = parse(content);
+    let Block::Paragraph(p) = &blocks[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(p.inlines.len(), 7, "{:?}", p.inlines);
+
+    let Inline::Text(prose) = &p.inlines[0] else {
+        panic!("expected prose text, got {:?}", p.inlines[0]);
+    };
+    assert_eq!(text_of(content, prose.range), "prose");
+
+    let Inline::Text(lead) = &p.inlines[2] else {
+        panic!("expected the leading gap, got {:?}", p.inlines[2]);
+    };
+    assert_eq!(text_of(content, lead.range), "lead ");
+
+    let Inline::Image(a) = &p.inlines[3] else {
+        panic!("expected image a, got {:?}", p.inlines[3]);
+    };
+    assert_eq!(text_of(content, a.range), "![[a]]");
+    assert_eq!(a.target_text, "a");
+
+    let Inline::Text(mid) = &p.inlines[4] else {
+        panic!("expected the mid gap, got {:?}", p.inlines[4]);
+    };
+    assert_eq!(text_of(content, mid.range), " mid ");
+
+    let Inline::Image(b) = &p.inlines[5] else {
+        panic!("expected image b, got {:?}", p.inlines[5]);
+    };
+    assert_eq!(text_of(content, b.range), "![[b]]");
+    assert_eq!(b.target_text, "b");
+
+    let Inline::Text(trailing) = &p.inlines[6] else {
+        panic!("expected the trailing gap, got {:?}", p.inlines[6]);
+    };
+    assert_eq!(text_of(content, trailing.range), " end");
+}
+
 /// A paragraph with two qualifying embed lines (separated by a prose line
 /// in between, still one paragraph with no blank lines) returns both.
 #[test]

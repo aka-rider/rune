@@ -282,3 +282,7 @@ impl Block {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "block_tests.rs"]
+mod tests;

@@ -324,4 +324,18 @@ mod tests {
         assert_eq!(real_offset_in_line(b"\tx", false, 4, Round::Down), 1);
         assert_eq!(real_offset_in_line(b"\tx", false, 5, Round::Down), 2);
     }
+
+    /// The BOM/tab-stop exemption in `walk_region` applies only to the
+    /// document's very FIRST line — `lines`'s own `is_first` flag is what
+    /// tells a terminated (`\n`-ending) first line apart from every later
+    /// one, not merely "index 0 among untermianted fragments" (already
+    /// covered by the no-trailing-newline fixture above): this fixture's
+    /// first line ends in `\n`, so it exercises `lines`'s OTHER branch.
+    #[test]
+    fn a_byte_order_mark_on_a_terminated_first_line_does_not_shift_the_tab_stops() {
+        assert_eq!(
+            parse_shadow("\u{feff}\tx\n"),
+            Cow::Owned::<str>("\u{feff}    x\n".to_owned())
+        );
+    }
 }

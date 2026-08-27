@@ -89,4 +89,60 @@ mod tests {
         assert!(shadow_may_open_frontmatter("---\r\ntitle: x\r\n---\r\n"));
         assert!(shadow_may_open_frontmatter("\u{feff}---\ntitle: x\n---\n"));
     }
+
+    #[test]
+    fn is_valid_frontmatter_close_requires_the_literal_delimiter_on_the_last_line() {
+        let closed = "---\ntitle: x\n---\n";
+        assert!(is_valid_frontmatter_close(
+            closed,
+            ByteRange::new(0, closed.len())
+        ));
+        let mismatched = "---\ntitle: x\n----\n";
+        assert!(!is_valid_frontmatter_close(
+            mismatched,
+            ByteRange::new(0, mismatched.len())
+        ));
+    }
+
+    /// A genuine `FrontmatterM` always spans an opening delimiter line AND a
+    /// separate closing one (`is_valid_frontmatter_close`'s own contract on
+    /// the node `build` is only ever called for — see `parse()`'s docs), so
+    /// `last_line > first_line` never actually meets on real input. Pinned
+    /// directly against a hand-built single-line range instead, the same
+    /// way `catalogue`'s `heading_name` test pins a branch no real
+    /// `parse()` input can reach: with only one line, there is no separate
+    /// close line to report.
+    #[test]
+    fn a_single_line_range_reports_no_close_line() {
+        let content = "---\n";
+        let starts = crate::parse::line_starts(content);
+        let fm = build(
+            content,
+            &starts,
+            ByteRange::new(0, content.len()),
+            &ScanHint::Root,
+        );
+        assert!(fm.close.is_none());
+    }
+
+    /// `frontmatter_extension_is_safe`'s guard only runs
+    /// `is_valid_frontmatter_close` when comrak's own reparse genuinely
+    /// produced a `FrontMatter` first child; otherwise it trusts the
+    /// fallback `_ => true` unconditionally. A document that OPENS like
+    /// frontmatter but never closes it (so the real first child degrades to
+    /// something else — here a `ThematicBreak`) is the reachable case that
+    /// pins the guard actually gating on node KIND: a leading BOM makes
+    /// this crate's OWN `node_range` conversion degenerate to an EMPTY
+    /// range for that non-FrontMatter fallback node (a comrak/BOM
+    /// sourcepos quirk unrelated to frontmatter itself), and an empty range
+    /// never satisfies `is_valid_frontmatter_close` — so a guard that ran
+    /// the check against this node regardless of its kind would wrongly
+    /// report `false` here.
+    #[test]
+    fn a_bom_prefixed_unterminated_frontmatter_opener_is_still_reported_safe() {
+        let content = "\u{feff}---\nnot: closed\n";
+        let shadow = crate::parse::parse_shadow(content);
+        let starts = crate::parse::line_starts(content);
+        assert!(frontmatter_extension_is_safe(content, &shadow, &starts));
+    }
 }

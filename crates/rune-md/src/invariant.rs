@@ -111,3 +111,38 @@ pub fn assert_no_duplicate_content_at(content: &str, cursor_offsets: &[usize], w
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    /// `synced_at` must actually run the given content and width through
+    /// `Buffer`/`DocMachine`, not hand back an untouched default pair —
+    /// pinned by checking the returned `Buffer` carries the real content
+    /// and the `DocMachine` actually parsed it into blocks, either of which
+    /// a `(Buffer::default(), DocMachine::default())` stand-in would fail.
+    #[test]
+    fn synced_at_actually_syncs_the_given_content() {
+        let (buf, doc) = synced_at("# H\n", &[0], true, 80);
+        assert_eq!(buf.content(), "# H\n");
+        assert!(
+            !doc.blocks().is_empty(),
+            "content must have been parsed into blocks"
+        );
+    }
+
+    /// `assert_full_line_coverage` exists to catch a producer bug that
+    /// silently drops a byte — pinned here by manufacturing exactly that
+    /// bug (clearing a real line's own spans after a genuine `emit`) rather
+    /// than relying on one to occur naturally, since the surrounding
+    /// pipeline is not known to have one.
+    #[test]
+    #[should_panic(expected = "a byte was silently dropped")]
+    fn assert_full_line_coverage_panics_when_a_line_loses_a_visible_byte() {
+        let (buf, doc) = synced_at("hello\n", &[0], true, 80);
+        let (mut lines, snap) = emit(buf.content(), doc.blocks(), 80);
+        lines[0].spans.clear();
+        assert_full_line_coverage(&buf, &lines, &snap);
+    }
+}

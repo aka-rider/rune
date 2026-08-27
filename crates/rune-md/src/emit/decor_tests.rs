@@ -1,9 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use super::decor::{push_heading_decor, push_heading_rule_decor, push_hr_decor};
 use super::emit_with;
 use super::tests::synced;
+use super::{Accounted, EmitOut, Sinks};
 use crate::icons::IconSet;
+use rune_syntax::LineDecor;
 use rune_syntax::SyntaxSpan;
+use rune_syntax::syntax::TableRowInfo;
 
 fn lines_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<rune_syntax::SyntaxLine> {
     let (buf, doc) = synced(content, cursor_offset, focused);
@@ -257,6 +261,101 @@ fn nested_list_items_each_keep_their_own_depth_bullet_control() {
     let lines = lines_for(content, content.len(), false);
     assert!(lines[0].decor.is_some());
     assert!(lines[1].decor.is_some());
+}
+
+#[test]
+fn push_heading_decor_clamps_an_out_of_range_level_to_the_last_icon_not_past_it() {
+    // Every real heading level is 1..=6 (`headings` is a fixed `[_; 6]`
+    // array), so the `.min(len - 1)` clamp never actually fires through
+    // ordinary parsed input — calling the producer directly with a level
+    // far outside that domain is the only way to exercise it. A `+`/`/`
+    // corruption of that `- 1` pushes the clamp target to 6 or 7, both
+    // past the array's last valid index (5), so `icons.headings.get(idx)`
+    // silently returns `None` and no piece is pushed at all.
+    let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
+    let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let icons = IconSet::unicode();
+    let mut out = EmitOut::new(
+        Sinks {
+            spans: &mut spans,
+            hidden: &mut hidden,
+            accounted: &mut accounted,
+        },
+        &mut tables,
+        80,
+        &icons,
+        &mut decors,
+    );
+
+    push_heading_decor(&mut out, 0, 200);
+
+    let decor = decors[0]
+        .as_ref()
+        .expect("a level far past 6 must still clamp to the LAST heading icon, not go missing");
+    assert_eq!(decor.pieces[0].first, icons.headings[5]);
+}
+
+#[test]
+fn push_rule_decor_divides_the_width_by_the_glyphs_cell_width_not_multiplies() {
+    // A rule glyph two cells wide makes `width / cells` and `width * cells`
+    // land far enough apart (5 repeats vs. 20) that any `/`-to-`*`
+    // corruption is unmistakable regardless of the exact width chosen.
+    let icons = IconSet {
+        rule: "\u{FF21}", // fullwidth 'A' — two cells wide
+        ..IconSet::unicode()
+    };
+    let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
+    let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let mut out = EmitOut::new(
+        Sinks {
+            spans: &mut spans,
+            hidden: &mut hidden,
+            accounted: &mut accounted,
+        },
+        &mut tables,
+        10,
+        &icons,
+        &mut decors,
+    );
+
+    push_hr_decor(&mut out, 0);
+
+    let decor = decors[0].as_ref().expect("push_hr_decor must set decor");
+    assert_eq!(decor.pieces[0].first.chars().count(), 5);
+}
+
+#[test]
+fn push_heading_rule_decor_actually_pushes_a_rule_not_a_no_op() {
+    let icons = IconSet::unicode();
+    let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut hidden: Accounted = vec![Vec::new()];
+    let mut accounted: Accounted = vec![Vec::new()];
+    let mut tables: Vec<Option<TableRowInfo>> = vec![None];
+    let mut decors: Vec<Option<LineDecor>> = vec![None];
+    let mut out = EmitOut::new(
+        Sinks {
+            spans: &mut spans,
+            hidden: &mut hidden,
+            accounted: &mut accounted,
+        },
+        &mut tables,
+        80,
+        &icons,
+        &mut decors,
+    );
+
+    push_heading_rule_decor(&mut out, 0, 1);
+
+    let decor = decors[0]
+        .as_ref()
+        .expect("push_heading_rule_decor must not be a no-op");
+    assert!(decor.is_rule);
 }
 
 #[test]

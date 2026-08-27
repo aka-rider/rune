@@ -255,6 +255,9 @@ constitution and the entry is deleted in the same commit.
 
 ### Files over 500 lines
 - **Where** (recomputed from the live tree with `wc -l`; comment purge below will change these numbers):
+  - `crates/rune-md/src/parse/block.rs` — 552 (newly over — a mutation-testing pass added a `#[cfg(test)] mod tests` covering `clone_kind_tag`'s dead-code arms, `ranges_overlap`, and the container-depth cap; split candidate: move that block to a sibling `block_tests.rs`, `#[path]`-included the way this same directory's `inline.rs`/`inline_tests.rs` already split)
+  - `crates/rune-md/src/parse/mod.rs` — 543 (newly over — the same pass added tests for `options_without_frontmatter` and an unterminated-fence boundary case; split candidate: move the existing `#[cfg(test)] mod tests` block to a sibling `mod_tests.rs`, `#[path]`-included the same way)
+  - `crates/rune-md/src/snapshot/mod.rs` — 515 (newly over — the same pass added `DisplaySnapshot::display_to_wrap`/`wrap_to_display` clamp tests and a `line_start_of` pin; split candidate: move the `#[cfg(test)] mod tests` block to a sibling `mod_tests.rs`, matching `image_rows.rs`'s own in-file test module for now, or extracting both to siblings together)
   - `crates/rune-cli/src/bootstrap_tests.rs` — 1119 (test file; split candidate unchanged: move the launch-image-first tests (`launch_image_first_*`) plus `CountingReadVfs` to a sibling `bootstrap_tests_image.rs`, `#[path]`-included from `main.rs` the way `rune-db`'s `load_tests.rs` is from `load.rs`)
   - `crates/rune-tui/src/explorer_preview/tests.rs` — 1083 (test file)
   - `crates/rune-tui/src/global.rs` — 943 (grew from 886: command-palette WP2's `TogglePalette` rows plus its chord-freedom and `from_termina` reachability tests)

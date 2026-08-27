@@ -20,6 +20,7 @@ mod table_render_common;
 use rune_md::emit::emit;
 use rune_md::table::layout::{TableLayout, choose};
 use rune_syntax::SyntaxSpan;
+use rune_syntax::scope::scope_table;
 use table_render_common::{display_rows_at, joined_line, per_span_display_width, synced};
 
 const NAME_AGE_TABLE: &str = "| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n";
@@ -309,5 +310,62 @@ fn a_table_starting_mid_line_degrades_to_raw_text_instead_of_rendering_wrong() {
     assert!(
         rows2.iter().any(|r| r.starts_with('\u{250c}')),
         "{rows2:#?}"
+    );
+}
+
+/// A table cell's own inline markup mirrors `emit::walk_inline`'s
+/// Rendered-branch concealment exactly, arm for arm: inline code shows its
+/// inner text without backticks, a link shows its link text without the
+/// `[...](...)` markup, a wikilink shows its label without `[[...]]`, and
+/// an image with no alt text falls back to showing its target — never the
+/// raw markup a `Revealed` cell would show instead.
+#[test]
+fn table_cell_inline_markup_conceals_the_same_way_a_rendered_paragraph_does() {
+    let content = "| Code | Link | Wiki | Image |\n\
+                   | --- | --- | --- | --- |\n\
+                   | `x` | [Home](x.md) | [[Target]] | ![](pic.png) |\n";
+    let (buf, doc) = synced(content, 0, false);
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
+    let body = joined_line(&lines, 2, buf.content());
+
+    assert!(body.contains('x') && !body.contains("`x`"), "{body:?}");
+    assert!(
+        body.contains("Home") && !body.contains("(x.md)"),
+        "{body:?}"
+    );
+    assert!(body.contains("Target") && !body.contains("[["), "{body:?}");
+    assert!(
+        body.contains("pic.png") && !body.contains("!["),
+        "an alt-less image must fall back to showing its target: {body:?}"
+    );
+}
+
+/// A Grid row's decorative border/padding chars carry the ROW's own role
+/// scope (`table_header_scope()` for a header row, `table_scope()` for a
+/// body row) — swap the `role == Header` check and a header row's chars
+/// would carry the body scope instead, and vice versa.
+#[test]
+fn grid_row_chars_carry_their_own_rows_role_scope_not_the_others() {
+    let table = scope_table();
+    let header_scope = table
+        .resolve("markup.table.header")
+        .expect("markup.table.header is registered");
+    let body_scope = table
+        .resolve("markup.table")
+        .expect("markup.table is registered");
+    assert_ne!(header_scope, body_scope);
+
+    let (buf, doc) = synced(NAME_AGE_TABLE, 0, false);
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
+
+    let header_scopes: Vec<_> = lines[0].spans.iter().map(SyntaxSpan::scope).collect();
+    let body_scopes: Vec<_> = lines[2].spans.iter().map(SyntaxSpan::scope).collect();
+    assert!(
+        header_scopes.iter().all(|&s| s != body_scope),
+        "header row must never carry the body role scope: {header_scopes:?}"
+    );
+    assert!(
+        body_scopes.iter().all(|&s| s != header_scope),
+        "body row must never carry the header role scope: {body_scopes:?}"
     );
 }

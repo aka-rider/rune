@@ -25,9 +25,13 @@
     clippy::panic
 )]
 
+use rune_core::buffer::Buffer;
+use rune_core::cursor::CursorSet;
 use rune_md::element::block::Block;
+use rune_md::element::doc::DocMachine;
 use rune_md::element::table::{TableAlign, TableM, TableRowShape};
 use rune_md::parse::parse;
+use rune_syntax::element::RevealMode;
 
 fn only_table(content: &str) -> TableM {
     let blocks = parse(content);
@@ -153,4 +157,43 @@ fn long_row_with_an_extra_cell_is_classified_truncated() {
     let body = &t.rows[1];
     assert_eq!(body.cells.len(), 2);
     assert_eq!(body.shape, TableRowShape::Truncated);
+}
+
+#[test]
+fn short_row_is_classified_padded_not_exact() {
+    // `cell_is_padded` (comrak autocompletes a short row's missing cell to a
+    // single-column sourcepos) feeds `any_padded` via `|=` — this is the
+    // only thing that can turn a row's shape from `Exact` into `Padded`,
+    // so any bug that keeps `any_padded` stuck at its initial `false`
+    // (whether in `cell_is_padded` itself or in the `|=` that accumulates
+    // it across a row's cells) surfaces here as a wrong `Exact`.
+    let content = "| a | b |\n| --- | --- |\n| a |\n";
+    let t = only_table(content);
+    assert_eq!(t.rows[1].shape, TableRowShape::Padded);
+}
+
+/// `TableM::sync` folds every descendant inline's own `dirty` bit into its
+/// own via `|=` — so the table's own state change (Rendered -> Revealed,
+/// moving the cursor onto its lines) must stay visible in the fold even
+/// though a plain `Inline::Text` cell (every cell here) always reports its
+/// own `sync()` as `false`. A `&=` in that fold would let any such `false`
+/// child silently swallow the table's own `true`.
+#[test]
+fn revealing_a_table_stays_dirty_even_though_its_text_cells_never_are() {
+    let content = "before\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n";
+    let buf = Buffer::new(content);
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(RevealMode::AtCursor);
+    doc.sync_content(&buf);
+    // Settle the table as Rendered with the cursor on the unrelated line
+    // above it, then discard whatever dirt that settling itself produced.
+    doc.sync_cursors(&buf, &CursorSet::new(0));
+    doc.clear_dirty();
+
+    let alice_at = content.find("Alice").expect("fixture has Alice");
+    doc.sync_cursors(&buf, &CursorSet::new(alice_at));
+    assert!(
+        doc.is_dirty(),
+        "moving the cursor onto the table must reveal it and mark the document dirty"
+    );
 }

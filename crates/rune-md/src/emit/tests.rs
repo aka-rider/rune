@@ -143,6 +143,53 @@ fn floor_and_ceil_char_boundary_snap_outward_never_split_a_char() {
     }
 }
 
+#[test]
+fn for_each_line_slice_skips_the_empty_trailing_slice_after_the_last_real_line() {
+    // A malformed-but-defended-against producer range: `starts` models two
+    // "lines" — `"abc\n"` and the zero-length line right after the final
+    // newline — and the range reaches past both, to byte 6, on a 4-byte
+    // buffer (the same "range extends past its own content" shape this
+    // function's own docs cite for `ThematicBreak`). The last iterated line
+    // (line 1) then has NO real overlap at all: `seg_start` and `seg_end`
+    // both land on 4. `f` must not be called for it.
+    let content = "abc\n";
+    let starts = vec![0usize, content.len()];
+    let mut calls: Vec<(usize, usize, usize)> = Vec::new();
+    for_each_line_slice(content, &starts, ByteRange::new(2, 6), |ll| {
+        calls.push((ll.line(), ll.start(), ll.end()));
+    });
+    assert_eq!(
+        calls,
+        vec![(0, 2, 3)],
+        "the exhausted trailing line must not receive a zero-length callback"
+    );
+}
+
+#[test]
+#[should_panic(expected = "not on a char boundary")]
+fn build_line_span_asserts_when_only_the_start_needs_snapping() {
+    // "日b": '日' occupies bytes [0,3), 'b' is byte 3. `s = 1` is mid-char
+    // (snaps down to 0, a real mismatch); `e = 3` already sits on a
+    // boundary (no mismatch). `snapped_ok` must be the conjunction of BOTH
+    // comparisons — false here — so this must still panic even though the
+    // second half of the pair matches.
+    let content = "日b";
+    let _ = build_line_span(content, 0, 1, 3, style::text_scope(), RevealState::Rendered);
+}
+
+#[test]
+fn build_line_span_treats_a_reversed_but_boundary_aligned_range_as_snap_ok() {
+    // "abc" is pure ASCII, so every index 0..=3 is already a char boundary
+    // on both sides of the reversed range below — `snapped_ok` is true and
+    // no panic fires. `content.get(2..1)` still fails (start > end), so the
+    // function falls through its `?` to `None` rather than panicking. Any
+    // flip of either `==` in `snapped_ok` makes ONE side of the (already
+    // boundary-aligned) pair report a spurious mismatch and panic instead.
+    let content = "abc";
+    let result = build_line_span(content, 0, 2, 1, style::text_scope(), RevealState::Rendered);
+    assert!(result.is_none());
+}
+
 pub(crate) fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
@@ -211,6 +258,33 @@ fn buffer_to_syntax_clamps_stably_inside_hidden_delimiter() {
         sp, sp2,
         "the clamped position must be stable under a second round-trip"
     );
+}
+
+#[test]
+fn image_reveal_state_selects_between_raw_markup_and_its_visible_label() {
+    // `emit_inline`'s `Inline::Image` arm branches on `m.sm.state() ==
+    // RevealState::Revealed`; a `==`-to-`!=` corruption swaps which side
+    // runs for a GIVEN state, so driving the same content through both a
+    // Revealed and a Rendered sync catches it either way the swap goes.
+    let content = "![alt](http://x)\n";
+
+    let (buf, doc) = synced(content, 0, true); // cursor inside the image's own range -> Revealed
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
+    let revealed: String = lines[0]
+        .spans
+        .iter()
+        .map(|s| s.text(buf.content()))
+        .collect();
+    assert_eq!(revealed, "![alt](http://x)");
+
+    let (buf2, doc2) = synced(content, content.len(), false); // unfocused -> forced Rendered
+    let (lines2, _snap2) = emit(buf2.content(), doc2.blocks(), 80);
+    let rendered: String = lines2[0]
+        .spans
+        .iter()
+        .map(|s| s.text(buf2.content()))
+        .collect();
+    assert_eq!(rendered, "alt");
 }
 
 /// WP2.S6 fixture, run BEFORE wiring list decor: settles whether comrak's

@@ -468,5 +468,11 @@ fn wikilink_label_range(content: &str, range: ByteRange) -> ByteRange {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 #[path = "inline_tests.rs"]
 mod tests;

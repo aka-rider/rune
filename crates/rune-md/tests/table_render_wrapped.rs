@@ -17,6 +17,8 @@ use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
 use rune_md::table::layout::{TableLayout, choose};
+use rune_syntax::SyntaxSpan;
+use rune_syntax::scope::scope_table;
 use rune_syntax::wrap::WrapMap;
 use table_render_common::{display_rows_at, display_width, joined_line, synced, wrap_pivot_url};
 
@@ -197,4 +199,51 @@ fn a_wrapped_table_borders_at_the_width_it_lays_its_content_out_at() {
             "row {line} renders {rendered} cells but its border is built at {border}: {text:?}"
         );
     }
+}
+
+/// `emit_table`'s Wrapped-only `frame_overhead = 4 * n_cols - 1` (n_cols
+/// is 3 here) feeds `content_budget = avail - frame_overhead`, which
+/// `constrain_widths` then stretches proportionally: get the `4`, the
+/// `n_cols`, or the `- 1` wrong and the "Description" column's stretched
+/// width (19, worked out by hand against `constrain_widths`'s own
+/// proportional-split formula) comes out different — the URL and Name
+/// columns are already at their own floor/atomic width and can't stretch,
+/// so any budget error lands entirely on this one column.
+#[test]
+fn wrapped_frame_overhead_uses_four_times_column_count_minus_one() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let width = 100u16;
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), width);
+
+    let info = lines[2].table.as_ref().expect("rendered table row");
+    assert_eq!(info.col_widths, vec![5, 19, 65]);
+}
+
+/// Same role-scope pin as Grid's own (`table_render_grid.rs`), but for the
+/// Wrapped row builder's own `role == Header` check.
+#[test]
+fn wrapped_row_chars_carry_their_own_rows_role_scope_not_the_others() {
+    let table = scope_table();
+    let header_scope = table
+        .resolve("markup.table.header")
+        .expect("markup.table.header is registered");
+    let body_scope = table
+        .resolve("markup.table")
+        .expect("markup.table is registered");
+
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 100);
+
+    let header_scopes: Vec<_> = lines[0].spans.iter().map(SyntaxSpan::scope).collect();
+    let body_scopes: Vec<_> = lines[2].spans.iter().map(SyntaxSpan::scope).collect();
+    assert!(
+        header_scopes.iter().all(|&s| s != body_scope),
+        "header row must never carry the body role scope: {header_scopes:?}"
+    );
+    assert!(
+        body_scopes.iter().all(|&s| s != header_scope),
+        "body row must never carry the header role scope: {body_scopes:?}"
+    );
 }

@@ -87,3 +87,47 @@ fn pivoted_table_gets_no_synthetic_border_rows_in_the_display_snapshot() {
         "a Pivoted table must get no synthesised border rows: {pivot:#?}"
     );
 }
+
+/// `emit_table` derives which body row is the FIRST by document order
+/// (`first_body_line`) and only skips the leading `─` rule for THAT one —
+/// every later body row's own source line must instead render the rule as
+/// its row-1 text (the label:value pairs move to `extra_rows` behind it).
+/// Two body rows exercise both sides at once: get `first_body_line`
+/// pointed at the header's own line instead of the first body row's (or
+/// invert the `!=` that compares against it), and either the first row
+/// wrongly grows a leading rule, the second wrongly loses its own, or
+/// both.
+#[test]
+fn only_the_first_pivoted_body_row_skips_its_own_leading_rule() {
+    let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |\n";
+    let (buf, doc) = synced(content, 0, false);
+    let width = 8u16;
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), width);
+    assert_eq!(
+        choose(&[5, 3], &[5, 3], width as usize),
+        TableLayout::Pivoted,
+        "fixture must actually collapse to Pivoted at this width"
+    );
+
+    let first = joined_line(&lines, 2, buf.content());
+    assert!(
+        first.contains("Name: Alice") && !first.chars().all(|c| c == '─'),
+        "the first record must render its label:value pair directly, no leading rule: {first:?}"
+    );
+
+    let second = joined_line(&lines, 3, buf.content());
+    assert!(
+        !second.is_empty() && second.chars().all(|c| c == '─'),
+        "a later record's own source line must render the leading rule, not its label:value pairs: {second:?}"
+    );
+    let info = lines[3].table.as_ref().expect("rendered table row");
+    let extra_text: String = info
+        .extra_rows
+        .iter()
+        .flat_map(|r| r.iter().map(|s| s.text(buf.content())))
+        .collect();
+    assert!(
+        extra_text.contains("Name: Bob"),
+        "the second record's own label:value pairs must still appear, just pushed into extra_rows: {extra_text:?}"
+    );
+}

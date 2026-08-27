@@ -392,6 +392,21 @@ mod tests {
 
         assert!(display.rows().first().is_some_and(|r| r.synthetic));
         assert!(display.rows().last().is_some_and(|r| r.synthetic));
+
+        // The middle border must sit between the two BODY rows specifically
+        // (wrap rows 2 and 3), borrowing the LATTER's wrap_row per a
+        // leading border's own convention (see `expand_tables`'s docs) —
+        // not between the separator and the first body row, which a
+        // `prev_role == Body` check flipped to `!=` would misplace it at
+        // instead (same total row/synthetic COUNT either way, so only the
+        // exact wrap_row pins the bug).
+        let middle = display
+            .rows()
+            .iter()
+            .filter(|r| r.synthetic)
+            .nth(1)
+            .expect("a middle border between the two body rows");
+        assert_eq!(middle.wrap_row, 3);
     }
 
     /// WP4.S3: the new `image` field must default to `None` for every row
@@ -451,5 +466,50 @@ mod tests {
         let wrap = WrapMap::new(80).sync(content, &lines);
         let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
         assert_round_trip_and_synthetic_adjacency(&wrap, &display);
+    }
+
+    fn four_line_table_display() -> DisplaySnapshot {
+        let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |";
+        let blocks = crate::parse::parse(content);
+        let (lines, _syntax) = crate::emit::emit(content, &blocks, 80);
+        let wrap = WrapMap::new(80).sync(content, &lines);
+        DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap)
+    }
+
+    /// An out-of-range display row clamps to the LAST row (`rows.len() -
+    /// 1`), not one past it — pinned with a fixture whose last row's
+    /// `wrap_row` (3) differs from every other row's, so a wrong clamp
+    /// bound reads a wrong (or out-of-bounds, defaulting to 0) row instead.
+    #[test]
+    fn display_to_wrap_clamps_to_the_last_row() {
+        let display = four_line_table_display();
+        assert_eq!(display.total_rows(), 7);
+        assert_eq!(display.rows().last().unwrap().wrap_row, 3);
+        assert_eq!(display.display_to_wrap(DisplayRow(1000)), WrapRow(3));
+    }
+
+    /// Same clamp, the `wrap_to_display` side: an out-of-range wrap row
+    /// clamps to `wrap_to_display.len() - 1`, landing on the LAST real
+    /// row's own display index (5, the second body row) — not one past it.
+    #[test]
+    fn wrap_to_display_clamps_to_the_last_wrap_row() {
+        let display = four_line_table_display();
+        assert_eq!(display.wrap_to_display(WrapRow(1000)), DisplayRow(5));
+    }
+
+    /// `line_start_of` reads a content row's own first span's range start
+    /// directly — pinned against a value that is neither of the constant
+    /// fallbacks (`0`/`1`) a broken producer might return instead.
+    #[test]
+    fn line_start_of_reads_the_first_spans_range_start() {
+        let span = SyntaxSpan::substituted(0, String::new(), table_border_scope(), 42..42);
+        let row = SnapshotRow {
+            spans: vec![span],
+            wrap_row: 0,
+            synthetic: false,
+            decor: None,
+            image: None,
+        };
+        assert_eq!(line_start_of(&row), 42);
     }
 }

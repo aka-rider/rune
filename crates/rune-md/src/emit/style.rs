@@ -237,4 +237,19 @@ mod tests {
         assert_eq!(base_scope(DocumentKind::Plain), text_scope());
         assert_eq!(base_scope(DocumentKind::Image), text_scope());
     }
+
+    /// Each level 1..=5 has its OWN arm; deleting any one of them falls
+    /// through to the `_` catch-all and silently mislabels that level as
+    /// `Heading6`. Level 6 (and the catch-all it actually exercises) is
+    /// included for completeness, though it can't itself distinguish a
+    /// deleted arm from an intact one.
+    #[test]
+    fn heading_style_maps_each_level_to_its_own_distinct_scope() {
+        assert_eq!(heading_style(1), MarkdownScope::Heading1.into());
+        assert_eq!(heading_style(2), MarkdownScope::Heading2.into());
+        assert_eq!(heading_style(3), MarkdownScope::Heading3.into());
+        assert_eq!(heading_style(4), MarkdownScope::Heading4.into());
+        assert_eq!(heading_style(5), MarkdownScope::Heading5.into());
+        assert_eq!(heading_style(6), MarkdownScope::Heading6.into());
+    }
 }

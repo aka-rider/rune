@@ -201,6 +201,56 @@ fn embed_prefixed_wikilink_comrak_behaviour_is_pinned() {
 }
 
 #[test]
+fn embed_targets_collects_every_image_target_in_document_order() {
+    let content = "![a](x.png)\n\n> ![[y]]\n\n- ![z](w.png)\n";
+    let blocks = parse(content);
+    assert_eq!(
+        embed_targets(&blocks),
+        vec!["x.png".to_string(), "y".to_string(), "w.png".to_string()]
+    );
+}
+
+#[test]
+fn embed_targets_is_empty_for_a_document_with_no_images() {
+    let blocks = parse("plain text, no embeds here\n");
+    assert!(embed_targets(&blocks).is_empty());
+}
+
+/// `wikilink_role` only ever returns `UseRole::Embed` for a `WikiLink` node
+/// whose match is immediately preceded by `'!'` — a shape comrak's own
+/// `within_brackets` guard never actually produces (see the function's own
+/// docs), so no real `parse()` output can drive this branch. Built and
+/// called directly, the same way `setext_heading_name_survives_a_degraded_
+/// underline` above pins `heading_name`'s contract on a hand-built input
+/// unreachable from real markdown.
+#[test]
+fn wikilink_role_reads_the_byte_immediately_before_the_match() {
+    assert_eq!(wikilink_role("a!bc", 2), UseRole::Embed);
+    assert_eq!(wikilink_role("!x", 1), UseRole::Embed);
+    assert_eq!(wikilink_role("ax", 1), UseRole::Link);
+    assert_eq!(wikilink_role("x", 0), UseRole::Link);
+}
+
+/// A setext heading's first content line that is ENTIRELY a run of `#`
+/// strips to an EMPTY name: seven hashes is one too many to read as an ATX
+/// opener (CommonMark caps that at six), so it survives as ordinary setext
+/// TEXT rather than an ATX marker — exactly the shape that makes
+/// `closed.len() == trimmed.len()` false (the run of `#` truly did get
+/// stripped) while `closed.is_empty()` is true, the one combination that
+/// tells `||` and `&&` apart at that branch.
+#[test]
+fn a_setext_heading_whose_text_is_entirely_hashes_strips_to_an_empty_name() {
+    let refs = refs_of("#######\n===\n");
+    assert_eq!(
+        refs[0].kind,
+        RefKind::Def {
+            role: DefRole::Heading(1),
+            name: String::new(),
+        }
+    );
+}
+
+#[test]
 fn markdown_image_becomes_an_embed_use() {
     let refs = refs_of("![alt](x.png)\n");
     assert_eq!(refs.len(), 1);

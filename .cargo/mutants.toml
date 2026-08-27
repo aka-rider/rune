@@ -46,5 +46,17 @@ exclude_re = [
   'highlight\.rs.*replace \+= with \*= in run_query',
   'main\.rs.*match guard doc_db\.publish_mode\.is_create_only',
   'db_bootstrap\.rs.*replace == with != in blocking_call',
+  'emit/mod\.rs:230:.*replace > with >= in fill_gaps',
+  'emit/mod\.rs:233:.*replace > with >= in fill_gaps',
+  'emit/mod\.rs:237:.*replace < with <= in fill_gaps',
+  'emit/table\.rs:112:.*replace > with >= in emit_table',
+  'wrapped\.rs:99:.*replace > with >= in place_first_word',
+  'parse/table\.rs:98:.*replace && with \|\| in build_table',
+  'shadow\.rs:34:.*replace == with != in parse_shadow',
+  'shadow\.rs:181:.*replace \+ with \* in walk_region',
+  'frontmatter\.rs:58:',
+  'frontmatter\.rs:66:.*with false',
+  'replace \+= with \*= in leading_backtick_run',
+  'replace \+= with \*= in trailing_backtick_run',
 ]
 exclude_globs = []

@@ -86,3 +86,14 @@ pub(crate) fn push_hr_decor(out: &mut EmitOut, line: usize) {
 pub(crate) fn push_heading_rule_decor(out: &mut EmitOut, line: usize, level: u8) {
     push_rule_decor(out, line, heading_style(level));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_cont_is_one_space_per_cell_of_the_first_piece() {
+        assert_eq!(blank_cont("ab"), "  ");
+        assert_eq!(blank_cont(""), "");
+    }
+}

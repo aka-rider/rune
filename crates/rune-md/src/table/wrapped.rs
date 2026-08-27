@@ -212,6 +212,43 @@ mod tests {
         assert_eq!(lines, vec![url.to_string()]);
     }
 
+    /// `max_width == 0` is a shortcut, not just the first half of an `||`:
+    /// with `&&` instead, a zero-width cell would fall through into
+    /// `place_first_word`/`hard_break_word` and shatter every grapheme onto
+    /// its own line instead of staying on the one line this returns.
+    #[test]
+    fn wrap_cell_returns_the_whole_text_unbroken_at_zero_max_width() {
+        assert_eq!(wrap_cell("hi", 0), vec!["hi".to_string()]);
+    }
+
+    /// Packing a word onto the current line accumulates width via `+=`, not
+    /// `*=`: "bbb" (width 3) then "cc" (width 2) packed after "a" (width 1)
+    /// at max_width 10 track a running width of 1, 5, 8 under `+=` — room
+    /// for one more word ("d", width 1) at 8+1+1=10, then "e" overflows and
+    /// starts a second line. Under `*=` the tracked width balloons to 1, 4,
+    /// 12, wrongly forcing "d" onto a second line well before the real
+    /// 10-cell budget is used up, and "e" packs in behind it instead.
+    #[test]
+    fn wrap_cell_tracks_packed_width_by_addition_not_multiplication() {
+        assert_eq!(
+            wrap_cell("a bbb cc d e", 10),
+            vec!["a bbb cc d".to_string(), "e".to_string()]
+        );
+    }
+
+    /// `hard_break_word`'s break test is `current_width + gw > max_width`,
+    /// not `current_width * gw > max_width`: four single-width-1 `a`s at
+    /// max_width 2 must break into two-char chunks ("aa", "aa") under `+`;
+    /// under `*`, the third char's `2 * 1 = 2` no longer exceeds 2, so the
+    /// break slips to the fourth char instead, chunking as ("aaa", "a").
+    #[test]
+    fn hard_break_word_accumulates_width_by_addition_not_multiplication() {
+        assert_eq!(
+            wrap_cell("aaaa", 2),
+            vec!["aa".to_string(), "aa".to_string()]
+        );
+    }
+
     #[test]
     fn wrap_cell_hard_breaks_an_over_long_non_url_word_by_display_width() {
         let lines = wrap_cell("世界世界世界", 4);

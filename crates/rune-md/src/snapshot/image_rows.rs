@@ -326,4 +326,38 @@ mod tests {
         assert_eq!(display.total_rows(), wrap.total_rows());
         assert!(display.rows().iter().all(|r| r.image.is_none()));
     }
+
+    #[test]
+    fn image_dims_is_empty_reflects_whether_any_target_was_inserted() {
+        let mut dims = ImageDims::new();
+        assert!(dims.is_empty());
+        dims.insert("x.png", 10, 4);
+        assert!(!dims.is_empty());
+    }
+
+    fn standalone_targets(content: &str) -> Vec<String> {
+        let blocks = crate::parse::parse(content);
+        let starts = crate::parse::line_starts(content);
+        let mut out = std::collections::HashMap::new();
+        collect_standalone_images(&blocks, content, &starts, &mut out);
+        let mut targets: Vec<String> = out.values().map(|m| m.target_text.clone()).collect();
+        targets.sort();
+        targets
+    }
+
+    /// `collect_standalone_images` must recurse into a blockquote's own
+    /// paragraphs — one of only two container kinds a bare image line can
+    /// sit directly inside (the other is a list item, pinned below).
+    #[test]
+    fn a_standalone_image_inside_a_blockquote_is_found() {
+        let content = "> ![[note.png]]\n";
+        assert_eq!(standalone_targets(content), vec!["note.png".to_string()]);
+    }
+
+    /// The same, for a list item.
+    #[test]
+    fn a_standalone_image_inside_a_list_item_is_found() {
+        let content = "- ![[note.png]]\n";
+        assert_eq!(standalone_targets(content), vec!["note.png".to_string()]);
+    }
 }
