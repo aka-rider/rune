@@ -111,9 +111,10 @@ pub(crate) fn handle_file_opened(
     path: &Path,
     result: Result<Vec<u8>, CmdError>,
     anchor: Option<rune_nav::Anchor>,
+    preview_generation: Option<crate::generation::PreviewGen>,
     effects: &mut Effects,
 ) {
-    if crate::explorer_preview::maybe_consume_reply(app, path, &result) {
+    if crate::explorer_preview::maybe_consume_reply(app, path, preview_generation, &result) {
         return;
     }
 
@@ -181,7 +182,13 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
 
 fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId {
     let dims = rune_image::probe_dimensions(bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
-    let id = rune_image::alloc_id(resolved.as_os_str().as_encoded_bytes());
+    // The whole-document image path and the inline-embed path share ONE
+    // terminal-global allocator (`App::image_ids`) keyed by this same
+    // resolved-path string — Kitty image ids are terminal-global, so a
+    // per-document hash alone (the old `rune_image::alloc_id` call this
+    // replaced) could hand two different open documents the same id.
+    let key = resolved.to_string_lossy().into_owned();
+    let id = app.image_ids.alloc_free_id(&key);
     let bytes_len = bytes.len() as u64;
     let file_name = resolved
         .file_name()
@@ -233,13 +240,19 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     crate::db_enqueue::probe(app, id);
 }
 
-pub fn select_tab(app: &mut App, idx: usize) {
+/// Activates the tab at `idx`, or does nothing and reports `false` when no
+/// tab is open at that position — the caller decides whether that's worth
+/// telling the user about (`pane_global::tab_switch` does; `opentabs::
+/// activate` never passes an out-of-range index in the first place, since
+/// its own cursor is already clamped to the open tab count).
+pub fn select_tab(app: &mut App, idx: usize) -> bool {
     let Some(&id) = app.documents.order().get(idx) else {
-        return;
+        return false;
     };
     let departed = crate::navhistory::departure_origin(app);
     switch_to(app, id);
     crate::navhistory::record_departure_if_moved(app, departed);
+    true
 }
 
 pub fn toggle_help(app: &mut App, effects: &mut Effects) {

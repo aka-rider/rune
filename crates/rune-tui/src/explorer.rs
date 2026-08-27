@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,8 +26,16 @@ pub struct Explorer {
     pub pending_reveal: Option<PathBuf>,
     pub preview: Option<DocumentId>,
     pub browsing_origin: crate::returnto::ReturnTo,
-    pub preview_awaiting: HashSet<PathBuf>,
+    pub preview_awaiting: Option<PathBuf>,
+    pub preview_generation: crate::generation::PreviewGen,
+    next_preview_gen: crate::generation::GenCounter<crate::generation::Preview>,
     pub preview_failed: Option<PathBuf>,
+}
+
+impl Explorer {
+    pub(crate) fn mint_preview_generation(&mut self) -> crate::generation::PreviewGen {
+        self.next_preview_gen.mint()
+    }
 }
 
 impl Default for Explorer {
@@ -43,7 +50,9 @@ impl Default for Explorer {
             pending_reveal: None,
             preview: None,
             browsing_origin: crate::returnto::ReturnTo::none(),
-            preview_awaiting: HashSet::new(),
+            preview_awaiting: None,
+            preview_generation: crate::generation::Generation::ZERO,
+            next_preview_gen: crate::generation::GenCounter::default(),
             preview_failed: None,
         }
     }

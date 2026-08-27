@@ -13,6 +13,7 @@ pub enum PasteTarget {
     Document(DocumentId),
     Title(DocumentId),
     Search,
+    Palette,
 }
 
 #[derive(Debug)]
@@ -138,6 +139,7 @@ pub enum Msg {
         path: PathBuf,
         result: Result<Vec<u8>, CmdError>,
         anchor: Option<rune_nav::Anchor>,
+        preview_generation: Option<crate::generation::PreviewGen>,
     },
     Highlighted {
         doc: DocumentId,

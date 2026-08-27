@@ -44,9 +44,10 @@ pub(super) fn run_cmds(app: &mut App, effects: &mut Effects) {
             path,
             result,
             anchor,
+            preview_generation,
         }) = cmd.run()
         {
-            workspace::handle_file_opened(app, &path, result, anchor, effects);
+            workspace::handle_file_opened(app, &path, result, anchor, preview_generation, effects);
         }
     }
 }

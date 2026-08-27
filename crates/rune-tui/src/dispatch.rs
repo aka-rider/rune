@@ -25,6 +25,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             PasteTarget::Title(doc) => crate::title::keys::paste(app, doc, &text),
             PasteTarget::Document(id) => clipboard::handle_paste_content(app, id, &text),
             PasteTarget::Search => crate::search::keys::paste(app, &text),
+            PasteTarget::Palette => crate::palette::keys::paste(app, &text),
         },
         Msg::SaveDone {
             id,
@@ -94,7 +95,15 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             path,
             result,
             anchor,
-        } => crate::workspace::handle_file_opened(app, &path, result, anchor, effects),
+            preview_generation,
+        } => crate::workspace::handle_file_opened(
+            app,
+            &path,
+            result,
+            anchor,
+            preview_generation,
+            effects,
+        ),
         Msg::Highlighted {
             doc,
             version,

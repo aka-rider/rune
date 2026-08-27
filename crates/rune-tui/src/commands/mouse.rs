@@ -94,13 +94,13 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         return;
     }
 
-    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
-        filesearch::cancel(app, effects);
-        return;
-    }
-
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = crate::layout::geometry(area, app);
+
+    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
+        handle_filesearch_click(app, geo.explorer_inner, input, effects);
+        return;
+    }
 
     if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.palette().is_some() {
         let inside = geo.palette.is_some_and(|rect| {
@@ -144,6 +144,30 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         }
         Some(Pane::Title) | None => {}
     }
+}
+
+/// A left-click while the finder is open: outside its own rect cancels it
+/// (the finder paints over the Explorer's rect, exactly the containment
+/// test the palette's own overlay already does one branch down); inside it,
+/// row 0 is the query bar and every row after is a result — clicking a
+/// result selects and opens it, the same as landing the cursor there and
+/// pressing Enter.
+fn handle_filesearch_click(
+    app: &mut App,
+    rect: ratatui::layout::Rect,
+    input: MouseInput,
+    effects: &mut Effects,
+) {
+    let point = ratatui::layout::Position::new(input.column, input.row);
+    if !rect.contains(point) {
+        filesearch::cancel(app, effects);
+        return;
+    }
+    let row_in_area = input.row.saturating_sub(rect.y);
+    let Some(visible_row) = row_in_area.checked_sub(1) else {
+        return;
+    };
+    filesearch::click_row(app, visible_row as usize, effects);
 }
 
 fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {

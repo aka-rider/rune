@@ -142,9 +142,17 @@ fn a_stale_reply_for_a_path_the_cursor_has_left_is_ignored() {
         path,
         result,
         anchor,
+        preview_generation,
     }) = stale_cmd.run()
     {
-        workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
+        workspace::handle_file_opened(
+            &mut app,
+            &path,
+            result,
+            anchor,
+            preview_generation,
+            &mut effects,
+        );
     }
     let shown_after_stale = app
         .explorer
@@ -264,4 +272,88 @@ fn a_binary_file_renders_a_placeholder_with_no_banner() {
         !crate::messages::is_open(&app),
         "no message pane for a failed preview"
     );
+}
+
+/// Defect 1's own race: the explorer's live preview and a real, anchored
+/// file open (e.g. following a link) both target the same path, and the
+/// REAL open's own reply lands first, while the preview's is still in
+/// flight. Correlated purely by path (the old bug), the real open's own
+/// bytes would be swallowed as the preview's — landing read-only, its
+/// anchor dropped. Correlated by generation, the real open must land as an
+/// ordinary document with its anchor applied, and the stale preview reply
+/// that lands after must change nothing about it.
+#[test]
+fn a_real_open_racing_its_own_in_flight_preview_lands_with_its_anchor() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/a.md"), b"first\nsecond\nthird")
+        .unwrap();
+    let mut app = app_with(&mem);
+    load_entries(&mut app, &["a.md"]);
+    let mut effects = Effects::default();
+
+    app.explorer.nav.move_by(1, app.explorer.entries.len()); // "a.md"
+    after_cursor_move(&mut app, &mut effects);
+    let preview_cmd = effects.cmds.pop().expect("preview cmd queued");
+
+    workspace::open_path_async(
+        &mut app,
+        std::path::Path::new("/root/a.md"),
+        Some(rune_nav::Anchor::Line(2)),
+        &mut effects,
+    );
+    let real_open_cmd = effects.cmds.pop().expect("real open cmd queued");
+
+    // The race: the real open's own reply lands first.
+    if let Some(Msg::FileOpened {
+        path,
+        result,
+        anchor,
+        preview_generation,
+    }) = real_open_cmd.run()
+    {
+        workspace::handle_file_opened(
+            &mut app,
+            &path,
+            result,
+            anchor,
+            preview_generation,
+            &mut effects,
+        );
+    }
+
+    let id = app.active;
+    assert_eq!(
+        app.doc(id).map(|d| d.read_only),
+        Some(ReadOnly::No),
+        "a real open racing its own preview must land as a normal document, \
+         never be swallowed as the stale preview's own reply"
+    );
+    assert_eq!(app.focus(), Pane::Editor, "the real open must move focus");
+    let landed_at = app.doc(id).map(|d| d.cursors.primary().position);
+    assert_eq!(
+        landed_at,
+        Some("first\n".len()),
+        "the anchor from the real open must land, not be dropped"
+    );
+
+    // The stale preview reply lands after — it must be dropped, never
+    // downgrading the document the real open just landed.
+    if let Some(Msg::FileOpened {
+        path,
+        result,
+        anchor,
+        preview_generation,
+    }) = preview_cmd.run()
+    {
+        workspace::handle_file_opened(
+            &mut app,
+            &path,
+            result,
+            anchor,
+            preview_generation,
+            &mut effects,
+        );
+    }
+    assert_eq!(app.doc(id).map(|d| d.read_only), Some(ReadOnly::No));
+    assert_eq!(app.doc(id).map(|d| d.cursors.primary().position), landed_at);
 }

@@ -59,6 +59,7 @@ pub fn read_file_cmd(
             path,
             result,
             anchor,
+            preview_generation: None,
         })
     })
 }

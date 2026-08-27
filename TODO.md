@@ -26,18 +26,6 @@ constitution and the entry is deleted in the same commit.
 
 ### CORRECTNESS
 
-#### Any left-click while the finder is open cancels it — including a click on a result row
-- **Where**: `crates/rune-tui/src/commands/mouse.rs:97-100`.
-- **Wrong**: `Down(Left)` + `filesearch().is_some()` → unconditional `filesearch::cancel`, with no rect-containment test and a `return` before the finder mouse-routing arm at `:126`. The palette arm right below does test containment. Clicking the row you want discards the query; the only feedback is the overlay vanishing.
-- **Instead**: containment-test like the palette arm; route clicks inside the finder rect to its rows.
-- **Confidence**: confirmed.
-
-#### Preview reply and real file-open reply are indistinguishable — the real open is swallowed and its anchor lost
-- **Where**: `crates/rune-tui/src/explorer_preview/mod.rs:53-89`, consumed at `crates/rune-tui/src/workspace/mod.rs:116-118`.
-- **Wrong**: `read_preview_cmd` and `read_file_cmd` both reply `Msg::FileOpened`, correlated by path only, then by re-deriving `is_current_target` from the live cursor at arrival — exactly what the constitution forbids ("killed by a generation/version echo on the request, never by resolving live state on arrival"). If the explorer cursor sits on `notes.md` with a preview in flight and the user follows a link to `notes.md#section`, the link reply is consumed as the preview's, `handle_file_opened` returns early, the anchor is dropped and focus never moves — the user lands at the top of a preview tab with no explanation.
-- **Instead**: carry a generation/purpose on the preview request and match on it, as the explorer dir-loads already do.
-- **Confidence**: plausible (needs the race window).
-
 #### Tab-limit eviction hijacks the active document and never says the requested open was refused
 - **Where**: `crates/rune-tui/src/opentabs/limit.rs:51-64` + `crates/rune-tui/src/workspace/mod.rs:262-264`.
 - **Wrong**: with the tab limit reached and every eligible tab dirty, `ensure_room` calls `switch_to(victim)` — moving the user to a doc they weren't looking at — then arms a `DirtyClose` guard and returns false *before* the "Tab limit reached" warn; the caller (e.g. `toggle_help`) then bare-returns. The user pressed F1, got teleported to an unrelated tab with a close prompt, and was never told Help was refused. Data safety itself is fine (pinned/preview/saving/pathless excluded, guard always armed on a dirty victim).
@@ -49,12 +37,6 @@ constitution and the entry is deleted in the same commit.
 - **Wrong**: `^E` focuses `Pane::Messages`; a terminal ⌘V routes `handle_paste_content(app, app.active, text)` into the *editor's* document at a caret that isn't even painted (`app_view` clears `focused` when focus≠Editor). Journaled/undoable, so not data loss, but an unannounced insertion into the user's words at an invisible point. The message pane is `ReadOnly::Always` and should refuse, not redirect.
 - **Instead**: route paste to the focused pane; refuse (with feedback) when it is read-only.
 - **Confidence**: confirmed.
-
-#### Recents and the workspace walk race, so a file can be listed twice
-- **Where**: `crates/rune-tui/src/filesearch/mod.rs:167-181` vs `:275-290`.
-- **Wrong**: both Cmds run on their own threads, replies unordered. `handle_scanned` builds its dedup `seen` from `state.recents` at reply time; `handle_recents_loaded` only assigns `mru_rank` and never re-filters `walk`. Scan-lands-first → duplicate rows and a doubled `matched/total` count. The existing test pins only the recents-first ordering.
-- **Instead**: dedup at render time from the merged set regardless of arrival order.
-- **Confidence**: plausible.
 
 #### Kitty image IDs collide across documents — wrong image shown / another document's image deleted
 - **Where**: `crates/rune-tui/src/workspace/mod.rs:184` (`alloc_id`, no probing), `crates/rune-tui/src/graphics/embed/alloc.rs:15-26` (per-document allocator), `crates/rune-image/src/ids.rs:37-44` (FNV-1a truncated to 24 bits).
@@ -70,7 +52,6 @@ constitution and the entry is deleted in the same commit.
 - **`settle_pending_materialize` drains and discards every non-`MaterializeVfsDone` message at shutdown** — `crates/rune-tui/src/runtime/exit_settle.rs:29-45`; a last-moment `SaveDone(Err)` is swallowed, so the user quits believing a failed direct save landed. Loses the report, not bytes.
 - **`close_now` cancels the rename's feedback, not the rename** — `crates/rune-tui/src/workspace/close.rs:89,97`; the file is still renamed on disk (or, in the `Collided` case, not renamed) and the user is never told.
 - **No-store draft create leaves the document permanently dirty** — `crates/rune-tui/src/rename_create.rs:98-136`→`rename.rs:434-443`; `bind_to` binds the path without advancing the saved baseline, so a byte-matching file stays "unsaved" forever and arms a spurious quit guard.
-- **Palette/finder swallow `⌘V` (and empty-list `Tab`) with no feedback** — `crates/rune-tui/src/palette/keys.rs:97-101,161-179`; `PasteTarget` has no `Palette` variant.
 - **Rename can start while a confirmed trash Cmd is in flight** — the trash/rename mutex (landed 2026-08-27) refuses trash during a rename, but not the mirror: `trash::confirm` clears the Guard before spawning `trash_cmd`, so the UI is interactive and ^R can enqueue a rename against a path whose trash Cmd is mid-flight. Same race class, opposite direction; gate rename (and probably save) on `TrashState::Pending`.
 - **`messages.doc.focused` is cached shadow state** — `crates/rune-tui/src/messages/mod.rs:171,178`; set true in `focus()`, cleared only in `collapse()`, so the pane keeps painting its selection as focused after the editor regains focus, and a stray selection pins the pane open until the next post.
 - **Click in the message pane acts on a vetoed focus transition** — `crates/rune-tui/src/messages/mod.rs:355-375`; `mouse_down` hit-tests and latches a drag without re-checking that `focus()` succeeded (both sibling handlers do), so a click with an invalid title in the field still selects text and emits OSC 52 on mouse-up.

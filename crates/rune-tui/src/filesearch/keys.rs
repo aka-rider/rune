@@ -121,7 +121,7 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
     }
 }
 
-fn open_selected(app: &mut App, effects: &mut Effects) {
+pub(super) fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some(path) = selected_path(app) else {
         crate::messages::info(app, "no file selected");
         return;

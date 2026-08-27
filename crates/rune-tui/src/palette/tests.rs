@@ -406,3 +406,78 @@ fn one_backspace_from_the_bare_parameterized_prefix_returns_to_name_mode() {
     );
     assert_eq!(state.field.text(), "language");
 }
+
+const SUP: Mods = Mods {
+    shift: false,
+    alt: false,
+    ctrl: false,
+    sup: true,
+};
+
+/// Defect 4: ⌘V into the palette's query used to be swallowed silently —
+/// neither `PALETTE_BINDINGS` nor `PasteTarget` had any entry for it.
+#[test]
+fn command_v_spawns_a_pbpaste_cmd_tagged_for_the_palette() {
+    let mut app = app();
+    let mut effects = Effects::default();
+    open(&mut app, &mut effects);
+
+    let cmd_v = KeyInput {
+        code: KeyCode::Char('v'),
+        mods: SUP,
+    };
+    assert_eq!(
+        crate::palette::keys::handle_key(&mut app, cmd_v, &mut effects),
+        crate::keymap::KeyOutcome::Consumed
+    );
+    assert_eq!(
+        effects.cmds.len(),
+        1,
+        "exactly one pbpaste read must be spawned"
+    );
+    assert!(app.palette().expect("open").field.is_empty());
+}
+
+#[test]
+fn the_pbpaste_reply_for_the_palette_inserts_into_its_field() {
+    let mut app = app();
+    let mut effects = Effects::default();
+    open(&mut app, &mut effects);
+
+    crate::app::update(
+        &mut app,
+        crate::runtime::Msg::ClipboardRead {
+            text: "commit".to_string(),
+            target: crate::runtime::PasteTarget::Palette,
+        },
+        &mut effects,
+    );
+
+    assert_eq!(app.palette().expect("open").field.text(), "commit");
+}
+
+/// Defect 4: Tab with nothing selected (an empty result list) used to be a
+/// silent no-op — house rule, every user action gets feedback.
+#[test]
+fn tab_with_no_matching_command_reports_and_stays_open() {
+    let mut app = app();
+    let mut effects = Effects::default();
+    open(&mut app, &mut effects);
+    if let Some(state) = app.palette_mut() {
+        state.field.set_text("zzz_no_such_command_zzz");
+    }
+    recompute(&mut app);
+    assert!(
+        app.palette().expect("open").rows.is_empty(),
+        "test setup: nothing matches"
+    );
+
+    let _ = crate::palette::keys::handle_key(&mut app, TAB, &mut effects);
+
+    assert!(app.palette().is_some(), "an empty list must never close it");
+    assert_eq!(
+        app.palette().expect("open").refusal.as_deref(),
+        Some("no matching command"),
+        "Tab on an empty list must report feedback, not swallow the key"
+    );
+}

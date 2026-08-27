@@ -165,9 +165,17 @@ fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
         path,
         result,
         anchor,
+        preview_generation,
     }) = stale_cmd.run()
     {
-        workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
+        workspace::handle_file_opened(
+            &mut app,
+            &path,
+            result,
+            anchor,
+            preview_generation,
+            &mut effects,
+        );
     }
 
     let shown_after_stale = app

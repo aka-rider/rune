@@ -107,6 +107,7 @@ pub struct Palette;
 pub struct DirLoad;
 pub struct ImageDecode;
 pub struct MessagesCollapse;
+pub struct Preview;
 
 pub type RenameGen = Generation<Rename>;
 pub type MergeGen = Generation<Merge>;
@@ -119,3 +120,4 @@ pub type PaletteGen = Generation<Palette>;
 pub type DirLoadGen = Generation<DirLoad>;
 pub type ImageDecodeGen = Generation<ImageDecode>;
 pub type MessagesCollapseGen = Generation<MessagesCollapse>;
+pub type PreviewGen = Generation<Preview>;

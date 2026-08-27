@@ -128,6 +128,31 @@ pub(crate) fn mouse(app: &mut App, input: MouseInput, effects: &mut Effects) {
     }
 }
 
+/// A click on the finder's `visible_row`-th ON-SCREEN result row (0-based,
+/// already past the query bar) — `commands::mouse`'s own hit test resolves
+/// the click to this index, this function resolves it to an absolute
+/// `state.results` index through the SAME scroll window `render::filesearch`
+/// paints from, then selects and opens it exactly like `keys::open_selected`
+/// does for Enter. A click past the last visible row (blank space below a
+/// short list, or the "no matches" placeholder) is a no-op.
+pub(crate) fn click_row(app: &mut App, visible_row: usize, effects: &mut Effects) {
+    let Some(state) = app.filesearch() else {
+        return;
+    };
+    let height = keys::page_amount(app).max(1) as usize;
+    let window = state.nav.window(state.results.len(), height);
+    let Some(absolute) = window.start.checked_add(visible_row) else {
+        return;
+    };
+    if absolute >= window.end {
+        return;
+    }
+    if let Some(state) = app.filesearch_mut() {
+        state.nav.cursor = absolute;
+    }
+    keys::open_selected(app, effects);
+}
+
 fn candidate_by<'a>(
     recents: &'a [Candidate],
     walk: &'a [Candidate],
@@ -171,6 +196,7 @@ pub(crate) fn handle_recents_loaded(
             }
             if let Some(state) = app.filesearch_mut() {
                 state.recents = recents;
+                dedupe_walk_against_recents(state);
             }
         }
         Err(e) => {
@@ -178,6 +204,19 @@ pub(crate) fn handle_recents_loaded(
         }
     }
     recompute(app, effects);
+}
+
+/// Drops any `state.walk` candidate whose path already appears in
+/// `state.recents` — the finder's recents load and its workspace walk are
+/// two independent one-shot replies that can land in either order, so this
+/// runs after EITHER lands (`handle_recents_loaded`, `handle_scanned`)
+/// rather than once at whichever happened to reply first; a scan landing
+/// before recents left the overlap unfiltered until recents applied this
+/// same pass a second time.
+fn dedupe_walk_against_recents(state: &mut FileSearchState) {
+    let seen: std::collections::HashSet<PathBuf> =
+        state.recents.iter().map(|c| c.path.clone()).collect();
+    state.walk.retain(|c| !seen.contains(&c.path));
 }
 
 pub(crate) fn reset_and_recompute(app: &mut App, effects: &mut Effects) {
@@ -272,12 +311,9 @@ pub(crate) fn handle_scanned(
         Ok(scan) => {
             if let Some(state) = app.filesearch_mut() {
                 let root = state.root.clone();
-                let seen: std::collections::HashSet<PathBuf> =
-                    state.recents.iter().map(|c| c.path.clone()).collect();
                 state.walk = scan
                     .files
                     .into_iter()
-                    .filter(|path| !seen.contains(path))
                     .map(|path| {
                         let display = display_relative(&root, &path);
                         Candidate {
@@ -288,6 +324,7 @@ pub(crate) fn handle_scanned(
                         }
                     })
                     .collect();
+                dedupe_walk_against_recents(state);
                 state.walk_pending = false;
                 state.walk_truncated = scan.truncated;
             }

@@ -39,29 +39,42 @@ pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effect
         .and_then(|doc| doc.file_path.as_deref())
         == Some(target);
     let already_failed = app.explorer.preview_failed.as_deref() == Some(target);
-    if already_showing || already_failed || app.explorer.preview_awaiting.contains(target) {
+    let already_awaiting = app.explorer.preview_awaiting.as_deref() == Some(target);
+    if already_showing || already_failed || already_awaiting {
         return;
     }
 
-    app.explorer.preview_awaiting.insert(target.to_path_buf());
+    let generation = app.explorer.mint_preview_generation();
+    app.explorer.preview_generation = generation;
+    app.explorer.preview_awaiting = Some(target.to_path_buf());
     let vfs = std::sync::Arc::clone(&app.vfs);
-    effects
-        .cmds
-        .push(crate::runtime::read_preview_cmd(vfs, target.to_path_buf()));
+    effects.cmds.push(crate::runtime::read_preview_cmd(
+        vfs,
+        target.to_path_buf(),
+        generation,
+    ));
 }
 
+/// A `Msg::FileOpened` reply belongs to the live preview only when its
+/// `preview_generation` echoes what `request_preview` minted and is still
+/// current — never a path match, and never a re-derivation of whatever the
+/// cursor or finder selection currently sits on. A real file open (e.g.
+/// following a link into a path the preview is still loading) always
+/// carries `preview_generation: None` and so can never be mistaken for it.
 pub(crate) fn maybe_consume_reply(
     app: &mut App,
     path: &Path,
+    preview_generation: Option<crate::generation::PreviewGen>,
     result: &Result<Vec<u8>, CmdError>,
 ) -> bool {
-    if !app.explorer.preview_awaiting.remove(path) {
+    let Some(generation) = preview_generation else {
         return false;
-    }
-    if workspace::existing_document_for(app, path).is_some() {
+    };
+    if generation != app.explorer.preview_generation {
         return true;
     }
-    if !is_current_target(app, path) {
+    app.explorer.preview_awaiting = None;
+    if workspace::existing_document_for(app, path).is_some() {
         return true;
     }
     match result {
@@ -69,23 +82,6 @@ pub(crate) fn maybe_consume_reply(
         Err(reason) => apply_failed(app, path, &reason.to_string()),
     }
     true
-}
-
-fn is_current_target(app: &App, path: &Path) -> bool {
-    if app.filesearch().is_some() {
-        return crate::filesearch::selected_candidate(app)
-            .and_then(|c| resolved_target(app, &c.path))
-            .is_some_and(|selected| selected == path);
-    }
-    if app.explorer_find().is_some() {
-        return false;
-    }
-    app.explorer
-        .entries
-        .get(app.explorer.nav.cursor)
-        .filter(|e| e.kind != rune_vfs::FileKind::Dir)
-        .and_then(|e| resolved_target(app, &e.path))
-        .is_some_and(|selected| selected == path)
 }
 
 fn resolved_target(app: &App, path: &Path) -> Option<PathBuf> {

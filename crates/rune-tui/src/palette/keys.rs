@@ -2,11 +2,12 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
-use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::clipboard::pbpaste_cmd;
+use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::listnav::ListCommand;
 use crate::queryline;
 use crate::registry::{self, ArgKind, Availability, CommandId, ExecOutcome};
-use crate::runtime::Effects;
+use crate::runtime::{Effects, PasteTarget};
 
 use super::{PaletteMode, close, recompute, row_capacity};
 
@@ -95,6 +96,10 @@ pub(crate) const PALETTE_BINDINGS: &[Binding<PaletteKeyCommand>] = &[
 ];
 
 pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
+    if keymap::resolve(key) == Some(Command::Paste) {
+        effects.cmds.push(pbpaste_cmd(PasteTarget::Palette));
+        return KeyOutcome::Consumed;
+    }
     if let Some(cmd) = resolve_in(PALETTE_BINDINGS, key) {
         apply(app, cmd, key, effects);
     }
@@ -159,6 +164,7 @@ fn tab(app: &mut App) {
     match state.mode {
         PaletteMode::Name => {
             let Some(row) = state.rows.get(state.nav.cursor) else {
+                set_refusal(app, "no matching command".to_string());
                 return;
             };
             let id = row.id;
@@ -175,6 +181,7 @@ fn tab(app: &mut App) {
                 return;
             }
             let Some(row) = state.arg_rows.get(state.nav.cursor) else {
+                set_refusal(app, "no matching argument".to_string());
                 return;
             };
             let label = row.label.clone();

@@ -21,7 +21,11 @@ pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 /// showing whatever was previewed before, never the ordinary open-failure
 /// banner `workspace::handle_file_opened` would otherwise raise. `anchor`
 /// is always `None`: a preview never lands a navigation anchor.
-pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
+pub fn read_preview_cmd(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    generation: crate::generation::PreviewGen,
+) -> Cmd {
     Cmd::read_file(move || {
         let result = (|| -> Result<Vec<u8>, CmdError> {
             let bytes = match rune_vfs::get(vfs.as_ref(), &path, Some(MAX_PREVIEW_BYTES)) {
@@ -40,6 +44,7 @@ pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
             path,
             result,
             anchor: None,
+            preview_generation: Some(generation),
         })
     })
 }
