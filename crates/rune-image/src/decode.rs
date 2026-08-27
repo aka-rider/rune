@@ -2,6 +2,13 @@ use std::io::Cursor;
 
 pub use image::ImageError;
 
+pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+const MAX_DECODE_PIXELS: u64 = 4 * crate::transmit::MAX_TRANSMIT_PIXELS as u64;
+const MAX_DECODE_AXIS: u32 = 16_384;
+
+const SVG_SNIFF_WINDOW: usize = 512;
+
 #[derive(Debug)]
 pub struct Decoded {
     pub image: image::RgbaImage,
@@ -56,10 +63,16 @@ fn from_image_format(format: image::ImageFormat) -> Option<Format> {
 
 fn looks_like_svg(data: &[u8]) -> bool {
     let without_bom = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(data);
-    let Ok(text) = std::str::from_utf8(without_bom) else {
-        return false;
+    let window_len = without_bom.len().min(SVG_SNIFF_WINDOW);
+    let window = without_bom.get(..window_len).unwrap_or(&[]);
+    let text = match std::str::from_utf8(window) {
+        Ok(text) => text,
+        Err(err) => window
+            .get(..err.valid_up_to())
+            .and_then(|valid| std::str::from_utf8(valid).ok())
+            .unwrap_or(""),
     };
-    let trimmed = text.trim();
+    let trimmed = text.trim_start();
     if trimmed.is_empty() {
         return false;
     }
@@ -71,6 +84,27 @@ fn looks_like_svg(data: &[u8]) -> bool {
         return low.contains("<svg");
     }
     false
+}
+
+fn dimension_limit_error() -> ImageError {
+    ImageError::Limits(image::error::LimitError::from_kind(
+        image::error::LimitErrorKind::DimensionError,
+    ))
+}
+
+fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_AXIS);
+    limits.max_image_height = Some(MAX_DECODE_AXIS);
+    limits
+}
+
+#[cfg(not(feature = "svg"))]
+fn svg_unsupported_error() -> ImageError {
+    ImageError::IoError(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "svg support not built into this binary",
+    ))
 }
 
 pub fn decode_still(data: &[u8]) -> Result<Decoded, ImageError> {
@@ -87,11 +121,23 @@ pub fn decode_still(data: &[u8]) -> Result<Decoded, ImageError> {
             ImageError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
         });
     }
+    #[cfg(not(feature = "svg"))]
+    if looks_like_svg(data) {
+        return Err(svg_unsupported_error());
+    }
 
-    let reader = image::ImageReader::new(Cursor::new(data)).with_guessed_format()?;
+    if let Some((width, height, _)) = probe_dimensions(data) {
+        let total_pixels = (width as u64).saturating_mul(height as u64);
+        if total_pixels > MAX_DECODE_PIXELS {
+            return Err(dimension_limit_error());
+        }
+    }
+
+    let mut reader = image::ImageReader::new(Cursor::new(data)).with_guessed_format()?;
+    reader.limits(decode_limits());
     let format = reader.format().and_then(from_image_format);
     let dynamic = reader.decode()?;
-    let rgba = dynamic.to_rgba8();
+    let rgba = dynamic.into_rgba8();
     let (width, height) = rgba.dimensions();
     Ok(Decoded {
         image: rgba,
@@ -266,5 +312,27 @@ mod tests {
             cfg!(feature = "svg"),
             "extensions() must advertise \"svg\" exactly when the svg feature compiles a decoder for it"
         );
+    }
+
+    #[test]
+    fn looks_like_svg_only_examines_a_bounded_prefix_of_the_input() {
+        let mut data = vec![b'x'; SVG_SNIFF_WINDOW * 4];
+        data.extend_from_slice(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        assert_eq!(sniff_format(&data), None);
+    }
+
+    #[test]
+    fn looks_like_svg_still_finds_a_prologue_that_fits_inside_the_window() {
+        let mut data = vec![b' '; SVG_SNIFF_WINDOW / 2];
+        data.extend_from_slice(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        assert_eq!(sniff_format(&data), Some(Format::Svg));
+    }
+
+    #[cfg(not(feature = "svg"))]
+    #[test]
+    fn decode_still_reports_missing_svg_support_instead_of_an_unknown_format() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#;
+        let err = decode_still(svg).expect_err("svg must fail without the svg feature");
+        assert!(err.to_string().contains("svg support not built"));
     }
 }

@@ -40,6 +40,7 @@ svg = ["dep:resvg", "dep:usvg"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
+png = "0.18"
 
 [lints]
 workspace = true

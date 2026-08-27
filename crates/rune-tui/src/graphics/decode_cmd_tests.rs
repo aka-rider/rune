@@ -189,6 +189,44 @@ fn a_failed_decode_becomes_failed_status_with_no_raw_output() {
 }
 
 #[test]
+fn reload_refuses_a_file_that_grew_past_the_image_byte_ceiling() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/vault/x.png"), X_PNG)
+        .expect("seed x.png");
+    let vfs: Arc<dyn Vfs + Send + Sync> = mem.clone();
+    let mut app = App::new(Buffer::new(""), None, vfs, None);
+    app.graphics.kitty = true;
+    app.graphics.cell = CellSize { w: 8, h: 16 };
+    let id = crate::workspace::open_path(&mut app, Path::new("/vault/x.png")).expect("open x.png");
+    app.doc_mut(id).expect("doc").viewport.set_size(80, 24);
+
+    let mut effects = Effects::default();
+    schedule_image_decode(&mut app, id, &mut effects);
+    settle_cmds(&mut app, effects.cmds);
+    assert!(
+        is_live(&app, id),
+        "test setup: the initial decode must succeed"
+    );
+
+    let oversized = vec![0u8; (rune_image::MAX_IMAGE_BYTES + 1) as usize];
+    mem.save_atomic(Path::new("/vault/x.png"), &oversized)
+        .expect("grow x.png past the image byte ceiling");
+
+    let mut reload_effects = Effects::default();
+    reload_image(&mut app, id, &mut reload_effects);
+    settle_cmds(&mut app, reload_effects.cmds);
+
+    let image = app.doc(id).unwrap().image().unwrap();
+    let ImageStatus::Failed(msg) = &image.status else {
+        unreachable!("test setup: the oversized file must be refused as Failed");
+    };
+    assert!(
+        msg.to_ascii_lowercase().contains("large"),
+        "expected a too-large refusal, got {msg:?}"
+    );
+}
+
+#[test]
 fn a_stale_generation_is_dropped_with_no_effects() {
     let (mut app, id) = app_with_pending_image(true);
     app.doc_mut(id).expect("doc").image_mut().unwrap().in_flight = Some(mint_gen(2));

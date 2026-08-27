@@ -44,7 +44,7 @@ const MAX_CHUNK_SIZE: usize = 4096;
 /// dimensions. `4096 * 4096` keeps the worst case (near-incompressible
 /// pixel data, base64 inflation) under ~85 MB rather than scaling with an
 /// arbitrary source image's total pixel count.
-const MAX_TRANSMIT_PIXELS: usize = 4096 * 4096;
+pub(crate) const MAX_TRANSMIT_PIXELS: usize = 4096 * 4096;
 
 const APC_INTRO: &str = "\x1b_G";
 const APC_OUTRO: &str = "\x1b\\";

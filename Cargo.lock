@@ -2272,6 +2272,7 @@ dependencies = [
  "base64",
  "gif",
  "image",
+ "png",
  "resvg",
  "serde_json",
  "usvg",
