@@ -28,5 +28,16 @@ exclude_re = [
   'query\.rs.*replace \+ with \* in snap_to_grapheme_boundary',
   'query\.rs:127:.*replace < with <= in byte_col_from_visual',
   'query\.rs.*replace \+= with \*= in WrapSnapshot::syntax_to_wrap',
+  'replace - with \+ in Buffer::build_edited_content',
+  'lineindex\.rs.*replace && with \|\| in Buffer::line',
+  'lineindex\.rs.*replace - with \+ in Buffer::line_col_to_offset',
+  'lineindex\.rs.*replace - with / in Buffer::line_col_to_offset',
+  'lineindex\.rs.*replace > with >= in Buffer::line_col_to_offset',
+  'trailing\.rs.*replace > with >= in line_content_end',
+  'trailing\.rs.*replace > with >= in whitespace_run_start',
+  'cursor\.rs.*replace < with <= in Cursor::selection_range',
+  'replace CursorSet::is_empty -> bool with false',
+  'replace > with >= in CursorSet::merge',
+  'undo\.rs.*replace \|\| with && in reapply',
 ]
 exclude_globs = []

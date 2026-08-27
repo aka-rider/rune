@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use super::{Buffer, Edit};
 use crate::coords::BufferPoint;
 
@@ -182,6 +184,22 @@ mod tests {
         assert_eq!(b.line_end(1), None);
         assert_eq!(b.line_start(0), Some(0));
         assert_eq!(b.line_end(0), Some(9));
+    }
+
+    /// `col: 10` on the (non-last) middle line overshoots that line's own
+    /// content; the offset must clamp to the LINE's end (5, the byte after
+    /// "bb"), never to the whole buffer's end (8) and never past it
+    /// unclamped. This distinguishes `bp.line == count - 1` from
+    /// `bp.line != count - 1` (which would wrongly treat every non-last
+    /// line as the last one) and `if offset > end` from `if offset == end`
+    /// (which would only clamp an exact match, leaving an overshoot
+    /// un-clamped and later force-snapped all the way to the buffer's own
+    /// end instead of the line's).
+    #[test]
+    fn line_col_to_offset_clamps_an_overshot_column_to_the_lines_own_end_not_the_buffers() {
+        let b = Buffer::new("aa\nbb\ncc");
+        let offset = b.line_col_to_offset(BufferPoint { line: 1, col: 10 });
+        assert_eq!(offset, 5, "must clamp to line 1's end, not content.len()");
     }
 
     #[test]

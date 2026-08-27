@@ -55,3 +55,24 @@ pub struct DisplayPoint {
     pub row: usize,
     pub col: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_row_add_and_sub_are_not_the_default() {
+        assert_eq!(DisplayRow(5) + 3, DisplayRow(8));
+        assert_eq!(DisplayRow(5) - 3, DisplayRow(2));
+    }
+
+    #[test]
+    fn display_row_sub_saturates_instead_of_underflowing() {
+        assert_eq!(DisplayRow(1) - 3, DisplayRow(0));
+    }
+
+    #[test]
+    fn display_row_display_renders_the_number() {
+        assert_eq!(DisplayRow(7).to_string(), "7");
+    }
+}
