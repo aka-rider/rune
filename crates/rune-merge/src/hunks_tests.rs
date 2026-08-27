@@ -14,7 +14,7 @@ fn round_trip(hunks: &[Hunk]) -> Vec<u8> {
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    find_subslice(haystack, needle).is_some()
+    needle.is_empty() || haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 // Separate changed lines with a shared line so diffy's Myers diff does
@@ -77,22 +77,6 @@ fn marker_shaped_document_content_segments_correctly() {
             Hunk::Clean(b"after\n".to_vec()),
         ]
     );
-}
-
-#[test]
-fn conflict_marker_length_picks_max_run_across_all_inputs() {
-    let ancestor = b"|||||||||\nrest\n";
-    let ours = b"hello\n";
-    let theirs = b"<<<<<<<<\nworld\n";
-    assert_eq!(conflict_marker_length(ancestor, ours, theirs), 10);
-}
-
-#[test]
-fn conflict_marker_length_defaults_to_seven_without_marker_like_content() {
-    let ancestor = b"hello\n";
-    let ours = b"world\n";
-    let theirs = b"there\n";
-    assert_eq!(conflict_marker_length(ancestor, ours, theirs), 7);
 }
 
 #[test]
@@ -237,14 +221,6 @@ fn mixed_clean_merge_preserves_crlf_bom_no_trailing_newline() {
 }
 
 #[test]
-fn parse_diff3_no_conflict_markers() {
-    let output = b"line1\nline2\n";
-    let parsed = parse_diff3(output, 7);
-    assert_eq!(parsed.conflicts.len(), 0);
-    assert_eq!(parsed.trailing_clean, output);
-}
-
-#[test]
 fn clean_text_brackets_a_conflict_on_both_sides() {
     let ancestor = b"before\nshared\nafter\n";
     let ours = b"before\nours-change\nafter\n";
@@ -265,58 +241,12 @@ fn clean_text_brackets_a_conflict_on_both_sides() {
     );
 }
 
+// Under the old rendered-text anchoring this input defeated re-anchoring
+// and collapsed to one whole-file conflict; position accounting localizes
+// it: ours' clean first-line change auto-resolves, and only the genuinely
+// double-edited last line conflicts.
 #[test]
-fn parse_diff3_conflict_sections() {
-    let output =
-        b"<<<<<<< ours\nours-line\n||||||| ancestor\nanc-line\n=======\ntheirs-line\n>>>>>>> theirs\n";
-    let parsed = parse_diff3(output, 7);
-    assert_eq!(parsed.conflicts.len(), 1);
-    let (clean_before, block) = &parsed.conflicts[0];
-    assert_eq!(block.ours, b"ours-line\n");
-    assert_eq!(block.ancestor, b"anc-line\n");
-    assert_eq!(block.theirs, b"theirs-line\n");
-    assert!(clean_before.is_empty());
-    assert!(parsed.trailing_clean.is_empty());
-}
-
-// A hand-built diff3 payload whose first conflict section names text
-// that appears nowhere in `ours` (an anchor failure unrelated to the
-// trailing-newline case), followed by a second conflict block that
-// anchors normally. The widened fallback must swallow only the first
-// block plus the clean text up to where the second block re-anchors —
-// not the whole file — leaving the second conflict and the trailing
-// clean region exactly as localized as they would be without any
-// failure at all.
-#[test]
-fn unanchorable_section_widens_only_its_own_run() {
-    let ours = b"AAAA\nBBBB\nshared\nCCCC\nDDDD\n";
-    let theirs = b"AAAA\nXXXX\nshared\nYYYY\nDDDD\n";
-    let diff3_output: &[u8] = b"AAAA\n\
-<<<<<<< ours\nZZZZ\n||||||| ancestor\nanc1\n=======\nXXXX\n>>>>>>> theirs\n\
-shared\n\
-<<<<<<< ours\nCCCC\n||||||| ancestor\nanc2\n=======\nYYYY\n>>>>>>> theirs\n\
-DDDD\n";
-
-    let hunks = parse_hunks(ours, theirs, diff3_output, 7);
-
-    assert_eq!(
-        hunks,
-        vec![
-            Hunk::Conflict {
-                ours: b"AAAA\nBBBB\nshared\n".to_vec(),
-                theirs: b"AAAA\nXXXX\nshared\n".to_vec(),
-            },
-            Hunk::Conflict {
-                ours: b"CCCC\n".to_vec(),
-                theirs: b"YYYY\n".to_vec(),
-            },
-            Hunk::Clean(b"DDDD\n".to_vec()),
-        ]
-    );
-}
-
-#[test]
-fn unanchorable_conflict_with_no_resync_runs_to_end_of_input() {
+fn repeated_content_localizes_instead_of_collapsing_to_one_conflict() {
     let ancestor: &[u8] = b"eta\r\nBBBB\nCCCC\nzeta";
     let ours: &[u8] = b"AAAA\r\nBBBB\nCCCC\nAAAA";
     let theirs: &[u8] = b"eta\r\nBBBB\nCCCC\nXXXX";
@@ -325,9 +255,80 @@ fn unanchorable_conflict_with_no_resync_runs_to_end_of_input() {
 
     assert_eq!(
         hunks,
-        vec![Hunk::Conflict {
-            ours: ours.to_vec(),
-            theirs: theirs.to_vec(),
-        }]
+        vec![
+            Hunk::Clean(b"AAAA\r\nBBBB\nCCCC\n".to_vec()),
+            Hunk::Conflict {
+                ours: b"AAAA".to_vec(),
+                theirs: b"XXXX".to_vec(),
+            },
+        ]
     );
+}
+
+#[test]
+fn crlf_file_with_disjoint_edits_merges_clean_with_exact_bytes() {
+    let ancestor = b"alpha\r\nbeta\r\ngamma\r\ndelta\r\n";
+    let ours = b"alpha\r\nours-beta\r\ngamma\r\ndelta\r\n";
+    let theirs = b"alpha\r\nbeta\r\ngamma\r\ntheirs-delta\r\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(
+        hunks,
+        vec![Hunk::Clean(
+            b"alpha\r\nours-beta\r\ngamma\r\ntheirs-delta\r\n".to_vec()
+        )]
+    );
+}
+
+#[test]
+fn ours_deletion_of_a_region_theirs_edited_conflicts_instead_of_vanishing() {
+    let ancestor = b"keep\nold-a\nold-b\n";
+    let ours = b"keep\n";
+    let theirs = b"keep\nold-a\nnew-b\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(
+        hunks,
+        vec![
+            Hunk::Clean(b"keep\n".to_vec()),
+            Hunk::Conflict {
+                ours: b"".to_vec(),
+                theirs: b"old-a\nnew-b\n".to_vec(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn both_sides_insert_differently_at_the_same_point_conflicts() {
+    let ancestor = b"top\nbottom\n";
+    let ours = b"top\nours-mid\nbottom\n";
+    let theirs = b"top\ntheirs-mid\nbottom\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(
+        hunks,
+        vec![
+            Hunk::Clean(b"top\n".to_vec()),
+            Hunk::Conflict {
+                ours: b"ours-mid\n".to_vec(),
+                theirs: b"theirs-mid\n".to_vec(),
+            },
+            Hunk::Clean(b"bottom\n".to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn agreed_deletion_disappears_cleanly() {
+    let ancestor = b"keep\ndrop\nkeep2\n";
+    let ours = b"keep\nkeep2\n";
+    let theirs = b"keep\nkeep2\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(hunks, vec![Hunk::Clean(b"keep\nkeep2\n".to_vec())]);
 }

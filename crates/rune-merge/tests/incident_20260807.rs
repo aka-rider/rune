@@ -1,24 +1,13 @@
-//! Regression gate for the 2026-08-07 real-incident conflict-anchoring bug,
-//! tightened past the initial diagnosis into the actual fix.
+//! Regression gate for the 2026-08-07 real-incident corpus.
 //!
-//! Root cause: diffy's diff3 output holds exactly one conflict block on the
-//! real incident bytes, sitting after a large shared clean prefix, with an
-//! ours-section far smaller than all of `ours`. diffy's diff3 marker text
-//! newline-terminates every line it writes — including a section's last
-//! line when that line is also the input's last line and the input has no
-//! trailing newline of its own. The ours-section here is exactly that
-//! case: `ours.md` has no trailing newline, so the verbatim run it names
-//! is one byte shorter than the section text. The old anchor check failed
-//! outright on that mismatch and `parse_hunks` discarded the localized
-//! boundary entirely, falling back to one whole-file conflict. The fix
-//! retries a failed anchor with that synthesized trailing newline
-//! stripped, accepted only when the match then lands exactly at
-//! end-of-input.
-//!
-//! Diffy's own conflict granularity was never the problem (explanation
-//! (b)); the deltas do not genuinely overlap either (explanation (a) —
-//! ours differs from the ancestor by one appended line). Both are ruled
-//! out by the same evidence that pins verdict (c).
+//! On these bytes `ours` differs from the ancestor by exactly one
+//! appended 294-byte block (the common prefix is the whole ancestor),
+//! while `theirs` rewrites many interior regions; the two change sets
+//! share no ancestor line, so the honest 3-way result is a clean merge
+//! carrying all of theirs' edits plus ours' appended block. The old
+//! rendered-diff3 parse could not see that — its alignment manufactured
+//! an 8.8KB conflict, and before its anchoring fix, one whole-file
+//! conflict. Position-accounted hunks localize exactly.
 
 #![allow(
     clippy::unwrap_used,
@@ -37,81 +26,44 @@ fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("reading fixture {path}: {e}"))
 }
 
-/// The real incident bytes, with the anchoring fix in place: the clean
-/// prefix shared by all three inputs survives as `Clean`, and exactly one
-/// `Conflict` covers the region that actually differs — not the whole
-/// file.
+/// The real incident bytes merge clean: one `Clean` hunk, ours' appended
+/// block present verbatim, and removing that single block from the result
+/// reproduces `theirs` byte-for-byte — nothing from either side is lost
+/// or reordered.
 #[test]
-fn incident_corpus_localizes_to_one_conflict_after_the_clean_prefix() {
+fn incident_corpus_merges_clean_with_both_sides_changes() {
     let ancestor = fixture("ancestor.md");
     let ours = fixture("ours.md");
     let theirs = fixture("theirs.md");
 
+    let shared_prefix = ancestor
+        .iter()
+        .zip(ours.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    assert_eq!(
+        shared_prefix,
+        ancestor.len(),
+        "ours must be the ancestor plus an appended tail"
+    );
+    let block = &ours[shared_prefix..];
+    assert_eq!(block.len(), 294, "the incident's appended block");
+
     let hunks = merge_hunks(&ancestor, &ours, &theirs);
 
-    assert_eq!(
-        hunks.len(),
-        2,
-        "expected a clean prefix followed by one localized conflict, got {} hunks: {hunks:?}",
-        hunks.len()
-    );
-    let Hunk::Clean(prefix) = &hunks[0] else {
-        panic!(
-            "expected the first hunk to be the clean prefix, got {:?}",
-            hunks[0]
-        );
+    let [Hunk::Clean(result)] = hunks.as_slice() else {
+        panic!("expected one clean hunk, got {hunks:?}");
     };
-    let Hunk::Conflict {
-        ours: c_ours,
-        theirs: c_theirs,
-    } = &hunks[1]
-    else {
-        panic!(
-            "expected the second hunk to be the conflict, got {:?}",
-            hunks[1]
-        );
-    };
-
-    assert_eq!(prefix.len(), 34_358, "clean prefix should not have shrunk");
+    let at = result
+        .windows(block.len())
+        .position(|w| w == block)
+        .expect("ours' appended block must survive into the result");
+    let mut without_block = result[..at].to_vec();
+    without_block.extend_from_slice(&result[at + block.len()..]);
     assert_eq!(
-        c_ours.len(),
-        8_802,
-        "ours-section should be the localized region, not the whole 30 433-byte file"
+        without_block, theirs,
+        "the result minus ours' block must be exactly theirs"
     );
-    assert_eq!(
-        c_theirs.len(),
-        2_409,
-        "theirs-section should be the localized region, not the whole 36 767-byte file"
-    );
-    assert!(
-        !c_theirs.is_empty(),
-        "theirs-section must carry real content, never empty"
-    );
-
-    // Byte-faithfulness here means every returned run of bytes is a
-    // verbatim substring of the input it claims to come from — not that
-    // concatenating hunks reconstructs `ours` or `theirs` byte-for-byte,
-    // since a clean region legitimately carries whichever side's change
-    // diff3 auto-resolved there (3-way merge semantics, not a bug).
-    assert!(
-        contains(&ours, c_ours),
-        "ours-section not a verbatim substring of ours"
-    );
-    assert!(
-        contains(&theirs, c_theirs),
-        "theirs-section not a verbatim substring of theirs"
-    );
-    assert!(
-        contains(&ours, prefix) || contains(&theirs, prefix),
-        "clean prefix not a verbatim substring of either side"
-    );
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 /// With no known ancestor at all, `merge_hunks_no_ancestor` runs a direct
