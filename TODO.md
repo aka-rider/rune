@@ -52,12 +52,6 @@ constitution and the entry is deleted in the same commit.
 
 ### CRASH / DoS
 
-#### Stack overflow (SIGABRT, no unwind) on deeply nested blockquotes — a ~2.5 KB file kills a release build
-- **Where**: `crates/rune-md/src/parse/block.rs:114-131` (`BlockQuote` → `build_blocks` → `build_block`), mirrored in `crates/rune-md/src/emit/walk.rs:317-336`, `crates/rune-md/src/catalogue.rs:42-46,111-115`, and the recursive `Drop` of the `Block` tree; on the synchronous render path via `crates/rune-tui/src/document/sync.rs:30-37`.
-- **Wrong**: comrak does not cap blockquote nesting (it caps lists at 100), and `build_block` walks the tree with no depth counter — tree depth equals the `>` count exactly. Measured: `">".repeat(2500) + " x"` overflows an 8 MiB stack in release (2400 is fine); 700 in debug. Because the constitution forbids `panic = "abort"` precisely so terminal restore runs on unwind, a stack overflow is *worse* than a panic — it aborts, so neither the terminal nor the unsaved buffer is recovered. Opening, or typing/pasting into, such a file aborts the process.
-- **Instead**: bound recursion depth in `build_block` (and the emit/catalogue walks), degrading over-deep nesting rather than recursing; treat the tree walk as the chokepoint.
-- **Confidence**: confirmed (executed).
-
 #### Panic: `u16` underflow when a text drag crosses into the diff-left pane
 - **Where**: `crates/rune-tui/src/commands/mouse.rs:336` (`handle_left_drag`), with the guard reading `crates/rune-tui/src/layout.rs:176-178` (`Geometry::pane_at`).
 - **Wrong**: with a side-by-side diff view open, `layout.rs:340-343` puts every column of `diff_left` strictly left of `editor.x`. Start a left-button text drag in the right/editor pane (latches `Drag::Text{pane:Editor}`) and drag left into the diff-left pane. `handle_left_drag`'s guard is `pane_at(...) != Some(Pane::Editor)`, but `pane_at` deliberately returns `Some(Pane::Editor)` for a point inside `diff_left`, so the guard passes and `:336` does the unchecked `input.column - editor.x`. Executed: `pane_at(3,3)=Some(Editor)` then `panicked … attempt to subtract with overflow`. In release (no overflow checks) it wraps, hit-tests the *right* document from a click in the *left* pane, and snaps the selection to a garbage offset. The sibling `handle` uses `saturating_sub` at `:132-133`; only this path subtracts raw, and the function's doc comment claiming "wandered outside the editor mid-drag is a no-op" is falsified by `pane_at`'s diff-left fallthrough.

@@ -302,7 +302,7 @@ pub fn parse(content: &str) -> Vec<Block> {
     };
     let arena = Arena::new();
     let root = parse_document(&arena, &shadow, &opts);
-    block::build_blocks(content, &starts, root, &ScanHint::Root)
+    block::build_blocks(content, &starts, root, &ScanHint::Root, 0)
 }
 
 #[cfg(test)]
@@ -383,6 +383,41 @@ mod tests {
         assert_eq!(text_of(content, bq.markers[0].marker), "> ");
         assert_eq!(bq.markers[0].line, 0);
         assert_eq!(bq.markers[1].line, 1);
+    }
+
+    /// A run of 2500 nested `>` markers has no cap in comrak itself (unlike
+    /// its own 100-deep LIST cap) — `build_block`'s `MAX_CONTAINER_DEPTH`
+    /// guard is the only thing standing between this and a stack overflow:
+    /// unbounded recursion through `build_block`/`build_blocks` (parse), the
+    /// mirrored recursive walk in `emit::emit`, `catalogue::catalogue`, and
+    /// the compiler-generated recursive `Drop` glue for the `Block` tree
+    /// itself (`Vec<Block>` dropping each nested `Blockquote`'s own
+    /// `Vec<Block>` children) all consume the SAME tree this depth cap
+    /// bounds, so exercising all three here on one thread proves every one
+    /// of them stays within a real stack rather than just the parse walk.
+    /// Spawned on its own thread with an explicit, platform-typical 8 MiB
+    /// stack rather than trusting the test harness's own worker thread,
+    /// which can default to a smaller stack than a real terminal session's
+    /// main thread ever would.
+    #[test]
+    fn a_pathologically_deep_blockquote_does_not_overflow_the_stack() {
+        let content = format!("{} x\n", ">".repeat(2500));
+        let handle = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                let blocks = parse(&content);
+                let (_, _) = crate::emit::emit(&content, &blocks, 80);
+                let _ = crate::catalogue::catalogue(&content, &blocks);
+                blocks.len()
+            })
+            .expect("spawn the repro thread");
+        let top_level_blocks = handle
+            .join()
+            .expect("parse/emit/catalogue/drop must not abort the thread");
+        assert_eq!(
+            top_level_blocks, 1,
+            "expected one top-level blockquote, its innermost nesting flattened to raw content"
+        );
     }
 
     #[test]

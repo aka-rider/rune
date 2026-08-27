@@ -69,15 +69,26 @@ struct BlockCtx<'c, 'p> {
     line: usize,
 }
 
+// comrak caps a LIST's own nesting at 100 (its `Options::parse::relaxed_*`
+// tunables don't reach this), but a BLOCKQUOTE has no such cap: its tree
+// depth is exactly the source's own run of leading `>` markers, unbounded.
+// `build_block` recurses once per container level for either kind, so one
+// shared counter — checked before EITHER arm recurses — bounds the real
+// call-stack depth regardless of which kind (or which mix of the two)
+// supplies the nesting, mirroring comrak's own list cap rather than
+// inventing a different ceiling.
+const MAX_CONTAINER_DEPTH: usize = 100;
+
 pub(super) fn build_blocks<'a>(
     content: &str,
     starts: &[usize],
     parent: &'a AstNode<'a>,
     hint: &ScanHint,
+    depth: usize,
 ) -> Vec<Block> {
     let mut out = Vec::new();
     for child in parent.children() {
-        if let Some(b) = build_block(content, starts, child, hint) {
+        if let Some(b) = build_block(content, starts, child, hint, depth) {
             out.push(b);
         }
     }
@@ -89,6 +100,7 @@ fn build_block<'a>(
     starts: &[usize],
     node: &'a AstNode<'a>,
     hint: &ScanHint,
+    depth: usize,
 ) -> Option<Block> {
     let range = node_range(content, starts, node);
     // comrak's line numbers are 1-based and count `\r\n` pairs differently
@@ -111,6 +123,13 @@ fn build_block<'a>(
         BlockKind::Heading { level, setext } => {
             Some(build_heading(&ctx, node, range, level, setext))
         }
+        BlockKind::BlockQuote if depth >= MAX_CONTAINER_DEPTH => Some(build_verbatim(
+            content,
+            starts,
+            range,
+            hint,
+            VerbatimKind::Unknown,
+        )),
         BlockKind::BlockQuote => {
             let markers = blockquote_markers(content, starts, range, hint);
             let marker_ends = markers
@@ -122,7 +141,7 @@ fn build_block<'a>(
                 conceals_own_prefix: true,
                 parent: hint,
             };
-            let children = build_blocks(content, starts, node, &child_hint);
+            let children = build_blocks(content, starts, node, &child_hint, depth + 1);
             Some(Block::Blockquote(BlockquoteM {
                 range,
                 markers,
@@ -135,12 +154,19 @@ fn build_block<'a>(
             closed,
         } => Some(build_code_block(&ctx, range, fenced, info, closed)),
         BlockKind::ThematicBreak => Some(build_thematic_break(content, starts, range, line)),
+        BlockKind::List if depth >= MAX_CONTAINER_DEPTH => Some(build_verbatim(
+            content,
+            starts,
+            range,
+            hint,
+            VerbatimKind::Unknown,
+        )),
         BlockKind::List => {
             let ordered = matches!(
                 node.data.borrow().value,
                 NodeValue::List(ref l) if matches!(l.list_type, ListType::Ordered)
             );
-            let items = build_list_items(content, starts, node, hint);
+            let items = build_list_items(content, starts, node, hint, depth + 1);
             Some(Block::List(ListM { ordered, items }))
         }
         // parse()'s `frontmatter_extension_is_safe` pre-check already ruled
@@ -151,28 +177,51 @@ fn build_block<'a>(
         ))),
         BlockKind::Table => {
             super::table::build_table(content, starts, node, hint, range).or_else(|| {
-                Some(Block::Verbatim(VerbatimM {
-                    sm: RevealSm::new(RevealState::Revealed),
+                Some(build_verbatim(
+                    content,
+                    starts,
                     range,
-                    kind: VerbatimKind::Table,
-                    content_lines: super::per_line_content(content, starts, range, hint),
-                }))
+                    hint,
+                    VerbatimKind::Table,
+                ))
             })
         }
-        BlockKind::HtmlBlock => Some(Block::Verbatim(VerbatimM {
-            sm: RevealSm::new(RevealState::Revealed),
+        BlockKind::HtmlBlock => Some(build_verbatim(
+            content,
+            starts,
             range,
-            kind: VerbatimKind::Html,
-            content_lines: super::per_line_content(content, starts, range, hint),
-        })),
+            hint,
+            VerbatimKind::Html,
+        )),
         BlockKind::Document => None,
-        BlockKind::Other => Some(Block::Verbatim(VerbatimM {
-            sm: RevealSm::new(RevealState::Revealed),
+        BlockKind::Other => Some(build_verbatim(
+            content,
+            starts,
             range,
-            kind: VerbatimKind::Unknown,
-            content_lines: super::per_line_content(content, starts, range, hint),
-        })),
+            hint,
+            VerbatimKind::Unknown,
+        )),
     }
+}
+
+/// A block that degrades to raw passthrough text: unrecognized syntax
+/// (`BlockKind::Other`/`HtmlBlock`), a malformed table falling back off
+/// `build_table`, and a blockquote/list nested past `MAX_CONTAINER_DEPTH`
+/// (never structured further — see that constant's docs) all share this
+/// exact shape.
+fn build_verbatim(
+    content: &str,
+    starts: &[usize],
+    range: ByteRange,
+    hint: &ScanHint,
+    kind: VerbatimKind,
+) -> Block {
+    Block::Verbatim(VerbatimM {
+        sm: RevealSm::new(RevealState::Revealed),
+        range,
+        kind,
+        content_lines: super::per_line_content(content, starts, range, hint),
+    })
 }
 
 fn build_heading<'a>(
@@ -297,6 +346,7 @@ fn build_list_items<'a>(
     starts: &[usize],
     list_node: &'a AstNode<'a>,
     hint: &ScanHint,
+    depth: usize,
 ) -> Vec<ListItemM> {
     let mut items = Vec::new();
     for item_node in list_node.children() {
@@ -329,7 +379,7 @@ fn build_list_items<'a>(
             conceals_own_prefix: false,
             parent: hint,
         };
-        let children = build_blocks(content, starts, item_node, &child_hint);
+        let children = build_blocks(content, starts, item_node, &child_hint, depth);
 
         items.push(ListItemM {
             sm: RevealSm::new(RevealState::Rendered),
