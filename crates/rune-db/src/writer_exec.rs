@@ -195,11 +195,12 @@ pub(crate) fn merge_progress(
 
 pub(crate) fn merge_close(
     conn: &mut Connection,
+    liveness_check: &LivenessCheckFn,
     session_id: SessionId,
     doc_id: DocId,
     state: crate::merge_state::MergeCloseState,
 ) -> Result<OpOutcome, Error> {
-    crate::merge_state::merge_close(conn, doc_id, session_id, state)?;
+    crate::merge_state::merge_close(conn, liveness_check.as_ref(), doc_id, session_id, state)?;
     Ok(OpOutcome::None)
 }
 

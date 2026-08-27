@@ -166,6 +166,7 @@ pub(crate) enum OpKind {
     },
     MergeClose {
         session_id: SessionId,
+        liveness_check: LivenessCheckFn,
         doc_id: DocId,
         state: crate::merge_state::MergeCloseState,
     },

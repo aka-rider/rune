@@ -201,8 +201,10 @@ impl Store {
         doc_id: DocId,
         state: crate::merge_state::MergeCloseState,
     ) -> Result<u64, Error> {
+        let liveness_check = self.liveness_check();
         self.enqueue(OpKind::MergeClose {
             session_id: self.session_id,
+            liveness_check,
             doc_id,
             state,
         })

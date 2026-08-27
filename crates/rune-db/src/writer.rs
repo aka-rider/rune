@@ -370,9 +370,10 @@ fn execute_op(
         ),
         OpKind::MergeClose {
             session_id,
+            liveness_check,
             doc_id,
             state,
-        } => exec::merge_close(conn, session_id, doc_id, state),
+        } => exec::merge_close(conn, &liveness_check, session_id, doc_id, state),
 
         // Materialize/rename ops.
         OpKind::MaterializePrepare {

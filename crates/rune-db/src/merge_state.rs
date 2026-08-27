@@ -64,7 +64,9 @@ pub(crate) fn merge_open(
     let at = crate::session::format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
         for (row_id, session_id) in active_rows_newest_first(tx, args.doc_id)? {
-            if session_id != args.session_id && !is_session_alive(tx, liveness_check, session_id)? {
+            let stale =
+                session_id == args.session_id || !is_session_alive(tx, liveness_check, session_id)?;
+            if stale {
                 set_state(tx, row_id, MergeRowState::Abandoned)?;
             }
         }
@@ -114,12 +116,17 @@ pub(crate) fn merge_progress(
 
 pub(crate) fn merge_close(
     conn: &mut Connection,
+    liveness_check: &dyn Fn(i64, &str) -> bool,
     doc_id: DocId,
     session_id: SessionId,
     state: MergeCloseState,
 ) -> Result<(), Error> {
     retry::with_retry(conn, |tx| {
-        let Some(row_id) = newest_active_owned(tx, doc_id, session_id)? else {
+        let target = match newest_active_owned(tx, doc_id, session_id)? {
+            Some(row_id) => Some(row_id),
+            None => newest_active_dead(tx, liveness_check, doc_id)?,
+        };
+        let Some(row_id) = target else {
             return Ok(());
         };
         set_state(tx, row_id, state.into())
@@ -313,15 +320,27 @@ mod tests {
         assert_eq!(marker_hash, observation::hash_bytes(b"markers'"));
         assert_eq!(state, MergeRowState::Active.as_str());
 
-        merge_close(&mut conn, doc_id, session_id, MergeCloseState::Completed)
-            .expect("merge_close");
+        merge_close(
+            &mut conn,
+            &alive,
+            doc_id,
+            session_id,
+            MergeCloseState::Completed,
+        )
+        .expect("merge_close");
         assert_eq!(
             row_states(&conn, doc_id),
             vec![(session_id, MergeRowState::Completed.as_str().to_string())]
         );
 
-        merge_close(&mut conn, doc_id, session_id, MergeCloseState::Completed)
-            .expect("close with no active row is a no-op");
+        merge_close(
+            &mut conn,
+            &alive,
+            doc_id,
+            session_id,
+            MergeCloseState::Completed,
+        )
+        .expect("close with no active row is a no-op");
     }
 
     #[test]
@@ -485,5 +504,82 @@ mod tests {
             row_states(&conn, doc_id),
             vec![(session_a, MergeRowState::Active.as_str().to_string())]
         );
+    }
+
+    #[test]
+    fn merge_close_closes_a_resumed_but_not_re_owned_row() {
+        let mut conn = open();
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+        let doc_id = seed_doc(&conn);
+        let theirs = seed_observation(&mut conn, doc_id, session_a);
+        open_merge(
+            &mut conn,
+            &alive,
+            doc_id,
+            session_a,
+            theirs,
+            "working form",
+            "[7]",
+        );
+
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let resumed = retry::with_retry(&mut conn, |tx| {
+            resume_candidate(tx, &dead, doc_id, &observation::hash_bytes(b"working form"))
+        })
+        .expect("resume_candidate");
+        assert!(resumed.is_some(), "test setup: the row must resume");
+        assert_eq!(
+            row_states(&conn, doc_id),
+            vec![(session_a, MergeRowState::Active.as_str().to_string())],
+            "test setup: resume_candidate never re-owns the row"
+        );
+
+        merge_close(
+            &mut conn,
+            &dead,
+            doc_id,
+            session_b,
+            MergeCloseState::Completed,
+        )
+        .expect("merge_close");
+
+        assert_eq!(
+            row_states(&conn, doc_id),
+            vec![(session_a, MergeRowState::Completed.as_str().to_string())],
+            "the resumed row must close even though session_b never re-owned it"
+        );
+    }
+
+    #[test]
+    fn merge_open_is_idempotent_for_the_same_session_and_doc() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id = seed_doc(&conn);
+        let theirs = seed_observation(&mut conn, doc_id, session_id);
+
+        open_merge(&mut conn, &alive, doc_id, session_id, theirs, "m1", "[1]");
+        open_merge(&mut conn, &alive, doc_id, session_id, theirs, "m2", "[2]");
+
+        let active_rows: Vec<(SessionId, String)> = row_states(&conn, doc_id)
+            .into_iter()
+            .filter(|(_, state)| state == MergeRowState::Active.as_str())
+            .collect();
+        assert_eq!(
+            active_rows,
+            vec![(session_id, MergeRowState::Active.as_str().to_string())],
+            "exactly one active row may survive a second open for the same session+doc"
+        );
+        let (blocks, state): (String, String) = conn
+            .query_row(
+                "SELECT blocks, state FROM merges WHERE doc_id=?1 AND state='active'",
+                params![doc_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("row");
+        assert_eq!(blocks, "[2]", "the surviving row must be the newer open");
+        assert_eq!(state, MergeRowState::Active.as_str());
     }
 }
