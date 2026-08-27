@@ -89,4 +89,19 @@ mod tests {
     fn decode_svg_rejects_garbage() {
         assert!(decode_svg(b"not an svg document").is_err());
     }
+
+    #[test]
+    fn every_variant_display_message_is_non_empty() {
+        assert!(!SvgError::EmptyCanvas.to_string().is_empty());
+        assert!(!SvgError::Rasterize.to_string().is_empty());
+        let err = decode_svg(b"not an svg document").expect_err("garbage must fail to parse");
+        assert!(matches!(err, SvgError::Parse(_)));
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn parse_error_variant_exposes_its_inner_error_as_the_source() {
+        let err = decode_svg(b"not an svg document").expect_err("garbage must fail to parse");
+        assert!(std::error::Error::source(&err).is_some());
+    }
 }

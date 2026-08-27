@@ -66,4 +66,26 @@ mod tests {
         assert_eq!(ImageId::from_masked(MAX_ID - 1).next().get(), MAX_ID);
         assert_eq!(ImageId::from_masked(1).next().get(), 2);
     }
+
+    #[test]
+    fn frame_id_seed_is_deterministic_for_the_same_path_and_frame() {
+        assert_eq!(frame_id_seed("/a/b.gif", 3), frame_id_seed("/a/b.gif", 3));
+    }
+
+    #[test]
+    fn frame_id_seed_differs_across_frames_of_the_same_path() {
+        assert_ne!(frame_id_seed("/a/b.gif", 3), frame_id_seed("/a/b.gif", 4));
+    }
+
+    #[test]
+    fn frame_id_seed_differs_across_paths_at_the_same_frame() {
+        assert_ne!(frame_id_seed("/a/b.gif", 3), frame_id_seed("/a/c.gif", 3));
+    }
+
+    #[test]
+    fn frame_id_seed_is_built_from_the_path_and_frame_it_is_given() {
+        let seed = frame_id_seed("/a/b.gif", 3);
+        assert!(seed.contains("/a/b.gif"));
+        assert!(seed.contains('3'));
+    }
 }

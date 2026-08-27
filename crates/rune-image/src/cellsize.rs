@@ -45,3 +45,54 @@ pub fn fit_cells(px: PixelSize, max: CellFootprint, cs: CellSize) -> CellFootpri
         rows: rows.max(1),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_width_image_occupies_no_cells() {
+        let px = PixelSize { w: 0, h: 10 };
+        let max = CellFootprint { cols: 5, rows: 5 };
+        assert_eq!(
+            fit_cells(px, max, DEFAULT_CELL_SIZE),
+            CellFootprint { cols: 0, rows: 0 }
+        );
+    }
+
+    #[test]
+    fn zero_height_image_occupies_no_cells() {
+        let px = PixelSize { w: 10, h: 0 };
+        let max = CellFootprint { cols: 5, rows: 5 };
+        assert_eq!(
+            fit_cells(px, max, DEFAULT_CELL_SIZE),
+            CellFootprint { cols: 0, rows: 0 }
+        );
+    }
+
+    #[test]
+    fn zero_width_cell_size_occupies_no_cells() {
+        let px = PixelSize { w: 10, h: 10 };
+        let max = CellFootprint { cols: 5, rows: 5 };
+        let cs = CellSize { w: 0, h: 16 };
+        assert_eq!(fit_cells(px, max, cs), CellFootprint { cols: 0, rows: 0 });
+    }
+
+    #[test]
+    fn zero_height_cell_size_occupies_no_cells() {
+        let px = PixelSize { w: 10, h: 10 };
+        let max = CellFootprint { cols: 5, rows: 5 };
+        let cs = CellSize { w: 8, h: 0 };
+        assert_eq!(fit_cells(px, max, cs), CellFootprint { cols: 0, rows: 0 });
+    }
+
+    #[test]
+    fn tall_narrow_image_scales_down_to_fit_only_the_row_ceiling() {
+        let px = PixelSize { w: 8, h: 1600 };
+        let max = CellFootprint { cols: 50, rows: 10 };
+        let fitted = fit_cells(px, max, DEFAULT_CELL_SIZE);
+        assert!(fitted.cols <= max.cols);
+        assert_eq!(fitted.rows, max.rows);
+        assert_eq!(fitted, CellFootprint { cols: 1, rows: 10 });
+    }
+}

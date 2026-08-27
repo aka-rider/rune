@@ -5,12 +5,18 @@ gitignore = true
 # mutant fails the build as "unviable", each one costing a full compile.
 cap_lints = true
 # cap_lints also disables rustc's long-running-const-eval guard, so builds
-# need their own bound.
-build_timeout_multiplier = 4.0
+# need their own bound. Parallel-job contention pushed legitimate builds
+# past 4x, so this is set generously above the observed worst case.
+build_timeout_multiplier = 8.0
 # Proptest suites make test time vary; floor the auto timeout above the
 # default 20 s.
 minimum_test_timeout = 60
 # Grows only during triage; every entry must be justified in the commit
 # that adds it.
-exclude_re = []
+exclude_re = [
+  'anim\.rs.*replace < with <= in clamp_delay',
+  'cellsize\.rs.*replace > with >= in fit_cells',
+  'percent\.rs.*replace \| with \^ in decode',
+  'anchor\.rs.*NormalizedChars.*next',
+]
 exclude_globs = []

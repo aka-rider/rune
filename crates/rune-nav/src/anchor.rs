@@ -81,4 +81,9 @@ mod tests {
     fn anchor_matches_rejects_a_genuine_mismatch() {
         assert!(!anchor_matches("Setup", "Teardown"));
     }
+
+    #[test]
+    fn anchor_matches_trims_leading_and_trailing_whitespace() {
+        assert!(anchor_matches("  Setup  ", "setup"));
+    }
 }

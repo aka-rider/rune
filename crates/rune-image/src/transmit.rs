@@ -229,6 +229,20 @@ mod tests {
         String::from_utf8(transmit.to_bytes()).expect("utf-8")
     }
 
+    fn decoded_png_dimensions(transmit: &Transmit) -> (u32, u32) {
+        let text = flat(transmit);
+        let payload_b64 = text
+            .split_once(';')
+            .expect("payload separator present")
+            .1
+            .strip_suffix(APC_OUTRO)
+            .expect("outro present");
+        let png_bytes = BASE64.decode(payload_b64).expect("valid base64 payload");
+        let img = image::load_from_memory_with_format(&png_bytes, image::ImageFormat::Png)
+            .expect("valid png payload");
+        (img.width(), img.height())
+    }
+
     #[test]
     fn every_chunk_is_one_self_contained_apc_and_they_concatenate_to_the_stream() {
         let payload = "A".repeat(MAX_CHUNK_SIZE * 2 + 7);
@@ -358,6 +372,71 @@ mod tests {
         // (covered for byte-size purposes separately, by `cap_pixel_count`'s
         // own unit tests against near-incompressible dimensions).
         assert!(seq.len() < 2_000_000, "seq.len() = {}", seq.len());
+    }
+
+    #[test]
+    fn fit_and_encode_leaves_a_source_well_under_the_transmit_pixel_ceiling_unscaled() {
+        let decoded = Decoded {
+            image: image::RgbaImage::from_pixel(300, 300, image::Rgba([4, 4, 4, 255])),
+            width: 300,
+            height: 300,
+            format: crate::decode::Format::Png,
+        };
+        let cell = CellSize { w: 8, h: 16 };
+        let transmit = fit_and_encode(&decoded, 1, 1000, 1000, cell).expect("encode");
+        assert_eq!(decoded_png_dimensions(&transmit), (300, 300));
+    }
+
+    #[test]
+    fn fit_and_encode_multiplies_the_requested_cell_box_by_the_cell_pixel_size() {
+        let decoded = Decoded {
+            image: image::RgbaImage::from_pixel(1000, 1000, image::Rgba([7, 7, 7, 255])),
+            width: 1000,
+            height: 1000,
+            format: crate::decode::Format::Png,
+        };
+        let cell = CellSize { w: 20, h: 10 };
+        let transmit = fit_and_encode(&decoded, 1, 10, 5, cell).expect("encode");
+        assert_eq!(decoded_png_dimensions(&transmit), (50, 50));
+    }
+
+    #[test]
+    fn into_chunks_preserves_every_byte_and_chunk_boundary() {
+        let payload = "A".repeat(MAX_CHUNK_SIZE * 2 + 7);
+        let transmit = frame_transmit(&payload, 9, 3, 4);
+        let expected_chunks = transmit.chunks().to_vec();
+        let expected_bytes = transmit.to_bytes();
+
+        let chunks = transmit.into_chunks();
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks, expected_chunks);
+        assert_eq!(chunks.concat(), expected_bytes);
+    }
+
+    #[test]
+    fn loop_chunks_never_exceed_the_protocol_chunk_size_limit() {
+        let payload = "A".repeat(MAX_CHUNK_SIZE * 2 + 7);
+        let transmit = frame_transmit(&payload, 9, 3, 4);
+        for (i, chunk) in transmit.chunks().iter().take(2).enumerate() {
+            let text = std::str::from_utf8(chunk).expect("chunk is utf-8");
+            let payload_part = text
+                .split_once(';')
+                .expect("payload separator present")
+                .1
+                .strip_suffix(APC_OUTRO)
+                .expect("outro present");
+            assert_eq!(
+                payload_part.len(),
+                MAX_CHUNK_SIZE,
+                "chunk {i} does not carry exactly the protocol chunk size"
+            );
+        }
+    }
+
+    #[test]
+    fn terminator_is_the_exact_empty_final_chunk_escape_sequence() {
+        assert_eq!(encode_transmit_terminator(), "\x1b_Gq=2,m=0\x1b\\");
     }
 
     #[test]

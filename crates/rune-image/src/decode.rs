@@ -190,6 +190,73 @@ mod tests {
         assert_eq!(decoded.image.get_pixel(0, 0).0, [10, 200, 30, 255]);
     }
 
+    fn encode(w: u32, h: u32, format: image::ImageFormat) -> Vec<u8> {
+        let img = if format == image::ImageFormat::Jpeg {
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                w,
+                h,
+                image::Rgb([10, 200, 30]),
+            ))
+        } else {
+            image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                w,
+                h,
+                image::Rgba([10, 200, 30, 255]),
+            ))
+        };
+        let mut buf = Vec::new();
+        let mut cursor = Cursor::new(&mut buf);
+        img.write_to(&mut cursor, format)
+            .expect("encode test image");
+        buf
+    }
+
+    #[test]
+    fn probe_dimensions_reports_jpeg() {
+        let data = encode(6, 3, image::ImageFormat::Jpeg);
+        let (w, h, format) = probe_dimensions(&data).expect("probe jpeg");
+        assert_eq!((w, h, format), (6, 3, Format::Jpeg));
+    }
+
+    #[test]
+    fn probe_dimensions_reports_gif() {
+        let data = encode(6, 3, image::ImageFormat::Gif);
+        let (w, h, format) = probe_dimensions(&data).expect("probe gif");
+        assert_eq!((w, h, format), (6, 3, Format::Gif));
+    }
+
+    #[test]
+    fn probe_dimensions_reports_bmp() {
+        let data = encode(6, 3, image::ImageFormat::Bmp);
+        let (w, h, format) = probe_dimensions(&data).expect("probe bmp");
+        assert_eq!((w, h, format), (6, 3, Format::Bmp));
+    }
+
+    #[test]
+    fn probe_dimensions_reports_tiff() {
+        let data = encode(6, 3, image::ImageFormat::Tiff);
+        let (w, h, format) = probe_dimensions(&data).expect("probe tiff");
+        assert_eq!((w, h, format), (6, 3, Format::Tiff));
+    }
+
+    #[test]
+    fn looks_like_svg_accepts_an_xml_prologue_with_no_doctype_or_comment() {
+        let data = br#"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>"#;
+        assert_eq!(sniff_format(data), Some(Format::Svg));
+    }
+
+    #[test]
+    fn looks_like_svg_accepts_a_doctype_prologue_with_no_xml_or_comment() {
+        let data = b"<!doctype svg><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert_eq!(sniff_format(data), Some(Format::Svg));
+    }
+
+    #[test]
+    fn looks_like_svg_accepts_a_leading_comment_with_no_xml_or_doctype() {
+        let data = b"<!-- comment --><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert_eq!(sniff_format(data), Some(Format::Svg));
+    }
+
     #[test]
     fn extensions_reflect_whether_the_svg_decoder_is_actually_compiled_in() {
         let exts = extensions();
