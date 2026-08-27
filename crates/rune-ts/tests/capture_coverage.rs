@@ -47,6 +47,26 @@ fn every_grammar_capture_resolves_or_is_deliberately_ignored() {
 }
 
 #[test]
+fn declared_capture_names_lists_known_aliases_and_ignores() {
+    let names: Vec<_> = declared_capture_names().collect();
+    assert!(
+        names.contains(&"field"),
+        "expected the field alias to be declared, got {names:?}"
+    );
+    assert!(
+        names.contains(&"spell"),
+        "expected the spell ignore entry to be declared, got {names:?}"
+    );
+}
+
+#[test]
+fn an_unregistered_capture_name_is_not_accounted_for() {
+    assert!(!capture_is_accounted_for(
+        "definitely_not_a_real_capture_xyz"
+    ));
+}
+
+#[test]
 fn every_declared_capture_name_is_still_used_by_some_grammar() {
     let used = all_compiled_capture_names();
     for declared in declared_capture_names() {

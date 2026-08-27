@@ -25,6 +25,26 @@ fn every_language_loads_and_its_query_compiles() {
 }
 
 #[test]
+fn registry_is_a_stable_shared_instance() {
+    let first = registry();
+    let rust = LangId::from_name("rust").expect("rust is a known language");
+    assert!(
+        first.get(rust).is_some(),
+        "rust must be resolvable via the shared registry()"
+    );
+    let second = registry();
+    assert!(
+        std::ptr::eq(first, second),
+        "registry() must hand back the same cached instance on every call, not a fresh one"
+    );
+    assert_eq!(
+        second.names().count(),
+        22,
+        "the shared registry must list all 22 languages"
+    );
+}
+
+#[test]
 fn registry_compiles_only_requested_language() {
     let reg = registry::LanguageRegistry::new();
     assert_eq!(

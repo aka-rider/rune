@@ -121,6 +121,13 @@ fn spans_of(lang: &str, source: &str) -> Vec<(std::ops::Range<usize>, rune_synta
 }
 
 #[test]
+fn parsed_tree_source_returns_the_exact_input() {
+    let source = "fn f() {}";
+    let parsed = parse("rust", source, BUDGET).expect("parse succeeds");
+    assert_eq!(parsed.source(), source);
+}
+
+#[test]
 fn rust_string_escape_is_captured() {
     let source = "fn f() { let s = \"a\\nb\"; }";
     let escape = scope_table()

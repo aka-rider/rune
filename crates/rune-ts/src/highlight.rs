@@ -345,6 +345,7 @@ fn painter_order(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -366,5 +367,14 @@ mod tests {
                 "CAPTURE_ALIASES key @{alias} already resolves on its own, so its entry is dead"
             );
         }
+    }
+
+    #[test]
+    fn vec_conversion_yields_an_untruncated_result() {
+        let keyword = SCOPES.resolve("keyword").expect("keyword scope");
+        let spans = vec![(0..1, keyword), (2..3, keyword)];
+        let result: HighlightResult = spans.clone().into();
+        assert_eq!(result.spans, spans);
+        assert!(!result.truncated);
     }
 }

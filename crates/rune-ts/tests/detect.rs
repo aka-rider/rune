@@ -185,6 +185,68 @@ fn long_multibyte_content_does_not_panic() {
     let _ = detect(Some(Path::new("/x/m")), &content);
 }
 
+/// A `vim:` occurrence directly preceded by a non-whitespace character is
+/// not a modeline marker and must be rejected, even though a valid `ft=`
+/// token sits right after it.
+#[test]
+fn vim_marker_preceded_by_non_whitespace_is_rejected() {
+    assert_eq!(
+        detect(Some(Path::new("/x/a.txt")), "Xvim: ft=python\n"),
+        None
+    );
+}
+
+/// A `vim:` marker sitting at the very start of a line (nothing precedes
+/// it) is accepted, the same as one preceded by whitespace.
+#[test]
+fn vim_marker_at_start_of_line_is_accepted() {
+    assert_eq!(
+        detect(Some(Path::new("/x/a.txt")), "vim: ft=python\n"),
+        Some(Detected::Lang(lang_id("python")))
+    );
+}
+
+/// Rejecting one `vim:` occurrence (bad preceding character) must not
+/// corrupt the scan position used to find a later, validly-preceded
+/// occurrence on the same line.
+#[test]
+fn second_vim_marker_is_still_found_after_a_rejected_first_one() {
+    assert_eq!(
+        detect(Some(Path::new("/x/a.txt")), "01234vim: vim: ft=python\n"),
+        Some(Detected::Lang(lang_id("python")))
+    );
+}
+
+/// The emacs `mode:` form must be read from the modeline itself, not
+/// coincidentally reproduced by the file's own extension.
+#[test]
+fn emacs_mode_form_is_read_without_extension_help() {
+    assert_eq!(
+        detect(Some(Path::new("/x/a.txt")), "# -*- mode: ruby -*-\n"),
+        Some(Detected::Lang(lang_id("ruby")))
+    );
+}
+
+/// The emacs `-*-` opener at the very start of a line (nothing precedes
+/// it) is still recognized.
+#[test]
+fn emacs_mode_form_at_start_of_line_is_read() {
+    assert_eq!(
+        detect(Some(Path::new("/x/a.txt")), "-*- mode: ruby -*-\n"),
+        Some(Detected::Lang(lang_id("ruby")))
+    );
+}
+
+/// The bare emacs form `-*- NAME -*-` (no `mode:` key) is read as a
+/// language name on its own.
+#[test]
+fn emacs_bare_name_form_without_mode_key_is_read() {
+    assert_eq!(
+        detect(Some(Path::new("/x/a.txt")), "# -*- python -*-\n"),
+        Some(Detected::Lang(lang_id("python")))
+    );
+}
+
 /// Every value in `FILENAMES` and `INTERPRETERS` must be a spelling
 /// `lang::resolve` already accepts, so neither table can silently name a
 /// grammar that does not exist.

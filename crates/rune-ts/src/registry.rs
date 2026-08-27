@@ -110,3 +110,24 @@ pub fn registry() -> &'static LanguageRegistry {
     static REGISTRY: LazyLock<LanguageRegistry> = LazyLock::new(LanguageRegistry::new);
     &REGISTRY
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failures_reports_a_failed_language() {
+        let def: &'static LangDef = &LANGUAGES[0];
+        let slot: LanguageEntry = OnceLock::new();
+        slot.set(Err("synthetic failure".to_string()))
+            .expect("freshly created OnceLock accepts the first set");
+        let registry = LanguageRegistry {
+            entries: vec![Some((def, slot))],
+        };
+        assert_eq!(
+            registry.failures(),
+            vec![(def.name, "synthetic failure".to_string())]
+        );
+    }
+}
