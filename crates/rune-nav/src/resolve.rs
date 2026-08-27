@@ -167,3 +167,8 @@ fn is_regular(vfs: &dyn Vfs, p: &Path) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 #[path = "resolve_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#[path = "resolve_extension_root_tests.rs"]
+mod extension_root_tests;

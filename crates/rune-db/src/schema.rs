@@ -358,3 +358,7 @@ fn reconcile_additive_columns(conn: &Connection) -> Result<(), Error> {
 #[cfg(test)]
 #[path = "schema_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "schema_identifier_versioning_tests.rs"]
+mod identifier_versioning_tests;

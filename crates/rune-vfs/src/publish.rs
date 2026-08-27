@@ -246,3 +246,7 @@ pub fn put<V: Vfs + ?Sized>(
 #[cfg(test)]
 #[path = "publish_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "publish_conditions_tests.rs"]
+mod conditions_tests;
