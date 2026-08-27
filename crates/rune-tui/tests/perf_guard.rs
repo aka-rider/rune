@@ -4,6 +4,13 @@
 //! never any spawned `Cmd`'s own off-thread work (a highlight parse, a
 //! save) — stays bounded on a large document.
 //!
+//! O(file) per keystroke is the deliberate design ceiling: the buffer's
+//! full content copy, line-index clone, memcmp, and journal clones per
+//! edit batch buy value semantics that make the undo journal and the
+//! recovery store trivially correct. A rope behind the same value-semantics
+//! facade is the known successor if this guard's fixture size ever stops
+//! matching real documents — grow the fixture before reaching for the rope.
+//!
 //! Plus the PER-FRAME render cost, which `sync_view` never reaches:
 //! `render::build_rows` runs once per draw, on every draw, whether or not
 //! anything changed, so work that creeps into it is paid at frame rate. The

@@ -105,4 +105,4 @@ Before adding any style or color, read the existing styles. One meaning per colo
 
 ## 13. The Ledger
 
-`TODO.md` at the repo root is the refactor ledger: known violations of these rules are inventoried there and must not spread. New code follows every rule above even where neighboring legacy code does not.
+Known violations of these rules are inventoried in `TODO.md` at the repo root and must not spread; new code follows every rule above even where neighboring legacy code does not. The ledger exists only while violations are known — an absent `TODO.md` means none are. Finding a violation recreates the file with its entry; the commit that fixes an entry deletes it, and deleting the last entry deletes the file.

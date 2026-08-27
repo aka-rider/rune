@@ -1,3 +1,29 @@
+# Mutation-testing state of record (relocated from the retired TODO.md
+# ledger, 2026-08-27):
+# - Every crate except rune-tui and rune-fuzz stands at zero unjustified
+#   missed mutants: rune-image 0/143, rune-nav 0/56, rune-syntax 0/397,
+#   rune-core 0/309, rune-ts 0/103, rune-cli 1/99, rune-md 2/869,
+#   rune-merge 0/119, rune-vfs 0/229, rune-db 0/770. rune-tui (51k LOC) and
+#   rune-fuzz (the harness itself) are out of scope by size and role.
+# - Known residual misses, documented rather than excluded: rune-cli
+#   AppGuard::drop (needs a PTY harness); rune-md's
+#   assert_no_duplicate_content pair (needs a document violating the
+#   invariant; 100k+ fuzz inputs found none).
+# - Timeouts in the tallies are hang-kills: the mutant makes an existing
+#   test loop or wait forever, so the timeout itself is the catch.
+# - Every pass so far ran on Linux; #[cfg(target_os = "macos")] bodies
+#   (rune-vfs disk exchange/fsync, rune-db session liveness) generate no
+#   mutants here and several exclusions below rest on exactly that proof.
+#   A macOS run is required before "0 missed" covers the durability paths,
+#   and those exclusions must be re-justified there.
+# - Some exclude_re entries pin file:line and need re-justification when
+#   those lines move (noted in their commits).
+# - CI follow-up: a PR-scoped `cargo mutants --in-diff` job once a macOS
+#   runner budget exists.
+# - The --skip test-name filters in the Makefile matter: dependency_guard
+#   (rune-nav) and the source-grep gate in rune-md read the tree, not the
+#   mutant, and false-catch mutants if left in.
+#
 # Keep .devbox (self-gitignored nix store, ~1.5 GB) and fuzz artifacts out of
 # the per-job tree copies; target/ is always excluded regardless of this flag.
 gitignore = true
