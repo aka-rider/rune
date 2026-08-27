@@ -485,6 +485,23 @@ mod tests {
         }
     }
 
+    /// A list met at `depth == 99` (inside 99 blockquote levels) is still a
+    /// real `List`; at `depth == 100` the `BlockKind::List` cap guard is the
+    /// only thing degrading it to `Verbatim` — a guard hard-wired to `false`
+    /// would keep nesting real lists forever.
+    #[test]
+    fn a_list_at_the_container_depth_cap_degrades_to_verbatim() {
+        let mut under = nested_blockquotes(99);
+        under.push_str(&">".repeat(99));
+        under.push_str(" - x\n");
+        assert!(matches!(deepest_kind(&under), Block::List(_)));
+
+        let mut over = nested_blockquotes(100);
+        over.push_str(&">".repeat(100));
+        over.push_str(" - x\n");
+        assert!(matches!(deepest_kind(&over), Block::Verbatim(_)));
+    }
+
     /// Exactly 100 real blockquote levels (the 100th built at `depth == 99`,
     /// still under the cap) still nest normally; a 101st (built at
     /// `depth == 100`) is the first to degrade to `Verbatim` — the precise

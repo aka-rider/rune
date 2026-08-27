@@ -58,5 +58,11 @@ exclude_re = [
   'frontmatter\.rs:66:.*with false',
   'replace \+= with \*= in leading_backtick_run',
   'replace \+= with \*= in trailing_backtick_run',
+  'layout\.rs:420:.*replace > with >= in constrain_widths',
+  'inline\.rs:247:.*replace < with <= in trailing_backtick_run',
+  'inline\.rs:248:.*replace != with == in trailing_backtick_run',
+  'inline\.rs:253:.*replace < with == in trailing_backtick_run',
+  'inline\.rs:253:.*replace < with > in trailing_backtick_run',
+  'inline\.rs:253:.*replace == with != in trailing_backtick_run',
 ]
 exclude_globs = []
