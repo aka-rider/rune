@@ -1,11 +1,13 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rune_vfs::Vfs;
+use rune_vfs::{PutCondition, PutOutcome, Vfs};
 
 use crate::app::App;
 use crate::commands::strip_trailing;
 use crate::document::{Document, DocumentId, ReadOnly};
+use crate::materialize_ack::SaveRace;
 use crate::messages;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 
@@ -136,32 +138,81 @@ fn save_cmd(
     version: u64,
 ) -> Cmd {
     Cmd::save(move || {
-        let (result, durable) = match rune_vfs::put(
+        let (result, durable, stray_temp, race) = match rune_vfs::put(
             vfs.as_ref(),
             &path,
             &bytes,
-            rune_vfs::PutCondition::Force { expect: None },
+            PutCondition::Force { expect: None },
         ) {
-            Ok(
-                rune_vfs::PutOutcome::Committed { durable, .. }
-                | rune_vfs::PutOutcome::Raced { durable, .. },
-            ) => (Ok(()), durable),
+            Ok(PutOutcome::Committed {
+                durable,
+                stray_temp,
+                ..
+            }) => (Ok(()), durable, stray_temp, None),
+            Ok(PutOutcome::Raced {
+                durable,
+                stray_temp,
+                displaced,
+                ..
+            }) => {
+                let race = preserve_displaced(vfs.as_ref(), &path, &displaced.bytes);
+                (Ok(()), durable, stray_temp, Some(race))
+            }
             Ok(_) => (
                 Err(CmdError::Refused(
                     "save failed: unconditional publish refused".to_string(),
                 )),
                 true,
+                None,
+                None,
             ),
-            Err(e) => (Err(CmdError::Io(e)), true),
+            Err(e) => (Err(CmdError::Io(e)), true, None, None),
         };
         Some(Msg::SaveDone {
             id,
             ticket,
             version,
             result,
-            durable,
+            detail: crate::runtime::SaveOutcomeDetail {
+                durable,
+                stray_temp,
+                race,
+            },
         })
     })
+}
+
+/// A `Force { expect: None }` publish carries no informed baseline, so
+/// `rune_vfs::put` conservatively flags any pre-existing, differing content
+/// it displaced as `Raced` rather than silently discarding it — this
+/// direct-vfs fallback has no recovery store to hand those bytes to (that's
+/// exactly why it took this path), so it durably preserves them itself: a
+/// fresh, never-clobbered sibling file next to `path`, named in the message
+/// [`handle_save_done`] posts. A failure to write that sibling is reported
+/// too, never swallowed — the primary save already succeeded either way.
+fn preserve_displaced(vfs: &dyn Vfs, path: &Path, displaced: &[u8]) -> SaveRace {
+    let sibling = conflict_sibling_path(path);
+    match rune_vfs::put(vfs, &sibling, displaced, PutCondition::IfAbsent) {
+        Ok(PutOutcome::Committed { .. }) => SaveRace::Preserved(sibling),
+        Ok(other) => SaveRace::PreserveFailed(format!(
+            "could not claim a fresh sibling path at {}: {other:?}",
+            sibling.display()
+        )),
+        Err(e) => SaveRace::PreserveFailed(e.to_string()),
+    }
+}
+
+fn conflict_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!("{file_name}.conflict-{pid}-{nanos}"))
 }
 
 #[cfg(test)]

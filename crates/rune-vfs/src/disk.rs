@@ -8,7 +8,9 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use crate::{DirEntry, FileKind, Identity, Link, Stat, Vfs, sort_dir_entries, temp_name};
+use crate::{
+    DirEntry, FileKind, Identity, Link, MAX_SYMLINK_HOPS, Stat, Vfs, sort_dir_entries, temp_name,
+};
 
 /// Disk-backed `Vfs`. Uses a flagged atomic rename syscall for crash-safe
 /// publish; stateless (no synchronization needed).
@@ -99,6 +101,51 @@ impl Disk {
             )
         })
     }
+
+    /// See [`Vfs::resolve`]. `hops` counts symlink substitutions made so
+    /// far, mirroring `Mem::resolve`'s own `MAX_SYMLINK_HOPS` cycle guard —
+    /// a self-referential or mutually-dangling symlink chain must error
+    /// `ELOOP` rather than recurse forever.
+    fn resolve_leaf(path: &Path, hops: usize) -> io::Result<PathBuf> {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let hops = hops + 1;
+                if hops > MAX_SYMLINK_HOPS {
+                    return Err(io::Error::from_raw_os_error(libc::ELOOP));
+                }
+                let raw_target = fs::read_link(path).map_err(|e| {
+                    crate::wrap_io(e, format!("resolve {}: read_link", path.display()))
+                })?;
+                let target = if raw_target.is_absolute() {
+                    raw_target
+                } else {
+                    path.parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(raw_target)
+                };
+                Self::resolve_leaf(&target, hops)
+            }
+            Ok(_) => fs::canonicalize(path)
+                .map_err(|e| crate::wrap_io(e, format!("resolve {}", path.display()))),
+            Err(_) => match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => {
+                    let canonical_parent = fs::canonicalize(parent).map_err(|e| {
+                        crate::wrap_io(e, format!("resolve {}: resolve parent", path.display()))
+                    })?;
+                    Ok(canonical_parent.join(path.file_name().unwrap_or_default()))
+                }
+                _ => {
+                    let canonical_cwd = std::env::current_dir().map_err(|e| {
+                        crate::wrap_io(
+                            e,
+                            format!("resolve {}: get current directory", path.display()),
+                        )
+                    })?;
+                    Ok(canonical_cwd.join(path))
+                }
+            },
+        }
+    }
 }
 
 impl Vfs for Disk {
@@ -112,10 +159,14 @@ impl Vfs for Disk {
         // `create_new(true)` alone guarantees a brand-new file (it errors
         // `AlreadyExists` rather than opening one that's already there), so
         // there is never an existing file for `truncate(true)` to act on —
-        // that option is deliberately absent.
+        // that option is deliberately absent. `mode(0o600)` closes the
+        // window where the temp — full document plaintext — would
+        // otherwise sit at the umask-derived default (typically
+        // world-readable) until the permission copy below runs.
         let mut temp_file = OpenOptions::new()
             .create_new(true)
             .write(true)
+            .mode(0o600)
             .custom_flags(libc::O_CLOEXEC)
             .open(&temp)?;
 
@@ -133,11 +184,24 @@ impl Vfs for Disk {
 
         drop(temp_file);
 
-        // Best-effort: preserve the destination's permissions on the temp
-        // before it's ever published, so a SWAP publish doesn't change the
-        // file's mode.
+        // Preserve the destination's permissions on the temp before it's
+        // ever published, so a SWAP publish doesn't change the file's
+        // mode: after the publish, the destination IS the temp's inode, so
+        // a silently-swallowed failure here would permanently downgrade
+        // (or upgrade) the published file's mode with nothing to show for
+        // it. A brand-new document (no existing destination) has nothing
+        // to preserve and keeps the `mode(0o600)` set above.
         if let Ok(metadata) = fs::metadata(path) {
-            let _ = fs::set_permissions(&temp, metadata.permissions());
+            fs::set_permissions(&temp, metadata.permissions()).map_err(|e| {
+                let _ = fs::remove_file(&temp);
+                crate::wrap_io(
+                    e,
+                    format!(
+                        "write_durable {}: could not preserve the destination's permissions on the temp",
+                        path.display()
+                    ),
+                )
+            })?;
         }
 
         Ok(temp)
@@ -192,33 +256,16 @@ impl Vfs for Disk {
         fs::read_link(path).map_err(|e| crate::wrap_io(e, format!("read_link {}", path.display())))
     }
 
-    /// Canonicalize `path` via `fs::canonicalize`. When the leaf itself
-    /// doesn't exist yet (first save of a brand-new file — canonicalize
-    /// requires every path component to exist), only the parent directory
-    /// is resolved and the unresolved leaf name is re-joined, so a
-    /// symlinked parent directory still canonicalizes correctly.
+    /// Canonicalize `path`, following a symlink leaf to its target even when
+    /// that target doesn't exist (a dangling link) — the POSIX-editor
+    /// convention: writing through a dangling symlink creates the target,
+    /// never the link itself. When the final, non-symlink leaf doesn't
+    /// exist yet (first save of a brand-new file, or the dangling target
+    /// just followed to), only its parent directory is resolved and the
+    /// unresolved leaf name is re-joined, so a symlinked parent directory
+    /// still canonicalizes correctly.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
-        if path.exists() {
-            return fs::canonicalize(path)
-                .map_err(|e| crate::wrap_io(e, format!("resolve {}", path.display())));
-        }
-        match path.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => {
-                let canonical_parent = fs::canonicalize(parent).map_err(|e| {
-                    crate::wrap_io(e, format!("resolve {}: resolve parent", path.display()))
-                })?;
-                Ok(canonical_parent.join(path.file_name().unwrap_or_default()))
-            }
-            _ => {
-                let canonical_cwd = std::env::current_dir().map_err(|e| {
-                    crate::wrap_io(
-                        e,
-                        format!("resolve {}: get current directory", path.display()),
-                    )
-                })?;
-                Ok(canonical_cwd.join(path))
-            }
-        }
+        Self::resolve_leaf(path, 0)
     }
 
     fn mkdir_all(&self, path: &Path) -> io::Result<()> {

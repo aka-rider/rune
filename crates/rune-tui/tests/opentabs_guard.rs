@@ -17,7 +17,7 @@ use rune_tui::app;
 use rune_tui::commands::edit;
 use rune_tui::generation::Generation;
 use rune_tui::keymap::KeyCode;
-use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
+use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg, SaveOutcomeDetail};
 use rune_tui::workspace;
 
 use opentabs_common::{open_second, open_seeded, plain};
@@ -199,7 +199,11 @@ fn a_failed_save_ack_leaves_the_document_open() {
             ticket,
             version,
             result: Err(CmdError::Refused("disk full".to_string())),
-            durable: true,
+            detail: SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
         },
         &mut effects2,
     );

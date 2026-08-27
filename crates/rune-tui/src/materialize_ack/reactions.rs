@@ -12,6 +12,8 @@ use crate::messages;
 use crate::runtime::{CmdError, Effects};
 use crate::workspace;
 
+use super::SaveRace;
+
 #[path = "committed.rs"]
 mod committed;
 use committed::handle_committed_ack;
@@ -284,7 +286,7 @@ pub(crate) fn handle_save_done(
     ticket: crate::document::SaveTicket,
     version: u64,
     result: Result<(), CmdError>,
-    durable: bool,
+    detail: crate::runtime::SaveOutcomeDetail,
 ) {
     if app
         .doc(id)
@@ -299,8 +301,20 @@ pub(crate) fn handle_save_done(
             if let Some(doc) = app.doc_mut(id) {
                 doc.finish_save_ok(version);
             }
-            if !durable {
+            if !detail.durable {
                 messages::warn(app, super::DURABILITY_UNCONFIRMED_WARNING);
+            }
+            if let Some(temp) = &detail.stray_temp {
+                messages::warn(app, super::stray_temp_warning(temp));
+            }
+            match detail.race {
+                Some(SaveRace::Preserved(path)) => {
+                    messages::info(app, super::race_preserved_message(&path));
+                }
+                Some(SaveRace::PreserveFailed(reason)) => {
+                    messages::warn(app, super::race_preserve_failed_warning(&reason));
+                }
+                None => {}
             }
         }
         Err(e) => {

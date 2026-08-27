@@ -20,12 +20,6 @@ constitution and the entry is deleted in the same commit.
 
 ### DATA-LOSS
 
-#### The direct-vfs fallback save is an unconditional force-clobber that silently destroys foreign edits and drops the displaced bytes
-- **Where**: `crates/rune-tui/src/save.rs:130-165` (`save_cmd`), reached via `save_directly` from `:77-82` and `crates/rune-tui/src/save/materialize.rs:63-125`.
-- **Wrong**: any document that is not store-bound (no `db`, degraded store, `Replica::Detached` from a refused hydration / committed-ack detach) saves via `PutCondition::Force{expect:None}`. In vfs that sets `race_baseline = new_etag`, so an external change returns `PutOutcome::Raced{displaced,..}` carrying the foreign bytes — but `save_cmd` collapses `Committed | Raced` to `(Ok(()), durable)`, drops `displaced`, the temp holding it was already removed, and the `Ok` arm posts no message unless `!durable`. Concrete: open `note.md`, store hiccups and detaches the doc, another program rewrites `note.md`, ^S → the other program's edits are gone, no warning, no blob. The coordinated path posts "a concurrent external change was overwritten; its bytes were preserved" and records the blob; this path does neither.
-- **Instead**: the uncoordinated save must preserve and report `displaced` the way the coordinated path does, or refuse rather than force-clobber.
-- **Confidence**: confirmed.
-
 #### Concurrent `ALTER TABLE ADD COLUMN` degrades a whole session to a recovery-less in-memory store
 - **Where**: `crates/rune-db/src/schema.rs:299-336` (`reconcile_additive_columns`/`add_column`), with `crates/rune-db/src/open_ladder.rs:26-54`.
 - **Wrong**: `schema::apply` runs the additive-column reconcile on every open with no transaction and no retry. Just after an upgrade that adds a nullable column, two processes launching together both read it missing and both `ALTER TABLE ADD COLUMN`; the loser gets `duplicate column name` (or an unrecovered BUSY), `open_recovery_store` returns `Err`, and `open_ladder` falls through both file rungs to the in-memory rung. That session runs degraded — every unsaved edit for its lifetime goes to a private in-memory DB and is lost on exit.
@@ -65,12 +59,6 @@ constitution and the entry is deleted in the same commit.
 - **Wrong**: attacker-controlled SVG bytes go to a parser with internal-entity expansion enabled (not classic XXE — no external fetch — but a billion-laughs-shaped SVG is the obvious probe), and the image read path has no byte cap (same `None` as the OOM entry). rune makes no decision here.
 - **Instead**: cap SVG input size and pin a repro test; if roxmltree's caps are relied on, assert them.
 - **Confidence**: plausible.
-
-#### Save opens the temp world-readable and can silently downgrade a private file's mode
-- **Where**: `crates/rune-vfs/src/disk.rs:116-141`.
-- **Wrong**: two defects in one window. (a) the temp is opened without `.mode(0o600)`, so it is `0644`, and the full document content is `write_all`'d into it before `:139-141` copies the destination's permissions — a real window in which a `0600` document's plaintext is world-readable beside it. (b) `let _ = fs::set_permissions(&temp, …)` discards its error; because publish is `RENAME_SWAP`/`RENAME_EXCHANGE`, the destination afterwards is the temp's inode, so a failed `set_permissions` permanently downgrades the user's `0600` file to `0644` with no message ("no hidden failure modes"). Related ledger note: the swap also discards the destination's ACLs/xattrs/Finder-tags/quarantine on every save, since the published inode is brand-new.
-- **Instead**: set the mode at `open` time via `OpenOptionsExt::mode(0o600)` (fixes both halves) and surface any permission-copy failure.
-- **Confidence**: confirmed.
 
 #### `⌘⌫` / `^⌫` are globally bound to Trash, shadowing delete-to-line-start in every field and the editor
 - **Where**: `crates/rune-tui/src/global.rs:217-228` + `crates/rune-tui/src/dispatch.rs:271-274` (global table consulted before any focus routing); layering issue at `crates/rune-tui/src/pane_bar_policy.rs:30-37`.
@@ -152,12 +140,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: allocate whole-document IDs through a terminal-global probing allocator, not a content hash.
 - **Confidence**: confirmed (mechanism).
 
-#### Disk/Mem divergence: publishing through a dangling symlink
-- **Where**: `crates/rune-vfs/src/disk.rs:200-222` (`Disk::resolve` gates on `path.exists()`) vs `crates/rune-vfs/src/mem/mod.rs:277-299` + `path_util.rs:61-79`.
-- **Wrong**: `Disk::resolve` branches on `path.exists()` (follows the link, false for a dangling one) and returns the link's own path, so `put_force`→`stat`→`rename_excl` hits the existing dentry → `EEXIST`. `Mem::resolve` returns the *target* regardless of existence, so the publish creates the target and succeeds. Any test asserting this behavior passes on Mem and is false on Disk; on real disk, saving through a dangling symlink surfaces "File exists", the opposite of what happened.
-- **Instead**: make `Disk::resolve` and `Mem::follow_links` agree on the dangling-leaf case.
-- **Confidence**: confirmed (executed).
-
 #### `Document::hydrate` journals crash-recovery adoption with empty cursor sets
 - **Where**: `crates/rune-tui/src/document/mod.rs:287-292` — `cursors_before: Vec::new(), cursors_after: Vec::new()`.
 - **Wrong**: after crash recovery the first ⌘Z undoes the hydration and, because `cursors_before` is empty, restores a cursor set built from nothing. The empty cursor vectors are clearly wrong even if the buffer revert is intended.
@@ -184,7 +166,6 @@ constitution and the entry is deleted in the same commit.
 - **Snapshot debounce keys off `active_doc()` across a possible active-document change** — `crates/rune-tui/src/app.rs:227,235-238`; a message that switches tabs arms/omits the snapshot debounce for the wrong document (journaling is unaffected; only the snapshot anchor is mis-timed).
 - **`probe`'s deferral is silently lost when the file binding is missing** — `crates/rune-tui/src/db_enqueue_load.rs:144-149` returns whether or not it stashed `pending_probe`, so `last_sync` can stall until an unrelated event probes again.
 - **`unreachable!` panics in the update loop** — `crates/rune-tui/src/dispatch.rs:61-63,161-163` (`Msg::Timer`/`RecentsLoaded` illegal pairings) and `crates/rune-vfs/src/testing.rs:20` (non-`cfg(test)`-gated, compiles into the release binary). All unreachable today, but the constitution routes "can't happen" through `assert_invariant!` or an enum shape, never a panic.
-- **`put_if_absent` leaks the temp on a non-`AlreadyExists` publish failure** — `crates/rune-vfs/src/publish.rs:146,179` returns `Err` with no cleanup, while `put_force`'s create path wraps the same failure in `remove_temp_noting_failure`. Same operation, two policies.
 - **Latent subtraction underflow in the fixed-indent hint builder** — `crates/rune-md/src/parse/indent.rs:30` (`candidate_end - scan_start`); no current producer overshoots the line, but a sibling test constructs exactly such an overshooting hint elsewhere, and this is the one site in the family that would panic rather than clamp. Use `saturating_sub` or an early continue.
 - **Two documents on one file from differing path spellings** — `crates/rune-tui/src/workspace/mod.rs:211-216` compares `file_path` byte-for-byte, so a relative CLI positional and an absolute Explorer open of the same file yield two documents each with its own `db_id`/`FileBinding`; the shared-baseline probe and epoch bump then don't cover the pair. `materialize_ack/reactions.rs:215-224` resolves paths for the same hazard; the tab-dedup chokepoint does not.
 - **`looks_like_svg` lowercases the entire file to test a 4-byte prefix** — `crates/rune-image/src/decode.rs:57-74`; a 500 MB UTF-8 file costs a full copy before anything decides it isn't an image. Also `sniff_format` reports `Format::Svg` without the `svg` feature, which `decode_still` then fails on.

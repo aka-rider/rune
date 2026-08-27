@@ -20,7 +20,7 @@ use rune_tui::document::DocumentId;
 use rune_tui::guard::{GuardKind, GuardPrompt};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
-use rune_tui::runtime::{CmdError, Effects, Msg};
+use rune_tui::runtime::{CmdError, Effects, Msg, SaveOutcomeDetail};
 use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 fn test_app() -> App {
@@ -161,7 +161,11 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
             ticket,
             version,
             result: Ok(()),
-            durable: true,
+            detail: SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
         },
         &mut effects,
     );
@@ -194,7 +198,11 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
             ticket,
             version,
             result: Err(CmdError::Refused("disk full".to_string())),
-            durable: true,
+            detail: SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
         },
         &mut effects,
     );
@@ -243,7 +251,11 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
             ticket: ticket_a,
             version: version_a,
             result: Ok(()),
-            durable: true,
+            detail: SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
         },
         &mut effects,
     );
@@ -259,7 +271,11 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
             ticket: ticket_b,
             version: version_b,
             result: Ok(()),
-            durable: true,
+            detail: SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
         },
         &mut effects,
     );
@@ -303,7 +319,11 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
             ticket: ticket_a,
             version: version_a,
             result: Ok(()),
-            durable: true,
+            detail: SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
         },
         &mut effects,
     );

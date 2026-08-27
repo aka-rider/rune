@@ -25,6 +25,29 @@ pub(crate) fn stray_temp_warning(temp: &Path) -> String {
     )
 }
 
+/// What became of the bytes an uncoordinated (no store binding)
+/// direct-`vfs` save displaced — that path has no recovery store to record
+/// them into, so `save::save_cmd` preserves them itself and reports the
+/// outcome here for [`super::handle_save_done`] to surface.
+#[derive(Debug)]
+pub enum SaveRace {
+    Preserved(std::path::PathBuf),
+    PreserveFailed(String),
+}
+
+pub(crate) fn race_preserved_message(path: &Path) -> String {
+    format!(
+        "saved \u{2014} content already on disk was replaced; the previous version was kept at {}",
+        path.display()
+    )
+}
+
+pub(crate) fn race_preserve_failed_warning(reason: &str) -> String {
+    format!(
+        "saved \u{2014} content already on disk was replaced, but the previous version could not be preserved: {reason}"
+    )
+}
+
 pub(crate) const SAVE_REFUSED_DISK_CHANGED: &str =
     "save refused \u{2014} the file changed on disk since it was opened";
 

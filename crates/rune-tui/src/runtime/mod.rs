@@ -72,6 +72,18 @@ impl From<rune_image::ImageError> for CmdError {
     }
 }
 
+/// `Msg::SaveDone`'s success-side facts, bundled so the message (and
+/// [`crate::materialize_ack::handle_save_done`], which unpacks it) don't
+/// carry them as three separate parameters: `durable` matters only when
+/// `result` is `Ok`, and `stray_temp`/`race` are independent, optional
+/// facts about that same successful publish.
+#[derive(Debug)]
+pub struct SaveOutcomeDetail {
+    pub durable: bool,
+    pub stray_temp: Option<PathBuf>,
+    pub race: Option<crate::materialize_ack::SaveRace>,
+}
+
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
@@ -88,7 +100,7 @@ pub enum Msg {
         ticket: crate::document::SaveTicket,
         version: u64,
         result: Result<(), CmdError>,
-        durable: bool,
+        detail: SaveOutcomeDetail,
     },
     Timer {
         key: crate::runtime::TimerKey,

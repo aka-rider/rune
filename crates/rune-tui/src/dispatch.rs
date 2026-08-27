@@ -31,8 +31,8 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             ticket,
             version,
             result,
-            durable,
-        } => materialize_ack::handle_save_done(app, id, ticket, version, result, durable),
+            detail,
+        } => materialize_ack::handle_save_done(app, id, ticket, version, result, detail),
         Msg::Timer { key, generation } => match key {
             TimerKey::QuitConfirm => {
                 let generation = crate::generation::QuitGen::from_raw(generation);

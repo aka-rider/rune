@@ -96,8 +96,10 @@ fn finish_over_existing<V: Vfs + ?Sized>(
     // The publish already took effect: a failure reading the displaced
     // bytes back off the temp is NOT a failed save. The temp is kept — it
     // may hold the sole copy of the displaced content — and the raced-ness
-    // stays unclassified, so this reports a plain commit.
+    // stays unclassified, so this reports a plain commit that names the
+    // kept temp via `stray_temp`.
     let Ok(displaced_bytes) = vfs.read(temp) else {
+        published.stray_temp = Some(temp.to_path_buf());
         return Ok(ForceOutcome::Committed(published));
     };
     let displaced_sighted = vfs
@@ -156,13 +158,14 @@ pub(crate) fn put_if_match<V: Vfs + ?Sized>(
 fn finish_fresh_create<V: Vfs + ?Sized>(
     vfs: &V,
     dest: &Path,
+    temp: &Path,
     bytes: &[u8],
     publish: io::Result<()>,
 ) -> io::Result<Published> {
     let durable = match publish {
         Ok(()) => true,
         Err(e) if published_not_durable(&e) => false,
-        Err(e) => return Err(e),
+        Err(e) => return Err(remove_temp_noting_failure(vfs, temp, e)),
     };
     Ok(Published {
         etag: etag_of(bytes),
@@ -195,7 +198,7 @@ pub(crate) fn put_if_absent<V: Vfs + ?Sized>(
         }
         other => other,
     };
-    let published = finish_fresh_create(vfs, &dest, bytes, publish)?;
+    let published = finish_fresh_create(vfs, &dest, &temp, bytes, publish)?;
     Ok(IfAbsentOutcome::Committed(published))
 }
 
@@ -209,13 +212,8 @@ pub(crate) fn put_force<V: Vfs + ?Sized>(
     let dest_stat = vfs.stat(&dest).ok();
     let temp = vfs.write_durable(&dest, bytes)?;
     let Some(dest_stat) = dest_stat else {
-        let publish = match vfs.rename_excl(&temp, &dest) {
-            Err(e) if !published_not_durable(&e) => {
-                return Err(remove_temp_noting_failure(vfs, &temp, e));
-            }
-            other => other,
-        };
-        let published = finish_fresh_create(vfs, &dest, bytes, publish)?;
+        let publish = vfs.rename_excl(&temp, &dest);
+        let published = finish_fresh_create(vfs, &dest, &temp, bytes, publish)?;
         return Ok(ForceOutcome::Committed(published));
     };
     if dest_stat.kind != FileKind::File {

@@ -174,16 +174,29 @@ fn a_displaced_read_failure_after_the_publish_is_still_a_commit_and_keeps_the_te
     vfs.fail_next(OpKind::Read, io::ErrorKind::PermissionDenied);
 
     let outcome = put(&vfs, path, b"updated", PutCondition::Force { expect: None }).unwrap();
-    assert!(matches!(
-        outcome,
-        PutOutcome::Committed { durable: true, .. }
-    ));
+    let PutOutcome::Committed {
+        durable: true,
+        stray_temp,
+        ..
+    } = &outcome
+    else {
+        unreachable!("expected a durable Committed, got {outcome:?}");
+    };
     assert_eq!(vfs.read(path).unwrap(), b"updated");
+    let paths = vfs.debug_paths();
     assert_eq!(
-        vfs.debug_paths().len(),
+        paths.len(),
         2,
         "the temp may hold the sole displaced copy and must survive"
     );
+    let stray_temp = stray_temp
+        .as_deref()
+        .expect("a kept temp must be named on the outcome");
+    assert!(
+        paths.iter().any(|p| p == stray_temp),
+        "the named stray_temp must be the surviving temp file"
+    );
+    assert_ne!(stray_temp, path);
 }
 
 #[test]
@@ -246,7 +259,7 @@ fn if_absent_loser_gets_conflict_and_the_temp_is_removed() {
 }
 
 #[test]
-fn if_absent_non_collision_failure_keeps_the_temp() {
+fn if_absent_non_collision_failure_cleans_up_the_temp() {
     let vfs = Mem::new();
     let path = Path::new("/doc.md");
     vfs.fail_next(OpKind::RenameExcl, io::ErrorKind::PermissionDenied);
@@ -254,7 +267,72 @@ fn if_absent_non_collision_failure_keeps_the_temp() {
     let before = vfs.debug_paths().len();
     let result = put(&vfs, path, b"bytes", PutCondition::IfAbsent);
     assert!(result.is_err());
-    assert_eq!(vfs.debug_paths().len(), before + 1);
+    assert_eq!(
+        vfs.debug_paths().len(),
+        before,
+        "a non-collision publish failure must not leak the temp, matching put_force's policy"
+    );
+}
+
+struct FailRenameExclAndRemoveVfs {
+    inner: Mem,
+}
+
+impl Vfs for FailRenameExclAndRemoveVfs {
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+        self.inner.write_durable(path, bytes)
+    }
+    fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+        self.inner.exchange(a, b)
+    }
+    fn rename_excl(&self, _old: &Path, _new: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "rename_excl always fails",
+        ))
+    }
+    fn remove(&self, _path: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "remove always fails",
+        ))
+    }
+    fn trash(&self, path: &Path) -> io::Result<()> {
+        self.inner.trash(path)
+    }
+    fn stat(&self, path: &Path) -> io::Result<crate::Stat> {
+        self.inner.stat(path)
+    }
+    fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.resolve(path)
+    }
+    fn mkdir_all(&self, path: &Path) -> io::Result<()> {
+        self.inner.mkdir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<crate::DirEntry>> {
+        self.inner.read_dir(path)
+    }
+    fn read_link(&self, path: &Path) -> io::Result<PathBuf> {
+        self.inner.read_link(path)
+    }
+}
+
+#[test]
+fn if_absent_non_collision_failure_notes_a_cleanup_failure_too() {
+    let vfs = FailRenameExclAndRemoveVfs { inner: Mem::new() };
+    let path = Path::new("/doc.md");
+
+    let before = vfs.inner.debug_paths().len();
+    let err = put(&vfs, path, b"bytes", PutCondition::IfAbsent).unwrap_err();
+    assert_eq!(
+        vfs.inner.debug_paths().len(),
+        before + 1,
+        "the temp survives when its own cleanup also fails"
+    );
+    assert!(err.to_string().contains("could not be cleaned up"));
 }
 
 #[test]

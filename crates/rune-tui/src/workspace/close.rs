@@ -243,7 +243,11 @@ mod tests {
                 ticket,
                 version,
                 result: Ok(()),
-                durable: true,
+                detail: crate::runtime::SaveOutcomeDetail {
+                    durable: true,
+                    stray_temp: None,
+                    race: None,
+                },
             },
             &mut effects,
         );

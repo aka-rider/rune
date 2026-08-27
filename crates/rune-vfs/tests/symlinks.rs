@@ -307,6 +307,76 @@ fn mem_stats_a_symlink_as_the_file_it_points_at() {
 }
 
 #[test]
+fn disk_saving_through_a_symlink_writes_the_target_and_leaves_the_link_a_link() {
+    let scratch = Scratch::new("disk-save-through-link");
+    let root = scratch.path();
+    let real = root.join("real.md");
+    let alias = root.join("alias.md");
+    fs::write(&real, b"original").expect("write real");
+    std::os::unix::fs::symlink(&real, &alias).expect("create symlink");
+
+    Disk.save_atomic(&alias, b"new content")
+        .expect("save through the symlink");
+
+    assert_eq!(fs::read(&real).expect("read target"), b"new content");
+    assert_eq!(
+        fs::read_link(&alias).expect("the link must still be a link"),
+        real
+    );
+}
+
+#[test]
+fn disk_saving_through_a_dangling_symlink_creates_the_target() {
+    let scratch = Scratch::new("disk-dangling-save");
+    let root = scratch.path();
+    let target = root.join("target.md");
+    let link = root.join("link.md");
+    std::os::unix::fs::symlink(&target, &link).expect("create dangling symlink");
+
+    Disk.save_atomic(&link, b"created through a dangling link")
+        .expect("save through a dangling symlink must create the target");
+
+    assert_eq!(
+        fs::read(&target).expect("read the newly created target"),
+        b"created through a dangling link"
+    );
+    let link_metadata = fs::symlink_metadata(&link).expect("read link metadata");
+    assert!(
+        link_metadata.file_type().is_symlink(),
+        "the link must still be a symlink, never replaced"
+    );
+    assert_eq!(
+        fs::read_link(&link).expect("read_link"),
+        target,
+        "the link must still name the target"
+    );
+}
+
+#[test]
+fn mem_saving_through_a_dangling_symlink_creates_the_target() {
+    let vfs = Mem::new();
+    vfs.symlink(Path::new("/root/link.md"), Path::new("/root/target.md"))
+        .expect("seed dangling symlink");
+
+    vfs.save_atomic(
+        Path::new("/root/link.md"),
+        b"created through a dangling link",
+    )
+    .expect("save through a dangling symlink must create the target");
+
+    assert_eq!(
+        vfs.read(Path::new("/root/target.md"))
+            .expect("read the newly created target"),
+        b"created through a dangling link"
+    );
+    assert_eq!(
+        vfs.read_link(Path::new("/root/link.md"))
+            .expect("the link must still be a link"),
+        PathBuf::from("/root/target.md")
+    );
+}
+
+#[test]
 fn mem_saving_through_a_symlink_writes_the_target_and_leaves_the_link_a_link() {
     let vfs = Mem::new();
     vfs.save_atomic(Path::new("/root/real.md"), b"original")
