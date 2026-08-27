@@ -182,3 +182,69 @@ pub(super) fn next_grapheme<'a>(text: &'a str, bounds: &[usize], pos: usize) -> 
         .unwrap_or(text.len());
     text.get(pos..limit)?.graphemes(true).next()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_aware_width_treats_newline_and_carriage_return_as_zero_columns() {
+        assert_eq!(control_aware_width('\n'), 0);
+        assert_eq!(control_aware_width('\r'), 0);
+    }
+
+    #[test]
+    fn control_aware_width_floors_halfwidth_katakana_sound_marks_to_one() {
+        assert_eq!(control_aware_width(HALFWIDTH_KATAKANA_VOICED_SOUND_MARK), 1);
+        assert_eq!(
+            control_aware_width(HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK),
+            1
+        );
+    }
+
+    #[test]
+    fn control_aware_width_defers_to_unicode_width_for_everything_else() {
+        assert_eq!(control_aware_width('a'), 1);
+        assert_eq!(control_aware_width('世'), 2);
+    }
+
+    #[test]
+    fn grapheme_width_counts_a_halfwidth_katakana_dakuten_as_its_own_cell() {
+        let ka_with_dakuten = "\u{FF76}\u{FF9E}";
+        assert_eq!(ka_with_dakuten.chars().count(), 2);
+        assert_eq!(grapheme_width(ka_with_dakuten), 2);
+    }
+
+    #[test]
+    fn grapheme_width_counts_two_dakuten_marks_in_one_cluster() {
+        let double_marked = "\u{FF76}\u{FF9E}\u{FF9F}";
+        assert_eq!(grapheme_width(double_marked), 3);
+    }
+
+    #[test]
+    fn grapheme_width_single_rune_cluster_matches_control_aware_width() {
+        assert_eq!(grapheme_width("a"), control_aware_width('a'));
+        assert_eq!(grapheme_width(""), 0);
+    }
+
+    #[test]
+    fn next_grapheme_clamps_to_the_span_boundary_instead_of_fusing_across_it() {
+        // A base char followed immediately by a ZWJ, followed by a plain
+        // char in the NEXT span. Without clamping to `bounds`, grapheme
+        // segmentation over the raw text would fuse the base char and the
+        // ZWJ into one cluster spanning past byte 1.
+        let text = "a\u{200D}b";
+        assert_eq!(next_grapheme(text, &[1, text.len()], 0), Some("a"));
+    }
+
+    #[test]
+    fn next_grapheme_returns_the_whole_cluster_when_unclamped() {
+        let text = "a\u{200D}b";
+        assert_eq!(next_grapheme(text, &[text.len()], 0), Some("a\u{200D}"));
+    }
+
+    #[test]
+    fn next_grapheme_returns_none_past_the_end_of_the_text() {
+        assert_eq!(next_grapheme("abc", &[3], 3), None);
+    }
+}

@@ -255,6 +255,66 @@ mod tests {
     }
 
     #[test]
+    fn resolve_force_rendered_ignores_the_decide_closure() {
+        assert_eq!(
+            RevealGrant::ForceRendered.resolve(|| true),
+            RevealState::Rendered
+        );
+    }
+
+    #[test]
+    fn resolve_force_revealed_ignores_the_decide_closure() {
+        assert_eq!(
+            RevealGrant::ForceRevealed.resolve(|| false),
+            RevealState::Revealed
+        );
+    }
+
+    #[test]
+    fn resolve_decide_defers_to_the_closure_result() {
+        assert_eq!(RevealGrant::Decide.resolve(|| true), RevealState::Revealed);
+        assert_eq!(RevealGrant::Decide.resolve(|| false), RevealState::Rendered);
+    }
+
+    #[test]
+    fn byte_range_len_is_the_byte_span_not_a_constant() {
+        assert_eq!(ByteRange::new(3, 10).len(), 7);
+        assert_eq!(ByteRange::new(5, 5).len(), 0);
+    }
+
+    #[test]
+    fn byte_range_contains_is_start_inclusive_end_exclusive() {
+        let r = ByteRange::new(3, 7);
+        assert!(!r.contains(2));
+        assert!(r.contains(3));
+        assert!(r.contains(6));
+        assert!(!r.contains(7));
+        assert!(!r.contains(8));
+    }
+
+    #[test]
+    fn cursor_probe_any_on_line_matches_only_that_line() {
+        let buf = Buffer::new("l0\nl1\nl2\nl3\nl4\nl5\nl6\n");
+        let cursors = CursorSet::new(13); // the '4' in "l4"
+        let probe = CursorProbe::new(&buf, &cursors);
+        assert!(probe.any_on_line(4));
+        assert!(!probe.any_on_line(3));
+        assert!(!probe.any_on_line(5));
+    }
+
+    #[test]
+    fn cursor_probe_any_in_lines_checks_an_inclusive_range() {
+        let buf = Buffer::new("l0\nl1\nl2\nl3\nl4\nl5\nl6\n");
+        let cursors = CursorSet::new(13); // the '4' in "l4"
+        let probe = CursorProbe::new(&buf, &cursors);
+        assert!(probe.any_in_lines(3, 5)); // 4 is strictly inside
+        assert!(probe.any_in_lines(4, 6)); // 4 is the low boundary
+        assert!(probe.any_in_lines(1, 4)); // 4 is the high boundary
+        assert!(!probe.any_in_lines(5, 6)); // below the range
+        assert!(!probe.any_in_lines(0, 3)); // above the range
+    }
+
+    #[test]
     fn cursor_probe_touches_includes_both_edges() {
         let buf = Buffer::new("0123456789");
         let range = ByteRange::new(3, 7);

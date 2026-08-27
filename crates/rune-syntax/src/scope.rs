@@ -169,6 +169,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn name_returns_the_registered_string_by_id() {
+        let mut table = ScopeTable::new();
+        let id = table.register("markup.strong");
+        assert_eq!(table.name(id), Some("markup.strong"));
+    }
+
+    #[test]
+    fn name_returns_none_for_an_id_past_the_end() {
+        let table = ScopeTable::new();
+        assert_eq!(table.name(ScopeId(0)), None);
+    }
+
+    #[test]
+    fn is_empty_reflects_registrations() {
+        let mut table = ScopeTable::new();
+        assert!(table.is_empty());
+        table.register("markup.strong");
+        assert!(!table.is_empty());
+    }
+
+    #[test]
+    fn iter_yields_every_registered_name_with_its_id() {
+        let mut table = ScopeTable::new();
+        let a = table.register("markup.strong");
+        let b = table.register("markup.italic");
+        let entries: Vec<(ScopeId, &str)> = table.iter().collect();
+        assert_eq!(entries, vec![(a, "markup.strong"), (b, "markup.italic")]);
+    }
+
+    #[test]
     fn register_is_idempotent() {
         let mut table = ScopeTable::new();
         let a = table.register("markup.strong");

@@ -87,3 +87,85 @@ fn build_line_conversions_debug_asserts_on_overlapping_input() {
     let hidden = vec![vec![(0usize, 5usize), (3usize, 8usize)]];
     let _ = build_line_conversions(&starts, &hidden);
 }
+
+/// A zero-length raw range (`e == s`) must be dropped before the
+/// overlap check ever sees it — not merely at merge time. Here the
+/// zero-length entry `(5,5)` sorts ahead of the real `(5,8)` range once
+/// both survive the filter, which would make the (wrongly kept)
+/// zero-length entry look like it overlaps its neighbor and trip the
+/// producer-bug assert on perfectly valid input.
+#[test]
+fn build_line_conversions_drops_zero_length_ranges_before_the_overlap_check() {
+    let starts = vec![0usize];
+    let hidden = vec![vec![(5usize, 8usize), (5usize, 5usize)]];
+    let convs = build_line_conversions(&starts, &hidden);
+    assert_eq!(convs[0].hidden.len(), 1);
+    assert_eq!(convs[0].hidden[0].start, 5);
+    assert_eq!(convs[0].hidden[0].end, 8);
+    assert_eq!(convs[0].deltas[0].delta, 3);
+}
+
+/// `clamp_col` treats a hidden range as `[start, end)`: the byte right
+/// after a hidden run (`col == h.end`) is a normal, unclamped syntax
+/// column, not part of the range it just walked past.
+#[test]
+fn clamp_col_end_is_exclusive() {
+    let hidden = vec![HiddenRange {
+        start: 5,
+        end: 8,
+        clamp_to: 99,
+    }];
+    assert_eq!(clamp_col(8, &hidden), 8);
+    assert_eq!(clamp_col(7, &hidden), 99);
+}
+
+/// `clamp_col`'s early-exit condition (`h.start > col`, "no earlier
+/// range could possibly match, so none of the rest can either") must
+/// fire on strictly-greater and nothing weaker. A range whose start
+/// merely EQUALS `col` never matches on its own (a hidden range is
+/// never empty in practice) but must NOT trigger the early exit either,
+/// since a later, real range starting at that same `col` still can.
+#[test]
+fn clamp_col_stops_scanning_only_once_past_every_possible_match() {
+    let starts_after_col = vec![
+        HiddenRange {
+            start: 20,
+            end: 25,
+            clamp_to: 25,
+        },
+        HiddenRange {
+            start: 3,
+            end: 6,
+            clamp_to: 6,
+        },
+    ];
+    assert_eq!(clamp_col(4, &starts_after_col), 4);
+
+    let degenerate_then_real = vec![
+        HiddenRange {
+            start: 5,
+            end: 5,
+            clamp_to: 999,
+        },
+        HiddenRange {
+            start: 5,
+            end: 8,
+            clamp_to: 77,
+        },
+    ];
+    assert_eq!(clamp_col(5, &degenerate_then_real), 77);
+
+    let earlier_non_match_then_real = vec![
+        HiddenRange {
+            start: 2,
+            end: 5,
+            clamp_to: 5,
+        },
+        HiddenRange {
+            start: 8,
+            end: 12,
+            clamp_to: 12,
+        },
+    ];
+    assert_eq!(clamp_col(9, &earlier_non_match_then_real), 12);
+}
