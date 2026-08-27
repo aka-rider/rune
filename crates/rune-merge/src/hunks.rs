@@ -403,19 +403,24 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8], marker_len: usiz
     hunks
 }
 
-/// Classifies one clean region between conflicts.
+fn empty_side_would_discard_nonempty(candidate: &[u8], other: &[u8]) -> bool {
+    candidate.is_empty() && !other.is_empty()
+}
+
 fn classify_clean_region(ours_clean: &[u8], theirs_clean: &[u8], merged_clean: &[u8]) -> Hunk {
     if ours_clean == theirs_clean {
-        Hunk::Clean(ours_clean.to_vec())
-    } else if theirs_clean == merged_clean {
-        Hunk::Clean(theirs_clean.to_vec())
-    } else if ours_clean == merged_clean {
-        Hunk::Clean(ours_clean.to_vec())
-    } else {
-        Hunk::Conflict {
-            ours: ours_clean.to_vec(),
-            theirs: theirs_clean.to_vec(),
-        }
+        return Hunk::Clean(ours_clean.to_vec());
+    }
+    if theirs_clean == merged_clean && !empty_side_would_discard_nonempty(theirs_clean, ours_clean)
+    {
+        return Hunk::Clean(theirs_clean.to_vec());
+    }
+    if ours_clean == merged_clean && !empty_side_would_discard_nonempty(ours_clean, theirs_clean) {
+        return Hunk::Clean(ours_clean.to_vec());
+    }
+    Hunk::Conflict {
+        ours: ours_clean.to_vec(),
+        theirs: theirs_clean.to_vec(),
     }
 }
 

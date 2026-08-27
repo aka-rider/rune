@@ -122,6 +122,15 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     };
 
+    if merge_result_would_erase_nonempty_ours(&buffer_text, &ours_text) {
+        app.merge = MergeState::Inactive;
+        messages::error(
+            app,
+            "merge refused — the result would empty a non-empty buffer, left untouched",
+        );
+        return;
+    }
+
     let first_start = pairs.first().map_or(0, |p| p.block.range.start);
     if !install_whole_range(app, doc, &buffer_text, first_start) {
         app.merge = MergeState::Inactive;
@@ -184,6 +193,10 @@ pub(crate) fn handle_merge_prep_ack(
         app,
         format!("{unresolved} conflict(s) to resolve — {}", super::VERB_HINT),
     );
+}
+
+fn merge_result_would_erase_nonempty_ours(buffer_text: &str, ours_text: &str) -> bool {
+    buffer_text.is_empty() && !ours_text.is_empty()
 }
 
 struct MergeUtf8Error;

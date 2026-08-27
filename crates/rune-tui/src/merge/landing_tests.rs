@@ -301,6 +301,17 @@ fn begin_refuses_while_a_save_is_in_flight() {
 }
 
 #[test]
+fn merge_result_would_erase_nonempty_ours_flags_only_that_case() {
+    assert!(merge_result_would_erase_nonempty_ours("", "ours had text"));
+    assert!(!merge_result_would_erase_nonempty_ours("", ""));
+    assert!(!merge_result_would_erase_nonempty_ours(
+        "merged text",
+        "ours had text"
+    ));
+    assert!(!merge_result_would_erase_nonempty_ours("merged text", ""));
+}
+
+#[test]
 fn install_whole_range_places_the_cursor_at_the_requested_offset() {
     let mut app = app_with("old content");
     let doc = app.active;
