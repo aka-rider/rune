@@ -350,6 +350,31 @@ mod tests {
     }
 
     #[test]
+    fn newest_confirmed_size_distinguishes_real_results_from_a_hardcoded_one() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+
+        assert_eq!(
+            newest_confirmed_size(&tx, doc_id).expect("newest_confirmed_size"),
+            None,
+            "no confirmed observation yet must be a real None, not a hardcoded Some"
+        );
+
+        let content = "a whole paragraph of real content";
+        seed_confirmed(&tx, doc_id, session_id, content);
+
+        assert_eq!(
+            newest_confirmed_size(&tx, doc_id).expect("newest_confirmed_size"),
+            Some(content.len() as i64),
+            "the confirmed size must be the real recorded size, not a hardcoded 1"
+        );
+        tx.commit().expect("commit");
+    }
+
+    #[test]
     fn confirm_against_history_never_upgrades_an_unstable_bracket() {
         let mut conn = open();
         let tx = conn.transaction().expect("tx");

@@ -365,3 +365,81 @@ fn add_column_treats_a_concurrently_added_duplicate_column_as_a_successful_no_op
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn add_column_surfaces_errors_that_are_not_a_duplicate_column_race() {
+    let conn = Connection::open_in_memory().expect("open");
+    let column = ColumnShape {
+        name: "x".to_string(),
+        decl_type: "INTEGER".to_string(),
+        not_null: false,
+        default_value: None,
+    };
+
+    let err = add_column(&conn, "does_not_exist", &column, None).expect_err(
+        "altering a table that does not exist is a real failure, not a \
+         concurrent duplicate-column race, and must not be swallowed",
+    );
+
+    assert!(
+        err.to_string()
+            .to_ascii_lowercase()
+            .contains("no such table")
+    );
+}
+
+#[test]
+fn add_column_appends_only_non_default_referential_actions() {
+    let conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch(
+        "CREATE TABLE parent(id INTEGER PRIMARY KEY);
+         CREATE TABLE with_actions(id INTEGER PRIMARY KEY);
+         CREATE TABLE without_actions(id INTEGER PRIMARY KEY);",
+    )
+    .expect("seed tables");
+    let column = ColumnShape {
+        name: "parent_id".to_string(),
+        decl_type: "INTEGER".to_string(),
+        not_null: false,
+        default_value: None,
+    };
+
+    let with_actions_fk = ForeignKeyShape {
+        ref_table: "parent".to_string(),
+        ref_column: Some("id".to_string()),
+        on_delete: "CASCADE".to_string(),
+        on_update: "SET NULL".to_string(),
+    };
+    add_column(&conn, "with_actions", &column, Some(&with_actions_fk))
+        .expect("add column with explicit non-default referential actions");
+    let with_actions_sql = table_create_sql(&conn, "with_actions").expect("read create sql");
+    assert!(with_actions_sql.contains("ON DELETE CASCADE"));
+    assert!(with_actions_sql.contains("ON UPDATE SET NULL"));
+
+    let no_action_fk = ForeignKeyShape {
+        ref_table: "parent".to_string(),
+        ref_column: Some("id".to_string()),
+        on_delete: "NO ACTION".to_string(),
+        on_update: "NO ACTION".to_string(),
+    };
+    add_column(&conn, "without_actions", &column, Some(&no_action_fk))
+        .expect("add column with the default referential actions");
+    let without_actions_sql = table_create_sql(&conn, "without_actions").expect("read create sql");
+    assert!(!without_actions_sql.contains("ON DELETE"));
+    assert!(!without_actions_sql.contains("ON UPDATE"));
+}
+
+#[test]
+fn is_duplicate_column_error_requires_the_message_to_name_the_specific_column() {
+    let conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY)")
+        .expect("seed table");
+    conn.execute_batch("ALTER TABLE t ADD COLUMN foo INTEGER")
+        .expect("add foo once");
+    let err = conn
+        .execute_batch("ALTER TABLE t ADD COLUMN foo INTEGER")
+        .expect_err("adding the same column twice is a real sqlite duplicate-column error");
+
+    assert!(is_duplicate_column_error(&err, "foo"));
+    assert!(!is_duplicate_column_error(&err, "bar"));
+}

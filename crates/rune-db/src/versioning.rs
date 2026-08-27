@@ -147,6 +147,27 @@ mod tests {
     use super::*;
     use crate::store::Store;
 
+    #[test]
+    fn db_file_name_renders_the_real_versioned_filename() {
+        assert_eq!(db_file_name(2), "rune-v2.db");
+        assert_eq!(db_file_name(7), "rune-v7.db");
+    }
+
+    #[test]
+    fn parse_old_version_filename_rejects_a_leading_sign_digits_alone_cannot_catch() {
+        // `"+5".parse::<u32>()` succeeds (Rust accepts a leading `+` for
+        // unsigned integers), so ONLY the explicit all-ascii-digit guard
+        // rejects this — a loosened `&&` would let it fall through to
+        // `.parse()` and wrongly accept it as version 5.
+        assert_eq!(parse_old_version_filename("rune-v+5.db"), None);
+    }
+
+    #[test]
+    fn parse_old_version_filename_accepts_exactly_digits() {
+        assert_eq!(parse_old_version_filename("rune-v0.db"), Some(0));
+        assert_eq!(parse_old_version_filename("rune-v12.db"), Some(12));
+    }
+
     /// Proves the frozen liveness contract holds for a freshly created
     /// store: exactly the query WP6's GC will run against every past and
     /// future `rune-v*.db`, executed here against a version-1 file this

@@ -317,6 +317,72 @@ fn probe_auto_adopts_when_disk_hash_equals_journal_head() {
 /// save CAS baseline) points at disk's NEW content — a plain save
 /// straight after would then CAS-succeed and overwrite that newer
 /// content with the buffer's stale bytes.
+/// A `Clean` probe whose existing `saved_obs` baseline ALREADY matches
+/// theirs (an unchanged document, re-probed) must never redundantly
+/// re-adopt: `should_adopt` guards on the baseline's hash actually
+/// DIFFERING from theirs, not matching it.
+#[test]
+fn probe_never_redundantly_readopts_an_already_matching_clean_baseline() {
+    let mut conn = open();
+    let vfs = Mem::new();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let path = Path::new("/doc.md");
+    publish(&vfs, path, b"hello");
+
+    let loaded = crate::load::load(
+        &mut conn,
+        &vfs,
+        session_id,
+        &|_, _| false,
+        path,
+        SystemTime::now(),
+    )
+    .expect("load");
+    let doc_id = loaded.doc_id;
+
+    let saved_obs_before: Option<i64> = conn
+        .query_row(
+            "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+            params![session_id, doc_id],
+            |r| r.get(0),
+        )
+        .expect("read saved_obs before");
+    assert!(
+        saved_obs_before.is_some(),
+        "test setup: load must adopt a baseline"
+    );
+
+    let count = |conn: &Connection| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM observations WHERE doc_id=?1",
+            params![doc_id],
+            |r| r.get(0),
+        )
+        .expect("count observations")
+    };
+    let obs_before = count(&conn);
+
+    let state = probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe");
+    assert_eq!(state.kind, SyncKind::Clean);
+
+    assert_eq!(
+        count(&conn),
+        obs_before,
+        "an unchanged clean baseline must never mint a redundant re-adoption"
+    );
+    let saved_obs_after: Option<i64> = conn
+        .query_row(
+            "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+            params![session_id, doc_id],
+            |r| r.get(0),
+        )
+        .expect("read saved_obs after");
+    assert_eq!(
+        saved_obs_after, saved_obs_before,
+        "the CAS baseline must stay put when it already matches theirs"
+    );
+}
+
 #[test]
 fn probe_never_auto_adopts_disk_ahead() {
     let mut conn = open();

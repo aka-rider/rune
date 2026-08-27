@@ -140,6 +140,7 @@ fn table_columns(conn: &Connection, table: &str) -> Result<Vec<ColumnShape>, Err
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+#[derive(Debug)]
 struct ForeignKeyShape {
     ref_table: String,
     ref_column: Option<String>,

@@ -152,4 +152,19 @@ mod tests {
     fn obs_id_from_rowid_accepts_positive() {
         assert_eq!(obs_id_from_rowid(7).expect("ok").get(), 7);
     }
+
+    #[test]
+    fn seq_display_renders_the_decimal_value_not_an_empty_default() {
+        assert_eq!(Seq(42).to_string(), "42");
+    }
+
+    #[test]
+    fn obs_id_display_renders_the_decimal_value_not_an_empty_default() {
+        assert_eq!(ObsId::new(7).expect("nonzero").to_string(), "7");
+    }
+
+    #[test]
+    fn blob_hash_display_renders_the_hash_text_not_an_empty_default() {
+        assert_eq!(BlobHash("deadbeef".to_string()).to_string(), "deadbeef");
+    }
 }

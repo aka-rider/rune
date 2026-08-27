@@ -103,5 +103,74 @@ exclude_re = [
   # still gets resolved away). No public `Vfs` method can observe them.
   'fault\.rs:311:20:.*replace \+= with \*= in Mem::symlink',
   'fault\.rs:314:26:.*replace \+= with \*= in Mem::symlink',
+  # rune-db: `diag::background_note` only ever writes via `eprintln!`,
+  # never returns a value or takes a caller-visible side channel — its
+  # entire observable effect is a raw write to fd 2. Under this crate's own
+  # test gate (`cargo test -p rune-db`, no `--nocapture`), the standard
+  # library's test harness intercepts `eprintln!`/`println!` at a
+  # thread-local level INSIDE `io::stderr()`'s write path, before the call
+  # ever reaches a real OS file descriptor — confirmed directly: a test that
+  # `dup2`s fd 2 to a pipe around the call captures nothing under a normal
+  # `cargo test` run, and captures the real message only when re-run with
+  # `--nocapture --test-threads=1`. The capture mechanism the harness uses
+  # internally (`io::set_output_capture`) is unstable/internal-only, so no
+  # stable, non-`--nocapture` test can observe this function's output at
+  # all under the mandated gate.
+  'diag\.rs:14:5:.*replace background_note with \(\)',
+  # rune-db, on Linux: `parse_timeval`, and the `#[cfg(target_os =
+  # "macos")]` bodies of `proc_started_at` and `boot_time`, are macOS-only —
+  # this build target never compiles them in, so every mutation to their
+  # bodies produces a byte-identical binary to baseline. Each has a
+  # separate, real Linux counterpart (`proc_started_at` at session.rs:105,
+  # `boot_time` at session.rs:144) that IS compiled here and is pinned by
+  # its own tests, not excluded.
+  'session\.rs:27:5:.*replace parse_timeval',
+  'session\.rs:29:(16|12|24):.*in parse_timeval',
+  'session\.rs:53:5:.*replace proc_started_at',
+  'session\.rs:68:(19|14|26):.*in proc_started_at',
+  'session\.rs:86:(19|14|26):.*in proc_started_at',
+  'session\.rs:119:5:.*replace boot_time',
+  'session\.rs:132:(17|12|24):.*in boot_time',
+  'session\.rs:136:(33|73):.*in boot_time',
+  # rune-db: `process_exists`'s EPERM arm is only ever reached once its
+  # own guard has already ruled out ESRCH; kill(2) with signal 0 (no
+  # signal sent, existence/permission check only) can only fail with
+  # ESRCH or EPERM on any POSIX system — EINVAL is undocumented for a
+  # signal of 0, which is always valid — so no other errno value can ever
+  # reach this arm, real or synthetic. Forcing its guard to `true` cannot
+  # change which value it is evaluated against, so it cannot change the
+  # outcome either; confirmed via cp-aside against the crate's own
+  # `process_exists(1)` (EPERM, pid 1 owned by root) spec test.
+  'session\.rs:185:23:.*replace match guard code == libc::EPERM with true in process_exists',
+  # rune-db: same shape as the `diag.rs` background_note exclusion above.
+  # This match's THREE arms differ only in which best-effort
+  # `background_note` (eprintln!-only, unstably capturable) message logs;
+  # the checkpoint's real WAL effect and every return value are already
+  # fixed by `checkpoint(...)` before this match ever runs, so no branch
+  # differs in anything a `Store`/`DbEvent`/WAL-file-state test can
+  # observe. Confirmed via cp-aside: with the crate's own WAL-truncation
+  # spec tests in place, all three mutations here still pass.
+  'writer_lifecycle\.rs:132:(25|30):.*in run_shutdown_maintenance',
+  # rune-db: `libsqlite3-sys`'s bundled build compiles with
+  # `-DSQLITE_USE_URI` (see its build.rs), so SQLite recognizes `file:`
+  # URI syntax UNCONDITIONALLY — the runtime `SQLITE_OPEN_URI` flag bit
+  # has zero effect on this build, confirmed empirically (opening a
+  # `file:...?mode=memory&cache=shared` target with that bit cleared
+  # still honors `mode=memory`, and opening an existing file via a
+  # `file:` URI with it cleared still succeeds). `SQLITE_OPEN_NO_MUTEX`
+  # only selects an internal threading mode, never observable from a
+  # single connection's query results. And `SQLITE_OPEN_CREATE` is moot
+  # for a `mode=memory` target specifically: SQLite allocates the
+  # in-memory database regardless (confirmed empirically opening a
+  # brand-new, never-before-seen `memory_uri()` name without it). Once
+  # those three bits are inert, `^` and `&` against them are
+  # indistinguishable from `|` for every combination these functions
+  # produce.
+  'conn\.rs:63:9:.*replace \| with \^ in open_read_replica',
+  'conn\.rs:64:9:.*in open_read_replica',
+  'conn\.rs:89:5:.*replace memory_open_flags',
+  'conn\.rs:90:9:.*replace \| with \^ in memory_open_flags',
+  'conn\.rs:91:9:.*in memory_open_flags',
+  'conn\.rs:92:9:.*in memory_open_flags',
 ]
 exclude_globs = []

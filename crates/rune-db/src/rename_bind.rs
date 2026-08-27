@@ -226,6 +226,33 @@ mod tests {
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");
     }
 
+    /// The collision guard must fire ONLY on `AlreadyExists`, never on any
+    /// other `rename_excl` failure — even one whose destination happens to
+    /// exist (so `vfs.stat(to)` alone can't tell them apart). A
+    /// `PermissionDenied` with `to` already present must still surface as a
+    /// genuine error, not be swallowed as a `Collided` refusal.
+    #[test]
+    fn rename_bind_only_treats_already_exists_as_a_collision() {
+        let mut f = fixture(b"ours");
+        publish(&f.vfs, Path::new("/b.md"), b"theirs");
+        f.vfs
+            .fail_next(VfsOp::RenameExcl, io::ErrorKind::PermissionDenied);
+
+        let err = rename_bind(
+            &mut f.conn,
+            &f.vfs,
+            f.ds,
+            Path::new("/a.md"),
+            Path::new("/b.md"),
+            SystemTime::now(),
+        )
+        .expect_err("a non-AlreadyExists failure must surface as an error, not a collision");
+        assert!(
+            matches!(err, Error::Io(e) if e.kind() == io::ErrorKind::PermissionDenied),
+            "the original error kind must pass through untouched"
+        );
+    }
+
     /// A genuine `rename_excl` failure surfaces as an error with both paths
     /// intact and the database untouched — `renamex_np` is atomic, so there
     /// is no half-renamed state to clean up.

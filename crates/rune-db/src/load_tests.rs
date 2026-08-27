@@ -312,6 +312,72 @@ fn dead_session_with_no_edit_yields_disk_and_the_new_sessions_journal_agrees() {
     );
 }
 
+/// A plain tab-switch reload of an unchanged document must find nothing to
+/// heal: the first load already adopted this exact content, so the reload's
+/// hash-equal branch must not mint a redundant heal-adoption.
+#[test]
+fn reload_with_an_already_healed_baseline_never_redundantly_reheals() {
+    let mut conn = open();
+    let vfs = Mem::new();
+    let path = Path::new("/doc.md");
+    publish(&vfs, path, b"steady content");
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+
+    let first = load(
+        &mut conn,
+        &vfs,
+        session_id,
+        &always_alive,
+        path,
+        SystemTime::now(),
+    )
+    .expect("first load");
+
+    let count = |conn: &Connection| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM observations WHERE doc_id=?1",
+            params![first.doc_id],
+            |r| r.get(0),
+        )
+        .expect("count observations")
+    };
+    let obs_before = count(&conn);
+    let saved_obs_before = retry::with_retry(&mut conn, |tx| {
+        observation::saved_obs_for(tx, session_id, first.doc_id)
+    })
+    .expect("saved_obs_for")
+    .expect("first load must adopt a baseline");
+
+    let second = load(
+        &mut conn,
+        &vfs,
+        session_id,
+        &always_alive,
+        path,
+        SystemTime::now(),
+    )
+    .expect("second load");
+    assert!(
+        second.has_history,
+        "the reload must see its own prior history"
+    );
+
+    assert_eq!(
+        count(&conn),
+        obs_before,
+        "an already-healed baseline must never mint a redundant heal-adoption"
+    );
+    let saved_obs_after = retry::with_retry(&mut conn, |tx| {
+        observation::saved_obs_for(tx, session_id, first.doc_id)
+    })
+    .expect("saved_obs_for")
+    .expect("baseline must still exist");
+    assert_eq!(
+        saved_obs_after.id, saved_obs_before.id,
+        "the CAS baseline must stay put when there is nothing to heal"
+    );
+}
+
 /// TOCTOU pin: `load_from_read` adopts whatever bytes the caller's own
 /// taken read carries, never a second, independent read of the same path —
 /// the CAS baseline and the returned content both trace to the SAME

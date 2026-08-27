@@ -152,6 +152,20 @@ fn verdict(tx: &Transaction<'_>, session_id: SessionId, doc_id: DocId) -> SyncKi
 }
 
 #[test]
+fn is_disk_divergent_is_true_only_for_disk_ahead_and_diverged() {
+    assert!(SyncKind::DiskAhead.is_disk_divergent());
+    assert!(SyncKind::Diverged.is_disk_divergent());
+    assert!(
+        !SyncKind::Clean.is_disk_divergent(),
+        "no disk fact yet ahead of the buffer is not a divergence"
+    );
+    assert!(
+        !SyncKind::BufferAhead.is_disk_divergent(),
+        "an ordinary unsaved edit is the dirty flag's job, not a divergence"
+    );
+}
+
+#[test]
 fn anothers_sessions_newest_save_is_a_real_divergence() {
     let mut conn = open();
     let publisher =

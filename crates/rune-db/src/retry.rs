@@ -179,8 +179,19 @@ const BACKOFF_JITTER_WIDTH_MS: u64 = 8;
 /// test should ever need to control deterministically — the same way
 /// rusqlite's own `busy_timeout` isn't either.
 fn jittered_backoff(attempt: u32) -> Duration {
-    let base_ms = BACKOFF_STEP_MS * u64::from(attempt);
     let jitter_ms = u64::from(std::process::id()) % BACKOFF_JITTER_WIDTH_MS;
+    backoff_delay(attempt, jitter_ms)
+}
+
+/// The pure arithmetic [`jittered_backoff`] delegates to — split out so a
+/// test can pin the step/jitter formula against a chosen `jitter_ms`
+/// directly, instead of that formula only ever being reachable through the
+/// live, per-process `std::process::id()` value (whose own jitter can land
+/// on `0`, which would make an additive and a subtractive jitter term
+/// produce the identical `Duration` — a blind spot no assertion on
+/// [`jittered_backoff`] itself could close deterministically).
+fn backoff_delay(attempt: u32, jitter_ms: u64) -> Duration {
+    let base_ms = BACKOFF_STEP_MS * u64::from(attempt);
     Duration::from_millis(base_ms + jitter_ms)
 }
 
@@ -259,6 +270,33 @@ mod tests {
             Step::Surface
         ));
         assert_eq!(restart, 0, "primary 5 must never touch the restart counter");
+    }
+
+    /// `Default::default()` on a whole-function mutant collapses this to
+    /// `Duration::ZERO` — the real formula's base term alone
+    /// (`BACKOFF_STEP_MS * attempt`) is already nonzero for any
+    /// `attempt >= 1`, regardless of what the process's own jitter happens
+    /// to be.
+    #[test]
+    fn jittered_backoff_is_never_zero_for_a_nonzero_attempt() {
+        assert_ne!(jittered_backoff(1), Duration::ZERO);
+    }
+
+    /// Pins the exact step-growth-plus-jitter formula against explicit
+    /// `jitter_ms` values, independent of this test process's own pid — the
+    /// `+`/`-`/`*` swaps on the jitter term and the `*`/`+`/`/` swaps on the
+    /// step term all land on a different millisecond count than the one
+    /// asserted here.
+    #[test]
+    fn backoff_delay_grows_by_the_step_and_adds_the_jitter_verbatim() {
+        assert_eq!(
+            backoff_delay(2, 3),
+            Duration::from_millis(2 * BACKOFF_STEP_MS + 3)
+        );
+        assert_eq!(
+            backoff_delay(3, 0),
+            Duration::from_millis(3 * BACKOFF_STEP_MS)
+        );
     }
 
     #[test]

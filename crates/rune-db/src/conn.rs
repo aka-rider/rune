@@ -162,6 +162,55 @@ mod tests {
     }
 
     #[test]
+    fn apply_pragmas_sets_synchronous_normal_and_wal_autocheckpoint() {
+        let uri = memory_uri();
+        let conn = Connection::open_with_flags(&uri, memory_open_flags()).expect("open connection");
+        apply_pragmas(&conn).expect("apply pragmas");
+        let synchronous: i64 = conn
+            .pragma_query_value(None, "synchronous", |row| row.get(0))
+            .expect("read synchronous pragma");
+        assert_eq!(synchronous, 1, "NORMAL is synchronous level 1");
+        let autocheckpoint: i64 = conn
+            .pragma_query_value(None, "wal_autocheckpoint", |row| row.get(0))
+            .expect("read wal_autocheckpoint pragma");
+        assert_eq!(autocheckpoint, 1000);
+    }
+
+    #[test]
+    fn memory_open_flags_actually_opens_a_writable_memory_connection() {
+        let uri = memory_uri();
+        let conn = Connection::open_with_flags(&uri, memory_open_flags())
+            .expect("a real in-memory open-mode combination must open");
+        conn.execute_batch("CREATE TABLE t(x)")
+            .expect("a real read-write connection must allow DDL");
+    }
+
+    #[test]
+    fn open_read_replica_opens_an_existing_file_read_only() {
+        let dir = test_temp_dir("read-replica");
+        let path = dir.join("rune-v1.db");
+        let _writer = open_recovery_store(RecoveryTarget::File(&path)).expect("create db");
+        let target = path.to_str().expect("utf8 path");
+
+        let replica = open_read_replica(target).expect("open read replica");
+        let write_result = replica.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/x', 'x', 'x')",
+            [],
+        );
+        assert!(
+            write_result.is_err(),
+            "a read-only connection must refuse writes"
+        );
+        let count: i64 = replica
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .expect("reads must still work over the replica");
+        assert_eq!(count, 0);
+
+        drop(replica);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn recovery_store_file_backed_is_wal_mode() {
         let dir = test_temp_dir("recovery-wal");
         let path = dir.join("rune-v1.db");
@@ -249,5 +298,16 @@ mod tests {
         drop(second);
         drop(first);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn fresh_memory_uri_for_test_returns_a_real_process_scoped_uri() {
+        let uri = fresh_memory_uri_for_test();
+        assert!(
+            uri.starts_with(&format!("file:rune-db-mem-{}-", std::process::id())),
+            "got {uri:?}"
+        );
+        assert!(uri.contains("mode=memory"), "got {uri:?}");
     }
 }

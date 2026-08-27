@@ -217,3 +217,7 @@ impl From<std::io::Error> for Error {
         Error::Io(e)
     }
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;

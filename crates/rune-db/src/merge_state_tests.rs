@@ -324,6 +324,124 @@ fn merge_close_closes_a_resumed_but_not_re_owned_row() {
 }
 
 #[test]
+fn newest_active_owned_returns_none_when_no_row_matches_this_session() {
+    let mut conn = open();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let doc_id = seed_doc(&conn);
+
+    let tx = conn.transaction().expect("tx");
+    assert_eq!(
+        newest_active_owned(&tx, doc_id, session_id).expect("newest_active_owned"),
+        None,
+        "no matching row must be a real None, not a hardcoded Some"
+    );
+}
+
+#[test]
+fn newest_active_owned_finds_this_sessions_row_not_a_hardcoded_first_row() {
+    let mut conn = open();
+    let doc_id = seed_doc(&conn);
+
+    // Consume row id 1 with a decoy row owned by a DIFFERENT session, so a
+    // hardcoded `Some(1)` is provably wrong for the query below.
+    let session_decoy = crate::session::establish_session(&conn, SystemTime::now()).expect("decoy");
+    let theirs_decoy = seed_observation(&mut conn, doc_id, session_decoy);
+    open_merge(
+        &mut conn,
+        &alive,
+        doc_id,
+        session_decoy,
+        theirs_decoy,
+        "decoy",
+        "[]",
+    );
+
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let theirs = seed_observation(&mut conn, doc_id, session_id);
+    open_merge(&mut conn, &alive, doc_id, session_id, theirs, "mine", "[]");
+
+    let expected_id: i64 = conn
+        .query_row(
+            "SELECT id FROM merges WHERE doc_id=?1 AND session_id=?2 AND state='active'",
+            params![doc_id, session_id],
+            |r| r.get(0),
+        )
+        .expect("expected id");
+    assert_ne!(expected_id, 1, "test setup: the decoy row must occupy id 1");
+
+    let tx = conn.transaction().expect("tx");
+    assert_eq!(
+        newest_active_owned(&tx, doc_id, session_id).expect("newest_active_owned"),
+        Some(expected_id),
+        "must return the real matching row id, not a hardcoded 1"
+    );
+}
+
+#[test]
+fn newest_active_dead_returns_none_when_every_active_owner_is_alive() {
+    let mut conn = open();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let doc_id = seed_doc(&conn);
+    let theirs = seed_observation(&mut conn, doc_id, session_id);
+    open_merge(&mut conn, &alive, doc_id, session_id, theirs, "m", "[]");
+
+    let tx = conn.transaction().expect("tx");
+    assert_eq!(
+        newest_active_dead(&tx, &alive, doc_id).expect("newest_active_dead"),
+        None,
+        "every owner alive must be a real None, not a hardcoded Some"
+    );
+}
+
+#[test]
+fn newest_active_dead_finds_the_dead_owners_row_not_a_hardcoded_first_row() {
+    let mut conn = open();
+    let doc_id = seed_doc(&conn);
+
+    // Consume row id 1 with a decoy row that is no longer active by the
+    // time we query, so a hardcoded `Some(1)` is provably wrong.
+    let session_decoy = crate::session::establish_session(&conn, SystemTime::now()).expect("decoy");
+    let theirs_decoy = seed_observation(&mut conn, doc_id, session_decoy);
+    open_merge(
+        &mut conn,
+        &alive,
+        doc_id,
+        session_decoy,
+        theirs_decoy,
+        "decoy",
+        "[]",
+    );
+    merge_close(
+        &mut conn,
+        &alive,
+        doc_id,
+        session_decoy,
+        MergeCloseState::Completed,
+    )
+    .expect("close decoy");
+
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let theirs = seed_observation(&mut conn, doc_id, session_id);
+    open_merge(&mut conn, &alive, doc_id, session_id, theirs, "mine", "[]");
+
+    let expected_id: i64 = conn
+        .query_row(
+            "SELECT id FROM merges WHERE doc_id=?1 AND session_id=?2 AND state='active'",
+            params![doc_id, session_id],
+            |r| r.get(0),
+        )
+        .expect("expected id");
+    assert_ne!(expected_id, 1, "test setup: the decoy row must occupy id 1");
+
+    let tx = conn.transaction().expect("tx");
+    assert_eq!(
+        newest_active_dead(&tx, &dead, doc_id).expect("newest_active_dead"),
+        Some(expected_id),
+        "must return the real dead owner's row id, not a hardcoded 1"
+    );
+}
+
+#[test]
 fn merge_open_is_idempotent_for_the_same_session_and_doc() {
     let mut conn = open();
     let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");

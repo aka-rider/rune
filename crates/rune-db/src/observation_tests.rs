@@ -18,6 +18,39 @@ fn seed_blob(tx: &Transaction<'_>, content: &str) -> String {
 }
 
 #[test]
+fn observation_stat_repackages_this_observations_own_facts_not_a_default() {
+    let observation = Observation {
+        id: ObsId::new(1).expect("nonzero"),
+        doc_id: DocId(1),
+        session_id: SessionId(1),
+        blob_hash: BlobHash("hash".to_string()),
+        seq: None,
+        size: Some(5),
+        mtime: Some("t".to_string()),
+        inode: Some(9),
+        device: Some(3),
+        nlink: Some(2),
+        origin: ObsOrigin::Probe,
+        parent_a: None,
+        parent_b: None,
+        at: "t".to_string(),
+        confirmed: Confirmation::Confirmed,
+    };
+
+    assert_eq!(
+        observation.stat(),
+        StatFacts {
+            size: Some(5),
+            mtime: Some("t".to_string()),
+            inode: Some(9),
+            device: Some(3),
+            nlink: Some(2),
+        },
+        "stat() must repackage THIS observation's own facts, never a default"
+    );
+}
+
+#[test]
 fn get_observation_missing_id_is_an_error_not_a_default() {
     let mut conn = open();
     let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");

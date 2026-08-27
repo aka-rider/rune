@@ -438,3 +438,7 @@ fn legacy_empty_started_at_after_boot_is_spared() {
         "a legacy '' row after boot must stay governed by is_alive, not reboot-death"
     );
 }
+
+#[cfg(test)]
+#[path = "reaper_boot_tests.rs"]
+mod boot_tests;

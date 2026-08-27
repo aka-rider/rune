@@ -205,8 +205,71 @@ pub(crate) fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>,
 mod tests {
     use super::*;
     use crate::test_support::open;
-    use rune_vfs::{Mem, VfsTestExt};
+    use rune_vfs::{DirEntry, Mem, Stat, VfsTestExt};
     use std::time::Duration;
+
+    /// Wraps a real [`Mem`] but forces `stat`'s reported inode to exactly
+    /// `0` — the one identity shape `stat_id` must refuse to trust (module
+    /// doc: `ino == 0` triggers the fallback-to-name-keying guard), which no
+    /// real `Mem`/`Disk` stat ever produces on its own.
+    struct ZeroInodeVfs {
+        inner: Mem,
+    }
+
+    impl Vfs for ZeroInodeVfs {
+        fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+            self.inner.read(path)
+        }
+        fn write_durable(&self, path: &Path, bytes: &[u8]) -> std::io::Result<std::path::PathBuf> {
+            self.inner.write_durable(path, bytes)
+        }
+        fn exchange(&self, a: &Path, b: &Path) -> std::io::Result<()> {
+            self.inner.exchange(a, b)
+        }
+        fn rename_excl(&self, old: &Path, new: &Path) -> std::io::Result<()> {
+            self.inner.rename_excl(old, new)
+        }
+        fn remove(&self, path: &Path) -> std::io::Result<()> {
+            self.inner.remove(path)
+        }
+        fn trash(&self, path: &Path) -> std::io::Result<()> {
+            self.inner.trash(path)
+        }
+        fn stat(&self, path: &Path) -> std::io::Result<Stat> {
+            let mut stat = self.inner.stat(path)?;
+            stat.identity.inode = Some(0);
+            Ok(stat)
+        }
+        fn read_link(&self, path: &Path) -> std::io::Result<std::path::PathBuf> {
+            self.inner.read_link(path)
+        }
+        fn resolve(&self, path: &Path) -> std::io::Result<std::path::PathBuf> {
+            self.inner.resolve(path)
+        }
+        fn mkdir_all(&self, path: &Path) -> std::io::Result<()> {
+            self.inner.mkdir_all(path)
+        }
+        fn read_dir(&self, path: &Path) -> std::io::Result<Vec<DirEntry>> {
+            self.inner.read_dir(path)
+        }
+    }
+
+    #[test]
+    fn stat_id_treats_a_zero_inode_as_unusable_identity() {
+        let vfs = ZeroInodeVfs { inner: Mem::new() };
+        let path = Path::new("/doc.md");
+        let temp = vfs
+            .inner
+            .write_durable(path, b"hello")
+            .expect("write_durable");
+        vfs.inner.rename_excl(&temp, path).expect("publish");
+
+        assert_eq!(
+            stat_id(&vfs, path),
+            None,
+            "an inode of exactly 0 must fall back to name-keying, never be trusted as real identity"
+        );
+    }
 
     #[test]
     fn open_path_by_name_reuses_the_same_row_on_a_second_open() {

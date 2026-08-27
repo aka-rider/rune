@@ -154,3 +154,62 @@ fn column_source_segment_locates_a_columns_own_definition_in_the_real_schema() {
 
     assert_eq!(segment, "parent_a INTEGER REFERENCES observations(id)");
 }
+
+#[test]
+fn column_source_segment_ignores_a_comma_nested_inside_a_check_constraints_parens() {
+    let create_sql = "CREATE TABLE t (a INTEGER, c INTEGER CHECK(c IN (1,2)))";
+
+    assert_eq!(
+        column_source_segment(create_sql, "c").as_deref(),
+        Some("c INTEGER CHECK(c IN (1,2))")
+    );
+}
+
+#[test]
+fn strip_sql_line_comments_requires_two_consecutive_dashes_to_start_a_comment() {
+    assert_eq!(strip_sql_line_comments("x-y\nz"), "x-y\nz");
+    assert_eq!(strip_sql_line_comments("a -- comment\nb"), "a \nb");
+}
+
+#[test]
+fn column_carries_an_unreproducible_constraint_flags_each_keyword_independently() {
+    assert!(column_carries_an_unreproducible_constraint(
+        "c INTEGER UNIQUE"
+    ));
+    assert!(column_carries_an_unreproducible_constraint(
+        "c TEXT COLLATE NOCASE"
+    ));
+    assert!(column_carries_an_unreproducible_constraint(
+        "c INTEGER GENERATED ALWAYS AS (1) STORED"
+    ));
+}
+
+#[test]
+fn foreign_key_for_column_returns_only_the_requested_columns_own_foreign_key() {
+    let canonical = Connection::open_in_memory().expect("open");
+    canonical.execute_batch(SCHEMA).expect("apply real schema");
+
+    let fk = foreign_key_for_column(&canonical, "observations", "doc_id")
+        .expect("query foreign keys")
+        .expect("doc_id carries a foreign key in the real schema");
+
+    assert_eq!(fk.ref_table, "documents");
+}
+
+#[test]
+fn foreign_key_for_column_rejects_a_composite_foreign_key_touching_the_same_column_twice() {
+    let canonical = Connection::open_in_memory().expect("open");
+    canonical
+        .execute_batch(
+            "CREATE TABLE parent(a INTEGER, b INTEGER, PRIMARY KEY(a, b));
+             CREATE TABLE child(x INTEGER, FOREIGN KEY(x, x) REFERENCES parent(a, b));",
+        )
+        .expect("create a table whose foreign key names the same column twice");
+
+    let err = foreign_key_for_column(&canonical, "child", "x").expect_err(
+        "a foreign key that touches the requested column more than once is composite \
+         and must not be silently narrowed to its first appearance",
+    );
+
+    assert!(err.to_string().contains("composite"));
+}
