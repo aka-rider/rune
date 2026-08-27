@@ -13,8 +13,7 @@ pub(super) fn app_with(mem: &Arc<Mem>) -> App {
     let mut app = App::new(CoreBuffer::new("hello"), None, vfs, None);
     app.active_doc_mut().viewport.set_size(80, 23);
     app.splits.left.show();
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(crate::app::FrameSize::new(80, 24));
     app
 }
 

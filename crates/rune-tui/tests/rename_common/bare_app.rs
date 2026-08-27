@@ -9,7 +9,6 @@ use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{Effects, Msg};
-use rune_tui::workspace;
 
 use rune_core::buffer::Buffer;
 use rune_vfs::{Mem, Vfs, VfsTestExt};
@@ -162,97 +161,15 @@ pub fn app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     (app, bridge)
 }
 
-/// A store-bound pathless draft on a bare `App`: minted through the real
-/// `workspace::new_untitled_document` flow with its `CreateScratch` ack
-/// delivered through the ordinary `Msg::Db` path — never
-/// `set_doc_db_for_test`. Bare-`App` rather than a `Session` because the
-/// Enter that names a store-bound draft starts a materialize on a plain
-/// key, which the fuzz driver's `SAVE-INFLIGHT-SM` checker (rightly, for
-/// the flows it generates) rejects.
-pub fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
-    let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-    let bridge = DbBridge::bootstrap();
-    let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
-
-    let mut app = App::new(
-        Buffer::new(""),
-        None,
-        vfs,
-        Some(Db::new(store, Arc::clone(&bridge), false)),
-    );
-    let id = workspace::new_untitled_document(&mut app);
-    let evt = next_event(&bridge);
-    let mut effects = Effects::default();
-    app::update(&mut app, Msg::Db(evt), &mut effects);
-    assert!(
-        app.doc(id)
-            .is_some_and(rune_tui::document::Document::is_store_bound),
-        "the CreateScratch ack must bind the draft"
-    );
-
-    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
-    app.sync_view();
-    type_text(&mut app, "draft body");
-    (app, bridge)
-}
-
-/// The body [`unsaved_named_app_with_store`] types into its document — the
-/// bytes the loader would have found on disk had the launch actually
-/// published anything, i.e. none: the fixture starts the buffer EMPTY
-/// (`loader::load_buffer`'s own "a nonexistent path opens an empty
-/// buffer") and types this in through the public key path afterward, so
-/// the document is dirty because the user typed, not because a field was
-/// poked.
+/// The body `rename_common::unsaved_named_session` (and
+/// `db_wiring_rebind_replica.rs`'s own file-backed counterpart) types into
+/// its document — the bytes the loader would have found on disk had the
+/// launch actually published anything, i.e. none: the fixture starts the
+/// buffer EMPTY (`loader::load_buffer`'s own "a nonexistent path opens an
+/// empty buffer") and types this in through the public key path afterward,
+/// so the document is dirty because the user typed, not because a field
+/// was poked.
 pub const UNPUBLISHED_BODY: &str = "unpublished body";
-
-/// A path-set, create-only, store-bound app whose file is ABSENT from
-/// `mem` — work package A's fixture: a document that already knows its
-/// name (unlike [`draft_app_with_store`]'s pathless shape) but has never
-/// been published, the state a named launch onto a not-yet-existing path
-/// leaves behind. Binds to a genuine scratch row (`path=''`, `CreateScratch`)
-/// rather than borrowing a seeded file's real `documents` row — the same
-/// row shape `handle_materialize_ack`'s own comment cites as having no CAS
-/// baseline to raise `[M]`/`[D]` against, which is exactly the shape this
-/// fixture needs to exercise the lost-create-race hand-off honestly.
-///
-/// The buffer starts empty, exactly like `loader::load_buffer`'s own
-/// nonexistent-path case, then types [`UNPUBLISHED_BODY`] through the
-/// ordinary key path — a document seeded non-empty here would come out of
-/// `Document::new` already clean (`saved_content` is captured from the
-/// INITIAL buffer), which would make every ⌘S downstream a silent no-op.
-pub fn unsaved_named_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
-    let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-    let bridge = DbBridge::bootstrap();
-    let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
-
-    store.create_scratch().expect("enqueue create_scratch");
-    let row_id = match next_event(&bridge) {
-        DbEvent::Ok {
-            result: OpOutcome::ScratchDocId(doc_id),
-            ..
-        } => doc_id.0,
-        other => panic!("expected a ScratchDocId ack, got {other:?}"),
-    };
-
-    let mut app = App::new(
-        Buffer::new(""),
-        Some(PathBuf::from("/root/nope.md")),
-        vfs,
-        Some(Db::new(store, Arc::clone(&bridge), false)),
-    );
-    app.active_doc_mut().set_doc_db_for_test(DocDb::new(
-        row_id,
-        PublishMode::CreateOnly,
-        rune_db::Seq(0),
-    ));
-    app.install_or_join_file_binding(row_id, None);
-    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
-    app.sync_view();
-    type_text(&mut app, UNPUBLISHED_BODY);
-    (app, bridge)
-}
 
 pub fn key(code: KeyCode, mods: Mods) -> Msg {
     Msg::Key(KeyInput { code, mods })
@@ -292,8 +209,8 @@ pub fn send(app: &mut App, msg: Msg) -> Effects {
 
 /// Types `text` into whatever pane is currently focused, one key at a
 /// time — the title field for `rename_to`/`type_new_name`'s callers, or the
-/// editor buffer for `unsaved_named_app_with_store`'s own call (no `^r`
-/// precedes it, so focus is still the Editor).
+/// editor buffer for a caller that never focused the title (focus stays on
+/// the Editor).
 pub fn type_text(app: &mut App, text: &str) {
     for ch in text.chars() {
         send(app, plain(KeyCode::Char(ch)));

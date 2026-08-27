@@ -79,7 +79,7 @@ pub(crate) fn ensure_visible(app: &mut App) {
 }
 
 fn visible_rows(app: &App) -> usize {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     entry_rows(crate::layout::geometry(area, app).explorer_inner).max(1)
 }
 

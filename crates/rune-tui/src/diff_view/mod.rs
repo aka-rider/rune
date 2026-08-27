@@ -111,7 +111,7 @@ pub fn sync(app: &mut App) {
         .map(|v| rows::line_heights(&v.wrap))
         .unwrap_or_default();
     let deadline = Some(app.clock.now() + INTRALINE_BUDGET);
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let folded = crate::layout::geometry(area, app).diff_left.is_none();
 
     let Some(diff) = app.diff.as_mut() else {

@@ -27,7 +27,7 @@ pub(crate) fn toggle_left(app: &mut App, painted_before: bool, effects: &mut Eff
 /// its floor before focus lands there.
 pub(crate) fn focus_tabs(app: &mut App, effects: &mut Effects) {
     app.splits.left.show();
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let geo = crate::layout::geometry(area, app);
     if let Some(block) = geo.left_block {
         let budget = crate::layout::explorer_budget(block);
@@ -162,8 +162,7 @@ mod tests {
     #[test]
     fn tab_switch_out_of_range_leaves_focus_untouched_and_warns() {
         let mut app = app();
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         app.splits.left.show();
         app.set_focus_pane(Pane::Tabs, &mut Effects::default());
         let active_before = app.active;
@@ -188,8 +187,7 @@ mod tests {
     #[test]
     fn tab_switch_in_range_activates_the_tab_and_focuses_the_editor() {
         let mut app = app();
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         let second = app.open_document(Buffer::new("second"));
         app.set_focus_pane(Pane::Tabs, &mut Effects::default());
 

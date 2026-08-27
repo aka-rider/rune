@@ -27,7 +27,7 @@ fn live_place(app: &App) -> Option<Place> {
     Some(Place {
         doc: app.active,
         path: doc.file_path.clone(),
-        offset: doc.cursors.primary().position,
+        offset: doc.cursors.primary().position.get(),
         kind: PlaceKind::Visited,
     })
 }

@@ -11,11 +11,11 @@ pub(super) fn apply_bracket_match(rows: &mut [Vec<Cell>], doc: &Document, theme:
     }
     let content = doc.buffer.content();
     for cursor in doc.cursors.all() {
-        let Some((open, close)) = pair_at_caret(content, cursor.position) else {
+        let Some((open, close)) = pair_at_caret(content, cursor.position.get()) else {
             continue;
         };
         for end in [open, close] {
-            if end == cursor.position {
+            if end == cursor.position.get() {
                 continue;
             }
             paint_range(

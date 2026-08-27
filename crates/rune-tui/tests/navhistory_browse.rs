@@ -283,7 +283,7 @@ fn escaping_a_narrow_explorer_records_nothing() {
     arrow_to(&mut app, "b.md");
     assert!(app.active_doc().is_preview());
 
-    app.frame_width = 24;
+    app.frame = Some(rune_tui::app::FrameSize::new(24, app.frame_height()));
     app.sync_view();
     press_and_settle(&mut app, plain(KeyCode::Escape));
 

@@ -208,14 +208,13 @@ fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
     let content = "one two three\nfour five six\nseven eight nine\n";
     // `app_for` already resizes to `WIDTH`/`HEIGHT` through the real
     // `Msg::Resize` chokepoint, so `layout::geometry` (and so the mouse
-    // gesture's `editor` rect below, which reads `frame_width`/
-    // `frame_height`) is already sized to match.
+    // gesture's `editor` rect below, which reads `App::frame`) is already
+    // sized to match.
     let mut session = app_for(content, 0, true);
     send(session.app_mut(), ctrl('p'));
     assert_eq!(session.app().active_doc().read_only, ReadOnly::Reading);
 
-    let area =
-        ratatui::layout::Rect::new(0, 0, session.app().frame_width, session.app().frame_height);
+    let area = session.app().frame_area();
     let editor = rune_tui::layout::geometry(area, session.app()).editor;
     let mut effects = Effects::default();
     app::update(
@@ -313,7 +312,7 @@ fn match_bracket_in_reading_view_refuses_instead_of_moving_an_invisible_caret() 
     let scroll_before = app.active_doc().viewport.scroll_row;
     let caret_before = app.active_doc().cursors.primary().position;
     assert_eq!(
-        content.as_bytes()[caret_before],
+        content.as_bytes()[caret_before.get()],
         b'(',
         "the fixture must park the caret on a bracket, or this proves nothing"
     );

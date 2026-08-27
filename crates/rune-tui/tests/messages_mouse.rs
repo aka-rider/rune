@@ -15,6 +15,7 @@ mod messages_common;
 
 use ratatui::layout::Rect;
 
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_fuzz::Session;
 use rune_tui::app;
@@ -72,9 +73,9 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
             .expect("test setup: log document must contain the posted text");
         let end = start + "hello world".len();
         messages::doc_mut(session.app_mut()).cursors = CursorSet::new_from(&[Cursor {
-            position: end,
-            anchor: start,
-            desired_col: 0,
+            position: BufferOffset(end),
+            anchor: BufferOffset(start),
+            desired_col: VisualCol(0),
             id: CursorId::FIRST,
         }]);
 
@@ -101,7 +102,7 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
 /// since every test here opens it first.
 fn pane_rect(session: &Session) -> Rect {
     let app = session.app();
-    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     layout::geometry(area, app)
         .messages
         .expect("test setup: the pane must be open")
@@ -225,7 +226,7 @@ fn a_drag_in_the_editor_never_touches_the_log_documents_cursor() {
     messages::warn(session.app_mut(), "hello world");
     session.app_mut().sync_view();
 
-    let area = Rect::new(0, 0, session.app().frame_width, session.app().frame_height);
+    let area = session.app().frame_area();
     let editor = layout::geometry(area, session.app()).editor;
     mouse(
         &mut session,

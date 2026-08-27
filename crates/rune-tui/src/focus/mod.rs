@@ -5,8 +5,6 @@
 //! written against, and it needs variants `Pane` doesn't have (the
 //! search/replace fields).
 
-use ratatui::layout::Rect;
-
 use crate::app::App;
 use crate::pane::Pane;
 use crate::runtime::Effects;
@@ -100,15 +98,15 @@ impl LayoutMode {
     /// visibility through) plus the raw `Split` flags — the ONE function
     /// this whole module's guarantee rests on.
     ///
-    /// Guarded on an unsized frame (`frame_width`/`frame_height` still `0`,
-    /// i.e. before the first `Msg::Resize` ever lands — `App::relayout` is
-    /// documented as a no-op in exactly this state): `layout::geometry`
-    /// would otherwise report every pane collapsed at a zero-area frame,
-    /// which is a "not measured yet" state, not a real "nothing fits"
-    /// verdict, so this falls back to trusting the raw flags instead of
-    /// asking geometry a question it cannot yet answer meaningfully.
+    /// Guarded on an unsized frame (`App::frame` still `None`, i.e. before
+    /// the first `Msg::Resize` ever lands — `App::relayout` is documented
+    /// as a no-op in exactly this state): `layout::geometry` would
+    /// otherwise report every pane collapsed at a zero-area frame, which is
+    /// a "not measured yet" state, not a real "nothing fits" verdict, so
+    /// this falls back to trusting the raw flags instead of asking
+    /// geometry a question it cannot yet answer meaningfully.
     pub fn resolve(app: &App) -> LayoutMode {
-        if app.frame_width == 0 || app.frame_height == 0 {
+        if app.frame.is_none() {
             return if app.splits.left.is_shown() {
                 LayoutMode::Split {
                     explorer: true,
@@ -118,8 +116,7 @@ impl LayoutMode {
                 LayoutMode::EditorOnly
             };
         }
-        let area = Rect::new(0, 0, app.frame_width, app.frame_height);
-        crate::layout::resolve_mode(area, app)
+        crate::layout::resolve_mode(app.frame_area(), app)
     }
 
     /// `Some(VisiblePane(pane))` exactly when `pane` is painted under this

@@ -110,7 +110,7 @@ pub(crate) fn row_capacity(app: &App) -> usize {
     let Some(state) = app.palette() else {
         return 0;
     };
-    capacity(app.frame_height, state)
+    capacity(app.frame_height(), state)
 }
 
 pub(crate) fn recompute(app: &mut App) {
@@ -148,7 +148,7 @@ fn resync(app: &mut App, clear_refusal: bool) {
             *arg_rows = args::rank(app, cmd, &query, matcher);
         }
     }
-    let height = capacity(app.frame_height, &state).max(1);
+    let height = capacity(app.frame_height(), &state).max(1);
     let len = state.active_len();
     if len == 0 {
         state.nav.cursor = 0;

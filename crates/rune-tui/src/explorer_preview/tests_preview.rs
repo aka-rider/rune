@@ -329,7 +329,7 @@ fn a_real_open_racing_its_own_in_flight_preview_lands_with_its_anchor() {
          never be swallowed as the stale preview's own reply"
     );
     assert_eq!(app.focus(), Pane::Editor, "the real open must move focus");
-    let landed_at = app.doc(id).map(|d| d.cursors.primary().position);
+    let landed_at = app.doc(id).map(|d| d.cursors.primary().position.get());
     assert_eq!(
         landed_at,
         Some("first\n".len()),
@@ -355,5 +355,8 @@ fn a_real_open_racing_its_own_in_flight_preview_lands_with_its_anchor() {
         );
     }
     assert_eq!(app.doc(id).map(|d| d.read_only), Some(ReadOnly::No));
-    assert_eq!(app.doc(id).map(|d| d.cursors.primary().position), landed_at);
+    assert_eq!(
+        app.doc(id).map(|d| d.cursors.primary().position.get()),
+        landed_at
+    );
 }

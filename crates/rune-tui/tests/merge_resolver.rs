@@ -189,10 +189,7 @@ fn keep_ours_is_flag_only_and_take_theirs_is_one_journal_step() {
 fn fold_mode_at_the_default_width_keeps_the_save_gate_and_take_theirs_working() {
     let (mut session, doc_id) = enter_two_conflict_merge();
 
-    let geo = rune_tui::layout::geometry(
-        ratatui::layout::Rect::new(0, 0, session.app().frame_width, session.app().frame_height),
-        session.app(),
-    );
+    let geo = rune_tui::layout::geometry(session.app().frame_area(), session.app());
     assert!(
         geo.diff_left.is_none(),
         "the session's default width must be narrow enough to fold"

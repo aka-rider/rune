@@ -45,7 +45,7 @@ const RIGHT: KeyInput = KeyInput {
 fn place_caret(session: &mut Session, offset: usize) {
     let target = offset.min(session.app().active_doc().buffer.content().len());
     let mut guard = 0usize;
-    while session.app().active_doc().cursors.primary().position < target {
+    while session.app().active_doc().cursors.primary().position.get() < target {
         session.key(RIGHT);
         guard += 1;
         assert!(

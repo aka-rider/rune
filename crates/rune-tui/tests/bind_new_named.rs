@@ -1,9 +1,11 @@
 //! Work package A: a document that already has a `file_path` AND a
 //! create-only `DocDb` — a named file that does not exist on disk
 //! yet, the shape a launch onto a not-yet-existing positional leaves
-//! behind. `rename_common::unsaved_named_app_with_store` is the shared
+//! behind. `rename_common::unsaved_named_session` is the shared
 //! fixture; the end-to-end tests here drive it through the same public
-//! entry points a user reaches (⌘S, `^R`).
+//! entry points a user reaches (⌘S, `^R`), through `rune_fuzz::Session` now
+//! that `SAVE-INFLIGHT-SM` recognizes the title-focused Enter that commits
+//! a `bind_new_now` create.
 
 #![allow(
     clippy::unwrap_used,
@@ -17,13 +19,12 @@ mod rename_common;
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_tui::runtime::{CmdKind, Msg};
-
+use rune_tui::keymap::KeyCode;
 use rune_vfs::{Mem, Vfs, VfsTestExt};
 
 use rename_common::{
-    UNPUBLISHED_BODY, active_path, rename_to, send, sup, type_text, wait_for_load,
-    wait_for_materialize_prep, wait_for_materialize_record,
+    UNPUBLISHED_BODY, active_path, commit_name, drain_materialize_round_trip, plain_key, sup_key,
+    unsaved_named_session,
 };
 
 /// ⌘S on a named-but-unpublished document creates the file with the
@@ -32,36 +33,29 @@ use rename_common::{
 #[test]
 fn cmd_s_creates_the_file_and_flips_to_overwrite() {
     let mem = Arc::new(Mem::new());
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-    let id = app.active;
+    let mut session = unsaved_named_session(&mem);
+    let id = session.app().active;
 
-    send(&mut app, sup('s'));
-
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
+    assert!(session.key(sup_key('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
     assert_eq!(
         mem.read(Path::new("/root/nope.md")).expect("file created"),
         UNPUBLISHED_BODY.as_bytes()
     );
-    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
+    let doc_db = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .doc_db()
+        .expect("still bound");
     assert_eq!(
         doc_db.publish_mode,
         rune_tui::db::PublishMode::OverwriteExisting,
         "the create just committed — the next save is an overwrite"
     );
     assert!(
-        !app.doc(id).unwrap().is_dirty(),
+        !session.app().doc(id).unwrap().is_dirty(),
         "a just-published buffer must not read as dirty"
     );
 }
@@ -73,47 +67,40 @@ fn cmd_s_creates_the_file_and_flips_to_overwrite() {
 #[test]
 fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
     let mem = Arc::new(Mem::new());
+    let mut session = unsaved_named_session(&mem);
+    let id = session.app().active;
+    // The racer wins AFTER this session's own fixture has already booted
+    // (unaware of the path) — the concurrent write a "lost race" actually
+    // names, and the order `unsaved_named_session` itself requires: it
+    // opens directly on this path while absent, so seeding it first would
+    // have the fixture's own boot observe (and open) the racer's file
+    // instead of falling back to the create-only draft this test needs.
     mem.save_atomic(Path::new("/root/nope.md"), b"racer bytes")
         .expect("a concurrent creator wins first");
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-    let id = app.active;
 
-    send(&mut app, sup('s'));
-
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
+    assert!(session.key(sup_key('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
     // The hand-off seeds `last_sync = Diverged` the instant the race is
     // detected — before the Load round trip even lands — so `^M` is a
     // genuine escape hatch during the window a slower writer thread would
     // otherwise leave the user stuck with only the plain error message.
     assert_eq!(
-        app.doc(id).unwrap().last_sync,
+        session.app().doc(id).unwrap().last_sync,
         Some(rune_db::SyncKind::Diverged),
         "the A2 branch must seed Diverged so the merge route is reachable"
     );
 
     // The A2 route hands the document off to an ordinary Load to install a
     // real CAS baseline instead of raising an unanswerable Guard.
-    let load_evt = wait_for_load(&bridge);
-    send(&mut app, Msg::Db(load_evt));
+    assert!(session.deliver_db_all().is_none());
 
     // Review fix: the hand-off's Load is `binding_only` — its ack must
     // never clobber the `Diverged` seed with its own freshly-observed
     // (clean) sync kind, or `^M` stops being reachable the instant the
     // round trip lands.
     assert_eq!(
-        app.doc(id).unwrap().last_sync,
+        session.app().doc(id).unwrap().last_sync,
         Some(rune_db::SyncKind::Diverged),
         "the hand-off's Load ack must never overwrite the Diverged seed"
     );
@@ -124,22 +111,28 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
         "the racer's bytes must survive untouched"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("created by something")),
+        rune_tui::messages::newest_text(session.app())
+            .is_some_and(|m| m.contains("created by something")),
         "got {:?}",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(session.app())
     );
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a lost create race must never raise an unanswerable DiskConflict guard"
     );
-    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
+    let doc_db = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .doc_db()
+        .expect("still bound");
     assert_eq!(
         doc_db.publish_mode,
         rune_tui::db::PublishMode::OverwriteExisting,
         "the document must come out of the create bound to the file's own row"
     );
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer.content(),
         UNPUBLISHED_BODY,
         "the user's typed body must never be clobbered by the hand-off's Load"
     );
@@ -156,46 +149,46 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
 #[test]
 fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() {
     let mem = Arc::new(Mem::new());
+    let mut session = unsaved_named_session(&mem);
+    let id = session.app().active;
+    // See `cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds`
+    // for why the racer's write must land AFTER the fixture boots.
     mem.save_atomic(Path::new("/root/nope.md"), b"racer bytes")
         .expect("a concurrent creator wins first");
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-    let id = app.active;
 
     // A second, unrelated live document already bound to the racer's path.
-    let other = app.open_document(rune_core::buffer::Buffer::new("other tab's body"));
-    app.doc_mut(other).unwrap().file_path = Some(std::path::PathBuf::from("/root/nope.md"));
+    let other = session
+        .app_mut()
+        .open_document(rune_core::buffer::Buffer::new("other tab's body"));
+    session.app_mut().doc_mut(other).unwrap().file_path =
+        Some(std::path::PathBuf::from("/root/nope.md"));
 
-    send(&mut app, sup('s'));
-
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
+    assert!(session.key(sup_key('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
     assert!(
-        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("^R")),
+        rune_tui::messages::newest_text(session.app()).is_some_and(|m| m.contains("^R")),
         "got {:?}",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(session.app())
     );
     assert!(
-        app.doc(id).unwrap().buffer.content() == UNPUBLISHED_BODY,
+        session.app().doc(id).unwrap().buffer.content() == UNPUBLISHED_BODY,
         "the buffer must stay exactly as typed"
     );
-    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
+    let doc_db = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .doc_db()
+        .expect("still bound");
     assert!(
         doc_db.publish_mode.is_create_only(),
         "no hand-off happened, so the document must stay create-only"
     );
     assert!(
-        !app.db_ops
+        !session
+            .app()
+            .db_ops
             .values()
             .any(|p| p.doc == id && p.issued_version.is_some()),
         "no Load must have been enqueued for the colliding document"
@@ -212,28 +205,14 @@ fn rename_on_a_never_published_document_creates_at_the_new_name() {
         .expect(
             "seed the root-joined target so a wrongly root-joined create would actually collide",
         );
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-
-    rename_to(&mut app, "fresh");
+    let mut session = unsaved_named_session(&mem);
 
     // `rename::begin`'s create branch routes through `save::bind_new_now`,
-    // the same store-backed materialize dance ⌘S uses: a `MaterializePrepare`
-    // ack spawns the caller-side `vfs` `Cmd`, which itself replies with a
-    // `Msg` that enqueues `MaterializeRecord`.
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
+    // the same store-backed materialize dance ⌘S uses.
+    commit_name(&mut session, "fresh");
+    drain_materialize_round_trip(&mut session);
 
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
-
-    let path = active_path(&app).expect("the document must now be bound");
+    let path = active_path(session.app()).expect("the document must now be bound");
     assert_eq!(
         path,
         Path::new("/root/fresh.md"),
@@ -258,23 +237,11 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(Path::new("/root/taken.md"), b"already here")
         .expect("a file already sits at the rename target");
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-    let id = app.active;
+    let mut session = unsaved_named_session(&mem);
+    let id = session.app().active;
 
-    rename_to(&mut app, "taken");
-
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
+    commit_name(&mut session, "taken");
+    drain_materialize_round_trip(&mut session);
 
     assert_eq!(
         mem.read(Path::new("/root/taken.md")).expect("still there"),
@@ -286,26 +253,33 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
         "the never-published old name must never be created by the refused attempt"
     );
     assert!(
-        !app.db_ops
+        !session
+            .app()
+            .db_ops
             .values()
             .any(|p| p.doc == id && p.issued_version.is_some()),
         "a rename-route EEXIST must never enqueue a Load for the old, never-existing name"
     );
     assert!(
-        !app.db.as_ref().unwrap().degraded,
+        !session.app().db.as_ref().unwrap().degraded,
         "a plain rename collision must never degrade the store"
     );
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a rename-create collision has no CAS baseline to raise a Guard against"
     );
-    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
+    let doc_db = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .doc_db()
+        .expect("still bound");
     assert!(
         doc_db.publish_mode.is_create_only(),
         "the document must stay create-only — no naming attempt has succeeded yet"
     );
     assert!(
-        app.doc(id).unwrap().bind_target().is_none(),
+        session.app().doc(id).unwrap().bind_target().is_none(),
         "a refused create must clear bind_target"
     );
 }
@@ -325,47 +299,24 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(Path::new("/root/taken.md"), b"already here")
         .expect("a file already sits at the first rename target");
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-    let id = app.active;
+    let mut session = unsaved_named_session(&mem);
+    let id = session.app().active;
 
     // First attempt: collides, refused.
-    rename_to(&mut app, "taken");
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
+    commit_name(&mut session, "taken");
+    drain_materialize_round_trip(&mut session);
 
     // The refusal returns focus to the title, still holding the refused
     // name — `Esc` leaves it without re-committing, exactly like any other
     // manual cancel, so the second attempt below is a genuine plain save,
     // never a second attempt at the same refused rename.
-    send(
-        &mut app,
-        rename_common::plain(rune_tui::keymap::KeyCode::Escape),
-    );
+    assert!(session.key(plain_key(KeyCode::Escape)).is_none());
 
     // Second attempt: a plain save of the document's OWN path.
-    send(&mut app, sup('s'));
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-    let record_evt = wait_for_materialize_record(&bridge);
-    send(&mut app, Msg::Db(record_evt));
+    assert!(session.key(sup_key('s')).is_none());
+    drain_materialize_round_trip(&mut session);
 
-    let path = active_path(&app).expect("the document must now be bound");
+    let path = active_path(session.app()).expect("the document must now be bound");
     assert_eq!(
         path,
         Path::new("/root/nope.md"),
@@ -378,7 +329,12 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
         b"already here",
         "the refused target must stay exactly as it was"
     );
-    let doc_db = app.doc(id).unwrap().doc_db().expect("still bound");
+    let doc_db = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .doc_db()
+        .expect("still bound");
     assert_eq!(
         doc_db.publish_mode,
         rune_tui::db::PublishMode::OverwriteExisting,
@@ -396,27 +352,24 @@ fn a_refused_rename_create_never_leaks_its_path_into_a_later_successful_one() {
 /// make the very next save's `materialize_prepare` immediately `NotFound`.
 /// Simulated by dropping `app.db` between the caller-side `vfs` write
 /// committing and its `MaterializeRecord` bookkeeping landing — the exact
-/// window `record_outcome`'s doc comment describes.
+/// window `record_outcome`'s doc comment describes. `app.db` is nulled
+/// directly through `app_mut()` between the `MaterializePrepare` ack (which
+/// parks the caller-side vfs `Cmd` as the driver's own pending save) and
+/// its delivery — a plain state poke, not a fabricated message, so the
+/// checked steps around it stay real.
 #[test]
 fn a_synthesized_commit_with_no_store_left_drops_the_binding_and_the_next_save_still_lands() {
     let mem = Arc::new(Mem::new());
-    let (mut app, bridge) = rename_common::unsaved_named_app_with_store(&mem);
-    let id = app.active;
+    let mut session = unsaved_named_session(&mem);
+    let id = session.app().active;
 
-    send(&mut app, sup('s'));
-    let prep_evt = wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    assert!(session.key(sup_key('s')).is_none());
+    assert!(session.deliver_db().is_none());
 
     // The store vanishes entirely mid-flight, after the write already
     // committed but before its bookkeeping lands.
-    app.db = None;
-    send(&mut app, vfs_done);
+    session.app_mut().db = None;
+    assert!(session.deliver().is_none());
 
     assert_eq!(
         mem.read(Path::new("/root/nope.md")).expect("file created"),
@@ -424,31 +377,25 @@ fn a_synthesized_commit_with_no_store_left_drops_the_binding_and_the_next_save_s
         "the write itself already committed before the store vanished"
     );
     assert!(
-        !app.doc(id).unwrap().is_dirty(),
+        !session.app().doc(id).unwrap().is_dirty(),
         "the just-published bytes must still count as saved"
     );
     assert!(
-        !app.doc(id).unwrap().is_store_bound(),
+        !session.app().doc(id).unwrap().is_store_bound(),
         "a binding that can never serve its next save must be dropped, not left dangling"
     );
 
     // A second save, now routed through the no-store direct-vfs fallback,
     // must still land — the Prime Directive holds even once the binding
     // is gone.
-    type_text(&mut app, "!");
-    let mut effects = send(&mut app, sup('s'));
-    let save_cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("a dropped binding must fall back to the no-store save Cmd");
-    let save_done = save_cmd.run().expect("the save Cmd must reply");
-    send(&mut app, save_done);
+    assert!(session.type_("!").is_none());
+    assert!(session.key(sup_key('s')).is_none());
+    assert!(session.deliver().is_none());
 
     assert_eq!(
         mem.read(Path::new("/root/nope.md")).unwrap(),
         format!("{UNPUBLISHED_BODY}!").as_bytes(),
         "the second save must still reach disk despite the dropped binding"
     );
-    assert!(!app.doc(id).unwrap().is_dirty());
+    assert!(!session.app().doc(id).unwrap().is_dirty());
 }

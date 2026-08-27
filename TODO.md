@@ -28,7 +28,6 @@ constitution and the entry is deleted in the same commit.
 
 ### MINOR
 
-- **Wrap segment can exceed the width budget when decor is present** — `crates/rune-syntax/src/wrap/mod.rs:147`; the force-include-one-cluster fallback can emit a 2-cell cluster into a 1-cell content budget (`"# 👍🏽"` at width 3). Documented "always make progress" behavior with no byte/coordinate consequence — recorded so it isn't mistaken for a new bug.
 
 - **Concealed markdown delimiters can never take a background overlay** — `crates/rune-tui/src/render/cell.rs:147` (`paint_range`) keys purely on `Cell::buf_offset`, and `crates/rune-md/src/emit/walk_inline.rs:145,152` (`hide_range`) emits no cell at all for unrevealed link/image markup, so the offsets simply aren't on screen and the paint silently no-ops. It bites the matching-bracket highlight hardest: in a markdown document the brackets a user actually looks at are `[`…`](url)`, and when only one endpoint's element is `Revealed` the partner cannot be lit. Search and selection share the mechanism and the same blind spot. Needs a decision at the rune-md conceal boundary (reveal the partner's element, or mark the nearest visible cell), not a render-layer patch.
 - **The Kitty keyboard flags are pushed blind** — `crates/rune-tui/src/term.rs:135` sends `Csi::Keyboard(Keyboard::PushFlags(...))` unconditionally with no capability probe and no read-back, so rune cannot distinguish a terminal that honoured `DISAMBIGUATE_ESCAPE_CODES`/`REPORT_ALTERNATE_KEYS` from one that dropped the CSI on the floor. Every `secondary: true` alternate row in the binding tables is a guess about which of the two worlds we're in. A `CSI ? u` query would settle it and would let a one-time message name the terminal's own setting when a chord is unreachable.
@@ -41,26 +40,6 @@ constitution and the entry is deleted in the same commit.
 - **Wrong**: the 2026-08-13 migration moved nine `*_common` modules onto `rune_fuzz::Session`, but these binaries still construct bare `App`s through the duplicated fixture layer the migration exists to delete, so `rename_common` carries both layers side by side.
 - **Instead**: migrate the six binaries and `navhistory_common` onto `Session`, then delete the App layer and re-evaluate whether `set_doc_db_for_test` is orphaned. Known driver gaps that blocked full migration, to close in `rune-fuzz` first: no out-of-order db-op delivery through checked steps (`deliver_db` is oldest-first; `merge_common::deliver_op_unchecked` is the workaround); the redivergence tracker only learns of external writes via `Action::DivergeDisk`; `Effects::raw`/timer arming invisible through `Session`; `ReadDir`/`ReadFile` Cmds dropped by the driver; a single rename-Cmd slot; no targeted `ClipboardRead` action; `SAVE-INFLIGHT-SM` rejects the legitimate `bind_new_now` Enter-materialize flip.
 - **Done when**: no test binary constructs an `App` through a `*_common` fixture that duplicates `Session`, and the driver gaps above are either closed or individually recorded as deliberate.
-
-### Sentinel-value residue
-- **Where**: `crates/rune-tui/src/app.rs` (`frame_height/width: u16`, 0 = no resize yet — its own entry below defers it); `crates/rune-tui/src/filesearch/rank.rs` and `crates/rune-tui/src/messages/mod.rs` (`unwrap_or(usize::MAX)` — both documented deliberate orderings). (`rune-nav`'s empty-`PathBuf` root is fixed: `resolve` takes `Option<&Path>`.)
-- **Wrong**: the class is otherwise closed (`CellMap`, table `buf`, `Cell.buf_offset` are `Option<u32>`; `App.root` is `Option<PathBuf>`); these are the remaining sites where an absent value borrows a valid-looking encoding.
-- **Instead**: replace the two `usize::MAX` orderings with explicit `Option`-aware comparisons in the typed-newtypes pass.
-- **Done when**: no site encodes "absent" as `usize::MAX`.
-
-### A generation counter's type doesn't say which feature it belongs to
-- **Where**: `crates/rune-tui/src/generation.rs`'s `Generation`/`GenCounter` — one shared type now minted by every counter (`next_rename_gen`, `next_merge_gen`, `next_save_confirm_gen`, `next_quit_gen`, `next_trash_gen`, `next_filesearch_gen`, `next_search_history_gen`, `Explorer::next_request_gen`, `MessageLog::generation`, `ImageState::next_generation`); each is compared against a bare `generation: Generation` field carried by its own `Msg` reply.
-- **Wrong**: every counter and every `Msg` field that answers it share the exact same `Generation` type. Nothing stops a future edit from comparing one feature's counter against another feature's reply — reading `next_quit_gen` where `next_rename_gen` belongs, say — and the mistake still compiles.
-- **Instead**: give `Generation`/`GenCounter` a phantom type parameter naming the feature it belongs to (`Generation<Rename>`, `Generation<Merge>`, and so on), so passing a rename generation where a merge generation is expected fails to compile instead of comparing two unrelated counters at runtime.
-- **Done when**: each feature's reply carries a `Generation<T>` typed to that feature, and swapping two features' generation values is a compile error rather than a stale-reply check that only catches it at runtime.
-- **Update**: wide churn — every counter and every `Msg` reply site would need the change — and the failure mode a mismatch causes today (a stale reply gets discarded as "not the generation we're waiting for") already fails safe, so this is recorded rather than fixed now. Nine of the counters listed above now mint through the shared `Generation`/`GenCounter` newtype (`crates/rune-tui/src/generation.rs`), closing the prior mint-order inconsistency and per-feature reimplementation — but not this entry's actual complaint, which is the shared type itself.
-
-### Frame size `0` doubles as "not yet measured"
-- **Where**: `crates/rune-tui/src/app.rs`'s `App::frame_width`/`frame_height`, both `u16`; guarded by an early return in `crates/rune-tui/src/focus.rs` (`if app.frame_width == 0 || app.frame_height == 0`) and read again at other layout call sites.
-- **Wrong**: `0` means both "the first resize hasn't landed yet" and, in principle, a real if degenerate frame size. The two fields are read independently at some call sites, so a caller can observe one field measured and the other still `0` with nothing in the type system marking that in-between state.
-- **Instead**: replace the pair with a single `Option<(u16, u16)>` (or a small named struct) that is `None` until the first resize lands, so "not measured yet" is a state the type carries instead of a value borrowed from the field's own valid range.
-- **Done when**: `frame_width`/`frame_height` no longer use `0` as a sentinel.
-- **Update**: today's guard is one check in `focus.rs` plus the layout paths that read both fields together — low value for the size of the change, so this is recorded rather than fixed now.
 
 ## Mechanical
 

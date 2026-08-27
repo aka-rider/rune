@@ -15,8 +15,7 @@ use super::*;
 
 fn app() -> App {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    app.frame_width = 100;
-    app.frame_height = 30;
+    app.frame = Some(crate::app::FrameSize::new(100, 30));
     app
 }
 

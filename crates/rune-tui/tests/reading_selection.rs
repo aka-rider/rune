@@ -38,16 +38,14 @@ fn ctrl(c: char) -> Msg {
 }
 
 /// Builds an app already sized for `render_to_test_backend`'s `WIDTH`x
-/// `HEIGHT` backend — `app.frame_width`/`frame_height` (not just the active
-/// document's viewport) must match it, since `commands::mouse::handle`
-/// hit-tests a `Msg::Mouse`'s column/row against `app.frame_width`/
-/// `frame_height` itself, the same dimensions a click's caller renders
-/// into.
+/// `HEIGHT` backend — `App::frame` (not just the active document's
+/// viewport) must match it, since `commands::mouse::handle` hit-tests a
+/// `Msg::Mouse`'s column/row against `app.frame_width()`/`frame_height()`
+/// itself, the same dimensions a click's caller renders into.
 fn app_sized(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.clock = Arc::new(ManualClock::new());
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
     app
 }
@@ -57,7 +55,7 @@ fn app_sized(content: &str) -> App {
 /// call `commands::mouse::handle` itself uses, so a test can never
 /// silently click the border/title row instead of editor content.
 fn editor_origin(app: &App) -> (u16, u16) {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = rune_tui::layout::geometry(area, app).editor;
     (editor.x, editor.y)
 }

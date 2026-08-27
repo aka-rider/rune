@@ -33,7 +33,7 @@ const SHIFT_RIGHT: KeyInput = KeyInput {
 /// selection gesture, never a `CursorSet::new_from` poke.
 fn extend_selection_to(session: &mut rune_fuzz::Session, target: usize) {
     let mut guard = 0usize;
-    while session.app().active_doc().cursors.primary().position < target {
+    while session.app().active_doc().cursors.primary().position.get() < target {
         session.key(SHIFT_RIGHT);
         guard += 1;
         assert!(

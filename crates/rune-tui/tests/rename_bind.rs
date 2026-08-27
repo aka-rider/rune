@@ -5,8 +5,8 @@
 //! own editing in `rename_gate.rs`, copy/cut/paste in
 //! `rename_clipboard.rs`, the collision guard in `rename_collision.rs`,
 //! the store-backed `[R]eplace` path in `rename_replace.rs`, and the
-//! focus-loss-is-the-commit-chokepoint suite in `rename_focus.rs`; all
-//! seven pull shared fixtures from `rename_common`.
+//! focus-loss-is-the-commit-chokepoint suite in `rename_focus_bind.rs`/
+//! `rename_focus_close.rs`; all pull shared fixtures from `rename_common`.
 
 #![allow(
     clippy::unwrap_used,
@@ -26,8 +26,8 @@ use rune_tui::rename::RenameState;
 use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
-    DOC_PATH, bound_session, commit_name, ctrl, ctrl_key, draft_session, name_draft, open_title,
-    plain, plain_key, send, set_name, type_text, unbound_session,
+    DOC_PATH, bound_draft_session, bound_session, commit_name, ctrl_key, draft_session,
+    drain_materialize_round_trip, name_draft, open_title, plain_key, set_name, unbound_session,
 };
 
 // ── Focus and typing ────────────────────────────────────────────────────
@@ -369,35 +369,20 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
 /// (e.g. "Untitled 1") to shadow it forever.
 #[test]
 fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
-    let mem = std::sync::Arc::new(rune_vfs::Mem::new());
-    let (mut app, bridge) = rename_common::draft_app_with_store(&mem);
-
-    send(&mut app, ctrl('r'));
-    type_text(&mut app, "fresh");
-    send(&mut app, plain(KeyCode::Enter));
+    let (mut session, _mem) = bound_draft_session();
 
     // The store-backed create is a three-hop round trip —
     // `MaterializePrepare`'s ack spawns the caller-side `vfs` `Cmd`
     // (`handle_prepare_ack`), which itself replies with a `Msg` that
     // enqueues `MaterializeRecord`.
-    let prep_evt = rename_common::wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, rune_tui::runtime::Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == rune_tui::runtime::CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
+    name_draft(&mut session, "fresh");
+    drain_materialize_round_trip(&mut session);
 
-    let record_evt = rename_common::wait_for_materialize_record(&bridge);
-    send(&mut app, rune_tui::runtime::Msg::Db(record_evt));
-
-    assert_eq!(app.rename, RenameState::Idle);
-    let path = rename_common::active_path(&app).expect("the draft must now be bound");
+    assert_eq!(session.app().rename, RenameState::Idle);
+    let path = rename_common::active_path(session.app()).expect("the draft must now be bound");
     assert_eq!(path.file_name().unwrap(), "fresh.md");
     assert_eq!(
-        app.active_doc().file_name(),
+        session.app().active_doc().file_name(),
         "fresh.md",
         "a store-bound create ack must clear the untitled display_name override"
     );
@@ -412,44 +397,30 @@ fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
 /// in the Editor with the old placeholder name still showing.
 #[test]
 fn a_colliding_store_bound_draft_name_refuses_in_the_footer_and_returns_focus_to_the_title() {
-    let mem = std::sync::Arc::new(rune_vfs::Mem::new());
-    let (mut app, bridge) = rename_common::draft_app_with_store(&mem);
+    let (mut session, mem) = bound_draft_session();
     // The create target joins `explorer::initial_root` — computed from the
     // live app rather than hard-coded, so the seed collides with the very
     // path the create will actually claim.
-    let existing = rune_tui::explorer::initial_root(&app).join("taken.md");
+    let existing = rune_tui::explorer::initial_root(session.app()).join("taken.md");
     mem.save_atomic(&existing, b"someone else's file")
         .expect("seed");
 
-    send(&mut app, ctrl('r'));
-    type_text(&mut app, "taken");
-    send(&mut app, plain(KeyCode::Enter));
-
     // The same three-hop round trip as the successful create above.
-    let prep_evt = rename_common::wait_for_materialize_prep(&bridge);
-    let mut effects = send(&mut app, rune_tui::runtime::Msg::Db(prep_evt));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == rune_tui::runtime::CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
-    send(&mut app, vfs_done);
-
-    let record_evt = rename_common::wait_for_materialize_record(&bridge);
-    send(&mut app, rune_tui::runtime::Msg::Db(record_evt));
+    name_draft(&mut session, "taken");
+    drain_materialize_round_trip(&mut session);
 
     assert!(
-        app.guard.is_none(),
+        session.app().guard.is_none(),
         "a store-bound draft collision must never raise a guard"
     );
     assert!(
-        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("already exists")),
+        rune_tui::messages::newest_text(session.app())
+            .is_some_and(|m| m.contains("already exists")),
         "got {:?}",
-        rune_tui::messages::newest_text(&app)
+        rune_tui::messages::newest_text(session.app())
     );
     assert_eq!(
-        app.focus(),
+        session.app().focus(),
         Pane::Title,
         "the user must be returned straight to the title to retype the name"
     );

@@ -3,6 +3,15 @@
 //! departure every deliberate navigation records). Integration test files
 //! are separate binaries, so this is the one place both draw an identical
 //! `App`/`Mem` fixture from.
+//!
+//! Stays `App`-shaped rather than moving onto `rune_fuzz::Session`: every
+//! consumer either follows a link/opens a file async (`press_and_open` ->
+//! `settle_file_opens`) or drives the Explorer (`browsing_app`,
+//! `focus_explorer`, `arrow_to`, `settle`), both of which run a `ReadFile`/
+//! `ReadDir` `Cmd` by hand — the session driver drops both Cmd kinds on the
+//! floor rather than tracking them, the same reason `explorer_common::
+//! app_with`/`load_explorer` (this module's own `#[path]` include) stay
+//! `App`-shaped for their own consumers.
 #![allow(dead_code)]
 
 #[path = "../explorer_common/mod.rs"]
@@ -27,16 +36,14 @@ pub fn app_with(mem: &Arc<Mem>, path: &str, content: &str) -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(Buffer::new(content), Some(PathBuf::from(path)), vfs, None);
     app.set_root(PathBuf::from("/root"));
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
     app
 }
 
 pub fn plain_app(content: &str, width: u16, height: u16) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.frame_width = width;
-    app.frame_height = height;
+    app.frame = Some(rune_tui::app::FrameSize::new(width, height));
     app.sync_view();
     app
 }
@@ -105,7 +112,7 @@ pub fn press_and_open(app: &mut App, key: KeyInput) {
 }
 
 pub fn editor_origin(app: &App) -> (u16, u16) {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = rune_tui::layout::geometry(area, app).editor;
     (editor.x, editor.y)
 }
@@ -171,8 +178,7 @@ pub fn focus_explorer(app: &mut App) {
 pub fn browsing_app(mem: &Arc<Mem>) -> App {
     let mut app = explorer_common::app_with(mem);
     app.set_root(PathBuf::from("/root"));
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
     focus_explorer(&mut app);
     app

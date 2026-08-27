@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -49,8 +50,7 @@ fn app_with_file() -> App {
     );
     app.active_doc_mut().cursors = CursorSet::new(5);
     app.active_doc_mut().viewport.set_size(80, 23);
-    app.frame_width = 100;
-    app.frame_height = 30;
+    app.frame = Some(rune_tui::app::FrameSize::new(100, 30));
     app.sync_view();
     app
 }
@@ -221,8 +221,8 @@ fn cmd_x_is_still_cut_never_a_focus_chord() {
     let mut app = app_for("hello world");
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
-        anchor: 0,
-        position: 5,
+        anchor: BufferOffset(0),
+        position: BufferOffset(5),
         ..c
     });
 
@@ -255,8 +255,8 @@ fn escape_with_a_selection_collapses_and_stays_in_the_editor() {
     let mut app = app_for("hello world");
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
-        anchor: 0,
-        position: 5,
+        anchor: BufferOffset(0),
+        position: BufferOffset(5),
         ..c
     });
 

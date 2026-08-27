@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_db::{DbEvent, LoadResult, OpOutcome, SyncKind, SyncState, Version};
 use rune_fuzz::Session;
 use rune_tui::app::{self, App};
@@ -152,7 +153,7 @@ fn restart_restores_the_caret_the_crashed_session_journaled() {
     assert!(session_a.key(HOME).is_none());
     assert!(session_a.type_("X").is_none());
     assert_eq!(session_a.snapshot().content, "Xhello world");
-    assert_eq!(session_a.snapshot().cursors[0].position, 1);
+    assert_eq!(session_a.snapshot().cursors[0].position, BufferOffset(1));
     assert!(session_a.deliver_db_all().is_none());
     session_a
         .app_mut()
@@ -172,7 +173,7 @@ fn restart_restores_the_caret_the_crashed_session_journaled() {
     assert_eq!(session_b.snapshot().content, "Xhello world");
     assert_eq!(
         session_b.snapshot().cursors[0].position,
-        1,
+        BufferOffset(1),
         "the restart must seat the caret where the crashed session left it"
     );
 }
@@ -189,17 +190,17 @@ fn a_journaled_caret_outside_the_recovered_content_is_clamped() {
         "aaaaaaaaaa",
         "\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}",
         &[rune_core::cursor::Cursor {
-            position: usize::MAX,
-            anchor: 3,
-            desired_col: 0,
+            position: BufferOffset(usize::MAX),
+            anchor: BufferOffset(3),
+            desired_col: rune_core::coords::VisualCol(0),
             id: rune_core::cursor::CursorId::try_from(1).expect("non-zero"),
         }],
     );
 
     assert!(matches!(outcome, rune_tui::document::Hydration::Adopted));
     let cursor = app.doc(id).expect("active doc").cursors.primary();
-    assert_eq!(cursor.position, 10);
-    assert_eq!(cursor.anchor, 2);
+    assert_eq!(cursor.position, BufferOffset(10));
+    assert_eq!(cursor.anchor, BufferOffset(2));
 }
 
 /// The `Load` ack installs `Document::db` as `Some` once it lands.

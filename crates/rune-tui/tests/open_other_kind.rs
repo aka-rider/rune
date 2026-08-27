@@ -27,8 +27,7 @@ fn opening_a_non_file_from_the_explorer_posts_an_error_and_opens_nothing() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as _;
 
     let mut app = App::new(Buffer::new(""), None, vfs, None);
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(rune_tui::app::FrameSize::new(80, 24));
     let docs_before = app.documents.order().len();
 
     let mut effects = Effects::default();

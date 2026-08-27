@@ -3,14 +3,15 @@ use crate::journal::{append_edit, move_undo_pos, undo_peek};
 use crate::journal_append::EditBatch;
 use crate::test_support::{insert_test_document, open};
 use rune_core::buffer::AppliedEdit;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::CursorId;
 use rune_core::undo::EditKind;
 
 fn cursor_at(offset: usize) -> Cursor {
     Cursor {
-        position: offset,
-        anchor: offset,
-        desired_col: 0,
+        position: BufferOffset(offset),
+        anchor: BufferOffset(offset),
+        desired_col: VisualCol(0),
         id: CursorId::try_from(1).expect("test id is non-zero"),
     }
 }

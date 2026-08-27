@@ -104,8 +104,7 @@ mod tests {
         let mut app = App::new(Buffer::new(content), None, vfs, None);
         app.active_doc_mut().focused = true;
         app.active_doc_mut().cursors = CursorSet::new_from_positions(&[content.len()]);
-        app.frame_width = 80;
-        app.frame_height = 24;
+        app.frame = Some(crate::app::FrameSize::new(80, 24));
         app.relayout();
         app.sync_view();
         app

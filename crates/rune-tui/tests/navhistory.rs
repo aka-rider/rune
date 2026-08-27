@@ -31,7 +31,10 @@ fn link_follow_then_back_returns_and_forward_returns_again() {
         app.active_doc().file_path.as_deref(),
         Some(Path::new("/root/a.md"))
     );
-    assert_eq!(app.active_doc().cursors.primary().position, link_offset);
+    assert_eq!(
+        app.active_doc().cursors.primary().position.get(),
+        link_offset
+    );
 
     press(&mut app, forward_key());
     assert_eq!(
@@ -117,7 +120,7 @@ fn an_entry_below_an_insertion_still_lands_on_the_same_text() {
     press(&mut app, back_key());
     press(&mut app, back_key());
 
-    let landed = app.active_doc().cursors.primary().position;
+    let landed = app.active_doc().cursors.primary().position.get();
     let buffer = app.active_doc().buffer.content();
     assert_eq!(&buffer[landed..landed + "TARGET".len()], "TARGET");
 }

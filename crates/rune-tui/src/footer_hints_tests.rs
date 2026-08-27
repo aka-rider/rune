@@ -265,8 +265,7 @@ fn default_hint_entries_keep_save_close_and_rename_for_an_ordinary_document() {
 #[test]
 fn filesearch_open_shows_its_own_hints_not_the_explorer_s() {
     let mut app = app_with("hello");
-    app.frame_width = 120;
-    app.frame_height = 34;
+    app.frame = Some(crate::app::FrameSize::new(120, 34));
     let mut effects = crate::runtime::Effects::default();
     crate::filesearch::open(&mut app, &mut effects);
     assert_eq!(app.focus(), Pane::Explorer, "test setup");

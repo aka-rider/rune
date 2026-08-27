@@ -5,6 +5,7 @@ mod tui_edit_common;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::CursorSet;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, Mods};
@@ -25,13 +26,14 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
         press(&mut app, KeyCode::Right, Mods::NONE);
     }
     let after_right = app.active_doc_mut().cursors.primary();
-    assert_eq!(after_right.position, 5);
-    assert_eq!(after_right.desired_col, 5);
+    assert_eq!(after_right.position, BufferOffset(5));
+    assert_eq!(after_right.desired_col, VisualCol(5));
 
     press(&mut app, KeyCode::Down, Mods::NONE);
     let after_down = app.active_doc_mut().cursors.primary();
     assert_eq!(
-        after_down.desired_col, 5,
+        after_down.desired_col,
+        VisualCol(5),
         "desired_col must be preserved across a vertical move"
     );
 
@@ -39,7 +41,7 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
     let bp = app
         .active_doc_mut()
         .buffer
-        .offset_to_line_col(after_down.position);
+        .offset_to_line_col(after_down.position.get());
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
     assert_eq!(
@@ -77,7 +79,7 @@ fn down_from_inside_an_inline_code_span_advances_one_wrap_row() {
     press(&mut app, KeyCode::Down, Mods::NONE);
 
     let after = app.active_doc_mut().cursors.primary().position;
-    let landed_row = wrap_row_of(&mut app, after);
+    let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row,
         origin_row + 1,
@@ -103,7 +105,7 @@ fn down_from_the_opening_backtick_of_an_inline_code_span_advances_one_wrap_row()
     press(&mut app, KeyCode::Down, Mods::NONE);
 
     let after = app.active_doc_mut().cursors.primary().position;
-    let landed_row = wrap_row_of(&mut app, after);
+    let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row,
         origin_row + 1,
@@ -132,7 +134,7 @@ fn line_up_from_below_an_inline_code_span_returns_to_the_origin_row() {
     press(&mut app, KeyCode::Up, Mods::NONE);
 
     let after = app.active_doc_mut().cursors.primary().position;
-    let landed_row = wrap_row_of(&mut app, after);
+    let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row, origin_row,
         "Down then Up over an inline code span must return to the origin wrap row"
@@ -150,7 +152,7 @@ fn page_down_over_an_inline_code_span_advances_by_the_page_step() {
     press(&mut app, KeyCode::PageDown, Mods::NONE);
 
     let after = app.active_doc_mut().cursors.primary().position;
-    let landed_row = wrap_row_of(&mut app, after);
+    let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row,
         origin_row + 3,
@@ -182,7 +184,7 @@ fn down_advances_both_cursors_when_one_sits_inside_an_inline_code_span() {
     assert_eq!(all.len(), 2, "both cursors must survive the move");
     let mut rows: Vec<usize> = all
         .iter()
-        .map(|c| wrap_row_of(&mut app, c.position))
+        .map(|c| wrap_row_of(&mut app, c.position.get()))
         .collect();
     rows.sort_unstable();
     let mut expected = vec![
@@ -261,7 +263,8 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
 
     let after = app.active_doc_mut().cursors.primary();
     assert_eq!(
-        after.position, 5,
+        after.position,
+        BufferOffset(5),
         "Down must move within the narrow (width-5) wrap of the SAME logical \
          line, not skip to the trailing blank line a stale width-80 wrap \
          would have produced"

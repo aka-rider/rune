@@ -22,8 +22,7 @@ pub fn app_with_diff(right_text: &str, left_text: &str, width: u16) -> App {
         "fileA.md".to_string(),
     )
     .expect("fixture is valid UTF-8");
-    app.frame_width = width;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(width, HEIGHT));
     app.sync_view();
     app
 }

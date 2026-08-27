@@ -258,7 +258,7 @@ mod tests {
         field.seed("lessrc.md");
         assert!(!field.ext_unlocked());
         assert_eq!(field.window(), 0..6);
-        assert_eq!(field.field().cursor().position, 6);
+        assert_eq!(field.field().cursor().position.get(), 6);
     }
 
     #[test]

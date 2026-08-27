@@ -204,8 +204,7 @@ fn tabs_active_row_is_always_shown_and_the_cursor_row_only_when_tabs_is_focused_
  {
     let mut app = App::new(Buffer::new("first"), None, Arc::new(Mem::new()), None);
     app.active_doc_mut().viewport.set_size(80, 23);
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.splits.left.show();
     let active = app.active;
     let second = app.open_document(Buffer::new("second"));

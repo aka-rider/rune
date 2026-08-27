@@ -7,6 +7,7 @@
 
 use super::*;
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_vfs::Mem;
 use std::sync::Arc;
 
@@ -320,6 +321,6 @@ fn install_whole_range_places_the_cursor_at_the_requested_offset() {
 
     let cursors = app.doc(doc).unwrap().cursors.all();
     assert_eq!(cursors.len(), 1);
-    assert_eq!(cursors[0].position, 4);
-    assert_eq!(cursors[0].anchor, 4);
+    assert_eq!(cursors[0].position, BufferOffset(4));
+    assert_eq!(cursors[0].anchor, BufferOffset(4));
 }

@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use rune_core::buffer::{Buffer, Edit, SortedEdits, clamp_to_char_boundary};
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{EditKind, Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
@@ -271,15 +272,15 @@ impl Document {
         };
         let cursors_before = self.cursors.all().to_vec();
         let seat = |c: Cursor| {
-            let position = clamp_to_char_boundary(recovered, c.position);
-            let anchor = clamp_to_char_boundary(recovered, c.anchor);
+            let position = clamp_to_char_boundary(recovered, c.position.get());
+            let anchor = clamp_to_char_boundary(recovered, c.anchor.get());
             Cursor {
-                position,
-                anchor,
-                desired_col: if position == c.position {
+                position: BufferOffset(position),
+                anchor: BufferOffset(anchor),
+                desired_col: if position == c.position.get() {
                     c.desired_col
                 } else {
-                    0
+                    VisualCol(0)
                 },
                 ..c
             }

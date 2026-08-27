@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use super::*;
+use rune_core::coords::{BufferOffset, VisualCol};
 use rune_vfs::Mem;
 
 #[test]
@@ -78,12 +79,12 @@ fn hydrate_adopts_a_recovered_draft_even_in_reading_view() {
 #[test]
 fn hydrate_leaves_a_cursor_at_offset_zero_in_place() {
     let mut doc = Document::new(Buffer::new("on disk"));
-    assert_eq!(doc.cursors.primary().position, 0);
+    assert_eq!(doc.cursors.primary().position, BufferOffset(0));
 
     doc.hydrate("on disk", "a much longer recovered draft", &[]);
 
-    assert_eq!(doc.cursors.primary().position, 0);
-    assert_eq!(doc.cursors.primary().anchor, 0);
+    assert_eq!(doc.cursors.primary().position, BufferOffset(0));
+    assert_eq!(doc.cursors.primary().anchor, BufferOffset(0));
 }
 
 #[test]
@@ -94,8 +95,11 @@ fn hydrate_clamps_a_cursor_beyond_the_recovered_content() {
 
     doc.hydrate(disk, "01234567", &[]);
 
-    assert_eq!(doc.cursors.primary().position, "01234567".len());
-    assert_eq!(doc.cursors.primary().anchor, "01234567".len());
+    assert_eq!(
+        doc.cursors.primary().position,
+        BufferOffset("01234567".len())
+    );
+    assert_eq!(doc.cursors.primary().anchor, BufferOffset("01234567".len()));
 }
 
 #[test]
@@ -107,12 +111,12 @@ fn hydrate_lands_a_clamped_cursor_on_a_char_boundary() {
 
     let cursor = doc.cursors.primary();
     assert!(
-        "\u{e9}\u{e9}\u{e9}\u{e9}".is_char_boundary(cursor.position),
+        "\u{e9}\u{e9}\u{e9}\u{e9}".is_char_boundary(cursor.position.get()),
         "clamped position {} is not a char boundary",
         cursor.position
     );
     assert!(
-        "\u{e9}\u{e9}\u{e9}\u{e9}".is_char_boundary(cursor.anchor),
+        "\u{e9}\u{e9}\u{e9}\u{e9}".is_char_boundary(cursor.anchor.get()),
         "clamped anchor {} is not a char boundary",
         cursor.anchor
     );
@@ -120,9 +124,9 @@ fn hydrate_lands_a_clamped_cursor_on_a_char_boundary() {
 
 fn test_cursor(position: usize, anchor: usize) -> Cursor {
     Cursor {
-        position,
-        anchor,
-        desired_col: 0,
+        position: BufferOffset(position),
+        anchor: BufferOffset(anchor),
+        desired_col: VisualCol(0),
         id: rune_core::cursor::CursorId::try_from(1).expect("test id is non-zero"),
     }
 }
@@ -134,8 +138,8 @@ fn hydrate_installs_the_journaled_caret_over_the_existing_one() {
 
     doc.hydrate("on disk", "recovered draft", &[test_cursor(9, 9)]);
 
-    assert_eq!(doc.cursors.primary().position, 9);
-    assert_eq!(doc.cursors.primary().anchor, 9);
+    assert_eq!(doc.cursors.primary().position, BufferOffset(9));
+    assert_eq!(doc.cursors.primary().anchor, BufferOffset(9));
 }
 
 #[test]
@@ -154,7 +158,7 @@ fn hydrate_installs_every_journaled_caret() {
         ],
     );
 
-    let positions: Vec<usize> = doc.cursors.all().iter().map(|c| c.position).collect();
+    let positions: Vec<usize> = doc.cursors.all().iter().map(|c| c.position.get()).collect();
     assert_eq!(positions, vec![2, 11]);
 }
 
@@ -165,7 +169,7 @@ fn hydrate_without_a_journaled_caret_keeps_the_existing_one() {
 
     doc.hydrate("on disk", "recovered draft", &[]);
 
-    assert_eq!(doc.cursors.primary().position, 4);
+    assert_eq!(doc.cursors.primary().position, BufferOffset(4));
 }
 
 #[test]
@@ -174,8 +178,14 @@ fn hydrate_clamps_a_journaled_caret_past_the_end_of_the_recovered_content() {
 
     doc.hydrate("on disk", "short draft", &[test_cursor(9_000, 9_000)]);
 
-    assert_eq!(doc.cursors.primary().position, "short draft".len());
-    assert_eq!(doc.cursors.primary().anchor, "short draft".len());
+    assert_eq!(
+        doc.cursors.primary().position,
+        BufferOffset("short draft".len())
+    );
+    assert_eq!(
+        doc.cursors.primary().anchor,
+        BufferOffset("short draft".len())
+    );
 }
 
 #[test]
@@ -187,17 +197,17 @@ fn hydrate_snaps_a_journaled_caret_off_a_char_boundary() {
 
     let cursor = doc.cursors.primary();
     assert!(
-        recovered.is_char_boundary(cursor.position),
+        recovered.is_char_boundary(cursor.position.get()),
         "position {} splits a char",
         cursor.position
     );
     assert!(
-        recovered.is_char_boundary(cursor.anchor),
+        recovered.is_char_boundary(cursor.anchor.get()),
         "anchor {} splits a char",
         cursor.anchor
     );
-    assert_eq!(cursor.position, 2);
-    assert_eq!(cursor.anchor, 4);
+    assert_eq!(cursor.position, BufferOffset(2));
+    assert_eq!(cursor.anchor, BufferOffset(4));
 }
 
 #[test]
@@ -207,8 +217,8 @@ fn hydrate_keeps_a_cursor_offset_within_the_recovered_content() {
 
     doc.hydrate("on disk", "recovered draft", &[]);
 
-    assert_eq!(doc.cursors.primary().position, 3);
-    assert_eq!(doc.cursors.primary().anchor, 3);
+    assert_eq!(doc.cursors.primary().position, BufferOffset(3));
+    assert_eq!(doc.cursors.primary().anchor, BufferOffset(3));
 }
 
 #[test]
@@ -242,12 +252,12 @@ fn undoing_a_hydration_restores_the_pre_hydration_cursors_and_content() {
         "undo must never leave an empty cursor set"
     );
     assert!(
-        doc.cursors.primary().position <= doc.buffer.len(),
+        doc.cursors.primary().position <= BufferOffset(doc.buffer.len()),
         "the restored cursor must be in-bounds for the reverted buffer"
     );
     assert_eq!(
         doc.cursors.primary().position,
-        4,
+        BufferOffset(4),
         "undo must restore the actual pre-hydration cursor, not a synthesized offset-zero one"
     );
 }

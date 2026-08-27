@@ -183,8 +183,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         app
     }
 
@@ -239,8 +238,7 @@ mod tests {
         vfs.save_atomic(Path::new("/root/b.md"), b"b")
             .expect("seed b.md");
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(vfs), None);
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         app.root = Some(PathBuf::from("/root"));
         let mut effects = crate::runtime::Effects::default();
 
@@ -336,8 +334,7 @@ mod tests {
                 .expect("seed file");
         }
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(mem), None);
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         app.root = Some(PathBuf::from("/root"));
         app
     }

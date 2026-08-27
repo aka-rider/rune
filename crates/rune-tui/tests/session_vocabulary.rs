@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_fuzz::Session;
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 
@@ -32,7 +33,7 @@ fn open_type_click_and_switch_tabs_end_to_end() {
     let clicked = session.snapshot();
     assert_eq!(
         clicked.cursors.first().map(|c| c.position),
-        Some(0),
+        Some(BufferOffset(0)),
         "a click on the buffer's first cell puts the caret at byte 0"
     );
 

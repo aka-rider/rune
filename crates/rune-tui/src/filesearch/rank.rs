@@ -29,7 +29,7 @@ pub(super) fn rank(state: &mut FileSearchState) {
         b.in_tree
             .cmp(&a.in_tree)
             .then_with(|| b.score.cmp(&a.score))
-            .then_with(|| mru_key(a.mru_rank).cmp(&mru_key(b.mru_rank)))
+            .then_with(|| cmp_mru_rank(a.mru_rank, b.mru_rank))
             .then_with(|| a.width.cmp(&b.width))
             .then_with(|| {
                 display_of(recents, walk, a.candidate_idx).cmp(display_of(
@@ -92,6 +92,35 @@ fn display_of<'a>(recents: &'a [Candidate], walk: &'a [Candidate], idx: usize) -
     candidate_by(recents, walk, idx).map_or("", |c| c.display.as_str())
 }
 
-fn mru_key(rank: Option<usize>) -> usize {
-    rank.unwrap_or(usize::MAX)
+fn cmp_mru_rank(a: Option<usize>, b: Option<usize>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cmp_mru_rank;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn a_present_rank_sorts_before_an_absent_one() {
+        assert_eq!(cmp_mru_rank(Some(5), None), Ordering::Less);
+        assert_eq!(cmp_mru_rank(None, Some(5)), Ordering::Greater);
+    }
+
+    #[test]
+    fn two_absent_ranks_are_equal() {
+        assert_eq!(cmp_mru_rank(None, None), Ordering::Equal);
+    }
+
+    #[test]
+    fn two_present_ranks_compare_numerically() {
+        assert_eq!(cmp_mru_rank(Some(1), Some(2)), Ordering::Less);
+        assert_eq!(cmp_mru_rank(Some(2), Some(1)), Ordering::Greater);
+        assert_eq!(cmp_mru_rank(Some(3), Some(3)), Ordering::Equal);
+    }
 }

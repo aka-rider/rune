@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::CursorSet;
 use rune_nav::RefKind;
 use rune_tui::app::{self, App};
@@ -37,12 +38,11 @@ fn app_with(mem: &Arc<Mem>, path: &str, content: &str) -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(Buffer::new(content), Some(PathBuf::from(path)), vfs, None);
     app.set_root(PathBuf::from("/root"));
-    // `frame_width`/`frame_height` (not a direct `viewport.set_size`) are
-    // what `layout::geometry` — and so the mouse click tests' own
+    // `App::frame` (not a direct `viewport.set_size`) is what
+    // `layout::geometry` — and so the mouse click tests' own
     // `editor_origin` — actually reads; `sync_view`'s `relayout` derives
-    // the viewport size from them the same way the real runtime does.
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    // the viewport size from it the same way the real runtime does.
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
     app
 }
@@ -85,7 +85,7 @@ fn press(app: &mut App, key: KeyInput) -> Effects {
 /// `(col, row)` relative to the editor rect, translated to absolute frame
 /// coordinates — mirrors `commands::mouse`'s own test helper.
 fn editor_origin(app: &App) -> (u16, u16) {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = rune_tui::layout::geometry(area, app).editor;
     (editor.x, editor.y)
 }
@@ -226,7 +226,11 @@ fn ctrl_click_follows_a_link_while_a_plain_double_click_still_selects_a_word() {
     click(&mut app, 1, 0, false);
     click(&mut app, 1, 0, false);
     let c = app.active_doc().cursors.primary();
-    assert_eq!(c.selection_range(), (0, 5), "expected \"hello\" selected");
+    assert_eq!(
+        c.selection_range(),
+        (BufferOffset(0), BufferOffset(5)),
+        "expected \"hello\" selected"
+    );
 }
 
 #[test]
@@ -247,7 +251,7 @@ fn wikilink_with_anchor_lands_the_caret_on_the_headings_byte_offset() {
         app.active_doc().file_path.as_deref(),
         Some(Path::new("/root/note.md"))
     );
-    assert_eq!(app.active_doc().cursors.primary().position, expected);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
 }
 
 #[test]
@@ -266,7 +270,7 @@ fn hash_link_jumps_within_the_same_document() {
         before,
         "must stay in the same document"
     );
-    assert_eq!(app.active_doc().cursors.primary().position, expected);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
 }
 
 #[test]

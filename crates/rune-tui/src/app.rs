@@ -19,6 +19,18 @@ use crate::pane::Pane;
 use crate::runtime::{Effects, Msg};
 use crate::save;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl FrameSize {
+    pub const fn new(width: u16, height: u16) -> FrameSize {
+        FrameSize { width, height }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuitIntent {
     pub pending: std::collections::BTreeMap<DocumentId, u64>,
@@ -55,8 +67,7 @@ pub struct App {
     pub vfs: Arc<dyn Vfs + Send + Sync>,
     pub(crate) focus: Pane,
     pub splits: crate::layout::Splits,
-    pub frame_height: u16,
-    pub frame_width: u16,
+    pub frame: Option<FrameSize>,
     pub explorer: Explorer,
     pub tabs: OpenTabs,
     pub help_doc: Option<DocumentId>,
@@ -123,8 +134,7 @@ impl App {
             vfs,
             focus: Pane::Editor,
             splits: crate::layout::Splits::default(),
-            frame_height: 0,
-            frame_width: 0,
+            frame: None,
             explorer: Explorer::default(),
             tabs: OpenTabs::new(),
             help_doc: None,
@@ -223,16 +233,28 @@ impl App {
     pub fn set_root(&mut self, root: PathBuf) {
         self.root = Some(root);
     }
+
+    pub fn frame_width(&self) -> u16 {
+        self.frame.map_or(0, |frame| frame.width)
+    }
+
+    pub fn frame_height(&self) -> u16 {
+        self.frame.map_or(0, |frame| frame.height)
+    }
+
+    pub fn frame_area(&self) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, self.frame_width(), self.frame_height())
+    }
 }
 
 pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let journal_pos_before = app.active_doc().journal.pos();
     let active_before = app.active;
     let buffer_version_before = app.active_doc().buffer.version();
-    let frame_width_before = app.frame_width;
+    let frame_width_before = app.frame_width();
     let focus_before = app.focus();
     let nav_index_before = app.nav_history.index();
-    let nav_caret_before = app.active_doc().cursors.primary().position;
+    let nav_caret_before = app.active_doc().cursors.primary().position.get();
     dispatch::update_inner(app, msg, effects);
     let journal_pos_after = app.doc(active_before).map(|doc| doc.journal.pos());
     if journal_pos_after.is_some_and(|pos| pos != journal_pos_before) {

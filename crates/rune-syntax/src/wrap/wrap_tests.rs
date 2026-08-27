@@ -300,3 +300,42 @@ fn wrapped_segments_use_first_decor_on_row_zero_and_cont_decor_on_every_later_ro
         );
     }
 }
+
+#[test]
+fn a_cluster_wider_than_the_last_budget_cell_still_makes_progress() {
+    // "# 👍🏽" at width 3: the heading decor "# " reserves 2 of the 3
+    // available cells, leaving a content budget of 1 cell for the
+    // heading's own content — a single grapheme cluster, "👍🏽" (a
+    // thumbs-up modified by a skin-tone selector), that is 2 cells wide.
+    // The greedy breaker's own "always make progress" fallback still
+    // includes the whole cluster in that first segment rather than
+    // emitting an empty one: a documented, harmless width overrun with no
+    // byte or coordinate consequence (module docs).
+    let content = "👍🏽";
+    let width = 3u16;
+    let decor = LineDecor {
+        pieces: vec![DecorPiece {
+            first: "# ".to_string(),
+            cont: "  ".to_string(),
+            scope: TEXT,
+        }],
+        is_rule: false,
+    };
+    let line = SyntaxLine {
+        spans: vec![SyntaxSpan::identical(content, TEXT, 0..content.len())],
+        table: None,
+        decor: Some(decor),
+    };
+    let wrap = WrapMap::new(width).sync(content, &[line]);
+    assert_eq!(
+        wrap.total_rows(),
+        1,
+        "the whole cluster must land in a single segment"
+    );
+    let seg0 = &wrap.segments()[0];
+    let text: String = seg0.spans.iter().map(|s| s.text(content)).collect();
+    assert_eq!(
+        text, "👍🏽",
+        "the 2-cell cluster still makes progress into the 1-cell budget"
+    );
+}

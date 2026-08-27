@@ -18,8 +18,7 @@ fn seeded_app(files: &[(&str, &str)]) -> App {
             .expect("seed file");
     }
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(mem), None);
-    app.frame_width = 120;
-    app.frame_height = 34;
+    app.frame = Some(crate::app::FrameSize::new(120, 34));
     app.root = Some(PathBuf::from("/root"));
     app
 }
@@ -183,8 +182,7 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
         rune_db::Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {})).expect("db");
     let bridge = crate::db::DbBridge::bootstrap();
     let mut app = App::new(Buffer::new("hello"), None, vfs, None);
-    app.frame_width = 120;
-    app.frame_height = 34;
+    app.frame = Some(crate::app::FrameSize::new(120, 34));
     app.root = Some(PathBuf::from("/root"));
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let mut effects = Effects::default();

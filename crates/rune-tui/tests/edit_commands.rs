@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::coords::BufferOffset;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_tui::app::App;
 use rune_tui::commands::edit::{
@@ -32,7 +33,10 @@ fn insert_char_moves_caret_past_the_inserted_char() {
     let id = app.active;
     insert_char(&mut app, id, 'b');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 2);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(2)
+    );
     assert_eq!(app.doc(id).unwrap().journal.len(), 1);
 }
 
@@ -41,13 +45,16 @@ fn insert_char_replaces_a_selection() {
     let mut app = app_with("hello world", 0);
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
-        anchor: 0,
-        position: 5,
+        anchor: BufferOffset(0),
+        position: BufferOffset(5),
         ..c
     });
     insert_char(&mut app, id, 'X');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "X world");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 1);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(1)
+    );
 }
 
 #[test]
@@ -73,7 +80,10 @@ fn delete_right_removes_one_rune_forward() {
     let id = app.active;
     delete_right(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "bc");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 0);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(0)
+    );
 }
 
 #[test]
@@ -82,7 +92,10 @@ fn delete_word_left_removes_the_whole_preceding_word() {
     let id = app.active;
     delete_word_left(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello ");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 6);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(6)
+    );
 }
 
 #[test]
@@ -139,7 +152,10 @@ fn newline_preserves_current_line_indentation() {
     let id = app.active;
     newline(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "  indented\n  ");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 13);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(13)
+    );
 }
 
 #[test]
@@ -151,11 +167,17 @@ fn undo_then_redo_round_trips_content_and_cursors() {
 
     undo(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 5);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(5)
+    );
 
     redo(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position, 6);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position,
+        BufferOffset(6)
+    );
 }
 
 #[test]

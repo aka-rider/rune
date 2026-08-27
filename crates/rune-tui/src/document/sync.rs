@@ -1,4 +1,4 @@
-use rune_core::coords::{DisplayRow, WrapPoint, WrapRow};
+use rune_core::coords::{BufferOffset, DisplayRow, WrapPoint, WrapRow};
 use rune_core::cursor::Cursor;
 use rune_md::element::doc::ViewSnapshots;
 
@@ -56,7 +56,7 @@ impl Document {
 
     fn cursor_display_row(&self, view: &ViewSnapshots) -> DisplayRow {
         let primary = self.cursors.primary();
-        let buffer_point = self.buffer.offset_to_line_col(primary.position);
+        let buffer_point = self.buffer.offset_to_line_col(primary.position.get());
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
         view.display.wrap_to_display(WrapRow(wrap_point.row))
@@ -66,15 +66,15 @@ impl Document {
         let primary = self.cursors.primary();
         let col = view
             .wrap
-            .byte_col_from_visual(self.buffer.content(), row, primary.desired_col);
+            .byte_col_from_visual(self.buffer.content(), row, primary.desired_col.0);
         let syntax_point = view
             .wrap
             .wrap_to_syntax(self.buffer.content(), WrapPoint { row, col });
         let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
         let offset = self.buffer.line_col_to_offset(buffer_point);
         let snapped = Cursor {
-            position: offset,
-            anchor: offset,
+            position: BufferOffset(offset),
+            anchor: BufferOffset(offset),
             desired_col: primary.desired_col,
             id: primary.id,
         };

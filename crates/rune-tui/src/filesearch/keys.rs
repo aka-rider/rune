@@ -176,7 +176,7 @@ fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
 }
 
 pub(super) fn page_amount(app: &App) -> isize {
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     (crate::layout::geometry(area, app).explorer_inner.height as isize)
         .saturating_sub(1)
         .max(1)
@@ -209,8 +209,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         app
     }
 
@@ -294,8 +293,7 @@ mod tests {
             .expect("seed file");
         let vfs: Arc<dyn Vfs + Send + Sync> = mem;
         let mut app = App::new(Buffer::new("hello"), None, vfs, None);
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         let mut effects = Effects::default();
         crate::filesearch::open(&mut app, &mut effects);
         let generation = app.filesearch().expect("open").generation;

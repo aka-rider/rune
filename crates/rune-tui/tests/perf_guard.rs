@@ -415,7 +415,7 @@ fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {
     // top first, then two rows down onto the `let` line, to its end, and one
     // step left onto the `(`.
     let mut pages = 0usize;
-    while app.active_doc().cursors.primary().position > 0 {
+    while app.active_doc().cursors.primary().position.get() > 0 {
         press(&mut app, KeyCode::PageUp);
         pages += 1;
         assert!(pages <= 500, "the caret never paged back to the top");
@@ -426,7 +426,7 @@ fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {
     press(&mut app, KeyCode::Left);
 
     let doc = app.active_doc();
-    let at = doc.cursors.primary().position;
+    let at = doc.cursors.primary().position.get();
     assert_eq!(
         doc.buffer.byte(at),
         Some(b'('),

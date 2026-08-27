@@ -94,8 +94,7 @@ fn hunk_navigation_wraps_and_reports_position() {
 #[test]
 fn diff_chords_are_ordinary_unbound_keys_when_no_diff_view_is_active() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    app.frame_width = WIDE_ENOUGH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDE_ENOUGH, HEIGHT));
     app.sync_view();
 
     let mut effects = Effects::default();
@@ -138,7 +137,7 @@ fn click_in_the_left_pane_moves_the_right_pane_caret_to_the_aligned_line() {
 
     let right_content = app.active_doc().buffer.content().to_string();
     let expected = right_content.find("\nc").expect("c present in fileB") + 1;
-    assert_eq!(app.active_doc().cursors.primary().position, expected);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
 }
 
 #[test]

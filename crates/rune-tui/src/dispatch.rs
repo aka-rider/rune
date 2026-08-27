@@ -14,8 +14,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::PumpGraphics => {}
         Msg::Mouse(input) => mouse::handle(app, input, effects),
         Msg::Resize(width, height) => {
-            app.frame_width = width;
-            app.frame_height = height;
+            app.frame = Some(crate::app::FrameSize::new(width, height));
             app.relayout();
             crate::focus::reconcile(app, effects);
             crate::graphics::refit_on_resize(app, effects);
@@ -181,7 +180,7 @@ pub(crate) fn after_update(
     if app.active != active_before {
         crate::graphics::schedule_image_decode(app, app.active, effects);
     }
-    if content_changed || app.frame_width != frame_width_before {
+    if content_changed || app.frame_width() != frame_width_before {
         crate::graphics::sync_embeds(app, app.active, effects);
     }
     if crate::messages::should_arm_auto_collapse(app) {

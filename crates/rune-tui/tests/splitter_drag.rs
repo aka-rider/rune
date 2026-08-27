@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 
-use ratatui::layout::Rect;
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::DisplayRow;
@@ -25,8 +24,7 @@ use rune_vfs::Mem;
 /// defaults to, sized to `width`x`height`.
 fn app_for(width: u16, height: u16) -> App {
     let mut app = App::new(Buffer::new("hello\n"), None, Arc::new(Mem::new()), None);
-    app.frame_width = width;
-    app.frame_height = height;
+    app.frame = Some(rune_tui::app::FrameSize::new(width, height));
     app.splits.left.show();
     app.sync_view();
     app
@@ -35,7 +33,7 @@ fn app_for(width: u16, height: u16) -> App {
 /// The same geometry `commands::mouse`/`commands::splitter` themselves
 /// read from — never re-derived independently.
 fn geo(app: &App) -> Geometry {
-    layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height), app)
+    layout::geometry(app.frame_area(), app)
 }
 
 /// Sends one raw mouse event through the real `update`, resyncing
@@ -309,14 +307,17 @@ fn shrinking_and_restoring_the_frame_preserves_the_dragged_width() {
     // instead of dropping it (`LayoutMode::ExplorerOnly`) — the dragged
     // width no longer applies at that width, since there's no longer a
     // center pane to divide it against.
-    app.frame_width = MIN_LEFT_PANE_W + MIN_CENTER_W - 1;
+    app.frame = Some(rune_tui::app::FrameSize::new(
+        MIN_LEFT_PANE_W + MIN_CENTER_W - 1,
+        app.frame_height(),
+    ));
     app.sync_view();
     let narrow_block = geo(&app).left_block.expect("flips full-width, never drops");
-    assert_eq!(narrow_block.width, app.frame_width);
+    assert_eq!(narrow_block.width, app.frame_width());
 
     // Restore: the DESIRED size was never written back, so it comes back
     // untouched rather than resetting to the default.
-    app.frame_width = 100;
+    app.frame = Some(rune_tui::app::FrameSize::new(100, app.frame_height()));
     app.sync_view();
     assert_eq!(geo(&app).left_block.expect("restored").width, dragged_w);
 }
@@ -357,14 +358,14 @@ fn shrinking_the_frame_height_collapses_the_tab_rows_and_restoring_it_brings_the
     );
     let explorer_after_drag = geo(&app).explorer_inner.height;
 
-    app.frame_height = 15;
+    app.frame = Some(rune_tui::app::FrameSize::new(app.frame_width(), 15));
     app.sync_view();
     assert!(
         geo(&app).tabs_divider.is_none(),
         "a height that can no longer grant the dragged size collapses the tab rows"
     );
 
-    app.frame_height = 30;
+    app.frame = Some(rune_tui::app::FrameSize::new(app.frame_width(), 30));
     app.sync_view();
     assert!(
         geo(&app).tabs_divider.is_some(),
@@ -407,8 +408,7 @@ fn collapsing_the_focused_explorer_by_dragging_hands_focus_to_the_editor() {
 fn a_lost_button_up_does_not_latch_the_pointer_forever() {
     let content: String = (0..50).map(|i| format!("line {i}\n")).collect();
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.frame_width = 100;
-    app.frame_height = 30;
+    app.frame = Some(rune_tui::app::FrameSize::new(100, 30));
     app.splits.left.show();
     app.sync_view();
 

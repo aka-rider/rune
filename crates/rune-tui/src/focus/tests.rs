@@ -38,8 +38,7 @@ fn focusing_the_explorer_captures_the_browsing_origin() {
 
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
     app.splits.left.show();
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(crate::app::FrameSize::new(80, 24));
     let editing = app.active;
     let mut effects = Effects::default();
     assert_eq!(
@@ -161,8 +160,7 @@ fn reconcile_redirects_focus_off_a_pane_that_closed_while_focused() {
     use std::sync::Arc;
 
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(crate::app::FrameSize::new(80, 24));
 
     let mut effects = Effects::default();
     crate::messages::toggle(&mut app, &mut effects);

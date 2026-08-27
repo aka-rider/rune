@@ -64,7 +64,7 @@ fn scrolling_in_reading_view_moves_the_caret_with_the_view() {
         .buffer
         .line_start(5)
         .expect("line 5 exists in a 50-line fixture");
-    assert_eq!(app.active_doc().cursors.primary().position, expected);
+    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn following_a_link_after_scrolling_targets_a_link_on_screen() {
     let section_a = content
         .find("## Section-A")
         .expect("fixture has a Section-A heading");
-    let landed = app.active_doc().cursors.primary().position;
+    let landed = app.active_doc().cursors.primary().position.get();
     assert_eq!(
         landed, section_b,
         "the on-screen link (link two) must be the one followed"

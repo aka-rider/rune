@@ -74,7 +74,10 @@ pub fn record_departure(app: &mut App, from: DocumentId) {
     if !eligible(app, from) {
         return;
     }
-    let Some(offset) = app.doc(from).map(|doc| doc.cursors.primary().position) else {
+    let Some(offset) = app
+        .doc(from)
+        .map(|doc| doc.cursors.primary().position.get())
+    else {
         return;
     };
     let Some(place) = place_for(app, from, offset, PlaceKind::Visited) else {
@@ -94,7 +97,7 @@ pub fn observe_jump(app: &mut App, active_before: DocumentId, caret_before: usiz
     if app.active != active_before || !eligible(app, active_before) {
         return;
     }
-    let after_offset = app.active_doc().cursors.primary().position;
+    let after_offset = app.active_doc().cursors.primary().position.get();
     if caret_before == after_offset {
         return;
     }

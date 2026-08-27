@@ -167,8 +167,7 @@ fn app_with_db() -> App {
         .expect("open in-memory store");
     let bridge = crate::db::DbBridge::bootstrap();
     let mut app = App::new(rune_core::buffer::Buffer::new("hello"), None, vfs, None);
-    app.frame_width = 80;
-    app.frame_height = 24;
+    app.frame = Some(crate::app::FrameSize::new(80, 24));
     app.db = Some(crate::db::Db::new(store, bridge, false));
     let id = app.active;
     if let Some(doc) = app.doc_mut(id) {

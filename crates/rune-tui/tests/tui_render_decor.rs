@@ -158,11 +158,10 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor);
     app.doc_mut(id).unwrap().viewport.set_size(40, 10);
-    app.frame_width = 40;
-    app.frame_height = 11; // + footer row
+    app.frame = Some(rune_tui::app::FrameSize::new(40, 11)); // + footer row
     app.sync_view();
 
-    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     let editor = rune_tui::layout::geometry(area, &app).editor;
 
     let mut effects = Effects::default();
@@ -180,7 +179,7 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
     );
 
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors.primary().position.get(),
         content.find("Heading").expect("fixture has a heading"),
         "a click on the heading's own icon cell must land on the heading text's first byte"
     );

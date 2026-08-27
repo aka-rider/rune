@@ -171,14 +171,14 @@ pub(crate) fn apply_cursor_overlays(
     for cursor in cursors.all() {
         if selection && cursor.has_selection() {
             let (start, end) = cursor.selection_range();
-            highlight_selection(rows, start, end, theme);
+            highlight_selection(rows, start.get(), end.get(), theme);
         }
 
         if !caret {
             continue;
         }
 
-        let buffer_point = buf.offset_to_line_col(cursor.position);
+        let buffer_point = buf.offset_to_line_col(cursor.position.get());
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
         // The cursor's own row lives in WRAP space (border rows aren't
@@ -259,7 +259,7 @@ pub(crate) fn apply_cursor_overlays(
             .get(wrap_point.row)
             .and_then(|seg| seg.table.as_ref())
             .is_some_and(|t| t.boxed);
-        place_caret(row, visual_col, cursor.position, boxed);
+        place_caret(row, visual_col, cursor.position.get(), boxed);
     }
 }
 

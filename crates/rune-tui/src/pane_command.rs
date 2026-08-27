@@ -253,8 +253,7 @@ mod tests {
     #[test]
     fn toggle_left_on_a_too_small_frame_falls_back_to_the_editor() {
         let mut app = app();
-        app.frame_width = 5;
-        app.frame_height = 5;
+        app.frame = Some(crate::app::FrameSize::new(5, 5));
         let mut effects = Effects::default();
         handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
         assert_eq!(app.focus(), Pane::Editor);
@@ -310,8 +309,7 @@ mod tests {
     #[test]
     fn sup_shift_f_chord_opens_filesearch_on_a_never_shown_left_column() {
         let mut app = app();
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         assert!(!app.splits.left.is_shown(), "test setup: column hidden");
         let mut effects = Effects::default();
 
@@ -338,8 +336,7 @@ mod tests {
     #[test]
     fn sup_shift_f_chord_again_closes_and_restores_return_to() {
         let mut app = app();
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         let second = app.open_document(rune_core::buffer::Buffer::new("second"));
         crate::workspace::switch_to(&mut app, second);
         let mut effects = Effects::default();
@@ -382,8 +379,7 @@ mod tests {
 
         for binding in GLOBAL_BINDINGS {
             let mut app = app();
-            app.frame_width = 120;
-            app.frame_height = 34;
+            app.frame = Some(crate::app::FrameSize::new(120, 34));
             let active = app.active;
             crate::commands::edit::insert_char(&mut app, active, '!');
             let mut effects = Effects::default();
@@ -444,8 +440,7 @@ mod tests {
     #[test]
     fn toggle_left_while_filesearch_is_open_on_a_never_shown_column_lands_on_the_editor() {
         let mut app = app();
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         assert!(
             !app.splits.left.is_shown(),
             "test setup: column never shown"

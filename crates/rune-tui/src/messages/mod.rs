@@ -280,12 +280,14 @@ fn scroll(app: &mut App, delta: isize) {
         .doc
         .view
         .as_ref()
-        .map_or(DisplayRow(usize::MAX), |v| {
-            DisplayRow(v.display.total_rows().saturating_sub(1))
-        });
+        .map(|v| DisplayRow(v.display.total_rows().saturating_sub(1)));
     let scroll_row = app.messages.doc.viewport.scroll_row;
     app.messages.doc.viewport.scroll_row = if delta >= 0 {
-        (scroll_row + delta as usize).min(max_row)
+        let next = scroll_row + delta as usize;
+        match max_row {
+            Some(max_row) => next.min(max_row),
+            None => next,
+        }
     } else {
         scroll_row - (-delta) as usize
     };
@@ -345,7 +347,7 @@ pub fn is_collapse_armed(app: &App) -> bool {
 }
 
 fn pane_rect(app: &App) -> Option<Rect> {
-    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     crate::layout::geometry(area, app).messages
 }
 
@@ -432,8 +434,7 @@ mod tests {
 
     fn app_with_messages_open() -> App {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.frame_width = 120;
-        app.frame_height = 34;
+        app.frame = Some(crate::app::FrameSize::new(120, 34));
         info(&mut app, "seed a message so the pane has content");
         app
     }
@@ -445,7 +446,7 @@ mod tests {
         app.title.set_text("bad/name");
         assert_eq!(app.focus(), Pane::Title, "test setup: title holds focus");
         app.sync_view();
-        let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+        let area = app.frame_area();
         let rect = crate::layout::geometry(area, &app)
             .messages
             .expect("test setup: the messages pane must be painted this frame");
@@ -476,6 +477,21 @@ mod tests {
         assert!(
             !app.messages.doc.cursors.primary().has_selection(),
             "a click that never focused the pane must not place a selection"
+        );
+    }
+
+    #[test]
+    fn scrolling_before_the_log_view_is_synced_is_unclamped() {
+        let mut app = App::new(Buffer::new(""), None, Arc::new(Mem::new()), None);
+        assert!(
+            app.messages.doc.view.is_none(),
+            "test setup: the log view is never synced"
+        );
+        scroll(&mut app, 1_000_000);
+        assert_eq!(
+            app.messages.doc.viewport.scroll_row,
+            DisplayRow(1_000_000),
+            "with no known row count, a scroll must not be clamped to any ceiling"
         );
     }
 }

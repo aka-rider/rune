@@ -15,6 +15,7 @@ mod rename_common;
 use std::path::Path;
 use std::sync::Arc;
 
+use rune_core::coords::BufferOffset;
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::rename::RenameState;
 use rune_tui::title::ext_split;
@@ -54,7 +55,7 @@ fn right_at_the_end_of_the_stem_unlocks_the_extension_without_moving_the_cursor(
     assert!(session.key(plain_key(KeyCode::End)).is_none());
     assert_eq!(
         session.app().title.field().cursor().position,
-        session.app().title.text().len(),
+        BufferOffset(session.app().title.text().len()),
         "End can now reach past the split, into the unlocked extension"
     );
 }
@@ -70,7 +71,7 @@ fn the_extension_is_fenced_off_until_unlocked() {
     assert!(session.key(plain_key(KeyCode::End)).is_none());
     assert_eq!(
         session.app().title.field().cursor().position,
-        ext_split(session.app().title.text()),
+        BufferOffset(ext_split(session.app().title.text())),
         "End stops at the split while locked"
     );
 
@@ -149,7 +150,7 @@ fn word_motion_and_shift_selection_work_in_the_title() {
     );
     assert_eq!(
         session.app().title.field().cursor().position,
-        3,
+        BufferOffset(3),
         "word-right stops at the end of 'two'"
     );
 
@@ -167,7 +168,7 @@ fn word_motion_and_shift_selection_work_in_the_title() {
     );
     assert_eq!(
         session.app().title.field().cursor().position,
-        9,
+        BufferOffset(9),
         "shift-word-right extends to the end of 'words', clamped by the locked window"
     );
     assert_eq!(session.app().title.field().selected_text(), " words");

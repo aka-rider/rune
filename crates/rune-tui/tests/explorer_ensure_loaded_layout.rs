@@ -23,8 +23,7 @@ fn a_too_narrow_frame_flips_to_explorer_only_and_still_requests_a_listing() {
     let mut app = app_with(&mem);
     app.splits.left.show();
 
-    app.frame_width = 39;
-    app.frame_height = 30;
+    app.frame = Some(rune_tui::app::FrameSize::new(39, 30));
 
     let mut effects = Effects::default();
     explorer::ensure_loaded(&mut app, &mut effects);
@@ -46,8 +45,7 @@ fn a_too_short_frame_paints_nothing_and_requests_no_listing() {
     app.splits.left.show();
     assert!(app.splits.left.is_shown(), "the raw flag still says shown");
 
-    app.frame_width = 39;
-    app.frame_height = 3;
+    app.frame = Some(rune_tui::app::FrameSize::new(39, 3));
 
     let mut effects = Effects::default();
     explorer::ensure_loaded(&mut app, &mut effects);

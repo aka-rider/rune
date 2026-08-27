@@ -4,8 +4,8 @@
 //! `Cmd`-route rename, and draft naming live in the sibling
 //! `rename_bind.rs`; the refusals in `rename_refusals.rs`; the collision
 //! guard and hazard-1 tests in `rename_collision.rs`; the
-//! focus-loss-is-the-commit-chokepoint suite in `rename_focus.rs`. All
-//! pull shared fixtures from `rename_common`.
+//! focus-loss-is-the-commit-chokepoint suite in `rename_focus_bind.rs`/
+//! `rename_focus_close.rs`. All pull shared fixtures from `rename_common`.
 
 #![allow(
     clippy::unwrap_used,

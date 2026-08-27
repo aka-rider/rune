@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
-use rune_core::coords::DisplayRow;
+use rune_core::coords::{BufferOffset, DisplayRow, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
 use rune_fuzz::invariant::{buf_line_index, cur_bounds, cur_id, cur_order, version_monotone};
 use rune_fuzz::snapshot::Snapshot;
@@ -30,18 +30,18 @@ use rune_vfs::{Mem, Vfs};
 
 fn collapsed_cursor(id: u32, position: usize) -> Cursor {
     Cursor {
-        position,
-        anchor: position,
-        desired_col: 0,
+        position: BufferOffset(position),
+        anchor: BufferOffset(position),
+        desired_col: VisualCol(0),
         id: CursorId::try_from(id).expect("test ids are non-zero"),
     }
 }
 
 fn selection_cursor(id: u32, anchor: usize, position: usize) -> Cursor {
     Cursor {
-        position,
-        anchor,
-        desired_col: 0,
+        position: BufferOffset(position),
+        anchor: BufferOffset(anchor),
+        desired_col: VisualCol(0),
         id: CursorId::try_from(id).expect("test ids are non-zero"),
     }
 }

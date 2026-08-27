@@ -10,10 +10,10 @@ use crate::pane::Pane;
 impl App {
     /// The ONE geometry chokepoint's writer: derives
     /// every frame rect from `layout::geometry` and sizes the ACTIVE
-    /// document's viewport from its `editor` rect. A no-op while either
-    /// frame dimension is still `0` (before the first `Msg::Resize` —
+    /// document's viewport from its `editor` rect. A no-op while
+    /// `App::frame` is still `None` (before the first `Msg::Resize` —
     /// `layout::geometry` would otherwise be asked to lay out a
-    /// zero-by-something frame it never actually has to render).
+    /// frame it never actually has to render).
     ///
     /// Called from `sync_view` below (the runtime calls `sync_view`
     /// immediately before every `render::draw`, so that's the one chokepoint
@@ -35,10 +35,10 @@ impl App {
     /// `Resize` down to a 1x2 frame, and a 0-width/0-height viewport would
     /// reach `Document::set_width`'s wrap engine with a wrap column of `0`.
     pub fn relayout(&mut self) {
-        if self.frame_width == 0 || self.frame_height == 0 {
+        if self.frame.is_none() {
             return;
         }
-        let area = ratatui::layout::Rect::new(0, 0, self.frame_width, self.frame_height);
+        let area = self.frame_area();
         let geo = crate::layout::geometry(area, self);
         let (w, h) = (geo.editor.width.max(1), geo.editor.height.max(1));
         self.active_doc_mut().viewport.set_size(w, h);
@@ -80,8 +80,8 @@ impl App {
     /// navigation drives the document cursor, and a jump into a concealed
     /// element must reveal it even though the caret stays blurred.
     pub fn sync_view(&mut self) {
-        let width = self.frame_width;
-        let frame_height = self.frame_height;
+        let width = self.frame_width();
+        let frame_height = self.frame_height();
         crate::messages::sync(self, width, frame_height);
         self.relayout();
         let engaged = self.focus() == Pane::Editor && self.guard.is_none();
@@ -121,8 +121,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.frame_width = 80;
-        app.frame_height = 24;
+        app.frame = Some(crate::app::FrameSize::new(80, 24));
         app
     }
 

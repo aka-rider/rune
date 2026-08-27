@@ -31,8 +31,7 @@ fn app_for(content: &str, path: Option<&str>) -> App {
     // than a bare `viewport.set_size` — `App::relayout` (run inside
     // `sync_view`) sizes the viewport from the SAME `layout::geometry`
     // `render::draw` itself reads, so the two can never disagree.
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
     app
 }
@@ -75,8 +74,7 @@ fn title_row_shows_no_name_placeholder_when_pathless() {
 #[test]
 fn title_row_shows_untitled_1_for_the_default_untitled_document() {
     let mut app = App::new_untitled(Arc::new(Mem::new()), None);
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
 
     let title_row = row_text(&app, 1, WIDTH);

@@ -23,9 +23,9 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let selection = focused.then(|| {
         let cursor = app.title.field().cursor();
         (
-            cursor.selection_start(),
-            cursor.selection_end(),
-            cursor.position,
+            cursor.selection_start().get(),
+            cursor.selection_end().get(),
+            cursor.position.get(),
         )
     });
 

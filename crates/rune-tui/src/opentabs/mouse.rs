@@ -7,7 +7,7 @@ use crate::pointer::{MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
 
 fn pane_rect(app: &App) -> Rect {
-    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    let area = app.frame_area();
     crate::layout::geometry(area, app).tabs_inner
 }
 

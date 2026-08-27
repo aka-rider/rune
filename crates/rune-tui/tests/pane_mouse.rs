@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use ratatui::layout::Rect;
 
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
@@ -46,8 +45,7 @@ fn app_with(mem: &Arc<Mem>) -> App {
         None,
     );
     app.clock = Arc::new(ManualClock::new());
-    app.frame_width = WIDTH;
-    app.frame_height = HEIGHT;
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     app
@@ -119,7 +117,7 @@ fn show_left_column(app: &mut App) {
 }
 
 fn geometry(app: &App) -> Geometry {
-    layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height), app)
+    layout::geometry(app.frame_area(), app)
 }
 
 fn mouse(app: &mut App, kind: MouseKind, column: u16, row: u16) {

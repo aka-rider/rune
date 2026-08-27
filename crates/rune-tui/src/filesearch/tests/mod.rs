@@ -6,8 +6,7 @@ use std::sync::Arc;
 
 fn app() -> App {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    app.frame_width = 120;
-    app.frame_height = 34;
+    app.frame = Some(crate::app::FrameSize::new(120, 34));
     app
 }
 
