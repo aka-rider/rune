@@ -101,6 +101,43 @@ impl Buffer {
         super::snap_char_boundary(&self.content, offset)
     }
 
+    pub fn line_content_end(&self, n: usize) -> Option<usize> {
+        let end = self.line_end(n)?;
+        if n + 1 == self.line_starts.len() {
+            return Some(end);
+        }
+        Some(self.strip_trailing_cr(end))
+    }
+
+    pub fn line_terminator_range(&self, n: usize) -> Option<Range<usize>> {
+        let end = self.line_end(n)?;
+        if n + 1 == self.line_starts.len() {
+            return Some(end..end);
+        }
+        let content_end = self.strip_trailing_cr(end);
+        Some(content_end..end + 1)
+    }
+
+    fn strip_trailing_cr(&self, end: usize) -> usize {
+        if end > 0 && self.content.as_bytes().get(end - 1) == Some(&b'\r') {
+            end - 1
+        } else {
+            end
+        }
+    }
+
+    pub fn crlf_pair_at(&self, offset: usize) -> Option<Range<usize>> {
+        let bytes = self.content.as_bytes();
+        if bytes.get(offset) == Some(&b'\r') && bytes.get(offset + 1) == Some(&b'\n') {
+            return Some(offset..offset + 2);
+        }
+        if offset > 0 && bytes.get(offset - 1) == Some(&b'\r') && bytes.get(offset) == Some(&b'\n')
+        {
+            return Some(offset - 1..offset + 1);
+        }
+        None
+    }
+
     pub(super) fn update_line_starts(&self, edits: &[Edit]) -> LineStarts {
         let mut line_starts = self.line_starts.to_full();
         for e in edits {
@@ -200,6 +237,47 @@ mod tests {
         let b = Buffer::new("aa\nbb\ncc");
         let offset = b.line_col_to_offset(BufferPoint { line: 1, col: 10 });
         assert_eq!(offset, 5, "must clamp to line 1's end, not content.len()");
+    }
+
+    #[test]
+    fn line_content_end_stops_before_the_cr_of_a_crlf_line() {
+        let b = Buffer::new("a\r\nb");
+        assert_eq!(b.line_content_end(0), Some(1));
+        assert_eq!(b.line_content_end(1), Some(4));
+    }
+
+    #[test]
+    fn line_content_end_matches_line_end_on_a_bare_lf_line() {
+        let b = Buffer::new("a\nb");
+        assert_eq!(b.line_content_end(0), Some(1));
+        assert_eq!(b.line_end(0), Some(1));
+    }
+
+    #[test]
+    fn a_lone_trailing_cr_on_the_last_line_is_content_not_a_terminator() {
+        let b = Buffer::new("a\r\nb\r");
+        assert_eq!(b.line_content_end(1), Some(5));
+        assert_eq!(b.line_terminator_range(1), Some(5..5));
+    }
+
+    #[test]
+    fn line_terminator_range_reports_two_bytes_for_crlf_one_for_lf_none_when_unterminated() {
+        let b = Buffer::new("a\r\nb\nc");
+        assert_eq!(b.line_terminator_range(0), Some(1..3));
+        assert_eq!(b.line_terminator_range(1), Some(4..5));
+        assert_eq!(b.line_terminator_range(2), Some(6..6));
+    }
+
+    #[test]
+    fn crlf_pair_at_matches_from_either_byte_and_not_a_bare_cr_or_lf() {
+        let b = Buffer::new("a\r\nb");
+        assert_eq!(b.crlf_pair_at(1), Some(1..3));
+        assert_eq!(b.crlf_pair_at(2), Some(1..3));
+        assert_eq!(b.crlf_pair_at(0), None);
+        assert_eq!(b.crlf_pair_at(3), None);
+
+        let bare_cr = Buffer::new("a\rb");
+        assert_eq!(bare_cr.crlf_pair_at(1), None);
     }
 
     #[test]

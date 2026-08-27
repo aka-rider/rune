@@ -95,12 +95,21 @@ pub fn prev_rune_offset(buf: &Buffer, offset: usize) -> usize {
         return 0;
     }
     let content = buf.content();
-    content.floor_char_boundary(offset.min(content.len()).saturating_sub(1))
+    let candidate = content.floor_char_boundary(offset.min(content.len()).saturating_sub(1));
+    match buf.crlf_pair_at(candidate) {
+        Some(pair) if pair.end == candidate + 1 => pair.start,
+        _ => candidate,
+    }
 }
 
 pub fn next_rune_offset(buf: &Buffer, offset: usize) -> usize {
     if offset >= buf.len() {
         return buf.len();
+    }
+    if let Some(pair) = buf.crlf_pair_at(offset)
+        && pair.start == offset
+    {
+        return pair.end;
     }
     match buf.rune_at(offset) {
         Some((_, size)) => offset + size,
@@ -388,6 +397,25 @@ mod tests {
         let after_kanji = 1 + '\u{6c49}'.len_utf8();
         assert_eq!(next_rune_offset(&buf, 1), after_kanji);
         assert_eq!(prev_rune_offset(&buf, after_kanji), 1);
+    }
+
+    #[test]
+    fn right_arrow_steps_over_a_crlf_pair_as_one_boundary() {
+        let buf = Buffer::new("abc\r\ndef");
+        assert_eq!(next_rune_offset(&buf, 3), 5);
+    }
+
+    #[test]
+    fn left_arrow_steps_back_over_a_crlf_pair_as_one_boundary() {
+        let buf = Buffer::new("abc\r\ndef");
+        assert_eq!(prev_rune_offset(&buf, 5), 3);
+    }
+
+    #[test]
+    fn rune_step_does_not_treat_a_bare_cr_as_part_of_a_pair() {
+        let buf = Buffer::new("a\rb");
+        assert_eq!(next_rune_offset(&buf, 1), 2);
+        assert_eq!(prev_rune_offset(&buf, 2), 1);
     }
 
     #[test]

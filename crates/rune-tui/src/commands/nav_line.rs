@@ -41,24 +41,9 @@ pub fn line_start_offset(buf: &Buffer, offset: usize) -> usize {
     }
 }
 
-/// The offset of the line's end (just before its trailing `\n`, or the
-/// buffer's end) for the line containing `offset`.
 pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
     let bp = buf.offset_to_line_col(offset);
-    let mut end = buf.line_col_to_offset(BufferPoint {
-        line: bp.line,
-        col: 0,
-    });
-    while end < buf.len() {
-        let Some((r, size)) = buf.rune_at(end) else {
-            break;
-        };
-        if r == '\n' {
-            break;
-        }
-        end += size;
-    }
-    end
+    buf.line_content_end(bp.line).unwrap_or(buf.len())
 }
 
 /// The byte range `[line_start, line_end)` of the line containing `offset`,
@@ -69,13 +54,10 @@ pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
 /// removes) so the two can never disagree about where a line-copy ends.
 pub(crate) fn line_range_incl_newline(buf: &Buffer, offset: usize) -> (usize, usize) {
     let bp = buf.offset_to_line_col(offset);
-    // `bp.line` comes from `offset_to_line_col`, which always yields a
-    // valid line index — both lookups are `Some` by construction.
     let line_start = buf.line_start(bp.line).unwrap_or(0);
-    let mut line_end = buf.line_end(bp.line).unwrap_or(buf.len());
-    if line_end < buf.len() {
-        line_end += 1; // include the trailing '\n'
-    }
+    let line_end = buf
+        .line_terminator_range(bp.line)
+        .map_or(buf.len(), |r| r.end);
     (line_start, line_end)
 }
 
@@ -126,5 +108,19 @@ mod tests {
         let buf = Buffer::new("hello\nworld\n");
         assert_eq!(line_end_offset(&buf, 0), 5);
         assert_eq!(line_end_offset(&buf, 3), 5);
+    }
+
+    #[test]
+    fn end_key_lands_before_the_cr_of_a_crlf_line_not_between_cr_and_lf() {
+        let buf = Buffer::new("abc\r\ndef\r\n");
+        assert_eq!(line_end_offset(&buf, 0), 3);
+        assert_eq!(line_end_offset(&buf, 5), 8);
+    }
+
+    #[test]
+    fn line_range_incl_newline_spans_the_whole_crlf_terminator() {
+        let buf = Buffer::new("abc\r\ndef");
+        assert_eq!(line_range_incl_newline(&buf, 0), (0, 5));
+        assert_eq!(line_range_incl_newline(&buf, 5), (5, 8));
     }
 }

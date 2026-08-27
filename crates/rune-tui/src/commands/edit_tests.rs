@@ -104,3 +104,23 @@ fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
     redo(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "cd");
 }
+
+#[test]
+fn backspace_at_the_start_of_a_line_removes_the_whole_crlf_pair() {
+    let mut app = app_with("abc\r\ndef", "abc\r\n".len());
+    let id = app.active;
+
+    delete_left(&mut app, id);
+
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "abcdef");
+}
+
+#[test]
+fn delete_right_at_the_end_of_a_line_removes_the_whole_crlf_pair() {
+    let mut app = app_with("abc\r\ndef", 3);
+    let id = app.active;
+
+    delete_right(&mut app, id);
+
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "abcdef");
+}
