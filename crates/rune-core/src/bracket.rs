@@ -46,10 +46,17 @@ pub fn bracket_pair(text: &str, offset: usize) -> Option<(usize, usize)> {
     None
 }
 
+pub fn pair_at_caret(text: &str, offset: usize) -> Option<(usize, usize)> {
+    bracket_pair(text, offset).or_else(|| bracket_pair(text, offset.checked_sub(1)?))
+}
+
 pub fn jump_origin(text: &str, offset: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     if bytes.get(offset).copied().is_some_and(is_bracket) {
         return Some(offset);
+    }
+    if offset > 0 && bytes.get(offset - 1).copied().is_some_and(is_bracket) {
+        return Some(offset - 1);
     }
     bytes
         .iter()
@@ -118,5 +125,41 @@ mod tests {
     fn empty_text_has_neither_a_pair_nor_an_origin() {
         assert_eq!(bracket_pair("", 0), None);
         assert_eq!(jump_origin("", 0), None);
+    }
+
+    #[test]
+    fn pair_at_caret_finds_the_pair_when_just_after_a_closing_bracket() {
+        assert_eq!(pair_at_caret("(a)", 3), Some((0, 2)));
+    }
+
+    #[test]
+    fn pair_at_caret_finds_the_pair_when_just_after_an_opening_bracket() {
+        assert_eq!(pair_at_caret("(a)", 1), Some((0, 2)));
+    }
+
+    #[test]
+    fn pair_at_caret_at_offset_zero_on_a_non_bracket_has_no_pair() {
+        assert_eq!(pair_at_caret("a(b)", 0), None);
+    }
+
+    #[test]
+    fn pair_at_caret_has_no_pair_when_neither_neighbouring_byte_is_a_bracket() {
+        assert_eq!(pair_at_caret("a b c", 2), None);
+    }
+
+    #[test]
+    fn pair_at_caret_on_a_utf8_continuation_byte_has_no_pair_and_does_not_panic() {
+        assert_eq!(pair_at_caret("é)", 1), None);
+        assert_eq!(pair_at_caret("(é", 2), None);
+    }
+
+    #[test]
+    fn pair_at_caret_prefers_the_pair_at_the_caret_over_the_one_before_it() {
+        assert_eq!(pair_at_caret("()", 1), Some((0, 1)));
+    }
+
+    #[test]
+    fn jump_origin_prefers_the_bracket_just_behind_the_caret_over_a_later_one_on_the_line() {
+        assert_eq!(jump_origin("(a) (b)", 3), Some(2));
     }
 }

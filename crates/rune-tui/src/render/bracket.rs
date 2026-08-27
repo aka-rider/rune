@@ -1,4 +1,4 @@
-use rune_core::bracket::bracket_pair;
+use rune_core::bracket::pair_at_caret;
 
 use crate::document::Document;
 use crate::theme::Theme;
@@ -11,14 +11,18 @@ pub(super) fn apply_bracket_match(rows: &mut [Vec<Cell>], doc: &Document, theme:
     }
     let content = doc.buffer.content();
     for cursor in doc.cursors.all() {
-        let Some((open, close)) = bracket_pair(content, cursor.position) else {
+        let Some((open, close)) = pair_at_caret(content, cursor.position) else {
             continue;
         };
-        let far = if open == cursor.position { close } else { open };
-        paint_range(
-            rows,
-            far..far.saturating_add(1),
-            theme.chrome.bracket_match_bg,
-        );
+        for end in [open, close] {
+            if end == cursor.position {
+                continue;
+            }
+            paint_range(
+                rows,
+                end..end.saturating_add(1),
+                theme.chrome.bracket_match_bg,
+            );
+        }
     }
 }

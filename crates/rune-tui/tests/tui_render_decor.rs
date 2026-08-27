@@ -323,8 +323,8 @@ fn cell_bg_at(rows: &[Vec<render::Cell>], offset: usize) -> Option<ratatui::styl
     cell.expect("asserted present just above").style.bg
 }
 
-/// Only the FAR endpoint of the pair is painted: the near one IS the caret
-/// cell, where the caret's own reverse video would invert the tint into an
+/// Both endpoints of the pair are painted, except the one the caret itself
+/// sits on: that cell's own reverse video would invert the tint into an
 /// illegible grey.
 #[test]
 fn the_caret_on_a_bracket_paints_only_its_far_partner() {
@@ -347,9 +347,9 @@ fn the_caret_on_a_bracket_paints_only_its_far_partner() {
 
 #[test]
 fn a_caret_off_any_bracket_paints_no_bracket_match_at_all() {
-    let content = "(x)";
-    let rows = rows_for(content, 1, true);
-    let expected = bracket_match_bg(content, 1);
+    let content = "a(x)";
+    let rows = rows_for(content, 0, true);
+    let expected = bracket_match_bg(content, 0);
 
     for offset in 0..content.len() {
         assert_ne!(
@@ -357,5 +357,98 @@ fn a_caret_off_any_bracket_paints_no_bracket_match_at_all() {
             expected,
             "byte {offset} was lit while the caret sat off every bracket"
         );
+    }
+}
+
+/// Typing `(x)` and stopping leaves the caret just after the closing `)`
+/// (offset 3, one past the pair) — the overwhelmingly common case, and the
+/// one that lit nothing before `pair_at_caret` replaced `bracket_pair`.
+/// Since the caret sits on neither endpoint, both are lit.
+#[test]
+fn a_caret_just_after_the_closing_bracket_paints_both_partners() {
+    let content = "(x)";
+    let rows = rows_for(content, 3, true);
+    let expected = bracket_match_bg(content, 3);
+
+    assert_eq!(
+        cell_bg_at(&rows, 0),
+        expected,
+        "the opening `(` must be lit"
+    );
+    assert_eq!(
+        cell_bg_at(&rows, 2),
+        expected,
+        "the closing `)` must be lit"
+    );
+    assert_ne!(cell_bg_at(&rows, 1), expected, "nor anything between them");
+}
+
+/// A caret just after the opening `(` (offset 1, between the two brackets)
+/// sits on neither endpoint either, so both get lit the same way.
+#[test]
+fn a_caret_just_after_the_opening_bracket_paints_both_partners() {
+    let content = "(x)";
+    let rows = rows_for(content, 1, true);
+    let expected = bracket_match_bg(content, 1);
+
+    assert_eq!(
+        cell_bg_at(&rows, 0),
+        expected,
+        "the opening `(` must be lit"
+    );
+    assert_eq!(
+        cell_bg_at(&rows, 2),
+        expected,
+        "the closing `)` must be lit"
+    );
+    assert_ne!(cell_bg_at(&rows, 1), expected, "nor the caret's own cell");
+}
+
+/// The partner bracket can sit on a different row entirely — the match
+/// still keys off `Cell::buf_offset`, not row-local column arithmetic.
+#[test]
+fn a_bracket_partner_on_a_different_row_is_still_lit() {
+    let content = "(\nx\n)";
+    let close = content.rfind(')').expect("fixture has a closing paren");
+    let rows = rows_for(content, close, true);
+    let expected = bracket_match_bg(content, close);
+
+    assert_eq!(
+        cell_bg_at(&rows, 0),
+        expected,
+        "the opening `(` on the first row must be lit"
+    );
+    assert_ne!(
+        cell_bg_at(&rows, close),
+        expected,
+        "the caret's own `)` must not"
+    );
+}
+
+/// When the caret scrolls the partner off the top of the screen entirely,
+/// `paint_range` has no cell to paint it onto — it must stay a silent
+/// no-op rather than painting some other cell in its place.
+#[test]
+fn a_bracket_partner_scrolled_off_screen_paints_nothing_spurious() {
+    let mut content = String::from("(\n");
+    for _ in 0..40 {
+        content.push_str("x\n");
+    }
+    content.push(')');
+    let close = content.len() - 1;
+    let rows = rows_for(&content, close, true);
+    assert!(
+        rows.iter().flatten().all(|c| c.buf_offset != Some(0)),
+        "fixture assumption broken: the opening `(` must have scrolled off screen"
+    );
+    let expected = bracket_match_bg(&content, close);
+
+    for row in &rows {
+        for cell in row {
+            assert_ne!(
+                cell.style.bg, expected,
+                "no visible cell should carry the bracket-match tint while the partner is off screen"
+            );
+        }
     }
 }
