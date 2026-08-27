@@ -49,9 +49,6 @@ impl Effects {
     }
 }
 
-/// A redraw asked for by `update`, held until a frame is actually drawn:
-/// `Guard::force_redraw` erases the screen, so raising it on a turn whose
-/// frame is suppressed mid-image would leave the user staring at nothing.
 #[derive(Default)]
 pub struct RedrawLatch {
     requested: bool,
@@ -114,8 +111,6 @@ mod tests {
     fn a_request_survives_every_turn_whose_frame_was_suppressed() {
         let mut latch = RedrawLatch::default();
         latch.request();
-        // Turns that end in `Pumped::StillOwing` never reach a draw, so
-        // they never take the latch.
         latch.request();
         assert!(latch.take());
     }

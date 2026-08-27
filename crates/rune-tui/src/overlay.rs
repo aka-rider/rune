@@ -17,8 +17,6 @@ pub(crate) enum Overlay {
 
 pub(crate) struct OverlayClearance(());
 
-/// The read-only accessor a variant's own `&State` getter shares with every
-/// other variant: `Some` only while `Overlay` sits on exactly that variant.
 macro_rules! overlay_get {
     ($vis:vis $fn:ident, $variant:ident, $state:ty) => {
         $vis fn $fn(&self) -> Option<&$state> {
@@ -30,7 +28,6 @@ macro_rules! overlay_get {
     };
 }
 
-/// The mutable mirror of [`overlay_get`].
 macro_rules! overlay_get_mut {
     ($fn:ident, $variant:ident, $state:ty) => {
         pub(crate) fn $fn(&mut self) -> Option<&mut $state> {
@@ -42,9 +39,8 @@ macro_rules! overlay_get_mut {
     };
 }
 
-/// Installs a freshly built `state` as the one open overlay — gated on an
-/// [`OverlayClearance`] so no caller can open one without first proving the
-/// Title pane isn't focused.
+// `OverlayClearance` has no public constructor, so a caller can only reach
+// this if it already proved Title isn't focused.
 macro_rules! overlay_open {
     ($fn:ident, $variant:ident, $state:ty) => {
         pub(crate) fn $fn(&mut self, state: $state, _: OverlayClearance) {
@@ -53,9 +49,8 @@ macro_rules! overlay_open {
     };
 }
 
-/// Drops the overlay outright, only when it's still the named variant —
-/// closing an overlay that already changed underneath the caller (or was
-/// never open) is a no-op, not a stomp on whatever replaced it.
+// Only closes the named variant, so an overlay that already changed
+// underneath the caller is left alone rather than stomped.
 macro_rules! overlay_close {
     ($fn:ident, $variant:ident) => {
         pub(crate) fn $fn(&mut self) {
@@ -66,11 +61,6 @@ macro_rules! overlay_close {
     };
 }
 
-/// Removes and returns the variant's own state, leaving `Overlay::None`
-/// behind — for a caller that needs to consume-then-maybe-restore it (a
-/// resync, a close that persists something out of the departing state)
-/// rather than merely drop it. Any other variant (including `None`) is left
-/// untouched.
 macro_rules! overlay_take {
     ($fn:ident, $variant:ident, $state:ty) => {
         pub(crate) fn $fn(&mut self) -> Option<$state> {
@@ -94,13 +84,8 @@ impl App {
         (self.focus() != Pane::Title).then_some(OverlayClearance(()))
     }
 
-    /// Closes every overlay — the in-file search bar whether or not it is
-    /// focused, the fuzzy file finder, and the command palette — for every
-    /// global that moves focus, switches the active document, or opens
-    /// another surface. The finder closes via `filesearch::cancel` rather
-    /// than a bare overlay reset, so its own focus/return-to restore stays
-    /// coherent instead of leaving `App::focus` wherever the caller's own
-    /// arm is about to move it.
+    // The finder closes through `filesearch::cancel` rather than a bare
+    // overlay reset, so its own focus/return-to restore stays coherent.
     pub(crate) fn close_all_overlays(&mut self, effects: &mut Effects) {
         crate::search::close(self);
         if self.filesearch().is_some() {
@@ -111,10 +96,8 @@ impl App {
         }
     }
 
-    /// Closes only an overlay that owns the keyboard, so a Guard taking the
-    /// keystroke never also discards a kept, unfocused search highlight.
-    /// One `Overlay` slot means at most one is ever open, so closing "all"
-    /// once it owns focus closes exactly that one.
+    // Skips a kept, unfocused search highlight; only the overlay that owns
+    // the keyboard is closed here.
     pub(crate) fn close_focus_overlays(&mut self, effects: &mut Effects) {
         if self.overlay_owns_focus() {
             self.close_all_overlays(effects);

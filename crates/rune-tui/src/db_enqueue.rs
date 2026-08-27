@@ -1,9 +1,3 @@
-//! The enqueue side of the [`crate::db`] bridge (split out of `db.rs` to
-//! keep it under the 500-line budget): the small functions the three
-//! journal call sites (`commands::edit::commit_edit_batch`/`undo`/`redo`)
-//! and `workspace::open_path` use to build and submit ops into `db_ops`.
-//! The reaction to their eventual acks lives in [`crate::db_ack`].
-
 use std::path::Path;
 
 use rune_core::buffer::AppliedEdit;
@@ -16,18 +10,11 @@ use crate::app::App;
 use crate::db::{LoadPurpose, PendingOp};
 use crate::document::{DocumentId, Replica, ReplicaStep};
 
-/// THE sole chokepoint an edit batch's replica reaches after `Journal::
-/// push` at `commands::edit_core::apply_edit_batch_with_cursors`'s one call
-/// site: what happens next depends on `id`'s
-/// [`Replica`]. `Detached` (no store, a degraded one, or a document with no
-/// recovery journal) does nothing — same as always. `Binding` (a `Load`/
-/// `CreateScratch` op is still in flight) buffers the batch as a
-/// [`ReplicaStep`] instead of dropping it — [`crate::db_ack::install_doc_db`]
-/// replays every buffered step, in order, as a real `AppendEdit` the moment
-/// the ack installs the `DocDb`, restoring the 1:1 correspondence between
-/// local journal positions and durable `events` rows that silently dropping
-/// a pre-bind edit used to break. `Bound` enqueues immediately, exactly as
-/// before.
+// While a `Load`/`CreateScratch` op is still in flight (`Binding`), an edit
+// batch is buffered as a `ReplicaStep` rather than dropped, and replayed in
+// order once the binding completes: silently dropping a pre-bind edit would
+// break the 1:1 correspondence between local journal positions and durable
+// `events` rows.
 pub fn append_edit(
     app: &mut App,
     id: DocumentId,
@@ -39,8 +26,6 @@ pub fn append_edit(
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
-    // `id` not (or no longer) live is a plain, correct no-op — see
-    // `App::doc`'s docs.
     let Some(doc) = app.doc_mut(id) else { return };
     if let Replica::Binding { pending, .. } = &mut doc.replica {
         pending.push(ReplicaStep::new(edits, cursors_before, cursors_after, kind));
@@ -52,13 +37,6 @@ pub fn append_edit(
     append_edit_bound(app, id, edits, cursors_before, cursors_after, kind);
 }
 
-/// The actual `AppendEdit` enqueue, shared by [`append_edit`]'s `Bound`
-/// branch and [`replay_pending`]'s replay loop — a failure here (enqueue-
-/// time `Error`, never an async one — that lands via `Msg::Db` instead)
-/// only ever marks the whole store degraded (`materialize_ack::
-/// on_store_failure`) — the buffer/journal mutation already happened and is
-/// never rolled back. Every successful enqueue records `id` in
-/// `app.db_ops` so the eventual ack routes back to the right document.
 fn append_edit_bound(
     app: &mut App,
     id: DocumentId,
@@ -71,14 +49,9 @@ fn append_edit_bound(
     send_append(app, id, edits, cursors_before, cursors_after, kind);
 }
 
-/// Journals `id`'s deferred re-base bridge, if one is still pending
-/// (`DocDb::pending_rebase`'s own doc comment) — called immediately before
-/// the first op whose meaning depends on the bound row reconstructing to
-/// the buffer: an `AppendEdit` ([`append_edit_bound`]), a durable undo
-/// move ([`move_undo_pos`]), a save (`save::materialize`). Ops that only
-/// READ the reconstruction (probe, merge prep) deliberately never flush:
-/// until the user commits content through this binding, a dead session's
-/// recovered-but-not-adopted draft must stay reconstructable.
+// Ops that only read the reconstruction (probe, merge prep) deliberately
+// never flush: until the user commits content through this binding, a dead
+// session's recovered-but-not-adopted draft must stay reconstructable.
 pub(crate) fn flush_pending_rebase(app: &mut App, id: DocumentId) {
     let Some(step) = app
         .doc_mut(id)
@@ -137,25 +110,20 @@ fn send_append(
     }
 }
 
-/// Detects and neutralizes drift between `id`'s own buffer coordinates and
-/// what `db_id`'s row actually, durably reconstructs to — the mechanism
-/// behind both #119 (a sibling binding's own edits land in between) and
-/// #120 (an external reload the buffer never adopted): a binding whose
-/// buffer no longer matches the shared truth must never journal an edit at
-/// coordinates computed against its own stale view, or the edit lands at
-/// the wrong offset (or, worse, at a coincidentally valid but wrong one) in
-/// the row's real reconstruction.
-///
-/// Cheap in the ordinary case (`needs_check` false — a lone, never-diverged
-/// binding, the overwhelming common shape) — no content clone happens at
-/// all. Once a binding has diverged (or a sibling is bound to the same
-/// row), a PURE single-edit insertion is re-targeted to the tail of the
-/// row's own current content (an "append what I just typed" merge — the
-/// only translation with an unambiguous meaning without a real
-/// operational-transform engine); anything else (a delete, a replace, a
-/// multi-edit batch) falls back to one whole-content replace-all, exactly
-/// the same safety net `pending_rebase`'s eager bridge already uses for a
-/// fresh bind — content-correct always, fully surgical only when it can be.
+// Detects and neutralizes drift between `id`'s own buffer coordinates and
+// what `db_id`'s row actually, durably reconstructs to (a sibling binding's
+// edits landing in between, or an external reload the buffer never
+// adopted): a binding whose buffer no longer matches the shared truth must
+// never journal an edit at coordinates computed against its own stale view,
+// or the edit lands at the wrong offset in the row's real reconstruction.
+//
+// Cheap in the ordinary case (a lone, never-diverged binding) — no content
+// clone happens at all. Once diverged, a pure single-edit insertion is
+// re-targeted to the tail of the row's own current content (an "append
+// what I just typed" merge — the only unambiguous translation without a
+// real operational-transform engine); anything else falls back to one
+// whole-content replace-all — content-correct always, fully surgical only
+// when it can be.
 fn resolve_drift(
     app: &mut App,
     id: DocumentId,
@@ -230,18 +198,12 @@ fn resolve_drift(
     result
 }
 
-/// The one place a local journal count enters the writer's `i64` position
-/// arithmetic — a count past `i64::MAX` is unreachable for any real
-/// journal, and saturating there keeps the arithmetic total without a
-/// panic path.
+// A count past `i64::MAX` is unreachable for any real journal; saturating
+// here keeps the arithmetic total without a panic path.
 pub(crate) fn journal_i64(n: usize) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
 }
 
-/// Replays every [`ReplicaStep`] a `Binding` window buffered, in order, as a
-/// real `AppendEdit` — called by [`crate::db_ack::install_doc_db`] right
-/// after it moves `id`'s `Replica` to `Bound`, so every buffered step reaches
-/// the store before this document is ever considered fully bound.
 pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<ReplicaStep>) {
     for step in pending {
         append_edit_bound(
@@ -255,27 +217,14 @@ pub(crate) fn replay_pending(app: &mut App, id: DocumentId, pending: Vec<Replica
     }
 }
 
-/// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
-/// locally — called immediately after `Journal::move_pos` at
-/// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
-/// position just committed (`Journal::move_pos`'s own argument), mapped
-/// through `DocDb::undo_offset` into `token`'s own numbering — carried to
-/// the writer thread AS-IS from there, never further resolved to a durable
-/// seq here: only the writer thread, which has already executed every
-/// `AppendEdit` this token enqueued ahead of this op, can resolve it
-/// exactly (see `rune_db::OpKind::MoveUndoPos`'s doc comment). A position
-/// mapping BELOW `DocDb::undo_floor` predates this token's own numbering
-/// entirely (the local journal position `token` was minted at, or before)
-/// — cannot be sent as an exact position: mis-resolving it lands
-/// `current_seq` on another lineage's seq and recovery silently truncates
-/// or resurrects content. Such a move is journaled as a FORWARD re-base
-/// instead: one replace-all `AppendEdit` from `pre_content` (the buffer as
-/// it stood before this undo/redo committed, which is exactly what the
-/// durable replica reconstructs to) to the post-move buffer, after which a
-/// FRESH token re-anchors the mapping and later moves resolve exactly
-/// again. This op is doc-scoped (`PendingOp::doc_scoped`): a resolution
-/// failure is a fact about ONE document's undo position, never a reason to
-/// degrade the whole store.
+// `local_pos` is mapped through `DocDb::undo_offset` into `token`'s own
+// numbering and carried to the writer thread as-is: only the writer, which
+// has already executed every `AppendEdit` this token enqueued, can resolve
+// it exactly. A position mapping below `DocDb::undo_floor` predates this
+// token's numbering entirely and cannot be sent as an exact position —
+// mis-resolving it would land `current_seq` on another lineage's seq and
+// silently truncate or resurrect content on recovery. Such a move is
+// journaled as a forward re-base instead (`rebase_move`).
 pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_content: &str) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
@@ -310,15 +259,12 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_conten
     }
 }
 
-/// Journals an undo/redo the current token's numbering cannot express as
-/// one forward replace-all `AppendEdit` (`move_undo_pos`'s own doc
-/// comment): mints a FRESH [`rune_db::BindingToken`] for `id`'s binding —
-/// exactly the same "start numbering over" a rebind performs — sends the
-/// bridge as that token's own first append (when the buffer actually
-/// changed), then re-anchors `undo_offset`/`undo_floor` on the position the
-/// replica now sits at: every position at or above it resolves exactly
-/// from here on under the new token, and any later move back below lands
-/// here again.
+// Mints a fresh `BindingToken` for `id`'s binding — the same "start
+// numbering over" a rebind performs — sends the bridge as that token's own
+// first append, then re-anchors `undo_offset`/`undo_floor` on the position
+// the replica now sits at: every position at or above it resolves exactly
+// from here on under the new token, and any later move back below lands
+// here again.
 fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
     let current = match app.doc(id) {
         Some(doc) => doc.buffer.content().to_string(),

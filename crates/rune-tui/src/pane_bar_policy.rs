@@ -1,8 +1,3 @@
-//! The bar-close policy table for `pane_command::handle_global_command` —
-//! which `GlobalCommand`s close the search bar, close it via the finder's
-//! own toggle, or leave every bar exactly as they found it. Split out to
-//! keep `pane_command.rs` under the 500-line budget.
-
 use crate::keymap::GlobalCommand;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

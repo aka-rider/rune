@@ -1,14 +1,13 @@
-//! No escape sequence reports a terminal's colour depth, so `COLORTERM` is
-//! the whole signal: every truecolor-capable terminal on macOS sets it,
-//! and Terminal.app — not truecolor — never does.
-
+// No escape sequence reports a terminal's colour depth, so `COLORTERM` is
+// the whole signal: every truecolor-capable terminal on macOS sets it, and
+// Terminal.app never does.
 pub fn supports_truecolor() -> bool {
     colorterm_claims_truecolor(std::env::var("COLORTERM").ok().as_deref())
 }
 
-/// `COLORTERM` is process-global, so this takes the value as a parameter: a
-/// test that set or unset it directly would race every other test running
-/// concurrently in this binary.
+// `COLORTERM` is process-global, so this takes the value as a parameter
+// instead of reading `std::env` directly — a test that set or unset it
+// would race every other test running concurrently in this binary.
 pub(crate) fn colorterm_claims_truecolor(value: Option<&str>) -> bool {
     matches!(value, Some("truecolor") | Some("24bit"))
 }

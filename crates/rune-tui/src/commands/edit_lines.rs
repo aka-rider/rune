@@ -9,11 +9,6 @@ use crate::app::App;
 use crate::commands::edit_core::{apply_edit_batch_with_cursors, commit_edit_batch};
 use crate::document::DocumentId;
 
-/// `dedupe=true` (delete-line) skips a line an earlier cursor in this same
-/// batch already produced an edit for — two cursors on one line must not
-/// double-edit it. `dedupe=false` (clone-line-up/down, in the sibling
-/// `edit_lines_move` module) lets every cursor clone independently even
-/// when several cursors share a line.
 pub(crate) fn per_line_edits(
     app: &mut App,
     id: DocumentId,
@@ -177,20 +172,11 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
     })
 }
 
-/// Deletes the whole line under each (deduped) cursor: the whole
-/// buffer when it's the only line; the line plus its own trailing `\n`
-/// when a later line exists; otherwise (the last line) the PREVIOUS
-/// line's trailing `\n` plus this line's own text, since the last line has
-/// no trailing `\n` of its own to remove.
 pub fn delete_line(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, |line, buf| {
         let line_count = buf.line_count();
         if line_count == 1 {
             if buf.is_empty() {
-                // An empty buffer's one line has nothing to delete — a
-                // `0,0,""` edit would be a true no-op the user still has
-                // to ⌘Z through (matching `outdent`'s own `None` on its
-                // analogous no-op case, just below).
                 return None;
             }
             return Some(Edit {

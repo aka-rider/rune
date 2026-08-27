@@ -166,10 +166,6 @@ mod tests {
         );
     }
 
-    /// Regression: when every eligible tab is dirty, `ensure_room` must
-    /// refuse the open outright — never switch the active document to a
-    /// victim it cannot silently close, and never leave a `DirtyClose` guard
-    /// armed against a document the user never asked to look at.
     #[test]
     fn a_dirty_lra_victim_is_never_hijacked_and_the_open_is_refused_with_feedback() {
         let (mut app, ids) = filled_app(MAX_TABS);

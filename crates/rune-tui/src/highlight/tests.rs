@@ -1,8 +1,3 @@
-//! Unit coverage for the scheduler's own gates. The pipeline's behaviour —
-//! a fence and a file colouring identically, budgets, tree reuse — is
-//! specified end-to-end through the crate's public surface in
-//! `tests/highlight_*.rs` instead.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -23,10 +18,6 @@ fn app_for(content: &str, path: &str) -> App {
 
 #[test]
 fn schedule_highlight_skips_resolving_sources_while_one_is_already_in_flight() {
-    // `schedule_highlight` used to resolve its source (reconstructing every
-    // region's whole text) before checking whether a highlight was already
-    // in flight — so every version-changing message paid that even on the
-    // overwhelmingly common path where the gate immediately discards it.
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
@@ -56,9 +47,6 @@ fn schedule_highlight_skips_resolving_sources_while_one_is_already_in_flight() {
 
 #[test]
 fn schedule_highlight_resolves_and_dispatches_when_no_highlight_is_in_flight() {
-    // The converse of the case above: with no highlight running and no
-    // stored version yet, the gates must fall through and the source must
-    // actually be resolved once, dispatching exactly one cmd.
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
@@ -74,12 +62,6 @@ fn schedule_highlight_resolves_and_dispatches_when_no_highlight_is_in_flight() {
     );
 }
 
-/// A small `.rs` startup document parses inside `FIRST_PAINT_BUDGET`
-/// synchronously, populating its one region's tree before any `Cmd` ever
-/// runs — and, since the first-paint pass stamps `highlight.version` on
-/// success exactly like a completed background reply would, a subsequent
-/// `schedule_highlight` finds the document already current and pushes no
-/// `Cmd` at all.
 #[test]
 fn first_paint_highlights_small_file_synchronously() {
     let mut app = app_for("fn main() {}\n", "/x/main.rs");
@@ -103,12 +85,10 @@ fn first_paint_highlights_small_file_synchronously() {
     assert!(
         effects.cmds.is_empty(),
         "the already-current guard must suppress the bootstrap Cmd once the \
-         first-paint pass already populated this document's regions"
+        first-paint pass already populated this document's regions"
     );
 }
 
-/// A markdown document with no code region at all has nothing to parse —
-/// the first-paint pass must be a clean no-op, never inventing a region.
 #[test]
 fn first_paint_highlight_is_a_no_op_for_a_document_with_no_code_region() {
     let mut app = App::new(Buffer::new("# hello\n"), None, Arc::new(Mem::new()), None);
@@ -119,9 +99,6 @@ fn first_paint_highlight_is_a_no_op_for_a_document_with_no_code_region() {
     assert!(app.doc(id).expect("doc").highlight.regions.is_empty());
 }
 
-/// The first-paint pass is no longer code-document-only: a markdown document
-/// whose first screen carries a fence gets that fence coloured on frame 1
-/// for the same reason a `.ts` file does.
 #[test]
 fn first_paint_highlights_a_markdown_fence_too() {
     let mut app = app_for("```rust\nfn main() {}\n```\n", "/x/notes.md");
@@ -140,16 +117,6 @@ fn first_paint_highlights_a_markdown_fence_too() {
     );
 }
 
-/// A budget-limited pass that reaches only the first region of a reshaped
-/// layout must not let the starved slots inherit trees parsed from some
-/// OTHER region's text just because those trees sat at the same index.
-///
-/// The shape: a two-region layout `[A, B]` is fully highlighted, then a new
-/// region lands on top — `[TOP, A, B]` — and the follow-up pass's total
-/// (charged 100ms per budget consultation by the deterministic clock)
-/// affords only `TOP` before it is spent. The starved slots at indices 1 and
-/// 2 sit where `A`'s and `B`'s trees used to; inheriting those positionally
-/// would paint `A`'s text with `B`'s tree.
 #[test]
 fn a_budget_starved_region_never_inherits_a_tree_parsed_from_different_text() {
     const TOP: &str = "let top = 0;\n";
@@ -209,9 +176,6 @@ fn a_budget_starved_region_never_inherits_a_tree_parsed_from_different_text() {
     }
 }
 
-/// An info string with no highlighter behind it (unknown tag, or no tag)
-/// contributes no region — but is not an error and never blocks the
-/// document's other regions.
 #[test]
 fn region_language_resolves_the_first_token_only() {
     assert_eq!(region_language("rust,ignore"), Some(RegionLang::Ts("rust")));

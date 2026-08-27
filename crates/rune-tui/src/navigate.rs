@@ -1,14 +1,3 @@
-//! `navigate::follow` — following the link under the cursor: ⌘Enter/^Enter
-//! and a ctrl-click both funnel through this one entry point.
-//! Reads the ACTIVE document's `Document::catalogue` (rebuilt on every
-//! `Document::view()` call) to find what the cursor sits on, then dispatches
-//! on the `rune_nav::Destination` it resolves to — a same-document heading
-//! jump, opening (or reactivating) another document and landing on its
-//! anchor, or handing an external URL off to the OS opener. A miss under
-//! the cursor, or a target that never resolves, is reported through the
-//! status line rather than the error Banner — following a link is routine
-//! navigation, not a failure worth interrupting the user over.
-
 use std::process::Command as ProcessCommand;
 
 use rune_core::buffer::Buffer;
@@ -22,12 +11,6 @@ use crate::runtime::{Cmd, Effects, Msg};
 use crate::viewport::ScrollMode;
 use crate::workspace;
 
-/// Finds the first `Ref` in the ACTIVE document's catalogue whose `site`
-/// contains the primary cursor's byte offset and whose kind is a followable
-/// link, then dispatches on it. `UseRole::Embed` is catalogued but never
-/// followed here (it is an image, not a navigable link); a cursor sitting
-/// on neither a link nor an embed is a silent
-/// no-op.
 pub fn follow(app: &mut App, effects: &mut Effects) {
     let offset = app.active_doc().cursors.primary().position.get();
     let Some(target) = link_target_at(&app.active_doc().catalogue, offset) else {
@@ -67,10 +50,8 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
     }
 }
 
-/// The followable link, if any, sitting under `offset` — a `Use { role:
-/// Link, .. }` whose `site` touches it (edge-inclusive: a caret at the
-/// site's own end, where reveal already shows the raw markup, must still
-/// follow). Never matches a `Def` or an `Embed`.
+// `site.touches(offset)` is edge-inclusive: a caret at the site's own end,
+// where reveal already shows the raw markup, must still follow.
 fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
     catalogue.iter().find_map(|r| match &r.kind {
         RefKind::Use {
@@ -81,9 +62,6 @@ fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
     })
 }
 
-/// `Target::SameDoc` never touches `resolve`/the filesystem: the anchor
-/// is searched for directly in the ACTIVE document's own
-/// catalogue (`Anchor::Named`) or its buffer (`Anchor::Line`).
 fn follow_same_doc(app: &mut App, anchor: &Anchor) {
     let doc = app.active_doc();
     let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
@@ -98,14 +76,6 @@ fn follow_same_doc(app: &mut App, anchor: &Anchor) {
     doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 
-/// Opens (or reactivates) the document at `path` and, if `anchor` is
-/// `Some`, lands the caret on the matching heading once it's open:
-/// `workspace::open_path_async` reads the file
-/// off-thread when it isn't already open, so landing the anchor can't
-/// happen inline here anymore — it moves into the `Msg::FileOpened` ack
-/// reaction ([`land_anchor`] below), reached via `workspace::
-/// handle_file_opened`. An already-open target still lands its anchor
-/// synchronously, right here, since no read is needed.
 fn follow_location(
     app: &mut App,
     path: &std::path::Path,
@@ -116,14 +86,9 @@ fn follow_location(
     workspace::open_path_async(app, path, anchor, effects);
 }
 
-/// Lands the caret on `anchor` in the just-opened (or just-reactivated)
-/// document `id` — the shared reaction `workspace::open_path_async`'s
-/// synchronous reactivation branch AND `workspace::handle_file_opened`'s
-/// async ack both call, so the two routes can't drift apart on how an
-/// anchor is resolved. Forces `id`'s catalogue to exist NOW through
-/// `Document::sync_catalogue` rather than waiting for
-/// `App::sync_view`'s lazy per-active-document parse, since
-/// `id` isn't necessarily the active (or even the only) document yet.
+// Forces `id`'s catalogue to exist now, rather than waiting for the lazy
+// per-active-document parse, since `id` isn't necessarily the active
+// document yet.
 pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
     let Some(doc) = app.doc_mut(id) else {
         return;
@@ -143,12 +108,6 @@ pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
     doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 
-/// The byte offset `anchor` refers to: a `Named` anchor is name-based and
-/// is searched for against `catalogue`'s heading `Def`s via
-/// `rune_nav::anchor_matches`; a `Line` anchor is positional — its
-/// (1-based) number converts directly to the start of that line in
-/// `buffer` and never touches the catalogue at all, so its number can
-/// never be silently discarded the way a name-only lookup would force.
 fn anchor_offset(catalogue: &[Ref], buffer: &Buffer, anchor: &Anchor) -> Option<usize> {
     match anchor {
         Anchor::Named {
@@ -172,9 +131,6 @@ fn anchor_label(anchor: &Anchor) -> String {
     }
 }
 
-/// A human-readable label for a target that failed to resolve — the raw
-/// string the user actually wrote, so the status message names something
-/// they recognize.
 fn describe_target(target: &Target) -> String {
     match target {
         Target::Url(u) => u.clone(),
@@ -184,14 +140,10 @@ fn describe_target(target: &Target) -> String {
     }
 }
 
-/// The external-URL opener `Cmd`, the exact shape of
-/// `clipboard::pbpaste_cmd`: runs off-thread, never touches the terminal.
-/// `url` is passed to `/usr/bin/open` as a SEPARATE argv element, never
-/// interpolated into a shell string, so a crafted link can never inject a
-/// command. The scheme allowlist is enforced inside `rune_nav::resolve`,
-/// which is the only thing that can produce the `Destination::Url` this
-/// function consumes — so no producer of navigation targets, present or
-/// future, can route an arbitrary scheme to this spawn.
+// `url` is passed to `/usr/bin/open` as a separate argv element, never
+// interpolated into a shell string, so a crafted link can never inject a
+// command. The scheme allowlist that gates what reaches here at all lives in
+// `rune_nav::resolve`, the only producer of `Destination::Url`.
 fn open_external_cmd(url: String) -> Cmd {
     Cmd::open_external(
         move || match ProcessCommand::new("/usr/bin/open").arg(&url).status() {

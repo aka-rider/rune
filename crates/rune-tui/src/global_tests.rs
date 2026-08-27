@@ -251,10 +251,6 @@ fn global_n_binding_is_not_already_bound_in_any_pane_table() {
     assert_unclaimed_by_any_pane_table(&[ctrl_n, sup_n]);
 }
 
-/// Trash is no longer a global chord (product decision): neither `⌘⌫` nor
-/// `^⌫` resolves through `GLOBAL_BINDINGS` any more, in the editor, the
-/// title field, the finder, or anywhere else a raw key dispatch checks this
-/// table first.
 #[test]
 fn global_bindings_no_longer_claim_backspace_at_all() {
     use crate::binding::resolve_in;
@@ -278,9 +274,6 @@ fn global_bindings_no_longer_claim_backspace_at_all() {
     }
 }
 
-/// Trash's new home: an Explorer-pane-scoped binding on `⌘⌫` and the
-/// forward-delete key — `^⌫` deliberately does NOT survive the move, only
-/// the two chords the product decision named.
 #[test]
 fn explorer_owns_sup_backspace_and_delete_for_trash() {
     use crate::binding::resolve_in;

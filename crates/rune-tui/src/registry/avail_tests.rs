@@ -220,11 +220,6 @@ fn focus_title_stays_available_while_a_rename_is_in_flight() {
     ));
 }
 
-/// A save in flight defers a close (queues it for the ack) rather than
-/// refusing it outright — unlike rename/save's own in-flight rungs, this is
-/// not a hard refusal, so it must NOT be reachable through the same
-/// registry-predicate short-circuit `CloseFile`'s arm now runs: `close`'s
-/// row only mirrors the preview lock, exactly as before this change.
 #[test]
 fn close_while_saving_still_defers_instead_of_refusing() {
     let mut app = app_with("hello");

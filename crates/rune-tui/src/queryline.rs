@@ -1,30 +1,19 @@
-//! The shared editing core behind every hand-rolled single-line query
-//! buffer — `SearchState.draft`, `FileSearchState.query`, and
-//! `Overlay::ExplorerFind`'s `String`. None of the three needs cursor
-//! placement, selection, or undo (`field::TextField`'s own job, for
-//! `TitleField`/`PaletteState`): each is append-only from the keyboard and
-//! only ever erases from its own end, so a plain `String` plus these three
-//! free functions is the whole shared surface.
-
 use unicode_segmentation::UnicodeSegmentation;
 
 pub(crate) fn type_char(text: &mut String, c: char) {
     text.push(c);
 }
 
-/// Erases one GRAPHEME CLUSTER, not one `char` — a combining mark popped
-/// alone would desync what's on screen from what the buffer holds. A no-op
-/// on an already-empty `text`.
+// Erases one grapheme cluster, not one `char` — popping a combining mark
+// alone would desync what's on screen from what the buffer holds.
 pub(crate) fn erase_grapheme(text: &mut String) {
     if let Some((byte_idx, _)) = text.grapheme_indices(true).next_back() {
         text.truncate(byte_idx);
     }
 }
 
-/// The first line of `text`, control characters stripped — the sanitize
-/// every paste target applies before appending: the draft/query is always
-/// rendered as a single row, so an embedded newline would only ever show as
-/// a control glyph nobody typed.
+// Keeps only the first line: the draft/query always renders as a single
+// row, so an embedded newline would only ever show as a stray glyph.
 pub(crate) fn sanitize_pasted_line(text: &str) -> String {
     text.lines()
         .next()

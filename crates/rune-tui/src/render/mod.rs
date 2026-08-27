@@ -1,23 +1,3 @@
-//! The Cell model + blit: `DisplaySnapshot`
-//! wrap rows -> `Vec<Vec<Cell>>` (Rendered spans via `cell_map`, Revealed
-//! spans via byte arithmetic) -> overlays keyed on
-//! `buf_offset` (cursor reverse-video, selection background, synthetic EOL
-//! cursor cell) -> blit into `frame.buffer_mut()`.
-//! The terminal cursor stays hidden (`term::Guard::new`); the caret drawn
-//! here IS the cursor.
-//!
-//! Split for the 500-line budget: [`cell`] holds the `Cell` type and the
-//! buffer-content -> `Cell` walk (`segment_cells`/`segment_geometry`),
-//! [`blit`] holds the terminal-buffer write, [`code_bg`] holds the
-//! code-region background rectangle, and [`overlay`] holds the
-//! cursor/selection/highlight overlays `build_rows` below applies — all
-//! re-exported here so `render::Cell`/`render::segment_cells`/`render::blit`
-//! stay the paths every other module already calls through. [`rowbg`] is a
-//! fourth, unrelated background pass: the left column's Explorer/Tabs
-//! panes render straight to the ratatui `Buffer` rather than through this
-//! module's `Cell` row model, so their row backgrounds go through their
-//! own chokepoint instead.
-
 mod blit;
 mod bracket;
 mod cell;
@@ -49,19 +29,11 @@ pub use blit::blit;
 pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 pub(crate) use cell::{paint_range, push_grapheme_cells};
 
-/// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: the DISPLAY
-/// rows (wrap rows plus synthesised table borders) in `[scroll_row,
-/// scroll_row + height)`, with cursor/selection overlays applied. Generic
-/// over `doc` so the messages pane can render its own read-only `Document`
-/// through the identical pipeline the editor uses —
-/// required for mouse hit-testing to ever land correctly, since `render`'s
-/// row space and a bespoke row walk (the old `banner::build_rows`) are
-/// NOT the same space. `viewport.scroll_row` is a DISPLAY row index —
-/// `Document::scroll_to_cursor` is its single writer and converts through
-/// `DisplaySnapshot::wrap_to_display` before ever assigning it (see that
-/// function's docs). The diff/merge pane's background and intraline
-/// highlighting are NOT painted here — `render::draw` applies those itself,
-/// at the one call site that actually knows `doc` is the active document.
+// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: DISPLAY rows
+// in `[scroll_row, scroll_row + height)`, with cursor/selection overlays
+// applied. Generic over `doc` so the messages pane can render its own
+// read-only `Document` through the identical row-space pipeline the
+// editor uses, which mouse hit-testing depends on.
 pub fn build_rows(
     app: &App,
     doc: &Document,
@@ -72,39 +44,21 @@ pub fn build_rows(
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
         .map(|row| {
-            // A row carrying an `ImageRowRef` (set by
-            // either the whole-document image producer or, for an embed,
-            // `expand_images`) renders through the placeholder/info-card
-            // override instead of the ordinary span-cell path below — its
-            // spans are decorative placeholders with no real content to
-            // walk. `row_cells` returns `None` for an embed row that isn't
-            // currently showable as pixels (no Kitty) — that case falls
-            // through to the ordinary path so the row's own alt-text span
-            // (the `Rendered` emit) shows instead.
             if let Some(image_ref) = row.image.clone()
                 && let Some(cells) = image::row_cells(app, doc, &image_ref, viewport.width)
             {
                 return cells;
             }
-            // The row's own decoration (heading icon / bullet /
-            // quote bar / hr rule) is prepended BEFORE the overlay walks
-            // below run — those walks all skip an offset-less cell
-            // (the overlay module documents that skip), so a decor prefix never competes
-            // for highlight/selection/caret painting the way a real cell
-            // would.
             let mut cells = decor::decor_row_cells(&app.theme, row);
             cells.extend(segment_cells(&app.theme, content, &row.spans));
             cells
         })
         .collect();
 
-    // A code region's background is a RECTANGLE, painted before any token
-    // colour so a foreground lands on top of it rather than being
-    // overwritten by it. It is deliberately driven off the display
-    // snapshot's own `code_regions` (the one definition of code, shared with
-    // the highlight scheduler, computed once per document change) — never
-    // `doc.highlight` — so no highlight reply can reflow a row and two
-    // message-free renders agree.
+    // The code region background is a rectangle painted before token
+    // colour, driven off the display snapshot's own `code_regions` —
+    // never `doc.highlight` — so no highlight reply racing a render can
+    // make two frames of the same document disagree on where code starts.
     code_bg::paint_code_background(
         &mut rows,
         view,
@@ -114,12 +68,9 @@ pub fn build_rows(
     );
 
     // The token overlay paints BEFORE the cursor overlays below, so a
-    // selection background or the caret's reverse-video always wins over a
-    // token's foreground. Every region with a retained tree is queried fresh
-    // each frame, scoped to exactly the bytes just rendered:
-    // `visible_byte_range` derives the same window the span overlay itself
-    // scans, so the query never does work outside it. This is the whole
-    // parse -> render seam — a fence and a whole file reach it identically.
+    // selection background or the caret's reverse-video always wins over
+    // a token's foreground. Queried fresh each frame, scoped to exactly
+    // the visible byte window, so cost never grows with document size.
     let spans = overlay::visible_byte_range(&rows).map_or_else(Vec::new, |range| {
         crate::highlight::visible_spans(doc, range)
     });
@@ -127,15 +78,11 @@ pub fn build_rows(
 
     bracket::apply_bracket_match(&mut rows, doc, &app.theme);
 
-    // The search bar's live match highlight: painted AFTER
-    // the token overlay (so a match's background sits under, not over, a
-    // token's foreground) and BEFORE the cursor overlays just below (so
-    // the caret/selection still wins where they land on a match). Guarded
-    // on `doc_id` actually being the ACTIVE document — `build_rows` is
-    // generic over `doc` (the messages pane renders its own read-only
-    // `Document`, `doc_id: None`, through this same function), but
-    // `App::search`'s matches are computed against the active document's
-    // bytes only.
+    // Painted AFTER the token overlay (so a match's background sits under
+    // a token's foreground) and BEFORE the cursor overlays (so the
+    // caret/selection still wins). `build_rows` is generic over `doc` (the
+    // messages pane renders through it too), but `app.search()`'s matches
+    // only ever apply to the active document.
     if let Some(state) = app.search()
         && doc_id == Some(app.active)
     {
@@ -177,29 +124,15 @@ fn apply_reading_link_focus(rows: &mut [Vec<Cell>], focus: rune_syntax::element:
     }
 }
 
-// `apply_cursor_overlays`, `highlight_selection`, `place_caret` and
-// `apply_highlight_spans` moved to `overlay.rs` (500-line budget) — `build_rows`
-// above calls them through `overlay::`.
-
-/// Blits `app.view`'s current snapshot into the editor rect, and every
-/// other chrome rect `layout::geometry` computes (`draw`
-/// itself no longer computes any split — it consumes `Geometry`, the one
-/// chokepoint every rect comes from, so it can never disagree with
-/// `App::relayout`'s or `explorer`/`opentabs`'s own idea of the same
-/// rects).
-///
-/// Render order is load-bearing: the center
-/// `Block` must paint before the editor rows are blitted (its border
-/// spans the WHOLE `geo.center` rect, including where the editor sits one
-/// cell in), and the breadcrumb overlay must run after both — it splices
-/// directly onto the border row the `Block` already painted.
+// Render order is load-bearing: the center `Block` must paint before the
+// editor rows are blitted (its border spans the whole `geo.center` rect,
+// including where the editor sits one cell in), and the breadcrumb
+// overlay must run after both — it splices directly onto the border row
+// the `Block` already painted.
 pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);
 
-    // `draw_left_pane` itself no-ops on `geo.left_block == None` (a
-    // redundant guard used to re-check the same
-    // condition here first).
     draw_left_pane(app, &geo, frame);
 
     if geo.center_bordered {
@@ -302,8 +235,6 @@ pub fn draw(app: &App, frame: &mut Frame) {
         crate::breadcrumb::overlay(app, geo.center, app.focus() == Pane::Editor, frame);
     }
 
-    // The one messages-pane delegation — all of its own cell building
-    // lives in `messages::render`, never here.
     if let Some(messages_area) = geo.messages {
         messages::draw(app, messages_area, frame);
     }
@@ -314,20 +245,6 @@ pub fn draw(app: &App, frame: &mut Frame) {
     }
 }
 
-/// The pre-snapshot frame `draw` falls back to while `doc.view` is still
-/// `None` — a large document's first display-pipeline compute runs on a
-/// background `Cmd` (`runtime::bootstrap`'s large-document branch), and
-/// nothing is ever representable as a PARTIAL `DisplaySnapshot` —
-/// `DisplaySnapshot::total_rows`/`wrap_to_display`/`display_to_wrap` clamp a
-/// short prefix indistinguishably from a genuinely short document, which
-/// would silently corrupt every scroll/caret/hit-test query built against
-/// it). This reads straight from `Buffer`, unstyled, no wrap/emit pass, no
-/// syntax highlighting — and bounded to `area.height` lines via `str::
-/// lines().take(..)`, which stops walking the string the moment enough
-/// lines are found, so drawing this frame costs the same tiny constant
-/// regardless of how large the document is; the message pane (`runtime::
-/// bootstrap`'s own call into `messages::info`) is the on-screen indicator
-/// that the real content is still being prepared.
 fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
     let Some(diff_view) = app.diff.as_ref() else {
         return;
@@ -386,6 +303,12 @@ fn blank_rows(width: u16, height: u16) -> Vec<Vec<Cell>> {
         .collect()
 }
 
+// `doc.view` is still `None` while a large document's first
+// display-pipeline compute runs in the background: no prefix of a
+// DisplaySnapshot is safely representable (a clamped partial would look
+// identical to a genuinely short document to every scroll/caret/hit-test
+// query built against it). This instead reads straight from `Buffer`,
+// unstyled, bounded to `area.height` lines.
 fn draw_pending(doc: &Document, area: ratatui::layout::Rect, frame: &mut Frame) {
     let lines: Vec<ratatui::text::Line> = doc
         .buffer
@@ -397,46 +320,26 @@ fn draw_pending(doc: &Document, area: ratatui::layout::Rect, frame: &mut Frame) 
     frame.render_widget(ratatui::widgets::Paragraph::new(lines), area);
 }
 
-/// The left column: ONE titled, bordered block (" Files ") holding both
-/// panes, with the Open Tabs section introduced by an in-block divider row
-/// rather than a second border. This owns only that border and its
-/// focus-colored style; every rect it paints into comes from `Geometry`
-/// rather than a `Layout::split` of its own.
-///
-/// The single border's color tracks the EXPLORER's focus, since the block
-/// is titled for it; the Tabs pane signals its own focus through the
-/// divider row's color and the cursor prefix on its rows instead.
-///
-/// Render order is load-bearing: the block paints first — its border spans
-/// the whole rect, including the columns the inner content sits inside —
-/// then the Explorer rows, the divider, and the tab rows go on top.
+// The left column: ONE titled, bordered block holding both the Explorer
+// and Open Tabs panes, with Tabs introduced by an in-block divider row
+// rather than a second border. Render order is load-bearing: the block
+// paints first — its border spans the whole rect — then the Explorer
+// rows, the divider, and the tab rows go on top.
 fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     let Some(left_area) = geo.left_block else {
         return;
     };
 
-    // The finder replaces only the Explorer's own content — the Tabs
-    // section below it stays exactly as it always renders — so this is
-    // checked first, ahead of every other title/content decision below.
     let filesearch_active = app.filesearch().is_some();
 
-    // The Explorer can now be collapsed independently of the column
-    // itself (its own vertical splitter dragged to the top): when it has
-    // no rows to draw into, titling the block " Files " would claim a
-    // pane that isn't there, so the block's title follows what's actually
-    // showing instead of assuming the Explorer always is. A live type-to-
-    // search (`App::explorer_find`) takes the next priority: the query is
-    // the whole visible-feedback story the design calls for (no chord, no
-    // mode indicator elsewhere on screen), so the block's own title is the
-    // one place it can show without stealing an entry row.
     let title = if filesearch_active {
         " Open File ".to_string()
     } else if geo.explorer_inner.height == 0 {
         " Open ".to_string()
     } else if let Some(query) = app.explorer_find() {
-        // Truncated to the block's own inner width (minus the two corner
-        // cells) in terminal CELLS, not chars — a long query on a
-        // narrow column must not overrun the border.
+        // Truncated to the block's own inner width in terminal CELLS, not
+        // chars, so a long query on a narrow column can't overrun the
+        // border.
         let budget = (left_area.width as usize).saturating_sub(2);
         let raw = format!(" Search: {query} ");
         crate::width::truncate_tail_to_width(&raw, budget)

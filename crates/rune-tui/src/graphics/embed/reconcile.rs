@@ -97,11 +97,6 @@ fn spawn_or_respawn(
             continue;
         }
 
-        // The embed and the whole-document image path share ONE
-        // terminal-global allocator (`App::image_ids`) keyed by this same
-        // resolved-path string, so a path that hashes to the same natural
-        // id as some other open document's image always probes to a
-        // distinct seat rather than silently sharing it.
         let key = abs_path.to_string_lossy().into_owned();
         let embed_id = app.image_ids.alloc_free_id(&key);
         let Some(doc) = app.doc_mut(id) else { return };

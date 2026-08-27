@@ -1,10 +1,3 @@
-//! Editing group of `EDITOR_BINDINGS` (chords that mutate the document,
-//! move/clone a line, add a multi-cursor, undo/redo, or save). Split out
-//! of `editor_bindings.rs` to bring that file under the 500-line
-//! budget; assembled back into the single `EDITOR_BINDINGS` table (see
-//! that module's doc comment) in the exact original order — this module
-//! only owns the definitions.
-
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{Command, KeyCode};
 
@@ -150,11 +143,6 @@ pub(crate) const SAVE: Binding<Command> = Binding {
     secondary: false,
 };
 
-/// Re-decode and retransmit an image document, or re-schedule any wedged
-/// embed decode. `⌘R` is unused anywhere else in this table (see
-/// `editor_bindings.rs`'s own collision test); `dispatch::Command::Reload`
-/// refuses with a status message on a document with neither an image nor
-/// a wedged embed to reload.
 pub(crate) const RELOAD: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('r'), SUP),
     cmd: Command::Reload,

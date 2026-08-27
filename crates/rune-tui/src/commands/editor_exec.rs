@@ -10,15 +10,6 @@ use crate::registry::CommandId;
 use crate::runtime::{Effects, PasteTarget};
 use crate::save;
 
-/// Stage 4's entry point for every `keymap::Command`, both from an ordinary
-/// chord (`dispatch::handle_editor_key`) and from the palette
-/// (`registry::exec::execute`, which already checked availability itself
-/// before calling here — this is a harmless repeat for that path, and the
-/// only gate at all for a direct chord). Refusing HERE, once, is what stops
-/// `Command::Paste` from spawning a `pbpaste` read for a document that will
-/// only reject the paste once the reply lands, and what gives every other
-/// read-only-gated command (Cut, DeleteLeft, Indent, ...) the same feedback
-/// the palette already shows for them.
 pub(crate) fn run(
     app: &mut App,
     command: Command,
@@ -138,10 +129,6 @@ mod tests {
         app
     }
 
-    /// Regression: `⌘V` (`Command::Paste`) on a read-only document used to
-    /// spawn the `pbpaste` read anyway, only to have the insertion silently
-    /// dropped once the reply landed. It must now refuse up front, with
-    /// feedback, and never spawn the read at all.
     #[test]
     fn paste_on_a_read_only_document_refuses_up_front_and_spawns_no_cmd() {
         let mut app = app_with("hello");

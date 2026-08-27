@@ -1,10 +1,8 @@
 use rune_image::{CellFootprint, CellSize, PixelSize};
 
-/// A fitted footprint, plus whether the natural fit wanted more rows than
-/// `rune_image::ADDRESSABLE_ROWS` can address — a tall image capped at that
-/// ceiling loses its bottom rows rather than misrendering them as repeats
-/// of row 0, and a caller that cares can surface the loss instead of
-/// letting it pass silently.
+// Capped at `rune_image::ADDRESSABLE_ROWS`: past that row count Kitty's
+// placeholder addressing repeats row 0 instead of the image's own content,
+// so `truncated` lets a caller warn instead of showing that silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Fit {
     pub cells: CellFootprint,
@@ -58,10 +56,6 @@ mod tests {
 
     #[test]
     fn a_tall_images_footprint_never_exceeds_addressable_rows_and_reports_truncation() {
-        // A 1080x9000 portrait screenshot in an 80-column pane: the naive
-        // fit math wants far more rows than the Kitty placeholder protocol
-        // can address (`rune_image::ADDRESSABLE_ROWS`) — a row past that
-        // silently repeats `DIACRITICS[0]`'s content instead of its own.
         let fit = fit(PixelSize { w: 1080, h: 9000 }, 80, CellSize { w: 8, h: 16 });
         assert!(
             fit.cells.rows <= rune_image::ADDRESSABLE_ROWS,

@@ -1,11 +1,3 @@
-//! Line duplication and reordering commands: split out of the sibling
-//! `edit_lines` module (that module was already over the 500-line
-//! budget). Implements clone-line-up/down and move-line-up/down commands.
-//! `clone_line_up`/`clone_line_down` reuse `edit_lines`'s
-//! `per_line_edits` (via `pub(crate)`); `move_line_up`/`move_line_down`
-//! hand-place the resulting cursor at a column instead of the edit's end,
-//! so those two call `edit_core::apply_edit_batch_with_cursors` directly.
-
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::coords::BufferOffset;
 use rune_core::cursor::Cursor;
@@ -31,8 +23,6 @@ fn line_parts(buf: &Buffer, n: usize) -> Option<LineParts> {
     })
 }
 
-/// Inserts a copy of each (non-deduped) cursor's line directly above it.
-/// `line == 0` skips that cursor (no line to clone above).
 pub fn clone_line_up(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
         if line == 0 {
@@ -53,7 +43,6 @@ pub fn clone_line_up(app: &mut App, id: DocumentId) {
     });
 }
 
-/// Inserts a copy of each (non-deduped) cursor's line directly below it.
 pub fn clone_line_down(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
         let content_end = buf.line_content_end(line)?;
@@ -71,13 +60,11 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
     });
 }
 
-/// Swaps the FIRST cursor's line with the one directly above it, in a
-/// single edit, and collapses the whole cursor set to just that one
-/// cursor: move-line only ever acts on the first
-/// cursor, dropping any others in the set. The surviving cursor lands at
-/// the same COLUMN it held within its line, now inside the moved block —
-/// not at the edit's end, which is why this calls `apply_edit_batch_with_
-/// cursors` directly instead of the generic `commit_edit_batch`.
+/// Acts only on the first cursor, collapsing the whole cursor set down to
+/// it. The surviving cursor lands at the same column it held within its
+/// line, now inside the moved block — not at the edit's end, which is why
+/// this calls `apply_edit_batch_with_cursors` directly instead of the
+/// generic `commit_edit_batch`.
 pub fn move_line_up(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
     let cursors_before = doc.cursors.clone();
@@ -135,7 +122,6 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Mirror of `move_line_up` above.
 pub fn move_line_down(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
     let cursors_before = doc.cursors.clone();
@@ -248,13 +234,6 @@ mod tests {
 
     #[test]
     fn clone_line_down_with_two_cursors_on_the_same_line_clones_it_twice_and_keeps_both_cursors() {
-        // Two cursors sharing "two" derive byte-identical zero-width
-        // insert edits at the same point (`per_line_edits(dedupe=false)`
-        // keys on `line_start`, not on cursor identity) — the exact shape
-        // `edit_core::coalesce_touching_edits` used to wrongly collapse
-        // 2->1, silently dropping one cursor's own clone. Both edits must
-        // survive uncoalesced: the line clones once PER CURSOR, and the
-        // cursor set stays at 2.
         let mut app = app_with("one\ntwo", 4);
         let id = app.active;
         let doc = app.doc_mut(id).unwrap();
@@ -285,7 +264,6 @@ mod tests {
         let id = app.active;
         move_line_up(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), "two\none\nthree");
-        // Column within "two" (2 bytes in) is preserved on the moved line.
         assert_eq!(
             app.doc(id).unwrap().cursors.primary().position,
             BufferOffset(2)
@@ -321,10 +299,6 @@ mod tests {
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
-    /// Every line command in this module funnels through the SAME
-    /// `apply_edit_batch_with_cursors` chokepoint `edit.rs`'s own commands
-    /// do (F1) — the other half of `edit::tests::
-    /// read_only_blocks_typing_backspace_and_newline`'s regression.
     #[test]
     fn read_only_blocks_line_commands() {
         let mut app = app_with("one\ntwo\nthree", "one\n".len());

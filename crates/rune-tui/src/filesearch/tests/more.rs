@@ -355,11 +355,6 @@ fn listed_paths(app: &App) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Defect 2: the finder's recents load and its workspace walk are two
-/// independent one-shot replies that can land in either order. Whichever
-/// order they land in, `/root/a.md` — named by both — must be listed
-/// exactly once, never twice, and the two orders must produce the identical
-/// row set.
 #[test]
 fn recents_then_scan_and_scan_then_recents_produce_identical_deduped_rows() {
     let mut effects = Effects::default();

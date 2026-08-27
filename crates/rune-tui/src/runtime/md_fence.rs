@@ -1,36 +1,9 @@
-//! Markdown-fence highlighting via comrak reuse: a
-//! ```` ```markdown ````/```` ```md ```` fence has no `rune-ts` grammar
-//! ("markdown stays comrak's", `rune_ts::lang`'s own doc comment), so this
-//! module reuses the SAME emitter that renders the real document, just
-//! forced fully revealed, and re-tags its output as overlay spans. The
-//! reverse direction — tree-sitter output feeding back into an emitted
-//! `SyntaxSpan` — is forbidden; emit-output feeding an overlay is the
-//! sanctioned channel this module uses instead.
-
 use rune_syntax::scope::scope_table;
 use rune_ts::{HighlightResult, MAX_SPANS};
 
-/// Highlights one fence's reconstructed markdown source:
-/// parse -> force every block revealed (`rune_md::reveal_all`)
-/// -> emit at width 0. Width only ever reaches the table layout
-/// path (which short-circuits before using it once available width is 0,
-/// every subtraction there saturating) and the thematic-break rule (which
-/// ignores it) — a markdown fence rendered as an overlay never lays out a
-/// table or draws a rule, so width 0 is safe here. `decor` output
-/// is irrelevant to this path and dropped along with everything else
-/// `emit` returns besides the spans.
-///
-/// Every span's own `(range(), scope())` becomes one overlay span, in the
-/// SAME coordinates as `text` — a fresh parse of the reconstructed fence
-/// text starts its own byte numbering at 0, which is what the caller's
-/// `LineMap::to_buffer` expects to remap. The plain `text` scope is skipped
-/// for span economy — an overlay carrying a span for every unstyled byte
-/// would cost the same paint result at a higher merge/sort cost downstream.
-///
-/// Capped at the same [`MAX_SPANS`] a tree-sitter query is capped at, and
-/// reporting truncation the same way, so the "part of this document is
-/// uncoloured" status line means one thing regardless of which channel
-/// produced the spans.
+// Emitting at width 0 is safe: width only reaches the table-layout path
+// (which short-circuits at 0, every subtraction saturating) and the
+// thematic-break rule (which ignores it) — an overlay never renders either.
 pub(crate) fn markdown_fence_spans(text: &str) -> HighlightResult {
     let plain = scope_table().resolve("text");
     let mut blocks = rune_md::parse::parse(text);

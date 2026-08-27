@@ -1,12 +1,3 @@
-//! OSC 52 clipboard writes and `pbpaste`-based clipboard reads. Write: an
-//! OSC 52 escape sequence carrying the base64-encoded payload — built here
-//! as plain bytes and pushed into `Effects.raw` by `commands::clipboard`,
-//! never sent from a `Cmd`, since Cmds must never touch the terminal.
-//! Read: `/usr/bin/pbpaste`, a deliberate choice over a pure-OSC-52 read —
-//! OSC 52 *read* is unsupported in Terminal.app and permission-gated in
-//! iTerm2/kitty — the macOS terminals this app targets; helix ships exactly
-//! this hybrid.
-
 use std::process::Command as ProcessCommand;
 
 use base64::Engine as _;
@@ -14,47 +5,29 @@ use base64::engine::general_purpose::STANDARD;
 
 use crate::runtime::{Cmd, Msg, PasteTarget};
 
-/// The largest raw (pre-base64) payload `osc52_copy` will encode.
-/// Terminal multiplexers (tmux, screen) cap how
-/// large an OSC 52 sequence they'll actually forward to the real terminal
-/// — far below 1 MiB — and silently drop anything over their own limit, so
-/// an unbounded copy/cut can write bytes into a sequence that never
-/// reaches the system clipboard at all, with no signal to the user. Kept
-/// comfortably under the smallest common multiplexer cap.
+// Terminal multiplexers (tmux, screen) cap how large an OSC 52 sequence they
+// forward to the real terminal — far below 1 MiB — and silently drop
+// anything over their own limit, so an unbounded copy/cut can write bytes
+// into a sequence that never reaches the system clipboard at all, with no
+// signal to the user. Kept comfortably under the smallest common
+// multiplexer cap.
 pub const OSC52_MAX_PAYLOAD_BYTES: usize = 100_000;
 
-/// Builds the OSC 52 "set system clipboard" escape sequence for `payload`:
-/// `ESC ] 5 2 ; c ; <base64> BEL` — the `c` selector targets the system
-/// clipboard, not a primary/selection buffer. Pure and terminal-free: the
-/// caller (`commands::clipboard::copy`/`cut`) pushes the returned bytes into
-/// `Effects.raw`; this function performs no I/O itself.
+const OSC52_SET_SYSTEM_CLIPBOARD: &[u8] = b"\x1b]52;c;";
+const BEL: u8 = 0x07;
+
 pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {
     let encoded = STANDARD.encode(payload);
     let mut out = Vec::with_capacity(encoded.len() + 8);
-    out.extend_from_slice(b"\x1b]52;c;");
+    out.extend_from_slice(OSC52_SET_SYSTEM_CLIPBOARD);
     out.extend_from_slice(encoded.as_bytes());
-    out.push(0x07); // BEL
+    out.push(BEL);
     out
 }
 
-/// The paste-read `Cmd`: runs `/usr/bin/pbpaste` on its own thread (every
-/// `Cmd` runs off the main thread by runtime design — see `runtime.rs` —
-/// and never touches the terminal) and reports its stdout back as
-/// `Msg::ClipboardRead`, tagged with `target` so the reply routes to
-/// wherever the paste was requested FROM, not wherever focus/the active
-/// document happen to be when it lands. A failure to spawn pbpaste, a
-/// non-zero exit, or stdout that isn't valid UTF-8 all produce `Msg::Error`
-/// instead of silently dropping or mangling the paste, so the user sees why
-/// nothing happened rather than nothing at all.
-///
-/// pbpaste's stdout is decoded STRICTLY, not lossily: a lossy decode would
-/// silently substitute U+FFFD for invalid bytes and still hand the result
-/// to `Msg::ClipboardRead`, which reaches `commands::clipboard::paste` and,
-/// from there, the user's own buffer and eventually their file on
-/// materialize — the ONE swallowed failure in an otherwise error-surfacing
-/// path (`CODE-REVIEW.md` rune-tui B finding 8). Rejecting outright and
-/// inserting nothing is the same trade this crate makes everywhere else
-/// user-visible content could be silently altered.
+// OSC 52 *read* is unsupported in Terminal.app and permission-gated in
+// iTerm2/kitty — the macOS terminals this app targets — so paste shells out
+// to `/usr/bin/pbpaste` instead; helix ships this same hybrid.
 pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
     Cmd::clipboard_read(move || {
         let output = match ProcessCommand::new("/usr/bin/pbpaste").output() {
@@ -76,9 +49,6 @@ pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
     })
 }
 
-/// The strict-decode chokepoint `pbpaste_cmd` reduces to, pulled out as its
-/// own pure function so the invalid-UTF-8 path is unit-testable without
-/// shelling out to a real `pbpaste`.
 fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
     String::from_utf8(stdout).map_or_else(
         |_| Msg::Posted {
@@ -94,9 +64,6 @@ fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
 mod tests {
     use super::*;
 
-    /// A real `DocumentId`, minted the only way one can be: from an `App`.
-    /// These tests only need the target to round-trip, not to name a live
-    /// document.
     fn doc_id() -> crate::document::DocumentId {
         use std::sync::Arc;
         let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(rune_vfs::Mem::new());
@@ -127,10 +94,6 @@ mod tests {
         assert_eq!(target, PasteTarget::Title(doc_id()));
     }
 
-    /// Regression for `CODE-REVIEW.md` rune-tui B finding 8: invalid UTF-8
-    /// from the clipboard must surface as `Msg::Error` and insert nothing,
-    /// never silently substitute U+FFFD and still hand the mangled text to
-    /// `Msg::ClipboardRead`.
     #[test]
     fn decode_pbpaste_stdout_rejects_invalid_utf8_instead_of_substituting() {
         let invalid = vec![0xff, 0xfe, 0xfd];

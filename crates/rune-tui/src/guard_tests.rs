@@ -13,11 +13,6 @@ fn app() -> App {
     App::new(Buffer::new("hi"), None, Arc::new(Mem::new()), None)
 }
 
-/// A store-bound, path-bound document whose store is (or isn't)
-/// degraded, dirtied through the real `insert_char` command — the same
-/// shape `db_wiring_degraded.rs`'s own degraded-confirm fixture builds,
-/// needed here too since integration tests cannot reach `trigger_save`
-/// (`pub(crate)`) directly.
 fn store_bound_app(degraded: bool) -> App {
     let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
     let clock: ClockFn = Arc::new(std::time::SystemTime::now);
@@ -42,7 +37,6 @@ fn prompt(doc: DocumentId, kind: GuardKind) -> GuardPrompt {
     GuardPrompt { doc, kind }
 }
 
-/// `set_guard` raises a prompt onto an empty slot.
 #[test]
 fn set_guard_raises_onto_an_empty_slot() {
     let mut app = app();
@@ -64,10 +58,6 @@ fn set_guard_raises_onto_an_empty_slot() {
     ));
 }
 
-/// `set_guard` never displaces a prompt already up — with the old modal
-/// error banner gone, this is the whole priority rule — the
-/// `Displaced` return is what lets `rename.rs` notice and stay `Idle`
-/// rather than wait on a prompt that was never raised.
 #[test]
 fn set_guard_refuses_to_replace_an_existing_prompt() {
     let mut app = app();
@@ -102,7 +92,6 @@ fn set_guard_refuses_to_replace_an_existing_prompt() {
     ));
 }
 
-/// `clear_guard` empties the slot.
 #[test]
 fn clear_guard_empties_the_slot() {
     let mut app = app();
@@ -119,8 +108,6 @@ fn clear_guard_empties_the_slot() {
     assert!(app.guard.is_none());
 }
 
-/// A convergence probe finding disk still diverged must leave the
-/// `DiskConflict` prompt exactly as it was.
 #[test]
 fn retract_disk_conflict_on_convergence_is_a_noop_while_still_divergent() {
     let mut app = app();
@@ -145,9 +132,6 @@ fn retract_disk_conflict_on_convergence_is_a_noop_while_still_divergent() {
     ));
 }
 
-/// A convergence probe for the doc the `DiskConflict` prompt names,
-/// once disk no longer diverges, clears it with an explanatory
-/// message rather than leaving a stale conflict prompt up.
 #[test]
 fn retract_disk_conflict_on_convergence_clears_the_prompt() {
     let mut app = app();
@@ -170,8 +154,6 @@ fn retract_disk_conflict_on_convergence_clears_the_prompt() {
     );
 }
 
-/// A converging probe must never clear a DIFFERENT Guard kind, or a
-/// `DiskConflict` prompt raised for a different document.
 #[test]
 fn retract_disk_conflict_on_convergence_touches_only_its_own_kind_and_doc() {
     let mut app = app();
@@ -196,9 +178,6 @@ fn retract_disk_conflict_on_convergence_touches_only_its_own_kind_and_doc() {
     ));
 }
 
-/// A cleared `RenameCollision` prompt notifies the rename machine
-/// (`rename::on_prompt_dismissed`), returning it to `Idle` — the other
-/// half of the global invariant `rename.rs` documents.
 #[test]
 fn clear_guard_on_a_rename_collision_returns_the_rename_machine_to_idle() {
     let mut app = app();
@@ -233,9 +212,6 @@ fn clear_guard_on_a_rename_collision_returns_the_rename_machine_to_idle() {
     assert_eq!(app.rename, crate::rename::RenameState::Idle);
 }
 
-/// `set_guard_or_warn` is the shared reaction every call site now goes
-/// through: on `Displaced` it posts exactly the caller's `refused` text
-/// and leaves the pre-existing prompt untouched.
 #[test]
 fn set_guard_or_warn_posts_refused_text_and_preserves_the_existing_prompt() {
     let mut app = app();
@@ -270,8 +246,6 @@ fn set_guard_or_warn_posts_refused_text_and_preserves_the_existing_prompt() {
     );
 }
 
-/// `set_guard_or_warn` raising onto an empty slot never warns — the
-/// warning is strictly a `Displaced` reaction.
 #[test]
 fn set_guard_or_warn_raises_silently_onto_an_empty_slot() {
     let mut app = app();
@@ -288,10 +262,6 @@ fn set_guard_or_warn_raises_silently_onto_an_empty_slot() {
     assert_eq!(messages::newest_text(&app), None);
 }
 
-/// The DiskConflict Guard's save-anyway is already the user's
-/// explicit last-resort consent — on a degraded store it must reach the
-/// materialize dance on the FIRST press, never arm the two-press
-/// confirm gate the way an ordinary `^S` does.
 #[test]
 fn force_save_single_press_when_degraded() {
     let mut app = store_bound_app(true);
@@ -319,8 +289,6 @@ fn force_save_single_press_when_degraded() {
     );
 }
 
-/// The degraded confirm-gate's ordinary two-press dance is untouched:
-/// `Normal` still only arms it on the first press.
 #[test]
 fn normal_save_still_arms_the_degraded_confirm_gate() {
     let mut app = store_bound_app(true);
@@ -342,11 +310,6 @@ fn normal_save_still_arms_the_degraded_confirm_gate() {
     assert!(app.pending_save_confirm.is_some_and(|(cid, _)| cid == doc));
 }
 
-/// A force-save must proceed even when the buffer is NOT dirty — "save
-/// anyway" means "make disk hold my buffer", and the user may have
-/// undone back to `saved_content` while disk still holds foreign bytes.
-/// The ordinary `Normal` path is untouched: it still refuses with
-/// `NotDirty`.
 #[test]
 fn force_save_bypasses_not_dirty() {
     let mut app = store_bound_app(false);
@@ -379,9 +342,6 @@ fn force_save_bypasses_not_dirty() {
     assert!(app.doc(doc).unwrap().save_in_flight());
 }
 
-/// A Guard takes the keyboard, so it closes whatever owned the keystroke —
-/// but a search bar the user left open only for its highlight owns nothing
-/// and must survive, or the highlight vanishes with no message saying why.
 #[test]
 fn an_unfocused_search_bar_survives_a_guard_raise() {
     let mut app = app();
@@ -404,8 +364,6 @@ fn an_unfocused_search_bar_survives_a_guard_raise() {
     );
 }
 
-/// The focused half of the same rule: a bar that DOES own the keystroke is
-/// closed, since the Guard is about to claim every key.
 #[test]
 fn a_focused_search_bar_closes_on_a_guard_raise() {
     let mut app = app();

@@ -1,36 +1,15 @@
-//! Explorer row glyphs. `IconTier::Unicode` gets no icon column at all — a
-//! deliberate product decision, not a missing-glyph gap — so [`icon`]
-//! returns `None` unconditionally on that tier and the caller renders no
-//! icon at all. `IconTier::Nerd` resolves through a short ladder that
-//! mirrors `rune_ts::detect`'s (directory, then whole filename, then
-//! extension, then language) minus the content-dependent rungs, since the
-//! Explorer has no file contents to read.
-//!
-//! Every codepoint below is a Nerd Fonts v3 `nf-md-*` (Material Design
-//! Icons) glyph, matching the family `rune_md::icons::IconSet::nerd()`
-//! already uses for its heading glyphs — never mixed with `nf-dev-*` or
-//! `nf-seti-*`, which would read as a mismatched family. Each entry names
-//! its nf-md glyph so a human can re-verify the codepoint against the
-//! Nerd Fonts cheat sheet without re-deriving it; the codepoint itself is
-//! not memorable and must never be retyped by hand from memory.
-
 use rune_vfs::{DirEntry, FileKind};
 
 use crate::theme::icons::IconTier;
 
-/// nf-md-folder.
-const FOLDER: &str = "\u{f024b}";
-/// nf-md-file_outline — the fallback for any file whose filename,
-/// extension, and language all fail to resolve a glyph.
-const GENERIC_FILE: &str = "\u{f0224}";
-/// nf-md-language_markdown.
-const MARKDOWN: &str = "\u{f0354}";
+// Every codepoint below is a Nerd Fonts v3 `nf-md-*` glyph — never
+// `nf-dev-*`/`nf-seti-*`, a mismatched family — named in a comment so it
+// can be re-verified against the Nerd Fonts cheat sheet rather than
+// retyped from memory.
+const FOLDER: &str = "\u{f024b}"; // nf-md-folder
+const GENERIC_FILE: &str = "\u{f0224}"; // nf-md-file_outline
+const MARKDOWN: &str = "\u{f0354}"; // nf-md-language_markdown
 
-/// Whole-filename table, case-insensitive, exact match only — no globs, no
-/// prefixes. `README`/`LICENSE` are deliberately absent: `README.md` must
-/// resolve through the `.md` extension rung to the markdown glyph, and a
-/// filename rung that shadowed the extension rung would be an unstated
-/// precedence rule.
 const FILENAME_GLYPHS: &[(&str, &str)] = &[
     (".gitignore", GIT),
     (".gitmodules", GIT),
@@ -42,22 +21,16 @@ const FILENAME_GLYPHS: &[(&str, &str)] = &[
     (".bashrc", CONSOLE),
 ];
 
-/// nf-md-git.
-const GIT: &str = "\u{f02a2}";
-/// nf-md-cog — build/automation glyph for `Makefile`; nf-md has no
-/// dedicated makefile glyph.
+const GIT: &str = "\u{f02a2}"; // nf-md-git
+// nf-md-cog: nf-md has no dedicated makefile glyph.
 const COG: &str = "\u{f0493}";
-/// nf-md-docker.
-const DOCKER: &str = "\u{f0868}";
-/// nf-md-lock.
-const LOCK: &str = "\u{f033e}";
-/// nf-md-console — shell rc file.
-const CONSOLE: &str = "\u{f018d}";
+const DOCKER: &str = "\u{f0868}"; // nf-md-docker
+const LOCK: &str = "\u{f033e}"; // nf-md-lock
+const CONSOLE: &str = "\u{f018d}"; // nf-md-console
 
-/// `rune_ts::lang::LANGUAGES` name to nf-md glyph. Partial by design: nf-md
-/// has no counterpart for `toml`, `yaml`, `tsx`, or `sql` — those four fall
-/// through to [`GENERIC_FILE`] rather than borrowing a glyph from another
-/// icon family.
+// Partial by design: nf-md has no counterpart for `toml`, `yaml`, `tsx`,
+// or `sql` — those four fall through to `GENERIC_FILE` rather than
+// borrowing a glyph from another icon family.
 const LANGUAGE_GLYPHS: &[(&str, &str)] = &[
     ("rust", "\u{f1617}"),       // nf-md-language_rust
     ("json", "\u{f0626}"),       // nf-md-code_json
@@ -79,8 +52,6 @@ const LANGUAGE_GLYPHS: &[(&str, &str)] = &[
     ("swift", "\u{f06e5}"),      // nf-md-language_swift
 ];
 
-/// The glyph for one Explorer row, or `None` on a tier with no icon font —
-/// the caller renders no icon column at all in that case.
 pub fn icon(tier: IconTier, entry: &DirEntry) -> Option<&'static str> {
     if tier == IconTier::Unicode {
         return None;
@@ -88,6 +59,9 @@ pub fn icon(tier: IconTier, entry: &DirEntry) -> Option<&'static str> {
     Some(resolve_nerd(entry))
 }
 
+// Mirrors `rune_ts::detect`'s ladder — directory, then whole filename, then
+// extension, then language — minus the content-dependent rungs, since the
+// Explorer has no file contents to read.
 fn resolve_nerd(entry: &DirEntry) -> &'static str {
     if entry.kind == FileKind::Dir {
         return FOLDER;
@@ -190,11 +164,9 @@ mod tests {
         }
     }
 
-    /// LAYOUT invariant only: every glyph in the table measures exactly 1
-    /// cell through the one width chokepoint, so the caller's fixed
-    /// two-cell `"{icon} "` column never misaligns. This cannot detect a
-    /// wrong codepoint — `unicode-width` returns the same value for every
-    /// private-use-area codepoint, correct or not — it only guards layout.
+    // Layout invariant only: this cannot catch a wrong codepoint —
+    // `unicode-width` reports the same width for every private-use-area
+    // codepoint, correct or not.
     #[test]
     fn every_table_glyph_measures_one_cell() {
         let mut all = vec![FOLDER, GENERIC_FILE, MARKDOWN];

@@ -1,7 +1,3 @@
-//! The fuzzy file finder's recents-load `Cmd` constructor — split out of
-//! `runtime.rs` itself (500-line budget), the same reason `highlight_cmd`/
-//! `timer` were.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,19 +7,6 @@ use crate::filesearch::Candidate;
 
 use super::{Cmd, CmdError, Msg, RecentsResult};
 
-/// Loads the finder's MRU document list off-thread through a cloned
-/// `ReaderQuery` — the reader thread's own connection, never the writer's,
-/// so this can never contend with or block on an in-flight recovery write.
-/// Reuses `CmdKind::SearchHistory`: the same off-thread reader-connection
-/// resource `load_search_history_cmd` already names, and the same
-/// fuzz-driver exemption that comes with it (the session fuzzer's step
-/// executor classifies neither kind as reachable, so a finder-recents reply
-/// stays unexercised there exactly like search history's own). Always
-/// replies with `Msg::RecentsLoaded { result: RecentsResult::FileSearch(..), .. }`,
-/// `generation` carried through unchanged — an unexpected reader reply
-/// variant folds into an `Err` on the SAME `Msg` rather than a silently
-/// empty list, so a mis-wiring surfaces in the message pane instead of an
-/// eternally empty finder.
 pub fn load_filesearch_recents_cmd(
     reader: rune_db::ReaderQuery,
     vfs: Arc<dyn Vfs + Send + Sync>,
@@ -54,10 +37,6 @@ fn load(
             return Err(CmdError::Refused("unexpected reader reply".to_string()));
         }
     };
-    // A `documents` row can outlive the file it named (deleted, renamed out
-    // from under the store) — `vfs.stat` here is the existence filter, the
-    // same DB-candidates-can-be-dead guard the plan calls for; a row whose
-    // file is gone is dropped rather than offered as an openable candidate.
     Ok(paths
         .into_iter()
         .filter_map(|raw| {

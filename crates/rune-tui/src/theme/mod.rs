@@ -1,19 +1,3 @@
-//! The rendered theme: the ONE chokepoint every
-//! `ratatui::style::Style` in this crate is built from — replaces an
-//! earlier `styles.rs`'s 17 independent chrome-style functions plus its
-//! `markdown(id)` funnel with a single `Theme` value held on `App`.
-//!
-//! `scopes` is indexed by the `ScopeId` `rune-syntax`'s `ScopeTable` hands
-//! out — `rune-syntax` owns that table; this module only ever maps a
-//! resolved id to a `Style`, never registers or resolves a scope name
-//! itself. `chrome` covers everything that isn't a
-//! markdown/code token: pane borders, tab labels, the footer, etc.
-//!
-//! Colours are stored as truecolor `Color::Rgb` (Catppuccin Mocha,
-//! `catppuccin.rs`) and quantized to `Color::Indexed` exactly once, here at
-//! construction (`quantize.rs`), never per frame — macOS Terminal.app (the
-//! default terminal on the only OS this app supports) is 256-colour only.
-
 pub mod catppuccin;
 pub mod icons;
 pub mod probe;
@@ -26,19 +10,10 @@ use quantize::to_ansi256;
 use rune_syntax::ScopeId;
 use rune_syntax::scope::{CODE_SCOPES, IMAGE_SCOPE_ID, MarkdownScope, scope_table};
 
-/// Every chrome (non-markdown/code) style an earlier `styles.rs` used to
-/// build from a raw `Color::Indexed` literal — one field per former
-/// function, same name, now a value instead of a call. Plus a few raw
-/// colours (`special`/`subtle`/`selection_bg`) that a handful of call
-/// sites (`breadcrumb.rs`'s ellipsis/leaf-part spans, `render.rs`'s
-/// selection overlay) build their OWN ad hoc `Style` from, rather than
-/// using a named chrome style verbatim.
 #[derive(Clone, Copy, Debug)]
 pub struct ChromeStyles {
     pub pane_title: Style,
     pub file_normal: Style,
-    /// An Explorer directory row's foreground — bold blue, the one hue
-    /// reserved for "this row is a directory" among content rows.
     pub dir_normal: Style,
     pub link_dir: Style,
     pub link_file: Style,
@@ -57,54 +32,26 @@ pub struct ChromeStyles {
     pub active_border: Style,
     pub inactive_border: Style,
     pub title_text: Style,
-    /// The messages pane's `Severity::Error` colour — `Info`
-    /// paints no colour of its own (plain text); `Warn` uses this yellow,
-    /// unbolded so it reads as less urgent than `error`'s bold red.
     pub warn: Style,
     pub special: Color,
     pub subtle: Color,
     pub selection_bg: Color,
-    /// The background painted behind a whole code REGION, as a rectangle,
-    /// rather than tagged onto its tokens. It lives here beside
-    /// `selection_bg` because it is a region colour, not a token scope: a
-    /// span's `bg` can only colour cells that exist, so it leaves a code
-    /// block's blank lines and the ragged space past each short line
-    /// uncovered. The render module's code-background pass is its one
-    /// consumer.
     pub code_bg: Color,
-    /// Region backgrounds for the diff/merge pane view's ours (right) and
-    /// theirs (left) sides. Catppuccin-tinted rather than raw ANSI
-    /// green/red, muted against `surface0` the same way `code_bg` sits at
-    /// full `surface0` rather than a saturated hue.
     pub merge_ours_bg: Style,
     pub merge_theirs_bg: Style,
-    /// The in-file search bar's match highlight. Its own
-    /// field rather than reusing `selection_bg`: a match and a live text
-    /// selection can both be on screen at once and must read as visually
-    /// distinct.
+    // A match highlight and a live text selection can both be on screen at
+    // once, so this stays its own field rather than reusing `selection_bg`.
     pub search_match_bg: Style,
     pub bracket_match_bg: Style,
-    /// The keyboard cursor row's background in the left column's panes,
-    /// painted in the focused pane only. Its own field rather than reusing
-    /// `selection_bg`: a left-column cursor row and an editor text
-    /// selection can both be on screen in the same frame, and a reviewer
-    /// tuning one must be able to move it without also moving the other.
+    // A left-column cursor row and an editor text selection can both be on
+    // screen in the same frame, so this stays its own field rather than
+    // reusing `selection_bg`.
     pub row_cursor_bg: Style,
-    /// The Tabs pane's active-document row background, painted regardless
-    /// of focus. Deliberately dimmer than `row_cursor_bg`: when the
-    /// keyboard cursor sits on the active tab, the two backgrounds overlap
-    /// and the brighter `row_cursor_bg` must still read as the stronger of
-    /// the two, so "where you are" (cursor) stays visually louder than
-    /// "what you're editing" (active document).
     pub row_active_bg: Style,
     pub diff_word_ours: Style,
     pub diff_word_theirs: Style,
 }
 
-/// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
-/// indexed) plus `chrome` (everything else). `Theme::catppuccin_mocha` is
-/// the only constructor, so quantization (Half 2) and scope-table walking
-/// (Half 1) both happen exactly once, at startup — never per frame.
 #[derive(Clone, Debug)]
 pub struct Theme {
     scopes: Vec<Style>,
@@ -112,8 +59,8 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Builds Catppuccin Mocha. `quantized` selects the 256-colour
-    /// fallback path.
+    // Quantization and scope-table walking below both happen exactly once,
+    // here at construction, never per frame.
     pub fn catppuccin_mocha(quantized: bool) -> Theme {
         let p = Mocha::palette();
         let c = move |rgb: Color| -> Color { if quantized { to_ansi256(rgb) } else { rgb } };
@@ -179,23 +126,14 @@ impl Theme {
         Theme { scopes, chrome }
     }
 
-    /// The rendered `Style` for `id` — the markdown/code-token equivalent
-    /// of `chrome`'s named fields. Falls back to a plain default `Style`
-    /// for an id past this theme's `scopes` length (a future tree-sitter
-    /// producer may register scopes a theme built before it existed
-    /// doesn't know about yet — degrade to unstyled text, never
-    /// panic or index out of bounds).
     pub fn scope_style(&self, id: ScopeId) -> Style {
         self.scopes.get(id.0 as usize).copied().unwrap_or_default()
     }
 
-    /// [`Theme::scope_style`] with `bg` stripped. An overlay cell's style is
-    /// merged onto the render buffer field-wise (`Style::patch` only
-    /// touches fields the patching style actually sets), so a scope that
-    /// carries a background here would silently overwrite whatever the base
-    /// cell had — the code-region background rectangle painted underneath
-    /// it, or an inline code span's own `markup.raw.inline` chip. Every
-    /// overlay consumer routes through this instead of `scope_style`.
+    // ratatui's `Style::patch` merges field-wise, so a scope style that
+    // carried a `bg` here would silently clobber whatever background the
+    // base cell already had (a code region's background rectangle, an
+    // inline code span's own chip) instead of layering over it.
     pub fn overlay_scope_style(&self, id: ScopeId) -> Style {
         Style {
             bg: None,
@@ -204,12 +142,6 @@ impl Theme {
     }
 }
 
-/// Linearly mixes two truecolor `Color::Rgb` values by `t` (`0.0` is pure
-/// `a`, `1.0` is pure `b`) — the same muting `merge_ours_bg`/
-/// `merge_theirs_bg` use to tint `surface0` toward green/red rather than
-/// painting a whole background in a fully saturated hue. Falls back to `a`
-/// unmixed for any non-`Rgb` variant (never reached with `Mocha::palette`'s
-/// own colours, all `Rgb`, but kept total rather than partial).
 fn blend(a: Color, b: Color, t: f32) -> Color {
     let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
         return a;
@@ -219,14 +151,6 @@ fn blend(a: Color, b: Color, t: f32) -> Color {
     Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 
-/// The canonical scope -> `Style` mapping (Catppuccin Mocha). Heading
-/// levels step down in colour and weight from `1` to `6`, mirroring an
-/// earlier styling's own "H1-H3 bold and colourful, H4 not bold, H6
-/// dimmest" shape without reusing its exact indexed literals. Composite
-/// emphasis resolves to its strongest component and never
-/// reaches here as a combined tag — `rune-md`'s `StyleCtx::resolve` already
-/// picked the single strongest scope before tagging the span, so this
-/// match only ever sees one emphasis kind at a time.
 fn markdown_scope_style(scope: MarkdownScope, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
     let base = Style::default();
     match scope {
@@ -240,30 +164,13 @@ fn markdown_scope_style(scope: MarkdownScope, p: &Mocha, c: &impl Fn(Color) -> C
         MarkdownScope::Strong => base.add_modifier(Modifier::BOLD),
         MarkdownScope::Italic => base.add_modifier(Modifier::ITALIC),
         MarkdownScope::Strikethrough => base.add_modifier(Modifier::CROSSED_OUT),
-        // Sapphire, not peach: peach is `markup.heading.2`, so an inline
-        // code span and an H2 title used to render in the same warm
-        // orange — code read as structure and cluttered the prose around
-        // it. Sapphire is a cold cyan-blue no other markdown scope claims,
-        // and stays distinct from `markup.link`'s blue (also underlined)
-        // and heading 5's teal. The `surface1` chip is what makes a span
-        // legible mid-prose and stays.
         MarkdownScope::RawInline => base.fg(c(p.sapphire)).bg(c(p.surface1)),
-        // Foreground only. A code block's background is a REGION colour
-        // (`ChromeStyles::code_bg`), painted as a rectangle by its own
-        // render pass: a span's `bg` can only reach cells that exist, so it
-        // left a block's blank lines bare and stopped at each short line's
-        // last character.
         MarkdownScope::RawBlock => base.fg(c(p.text)),
         MarkdownScope::Link => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
         MarkdownScope::Quote => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
         MarkdownScope::QuoteMarker => base.fg(c(p.overlay0)),
         MarkdownScope::List => base.fg(c(p.overlay1)),
         MarkdownScope::ListChecked => base.fg(c(p.green)),
-        // Table chrome reads as body text with dimmer rules around it, so
-        // it is expressed in palette terms like every scope above rather
-        // than as raw ANSI indices. The literals these replace bypassed
-        // `c(..)` entirely, which meant the quantized path stayed indexed
-        // only by accident of the constants already being indexed.
         MarkdownScope::TableHeader => base.fg(c(p.text)).add_modifier(Modifier::BOLD),
         MarkdownScope::Table => base.fg(c(p.text)),
         MarkdownScope::TableSeparator => base.fg(c(p.surface2)),
@@ -273,13 +180,6 @@ fn markdown_scope_style(scope: MarkdownScope, p: &Mocha, c: &impl Fn(Color) -> C
     }
 }
 
-/// [`rune_syntax::scope::CODE_SCOPES`]'s canonical scope -> `Style` mapping
-/// (Catppuccin Mocha), for tokens a tree-sitter producer tags. Sets only
-/// `fg` and `Modifier` — never `bg` — because a later render pass
-/// `Style::patch`es this onto a cell that already carries the code region's
-/// own background rectangle, and a `bg` here would clobber it. Every
-/// colour goes through `c(..)` so the quantized (256-colour) construction
-/// path never surfaces a raw `Color::Rgb`.
 fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
     let base = Style::default();
     match name {
@@ -297,11 +197,9 @@ fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style
         "attribute" => base.fg(c(p.yellow)),
         "label" => base.fg(c(p.sapphire)),
         "tag" => base.fg(c(p.blue)),
-        // Unreachable in practice: `name` is always drawn from this same
-        // table's own `CODE_SCOPES`, so every arm above is exhaustive over
-        // the names that ever reach here — a future scope this match
-        // hasn't been taught yet degrades to plain, unstyled text
-        // rather than panicking.
+        // `name` is a `&str`, not an exhaustive enum, so the compiler can't
+        // guarantee this match covers every capture name a grammar may
+        // emit; an unmatched one degrades to plain, unstyled text.
         _ => base,
     }
 }
@@ -312,9 +210,6 @@ mod tests {
 
     #[test]
     fn every_registered_scope_gets_a_non_default_or_deliberately_plain_style() {
-        // Every markdown scope resolves to SOME entry in `scopes` — no
-        // panic, no out-of-bounds — for both the truecolor and quantized
-        // construction paths.
         for quantized in [false, true] {
             let theme = Theme::catppuccin_mocha(quantized);
             let table = scope_table();
@@ -352,9 +247,6 @@ mod tests {
 
     #[test]
     fn overlay_scope_style_never_carries_a_background() {
-        // An overlay cell's style is merged onto the
-        // render buffer field-wise, so a scope carrying a bg here would
-        // clobber whatever background the base cell already had.
         for quantized in [false, true] {
             let theme = Theme::catppuccin_mocha(quantized);
             let table = scope_table();
@@ -367,12 +259,6 @@ mod tests {
 
     #[test]
     fn code_foreground_never_matches_a_heading() {
-        // Code is content; a heading is structure. When the two share a
-        // foreground the reader cannot tell them apart at a glance —
-        // inline code was once byte-identical to `markup.heading.2`, and
-        // read as a title mid-sentence. The rule is stated instead of a
-        // hex being pinned, so a future palette swap stays free to move
-        // any of these colours, just not back on top of each other.
         for quantized in [false, true] {
             let theme = Theme::catppuccin_mocha(quantized);
             let table = scope_table();
@@ -397,17 +283,6 @@ mod tests {
         }
     }
 
-    /// The left column's hue rule, restated for symlinks: the blue family
-    /// means "directory-ish", so `dir_normal` and `link_dir` may both be
-    /// blue and the rule is no longer "nothing else is blue". What survives
-    /// is distinguishability, in two strengths. The five Explorer row
-    /// categories must differ by HUE alone — that is what a user reads a
-    /// listing by, and it is what the quantized pass protects, since several
-    /// Mocha hues collapse onto one ANSI-256 index and a collision there is
-    /// invisible on a 256-colour terminal. Across the whole left column,
-    /// including the Tabs rows, hue plus weight must still separate every
-    /// pair: `file_normal` and `tab_active` deliberately share `text` and
-    /// are told apart by boldness.
     #[test]
     fn every_left_column_row_style_is_visually_distinct() {
         for quantized in [false, true] {
@@ -462,11 +337,6 @@ mod tests {
         }
     }
 
-    /// "Where you are" must read louder than "what you're editing": when the
-    /// keyboard cursor lands on the active tab the two backgrounds overlap,
-    /// and the cursor's own paint order only wins that cell — it does not
-    /// make the colour brighter. Swap the two values and the visual language
-    /// inverts silently without this.
     #[test]
     fn the_cursor_row_background_is_brighter_than_the_active_row_background() {
         let chrome = Theme::catppuccin_mocha(false).chrome;
@@ -482,12 +352,6 @@ mod tests {
 
     #[test]
     fn code_scopes_never_carry_a_background() {
-        // A later render pass `Style::patch`es a code-token style onto a
-        // cell that already carries a background: the code region's own
-        // rectangle behind every code row, and `markup.raw.inline`'s
-        // `surface1` chip wherever a code token is painted over an inline
-        // span. `code_scope_style` must never set `bg`, or it would clobber
-        // that background instead of layering over it.
         let theme = Theme::catppuccin_mocha(false);
         let table = scope_table();
         for name in CODE_SCOPES {

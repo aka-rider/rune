@@ -165,9 +165,8 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     }
 }
 
-/// The reply to the `Keyboard::QueryFlags` `term::Guard::enter_app_mode`
-/// sends right after pushing its Kitty flags — never sent by this app, only
-/// ever received (module docs on `Keyboard::ReportFlags`). Settles
+/// The terminal's reply to the Kitty keyboard-protocol flags query
+/// `term::Guard::enter_app_mode` sends on startup. Settles
 /// `app.keyboard_flags` from `None` to a real answer exactly once per
 /// session, and posts a one-time note when that answer confirms the
 /// terminal dropped a bit this app asked for, since a `⌘` chord built on a
@@ -333,19 +332,12 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     editor_exec::run(app, command, QuitKey::from_key(key), effects)
 }
 
-// The sole gate over the unbound-key fallback's printable-insert path — one
-// predicate over the whole key event, not a char-only check the call site
-// pre-filters by hand: a ctrl/alt/sup chord keymap left unresolved is a
-// request for a command, never text, so it must refuse right alongside a
-// raw C0/DEL control byte leaking through as an unmodified `Char` on a
-// legacy (non-Kitty) terminal encoding. Splitting "which mods" and "which
-// char" across two places is exactly how a real gap opened: macOS composes
-// an Option chord into text (⌥B into ∫) before any modifier survives a
-// legacy encoding, so a char-only filter had nothing left to refuse by the
-// time the composed glyph reached it. Kitty's CSI-u protocol reports that
-// same chord as the base key plus an explicit alt bit instead (this app
-// requests it — `term::keyboard_flags`), which is what lets `mods.alt` shut
-// the door here on any terminal that actually honours it.
+// macOS composes an Option chord into text (⌥B into ∫) before any modifier
+// survives a legacy (non-Kitty) terminal encoding, so a char-only filter has
+// nothing left to refuse by the time the composed glyph arrives. Kitty's
+// CSI-u protocol reports the same chord as the base key plus an explicit
+// alt bit instead (requested via `term::keyboard_flags`), which is what
+// lets `mods.alt` catch it here on any terminal that honours it.
 fn is_insertable_key(mods: Mods, ch: char) -> bool {
     !mods.ctrl && !mods.alt && !mods.sup && !ch.is_control()
 }

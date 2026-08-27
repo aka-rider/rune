@@ -64,11 +64,6 @@ mod tests {
 
     #[test]
     fn a_whole_document_key_and_an_embed_key_share_one_namespace() {
-        // The whole-document image path and the inline-embed path both key
-        // by the resolved absolute path string and must probe through the
-        // SAME allocator instance — this is what makes two documents whose
-        // paths collide under `rune_image::alloc_id` land on distinct ids
-        // regardless of which path opened first.
         let mut alloc = TerminalImageAllocator::new();
         let whole_doc = alloc.alloc_free_id("/vault/shared.png");
         let embed = alloc.alloc_free_id("/vault/shared.png");

@@ -1,10 +1,3 @@
-//! Motion group of `EDITOR_BINDINGS` (plain cursor movement, viewport-only
-//! scroll, and link-follow — no selection change, no document mutation).
-//! Split out of `editor_bindings.rs` to bring that file under the
-//! 500-line budget; assembled back into the single `EDITOR_BINDINGS` table
-//! (see that module's doc comment) in the exact original order — this
-//! module only owns the definitions.
-
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{Command, Extend, KeyCode, Motion};
 
@@ -94,8 +87,6 @@ pub(crate) const MATCH_BRACKET: Binding<Command> = Binding {
     secondary: false,
 };
 
-// Viewport-only scroll commands — vim/Helix parity, see
-// `keymap::resolve`'s doc comments on each arm for the exact rationale.
 pub(crate) const SCROLL_LINE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Up, CTRL),
     cmd: Command::ScrollLineUp,
@@ -145,8 +136,6 @@ pub(crate) const CURSOR_TO_BOTTOM: Binding<Command> = Binding {
     secondary: false,
 };
 
-// Follow the link under the cursor — Super or Ctrl held, both
-// mirroring the `keymap::resolve` arms exactly.
 pub(crate) const FOLLOW_LINK_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Enter, SUP),
     cmd: Command::FollowLink,

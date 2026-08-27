@@ -178,11 +178,10 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
 
 fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId {
     let dims = rune_image::probe_dimensions(bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
-    // The whole-document image path and the inline-embed path share ONE
-    // terminal-global allocator (`App::image_ids`) keyed by this same
-    // resolved-path string — Kitty image ids are terminal-global, so a
-    // per-document hash alone (the old `rune_image::alloc_id` call this
-    // replaced) could hand two different open documents the same id.
+    // Kitty image ids are terminal-global, so the whole-document image path
+    // and the inline-embed path share one allocator keyed by this same
+    // resolved-path string rather than a per-document hash, which could hand
+    // two different open documents the same id.
     let key = resolved.to_string_lossy().into_owned();
     let id = app.image_ids.alloc_free_id(&key);
     let bytes_len = bytes.len() as u64;
@@ -211,15 +210,6 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId 
     doc_id
 }
 
-/// The tab-dedup chokepoint: does some already-open document already name
-/// `path`? A raw `==` alone misses two spellings of the identical file (a
-/// relative CLI positional next to an Explorer's own absolute listing, say)
-/// whenever either document's `file_path` was bound before being resolved —
-/// nothing enforces that every binder pre-resolves, so this resolves both
-/// sides itself rather than trusting the caller. `resolve` only when the
-/// cheap raw comparison doesn't already settle it: the common case (a
-/// caller re-opening the exact spelling it opened before) never pays for
-/// it, and a resolve failure never manufactures a false match.
 pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
     let resolved_target = resolve(app.vfs.as_ref(), path).ok();
     app.documents
@@ -276,11 +266,6 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     }
 }
 
-/// Activates the tab at `idx`, or does nothing and reports `false` when no
-/// tab is open at that position — the caller decides whether that's worth
-/// telling the user about (`pane_global::tab_switch` does; `opentabs::
-/// activate` never passes an out-of-range index in the first place, since
-/// its own cursor is already clamped to the open tab count).
 pub fn select_tab(app: &mut App, idx: usize) -> bool {
     let Some(&id) = app.documents.order().get(idx) else {
         return false;
@@ -376,11 +361,6 @@ mod tests {
         assert_eq!(app.active, first_active);
     }
 
-    /// A document whose `file_path` was bound with a relative spelling
-    /// (e.g. the way a CLI positional could land before it is ever resolved)
-    /// must still be recognized when the same file is opened again through
-    /// its resolved, absolute spelling — the tab-dedup chokepoint resolves
-    /// both sides rather than trusting a raw byte comparison.
     #[test]
     fn opening_the_absolute_spelling_of_a_relatively_bound_document_reactivates_it() {
         let mem = Arc::new(Mem::new());

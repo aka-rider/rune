@@ -1,13 +1,5 @@
-//! List navigation and scroll-follow helpers for cursor-driven lists, plus
-//! the command surface and nav mechanics shared by the palette and file
-//! finder overlays — two structural twins built on the same key set (type/
-//! erase/up/down/page/top/bottom/enter/cancel, palette alone adding `Tab`)
-//! driving the same `List` cursor.
-
 use std::ops::Range;
 
-/// The command set both list overlays resolve their key tables to. Palette
-/// alone binds `Tab`; the file finder's own table simply never produces it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListCommand {
     Type,
@@ -23,7 +15,6 @@ pub enum ListCommand {
     Cancel,
 }
 
-/// A cursor-aware list navigator, tracking the visible window top.
 pub struct List {
     pub cursor: usize,
     pub top: usize,
@@ -50,8 +41,8 @@ impl List {
         }
     }
 
-    /// Adjusts `top` so that `cursor` stays within the visible window
-    /// [top + margin .. top + height - 1 - margin], with a jump buffer.
+    // Keeps `cursor` within [top + margin, top + height - 1 - margin],
+    // sliding `top` by an extra `jump` rows when the cursor forces a move.
     pub fn follow(&mut self, len: usize, height: usize, margin: usize, jump: usize) {
         if len == 0 || height == 0 {
             self.top = 0;
@@ -91,7 +82,6 @@ impl List {
             .min(len.saturating_sub(height));
     }
 
-    /// Returns the visible index range [top, top+height) clamped to [0, len).
     pub fn window(&self, len: usize, height: usize) -> Range<usize> {
         if height == 0 || len == 0 {
             return 0..0;
@@ -101,26 +91,17 @@ impl List {
         start..end
     }
 
-    /// `Up`/`Down`/`PageUp`/`PageDown`'s shared body: steps `cursor` by
-    /// `delta`, then re-follows the visible window — the margin both list
-    /// overlays derive the same way, a quarter of the viewport capped at 4
-    /// rows.
     pub(crate) fn move_and_follow(&mut self, delta: isize, len: usize, height: usize) {
         let margin = (height / 4).min(4);
         self.move_by(delta, len);
         self.follow(len, height, margin, 0);
     }
 
-    /// [`follow`] with the same default margin [`move_and_follow`] derives —
-    /// a rebuild that repositions `cursor` itself (a rank recompute, a
-    /// filtered listing) still needs the window re-settled around it with no
-    /// jump buffer.
     pub(crate) fn settle(&mut self, len: usize, height: usize) {
         let margin = (height / 4).min(4);
         self.follow(len, height, margin, 0);
     }
 
-    /// `Top`/`Bottom`'s shared body.
     pub(crate) fn jump_to_edge(&mut self, len: usize, top: bool) {
         if top {
             self.first();
@@ -175,20 +156,13 @@ mod tests {
 
     #[test]
     fn follow_keeps_cursor_in_window() {
-        // Scenario 1: cursor=2, top=0 — cursor is already in visible window [1,3]
-        // follow should not change top
         let mut list = List { cursor: 2, top: 0 };
         list.follow(20, 5, 1, 1);
         assert_eq!(list.top, 0);
 
-        // Scenario 2: cursor=12, top=0 — cursor is below visible window [1,3]
-        // follow should scroll top down so cursor 12 is visible
-        // offset = cursor - (size-1-margin) + jump = 12 - 3 + 1 = 10
-        // clamped to [0, 15] = 10
         list.cursor = 12;
         list.follow(20, 5, 1, 1);
         assert_eq!(list.top, 10);
-        // visible window = [11, 13], cursor 12 is inside
         assert!(list.cursor > list.top);
         assert!(list.cursor < list.top + 5 - 1);
     }
@@ -200,11 +174,9 @@ mod tests {
             top: 17,
         };
         let w = list.window(20, 5);
-        // top=17, height=5 → 17..20 (clamped to len=20)
         assert_eq!(w, 17..20);
 
         let w = list.window(18, 5);
-        // top=17, height=5 → 17..18 (clamped to len=18)
         assert_eq!(w, 17..18);
     }
 
@@ -217,7 +189,6 @@ mod tests {
 
     #[test]
     fn follow_resets_top_on_empty_list() {
-        // top must be reset to 0 when len or height is 0, not left stale
         let mut list = List { cursor: 0, top: 9 };
         list.follow(0, 5, 1, 0);
         assert_eq!(list.top, 0);
@@ -258,7 +229,6 @@ mod tests {
 
     #[test]
     fn window_start_clamped_past_end() {
-        // When top > len, start must be clamped to len, not produce backwards range
         let list = List { cursor: 0, top: 17 };
         let w = list.window(10, 5);
         assert_eq!(w, 10..10);

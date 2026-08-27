@@ -1,32 +1,9 @@
-//! The `⌃P`/`⌘P` reading-view toggle — the one place that mints
-//! `ReadOnly::Reading`. Flips the active document between `ReadOnly::No`
-//! and `ReadOnly::Reading`; refuses on `ReadOnly::Always` and `ReadOnly::
-//! Preview`, neither of which has an editable form the toggle could return
-//! to, exactly like `rename::begin`'s own read-only refusal (`Document::
-//! read_only`'s doc comment).
-//!
-//! No manual view invalidation is needed here: `Document::view()` calls
-//! `set_reveal_mode` before anything else, and that transition alone marks
-//! `DocMachine` dirty, so the toggle's geometry change is absorbed by the
-//! very next `view()` call (`document/tests.rs`'s sync-idempotence pin).
-
 use crate::app::App;
 use crate::document::ReadOnly;
 use crate::focus::{self, FocusTarget};
 use crate::messages;
 
-/// Toggles the active document's `ReadOnly` state between `No` and
-/// `Reading`. `Always`/`Preview` are left untouched with a status message —
-/// the same refusal shape `rename::begin` uses for the identical
-/// precondition.
 pub fn toggle(app: &mut App) {
-    // The reading view is a property of the document the Editor pane
-    // renders, so the pane that renders it is the only pane that may
-    // toggle it — `read_only` must never transition while, say, the
-    // title field holds focus. A silent no-op, not a
-    // refusal with a status message: `⌃P` firing from another pane is not
-    // user-initiated intent to toggle THIS document, the same precondition
-    // `app.rs::refocus_title` treats silently rather than as a refusal.
     if !matches!(
         focus::target(app),
         FocusTarget::Editor | FocusTarget::Palette

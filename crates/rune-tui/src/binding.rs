@@ -1,26 +1,17 @@
-//! Generic, data-driven binding tables — the second resolution style
-//! alongside `keymap::resolve`. Split out of `keymap.rs` to bring that file
-//! under the 500-line budget; `keymap` re-exports every item here so no
-//! import path downstream changed.
-
 use std::fmt::Write as _;
 
 use crate::keymap::{KeyCode, KeyInput, Mods};
 
-/// What a table row matches: one exact `KeyCode`, or any printable
-/// character — the Explorer's type-to-search row (plan "Explorer
-/// type-to-search", S1). Deliberately pattern-side only: `KeyInput` (the
-/// real terminal event `app::handle_key` receives) always carries a real
-/// `KeyCode`, never a `KeyMatch`, so a wildcard can never itself arrive AS
-/// input — it can only ever sit on the table side of a match.
+// `Printable` matches any printable character regardless of which one, but
+// only on the table side of a match: the real terminal event always
+// carries a `KeyCode`, never a `KeyMatch`, so a wildcard can never itself
+// arrive as input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyMatch {
     Code(KeyCode),
     Printable,
 }
 
-/// One exact chord: a `KeyMatch` plus the WHOLE `Mods` set that must be
-/// held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyPattern {
     pub key: KeyMatch,
@@ -35,10 +26,8 @@ impl KeyPattern {
         }
     }
 
-    /// A row that matches any printable `Char` (`!c.is_control()`) under
-    /// the given `mods`, with no regard to which character it is — the
-    /// wildcard `EXPLORER_SEARCH_BINDINGS`'s `Type` row needs so the FIRST
-    /// keystroke can both start a search and supply its first character.
+    // A wildcard row a type-to-search table needs so the first keystroke
+    // can both start the search and supply its first character.
     pub const fn printable(mods: Mods) -> KeyPattern {
         KeyPattern {
             key: KeyMatch::Printable,
@@ -56,14 +45,6 @@ impl KeyPattern {
         }
     }
 
-    /// A short display label (footer default-mode hints, the generated Help
-    /// doc — one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup,
-    /// then the key, `Char` uppercased ("^X" for Ctrl+x). `Printable` has no
-    /// single character to show, so it renders as the class it matches.
-    /// Appends to `out` rather than allocating its own `String`, so a caller
-    /// building many labels in a row (`footer_hints`'s per-frame hint list)
-    /// can reuse one growing buffer instead of paying a fresh allocation per
-    /// label.
     pub fn write_label(&self, out: &mut String) {
         if self.mods.ctrl {
             out.push('^');
@@ -96,17 +77,15 @@ impl KeyPattern {
     }
 }
 
-/// One table entry: the chord it binds, the command it produces, and its
-/// help-line label.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Binding<C: Copy + 'static> {
     pub key: KeyPattern,
     pub cmd: C,
     pub help: &'static str,
-    /// A secondary way to reach a command that already has a primary chord.
-    /// The footer's hint row skips a secondary binding so it does not
-    /// advertise two chords for the same action; the generated Help doc
-    /// still lists it, since it keeps working.
+    // A secondary way to reach a command that already has a primary
+    // chord: the footer's hint row skips it so it does not advertise two
+    // chords for the same action, but the generated Help doc still lists
+    // it, since it keeps working.
     pub secondary: bool,
 }
 
@@ -120,19 +99,15 @@ impl<C: Copy + 'static> Binding<C> {
     }
 }
 
-/// Linear first-match lookup over a binding table — these are chord tables
-/// (single- to low-double-digit entries), not per-keystroke text, so a
-/// `HashMap` would cost this module's whole appeal (a `const` table, no
-/// allocation) for nothing.
-///
-/// Precedence is FIRST-MATCH-WINS: the earliest row in table order whose
-/// pattern matches is the one returned, and any later row binding the
-/// identical key is unreachable dead weight (`crate::keymap::index::
-/// validate` rejects that shape outright, so it can only happen inside a
-/// table that skipped validation). This is the opposite of VS Code's own
-/// `keybindings.json`, which resolves LAST-match — a deliberate choice
-/// here, not an oversight, so state it once rather than leave it
-/// undocumented for whoever next reaches for the VS Code precedent.
+// These are chord tables (single- to low-double-digit entries), not
+// per-keystroke text, so a linear scan keeps the tables `const` with no
+// allocation, and a `HashMap` would buy nothing.
+//
+// Precedence is first-match-wins: the earliest row in table order whose
+// pattern matches is the one returned, and any later row binding the
+// identical key is unreachable dead weight. This is the opposite of
+// VS Code's own `keybindings.json`, which resolves last-match — a
+// deliberate choice here, not an oversight.
 pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
     table
         .iter()
@@ -140,10 +115,9 @@ pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
         .map(|binding| binding.cmd)
 }
 
-/// A pane's key handler's verdict on one keystroke (decision 8's four-stage
-/// pipeline, `app::handle_key`): `Consumed` stops the pipeline there;
-/// `Ignored` lets a later stage see the same key. `#[must_use]` — dropping
-/// the verdict is indistinguishable from a bug that always consumes.
+// `Consumed` stops the pipeline there; `Ignored` lets a later stage see
+// the same key. `#[must_use]` because dropping the verdict is
+// indistinguishable from a bug that always consumes.
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyOutcome {

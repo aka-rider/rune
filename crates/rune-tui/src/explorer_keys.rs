@@ -16,9 +16,6 @@ pub enum ExplorerCommand {
     Open,
     ParentDir,
     Leave,
-    /// Explorer-scoped Trash: `⌘⌫` and the forward-delete key, only while
-    /// the Explorer pane itself holds focus (never a global chord — no
-    /// text field competes for either key here).
     Trash,
 }
 

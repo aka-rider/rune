@@ -1,17 +1,7 @@
-//! The table-validation side of the prefix index: rejects, at startup,
-//! two bindings sharing the identical key. Split out of
-//! `index.rs` to bring that file under the 500-line budget; `index`
-//! re-exports every item here so no import path downstream changed.
-
 use crate::binding::Binding;
 
-/// The one way `validate` can reject a table: two DIFFERENT bindings
-/// sharing the exact same key, where first-match-wins (`resolve_in`'s docs)
-/// makes the second silently dead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingConflict {
-    /// `first`/`second` are the colliding bindings' own `help` labels, in
-    /// table order — `second` is the one first-match-wins would silence.
     Duplicate {
         first: &'static str,
         second: &'static str,
@@ -32,14 +22,10 @@ impl std::fmt::Display for BindingConflict {
 
 impl std::error::Error for BindingConflict {}
 
-/// Rejects, at startup, a table where two bindings share the exact same
-/// key: the second is silently dead, undocumented `resolve_in` first-match-
-/// wins precedence. Two DIFFERENT tables never collide against each other —
-/// call this once per table (each binding-table module's own test does, in
-/// lieu of a real process-startup hook this library crate has no place to
-/// install; the registry-walking test below covers every table this crate
-/// defines in one place, so a new table can no longer ship unvalidated by
-/// omission).
+// There is no process-startup hook this library crate can install itself,
+// so nothing calls this automatically — each binding-table module's own
+// test must call it, and never across two different tables (which are
+// allowed to collide with each other).
 pub fn validate<C: Copy>(table: &[Binding<C>]) -> Result<(), BindingConflict> {
     for (i, a) in table.iter().enumerate() {
         for b in table.iter().skip(i + 1) {
@@ -102,14 +88,9 @@ mod tests {
         }
     }
 
-    /// `validate` was only ever called by
-    /// each table's own hand-written test — `global::GLOBAL_BINDINGS`,
-    /// `opentabs::TABS_BINDINGS`, and `explorer_keys::EXPLORER_BINDINGS`
-    /// shipped with none, so a shadowed chord in any of them could never
-    /// fire and nothing would catch it. One registry-walking test, listing
-    /// every binding table this crate defines, closes that gap
-    /// structurally: a new table now has to be added HERE to be validated
-    /// at all, so its absence is conspicuous rather than silent.
+    // Every binding table this crate defines is listed here, so a new
+    // table has to be added to this list to be validated at all — its
+    // absence is conspicuous rather than silent.
     #[test]
     fn every_registered_binding_table_validates() {
         assert!(validate(crate::global::GLOBAL_BINDINGS).is_ok());

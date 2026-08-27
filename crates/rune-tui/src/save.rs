@@ -182,14 +182,13 @@ fn save_cmd(
     })
 }
 
-/// A `Force { expect: None }` publish carries no informed baseline, so
-/// `rune_vfs::put` conservatively flags any pre-existing, differing content
-/// it displaced as `Raced` rather than silently discarding it — this
-/// direct-vfs fallback has no recovery store to hand those bytes to (that's
-/// exactly why it took this path), so it durably preserves them itself: a
-/// fresh, never-clobbered sibling file next to `path`, named in the message
-/// [`handle_save_done`] posts. A failure to write that sibling is reported
-/// too, never swallowed — the primary save already succeeded either way.
+// A `Force { expect: None }` publish carries no informed baseline, so
+// `rune_vfs::put` conservatively flags any pre-existing, differing content
+// it displaced as `Raced` rather than silently discarding it. This
+// direct-vfs fallback has no recovery store to hand those bytes to, so it
+// durably preserves them itself in a fresh, never-clobbered sibling file
+// next to `path`. A failure to write that sibling is reported too, never
+// swallowed — the primary save already succeeded either way.
 fn preserve_displaced(vfs: &dyn Vfs, path: &Path, displaced: &[u8]) -> SaveRace {
     let sibling = conflict_sibling_path(path);
     match rune_vfs::put(vfs, &sibling, displaced, PutCondition::IfAbsent) {

@@ -56,11 +56,9 @@ pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effect
 }
 
 /// A `Msg::FileOpened` reply belongs to the live preview only when its
-/// `preview_generation` echoes what `request_preview` minted and is still
-/// current — never a path match, and never a re-derivation of whatever the
-/// cursor or finder selection currently sits on. A real file open (e.g.
-/// following a link into a path the preview is still loading) always
-/// carries `preview_generation: None` and so can never be mistaken for it.
+/// `preview_generation` echoes what `request_preview` minted — never a path
+/// match. A real file open always carries `preview_generation: None`, so it
+/// can never be mistaken for a stale preview reply.
 pub(crate) fn maybe_consume_reply(
     app: &mut App,
     path: &Path,

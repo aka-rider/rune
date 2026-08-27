@@ -1,11 +1,3 @@
-//! Splitter drag gestures: hit-testing the three grab bands `layout::geometry`
-//! exposes (the left column's own border band, the `Open` divider row
-//! already drawn between the Explorer and the tab rows, and the diff
-//! view's own pane divider) and moving the corresponding `Split` while a
-//! drag is latched. Every offset here is total — a pointer that has
-//! wandered off every rect, or a terminal too small to show any band, must
-//! clamp rather than panic or truncate.
-
 use ratatui::layout::Rect;
 
 use crate::app::App;
@@ -13,8 +5,6 @@ use crate::layout;
 use crate::pointer::{Drag, MouseInput, Splitter};
 use crate::runtime::Effects;
 
-/// Whether `(col, row)` lands inside `rect`, saturating so a rect pinned at
-/// the frame's far edge never wraps.
 fn contains(rect: Rect, col: u16, row: u16) -> bool {
     col >= rect.x
         && col < rect.x.saturating_add(rect.width)
@@ -22,20 +12,13 @@ fn contains(rect: Rect, col: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
-/// Folds a signed cell count back into the `u16` a `Split` stores: below
-/// zero clamps to `0`, above `u16::MAX` clamps to `u16::MAX`. The splitter
-/// maths above this needs signed arithmetic (a grab delta can be negative),
-/// so this is the one place that maps back into the unsigned domain instead
-/// of every call site doing its own `as` truncation.
 fn clamp_u16(v: i32) -> u16 {
     v.clamp(0, i32::from(u16::MAX)) as u16
 }
 
-/// Tests a left mouse-down against the two grab bands, latching
-/// `app.pointer.drag` and returning `true` on a hit. `tabs_divider` is
-/// tested first — it sits inside the column, so at the one cell where the
-/// bands could ever coincide it is the one the user actually sees and
-/// means to grab.
+/// `tabs_divider` is tested before `left_splitter`: at the one cell where
+/// the two bands could ever coincide, it sits inside the column and is the
+/// one the user actually sees and means to grab.
 pub fn begin(app: &mut App, input: MouseInput) -> bool {
     let area = app.frame_area();
     let geo = layout::geometry(area, app);
@@ -51,11 +34,6 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
         return true;
     }
 
-    // Both grab bands only exist while the column itself is shown, but
-    // `Geometry`'s type doesn't tie `left_block` to `tabs_divider`/
-    // `left_splitter` — so this guard stays a `let ... else` (never
-    // `unwrap`/`expect`) even though it's the same check either band
-    // needs.
     let Some(left_block) = geo.left_block else {
         return false;
     };
@@ -88,21 +66,12 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
 
 /// Moves whichever splitter the latched drag is grabbing, then routes
 /// through `focus::reconcile` so focus hands back to the Editor if the
-/// motion just collapsed the section that had it. Without that handoff,
-/// keystrokes keep routing to a pane with no on-screen presence: both
-/// `visible_rows` helpers `.max(1)`, so they report a visible row for a
-/// zero-height rect and hide the problem.
+/// motion just collapsed the section that had it — otherwise keystrokes
+/// keep routing to a pane with no on-screen presence.
 pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let Some(Drag::Splitter { which, grab_delta }) = app.pointer.drag else {
         return;
     };
-    // The finder overrides the left column's geometry for as long as it's
-    // open (`layout::resolve`) without ever writing `app.splits` — a
-    // `LeftColumn` drag measured against that overridden geometry would
-    // otherwise record a width the user never actually chose, corrupting
-    // what the column snaps back to once the finder closes. The
-    // `ExplorerTabs` divider is unaffected: the finder only replaces the
-    // Explorer's own content, not the Tabs pane beneath it.
     if matches!(which, Splitter::LeftColumn) && app.filesearch().is_some() {
         return;
     }
@@ -132,11 +101,6 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
         }
     }
 
-    // Same reconciliation the command path runs after `ToggleLeft`'s hide
-    // branch (`pane::handle_global_command`) — a drag that just collapsed
-    // the section holding focus reaches exactly the state a keybinding
-    // collapsing it would, through the one shared chokepoint rather than a
-    // second, independently-maintained copy of the check.
     crate::focus::reconcile(app, effects);
 }
 
@@ -160,12 +124,6 @@ mod tests {
         app
     }
 
-    /// Dragging the left column's splitter away and pressing `^B`'s
-    /// `GlobalCommand::ToggleLeft` hide branch must reach IDENTICAL state —
-    /// both hide the same `Split` and both redirect focus through the one
-    /// shared `focus::reconcile`/`set_focus_pane` path, so a user reaching
-    /// for either gesture is never surprised the other one behaves
-    /// differently.
     #[test]
     fn dragging_the_column_away_and_the_toggle_command_reach_the_same_state() {
         let mut dragged = app_with_explorer_focused();
@@ -203,11 +161,6 @@ mod tests {
         assert_eq!(dragged.focus(), Pane::Editor);
     }
 
-    /// A `LeftColumn` drag while the fuzzy file finder is open must leave
-    /// `app.splits` completely untouched — a drag measured against the
-    /// finder's OWN overridden geometry would otherwise `Split::request` a
-    /// width the user never actually chose, corrupting what the column
-    /// snaps back to once the finder closes.
     #[test]
     fn left_column_drag_is_ignored_while_filesearch_is_active() {
         let mut app = app_with_explorer_focused();

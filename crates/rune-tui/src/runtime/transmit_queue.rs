@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-// Kitty graphics protocol: chunks of one image transmit must arrive in
-// order, and no other graphics escape may appear between them.
 pub const DRAIN_BUDGET_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -16,6 +14,8 @@ struct Queued {
     started: bool,
 }
 
+// Kitty graphics protocol: chunks of one image transmit must arrive in
+// order, and no other graphics escape may appear between them.
 #[derive(Default)]
 pub struct TransmitQueue {
     pending: VecDeque<Queued>,

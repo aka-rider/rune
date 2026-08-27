@@ -1,10 +1,3 @@
-//! `layout::resolve`'s own left-column resolution — split out to keep
-//! `layout.rs` under the 500-line budget: [`carve_column`] splits one
-//! already-sized column block into its Explorer/divider/Tabs sections;
-//! [`resolve_column`] decides the column's own visibility/width (and, at
-//! the same time, the frame's `LayoutMode`) across its three cases
-//! (filesearch-forced, narrow-frame full-width, ordinary side-by-side).
-
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
 use crate::app::App;
@@ -15,10 +8,6 @@ use crate::layout::{
 };
 use crate::region::Region;
 
-/// The left column's rects plus the center pane and `LayoutMode`
-/// `resolve_column` decides alongside it — each of its three branches
-/// (filesearch-forced, narrow-frame full-width, ordinary side-by-side)
-/// builds one of these.
 pub(crate) struct ColumnResolution {
     pub(crate) left_block: Option<Rect>,
     pub(crate) explorer_inner: Rect,
@@ -28,11 +17,9 @@ pub(crate) struct ColumnResolution {
     pub(crate) mode: LayoutMode,
 }
 
-/// [`carve_column`]'s own result: one already-sized left-column block split
-/// into its Explorer/divider/Tabs sections. `fits` is `false` only when
-/// NEITHER section fits even alone (`Split::allot`'s `(None, None)` arm) —
-/// the caller's cue to give up on the column entirely rather than show a
-/// border around nothing.
+// `fits` is false only when neither section fits even alone — the
+// caller's cue to give up on the column entirely rather than show a
+// border around nothing.
 struct ColumnCarve {
     explorer_inner: Rect,
     tabs_divider: Option<Rect>,
@@ -40,10 +27,6 @@ struct ColumnCarve {
     fits: bool,
 }
 
-/// Splits one already-sized left-column block into its Explorer/divider/Tabs
-/// sections — shared by the ordinary `Split` column and the narrow-frame
-/// full-width `ExplorerOnly` column below, so the two can never diverge on
-/// how a block of a given size divides.
 fn carve_column(left_area: Rect, app: &App) -> ColumnCarve {
     let zero = Rect::new(0, 0, 0, 0);
     let inner = left_area.inner(Margin::new(1, 1));
@@ -100,11 +83,8 @@ fn carve_column(left_area: Rect, app: &App) -> ColumnCarve {
     }
 }
 
-/// Decides the left column's own visibility/width and the frame's
-/// `LayoutMode` — `layout::resolve`'s own sub-decision, split out here so
-/// that file stays under the 500-line budget. `split_fits` is `layout::
-/// resolve`'s own "does the column's floor fit beside the center's floor"
-/// check.
+// `split_fits` says whether the column's floor width fits beside the
+// center pane's floor width.
 pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> ColumnResolution {
     let zero = Rect::new(0, 0, 0, 0);
     let no_column = ColumnResolution {
@@ -117,12 +97,8 @@ pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> Co
     };
 
     if app.filesearch().is_some() && split_fits {
-        // The finder forces the left column visible at its own width,
-        // regardless of `app.splits.left.is_shown()` — visibility and
-        // size are decided here, once, exactly like every other case
-        // this function already handles; `app.splits` is never written.
-        // Below `split_fits`, the finder falls through to the narrow-
-        // frame handling below, unchanged.
+        // Visibility and width are decided here, once; `app.splits` is
+        // never written to reflect the finder's forced-visible column.
         let cap = main_area.width.saturating_sub(MIN_CENTER_W);
         let filesearch_fits = main_area.width >= FILESEARCH_MIN_W.saturating_add(MIN_CENTER_W);
         let left_w = if filesearch_fits {
@@ -158,13 +134,10 @@ pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> Co
             no_column
         }
     } else if (app.splits.left.is_shown() || app.filesearch().is_some()) && !split_fits {
-        // The finder falls through to this same narrow-frame branch as
-        // an already-shown column: below `split_fits` there is no room
-        // to paint the column beside a center pane, so — same as the
-        // ordinary Explorer case — the column becomes the whole frame
-        // rather than being dropped. Without this, a finder opened on
-        // a frame narrower than `split_fits` would paint nothing at
-        // all while still consuming every keystroke.
+        // Below `split_fits` there's no room to paint the column beside
+        // a center pane, so it becomes the whole frame instead of being
+        // dropped — otherwise a finder opened on a narrow frame would
+        // paint nothing while still consuming every keystroke.
         let carve = carve_column(main_area, app);
         if carve.fits {
             // No `center` at all: the column IS the frame this mode.
@@ -183,10 +156,8 @@ pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> Co
                 mode: LayoutMode::ExplorerOnly,
             }
         } else {
-            // The column can't show anything even at full width (a
-            // frame too SHORT, not just too narrow) — give up on it
-            // exactly like the ordinary Split path's own `(None, None)`
-            // arm does.
+            // Too SHORT, not just too narrow — give up on the column
+            // entirely, matching the ordinary Split path's own no-fit case.
             no_column
         }
     } else {
@@ -218,10 +189,8 @@ pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> Co
                         },
                     }
                 } else {
-                    // Neither section fits even alone: the column
-                    // yields the space entirely rather than showing a
-                    // border around nothing, and `center` reclaims the
-                    // width the column would otherwise have reserved.
+                    // Neither section fits even alone, so the column
+                    // yields the space entirely and `center` reclaims it.
                     no_column
                 }
             }

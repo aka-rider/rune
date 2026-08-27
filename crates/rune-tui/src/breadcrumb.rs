@@ -1,22 +1,3 @@
-//! The breadcrumb row: the location-history controls and the active
-//! document's path, spliced onto the center pane's bottom border row.
-//! `overlay` writes cells directly into `frame.buffer_mut()` — the same
-//! cell-writing idiom `render::blit` uses — rather than depending on
-//! ratatui's `Block` title-placement semantics, so the arithmetic is exact
-//! cell for cell.
-//!
-//! Render order is load-bearing: `render::draw` must have already painted
-//! the center `Block` over `block` before calling this, or `overlay`'s
-//! cells get painted over again.
-//!
-//! Every width in this module — the segment totals, `build_crumb`'s
-//! per-part accounting, and `put`'s column advance — goes through the
-//! crate's ONE chrome-width chokepoint (`crate::width::display_width`,
-//! backed by `rune_syntax::wrap::grapheme_width`), one grapheme CLUSTER per
-//! cell, so the dash fill can never be sized in one unit and drawn in
-//! another: a CJK/emoji/NFD-accented path component makes the difference
-//! visible immediately if the two ever drift apart.
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -36,8 +17,8 @@ const MIN_DASH: usize = 1;
 
 const CRUMB_PADDING: usize = 2;
 
-/// Under width pressure the crumb goes first and the controls second: the
-/// controls are the interactive element, the crumb only a label.
+// `render::draw` must already have painted the center `Block` over `block`
+// before this runs, or these cells get painted over again.
 pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     if block.height < 2 || block.width == 0 {
         return;
@@ -112,33 +93,13 @@ fn put_spans(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, spans: &[Sp
     }
 }
 
-/// Writes one whole GRAPHEME CLUSTER at `(*x, y)` and advances `*x` by that
-/// cluster's DISPLAY width — the identical idiom `render::blit` uses
-/// (`x.saturating_add(cell.width.max(1) as u16)`), and the reason this
-/// module can splice into a border row at all. One cluster per `Cell`
-/// (`cell_mut().set_symbol`, not `set_char`) rather than one `char` per
-/// `Cell`: advancing/writing per-`char` while `overlay` sizes its dash fill
-/// per grapheme cluster would desync the two the moment a path component
-/// holds an NFD accent or a ZWJ emoji sequence — the accent/joiner runes
-/// would each claim their own (wrong) cell instead of riding along in the
-/// base character's cell, and the `──╯` would land short of the right
-/// edge, leaving stale border cells behind it.
-///
-/// A cluster whose width is more than 1 (a CJK ideograph, a wide emoji)
-/// claims MORE than one `Cell` on screen but this function only ever
-/// writes its symbol into the FIRST one: like `render::blit`, it resets
-/// every continuation cell the cluster covers, or whatever the buffer held
-/// there before (a border dash, a previous glyph's leftover) stays visible
-/// beside the new symbol — a real on-screen artifact, not just a test
-/// nicety, since two glyphs would then appear to occupy the same visual
-/// span. Out-of-buffer writes are dropped by `cell_mut` returning `None`.
+/// Writes one grapheme cluster at `(*x, y)` and advances `*x` by its
+/// display width, resetting every continuation cell a wide cluster covers
+/// instead of leaving whatever the buffer held there before: ratatui's own
+/// buffer diffing recomputes width from the leading cell and never reads a
+/// continuation cell's content, so a stale glyph left behind there would
+/// still show up as a real on-screen artifact.
 fn put(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, cluster: &str, style: Style) {
-    // `crate::render::push_grapheme_cells` is the crate's one control-char
-    // policy (`render::cell::control_placeholder`) — a raw ESC/BEL/other
-    // control byte in a path component would otherwise reach `set_symbol`
-    // unfiltered and land in the terminal as live output, exactly the
-    // OSC-injection/`cell_width` debug-assert class every other direct
-    // buffer write in the crate already routes around this same way.
     let mut cells = Vec::new();
     let mut visual_col = 0usize;
     crate::render::push_grapheme_cells(&mut cells, &mut visual_col, cluster, None, style);
@@ -177,27 +138,15 @@ mod tests {
         )
     }
 
-    /// Draws `overlay` into a `height`-tall `TestBackend` (via the shared
-    /// `testgrid::draw_with`: `overlay` renders a component directly into
-    /// its own `Rect`, not the whole `App` through `render::draw`, so
-    /// `grid`/`row` don't apply here) and returns the bottom row's rendered
-    /// symbols concatenated into one `String` — the row `overlay` actually
-    /// writes to.
     fn overlay_bottom_row(app: &App, width: u16, height: u16, focused: bool) -> String {
         let buf = testgrid::draw_with(width, height, |frame| {
             let block = Rect::new(0, 0, width, height);
             overlay(app, block, focused, frame)
         });
         let mut s = String::new();
-        // Mirrors ratatui's OWN diffing (`Buffer::diff`, `set_stringn`):
-        // a wide glyph's continuation cell is a reset (blank) `Cell` that
-        // real terminal output never reaches, because the renderer
-        // recomputes the PRECEDING cell's own display width and skips that
-        // many columns unconditionally — it never consults the
-        // continuation cell's content. Reading every raw cell symbol
-        // (including that skipped one) would double-count a column no
-        // terminal ever prints, so this walk skips ahead by each symbol's
-        // own width exactly like the real render path does.
+        // Walk by each symbol's own display width, mirroring ratatui's own
+        // diffing: a wide glyph's continuation cell is blank and no real
+        // terminal ever reads it, so counting it here would double count.
         let mut x = 0u16;
         while x < width {
             let Some(cell) = buf.cell((x, height - 1)) else {
@@ -214,19 +163,11 @@ mod tests {
     fn overlay_relativizes_against_app_root_end_to_end() {
         let mut app = app_for("hello", Some("/Users/xiii/vault/notes/note.md"));
         app.set_root(PathBuf::from("/Users/xiii/vault"));
-        // parts = ["vault", "notes", "note.md"] instead of the full
-        // ["Users", "xiii", "vault", "notes", "note.md"].
         let row = overlay_bottom_row(&app, 60, 3, true);
         assert!(row.contains("vault/notes › note.md"));
         assert!(!row.contains("Users"));
     }
 
-    /// The crumb is root-relative for a document opened WITHOUT the
-    /// Explorer pane ever being shown: the root comes from startup's
-    /// `workspaceroot::resolve` → `App::set_root`, which runs
-    /// unconditionally, so the Explorer's own state can't be a
-    /// precondition for relativizing. The left column stays hidden
-    /// throughout — it is never shown.
     #[test]
     fn the_crumb_is_root_relative_without_the_explorer_ever_being_shown() {
         let mut app = app_for("hello", Some("/Users/xiii/vault/notes/note.md"));
@@ -244,9 +185,6 @@ mod tests {
         assert!(!row.contains("Users"), "the path above root must be cut");
     }
 
-    /// The boundary the relativizing must NOT cross: a sibling directory
-    /// sharing root's name as a string prefix is outside root, so its
-    /// document falls back to the absolute path.
     #[test]
     fn a_sibling_sharing_the_root_name_prefix_is_not_relativized() {
         let mut app = app_for("hello", Some("/a/vault2/notes.md"));
@@ -259,13 +197,10 @@ mod tests {
         );
     }
 
-    /// An independent width oracle (plan [rune-tui C 14]): computed
-    /// straight from `unicode_width`/`unicode_segmentation`, never by
-    /// calling this module's own `display_width`/`grapheme_width` — so a
-    /// regression in the production chokepoint can't pass a test that
-    /// merely re-invokes it. The old per-`char` `text_width` this module
-    /// used to have made its own width test "agree by construction" with
-    /// exactly the bug it existed to catch.
+    // An independent width oracle: computed straight from `unicode_width`/
+    // `unicode_segmentation`, never via this module's own `display_width`,
+    // so a regression in the production chokepoint can't pass a test that
+    // merely re-invokes it.
     fn oracle_cell_width(s: &str) -> usize {
         s.graphemes(true)
             .map(|g| {
@@ -281,10 +216,6 @@ mod tests {
     #[test]
     fn renders_the_exact_row_at_a_known_width() {
         let app = app_for("hello", Some("/a/b/note.md"));
-        // parts = ["a", "b", "note.md"]; crumb = "a/b › note.md" — the
-        // directories run together on a bare `/`, the leaf is set off by
-        // ` › `, and no part carries padding of its own: 1 + 1 + 1 + 3 + 7
-        // = 13 columns. `overlay` adds the ONE plain space on each side.
         let row = overlay_bottom_row(&app, 60, 3, true);
         assert_eq!(
             row,
@@ -295,9 +226,6 @@ mod tests {
         );
     }
 
-    /// Once the parts no longer fit, the dropped leading directories are
-    /// replaced by `…/` — and the row must still end flush at the right
-    /// edge, since the ellipsis is part of `bc` like any other span.
     #[test]
     fn a_too_long_path_is_truncated_with_an_ellipsis_prefix() {
         const W: u16 = 39;
@@ -311,11 +239,8 @@ mod tests {
         );
     }
 
-    /// An NFD-decomposed filename (`café.md` as `e` + combining acute,
-    /// macOS's own on-disk normalization) must render its accent riding
-    /// along in the base letter's cell, not claiming a stray cell of its
-    /// own — the exact class [rune-tui C 2] found broken. Measured against
-    /// the independent oracle, never `display_width` itself.
+    // macOS normalizes on-disk file names to NFD, so "café.md" arrives as
+    // "cafe" + combining acute, not the precomposed character.
     #[test]
     fn an_nfd_accent_rides_along_in_its_base_letters_cell() {
         const W: u16 = 50;
@@ -333,9 +258,6 @@ mod tests {
         );
     }
 
-    /// A ZWJ-joined emoji family in a path component is one grapheme
-    /// cluster, one cell — never torn into several cells the way a bare
-    /// `chars()` walk would.
     #[test]
     fn a_zwj_emoji_family_component_occupies_one_cell_per_cluster() {
         const W: u16 = 50;
@@ -349,13 +271,6 @@ mod tests {
         );
     }
 
-    /// A path component carrying a raw terminal escape sequence (here the
-    /// literal OSC title-spoof/clipboard-write payload from the ticket) must
-    /// never reach a cell's raw symbol: `put` routes every cluster through
-    /// the crate's one control-char policy exactly like every other direct
-    /// buffer write, so ESC/BEL surface only as their Unicode control-
-    /// picture placeholders, never as live escape bytes a terminal would
-    /// act on.
     #[test]
     fn a_control_byte_in_a_path_component_never_reaches_a_raw_cell_symbol() {
         let malicious = "\u{1b}]0;pwned\u{7}";
@@ -373,11 +288,6 @@ mod tests {
 
     #[test]
     fn wide_path_components_keep_the_corner_in_the_last_column() {
-        // A CJK component is 2 display columns per `char`. `overlay` sizes
-        // its dash fill in display columns, so `put` must advance in the
-        // same unit: advancing 1-per-`char` would land `──╯` three columns
-        // short of the right edge here, leaving stale cells behind the
-        // corner (the two coordinate systems must not be mixed).
         const W: u16 = 50;
         let app = app_for("hello", Some("/a/日本語/note.md"));
         let buf = testgrid::draw_with(W, 3, |frame| {
@@ -406,9 +316,6 @@ mod tests {
         expected
     }
 
-    /// The control cell at column `x` carries the footer colour and weight,
-    /// but never the footer's own background — that block of `surface0`
-    /// would read as a stray chip sitting on the pane border.
     fn assert_control_style(app: &App, x: u16, expected: Style) {
         const W: u16 = 60;
         let buf = testgrid::draw_with(W, 3, |frame| {
@@ -445,8 +352,6 @@ mod tests {
     #[test]
     fn bails_out_and_leaves_the_row_untouched_at_a_tiny_width() {
         let app = app_for("hello", Some("/a/b/note.md"));
-        // Neither the controls nor even the smallest crumb fit at width 5 —
-        // the row must come back exactly as the plain `TestBackend` default.
         let row = overlay_bottom_row(&app, 5, 3, true);
         assert_eq!(
             row,
@@ -455,8 +360,6 @@ mod tests {
         );
     }
 
-    /// Location history spans documents, so a draft — which has no path and
-    /// therefore no crumb — still gets its controls.
     #[test]
     fn a_draft_renders_the_controls_without_a_crumb() {
         let app = app_for("hello", None);
@@ -473,8 +376,6 @@ mod tests {
         assert_control_style(&app, FORWARD_GLYPH_X, dim);
     }
 
-    /// The keystroke carries the availability; its word stays the same dim
-    /// hint colour every other explanation in the chrome uses.
     #[test]
     fn the_words_keep_the_hint_colour_whatever_the_keystroke_does() {
         let app = app_with_one_earlier_place();
@@ -499,9 +400,6 @@ mod tests {
         assert_control_style(&app, BACK_GLYPH_X, app.theme.chrome.footer_key_inactive);
     }
 
-    /// Under width pressure the crumb goes first and the controls second:
-    /// the controls are what the user acts on, the crumb only names where
-    /// they are.
     #[test]
     fn the_crumb_is_dropped_before_the_controls() {
         let app = app_for("hello", Some("/a/b/note.md"));
@@ -509,8 +407,6 @@ mod tests {
         assert_eq!(row, format!("╰── ^[ back  ^] forward {}╯", "─".repeat(9)));
     }
 
-    /// Below the width the controls themselves need, the crumb comes back
-    /// alone — naming the file beats an empty border row.
     #[test]
     fn the_crumb_alone_survives_below_the_controls_width() {
         let app = app_for("hello", Some("/a/b/note.md"));
@@ -520,9 +416,6 @@ mod tests {
         );
     }
 
-    /// Too narrow for either block leaves the row blank — and a crumb that
-    /// has lost its file name says nothing at all, so it never buys itself
-    /// columns with a bare `…/`.
     #[test]
     fn neither_the_controls_nor_a_name_less_crumb_leaves_a_blank_row() {
         let app = app_for("hello", Some("/alpha/bravo/charlie/note.md"));

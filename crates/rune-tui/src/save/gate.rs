@@ -7,9 +7,6 @@ use crate::save::SaveStart;
 
 pub(crate) struct SaveClearance(());
 
-/// `BindNew` is the draft-naming create: it supplies its own path and IS
-/// the rename commit, so the pathless and rename-in-flight rungs would each
-/// refuse the very act they are gating.
 pub(crate) enum SaveEntry {
     Materialize,
     BindNew,

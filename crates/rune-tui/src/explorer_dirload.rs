@@ -22,14 +22,6 @@ fn with_parent_entry(root: &Path, mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
     entries
 }
 
-/// The neighbours of a `Refresh`'s previously-selected row, captured before
-/// the fresh listing replaces `app.explorer.entries` — a background
-/// completion (trash-done, rename-done) reloads the SAME directory the user
-/// is already looking at, so the selection should follow the row it was on:
-/// still there under the same name (`current`), or — if that row is the one
-/// that just vanished — the nearest surviving neighbour, preferring the row
-/// that was AFTER it (the standard file-manager convention) and falling
-/// back to the row BEFORE when the vanished row was last.
 struct RefreshAnchor {
     current: Option<String>,
     next: Option<String>,
@@ -70,11 +62,6 @@ pub(crate) fn handle_dir_loaded(
         return;
     }
 
-    // Only a real navigation invalidates an in-progress type-to-search: a
-    // `Refresh` reloads the directory the user is already looking at from a
-    // background completion they didn't ask for (trash-done, rename-done),
-    // so whatever they were typing is still describing something on THIS
-    // screen and must survive it.
     if matches!(cause, DirCause::Nav) {
         crate::explorer_search::clear_search(app);
     }
@@ -176,7 +163,7 @@ mod tests {
             DirCause::Nav,
             crate::generation::Generation::ZERO,
         );
-        app.explorer.nav.cursor = 2; // "gone"
+        app.explorer.nav.cursor = 2;
 
         handle_dir_loaded(
             &mut app,
@@ -201,7 +188,7 @@ mod tests {
             DirCause::Nav,
             crate::generation::Generation::ZERO,
         );
-        app.explorer.nav.cursor = 2; // "gone", the last row
+        app.explorer.nav.cursor = 2;
 
         handle_dir_loaded(
             &mut app,

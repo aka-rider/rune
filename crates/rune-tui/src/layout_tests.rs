@@ -3,9 +3,6 @@ use rune_core::buffer::Buffer;
 use rune_vfs::Mem;
 use std::sync::Arc;
 
-/// The bar's one row appears between `title` and `editor`
-/// only while `App::search` is open, and reserving it shrinks `editor`
-/// by exactly one row rather than displacing `title`.
 #[test]
 fn an_open_search_bar_reserves_one_row_between_title_and_editor() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
@@ -27,9 +24,6 @@ fn an_open_search_bar_reserves_one_row_between_title_and_editor() {
     assert_eq!(open.editor.height, closed.editor.height - 1);
 }
 
-/// A content area only one row tall keeps that row for the title
-/// instead — the bar simply has no room and `saturating_sub` keeps
-/// `editor` from underflowing.
 #[test]
 fn a_one_row_content_area_gives_the_bar_no_room_and_never_panics() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
@@ -39,11 +33,6 @@ fn a_one_row_content_area_gives_the_bar_no_room_and_never_panics() {
     assert!(geo.search_bar.is_none());
 }
 
-/// `explorer_budget` is a public function precisely because `geometry`
-/// and the focus-tabs handler's `ensure_trail` call must both use the exact
-/// same quantity — pin that it agrees with the inner rect `geometry`
-/// itself carves the vertical split from, rather than trusting the two
-/// expressions to stay in sync by inspection.
 #[test]
 fn explorer_budget_matches_the_inner_rect_geometry_actually_splits() {
     for left_area in [
@@ -62,10 +51,6 @@ fn app_with_left_shown() -> App {
     app
 }
 
-/// A frame too NARROW to fit the left column alongside the center pane
-/// must still show the column the user asked for — flipping to a
-/// full-width `LayoutMode::ExplorerOnly` rather than silently dropping
-/// it to `EditorOnly` the way the pre-flip resolver used to.
 #[test]
 fn a_too_narrow_frame_flips_to_explorer_only_instead_of_dropping_the_column() {
     let app = app_with_left_shown();
@@ -79,9 +64,6 @@ fn a_too_narrow_frame_flips_to_explorer_only_instead_of_dropping_the_column() {
     assert_eq!(resolve_mode(area, &app), LayoutMode::ExplorerOnly);
 }
 
-/// The converse: the same too-narrow frame with the column HIDDEN
-/// resolves to a full-width `EditorOnly` — the flip is keyed on whether
-/// the user asked for the column, never applied unconditionally.
 #[test]
 fn a_too_narrow_frame_with_the_column_hidden_stays_editor_only() {
     let app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
@@ -91,10 +73,6 @@ fn a_too_narrow_frame_with_the_column_hidden_stays_editor_only() {
     assert_eq!(resolve_mode(area, &app), LayoutMode::EditorOnly);
 }
 
-/// A frame narrow AND short enough that the column can't show anything
-/// even at full width still falls back to `EditorOnly` — the flip only
-/// ever trades a dropped column for a full-width one when there is
-/// something to actually paint there.
 #[test]
 fn a_too_narrow_and_too_short_frame_still_falls_back_to_editor_only() {
     let app = app_with_left_shown();
@@ -103,11 +81,6 @@ fn a_too_narrow_and_too_short_frame_still_falls_back_to_editor_only() {
     assert_eq!(resolve_mode(area, &app), LayoutMode::EditorOnly);
 }
 
-/// The height-driven counterpart: a column with enough WIDTH to show
-/// SIDE BY SIDE with the center pane, but too few ROWS for either the
-/// Explorer or the tab rows to fit (`resolve`'s `(None, None)` arm),
-/// resolves to `EditorOnly` — this frame is wide enough that the
-/// narrow-frame flip above never applies; it fails on height alone.
 #[test]
 fn a_too_short_frame_resolves_to_editor_only_not_a_silently_dropped_column() {
     let app = app_with_left_shown();
@@ -116,8 +89,6 @@ fn a_too_short_frame_resolves_to_editor_only_not_a_silently_dropped_column() {
     assert_eq!(resolve_mode(area, &app), LayoutMode::EditorOnly);
 }
 
-/// The ordinary case: a roomy frame resolves to `Split` with both
-/// sections painted, matching `geometry`'s own rects.
 #[test]
 fn a_roomy_frame_resolves_to_split_with_both_sections_shown() {
     let app = app_with_left_shown();
@@ -135,11 +106,6 @@ fn a_roomy_frame_resolves_to_split_with_both_sections_shown() {
     );
 }
 
-/// The load-bearing acceptance case: opening the finder
-/// on a fresh app whose left column was NEVER shown still forces the
-/// column visible, at `min(max(FILESEARCH_MIN_W, size_hint), frame -
-/// MIN_CENTER_W)` — geometry decides visibility here, `app.splits` is
-/// never written.
 #[test]
 fn filesearch_forces_the_column_visible_at_its_own_minimum_width() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
@@ -159,9 +125,6 @@ fn filesearch_forces_the_column_visible_at_its_own_minimum_width() {
     );
 }
 
-/// A frame between 40 and 72 columns wide (fits the ordinary floor but
-/// not the finder's own 48-cell minimum) still shows the column, at
-/// `frame - MIN_CENTER_W` rather than the full 48.
 #[test]
 fn filesearch_narrows_below_its_own_minimum_when_the_frame_is_tight() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
@@ -177,12 +140,6 @@ fn filesearch_narrows_below_its_own_minimum_when_the_frame_is_tight() {
     assert!(left_area.width >= MIN_LEFT_PANE_W);
 }
 
-/// Below `split_fits` (< 40 columns) with the left column never shown,
-/// the finder must still be painted — falling through to the same
-/// full-width `ExplorerOnly` branch an already-shown column takes,
-/// rather than the ordinary `Split::allot` path, which returns `None`
-/// for a hidden column and would leave the finder invisible while it
-/// keeps consuming every keystroke (silent input swallowing).
 #[test]
 fn filesearch_paints_explorer_only_below_split_fits_on_a_never_shown_column() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
@@ -271,9 +228,6 @@ fn every_region_lies_inside_the_frame_across_degenerate_sizes() {
     }
 }
 
-/// Closing the finder restores IDENTICAL geometry to a plain
-/// never-opened app at the same frame — nothing was ever written to
-/// `app.splits`, so there is nothing to restore.
 #[test]
 fn closing_filesearch_restores_the_pre_open_geometry() {
     let baseline = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);

@@ -1,18 +1,7 @@
-//! Mouse input, decoupled from `termina` — the same
-//! pattern `keymap.rs` uses for `KeyCode`/`KeyInput`: a platform- and
-//! library-independent event type, with `from_termina` the one bridge.
-//!
-//! Also `PointerState`, the multi-click tracker `commands::mouse` drives:
-//! 500 ms window AND Chebyshev distance <= 1 cell
-//! (deliberately not pixel-exact, since a human hand drifts). The wall
-//! clock never gets read directly here —
-//! `Clock` is an injected field on `App`, so a click sequence is
-//! reproducible from a fuzz seed instead of depending on real elapsed time.
-
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// A mouse button, decoupled from `termina::event::MouseButton`.
+// A mouse button, decoupled from `termina::event::MouseButton`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
@@ -20,12 +9,9 @@ pub enum MouseButton {
     Middle,
 }
 
-/// A mouse action, decoupled from `termina::event::MouseEventKind`. `Moved`
-/// (button-up hover) and the horizontal scroll variants are dropped by
-/// `from_termina` below — mode 1002 (`ButtonEventMouse`, `term.rs`) never
-/// reports plain hover in the first place, and this crate has no
-/// horizontal-scroll gesture to drive (horizontal scroll is explicitly out
-/// of scope for this plan).
+// `Moved` (button-up hover) and the horizontal scroll variants are dropped
+// by `from_termina` below — mode 1002 never reports plain hover, and this
+// crate has no horizontal-scroll gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseKind {
     Down(MouseButton),
@@ -35,9 +21,9 @@ pub enum MouseKind {
     ScrollDown,
 }
 
-/// One mouse event, in zero-based terminal cell coordinates (matching
-/// `termina::event::MouseEvent`'s own convention) plus the modifier keys
-/// held at the time (alt-click/shift-click).
+// One mouse event, in zero-based terminal cell coordinates (matching
+// `termina::event::MouseEvent`'s own convention) plus the modifier keys
+// held at the time (alt-click/shift-click).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MouseInput {
     pub kind: MouseKind,
@@ -48,8 +34,6 @@ pub struct MouseInput {
     pub ctrl: bool,
 }
 
-/// Translates a termina mouse event, or `None` for a variant this crate
-/// doesn't bind (`Moved`, the horizontal scroll directions).
 pub fn from_termina(event: termina::event::MouseEvent) -> Option<MouseInput> {
     use termina::event::{Modifiers as TM, MouseButton as TB, MouseEventKind as TK};
 
@@ -79,15 +63,14 @@ pub fn from_termina(event: termina::event::MouseEvent) -> Option<MouseInput> {
     })
 }
 
-/// Answers "what time is it right now?" — a trait rather than a bare
-/// `Instant::now()` call so `App` can carry the answer source as a field,
-/// letting the fuzzer inject its own clock and reproduce a gesture
-/// deterministically.
+// Answers "what time is it right now?" — a trait rather than a bare
+// `Instant::now()` call so `App` can carry the answer source as a field,
+// letting the fuzzer inject its own clock and reproduce a gesture
+// deterministically.
 pub trait Clock: std::fmt::Debug {
     fn now(&self) -> Instant;
 }
 
-/// The default on every `App`: the real wall clock.
 #[derive(Debug, Default)]
 pub struct SystemClock;
 
@@ -97,13 +80,11 @@ impl Clock for SystemClock {
     }
 }
 
-/// Test double — `pub` (not `#[cfg(test)]`) so integration tests in
-/// `tests/`, a separate crate, can construct and advance it. `Instant` has
-/// no public constructor other than `now()`, so this captures one real
-/// `Instant` as its epoch and
-/// advances a `Duration` offset from it rather than fabricating instants
-/// directly — the ABSOLUTE time is irrelevant to `PointerState`, only the
-/// durations BETWEEN clicks are.
+// `pub`, not `#[cfg(test)]`, so integration tests in a separate crate can
+// construct and advance it. `Instant` has no public constructor other than
+// `now()`, so this captures one real `Instant` as its epoch and advances a
+// `Duration` offset from it rather than fabricating instants directly —
+// only the durations between clicks matter, never the absolute time.
 #[derive(Debug)]
 pub struct ManualClock {
     epoch: Instant,
@@ -124,7 +105,6 @@ impl ManualClock {
         }
     }
 
-    /// Advances this clock by `d` — the only way its `now()` ever changes.
     pub fn advance(&self, d: Duration) {
         let mut elapsed = self
             .elapsed
@@ -144,13 +124,11 @@ impl Clock for ManualClock {
     }
 }
 
-/// The multi-click threshold: 500 ms.
 const MULTI_CLICK_WINDOW: Duration = Duration::from_millis(500);
 
-/// The multi-click distance: Chebyshev (max of the row/column deltas) <= 1
-/// cell — a straight-line/Euclidean distance would reject a
-/// click one cell diagonally off the last one, which a real hand produces
-/// often enough that this deliberately doesn't use it.
+// Chebyshev, not Euclidean: a straight-line distance would reject a click
+// one cell diagonally off the last one, which a real hand produces often
+// enough to matter.
 const MULTI_CLICK_DIST: i32 = 1;
 
 fn chebyshev(c1: u16, r1: u16, c2: u16, r2: u16) -> i32 {
@@ -159,7 +137,6 @@ fn chebyshev(c1: u16, r1: u16, c2: u16, r2: u16) -> i32 {
     dc.max(dr)
 }
 
-/// Which splitter a drag is moving.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Splitter {
     LeftColumn,
@@ -167,34 +144,29 @@ pub enum Splitter {
     DiffPanes,
 }
 
-/// The in-flight drag. Text selection and splitter dragging are mutually
-/// exclusive by construction — one gesture owns the pointer at a time.
 #[derive(Clone, Copy, Debug)]
 pub enum Drag {
-    /// Extending a selection from this buffer byte offset, in `pane`'s own
-    /// document — carried so a release or a continuation event can route
-    /// back to the SAME document the gesture began in, rather than
-    /// whichever one happens to be active or under the pointer at that
-    /// later moment — a drag begun in the messages pane must
-    /// never bleed into the active editor document's selection.
+    // Carries `pane` so a release or a continuation event routes back to
+    // the SAME document the gesture began in, never whichever one happens
+    // to be active or under the pointer later — a drag begun in the
+    // messages pane must never bleed into the editor's own selection.
     Text {
         anchor: usize,
         pane: crate::pane::Pane,
     },
-    /// Moving a splitter. `grab_delta` is the offset between the grabbed
-    /// cell and the splitter's own edge, so the splitter never jumps to
-    /// the pointer on the first drag event.
-    Splitter { which: Splitter, grab_delta: i32 },
-    /// Dragging across the open command palette's own row list: each tick
-    /// moves the selection to the row under the pointer, never executing
-    /// it — only a click (or Enter) does that.
+    // Moving a splitter. `grab_delta` is the offset between the grabbed
+    // cell and the splitter's own edge, so the splitter never jumps to
+    // the pointer on the first drag event.
+    Splitter {
+        which: Splitter,
+        grab_delta: i32,
+    },
+    // Dragging across the open command palette's own row list: each tick
+    // moves the selection to the row under the pointer, never executing
+    // it — only a click (or Enter) does that.
     Palette,
 }
 
-/// The click-aggregation + drag state a left-button gesture needs across
-/// messages: `last_click`/`click_count` decide whether THIS
-/// click continues a double/triple-click run; `drag` is the in-flight
-/// gesture a `Drag` event extends, `None` once the button is released.
 #[derive(Debug, Default)]
 pub struct PointerState {
     pub last_click: Option<(Instant, u16, u16)>,
@@ -204,27 +176,19 @@ pub struct PointerState {
 }
 
 impl PointerState {
-    /// Registers a left-button press at `(col, row)` at time `now` and
-    /// returns the resulting click count — `1` for a fresh click, `2`/`3`
-    /// when it continues a run within `MULTI_CLICK_WINDOW` and
-    /// `MULTI_CLICK_DIST` of the previous one. Caps at `3`: a fourth quick
-    /// click in place is treated the same as a triple (whole-line select),
-    /// the same convention most editors use rather than growing a
-    /// selection unit past "logical line".
+    // Caps at 3: a fourth quick click in place is treated the same as a
+    // triple.
     pub fn register_click(&mut self, now: Instant, col: u16, row: u16) -> u8 {
         self.register(now, col, row, None)
     }
 
-    /// The list panes' own registration: the same window and distance, plus
-    /// the resolved row index. One cell of hand drift is a stray inside a
-    /// word, but a DIFFERENT item in a list, so a run continues only while
-    /// consecutive clicks name the same index.
+    // Also gates on the resolved row index: one cell of hand drift is a
+    // stray inside a word, but a different item in a list, so a run
+    // continues only while consecutive clicks name the same index.
     pub fn register_row_click(&mut self, now: Instant, col: u16, row: u16, index: usize) -> u8 {
         self.register(now, col, row, Some(index))
     }
 
-    /// Ends any run in flight, so the next click starts a fresh one — what
-    /// a click resolving to no row at all reports.
     pub fn end_click_run(&mut self) {
         self.last_click = None;
         self.click_count = 0;

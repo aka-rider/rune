@@ -1,29 +1,3 @@
-//! Typed `Command` enum + a stateless resolver (plan Context, "Keymap").
-//! `resolve` never consults any state; it IS the LIVE dispatch path
-//! `app::handle_editor_key` calls, and it is now a thin
-//! wrapper around `resolve_in(editor_bindings::EDITOR_BINDINGS, key)` —
-//! the data table is the one source of truth, not a mirror kept in sync by
-//! hand. `resolve_in`'s whole-`Mods` matching (`KeyPattern::matches`) is
-//! load-bearing: a hand-written `match` guard can check a subset of a
-//! chord's modifiers and let something else through by accident (the
-//! defect this replaced — `CODE-REVIEW.md`'s rune-tui B finding 3: a loose
-//! `'s' if m.sup && !m.ctrl` arm let `⌘⇧S` perform a real save); a table
-//! lookup cannot. Every binding is a single chord requiring ctrl or sup, so
-//! a printable keystroke is always text — there is no stateful prefix
-//! mechanism, and nothing outside the terminal's own event stream is ever
-//! consulted to resolve a key.
-
-// The generic binding machinery now lives in `crate::binding` and the
-// global chord table in `crate::global` (this file was over the
-// 500-line budget). Re-exported here so every existing `keymap::` import
-// path keeps working.
-//
-// `index`/`editor_bindings`/`vim` are submodules of THIS file: Rust lets a
-// `foo.rs` module have its submodules live under `foo/` even though
-// `foo.rs` itself is not `foo/mod.rs` — so `keymap.rs` stays the single
-// top-level file the rest of the crate already imports from, while this
-// machinery gets its own files instead of growing this one past the
-// 500-line budget again.
 pub mod editor_bindings;
 pub mod index;
 mod keyinput;
@@ -61,20 +35,15 @@ pub enum Command {
     SelectAll,
     DeleteLeft,
     DeleteRight,
-    /// `⌥⌫`/`⌥⌦` (Option+Backspace/Delete).
     DeleteWordLeft,
     DeleteWordRight,
-    /// `⌘⇧K` (see `editor_bindings.rs`'s module doc).
     DeleteLine,
     Indent,
     Outdent,
-    /// `⌥↑`/`⌥↓`.
     MoveLineUp,
     MoveLineDown,
-    /// `⌥⇧↑`/`⌥⇧↓`.
     CloneLineUp,
     CloneLineDown,
-    /// `⌥⌘↑`/`⌥⌘↓`.
     AddCursorAbove,
     AddCursorBelow,
     Copy,
@@ -84,43 +53,27 @@ pub enum Command {
     Redo,
     Save,
     QuitConfirm,
-    /// Viewport-only scroll: vim `ctrl+e`/Helix
-    /// `scroll_line_up`/`down` — moves `Viewport::scroll_row` by one row,
-    /// never the cursor (unless the scroll pushes it off screen; see
-    /// `Viewport::reconcile`'s docs).
+    // Moves the viewport only; the cursor moves only if the scroll pushes
+    // it off screen.
     ScrollLineUp,
     ScrollLineDown,
-    /// vim/Helix `ctrl+u`/`ctrl+d`-style half-page scroll — viewport-only,
-    /// `commands::scroll(..., sync_cursor: false)` (Helix). Distinct from
-    /// `PageUp`/`PageDown` above, which move the CURSOR a full page.
+    // Viewport-only half-page scroll, distinct from `PageUp`/`PageDown`
+    // above, which move the cursor a full page.
     ScrollHalfPageUp,
     ScrollHalfPageDown,
-    /// vim/Helix `zz`: re-centres the viewport on the cursor's row.
+    // Viewport-only: re-centres on the cursor's row without moving the
+    // cursor.
     CentreCursor,
-    /// vim/Helix `zt`: scrolls the cursor's row to the top of the viewport.
+    // Viewport-only: scrolls the cursor's row to the top without moving
+    // the cursor.
     CursorToTop,
-    /// vim/Helix `zb`: scrolls the cursor's row to the bottom of the
-    /// viewport.
+    // Viewport-only: scrolls the cursor's row to the bottom without
+    // moving the cursor.
     CursorToBottom,
-    /// Follows the link under the cursor — ⌘Enter or ^Enter.
-    /// Deliberately distinct from the hardcoded plain-Enter newline fast
-    /// path (`app::handle_editor_key`, `Mods::NONE` only), so the two can
-    /// never collide.
     FollowLink,
-    /// Re-reads an image document through the `Vfs`, re-decodes it, and
-    /// retransmits under the same deterministic id — bound to `⌘R`, gated
-    /// by the `image` `when` atom so it only ever does anything on an
-    /// image document; `graphics::reload_image`
-    /// is itself a no-op on any other document, so the gate is a UX
-    /// signal (footer/help visibility) rather than the only thing standing
-    /// between this chord and a real editor document.
     Reload,
 }
 
-/// Which quit chord produced a `Command::QuitConfirm` — the identity `App`
-/// compares to require the SAME chord pressed twice: the two quit chords
-/// are `ctrl+c ctrl+c` and `ctrl+d ctrl+d`; pressing the other quit chord
-/// does not count as the second press.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuitKey {
     CtrlC,
@@ -128,10 +81,6 @@ pub enum QuitKey {
 }
 
 impl QuitKey {
-    /// The single source of truth for which `KeyInput`s are quit chords —
-    /// `resolve` below routes through this instead of duplicating the
-    /// guards, so a `Command::QuitConfirm` and its `QuitKey` identity can
-    /// never disagree.
     pub fn from_key(key: KeyInput) -> Option<QuitKey> {
         let m = key.mods;
         match key.code {
@@ -142,13 +91,6 @@ impl QuitKey {
     }
 }
 
-/// The stateless resolver. `None` means this exact chord isn't bound —
-/// the caller's own hardcoded fast paths (Enter, Escape, printable
-/// fallthrough) handle everything this function doesn't.
-/// The quit chords are the one exception kept outside the table: they are
-/// identity-bearing (`QuitKey`, threaded through `App::quit`) in a
-/// way a plain `Command` isn't, so `QuitKey::from_key` stays the single
-/// source of truth for them, same as before.
 pub fn resolve(key: KeyInput) -> Option<Command> {
     if QuitKey::from_key(key).is_some() {
         return Some(Command::QuitConfirm);
@@ -372,13 +314,6 @@ mod tests {
         );
     }
 
-    /// Regression for `CODE-REVIEW.md` rune-tui B finding 3: a loose
-    /// `resolve_char` arm (`'s' if m.sup && !m.ctrl`, never checking
-    /// `shift`/`alt`) let `⌘⇧S` and `⌘⌥S` perform a real in-place save via
-    /// `Command::Save`. `EDITOR_BINDINGS` has a row for the EXACT `sup`-only
-    /// chord (see its own doc comment for why), but `resolve_in`'s
-    /// whole-`Mods` matching means no chord holding `shift` or `alt`
-    /// alongside `sup+s` can match that row or any other.
     #[test]
     fn save_requires_exact_mods_and_shifted_variants_resolve_to_none() {
         let sup_shift = key(
@@ -401,11 +336,6 @@ mod tests {
         assert_eq!(resolve(sup_alt), None, "⌘⌥S must not resolve to a save");
     }
 
-    /// Regression for `CODE-REVIEW.md` rune-tui B finding 3's other half:
-    /// `⌥⇧←`/`⌥⇧→` must SELECT word-left/right, not collapse a selection
-    /// by silently falling back to plain word motion (the old
-    /// `resolve_char` guard didn't check `shift` on the ALT arm either).
-    /// Carried over from `⌥⇧B`/`⌥⇧F`, which macOS composes away.
     #[test]
     fn shift_alt_arrows_select_word_not_move() {
         let shift_alt = Mods {
@@ -423,16 +353,11 @@ mod tests {
         );
     }
 
-    /// The converse of `editor_bindings`'s own
-    /// `every_row_resolves_through_the_live_dispatch_path`: every chord
-    /// `resolve` DOES accept must have a matching `EDITOR_BINDINGS` row —
-    /// otherwise a chord could resolve live yet vanish from the generated
-    /// Help doc and the startup collision index, both of which only ever
-    /// read the table (`CODE-REVIEW.md` rune-tui B finding 4). Sweeps
-    /// every printable ASCII `Char` against all 16 `Mods` combinations
-    /// (~1500 cases) — cheap at this table's size, and it is what would
-    /// have caught finding 3 directly, since a resolving-but-tableless
-    /// chord is exactly what a loose `resolve_char` arm produced.
+    // The converse check: every chord `resolve` accepts must have a
+    // matching `EDITOR_BINDINGS` row, or it could resolve live yet stay
+    // invisible to the generated Help doc and the startup collision index,
+    // which both only ever read that table. Sweeps every printable ASCII
+    // `Char` against all 16 `Mods` combinations (~1500 cases).
     #[test]
     fn every_resolving_char_chord_has_an_editor_bindings_row() {
         let mod_combos: Vec<Mods> = (0u8..16)
@@ -450,7 +375,7 @@ mod tests {
                 checked += 1;
                 let k = key(KeyCode::Char(c), m);
                 if QuitKey::from_key(k).is_some() {
-                    continue; // Quit chords deliberately have no table row.
+                    continue;
                 }
                 let Some(cmd) = resolve(k) else { continue };
                 assert_eq!(
@@ -465,8 +390,4 @@ mod tests {
             "sweep should cover roughly 1500 cases, covered {checked}"
         );
     }
-
-    // The generic machinery (`resolve_in`/`KeyPattern`) now lives in
-    // `binding.rs` and the global table in `global.rs`; their coverage is
-    // in `tests/keymap_global.rs`.
 }

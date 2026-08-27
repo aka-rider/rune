@@ -93,12 +93,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 
-### Comment purge (the refactor itself)
-- **Where**: `crates/rune-tui` broadly — comments are roughly a third of the crate, rustdoc included
-- **Wrong**: a paragraph-long justification comment indicts the code it justifies — the code is the refactor candidate, not the comment.
-- **Instead**: apply the heuristic crate-wide: keep only complex-algorithm explanations (inside the function), third-party quirks that save real debugging time, and constraints no type/name/test can carry; delete the rest by cleaning the code they were defending.
-- **Done when**: the purge has run and each surviving comment matches one of the three legitimate categories above.
-
 
 ## Mutation testing (2026-08-27)
 

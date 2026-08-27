@@ -1,20 +1,5 @@
-//! Icon-tier selection: decides which glyph family a session
-//! paints line decorations and file-tree rows with — a nerd-font tier that
-//! needs a Nerd Font or system font fallback for its private-use-area
-//! glyphs, or a plain-Unicode tier that renders in any terminal font. The
-//! tier itself is the first-class value; `IconTier::markdown` derives the
-//! `rune_md::icons::IconSet` on demand, and `crate::fileicons` derives the
-//! Explorer glyph on demand — `rune-md` only ever holds the two `IconSet`
-//! VALUES (its own module doc: "choosing WHICH set applies is the
-//! caller's job"), and this module makes that choice once at startup from
-//! the environment, never re-decided per frame.
-
 use rune_md::icons::IconSet;
 
-/// Which glyph family a session paints decorations with: the nerd tier
-/// needs a Nerd Font (or a terminal with system font fallback covering its
-/// private-use-area codepoints); the Unicode tier renders in any terminal
-/// font.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconTier {
     Nerd,
@@ -22,7 +7,6 @@ pub enum IconTier {
 }
 
 impl IconTier {
-    /// The markdown decoration set this tier implies.
     pub fn markdown(self) -> IconSet {
         match self {
             IconTier::Nerd => IconSet::nerd(),
@@ -31,21 +15,10 @@ impl IconTier {
     }
 }
 
-/// Picks the icon tier from three environment-shaped inputs, taken as
-/// PARAMETERS rather than read from `std::env` directly: `RUNE_ICONS`/
-/// `TERM_PROGRAM`/`TERM` are process-global, so a test that set/unset them
-/// directly would race every other test in this binary running
-/// concurrently.
-///
-/// `RUNE_ICONS=nerd`/`RUNE_ICONS=unicode` is an explicit override and wins
-/// outright, whatever the terminal claims to be. Absent that, the nerd
-/// tier is chosen iff `TERM_PROGRAM` names a terminal known to ship (or
-/// fall back to a system font covering) the nerd-font private-use-area
-/// codepoints — Ghostty, WezTerm, iTerm2 — or `TERM` contains `"kitty"`
-/// (kitty sets `TERM=xterm-kitty`, not a `TERM_PROGRAM` this crate can
-/// rely on). Every other terminal, including an unset environment,
-/// defaults to the plain-Unicode tier — the safe choice for a terminal
-/// this crate knows nothing about.
+// `RUNE_ICONS`/`TERM_PROGRAM`/`TERM` are taken as parameters rather than
+// read from `std::env` directly: they are process-global, so a test that
+// set or unset them would race every other test running concurrently in
+// this binary.
 pub fn choose(env_icons: Option<&str>, term_program: Option<&str>, term: Option<&str>) -> IconTier {
     match env_icons {
         Some("nerd") => return IconTier::Nerd,

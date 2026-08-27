@@ -14,13 +14,6 @@ pub enum TimerKey {
     Msg(TimerMsgKey),
 }
 
-/// The keys that pair with `Msg::Timer` — every `TimerKey` variant EXCEPT
-/// `Snapshot`, which fires its own dedicated `Msg::SnapshotDue` instead.
-/// A distinct type from `TimerKey` itself so `Msg::Timer`'s own `key` field
-/// can carry this narrower type: the illegal `Msg::Timer{ key: TimerKey::
-/// Snapshot(_), .. }` pairing dispatch's `update_inner` used to have to
-/// guard against with an `unreachable!` becomes unrepresentable instead —
-/// there is no `TimerMsgKey::Snapshot` variant to construct.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TimerMsgKey {
     SaveConfirm,

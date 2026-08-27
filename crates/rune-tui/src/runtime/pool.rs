@@ -8,24 +8,14 @@ const DEFAULT_SIZE: usize = 4;
 const MIN_SIZE: usize = 2;
 const MAX_SIZE: usize = 8;
 
-/// How many worker threads [`Pool::new`] should spawn: the machine's own
-/// parallelism, clamped to a band sane for a TUI's background work — never
-/// below [`MIN_SIZE`] (a single-core report should still overlap two
-/// `Cmd`s), never above [`MAX_SIZE`] (a many-core build box has no reason
-/// to hold open more idle OS threads than this app ever has concurrent
-/// off-thread work for).
 pub(crate) fn size() -> usize {
     thread::available_parallelism()
         .map_or(DEFAULT_SIZE, |n| n.get())
         .clamp(MIN_SIZE, MAX_SIZE)
 }
 
-/// Runs `cmd` to completion and forwards its reply, if any, to `tx` —
-/// exactly what `spawn_cmd` used to do inline in its own `thread::spawn`
-/// closure, now shared by every pool worker's loop body and by the
-/// dedicated per-save thread `spawn_cmd` still spawns.  `catch_unwind`
-/// guards a `Cmd`'s own Rust panic; it cannot and does not guard a crash in
-/// linked C, which aborts the process rather than unwinding it.
+// `catch_unwind` guards a `Cmd`'s own Rust panic; a crash in linked C
+// aborts the process without unwinding.
 pub(crate) fn run_and_reply(cmd: Cmd, tx: &mpsc::Sender<Msg>) {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cmd.run())) {
         Ok(Some(msg)) => {
@@ -41,12 +31,6 @@ pub(crate) fn run_and_reply(cmd: Cmd, tx: &mpsc::Sender<Msg>) {
     }
 }
 
-/// A fixed-size worker pool for every `Cmd` kind except `Save` (which keeps
-/// its own dedicated, joinable thread per publish — see `spawn_cmd` — so
-/// `exit_settle::join_save_handles` can keep waiting on exactly the set of
-/// in-flight publishes it always has). One dedicated channel per worker
-/// (round-robin dispatch) rather than a single channel behind a shared
-/// `Mutex`: it needs no lock and no poison-recovery path to stay panic-safe.
 pub(crate) struct Pool {
     senders: Vec<mpsc::Sender<Cmd>>,
     next: AtomicUsize,
@@ -72,13 +56,6 @@ impl Pool {
         }
     }
 
-    /// Hands `cmd` to whichever worker is next in the round-robin —
-    /// bounded total threads, unbounded queue depth per worker. Ordering
-    /// across workers was never guaranteed even under the old one-thread-
-    /// per-`Cmd` scheme (the OS scheduler alone decided who finished
-    /// first), so this changes nothing a caller could have relied on: every
-    /// reply that must survive reordering already carries its own
-    /// generation or version echo.
     pub(crate) fn submit(&self, cmd: Cmd) {
         let idx = self.next.fetch_add(1, Ordering::Relaxed) % self.senders.len().max(1);
         if let Some(sender) = self.senders.get(idx) {

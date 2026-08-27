@@ -128,13 +128,6 @@ pub(crate) fn mouse(app: &mut App, input: MouseInput, effects: &mut Effects) {
     }
 }
 
-/// A click on the finder's `visible_row`-th ON-SCREEN result row (0-based,
-/// already past the query bar) — `commands::mouse`'s own hit test resolves
-/// the click to this index, this function resolves it to an absolute
-/// `state.results` index through the SAME scroll window `render::filesearch`
-/// paints from, then selects and opens it exactly like `keys::open_selected`
-/// does for Enter. A click past the last visible row (blank space below a
-/// short list, or the "no matches" placeholder) is a no-op.
 pub(crate) fn click_row(app: &mut App, visible_row: usize, effects: &mut Effects) {
     let Some(state) = app.filesearch() else {
         return;
@@ -206,13 +199,9 @@ pub(crate) fn handle_recents_loaded(
     recompute(app, effects);
 }
 
-/// Drops any `state.walk` candidate whose path already appears in
-/// `state.recents` — the finder's recents load and its workspace walk are
-/// two independent one-shot replies that can land in either order, so this
-/// runs after EITHER lands (`handle_recents_loaded`, `handle_scanned`)
-/// rather than once at whichever happened to reply first; a scan landing
-/// before recents left the overlap unfiltered until recents applied this
-/// same pass a second time.
+// The finder's recents load and its workspace walk are two independent
+// one-shot replies that can land in either order, so this runs after
+// either lands rather than once at whichever happened to reply first.
 fn dedupe_walk_against_recents(state: &mut FileSearchState) {
     let seen: std::collections::HashSet<PathBuf> =
         state.recents.iter().map(|c| c.path.clone()).collect();

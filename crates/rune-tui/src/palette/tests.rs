@@ -413,8 +413,6 @@ const SUP: Mods = Mods {
     sup: true,
 };
 
-/// Defect 4: ⌘V into the palette's query used to be swallowed silently —
-/// neither `PALETTE_BINDINGS` nor `PasteTarget` had any entry for it.
 #[test]
 fn command_v_spawns_a_pbpaste_cmd_tagged_for_the_palette() {
     let mut app = app();
@@ -455,8 +453,6 @@ fn the_pbpaste_reply_for_the_palette_inserts_into_its_field() {
     assert_eq!(app.palette().expect("open").field.text(), "commit");
 }
 
-/// Defect 4: Tab with nothing selected (an empty result list) used to be a
-/// silent no-op — house rule, every user action gets feedback.
 #[test]
 fn tab_with_no_matching_command_reports_and_stays_open() {
     let mut app = app();

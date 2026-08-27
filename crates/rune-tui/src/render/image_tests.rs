@@ -1,5 +1,3 @@
-//! Unit tests for the image info-card row builder, kept in a sibling file
-//! so `image.rs` itself stays inside the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
@@ -56,11 +54,6 @@ fn info_card_lines_include_name_dims_and_kitty_reason() {
     assert!(lines.iter().any(|l| l.contains("decoding")));
 }
 
-/// `Pending` splits on `in_flight`: a decode actually running reads
-/// "decoding…", while one that was never scheduled — or whose reply was
-/// lost — says so and names the way out. Collapsing both into
-/// "decoding…" is what made a wedged decode look identical to a slow one
-/// for an entire session.
 #[test]
 fn pending_without_an_in_flight_decode_reads_differently_from_a_running_one() {
     let mut app = app_with_image_doc(true, ImageStatus::Pending);
@@ -206,12 +199,9 @@ fn human_size_formats_bytes_and_larger_units() {
     assert_eq!(human_size(1536), "1.5 KB");
 }
 
-/// An independent width oracle (matching `breadcrumb.rs`'s own
-/// `oracle_cell_width` and the test-only `unicode-width` dev-dependency
-/// `Cargo.toml` documents): computed straight from `unicode_width`, never
-/// by calling this module's own `grapheme_width`/`push_grapheme_cells`, so
-/// a regression in the production width math can't pass a test that merely
-/// re-invokes the same broken function.
+// An independent width oracle: computed straight from `unicode_width`,
+// never by calling this module's own width functions, so a regression in
+// the production width math can't pass a test that just re-invokes it.
 fn oracle_grapheme_width(cluster: &str) -> usize {
     cluster
         .chars()
@@ -221,15 +211,6 @@ fn oracle_grapheme_width(cluster: &str) -> usize {
         .max(1)
 }
 
-/// `centered_cells` must build ONE `Cell` per grapheme CLUSTER, at that
-/// cluster's real display width, never one `Cell` per `char` at a
-/// hardcoded width — the file names it renders (the card's own name
-/// line, an inline embed's link target) are arbitrary user text, not
-/// ASCII. Slices out `text`'s own cells STRUCTURALLY, by the same leading-
-/// pad width `centered_cells` itself computes and documents (`(width -
-/// display_width(text)) / 2`) followed by one cell per grapheme cluster in
-/// `text` — never by filtering out `" "` cells, which would misidentify a
-/// space that is itself part of `text` as padding.
 fn content_cells<'a>(cells: &'a [Cell], text: &str, width: usize) -> &'a [Cell] {
     let pad = width.saturating_sub(display_width(text)) / 2;
     let content_len = text.graphemes(true).count();
@@ -268,8 +249,6 @@ fn centered_cells_segments_a_cjk_filename_by_grapheme_not_char() {
 
 #[test]
 fn centered_cells_keeps_a_zwj_family_emoji_as_one_cluster() {
-    // "man + ZWJ + woman + ZWJ + girl + ZWJ + boy" — a single extended
-    // grapheme cluster despite being seven code points.
     let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}";
     let text = format!("{family}.png");
     let expected: Vec<&str> = text.graphemes(true).collect();
@@ -302,7 +281,6 @@ fn centered_cells_keeps_a_zwj_family_emoji_as_one_cluster() {
 
 #[test]
 fn centered_cells_keeps_a_base_plus_combining_mark_as_one_cluster() {
-    // "cafe" + combining acute accent (NFD "café").
     let text = "cafe\u{0301}.png";
     let expected: Vec<&str> = text.graphemes(true).collect();
     assert_eq!(
@@ -328,16 +306,6 @@ fn centered_cells_keeps_a_base_plus_combining_mark_as_one_cluster() {
     }
 }
 
-/// The control-character exposure Finding 2 fixed: `centered_cells` is fed
-/// arbitrary user text (a file name, an inline embed's link target), which
-/// can contain a raw ASCII control byte. Before this fix, `centered_cells`
-/// built its own `Cell`s directly and handed ratatui a literal control byte
-/// as a cell's `text` — ratatui-core's `cell_width()` asserts a
-/// single-byte symbol is never `is_ascii_control` and panics the instant
-/// that cell is diffed. Routing through `push_grapheme_cells` (the same
-/// chokepoint `segment_cells` uses for real buffer content) substitutes the
-/// safe control-picture glyph instead, so a tab or a bare `\x07` in a file
-/// name can never reach ratatui unfiltered.
 #[test]
 fn centered_cells_substitutes_a_control_character_instead_of_passing_it_through() {
     let text = "bad\u{7}name.png"; // a bare BEL control byte
@@ -358,16 +326,6 @@ fn centered_cells_substitutes_a_control_character_instead_of_passing_it_through(
     );
 }
 
-/// The width-drift Finding 2's fix could otherwise reintroduce: a TAB is
-/// the one grapheme whose expansion width is NOT a fixed per-cluster
-/// number — `crate::width::display_width` (a prior version's pad source)
-/// gives it width 1 (`control_aware_width`'s single-char clamp), while
-/// `push_grapheme_cells` (what actually builds the returned cells) expands
-/// it to the next 4-column tab stop. Measuring `pad` from one function and
-/// building cells from the other let the declared row overrun `width`
-/// silently. `centered_cells` now derives `pad` from the SAME chokepoint
-/// it builds with, so this must hold for text containing a tab exactly as
-/// it does for plain text.
 #[test]
 fn centered_cells_with_a_tab_still_declares_exactly_width() {
     let text = "a\tb.png";

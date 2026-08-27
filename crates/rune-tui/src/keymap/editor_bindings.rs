@@ -1,50 +1,19 @@
-//! `EDITOR_BINDINGS` — the ONE source of truth for every editor-pane chord.
-//! `keymap::resolve` no longer hand-matches
-//! these chords itself; it delegates straight to `resolve_in(EDITOR_
-//! BINDINGS, key)`, so a chord either has a row here or it does not
-//! resolve — `help.rs`'s reflection pass and the startup collision index
-//! (`index::validate`) read the exact same data the live dispatch path
-//! uses, closing the recorded exception `help.rs` used to carry (a hand-
-//! maintained editor key list, kept in sync by hand — exactly the kind of
-//! parallel source of truth that must never exist) AND the drift a second, hand-written match
-//! used to allow (a loose modifier guard here once let `⌘⇧S` fall through
-//! to a real save — see the crate's `CODE-REVIEW.md`, rune-tui B finding
-//! 3 — since a hand-written `match` arm can check less than its whole
-//! `Mods`, while `KeyPattern::matches` never can).
-//!
-//! The quit chords are deliberately OMITTED here: `QuitKey::from_key`
-//! claims them before `resolve_in` is ever consulted (`keymap::resolve`
-//! above), so `ctrl+d` is NOT a `PageDown` row here — only `ctrl+u` reaches
-//! `Command::PageUp` from a `Char` chord.
-//!
-//! `Save`'s EXACT `sup`-only chord DOES have a row here, even though
-//! `global::GLOBAL_BINDINGS` already resolves the identical chord one
-//! stage earlier (`app::handle_key`'s stage 2, before any pane — including
-//! the editor's own resolver — ever sees the key): the row below is dead
-//! code on that live path, kept anyway because `keymap::resolve` is also
-//! called directly by things that never go through the layered
-//! `app::handle_key` pipeline (e.g. `rune-fuzz`'s driver tags each
-//! keystroke with `keymap::resolve(key)` for its `SAVE-INFLIGHT-SM`
-//! invariant) — those callers still need the EXACT chord to identify as
-//! `Command::Save`. Only the exact chord: no shift/alt variant gets a row,
-//! which is the actual fix (`CODE-REVIEW.md` rune-tui B finding 3) — a
-//! loose `resolve_char` arm here once let `⌘⇧S`/`⌘⌥S` through too.
-//!
-//! The 61 rows themselves are split across four sibling modules by natural
-//! group — `motion` (plain cursor movement, viewport-only scroll, link
-//! follow), `selection` (chords that extend or create a selection),
-//! `editing` (chords that mutate the document, move/clone a line, add a
-//! multi-cursor, undo/redo, save), `clipboard` (copy/cut/paste) — to bring
-//! this file under the 500-line budget. `EDITOR_BINDINGS` below lists
-//! every row by name in the EXACT original order (resolution is order-
-//! sensitive), regardless of which sibling module defines it.
+// The quit chords are deliberately omitted here: `QuitKey::from_key` claims
+// them before `resolve_in` is ever consulted, so `ctrl+d` is not a
+// `PageDown` row here — only `ctrl+u` reaches `Command::PageUp` from a
+// `Char` chord.
+//
+// `Save`'s exact `sup`-only chord does have a row here even though
+// `global::GLOBAL_BINDINGS` already resolves the identical chord one stage
+// earlier: `keymap::resolve` is also called directly by callers that never
+// go through that layered pipeline (`rune-fuzz`'s driver tags each
+// keystroke with `keymap::resolve(key)` for its save-inflight invariant),
+// and those callers need the exact chord to identify as `Command::Save`.
+// Only the exact chord gets a row — no shift/alt variant.
 
 mod clipboard;
 mod editing;
 mod motion;
-// Re-exported so a caller outside this module (`help.rs`'s reload test)
-// can name the reload binding by the same constant `EDITOR_BINDINGS`
-// itself lists, rather than a hardcoded help/key-label string.
 pub(crate) use editing::RELOAD;
 mod selection;
 
@@ -101,8 +70,6 @@ pub(crate) const ALT_SUP: Mods = Mods {
     sup: true,
 };
 
-/// One row per chord `keymap::resolve` binds (Save/quit chords excepted —
-/// see this module's doc comment).
 pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     motion::CHAR_LEFT,
     motion::CHAR_RIGHT,
@@ -180,13 +147,6 @@ mod tests {
 
     #[test]
     fn every_row_resolves_through_the_live_dispatch_path() {
-        // `resolve` delegates to this table directly, so this is
-        // near-tautological for the forward direction — kept as a
-        // cheap sanity check that a future change to `resolve` doesn't
-        // reintroduce a second, hand-written match that drifts from this
-        // table. The CONVERSE direction (every chord `resolve` accepts has
-        // a row here) is the real anti-drift gate — see the exhaustive
-        // sweep test in `keymap.rs`.
         use crate::binding::KeyMatch;
         use crate::keymap::{KeyInput, resolve};
 
@@ -209,14 +169,10 @@ mod tests {
         }
     }
 
-    /// There is no existing cross-table keymap-union guard to lean on (this
-    /// codebase deliberately allows different tables — vim vs. editor,
-    /// global vs. editor — to reuse the same physical key), so the reload
-    /// chord's own safety net has to be a dedicated test asserting no OTHER
-    /// row in THIS table already claims `⌘R`. `index::validate` (exercised
-    /// above) already rejects two rows sharing an identical key outright —
-    /// this test asserts that fact specifically for the reload binding, by
-    /// identity.
+    // `index::validate` already rejects any two rows in this table sharing
+    // a key; this test pins that fact specifically for the reload binding,
+    // by identity, since different tables are allowed to reuse a physical
+    // key and only a same-table collision is ever invalid.
     #[test]
     fn reload_key_is_not_already_bound_elsewhere_in_the_editor_table() {
         let claimants: Vec<&'static str> = EDITOR_BINDINGS

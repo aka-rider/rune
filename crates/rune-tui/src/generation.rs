@@ -1,28 +1,19 @@
-//! One request-correlation counter shape, reused by every feature that
-//! must tell a fresh async reply from a stale one (rename, merge,
-//! save-confirm, quit-confirm, filesearch, search history): a `GenCounter`
-//! field on `App` mints a `Generation` at request time, the request's
-//! `Cmd`/`Msg` carries that `Generation` back, and the handler compares it
-//! against whatever the feature's own state currently holds — a mismatch
-//! means a later request already superseded this reply. `Generation<T>`/
-//! `GenCounter<T>` are phantom-typed over a zero-sized marker per feature —
-//! a rename generation and a trash generation share the same `u64` shape
-//! but can never be compared or swapped for one another by mistake, because
-//! their marker types differ. `T` never appears at runtime (`PhantomData`),
-//! so every trait below is implemented for every `T` unconditionally rather
-//! than derived (`derive` would wrongly require `T: Trait`).
-
 use std::marker::PhantomData;
 
+// Phantom-typed over a zero-sized marker per feature, so a rename
+// generation and a trash generation share the same `u64` shape but can
+// never be compared or swapped for one another by mistake. `T` never
+// appears at runtime, so every trait below is implemented for every `T`
+// unconditionally rather than derived (`derive` would wrongly require `T:
+// Trait`).
 pub struct Generation<T>(u64, PhantomData<fn() -> T>);
 
 impl<T> Generation<T> {
     pub const ZERO: Generation<T> = Generation(0, PhantomData);
 
-    /// Builds a `Generation` from an explicit numeric value — for a fuzz
-    /// driver deliberately targeting a generation `mint()` structurally
-    /// cannot reach (a caller-chosen stale timer fire). Production code
-    /// only ever holds a `Generation` a `GenCounter` minted.
+    // For a fuzz driver deliberately targeting a generation `mint()`
+    // structurally cannot reach. Production code only ever holds a
+    // `Generation` a `GenCounter` minted.
     pub const fn from_raw(value: u64) -> Generation<T> {
         Generation(value, PhantomData)
     }

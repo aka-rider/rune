@@ -1,14 +1,3 @@
-//! The platform key-identity layer: `KeyCode`/`Mods`/`KeyInput` plus the one
-//! bridge from termina's own event type (`from_termina`). Split out of
-//! `keymap.rs` to bring that file under the 500-line budget, mirroring
-//! the `binding.rs`/`global.rs` extraction already used for the generic
-//! table machinery and the global chord table; `keymap` re-exports every
-//! item here so no import path downstream changed.
-
-/// A platform- and library-independent key identity — decoupled from
-/// termina's `KeyCode` so the resolver table below (and its tests) don't
-/// depend on termina at all. `from_termina` is the only place that bridges
-/// the two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyCode {
     Char(char),
@@ -25,15 +14,12 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     Delete,
-    /// The F1 function key, bound to `GlobalCommand::Help`. The only
-    /// `Function(u8)` termina reports this crate binds; no other function
-    /// key is meaningful here yet.
     F1,
 }
 
-/// Modifier keys held during a key event. Field names avoid `super` (a
-/// reserved path keyword) and spell out `sup` for the Command/Super key —
-/// Command on macOS, the platform this app exclusively targets.
+// Field names avoid `super` (a reserved path keyword) and spell out `sup`
+// for the Command/Super key — Command on macOS, the platform this app
+// exclusively targets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mods {
     pub shift: bool,
@@ -57,11 +43,9 @@ pub struct KeyInput {
     pub mods: Mods,
 }
 
-/// Translate a termina key event to a `KeyInput`, or `None` for a key this
-/// app doesn't bind (function keys, media keys, ...) or a Release event —
-/// commands act on `Press`/`Repeat` only (termina docs: "Code that handles
-/// shortcuts should usually check `kind == KeyEventKind::Press`"; `Repeat`
-/// is treated the same as `Press` so a held arrow key keeps moving).
+// termina's own docs say code handling shortcuts should usually check
+// `kind == KeyEventKind::Press`; this treats `Repeat` the same as `Press`
+// so a held arrow key keeps moving, and drops `Release` entirely.
 pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
     use termina::event::{KeyCode as TK, KeyEventKind, Modifiers as TM};
 

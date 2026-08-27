@@ -54,13 +54,9 @@ pub(crate) fn merge_hint_spans(app: &App, unresolved: usize) -> Vec<Span<'static
 pub(crate) fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
-    // A rename collision names its target: "replace <what>?" is a question
-    // the user can answer; a bare "replace" is not. `DirtyClose`/
-    // `DirtyQuit` both name WHICH document is waiting, so the prompt matches
-    // something the tab bar already shows. Deliberately NOT `title::name_for`:
-    // that one answers "what should the title FIELD hold", which for a
-    // pathless draft is the editable `.md` stub — a prompt reading "unsaved
-    // changes in .md" names nothing at all.
+    // Deliberately not `title::name_for`: for a pathless draft that answers
+    // with the editable `.md` stub, and a prompt reading "unsaved changes
+    // in .md" would name nothing at all.
     let options: &[guard::GuardOption] = match &prompt.kind {
         GuardKind::DirtyClose | GuardKind::DirtyQuit => {
             let name = app

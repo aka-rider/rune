@@ -59,15 +59,11 @@ pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
     );
 }
 
-/// The palette row's own availability check — a cheap, read-only mirror of
-/// [`target`]/[`selected_row_target`]'s existence checks, without their
-/// message-posting: the registry's `fn(&App) -> Availability` shape can't
-/// take `&mut App`, and the palette re-derives this on every keystroke of
-/// the filter field, so it must stay side-effect-free. Dirtiness and an
-/// in-flight rename/trash are deliberately NOT checked here — those are
-/// transient refusals `request_trash`/`confirm` already report with their
-/// own message, the same way `Save`'s registry row stays `Available` while
-/// a save is already in flight.
+/// Read-only and side-effect-free — the registry's `fn(&App) -> Availability`
+/// shape can't take `&mut App`, and the palette re-derives this on every
+/// keystroke. Dirtiness and an in-flight rename/trash are deliberately NOT
+/// checked here: those are transient refusals `request_trash`/`confirm`
+/// already report with their own message.
 pub(crate) fn availability(app: &App) -> Availability {
     if app.focus() == Pane::Explorer {
         return selected_row_availability(app);

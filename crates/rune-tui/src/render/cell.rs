@@ -23,10 +23,9 @@ pub fn style_for(theme: &Theme, id: ScopeId) -> Style {
     theme.scope_style(id)
 }
 
-// ratatui-core's cell_width() asserts a single-byte symbol is never an
-// ASCII control character; a raw control byte reaching set_symbol panics a
-// debug build and corrupts the row in release, so every control code maps
-// to its Unicode "control picture" glyph before it ever gets there.
+// ratatui's cell_width() panics on a bare ASCII control byte in a
+// single-byte symbol, so every control code is mapped to its Unicode
+// "control picture" glyph before it reaches ratatui.
 fn control_placeholder(ch: char) -> char {
     match ch as u32 {
         0x00..=0x1f => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{FFFD}'),
@@ -35,14 +34,10 @@ fn control_placeholder(ch: char) -> char {
     }
 }
 
-// A ZWJ sequence (e.g. a family emoji) or a skin-tone-modified emoji is many
-// chars forming one user-perceived grapheme cluster. Splitting it across
-// multiple Cells corrupts the display: ratatui's own buffer diffing treats
-// any cell whose cell_width() is > 1 as covering the next cell_width()-1
-// columns too and skips redrawing them, assuming no double-width cell is
-// ever followed by non-blank content — so a cluster must be emitted as one
-// Cell, and `blit` resets the buffer columns a wide Cell covers to keep
-// that assumption true for cells written directly via cell_mut.
+// A grapheme cluster (e.g. a ZWJ family emoji) must become exactly one
+// Cell: ratatui's buffer diffing treats a cell whose cell_width() is > 1
+// as covering the following cell_width()-1 columns and skips redrawing
+// them, assuming a wide cell is never followed by non-blank content.
 pub(crate) fn push_grapheme_cells(
     cells: &mut Vec<Cell>,
     visual_col: &mut usize,

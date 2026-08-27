@@ -11,9 +11,6 @@ fn app_with(content: &str) -> App {
     App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
 }
 
-/// While the title is focused with the extension gate locked
-/// and an extension actually present, the footer offers both the
-/// unlock gesture and the commit itself.
 #[test]
 fn title_focus_hints_show_the_unlock_gesture_while_locked_with_an_extension() {
     let mem = Arc::new(Mem::new());
@@ -44,10 +41,6 @@ fn title_focus_hints_show_the_unlock_gesture_while_locked_with_an_extension() {
     );
 }
 
-/// Once the gate is unlocked (or there's no extension to unlock — a
-/// pathless draft's own seeded state, decision 9), only the commit hint
-/// remains: offering an unlock gesture that's already a no-op would be
-/// misleading.
 #[test]
 fn title_focus_hints_drop_the_unlock_gesture_once_unlocked() {
     let mut app = app_with("hi");
@@ -67,10 +60,6 @@ fn title_focus_hints_drop_the_unlock_gesture_once_unlocked() {
     );
 }
 
-/// The span-level regression guard for assumption A2: the
-/// `^S` label span carries `theme.chrome.footer_key_inactive` on a
-/// clean document and `theme.chrome.footer_key` once an edit makes it
-/// dirty.
 #[test]
 fn save_label_span_is_styled_inactive_when_clean_and_active_when_dirty() {
     let save_label = GLOBAL_BINDINGS
@@ -100,10 +89,7 @@ fn save_label_span_is_styled_inactive_when_clean_and_active_when_dirty() {
     assert_eq!(save_span.style, app.theme.chrome.footer_key);
 }
 
-/// `GlobalCommand::Merge` has exactly one live binding (`^M` — Ghostty
-/// steals `⌘M`, so that form was dropped rather than bound), so on a
-/// diverged document the default hints list "merge" exactly once,
-/// rendered with the `^` glyph, never `⌘`.
+// Ghostty steals `⌘M`, so `GlobalCommand::Merge` only ever binds `^M`.
 #[test]
 fn default_hints_list_merge_once_as_ctrl_m() {
     let mut app = app_with("hello");
@@ -118,9 +104,6 @@ fn default_hints_list_merge_once_as_ctrl_m() {
     );
 }
 
-/// Without disk-side divergence there is nothing `^M` can merge —
-/// `merge::begin` refuses — so the hint stays out of the default row
-/// for every non-diverged sync state.
 #[test]
 fn default_hints_omit_merge_without_divergence() {
     for last_sync in [
@@ -138,10 +121,6 @@ fn default_hints_omit_merge_without_divergence() {
     }
 }
 
-/// The chord is dead for `ReadOnly::Always` (an image
-/// document is refused on `kind`, the Help tab has no `file_path`, the
-/// error banner is never in `app.documents`), so the hint must not
-/// promise it.
 #[test]
 fn default_hint_entries_omit_save_for_a_read_only_always_document() {
     let save_label = GLOBAL_BINDINGS
@@ -160,8 +139,6 @@ fn default_hint_entries_omit_save_for_a_read_only_always_document() {
     );
 }
 
-/// A `ReadOnly::Reading` document may hold bytes typed
-/// before the toggle and keeps a live `^S`, so the hint stays.
 #[test]
 fn default_hint_entries_keep_save_for_a_read_only_reading_document() {
     let save_label = GLOBAL_BINDINGS
@@ -180,10 +157,6 @@ fn default_hint_entries_keep_save_for_a_read_only_reading_document() {
     );
 }
 
-/// A `Preview` document promises none of save, close, or rename in the
-/// footer: all three refuse it (`save::trigger_save`, `workspace::
-/// request_close`, `App::focus_title`), so none may appear as a live
-/// hint.
 #[test]
 fn default_hint_entries_omit_save_close_and_rename_for_a_preview_document() {
     let save_label = GLOBAL_BINDINGS
@@ -220,9 +193,6 @@ fn default_hint_entries_omit_save_close_and_rename_for_a_preview_document() {
     );
 }
 
-/// The mirror of the above: an ordinary `ReadOnly::No` document keeps
-/// all three hints, so the suppression above is really keyed on
-/// `Preview` and not accidentally dropping them for everyone.
 #[test]
 fn default_hint_entries_keep_save_close_and_rename_for_an_ordinary_document() {
     let save_label = GLOBAL_BINDINGS
@@ -259,9 +229,6 @@ fn default_hint_entries_keep_save_close_and_rename_for_an_ordinary_document() {
     );
 }
 
-/// While the fuzzy file finder is open, the default hints reflect
-/// `FILESEARCH_BINDINGS`, not the ordinary Explorer table — even though
-/// `app.focus()` itself still reads `Pane::Explorer` throughout.
 #[test]
 fn filesearch_open_shows_its_own_hints_not_the_explorer_s() {
     let mut app = app_with("hello");

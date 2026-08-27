@@ -1,18 +1,9 @@
-//! Catppuccin Mocha's canonical truecolor palette, sourced
-//! from the MIT `catppuccin` crate's generated `PALETTE.mocha.colors`
-//! rather than hand-copied hex literals, so this crate's colours stay
-//! byte-identical to upstream's own spec.
-
 use ratatui::style::Color;
 
 fn rgb(c: catppuccin::Rgb) -> Color {
     Color::Rgb(c.r, c.g, c.b)
 }
 
-/// The Catppuccin Mocha palette as `ratatui::style::Color::Rgb` — one
-/// field per Catppuccin colour name (not per use site), so a style can
-/// reuse e.g. `blue` or `mauve` without re-deriving it from the upstream
-/// crate's own `Color`/`Rgb` types.
 #[derive(Clone, Copy, Debug)]
 pub struct Mocha {
     pub rosewater: Color,
@@ -44,9 +35,10 @@ pub struct Mocha {
 }
 
 impl Mocha {
-    /// Reads every field straight from `catppuccin::PALETTE.mocha.colors`
-    /// (`const`, generated at the `catppuccin` crate's OWN build time from
-    /// upstream's palette spec) — never a hand-copied hex literal.
+    // Reads every field from `catppuccin::PALETTE.mocha.colors` (the
+    // `catppuccin` crate's own generated constant) rather than a
+    // hand-copied hex literal, so this stays byte-identical to upstream's
+    // palette spec.
     pub fn palette() -> Mocha {
         let colors = catppuccin::PALETTE.mocha.colors;
         Mocha {
@@ -84,10 +76,6 @@ impl Mocha {
 mod tests {
     use super::*;
 
-    /// Pins Mocha's `base` colour to the well-known hex `#1e1e2e` (the
-    /// value every Catppuccin Mocha reference — and this theme's own
-    /// `quantize` test — cites), guarding against the upstream crate ever
-    /// shipping a differently-ordered or mis-mapped palette silently.
     #[test]
     fn mocha_base_matches_the_well_known_hex() {
         let m = Mocha::palette();

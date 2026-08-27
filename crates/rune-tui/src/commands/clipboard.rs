@@ -1,21 +1,3 @@
-//! Clipboard commands: copy/cut write OSC 52 bytes into `Effects.raw`
-//! (never a `Cmd` — a `Cmd` must never touch the terminal); paste spawns
-//! the `pbpaste` `Cmd`.
-//!
-//! Workspace-coupled: `copy`/`cut`/`handle_paste_
-//! content` take `(app: &mut App, id: DocumentId)` — `cut`/`handle_paste_
-//! content` bottom out in `commands::edit`, which touches `app.db`/dirty
-//! bookkeeping.
-//!
-//! `Msg::Paste` (bracketed paste) and a `Msg::ClipboardRead` targeting a
-//! document both funnel through `handle_paste_content` — the single
-//! function every DOCUMENT paste source calls, so a terminal ⌘V and an
-//! in-app `super+v` can never double-insert the same text (the bracketed
-//! paste vs `pbpaste` double-paste trap). A paste routed to the title
-//! (`PasteTarget::Title`) never reaches this function at all — it goes
-//! through `title::keys::paste` instead (`dispatch::update_inner`'s
-//! `Msg::Paste`/`Msg::ClipboardRead` arms decide which).
-
 use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
 
@@ -28,11 +10,6 @@ use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::{Effects, PasteTarget};
 
-/// Pushes `text`'s OSC 52 write into `effects.raw_bytes()`, or — over `clipboard::
-/// OSC52_MAX_PAYLOAD_BYTES` — posts an error message instead of silently
-/// writing a sequence a terminal multiplexer would just drop. Shared by
-/// `copy`/`cut` and the title's own `Command::Copy`/`Command::Cut` handling
-/// (`title::keys`) so the cap can never drift between call sites.
 pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &mut Effects) {
     if text.is_empty() {
         return;
@@ -51,11 +28,6 @@ pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &
     effects.write(osc52_copy(text.as_bytes()));
 }
 
-/// Single cursor (Phase 1's only case): the selection text, or — with no
-/// selection — the whole current line including its trailing newline
-/// (`copy_entire_line`). Multi-cursor joins each cursor's selection-or-line
-/// with `\n`, even though Phase 1 never actually produces more than one
-/// cursor.
 pub(crate) fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
     let all = cursors.all();
     match all {
@@ -78,34 +50,17 @@ fn copy_text_for_cursor(buf: &Buffer, c: &Cursor) -> String {
     }
 }
 
-/// The full line at `offset`, including its trailing `\n` unless it's the
-/// buffer's last line.
 fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
     let (start, end) = nav_line::line_range_incl_newline(buf, offset);
     buf.slice(start, end).unwrap_or("").to_string()
 }
 
-/// Never mutates the buffer — pushes the OSC 52 write directly into
-/// `Effects.raw` — a `Cmd` must never touch the terminal, exactly why
-/// this is `raw` output, not a `Cmd`.
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
     write_to_clipboard_or_report(app, &text, effects);
 }
 
-/// The same copy text as `copy`, computed BEFORE the delete (so it
-/// reflects what's being removed), plus a journaled delete of the same
-/// range(s) via `commands::edit::delete_selection_or_line` — reusing the
-/// existing selection-replacing edit machinery rather than duplicating the
-/// batch-apply/journal logic here. `write_to_clipboard_or_report` runs
-/// BEFORE the delete, so an over-cap selection must still be capturable
-/// before the delete: it raises a banner instead of silently writing a
-/// sequence a terminal multiplexer would just drop, so the user learns
-/// the cut never reached the system clipboard before its bytes are gone
-/// from the buffer too —
-/// the delete itself always proceeds either way, since it's
-/// journaled/undoable regardless of what happened to the clipboard.
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
@@ -113,31 +68,10 @@ pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     edit::delete_selection_or_line(app, id);
 }
 
-/// No buffer mutation here — just spawns the pbpaste `Cmd`, tagged with
-/// `target` so its `Msg::ClipboardRead` reply routes back to wherever the
-/// paste was requested from (`dispatch::update_inner`'s `ClipboardRead`
-/// arm) rather than wherever focus/the active document happen to be when
-/// it lands.
 pub fn paste(effects: &mut Effects, target: PasteTarget) {
     effects.cmds.push(pbpaste_cmd(target));
 }
 
-/// The single funnel `Msg::Paste` (bracketed paste, when focus isn't the
-/// title) and a document-targeted `Msg::ClipboardRead` both call — see
-/// module docs. Read-only documents are NOT guarded here (review finding
-/// F1): `edit::insert_text` bottoms out in `commands::edit::commit_edit_batch`,
-/// the single chokepoint that rejects every mutating command against a
-/// read-only `Document` — see its docs and `Document::read_only`'s.
-/// Duplicating the check here would just be a second copy that could
-/// silently drift from the real gate; the only guard this function keeps
-/// is the empty-text early-out, which the chokepoint doesn't (and
-/// shouldn't) special-case.
-///
-/// Multi-cursor line-distribution (pasting text with the same line count
-/// as the cursor set, spread one line per cursor) is NOT implemented:
-/// Phase 1 runs a single cursor, so that path is unreachable here.
-/// `edit::insert_text` replaces every cursor's selection with the same
-/// whole text — the only case that can occur in Phase 1.
 pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     if text.is_empty() {
         return;
@@ -148,15 +82,11 @@ pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     edit::insert_text(app, id, text, rune_core::undo::EditKind::Paste);
 }
 
-/// Deliberately NOT gated on `app.guard`, unlike the key pipeline's stage 1:
-/// a paste carries user content, and dropping it because a prompt happens
-/// to be up discards something the user explicitly asked to insert — the
-/// buffer is journaled and undoable, so landing it there is the safer
-/// failure mode than losing it. `PASTE-VERBATIM` pins this.
-///
-/// Bracketed paste has no request to attach a target to, so it routes by
-/// LIVE focus — unlike `Msg::ClipboardRead`, whose `target` was captured
-/// when the paste was requested.
+/// Deliberately not gated on `app.guard`, unlike the key pipeline's stage
+/// 1: a paste carries user content, and dropping it because a prompt
+/// happens to be up discards something the user explicitly asked to
+/// insert — the buffer is journaled and undoable, so landing it there is
+/// the safer failure mode than losing it.
 pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Effects) {
     match crate::focus::target(app) {
         crate::focus::FocusTarget::SearchField => crate::search::keys::paste(app, text),
@@ -203,7 +133,7 @@ mod tests {
     fn copy_of_a_selection_emits_exactly_one_osc52_raw_chunk_with_the_selected_bytes() {
         let mut app = app_with("hello world", 0);
         let id = app.active;
-        selecting(&mut app, id, 0, 5); // "hello"
+        selecting(&mut app, id, 0, 5);
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
 
@@ -218,7 +148,7 @@ mod tests {
 
     #[test]
     fn copy_with_no_selection_copies_the_whole_line_including_its_trailing_newline() {
-        let mut app = app_with("first\nsecond\nthird", 8); // caret inside "second"
+        let mut app = app_with("first\nsecond\nthird", 8);
         let id = app.active;
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
@@ -228,7 +158,7 @@ mod tests {
 
     #[test]
     fn copy_with_no_selection_on_the_last_line_has_no_trailing_newline() {
-        let mut app = app_with("first\nsecond\nthird", 15); // caret inside "third", the last line
+        let mut app = app_with("first\nsecond\nthird", 15);
         let id = app.active;
         let mut effects = Effects::default();
         copy(&mut app, id, &mut effects);
@@ -251,7 +181,7 @@ mod tests {
     fn cut_removes_the_selection_journals_it_and_emits_the_same_osc52_payload() {
         let mut app = app_with("hello world", 0);
         let id = app.active;
-        selecting(&mut app, id, 0, 5); // "hello"
+        selecting(&mut app, id, 0, 5);
         let mut effects = Effects::default();
         cut(&mut app, id, &mut effects);
 
@@ -267,11 +197,6 @@ mod tests {
         );
     }
 
-    /// A selection over `OSC52_MAX_PAYLOAD_BYTES` must not reach
-    /// `effects.raw_bytes()` at all — writing it would just be a
-    /// sequence a terminal multiplexer silently drops — and must instead
-    /// post a message so the user learns the copy never reached the
-    /// system clipboard.
     #[test]
     fn copy_over_the_osc52_cap_posts_a_message_instead_of_writing_raw() {
         let huge = "x".repeat(OSC52_MAX_PAYLOAD_BYTES + 1);
@@ -291,11 +216,6 @@ mod tests {
         );
     }
 
-    /// The cut half of the same cap: the message is posted
-    /// BEFORE the delete runs, but the delete still proceeds either way —
-    /// it's journaled/undoable regardless of what happened to the
-    /// clipboard, so refusing it too would trade one silent failure for a
-    /// second one.
     #[test]
     fn cut_over_the_osc52_cap_posts_a_message_but_still_deletes() {
         let huge = "x".repeat(OSC52_MAX_PAYLOAD_BYTES + 1);
@@ -331,16 +251,11 @@ mod tests {
         assert_eq!(app.doc(id).unwrap().buffer.content(), "first\nthird");
     }
 
-    /// Regression for F1: on a read-only `Document`, Cut must not mutate
-    /// the buffer, bump its version, or journal anything — the deletion is
-    /// rejected at `commands::edit::commit_edit_batch`, the shared
-    /// chokepoint every mutating command (including cut) funnels through.
-    /// The OSC 52 copy itself is a read, not a mutation, and is unaffected.
     #[test]
     fn cut_on_a_read_only_editor_does_not_mutate_the_buffer() {
         let mut app = app_with("hello world", 0);
         let id = app.active;
-        selecting(&mut app, id, 0, 5); // "hello"
+        selecting(&mut app, id, 0, 5);
         app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
         let before_version = app.doc(id).unwrap().buffer.version();
 
@@ -417,11 +332,6 @@ mod tests {
         );
     }
 
-    /// Regression: a bracketed paste while the search bar is focused must
-    /// land in the draft, never the document buffer underneath it — the
-    /// bar is a second input, not the active `Pane`, so the naive
-    /// `app.focus()` match this used to route on fell through to
-    /// `handle_paste_content` and bled the pasted text into the document.
     #[test]
     fn bracketed_paste_while_the_search_bar_is_focused_lands_in_the_draft() {
         use crate::app;
@@ -454,10 +364,6 @@ mod tests {
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
-    /// Regression: bracketed paste while a non-editor chrome pane (Explorer,
-    /// Tabs, or Messages) holds focus must refuse with feedback rather than
-    /// silently landing the pasted text in the editor's document underneath
-    /// an unpainted caret.
     #[test]
     fn bracketed_paste_while_a_non_editor_pane_is_focused_refuses_with_feedback() {
         use crate::app;

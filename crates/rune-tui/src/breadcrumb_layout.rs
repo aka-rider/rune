@@ -1,10 +1,3 @@
-//! The path-shortening/eliding computation side of [`crate::breadcrumb`],
-//! split out to keep it under the 500-line budget: relativizing a path
-//! against the workspace root ([`crumb_parts`]) and building the truncated,
-//! styled crumb spans that fit a given width ([`build_crumb`]). The
-//! render/overlay side — splicing those spans onto the center pane's
-//! bottom border row — stays in `crate::breadcrumb`.
-
 use ratatui::style::Style;
 use ratatui::text::Span;
 use std::path::Component;
@@ -15,30 +8,16 @@ use crate::navhistory::NavHistory;
 use crate::theme::Theme;
 use crate::width::display_width;
 
-/// Marks a crumb whose leading parts were dropped to fit the width. Two
-/// display columns; the trailing `/` reads as "…and more directories
-/// above", continuing the bare-slash directory chain that follows it.
 pub(crate) const ELLIPSIS: &str = "…/";
-
-/// Between two directories: a bare slash, no padding.
 pub(crate) const SEP: &str = "/";
-
-/// Between the LAST directory and the leaf file name only — the one place
-/// the crumb breathes, so the file name reads as the subject and the
-/// directory chain as its address.
 pub(crate) const LEAF_SEP: &str = " › ";
 
-/// Relativizes `path` against `root`, returning the ordered list of path components the
-/// crumb renders. When `root` is non-empty and `path` is under it (`Path::
-/// starts_with` compares whole components, so this can never mistake
-/// `/a/vault2` for being under `/a/vault` the way a bare string-prefix
-/// check would), the result is root's own base name followed by the
-/// remaining components below it — e.g. root `/Users/xiii/vault`, path
-/// `/Users/xiii/vault/notes/note.md` yields `["vault", "notes",
-/// "note.md"]`, not `["Users", "xiii", "vault", "notes", "note.md"]`.
-/// Falls back to every `Normal` component of the absolute path otherwise
-/// (`root` empty — not yet resolved — or `path` outside it).
+const TRUNCATION_BUFFER: usize = 6;
+
 pub(crate) fn crumb_parts(path: &std::path::Path, root: Option<&std::path::Path>) -> Vec<String> {
+    // `strip_prefix` compares whole path components, so `/a/vault2` is
+    // never mistaken for being under root `/a/vault` the way a bare
+    // string-prefix check would.
     if let Some(root) = root
         && let Ok(remainder) = path.strip_prefix(root)
     {
@@ -60,17 +39,11 @@ pub(crate) fn crumb_parts(path: &std::path::Path, root: Option<&std::path::Path>
         .collect()
 }
 
-/// Builds the crumb's spans right-to-left: each part verbatim (fg
-/// `SPECIAL`, no padding of its own) followed — for every part except the
-/// rightmost (the leaf) — by a `SUBTLE` separator span, `LEAF_SEP` when
-/// the part is the last directory (index `n - 2`) and `SEP` between any
-/// two directories above it. The walk stops as soon as adding the next
-/// part would overflow `max_width` by the 6-column buffer, at which point
-/// an `ELLIPSIS` span is prepended. Neither the leaf nor index `0` (the
-/// leftmost/root-most component) is ever dropped: a crumb naming no file is
-/// worth no columns at all, and `overlay` drops the whole crumb instead when
-/// even that shortest form does not fit. A single-component path renders as
-/// just that leaf.
+/// Builds the crumb's spans right-to-left, prepending an `ELLIPSIS` span
+/// once the next part would overflow `max_width`. Neither the leaf nor
+/// index `0` is ever dropped this way: a crumb naming no file is worth no
+/// columns at all, and `overlay` drops the whole crumb instead when even
+/// that shortest form does not fit.
 pub(crate) fn build_crumb(
     parts: &[String],
     max_width: usize,
@@ -93,8 +66,6 @@ pub(crate) fn build_crumb(
                 )],
             )
         } else {
-            // The part directly left of the leaf gets the wider ` › `;
-            // every directory above it is joined by a bare `/`.
             let sep = if i + 2 == n { LEAF_SEP } else { SEP };
             (
                 part_width + display_width(sep),
@@ -105,8 +76,7 @@ pub(crate) fn build_crumb(
             )
         };
 
-        // An arbitrary buffer for the ellipsis and some breathing room.
-        if current_width + seg_width + 6 > max_width && i > 0 && !is_last {
+        if current_width + seg_width + TRUNCATION_BUFFER > max_width && i > 0 && !is_last {
             segments.insert(
                 0,
                 Span::styled(ELLIPSIS, Style::new().fg(theme.chrome.special)),
@@ -181,20 +151,16 @@ mod tests {
         assert_eq!(parts, vec!["Users", "xiii", "vault", "note.md"]);
     }
 
-    /// `/a/vault2` must never be treated as under root `/a/vault` —
-    /// `Path::starts_with` compares whole components, unlike a bare string
-    /// prefix check.
     #[test]
     fn crumb_parts_does_not_mistake_a_sibling_with_a_shared_prefix_for_being_under_root() {
         let parts = crumb_parts(Path::new("/a/vault2/notes.md"), Some(Path::new("/a/vault")));
         assert_eq!(parts, vec!["a", "vault2", "notes.md"]);
     }
 
-    /// An independent width oracle (plan [rune-tui C 14]): computed
-    /// straight from `unicode_width`/`unicode_segmentation`, never by
-    /// calling this module's own `display_width`/`grapheme_width` — so a
-    /// regression in the production chokepoint can't pass a test that
-    /// merely re-invokes it.
+    // An independent width oracle: computed straight from `unicode_width`/
+    // `unicode_segmentation`, never via this module's own `display_width`,
+    // so a regression in the production chokepoint can't pass a test that
+    // merely re-invokes it.
     fn oracle_cell_width(s: &str) -> usize {
         s.graphemes(true)
             .map(|g| {
@@ -207,9 +173,6 @@ mod tests {
             .sum()
     }
 
-    /// The separator glyphs must be ONE display column each, or every width
-    /// in this module (dash fill, `bc`, the truncation budget) is computed
-    /// against a lie and the `──╯` drifts off the right edge.
     #[test]
     fn the_separator_glyphs_are_single_column() {
         assert_eq!(oracle_cell_width(SEP), 1);
@@ -217,7 +180,6 @@ mod tests {
         assert_eq!(oracle_cell_width(ELLIPSIS), 2);
     }
 
-    /// A one-component path is all leaf: no separator, no stray padding.
     #[test]
     fn a_single_component_path_renders_just_the_leaf() {
         let theme = crate::theme::Theme::catppuccin_mocha(false);
@@ -228,8 +190,6 @@ mod tests {
 
     #[test]
     fn total_width_identity_holds() {
-        // 1 (╰) + dash + (bc + 2 surrounding spaces) + 3 (──╯) == block.width,
-        // for every width from the bail-out floor up to a generous ceiling.
         let theme = crate::theme::Theme::catppuccin_mocha(false);
         for width in 30u16..80 {
             let parts: Vec<String> = vec!["a".into(), "b".into(), "note.md".into()];

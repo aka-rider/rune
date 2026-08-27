@@ -1,40 +1,3 @@
-//! Cursor movement, selection, select-all, and Escape-collapse.
-//!
-//! Vertical/page motion and the viewport-only scroll commands live
-//! in the sibling `nav_scroll` module (split out because this file was
-//! already over the 500-line budget). Line/
-//! document motion (line start/end, and the `handle_move_to` driver) lives
-//! in the sibling `nav_line` module for the same reason; that module
-//! reaches back into this one for the shared `move_cursors`/
-//! `update_horizontal` cursor-stepping infrastructure.
-//!
-//! Doc-local: every function here takes `&mut
-//! Document` directly — motion/selection never touches `App`-level state
-//! (the recovery store, status message, dirty cache), so there is no reason
-//! to thread a `DocumentId` through this module at all.
-//!
-//! Every handler that needs Buffer<->Syntax<->Wrap coordinate conversions
-//! calls `Document::view()` fresh at entry rather than reading `Document::
-//! view` (the cached field): that cache is only refreshed once per whole
-//! message BATCH (by the runtime, after every `Msg` in the batch has been
-//! applied — see `runtime::run`), so within a batch it can still reflect
-//! the state from BEFORE an earlier `Msg::Resize` in the same batch already
-//! widened the viewport. `Document::view()` is documented idempotent/cheap
-//! and always reflects the CURRENT `Document` fields (`viewport.width` in
-//! particular), so a `Key` handled right after a `Resize` in the same batch
-//! sees the post-resize wrap. That is: `view()` called at handler-entry,
-//! before this handler updates `cursors`, reflects cursor/reveal state from
-//! before this keystroke's own movement.
-//!
-//! Handlers here call `view()`, NEVER `sync()` (review finding F4):
-//! `sync()` also scrolls the viewport toward the PRIMARY cursor, and this
-//! module calls in BEFORE it has updated `cursors` for this motion — an
-//! intermediate scroll toward a soon-to-change cursor that the batch's
-//! real settle (`App::sync_view`, called once per batch) would then
-//! silently overwrite. `viewport.scroll_row` has exactly one writer:
-//! `Document::scroll_to_cursor`, invoked exactly once per settled batch via
-//! `Document::sync`/`App::sync_view` — never from inside a single command.
-
 use rune_core::bracket::{bracket_pair, jump_origin};
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferOffset, VisualCol};
@@ -52,18 +15,6 @@ enum CharClass {
     Other,
 }
 
-/// Unicode-aware word classifier (a deliberate
-/// divergence from ASCII-only word classification, recorded in `TODO.md`):
-/// asks `unicode-segmentation`'s UAX #29
-/// word-boundary algorithm whether `r`, fused between two ordinary word
-/// characters, stays part of one word segment — the same rule that
-/// already makes `is_ascii_alphanumeric()` true for `a`-`z`/`0`-`9`, but
-/// extended to every script's letters, digits and combining marks, not
-/// just ASCII's. A naive ASCII-only classifier would treat every non-ASCII
-/// letter (Cyrillic, Greek, CJK ideographs, combining marks, …) as `Other`,
-/// so `⌥←`/`⌥→` would stop at every individual character instead of the
-/// actual word boundary. Whitespace is likewise generalized to
-/// `char::is_whitespace`.
 fn char_class(r: char) -> CharClass {
     if r.is_whitespace() {
         CharClass::Whitespace
@@ -74,23 +25,15 @@ fn char_class(r: char) -> CharClass {
     }
 }
 
-/// Probes `unicode-segmentation`'s word-boundary algorithm: wraps `r`
-/// between two ASCII letters and asks whether the three stay fused into a
-/// single UAX #29 word segment. The crate exposes no direct per-character
-/// word-break property, so this is the public API's own way to classify
-/// one character — it mirrors `unicode_words()`'s own definition of a
-/// word: a maximal run of Alphabetic/Numeric runes and the marks/joiners
-/// that combine with them (which is also why `_`, Unicode's
-/// `ExtendNumLet`, joins rather than breaks a run).
+/// `unicode-segmentation` exposes no direct per-character word-break
+/// property, so this probes it indirectly: wrap `r` between two ASCII
+/// letters and ask whether the three stay fused into a single UAX #29 word
+/// segment.
 fn is_word_forming(r: char) -> bool {
     let probe = format!("a{r}a");
     probe.split_word_bounds().count() == 1
 }
 
-/// `Buffer::content` is a Rust `String`, a UTF-8-valid-by-construction type,
-/// so there is no reachable "invalid encoding" case to recover from —
-/// walking back to the nearest char boundary (at most 3 bytes) is the whole
-/// algorithm.
 pub fn prev_rune_offset(buf: &Buffer, offset: usize) -> usize {
     if offset == 0 {
         return 0;
@@ -187,15 +130,6 @@ pub fn word_right_offset(buf: &Buffer, offset: usize) -> usize {
     offset
 }
 
-/// The `[start, end)` byte range of the word (or whitespace/punctuation
-/// run) touching `offset` — the double-click "select word" gesture
-/// (`commands::mouse`). Class-based like `word_left_offset`/
-/// `word_right_offset` above, but expands outward from a single anchor
-/// rather than walking motion-by-motion, since a click can land anywhere
-/// inside the run, not just at its start. `nav_line::line_range_incl_newline`
-/// is the equivalent chokepoint for the triple-click "select the whole
-/// logical line" gesture — it already spans every wrapped row of the
-/// buffer line, since it works in buffer-line space, not wrap-row space.
 pub(crate) fn is_word_at(buf: &Buffer, offset: usize) -> bool {
     if buf.is_empty() {
         return false;
@@ -238,10 +172,6 @@ pub(crate) fn word_range_at(buf: &Buffer, offset: usize) -> (usize, usize) {
     (start, end)
 }
 
-/// Recomputes `desired_col`
-/// from the NEW position's visual column — every horizontal/line-start-end
-/// motion resets `desired_col` this way (only vertical row motion preserves
-/// the caller's `desired_col`, see `move_row` below).
 pub(crate) fn update_horizontal(
     view: &ViewSnapshots,
     buf: &Buffer,
@@ -293,8 +223,10 @@ fn handle_right(
     update_horizontal(view, buf, c, offset, extend)
 }
 
-/// Shared horizontal/line-start-end driver, applied to every cursor in the
-/// set.
+/// Reads a fresh `Document::view()` here, not `sync()`: `sync()` also
+/// scrolls the viewport toward the primary cursor, and this runs before
+/// `cursors` holds this motion's result, so an early scroll would chase a
+/// cursor about to move and get overwritten once the batch settles.
 pub(crate) fn move_cursors(
     doc: &mut Document,
     extend: Extend,
@@ -356,22 +288,12 @@ pub fn select_all(doc: &mut Document) {
     doc.cursors = CursorSet::new_from(&[c]);
 }
 
-/// Whether `escape` below found something in the buffer to collapse, or
-/// left it untouched — the cascade's own verdict, reported so the caller
-/// (`dispatch::handle_editor_key`'s hardcoded Escape fast path) knows
-/// whether to keep going: multi-cursor and selection collapse stay in the
-/// editor, `Unconsumed` is the cue to leave for the Explorer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EscapeOutcome {
     Collapsed,
     Unconsumed,
 }
 
-/// The Escape
-/// hardcoded fast path (plan Context, "Hardcoded fast paths outside the
-/// resolver"): multi-cursor collapses to the primary; a single cursor with
-/// a selection collapses the selection; otherwise reports `Unconsumed` so
-/// the cascade can fall through to leaving the editor.
 pub fn escape(doc: &mut Document) -> EscapeOutcome {
     if doc.cursors.is_multi() {
         let primary = doc.cursors.primary();
@@ -394,7 +316,7 @@ mod tests {
 
     #[test]
     fn prev_next_rune_offset_never_split_a_multibyte_char() {
-        let buf = Buffer::new("a\u{6c49}b"); // 'a', 汉 (3 bytes), 'b'
+        let buf = Buffer::new("a\u{6c49}b");
         let after_kanji = 1 + '\u{6c49}'.len_utf8();
         assert_eq!(next_rune_offset(&buf, 1), after_kanji);
         assert_eq!(prev_rune_offset(&buf, after_kanji), 1);
@@ -422,24 +344,12 @@ mod tests {
     #[test]
     fn word_left_right_skip_whole_words_and_whitespace_runs() {
         let buf = Buffer::new("hello   world");
-        assert_eq!(word_left_offset(&buf, 13), 8); // start of "world"
-        assert_eq!(word_right_offset(&buf, 0), 5); // end of "hello"
-        // Starting mid-whitespace, this skips the
-        // whitespace run AND the following word class run in the same
-        // call — it does not stop at the start
-        // of "world".
+        assert_eq!(word_left_offset(&buf, 13), 8);
+        assert_eq!(word_right_offset(&buf, 0), 5);
         assert_eq!(word_right_offset(&buf, 5), 13);
-        // Starting mid-word only skips to the end of the CURRENT word,
-        // stopping at the following whitespace run.
         assert_eq!(word_right_offset(&buf, 2), 5);
     }
 
-    /// A
-    /// non-ASCII alphabet must still form one word run, so `⌥→`/`⌥←` stop
-    /// at the WORD boundary, never at every individual Cyrillic character.
-    /// A naive ASCII-only classifier would treat every non-ASCII letter as
-    /// `Other`, so `word_right_offset` from 0 would stop after a single
-    /// rune instead of at the end of "привіт".
     #[test]
     fn word_motion_treats_a_non_ascii_alphabet_as_one_word() {
         let buf = Buffer::new("привіт світ");
@@ -449,8 +359,6 @@ mod tests {
         assert_eq!(word_left_offset(&buf, buf.len()), svit_start);
     }
 
-    /// `_` still joins a word run, and ASCII digits/letters keep classifying together with a
-    /// following Unicode letter (mixed identifiers stay one word).
     #[test]
     fn underscore_and_mixed_ascii_unicode_runs_stay_one_word() {
         let buf = Buffer::new("foo_bar привіт1");

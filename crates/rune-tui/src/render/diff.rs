@@ -137,11 +137,6 @@ mod tests {
 
     #[test]
     fn a_fold_views_left_virtual_row_never_takes_the_rights_background_even_when_offsets_collide() {
-        // The left document's own byte offsets and the right document's are
-        // two independent coordinate spaces — nothing stops them from
-        // numerically overlapping. A `Changed` region folds the right row
-        // first, then a `LeftVirtual` row beneath it; both rows here carry
-        // a cell at the SAME numeric offset (5), one from each document.
         let alignment = AlignmentMap {
             regions: vec![Region {
                 kind: RegionKind::Changed,

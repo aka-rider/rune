@@ -1,7 +1,3 @@
-//! rune-tui: the Elm-style runtime, terminal lifecycle, keymap resolver, and
-//! editor UI. Depends on rune-core and rune-md; owns the one place in the
-//! workspace that talks to a real terminal (`term::Guard`).
-
 pub mod app;
 mod app_view;
 pub mod binding;

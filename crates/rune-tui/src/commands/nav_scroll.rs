@@ -1,23 +1,3 @@
-//! Vertical/page motion (split out of `nav.rs` to stay under the 500-line
-//! budget) plus the
-//! viewport-only scroll commands: `scroll_line_up`/`down`,
-//! `scroll_half_page_up`/`down`, `centre_cursor`, `cursor_to_top`,
-//! `cursor_to_bottom`.
-//!
-//! `line_up`/`line_down`/`page_up`/`page_down` are CURSOR-driven: the
-//! cursor moves and `Document::sync`'s `scroll_to_cursor` -> `Viewport::
-//! reconcile` chases it afterward (`ScrollMode::FollowCursor`, the
-//! default). The new scroll commands below are the opposite: they move
-//! `Viewport::scroll_row` directly and arm `ScrollMode::Independent`, so
-//! the SAME `reconcile` call instead snaps the cursor onto screen if the
-//! scroll pushed it out of the scrolloff-padded band — never scrolling the
-//! viewport back to the cursor, which would defeat the point of scrolling
-//! (vim `runtime/doc/scroll.txt`; Helix `commands::scroll(..., sync_cursor:
-//! false)`). Neither family moves the viewport or the cursor a second time
-//! themselves — `reconcile` is the sole writer of `scroll_row`, and
-//! `Document::snap_cursor_to_row` is the sole `Independent`-mode writer of
-//! the cursor (see `document.rs`'s docs).
-
 use rune_core::coords::{BufferOffset, DisplayRow, WrapPoint, WrapRow};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
@@ -26,9 +6,6 @@ use crate::document::Document;
 use crate::keymap::Extend;
 use crate::viewport::ScrollMode;
 
-/// The wrap row `position` sits on in `view` — the ONE place a cursor's
-/// row is derived, so the row and the layout it is measured against can
-/// never drift apart.
 fn wrap_row_at(view: &ViewSnapshots, buf: &rune_core::buffer::Buffer, position: usize) -> usize {
     let bp = buf.offset_to_line_col(position);
     let sp = view.syntax.buffer_to_syntax(bp);
@@ -36,10 +13,8 @@ fn wrap_row_at(view: &ViewSnapshots, buf: &rune_core::buffer::Buffer, position: 
 }
 
 /// Visual-line up/down via the wrap conversions, preserving `c.desired_col`
-/// across the move (the property that makes moving through a ragged-right
-/// wrapped paragraph keep the caret in its visual column instead of
-/// snapping to each row's length). `c`'s row is measured in `view` —
-/// callers that need it measured against a settled view pass that view.
+/// across the move so moving through a ragged-right wrapped paragraph keeps
+/// the caret in its visual column instead of snapping to each row's length.
 fn move_row(
     view: &ViewSnapshots,
     buf: &rune_core::buffer::Buffer,
@@ -54,9 +29,6 @@ fn move_row(
     let wp2 = if target_row < 0 {
         WrapPoint { row: 0, col: 0 }
     } else if total > 0 && target_row as usize >= total {
-        // Clamped past the last row: land at that row's own end —
-        // `segment_len_at` expresses the "end of row" intent directly,
-        // without a magic-number sentinel.
         let row = total - 1;
         WrapPoint {
             row,
@@ -86,30 +58,23 @@ fn move_row(
     }
 }
 
-/// A full viewport minus one row of
-/// overlap for context. `pub(crate)` so `commands::reading_nav` pages a
-/// read-only document by the exact same step `page_up`/`page_down` use
-/// below, rather than re-deriving it.
+/// A full viewport minus one row of overlap for context.
 pub(crate) fn page_step(doc: &Document) -> isize {
     let h = doc.viewport.height;
     if h > 1 { (h - 1) as isize } else { 1 }
 }
 
-/// Shared vertical-motion driver (line up/down, page up/down). Two passes
-/// over the SAME original cursor set, both through `move_row`: the first
-/// exists only to produce a settled view to measure against — reveal is
-/// caret-driven, so a line whose reveal state depends on the cursor (a
-/// heading's `# `, an inline code span's backticks, a fenced block's
-/// opening/closing fence) can reflow the instant the cursor arrives
-/// there, and the pre-move view the first pass reads doesn't yet reflect
-/// that. The second pass re-runs `move_row` from the ORIGINAL cursors —
-/// not the first pass's result — against that settled view, so it lands
-/// where the user now sees the destination, not where a stale layout put
-/// it. Both the origin row and the delta are measured in that SAME
-/// settled view, never mixed across layouts: a fenced block's reveal can
-/// add or remove whole lines ABOVE the caret, so a row index computed in
-/// one layout does not carry over to a layout with a different number of
-/// rows above it.
+/// Shared vertical-motion driver (line up/down, page up/down). Runs two
+/// passes over the same original cursor set, both through `move_row`.
+/// Reveal is caret-driven, so a line whose reveal state depends on the
+/// cursor (a heading's `# `, an inline code span's backticks, a fenced
+/// block's fence) can reflow the instant the cursor arrives there; the
+/// first pass exists only to produce that settled, post-move view. The
+/// second pass then re-runs `move_row` from the ORIGINAL cursors — not the
+/// first pass's result — against the settled view, so both the origin row
+/// and the delta are measured in the same layout the user actually lands
+/// in, never mixed across two layouts with a different number of revealed
+/// lines above the caret.
 fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
     let view = doc.view();
     let original: Vec<Cursor> = doc.cursors.all().to_vec();
@@ -146,9 +111,6 @@ pub fn page_down(doc: &mut Document, extend: Extend) {
     move_row_cursors(doc, extend, step);
 }
 
-/// The row the PRIMARY cursor currently sits on, in wrap space — the input
-/// every viewport-only scroll command below needs before it can compute
-/// where to put `scroll_row`.
 fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
     let primary = doc.cursors.primary();
     let bp = doc.buffer.offset_to_line_col(primary.position.get());
@@ -158,13 +120,9 @@ fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
 
 /// Moves `scroll_row` by `delta` DISPLAY rows (`scroll_row` indexes
 /// `DisplaySnapshot::rows`, table borders included — not the wrap rows
-/// directly), clamped to `[0, total_rows - 1]` (never scrolled past the
-/// document), and arms `ScrollMode::Independent` so the
-/// per-batch settle snaps the cursor onto screen instead of scrolling the
-/// viewport back to it. The shared chokepoint both the line-scroll commands
-/// below and the mouse wheel (`commands::mouse`: the wheel scrolls 3
-/// rows per notch) route through, so the two can never disagree about how a scroll
-/// clamps or arms `Independent` mode.
+/// directly), clamped to `[0, total_rows - 1]`, and arms
+/// `ScrollMode::Independent` so the per-batch settle snaps the cursor onto
+/// screen instead of scrolling the viewport back to it.
 pub fn scroll_lines(doc: &mut Document, delta: isize) {
     let total = doc.view().display.total_rows();
     let max_row = DisplayRow(total.saturating_sub(1));
@@ -178,12 +136,10 @@ pub fn scroll_lines(doc: &mut Document, delta: isize) {
     doc.viewport.mode = ScrollMode::Independent;
 }
 
-/// vim `ctrl+e`/Helix `scroll_line_up` — viewport-only, one row.
 pub fn scroll_line_up(doc: &mut Document) {
     scroll_lines(doc, -1);
 }
 
-/// vim `ctrl+y`/Helix `scroll_line_down` — viewport-only, one row.
 pub fn scroll_line_down(doc: &mut Document) {
     scroll_lines(doc, 1);
 }
@@ -192,24 +148,18 @@ fn half_page_step(doc: &Document) -> isize {
     (doc.viewport.height as isize / 2).max(1)
 }
 
-/// Helix `half_page_up`: `commands::scroll(..., sync_cursor: false)` — the
-/// viewport moves by half a page; the cursor only follows if the scroll
-/// pushed it out of view.
 pub fn scroll_half_page_up(doc: &mut Document) {
     let step = half_page_step(doc);
     scroll_lines(doc, -step);
 }
 
-/// Helix `half_page_down` — the mirror of `scroll_half_page_up`.
 pub fn scroll_half_page_down(doc: &mut Document) {
     let step = half_page_step(doc);
     scroll_lines(doc, step);
 }
 
-/// Sets `scroll_row` directly to `target_row` (a DISPLAY row — not a delta)
-/// and arms `Independent` mode — shared by `centre_cursor`/`cursor_to_top`/
-/// `cursor_to_bottom` below, each of which converts the cursor's own WRAP
-/// row through `DisplaySnapshot::wrap_to_display` before calling this.
+/// Sets `scroll_row` directly to `target_row` — an absolute DISPLAY row,
+/// not a delta — and arms `Independent` mode.
 fn scroll_to(doc: &mut Document, target_row: DisplayRow) {
     let total = doc.view().display.total_rows();
     let max_row = DisplayRow(total.saturating_sub(1));
@@ -218,14 +168,10 @@ fn scroll_to(doc: &mut Document, target_row: DisplayRow) {
 }
 
 /// Scrolls the viewport so the DISPLAY row containing byte offset `target`
-/// is visible — merge mode's own "jump to a hunk" primitive. Converts
-/// through the exact same buffer -> syntax ->
-/// wrap -> display chokepoint chain `cursor_wrap_row`/`scroll_to` above use
-/// for the cursor's own position, but starting from a raw byte offset
-/// instead — and, unlike every other command in this module, never touches
-/// a cursor: `[`/`]` navigation moving the cursor would pollute the NEXT
-/// journal `Step`'s `cursors_before`, corrupting undo's "reopen the hunk
-/// you just resolved" experience.
+/// is visible — merge mode's own "jump to a hunk" primitive. Unlike every
+/// other command in this module, never touches a cursor: moving it here
+/// would pollute the next journal step's `cursors_before`, corrupting
+/// undo's reopen-the-hunk-you-just-resolved behavior.
 pub(crate) fn scroll_to_byte_offset(doc: &mut Document, target: usize) {
     let view = doc.view();
     let clamped = target.min(doc.buffer.content().len());
@@ -236,8 +182,6 @@ pub(crate) fn scroll_to_byte_offset(doc: &mut Document, target: usize) {
     scroll_to(doc, row);
 }
 
-/// vim/Helix `zz`: re-centres the viewport on the cursor's current row
-/// without moving the cursor itself.
 pub fn centre_cursor(doc: &mut Document) {
     let view = doc.view();
     let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
@@ -245,14 +189,12 @@ pub fn centre_cursor(doc: &mut Document) {
     scroll_to(doc, row - half);
 }
 
-/// vim/Helix `zt`: scrolls the cursor's row to the top of the viewport.
 pub fn cursor_to_top(doc: &mut Document) {
     let view = doc.view();
     let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
     scroll_to(doc, row);
 }
 
-/// vim/Helix `zb`: scrolls the cursor's row to the bottom of the viewport.
 pub fn cursor_to_bottom(doc: &mut Document) {
     let view = doc.view();
     let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
@@ -260,16 +202,10 @@ pub fn cursor_to_bottom(doc: &mut Document) {
     scroll_to(doc, row - height.saturating_sub(1));
 }
 
-/// `commands::reading_nav`'s `Home`: scrolls a read-only document to its
-/// very first row.
 pub fn scroll_to_document_top(doc: &mut Document) {
     scroll_to(doc, DisplayRow(0));
 }
 
-/// `commands::reading_nav`'s `End`: scrolls a read-only document to its
-/// LAST PAGE, not merely its last row — the document-reader convention
-/// (Preview, Evince, iBooks all land End on a full final page, not one row
-/// of content above a screen of blank space).
 pub fn scroll_to_document_bottom(doc: &mut Document) {
     let total = doc.view().display.total_rows();
     let height = doc.viewport.height as usize;
@@ -318,14 +254,13 @@ mod tests {
     #[test]
     fn centre_cursor_puts_the_cursor_row_in_the_middle() {
         let mut doc = doc_with_lines(100, 20);
-        // Move the cursor to line 50 directly.
         let offset = doc
             .buffer
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         centre_cursor(&mut doc);
-        assert_eq!(doc.viewport.scroll_row, DisplayRow(40)); // 50 - 20/2
+        assert_eq!(doc.viewport.scroll_row, DisplayRow(40));
     }
 
     #[test]

@@ -25,10 +25,6 @@ pub(crate) fn stray_temp_warning(temp: &Path) -> String {
     )
 }
 
-/// What became of the bytes an uncoordinated (no store binding)
-/// direct-`vfs` save displaced — that path has no recovery store to record
-/// them into, so `save::save_cmd` preserves them itself and reports the
-/// outcome here for [`super::handle_save_done`] to surface.
 #[derive(Debug)]
 pub enum SaveRace {
     Preserved(std::path::PathBuf),

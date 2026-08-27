@@ -73,11 +73,9 @@ impl From<rune_image::ImageError> for CmdError {
     }
 }
 
-/// `Msg::SaveDone`'s success-side facts, bundled so the message (and
-/// [`crate::materialize_ack::handle_save_done`], which unpacks it) don't
-/// carry them as three separate parameters: `durable` matters only when
-/// `result` is `Ok`, and `stray_temp`/`race` are independent, optional
-/// facts about that same successful publish.
+// `durable` matters only when `Msg::SaveDone`'s `result` is `Ok`;
+// `stray_temp`/`race` are independent, optional facts about that same
+// successful publish.
 #[derive(Debug)]
 pub struct SaveOutcomeDetail {
     pub durable: bool,
@@ -189,12 +187,6 @@ pub enum Msg {
     Quit,
 }
 
-/// One arm per legal `Msg::RecentsLoaded` producer — folding the load's
-/// origin into the result itself, rather than carrying a separate `kind`
-/// field alongside a same-shaped `result`, makes the `kind`/`result`
-/// mismatch `update_inner` used to guard against with an `unreachable!`
-/// unrepresentable: there is no way to construct e.g. `FileSearch` paired
-/// with a `String` list.
 #[derive(Debug)]
 pub enum RecentsResult {
     Search(Result<Vec<String>, CmdError>),

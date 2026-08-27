@@ -5,11 +5,10 @@ use rune_core::assert_invariant;
 
 use super::Cell;
 
-// ratatui's own diffing (BufferDiff) skips re-examining the continuation
-// column(s) after any cell whose own cell_width() is > 1, assuming a
-// double-width cell is never followed by non-blank content — so every
-// continuation column of a wide Cell must be explicitly reset here, or
-// stale content there would never reach the real terminal's redraw.
+// ratatui's diffing skips re-examining the column(s) after a cell whose
+// cell_width() is > 1, assuming a wide cell is never followed by
+// non-blank content — so every continuation column of a wide Cell must be
+// reset here, or stale content there would never reach the redraw.
 pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
     let buf = frame.buffer_mut();
     let right = area.x.saturating_add(area.width);

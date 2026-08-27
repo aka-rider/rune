@@ -1,20 +1,3 @@
-//! Multi-cursor management: add-cursor-above/add-cursor-below.
-//! `multicursor.escape`, the third command in this family, lives in
-//! `commands::nav::escape`.
-//!
-//! Doc-local, like `commands::nav`: pure cursor
-//! placement, no buffer mutation, so this takes `&mut Document` directly
-//! rather than `(app, id)` and never touches `apply_edit_batch_with_
-//! cursors`/`commit_edit_batch`.
-//!
-//! Deliberately NOT built on `nav::move_row` (the wrap-aware vertical
-//! motion arrow-up/down uses): add-cursor-above/below works in
-//! plain BUFFER-line space (`OffsetToLineCol`/`LineStart`/`LineEnd`), not
-//! wrap space — it targets the next LOGICAL line,
-//! ignoring soft-wrap entirely, unlike arrow-key vertical motion. Building
-//! it onto `move_row` would silently make it wrap-aware, which this plan
-//! did not ask for.
-
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferOffset, BufferPoint, VisualCol, WrapPoint};
 use rune_core::cursor::CursorSpec;
@@ -22,16 +5,14 @@ use rune_md::element::doc::ViewSnapshots;
 
 use crate::document::Document;
 
-/// Shared direction driver: `dir < 0` adds a cursor on the line above the
-/// TOPMOST existing cursor; `dir > 0` adds one on the line below the
-/// BOTTOMMOST.
+/// Targets the next LOGICAL line in plain buffer-line space, ignoring
+/// soft-wrap entirely — deliberately not built on `nav::move_row` (the
+/// wrap-aware vertical motion arrow-up/down uses), which would silently
+/// make this wrap-aware too.
 fn add_cursor(doc: &mut Document, dir: isize) {
     let all = doc.cursors.all();
     let Some(&first) = all.first() else { return };
 
-    // Find the extreme cursor to add adjacent to: topmost for dir<0,
-    // bottommost for dir>0. Ties keep the earlier cursor in iteration
-    // order.
     let mut extreme = first;
     for &c in all.iter().skip(1) {
         if (dir < 0 && c.position < extreme.position) || (dir > 0 && c.position > extreme.position)
@@ -51,13 +32,6 @@ fn add_cursor(doc: &mut Document, dir: isize) {
 
     let target_line = if dir < 0 { bp.line - 1 } else { bp.line + 1 };
 
-    // `desired_col` is a terminal-CELL count, never a byte column —
-    // it is measured on ONE line and only ever meaningful when replayed
-    // through the same cell->byte conversion `commands::nav_scroll::
-    // move_row` uses (`byte_col_from_visual`), never as a raw `BufferPoint.
-    // col`: a cell count replayed as bytes lands mid-character the moment
-    // the target line's bytes-per-cell ratio differs from the source
-    // line's (e.g. CJK on one line, ASCII on the other).
     let view = doc.view();
     let desired = if extreme.desired_col == VisualCol(0) {
         cell_col_at(&view, &doc.buffer, bp)
@@ -76,25 +50,12 @@ fn add_cursor(doc: &mut Document, dir: isize) {
     doc.cursors = doc.cursors.add(new_cursor);
 }
 
-/// Converts a full buffer point to its terminal-CELL visual column — the
-/// same buffer->syntax->wrap walk `commands::nav::update_horizontal` uses
-/// when a horizontal motion recomputes `desired_col` from a landed
-/// position. Used here only as the `desired_col == 0` sentinel's fallback
-/// (a cursor that has never had a real `desired_col` established yet), so
-/// that fallback carries the same unit as every other `desired_col`
-/// instead of smuggling a byte column in under the same field.
 fn cell_col_at(view: &ViewSnapshots, buf: &Buffer, bp: BufferPoint) -> VisualCol {
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
     VisualCol(view.wrap.visual_col(buf.content(), wp.row, wp.col))
 }
 
-/// Places a terminal-CELL visual column onto a DIFFERENT logical line's own
-/// first wrap row — the exact `byte_col_from_visual` conversion
-/// `commands::nav_scroll::move_row` performs for vertical motion, reused
-/// here so add-cursor-above/below (which targets the next LOGICAL line,
-/// ignoring soft-wrap — see this module's doc comment) still converts the
-/// cell column correctly rather than replaying it as a byte offset.
 fn visual_col_on_line(
     view: &ViewSnapshots,
     buf: &Buffer,
@@ -112,14 +73,10 @@ fn visual_col_on_line(
     view.syntax.syntax_to_buffer(sp)
 }
 
-/// Adds a cursor on the logical line above the topmost existing cursor, at
-/// its desired visual column.
 pub fn add_cursor_above(doc: &mut Document) {
     add_cursor(doc, -1);
 }
 
-/// Adds a cursor on the logical line below the bottommost existing cursor,
-/// at its desired visual column.
 pub fn add_cursor_below(doc: &mut Document) {
     add_cursor(doc, 1);
 }
@@ -140,7 +97,7 @@ mod tests {
 
     #[test]
     fn add_cursor_below_adds_one_on_the_next_line_same_column() {
-        let mut doc = doc_with("one\ntwo\nthree", 1); // col 1 of line 0
+        let mut doc = doc_with("one\ntwo\nthree", 1);
         add_cursor_below(&mut doc);
         assert_eq!(doc.cursors.len(), 2);
         let all = doc.cursors.all();
@@ -162,7 +119,6 @@ mod tests {
         let mut doc = doc_with("ab\nlonger line", "ab\nlonger".len());
         add_cursor_above(&mut doc);
         let all = doc.cursors.all();
-        // Line 0 ("ab") is only 2 bytes long — the new cursor clamps to it.
         assert_eq!(all[0].position, BufferOffset(2));
     }
 
@@ -182,14 +138,7 @@ mod tests {
 
     #[test]
     fn add_cursor_below_converts_desired_col_from_cells_not_raw_bytes() {
-        // line1 packs two double-width CJK glyphs before six single-byte
-        // ASCII characters, so a CELL column and the SAME NUMBER used as a
-        // raw BYTE column land on different characters — the exact defect
-        // class this guards: `desired_col` is always a cell count, and
-        // feeding it straight into a byte-column buffer API silently lands
-        // the cursor mid-character (or on the wrong character entirely).
         let mut doc = doc_with("x\n日本CDEFGH", 0);
-        // 5 CELLS: "日"(2) + "本"(2) + "C"(1).
         doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
             position: BufferOffset(0),
             anchor: BufferOffset(0),
@@ -201,19 +150,13 @@ mod tests {
         assert_eq!(doc.cursors.len(), 2);
         let new_cursor = doc.cursors.all()[1];
         let line1_start = doc.buffer.line_start(1).expect("line 1 exists");
-        // Correct: cell column 5 on "日本CDEFGH" lands right after "日本C"
-        // (2+2+1 = 5 cells), byte offset 7 (3+3+1) into that line, on 'D'.
-        // Treating `5` as a raw byte column instead (the pre-fix behavior)
-        // lands inside "本" (bytes 3..6) and snaps down to its start (byte
-        // 3) — a different, wrong character.
+        // Cell column 5 on "日本CDEFGH" is "日"+"本"+"C" (2+2+1 cells),
+        // byte offset 7 (3+3+1) into the line, landing on 'D'.
         assert_eq!(new_cursor.position, BufferOffset(line1_start + 7));
     }
 
     #[test]
     fn add_cursor_below_targets_the_bottommost_of_multiple_cursors() {
-        // Cursors on line 0 and line 1; the new one must land on line 2
-        // (adjacent to the BOTTOMMOST existing cursor), not line 1
-        // (adjacent to the topmost).
         let mut doc = doc_with("aaa\nbbb\nccc\nddd", 0);
         doc.cursors = doc.cursors.add(CursorSpec {
             position: BufferOffset("aaa\n".len()),

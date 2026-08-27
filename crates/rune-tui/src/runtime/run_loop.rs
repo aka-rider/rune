@@ -112,13 +112,9 @@ pub(super) fn apply(
     Ok(())
 }
 
-/// `Save` alone still gets its own dedicated, joinable OS thread: it is the
-/// one `Cmd` kind `exit_settle::join_save_handles` waits on by name at
-/// shutdown, so its thread must stay a `JoinHandle` the shutdown loop can
-/// poll, never a job sitting in the bounded pool's queue behind unrelated
-/// work. Every other kind — the ones that fire at keystroke rate
-/// (`Highlight`, `ImageDecode`) and used to get their own unbounded thread
-/// each — goes through `pool` instead, capped at a fixed worker count.
+// `Save` must stay a joinable thread the shutdown path can wait on —
+// pooled, an in-flight publish could sit behind unrelated queued work
+// while the app exits.
 pub(super) fn spawn_cmd(
     cmd: Cmd,
     tx: mpsc::Sender<Msg>,

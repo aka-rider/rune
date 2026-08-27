@@ -1,13 +1,11 @@
 use crate::binding::KeyPattern;
 use crate::registry::{self, CommandId, CommandSpec};
 
-/// `sup_chords_reliable` is `term::sup_chords_reliable(app.keyboard_flags)`
-/// at the one production call site (`workspace::show_help`) — this module
-/// stays termina-free, so the caller does that lookup and hands over a
-/// plain bool. `false` means the probe came back missing a bit this app
-/// asked for, so every `⌘` chord below gets an `\u{26a0}` marker: the
-/// per-row honesty the disambiguation probe owes the user, without
-/// guessing which specific chord they meant to press.
+// This module stays termina-free, so the caller does the keyboard-flags
+// probe and hands over a plain bool. `false` means the probe came back
+// missing a bit this app asked for, so every `⌘` chord below gets an
+// `\u{26a0}` marker rather than guessing which specific chord the
+// terminal actually meant.
 pub fn help_markdown(sup_chords_reliable: bool) -> String {
     let mut out = String::from("# Help\n\n");
     if !sup_chords_reliable {

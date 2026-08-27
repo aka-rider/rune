@@ -1,11 +1,3 @@
-//! Renders the fuzzy file finder overlay that replaces the Explorer's own
-//! content while `App::filesearch` is open: row 0 is the query row, reusing
-//! `render::search::build_spans` (the search bar's own chokepoint) rather
-//! than forking the prompt/caret/readout logic; the remaining rows are the
-//! ranked result list, styled purely from the precomputed `ResultRow::
-//! indices` `update`'s own `recompute` chokepoint already computed — this
-//! module never scores or ranks anything itself.
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -19,9 +11,6 @@ use crate::render::fuzzyspan::{display_spans, with_bg};
 use crate::theme::Theme;
 use crate::width::display_width;
 
-/// Pure function of `&App`, drawing into the same rect `explorer::draw`
-/// would otherwise fill (`render::draw_left_pane`'s own branch). A no-op if
-/// the finder isn't open or the rect has no rows at all.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let Some(state) = app.filesearch() else {
         return;
@@ -50,10 +39,6 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(lines), rows_area);
 }
 
-/// The result rows themselves: an explicit "no matches" feedback row for a
-/// non-empty query nothing matched (never a blank pane — house rule: silent
-/// input swallowing is architecturally unsound), otherwise the nav-windowed
-/// slice of `state.results`.
 fn result_lines(
     app: &App,
     state: &FileSearchState,
@@ -94,9 +79,6 @@ enum RowDisplay {
     CursorUnfocused,
 }
 
-/// One result row: a `›`-prefixed cursor row (full-row background rect,
-/// only while the Explorer pane is actually focused) or a plain two-space
-/// gutter; the candidate's own display string styled by [`display_spans`].
 fn result_line(
     app: &App,
     state: &FileSearchState,
@@ -149,13 +131,6 @@ fn candidate_spans(
     display_spans(display, indices, dim_style, file_style, avail_w, dir_end)
 }
 
-/// The query row's right-aligned readout: `matched/total` ordinarily, or
-/// `scanning…` while a walk `Cmd` is in flight, with a `+truncated` suffix
-/// when the walk hit its cap. `matched` is `state.results.len()` — the
-/// count actually shown, post the finder's own result cap — against
-/// `total`, the full candidate pool, so a cap (either the result cap on a
-/// broad match, or a walk truncation) stays visible as `matched < total`
-/// without a second counter to keep in sync.
 fn readout_text(state: &FileSearchState) -> String {
     if state.walk_pending {
         return "scanning\u{2026}".to_string();
@@ -225,11 +200,6 @@ mod tests {
         );
     }
 
-    /// The full end-to-end acceptance path: `open`
-    /// pushes the scan `Cmd` — inspected, never executed inline — and only
-    /// once its reply is hand-delivered does the list settle into
-    /// recents-then-walk order with the deduped path counted once, and the
-    /// readout leave `scanning…` for a real `matched/total`.
     #[test]
     fn hand_delivered_scan_reply_lists_recents_then_walk_and_dedups_by_path() {
         let vfs = Mem::new();
@@ -339,8 +309,6 @@ mod tests {
         app
     }
 
-    /// A query with zero matches renders an explicit "no matches"
-    /// feedback row rather than a blank pane.
     #[test]
     fn a_query_with_no_matches_renders_an_explicit_empty_state_row() {
         let mut app = seeded_app(&[("/root/a.md", "a")]);
@@ -368,10 +336,6 @@ mod tests {
         assert_eq!(text, "no matches");
     }
 
-    /// Two visible rows matching the same query have disjoint,
-    /// per-row-correct bold spans — pins the `indices.clear()` requirement
-    /// (`rank::rank`'s own doc): a callee that forgot to clear would leak
-    /// the first row's matched positions into the second row's bold set.
     #[test]
     fn multi_row_highlight_indices_are_disjoint_and_per_row_correct() {
         let mut app = seeded_app(&[("/root/note-a.md", "a"), ("/root/note-b.md", "b")]);
@@ -406,14 +370,9 @@ mod tests {
         }
     }
 
-    /// Finding 4: nucleo's `indices` are CHAR positions into the display
-    /// string, not grapheme positions — an NFD-decomposed filename (routine
-    /// on macOS/APFS) makes the two diverge. A query matching the ASCII
-    /// tail of an NFD name must bold exactly those trailing graphemes, not
-    /// shift onto the wrong character or vanish.
     #[test]
     fn nfd_decomposed_filename_bolds_the_matching_ascii_tail_graphemes() {
-        let nfd_name = "cafe\u{0301}.md"; // "café.md", "e" + combining acute
+        let nfd_name = "cafe\u{0301}.md";
         let mut app = seeded_app(&[]);
         let mut effects = crate::runtime::Effects::default();
         crate::filesearch::open(&mut app, &mut effects);

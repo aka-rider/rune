@@ -18,10 +18,6 @@ fn in_memory_db() -> Db {
     Db::new(store, bridge, false)
 }
 
-/// Two documents each enqueue an `AppendEdit`; delivering their
-/// `DbEvent::Ok` acks (identified only by op id, via `app.db_ops`) must
-/// route each `Seq` result to the CORRECT document's `DocDb`, never
-/// crossing them.
 #[test]
 fn db_event_acks_route_to_the_correct_document_via_db_ops() {
     let mut app = App::new(
@@ -56,8 +52,6 @@ fn db_event_acks_route_to_the_correct_document_via_db_ops() {
         .0;
     assert_ne!(op_for_a, op_for_b);
 
-    // Simulate the acks arriving in reverse enqueue order — routing
-    // must key off the op id, not arrival order.
     let doc_for_b = app.db_ops.remove(&op_for_b).expect("routes to doc b").doc;
     resolve_append_ack(&mut app, doc_for_b, rune_db::Seq(42));
     let doc_for_a = app.db_ops.remove(&op_for_a).expect("routes to doc a").doc;
@@ -129,11 +123,6 @@ fn handle_db_event_ok_seq_pops_db_ops_and_routes_to_the_right_document() {
     );
 }
 
-/// Review fix: a `DbEvent::Fatal` tears the whole writer thread down —
-/// every `db_ops` entry still in flight will never receive its ack, so
-/// `handle_db_event`'s `Fatal` arm must clear the map outright rather
-/// than leaving those entries as dead weight for the rest of the
-/// session.
 #[test]
 fn handle_db_event_fatal_clears_every_in_flight_db_op() {
     let mut app = App::new(
@@ -221,13 +210,6 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
     );
 }
 
-/// A `binding_only` ack for a document with live buffer edits must
-/// never adopt the recovered content or touch `last_sync` —
-/// only the shared per-file baseline and the document's own `DocDb` itself (which the
-/// lost-create-race hand-off relies on rebinding to an entirely
-/// different row, `publish_mode` included) advance. Contrasts `handle_
-/// load_ack_messages_a_non_diverged_adoption` above, which drives the
-/// ordinary (`LoadPurpose::Recover`) path and DOES adopt.
 #[test]
 fn binding_only_load_does_not_rehydrate() {
     let mut app = App::new(
@@ -237,9 +219,9 @@ fn binding_only_load_does_not_rehydrate() {
         Some(in_memory_db()),
     );
     let id = app.active;
-    // Starts create-only, on a DIFFERENT `db_id` than the ack
-    // below carries — the exact shape the lost-create-race hand-off
-    // leaves behind right before its own `binding_only` `Load` lands.
+    // Starts create-only on a different db_id than the ack carries —
+    // the shape the lost-create-race hand-off leaves right before its
+    // binding_only Load lands.
     app.doc_mut(id).expect("doc exists").replica =
         Replica::Bound(DocDb::new(3, PublishMode::CreateOnly, rune_db::Seq(0)));
     app.install_or_join_file_binding(3, None);
@@ -350,8 +332,6 @@ fn load_ack_for(nlink: u64) -> (App, DocumentId) {
     (app, id)
 }
 
-/// A load off a path with more than one hard link must warn that
-/// saving forks it from its other names.
 #[test]
 fn load_ack_warns_on_multiple_hard_links() {
     let (app, id) = load_ack_for(2);
@@ -365,7 +345,6 @@ fn load_ack_warns_on_multiple_hard_links() {
     );
 }
 
-/// An ordinary single-link file must never warn.
 #[test]
 fn load_ack_stays_silent_on_a_single_hard_link() {
     let (app, id) = load_ack_for(1);
@@ -374,12 +353,6 @@ fn load_ack_stays_silent_on_a_single_hard_link() {
     assert_eq!(messages::posts(&app), 0);
 }
 
-/// The re-baseline `Load` a `saved: None` `MaterializeRecord` ack
-/// enqueues (`materialize_ack::reactions`) must actually advance
-/// `expect_obs` once its own ack lands, and clear `pending_
-/// rebaseline_hash` — not fall into `install_or_join_file_binding`'s
-/// join semantics, which would silently drop the fresh observation for
-/// a `db_id` this process already has a binding for.
 #[test]
 fn rebaseline_load_advances_expect_obs() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
@@ -413,20 +386,16 @@ fn rebaseline_load_advances_expect_obs() {
     ));
     app.install_or_join_file_binding(load.doc_id.0, load.saved_obs);
 
-    // Simulates exactly the state a `saved: None` `MaterializeRecord`
-    // ack leaves behind (`materialize_ack.rs`'s own `record_outcome`
-    // `Err` arm) — reproducing the transient writer-queue failure that
-    // produces it for real would make this test racy against the
-    // writer thread (same rationale `force_save.rs`'s own lost-
-    // bookkeeping fixture states).
+    // Simulates the state a lost materialize-record ack leaves behind
+    // directly — reproducing the transient writer-queue failure for real
+    // would make this test racy against the writer thread.
     app.file_binding_mut(load.doc_id.0)
         .expect("binding exists")
         .pending_rebaseline_hash = Some(rune_db::hash_bytes(b"hello"));
 
-    // An external rewrite between the lost bookkeeping and the
-    // re-baseline `Load` below, so the fresh observation this test
-    // asserts against is genuinely NEW, not incidentally identical to
-    // the seed `Load`'s own.
+    // An external rewrite before the re-baseline load, so the fresh
+    // observation asserted below is genuinely new, not incidentally
+    // identical to the seed load's own.
     vfs.save_atomic(Path::new("/doc.md"), b"hello again")
         .expect("external rewrite");
 
