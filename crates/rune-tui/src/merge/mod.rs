@@ -27,11 +27,14 @@ pub(crate) fn is_divergent(doc: &Document) -> bool {
 
 pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) {
     let id = app.active;
-    let Some(doc) = app.doc(id) else { return };
     if matches!(&app.merge, MergeState::Pending { doc: d, .. } if *d == id) {
         messages::warn(app, "merge already preparing");
         return;
     }
+    if matches!(app.merge, MergeState::Active { .. }) {
+        abandon_active_before_fresh_begin(app);
+    }
+    let Some(doc) = app.doc(id) else { return };
     if doc.save_in_flight() {
         messages::warn(app, "save in progress — merge after it completes");
         return;
@@ -66,6 +69,19 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
+}
+
+fn abandon_active_before_fresh_begin(app: &mut App) {
+    let MergeState::Active { doc, session } = std::mem::take(&mut app.merge) else {
+        return;
+    };
+    let unresolved = session.unresolved_count();
+    let message = if unresolved == 0 {
+        "merge closed — starting a fresh merge against newer disk changes".to_string()
+    } else {
+        format!("merge closed — {unresolved} unresolved conflict(s) left behind for a fresh merge")
+    };
+    abandon_active(app, doc, session.saved_display_name, message);
 }
 
 pub(crate) fn exit_in_place(app: &mut App) {

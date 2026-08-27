@@ -68,12 +68,6 @@ constitution and the entry is deleted in the same commit.
 
 ### CORRECTNESS
 
-#### `merge::begin` does not guard an already-`Active` session — it silently drops it
-- **Where**: `crates/rune-tui/src/merge/mod.rs:28-69` (only `Pending{doc==id}` checked), reached from `crates/rune-tui/src/guard.rs:439,445`.
-- **Wrong**: hand-editing every conflict is a designed resting state (`Active`, unresolved==0), and then `refuses_save` returns false so ^S really saves; if disk moved, a `DiskConflict` guard is raised and pressing `m` runs `merge::begin`, which passes its `Pending` check and overwrites `app.merge` with `Pending` — dropping the `Active` session with no `diff_view::teardown`, no `enqueue_merge_close`, no `display_name` restore. Result: stale left/"disk" pane stays installed, the tab title is stuck at `file: editor <-> disk` for the session, and the merge row is left `Active` in the store, never closed. `merge::toggle` exits first; the guard route bypasses that.
-- **Instead**: `merge::begin` must tear down/close any existing session (or refuse) before installing a new one.
-- **Confidence**: confirmed (path); full user sequence plausible.
-
 #### `^M` cannot exit an active merge once the disk converges
 - **Where**: `crates/rune-tui/src/pane_command.rs:107-113` gating on `crates/rune-tui/src/registry/avail.rs:45-51`.
 - **Wrong**: `avail::merge` answers `Unavailable("no divergence to merge")` from `is_divergent`, and the `Merge` arm consults it before `merge::toggle` (the only exit). If the user resolves one hunk and an external process reverts the file (probe ack `Clean`), `retract_active_on_convergence` declines to retract (something is resolved) so the merge stays `Active`, but `^M` now refuses to exit and the palette row greys out. Escape still exits, but the advertised key is dead.
