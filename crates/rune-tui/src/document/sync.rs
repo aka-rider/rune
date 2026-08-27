@@ -23,8 +23,22 @@ impl Document {
             .map(crate::graphics::EmbedSet::to_image_dims)
             .unwrap_or_default();
         self.doc.set_embed_dims(embed_dims);
-        self.doc.sync_cursors(&self.buffer, &self.cursors);
+        let reveal_offsets = self.reveal_probe_offsets();
+        self.doc
+            .sync_cursors(&self.buffer, &self.cursors, &reveal_offsets);
         self.doc.snapshot(&self.buffer)
+    }
+
+    fn reveal_probe_offsets(&self) -> Vec<usize> {
+        let mut offsets = self.search_reveal_offsets.clone();
+        if self.has_insertion_point() {
+            let content = self.buffer.content();
+            for (open, close) in rune_core::bracket::cursor_bracket_pairs(content, &self.cursors) {
+                offsets.push(open);
+                offsets.push(close);
+            }
+        }
+        offsets
     }
 
     pub fn sync_catalogue(&mut self) {

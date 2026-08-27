@@ -386,3 +386,28 @@ fn no_last_query_reports_feedback_instead_of_a_silent_no_op() {
         "an unreachable chord must still give feedback, never swallow the keypress"
     );
 }
+
+#[test]
+fn a_live_search_match_inside_a_concealed_links_url_reveals_the_whole_link() {
+    let content = "prefix [text](hiddenword) suffix";
+    let mut app = app_with(content);
+    let link_open = content.find('[').expect("fixture has a link");
+
+    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
+    let mut effects = Effects::default();
+    for c in "hiddenword".chars() {
+        let _ = handle_key(&mut app, char_key(c), &mut effects);
+    }
+    assert!(!app.search().unwrap().matches.is_empty());
+    app.sync_view();
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = crate::render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    assert!(
+        rows.iter()
+            .flatten()
+            .any(|c| c.buf_offset == Some(link_open as u32)),
+        "a live search match inside the link's concealed url must reveal \
+         the whole link, so the link's own '[' reaches the screen"
+    );
+}

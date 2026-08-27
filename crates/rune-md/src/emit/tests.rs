@@ -196,7 +196,7 @@ pub(crate) fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buf
     doc.set_reveal_mode(focused.into());
     doc.sync_content(&buf);
     let cursors = CursorSet::new(cursor_offset);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     (buf, doc)
 }
 

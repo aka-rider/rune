@@ -26,7 +26,7 @@ fn plain_kind_skips_parse_and_emits_source_bytes_verbatim() {
 
     doc.set_reveal_mode(true.into());
     doc.set_width(80);
-    doc.sync_cursors(&buf, &CursorSet::new(0));
+    doc.sync_cursors(&buf, &CursorSet::new(0), &[]);
     let view = doc.snapshot(&buf);
 
     // Width 80 is wider than either line, so no wrap splitting occurs: one

@@ -28,7 +28,7 @@ pub fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, Do
     doc.sync_content(&buf);
     let offset = cursor_offset.min(buf.len());
     let cursors = CursorSet::new(offset);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     (buf, doc)
 }
 

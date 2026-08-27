@@ -1,3 +1,5 @@
+use crate::cursor::CursorSet;
+
 const PAIRS: [(u8, u8); 3] = [(b'(', b')'), (b'[', b']'), (b'{', b'}')];
 
 fn is_bracket(b: u8) -> bool {
@@ -48,6 +50,14 @@ pub fn bracket_pair(text: &str, offset: usize) -> Option<(usize, usize)> {
 
 pub fn pair_at_caret(text: &str, offset: usize) -> Option<(usize, usize)> {
     bracket_pair(text, offset).or_else(|| bracket_pair(text, offset.checked_sub(1)?))
+}
+
+pub fn cursor_bracket_pairs(text: &str, cursors: &CursorSet) -> Vec<(usize, usize)> {
+    cursors
+        .all()
+        .iter()
+        .filter_map(|c| pair_at_caret(text, c.position.get()))
+        .collect()
 }
 
 pub fn jump_origin(text: &str, offset: usize) -> Option<usize> {

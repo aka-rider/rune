@@ -187,11 +187,11 @@ fn revealing_a_table_stays_dirty_even_though_its_text_cells_never_are() {
     doc.sync_content(&buf);
     // Settle the table as Rendered with the cursor on the unrelated line
     // above it, then discard whatever dirt that settling itself produced.
-    doc.sync_cursors(&buf, &CursorSet::new(0));
+    doc.sync_cursors(&buf, &CursorSet::new(0), &[]);
     doc.clear_dirty();
 
     let alice_at = content.find("Alice").expect("fixture has Alice");
-    doc.sync_cursors(&buf, &CursorSet::new(alice_at));
+    doc.sync_cursors(&buf, &CursorSet::new(alice_at), &[]);
     assert!(
         doc.is_dirty(),
         "moving the cursor onto the table must reveal it and mark the document dirty"

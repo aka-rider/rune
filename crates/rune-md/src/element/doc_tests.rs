@@ -44,7 +44,7 @@ fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
     // Reveal the heading (cursor on its line), so its `RevealSm` is now
     // `Revealed` — a state that lives ONLY on the current `blocks` Vec.
     let cursors = CursorSet::new(0);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     assert_eq!(
         doc.blocks()[0].reveal_state(),
         rune_syntax::element::RevealState::Revealed
@@ -79,7 +79,7 @@ fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
 
     doc.sync_content(&buf);
     doc.set_width(80);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     let first = doc.snapshot(&buf);
     assert_eq!(doc.rebuild_count(), 1);
 
@@ -88,7 +88,7 @@ fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
     // run it for a second call within the same batch.
     doc.sync_content(&buf);
     doc.set_width(80);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     let second = doc.snapshot(&buf);
     assert_eq!(
         doc.rebuild_count(),
@@ -99,7 +99,7 @@ fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
 
     // Sanity: a real input change (width) still forces a rebuild.
     doc.set_width(40);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     doc.snapshot(&buf);
     assert_eq!(
         doc.rebuild_count(),
@@ -115,7 +115,7 @@ fn sync_cursors_never_bumps_built_version() {
     doc.sync_content(&buf);
     let before = doc.built_version();
     let cursors = CursorSet::new(0);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     assert_eq!(
         doc.built_version(),
         before,
@@ -137,7 +137,7 @@ fn reveal_mode_never_forces_every_decide_policy_block_rendered() {
     doc.sync_content(&buf);
     // cursor sits on the heading line, which WOULD reveal under `AtCursor`.
     let cursors = CursorSet::new(2);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     for b in doc.blocks() {
         assert_eq!(
             b.reveal_state(),
@@ -159,7 +159,7 @@ fn table_never_forces_reveal_mode_rendered() {
     // cursor sits on the table's own first line, which WOULD reveal it
     // under `AtCursor`.
     let cursors = CursorSet::new(0);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     for b in doc.blocks() {
         assert_eq!(
             b.reveal_state(),
@@ -179,7 +179,7 @@ fn table_at_cursor_reveals_when_cursor_is_in_its_line_range() {
     // `cursors.any_in_lines(first_line, last_line)`, so any line the table
     // spans must reveal the whole block.
     let cursors = CursorSet::new(0);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     for b in doc.blocks() {
         assert_eq!(
             b.reveal_state(),
@@ -198,7 +198,7 @@ fn heading_at_cursor_reveals_when_cursor_is_on_its_line() {
     // cursor sits on the heading line — `HeadingM::sync` decides off
     // `cursors.any_on_line`, distinct from `TableM`'s `any_in_lines` above.
     let cursors = CursorSet::new(2);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     for b in doc.blocks() {
         assert_eq!(
             b.reveal_state(),
@@ -225,7 +225,7 @@ fn frontmatter_and_verbatim_survive_unfocused_as_revealed() {
     let mut doc = DocMachine::new();
     let buf = Buffer::new("---\ntitle: x\n---\n\n<div>\nraw\n</div>\n");
     doc.sync_content(&buf);
-    doc.sync_cursors(&buf, &CursorSet::new(0));
+    doc.sync_cursors(&buf, &CursorSet::new(0), &[]);
     assert!(
         doc.blocks().len() >= 2,
         "expected a Frontmatter block and a Verbatim (html) block"
@@ -370,7 +370,7 @@ fn sync_cursors_marks_the_machine_dirty_when_its_one_block_transitions() {
     // reports true — with nothing else already marking the machine dirty,
     // `is_dirty()` afterward is exactly that block's own return value.
     let cursors = CursorSet::new(2);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     assert!(
         doc.is_dirty(),
         "a block's own dirty transition must propagate through sync_cursors's aggregation"
@@ -390,4 +390,52 @@ fn reveal_all_forces_every_block_revealed_with_no_cursor_input() {
     reveal_all(&mut blocks);
     assert!(!blocks.is_empty(), "fixture must produce parsed blocks");
     assert_all_revealed(&blocks);
+}
+
+fn link_reveal_state(doc: &DocMachine) -> rune_syntax::element::RevealState {
+    let paragraph = doc
+        .blocks()
+        .iter()
+        .find_map(|b| match b {
+            crate::element::block::Block::Paragraph(p) => Some(p),
+            _ => None,
+        })
+        .expect("fixture has a paragraph");
+    paragraph
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            crate::element::inline::Inline::Link(_) => Some(i.reveal_state()),
+            _ => None,
+        })
+        .expect("fixture paragraph has a link")
+}
+
+#[test]
+fn sync_cursors_reveal_offsets_open_a_link_no_cursor_touches() {
+    let content = "prefix [text](url) suffix";
+    let buf = Buffer::new(content);
+    let url_offset = content.find("url").expect("fixture has a url");
+    let outside = content.len() - 1;
+
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(RevealMode::AtCursor);
+    doc.sync_content(&buf);
+
+    let cursors = CursorSet::new(outside);
+    doc.sync_cursors(&buf, &cursors, &[]);
+    assert_eq!(
+        link_reveal_state(&doc),
+        rune_syntax::element::RevealState::Rendered,
+        "the cursor sits outside the link, so it stays concealed with no \
+         reveal offsets"
+    );
+
+    doc.sync_cursors(&buf, &cursors, &[url_offset]);
+    assert_eq!(
+        link_reveal_state(&doc),
+        rune_syntax::element::RevealState::Revealed,
+        "an overlay-driven offset landing inside the link's own range must \
+         reveal it exactly as a cursor touching it would"
+    );
 }

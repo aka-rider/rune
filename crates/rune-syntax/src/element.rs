@@ -136,9 +136,27 @@ pub struct CursorProbe {
 
 impl CursorProbe {
     pub fn new(buf: &Buffer, cursors: &CursorSet) -> CursorProbe {
-        let offsets: Vec<usize> = cursors.all().iter().map(|c| c.position.get()).collect();
+        let mut offsets: Vec<usize> = Vec::new();
+        for c in cursors.all() {
+            offsets.push(c.position.get());
+            if c.has_selection() {
+                offsets.push(c.anchor.get());
+            }
+        }
         let points: Vec<BufferPoint> = offsets.iter().map(|&o| buf.offset_to_line_col(o)).collect();
         CursorProbe { offsets, points }
+    }
+
+    pub fn with_reveal_offsets(
+        mut self,
+        buf: &Buffer,
+        extra: impl IntoIterator<Item = usize>,
+    ) -> CursorProbe {
+        for o in extra {
+            self.offsets.push(o);
+            self.points.push(buf.offset_to_line_col(o));
+        }
+        self
     }
 
     pub fn any_on_line(&self, line: usize) -> bool {
@@ -324,6 +342,40 @@ mod tests {
         assert!(CursorProbe::new(&buf, &at_start).touches(range));
         assert!(CursorProbe::new(&buf, &at_end).touches(range));
         assert!(!CursorProbe::new(&buf, &past_end).touches(range));
+    }
+
+    #[test]
+    fn cursor_probe_touches_a_selections_anchor_even_when_the_caret_sits_elsewhere() {
+        use rune_core::coords::{BufferOffset, VisualCol};
+        use rune_core::cursor::CursorSpec;
+
+        let buf = Buffer::new("0123456789");
+        let range = ByteRange::new(3, 7);
+        let selection = CursorSet::new_from_specs(&[CursorSpec {
+            position: BufferOffset(9),
+            anchor: BufferOffset(5),
+            desired_col: VisualCol(0),
+        }]);
+        assert!(
+            CursorProbe::new(&buf, &selection).touches(range),
+            "the anchor sits inside the range even though the caret does not"
+        );
+    }
+
+    #[test]
+    fn with_reveal_offsets_extends_touches_beyond_the_cursor_set() {
+        let buf = Buffer::new("0123456789");
+        let range = ByteRange::new(3, 7);
+        let no_cursor_near_it = CursorSet::new(9);
+        let probe = CursorProbe::new(&buf, &no_cursor_near_it);
+        assert!(!probe.touches(range));
+
+        let extended = probe.with_reveal_offsets(&buf, [5]);
+        assert!(
+            extended.touches(range),
+            "an overlay-driven offset (bracket match, search hit, ...) must \
+             reach the same touch check a real cursor does"
+        );
     }
 
     #[test]

@@ -73,7 +73,7 @@ proptest! {
         doc.set_reveal_mode(focused.into());
         doc.sync_content(&buf);
         let cursors = CursorSet::new(offset);
-        doc.sync_cursors(&buf, &cursors);
+        doc.sync_cursors(&buf, &cursors, &[]);
         let (lines, _syntax_snap) = emit(buf.content(), doc.blocks(), 80);
         let wrap_snap = WrapMap::new(raw_width).sync(buf.content(), &lines);
 
@@ -135,7 +135,7 @@ fn wrap_for(
     doc.set_reveal_mode(true.into());
     doc.sync_content(&buf);
     let cursors = CursorSet::new(0);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let wrap = WrapMap::new(width).sync(buf.content(), &lines);
     (buf, wrap)

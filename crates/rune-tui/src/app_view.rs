@@ -99,15 +99,33 @@ impl App {
         // this from.
         let icons = self.icons();
         self.active_doc_mut().icons = icons;
-        let view = self.active_doc_mut().sync();
-        self.active_doc_mut().view = Some(view);
-        crate::diff_view::sync(self);
         // A no-op with the bar closed; with it open, recomputes the match
         // set when the active document or its buffer version has drifted
         // since the last recompute (a tab switch, an undo/redo, an
         // external reload) — every draft edit already triggers its own
-        // recompute directly from `search::keys::handle_key`.
+        // recompute directly from `search::keys::handle_key`. Runs BEFORE
+        // the document sync below so a live match's own byte offsets can
+        // reach the reveal decision that sync makes — a match sitting
+        // inside concealed markup must reveal it, the same way the caret
+        // already does.
         crate::search::sync(self);
+        let active = self.active;
+        let search_offsets = self
+            .search()
+            .filter(|state| state.doc == active)
+            .map(|state| {
+                state
+                    .matches
+                    .iter()
+                    .flat_map(|m| [m.start, m.end.saturating_sub(1).max(m.start)])
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.active_doc_mut()
+            .set_search_reveal_offsets(search_offsets);
+        let view = self.active_doc_mut().sync();
+        self.active_doc_mut().view = Some(view);
+        crate::diff_view::sync(self);
     }
 }
 

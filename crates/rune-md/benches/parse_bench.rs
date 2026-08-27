@@ -29,7 +29,7 @@ fn full_pipeline_benchmark(c: &mut Criterion) {
             let cursors = CursorSet::new(0);
             let mut machine = DocMachine::new();
             machine.sync_content(&buf);
-            machine.sync_cursors(&buf, &cursors);
+            machine.sync_cursors(&buf, &cursors, &[]);
             black_box(machine.snapshot(&buf));
         });
     });

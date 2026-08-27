@@ -232,7 +232,7 @@ proptest! {
         doc.set_reveal_mode(focused.into());
         doc.sync_content(&buf);
         let cursors = CursorSet::new(offset);
-        doc.sync_cursors(&buf, &cursors);
+        doc.sync_cursors(&buf, &cursors, &[]);
         let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
 
         for line in 0..buf.line_count() {

@@ -332,8 +332,9 @@ impl DocMachine {
     /// The ONLY place child `RevealSm::transition` calls fire. Never bumps
     /// `built_version` — reveal state and content version are deliberately
     /// disjoint (Gotchas).
-    pub fn sync_cursors(&mut self, buf: &Buffer, cursors: &CursorSet) {
-        let probe = CursorProbe::new(buf, cursors);
+    pub fn sync_cursors(&mut self, buf: &Buffer, cursors: &CursorSet, reveal_offsets: &[usize]) {
+        let probe =
+            CursorProbe::new(buf, cursors).with_reveal_offsets(buf, reveal_offsets.iter().copied());
         let root_grant = match self.reveal_mode {
             RevealMode::Never => RevealGrant::ForceRendered,
             RevealMode::AtCursor => RevealGrant::Decide,

@@ -179,7 +179,7 @@ fn a_wrapped_table_borders_at_the_width_it_lays_its_content_out_at() {
     doc.set_reveal_mode(false.into());
     doc.sync_content(&buf);
     doc.set_width(40);
-    doc.sync_cursors(&buf, &CursorSet::new(0));
+    doc.sync_cursors(&buf, &CursorSet::new(0), &[]);
 
     let (lines, _) = emit(content, doc.blocks(), 40);
 

@@ -29,7 +29,7 @@ pub fn synced_at(
     doc.sync_content(&buf);
     let positions: Vec<usize> = cursor_offsets.iter().map(|&o| o.min(buf.len())).collect();
     let cursors = CursorSet::new_from_positions(&positions);
-    doc.sync_cursors(&buf, &cursors);
+    doc.sync_cursors(&buf, &cursors, &[]);
     (buf, doc)
 }
 

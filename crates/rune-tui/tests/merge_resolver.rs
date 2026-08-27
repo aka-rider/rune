@@ -371,7 +371,7 @@ fn dirty_close_guard_save_during_unresolved_merge_refuses_and_writes_nothing() {
 
 #[test]
 fn help_lists_the_diff_view_bindings() {
-    let help = rune_tui::help::help_markdown();
+    let help = rune_tui::help::help_markdown(true);
     assert!(
         help.contains("## Diff View"),
         "missing diff view section: {help}"

@@ -30,7 +30,7 @@ fn full_pipeline_5k_under_100ms() {
     let mut machine = DocMachine::new();
     machine.sync_content(&buf);
     let _refs = rune_md::catalogue::catalogue(buf.content(), machine.blocks());
-    machine.sync_cursors(&buf, &cursors);
+    machine.sync_cursors(&buf, &cursors, &[]);
     let _snap = machine.snapshot(&buf);
 
     let elapsed = start.elapsed();
@@ -79,7 +79,7 @@ fn average_pipeline_cost(doc: &str, iterations: usize) -> Duration {
         let cursors = CursorSet::new(0);
         let mut machine = DocMachine::new();
         machine.sync_content(&buf);
-        machine.sync_cursors(&buf, &cursors);
+        machine.sync_cursors(&buf, &cursors, &[]);
         std::hint::black_box(machine.snapshot(&buf));
     };
     run_once();

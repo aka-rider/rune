@@ -34,7 +34,7 @@ fn synced(content: &str, focused: bool) -> (Buffer, DocMachine) {
     let mut doc = DocMachine::new();
     doc.set_reveal_mode(focused.into());
     doc.sync_content(&buf);
-    doc.sync_cursors(&buf, &CursorSet::new(0));
+    doc.sync_cursors(&buf, &CursorSet::new(0), &[]);
     (buf, doc)
 }
 

@@ -90,7 +90,7 @@ fn measure(content: &str) -> Timing {
     let sync_content = t1.elapsed().as_secs_f64() * 1000.0;
     machine.set_width(WIDTH);
     let cursors = CursorSet::new(0);
-    machine.sync_cursors(&buf, &cursors);
+    machine.sync_cursors(&buf, &cursors, &[]);
 
     let t2 = Instant::now();
     let _snap = machine.snapshot(&buf);

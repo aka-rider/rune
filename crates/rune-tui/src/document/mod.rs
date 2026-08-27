@@ -42,6 +42,7 @@ pub struct Document {
     pub viewport: Viewport,
     pub focused: bool,
     pub reveal_engaged: bool,
+    pub(crate) search_reveal_offsets: Vec<usize>,
     pub journal: Journal,
     pub(crate) ladder_presses: usize,
     pub(crate) ladder_pressed_at: Option<Instant>,
@@ -89,6 +90,10 @@ impl Document {
         self.focused
     }
 
+    pub(crate) fn set_search_reveal_offsets(&mut self, offsets: Vec<usize>) {
+        self.search_reveal_offsets = offsets;
+    }
+
     pub fn has_reloadable_graphics(&self) -> bool {
         self.image().is_some()
             || self
@@ -129,6 +134,7 @@ impl Document {
             viewport: Viewport::default(),
             focused: true,
             reveal_engaged: true,
+            search_reveal_offsets: Vec::new(),
             journal: Journal::new(),
             ladder_presses: 0,
             ladder_pressed_at: None,
