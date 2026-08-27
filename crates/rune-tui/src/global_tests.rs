@@ -251,14 +251,14 @@ fn global_n_binding_is_not_already_bound_in_any_pane_table() {
     assert_unclaimed_by_any_pane_table(&[ctrl_n, sup_n]);
 }
 
+/// Trash is no longer a global chord (product decision): neither `⌘⌫` nor
+/// `^⌫` resolves through `GLOBAL_BINDINGS` any more, in the editor, the
+/// title field, the finder, or anywhere else a raw key dispatch checks this
+/// table first.
 #[test]
-fn global_backspace_chords_are_not_already_bound_in_any_pane_table() {
-    use crate::explorer_keys::EXPLORER_BINDINGS;
-    use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+fn global_bindings_no_longer_claim_backspace_at_all() {
+    use crate::binding::resolve_in;
     use crate::keymap::KeyInput;
-    use crate::keymap::editor_bindings::EDITOR_BINDINGS;
-    use crate::keymap::vim::VIM_BINDINGS;
-    use crate::opentabs::TABS_BINDINGS;
 
     let sup_backspace = KeyInput {
         code: KeyCode::Backspace,
@@ -269,36 +269,50 @@ fn global_backspace_chords_are_not_already_bound_in_any_pane_table() {
         mods: CTRL,
     };
 
-    fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
-        table
-            .iter()
-            .filter(|b| b.key.matches(key))
-            .map(|b| b.help)
-            .collect()
-    }
-
     for key in [sup_backspace, ctrl_backspace] {
-        assert!(
-            claimants(EDITOR_BINDINGS, key).is_empty(),
-            "EDITOR_BINDINGS already binds {key:?}"
-        );
-        assert!(
-            claimants(VIM_BINDINGS, key).is_empty(),
-            "VIM_BINDINGS already binds {key:?}"
-        );
-        assert!(
-            claimants(TABS_BINDINGS, key).is_empty(),
-            "TABS_BINDINGS already binds {key:?}"
-        );
-        assert!(
-            claimants(EXPLORER_BINDINGS, key).is_empty(),
-            "EXPLORER_BINDINGS already binds {key:?}"
-        );
-        assert!(
-            claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
-            "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
+        assert_eq!(
+            resolve_in(GLOBAL_BINDINGS, key),
+            None,
+            "{key:?} must not resolve through the global table any more"
         );
     }
+}
+
+/// Trash's new home: an Explorer-pane-scoped binding on `⌘⌫` and the
+/// forward-delete key — `^⌫` deliberately does NOT survive the move, only
+/// the two chords the product decision named.
+#[test]
+fn explorer_owns_sup_backspace_and_delete_for_trash() {
+    use crate::binding::resolve_in;
+    use crate::explorer_keys::{EXPLORER_BINDINGS, ExplorerCommand};
+    use crate::keymap::KeyInput;
+
+    let sup_backspace = KeyInput {
+        code: KeyCode::Backspace,
+        mods: SUP,
+    };
+    let ctrl_backspace = KeyInput {
+        code: KeyCode::Backspace,
+        mods: CTRL,
+    };
+    let delete = KeyInput {
+        code: KeyCode::Delete,
+        mods: Mods::NONE,
+    };
+
+    assert_eq!(
+        resolve_in(EXPLORER_BINDINGS, sup_backspace),
+        Some(ExplorerCommand::Trash)
+    );
+    assert_eq!(
+        resolve_in(EXPLORER_BINDINGS, delete),
+        Some(ExplorerCommand::Trash)
+    );
+    assert_eq!(
+        resolve_in(EXPLORER_BINDINGS, ctrl_backspace),
+        None,
+        "^⌫ must not survive the move to the Explorer pane"
+    );
 }
 
 #[test]

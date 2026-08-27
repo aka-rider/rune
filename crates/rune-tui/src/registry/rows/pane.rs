@@ -102,6 +102,7 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     explorer_row(ExplorerCommand::Open, "open", "open"),
     explorer_row(ExplorerCommand::ParentDir, "parent directory", "up dir"),
     explorer_row(ExplorerCommand::Leave, "leave explorer", "back to editor"),
+    explorer_row(ExplorerCommand::Trash, "trash", "trash"),
     explorer_search_row(ExplorerSearchCommand::Type, "type", "search by name"),
     explorer_search_row(ExplorerSearchCommand::Erase, "erase", "erase search char"),
     explorer_search_row(

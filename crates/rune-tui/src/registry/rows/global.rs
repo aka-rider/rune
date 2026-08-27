@@ -87,7 +87,12 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     ),
     availability_row(GlobalCommand::Merge, "merge", "merge", merge),
     row(GlobalCommand::ToggleMessages, "messages", "messages"),
-    row(GlobalCommand::Trash, "trash", "trash"),
+    availability_row(
+        GlobalCommand::Trash,
+        "trash",
+        "trash",
+        crate::trash::availability,
+    ),
     row(GlobalCommand::ToggleSearch, "search", "search"),
     row(GlobalCommand::SearchNext, "next match", "next match"),
     row(GlobalCommand::SearchPrev, "prev match", "prev match"),

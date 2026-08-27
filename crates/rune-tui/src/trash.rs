@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rune_vfs::Vfs;
+use rune_vfs::{FileKind, Link, Vfs};
 
 use crate::app::App;
 use crate::document::{Document, DocumentId};
@@ -10,8 +10,11 @@ use crate::generation::TrashGen;
 use crate::guard::{self, GuardKind, GuardPrompt, TrashSubject};
 use crate::messages;
 use crate::pane::Pane;
+use crate::registry::Availability;
 use crate::runtime::{Cmd, CmdError, Effects, Msg};
 use crate::workspace;
+
+const IN_FLIGHT_RENAME_REFUSAL: &str = "can't trash while a rename is in flight";
 
 #[derive(Default)]
 pub(crate) enum TrashState {
@@ -25,6 +28,10 @@ pub(crate) enum TrashState {
 pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
     if !matches!(app.trash, TrashState::Idle) {
         messages::error(app, "a trash is already in progress");
+        return;
+    }
+    if app.rename.in_flight() {
+        messages::error(app, IN_FLIGHT_RENAME_REFUSAL);
         return;
     }
 
@@ -44,6 +51,39 @@ pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
         "trash confirmation dropped \u{2014} a prompt is already showing",
         effects,
     );
+}
+
+/// The palette row's own availability check — a cheap, read-only mirror of
+/// [`target`]/[`selected_row_target`]'s existence checks, without their
+/// message-posting: the registry's `fn(&App) -> Availability` shape can't
+/// take `&mut App`, and the palette re-derives this on every keystroke of
+/// the filter field, so it must stay side-effect-free. Dirtiness and an
+/// in-flight rename/trash are deliberately NOT checked here — those are
+/// transient refusals `request_trash`/`confirm` already report with their
+/// own message, the same way `Save`'s registry row stays `Available` while
+/// a save is already in flight.
+pub(crate) fn availability(app: &App) -> Availability {
+    if app.focus() == Pane::Explorer {
+        return selected_row_availability(app);
+    }
+    if app.active_doc().file_path.is_some() {
+        Availability::Available
+    } else {
+        Availability::Unavailable("nothing to trash \u{2014} draft has no file".into())
+    }
+}
+
+fn selected_row_availability(app: &App) -> Availability {
+    let Some(entry) = app.explorer.entries.get(app.explorer.nav.cursor) else {
+        return Availability::Unavailable("nothing to trash \u{2014} no file selected".into());
+    };
+    match entry.link {
+        Link::To | Link::Broken => Availability::Available,
+        Link::No if entry.kind == FileKind::Dir => {
+            Availability::Unavailable("cannot trash a directory".into())
+        }
+        Link::No => Availability::Available,
+    }
 }
 
 fn target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
@@ -81,6 +121,10 @@ fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
 pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
     if !matches!(app.trash, TrashState::Idle) {
         messages::error(app, "a trash is already in progress");
+        return;
+    }
+    if app.rename.in_flight() {
+        messages::error(app, IN_FLIGHT_RENAME_REFUSAL);
         return;
     }
     if refuse_if_dirty(app, &path) {

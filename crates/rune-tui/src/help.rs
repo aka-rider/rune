@@ -188,10 +188,15 @@ mod tests {
     fn global_section_row_count_excludes_tab_switch_rows_moved_to_palette() {
         let md = help_markdown();
         let section = section_of(&md, "Global");
+        // Trash keeps its listed registry row (reachable from the palette)
+        // but has no `GLOBAL_BINDINGS` chord of its own any more — it still
+        // renders one row (key column "—"), so the count is one more than
+        // the raw binding-table tally.
         let expected = GLOBAL_BINDINGS
             .iter()
             .filter(|b| !matches!(b.cmd, GlobalCommand::TabSwitch(_)))
-            .count();
+            .count()
+            + 1;
         assert_eq!(row_count(section), expected);
     }
 

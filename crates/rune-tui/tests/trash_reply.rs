@@ -33,6 +33,7 @@ fn dirty_at_reply_keeps_the_tab_open_with_a_warning() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
     let id = session.app().active;
+    explorer_common::drive_load_explorer(&mut session);
     send(&mut session, sup_backspace());
     let mut effects = send(&mut session, yes());
     let cmd = effects.cmds.remove(0);
@@ -66,6 +67,7 @@ fn trash_done_ok_closes_the_tab_and_posts_moved() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
     let closing_id = session.app().active;
+    explorer_common::drive_load_explorer(&mut session);
     send(&mut session, sup_backspace());
     let mut effects = send(&mut session, yes());
     let cmd = effects.cmds.remove(0);
@@ -95,6 +97,7 @@ fn guard_at_reply_is_cleared_before_the_close() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
     let id = session.app().active;
+    explorer_common::drive_load_explorer(&mut session);
     send(&mut session, sup_backspace());
     let mut effects = send(&mut session, yes());
     let cmd = effects.cmds.remove(0);
@@ -136,6 +139,7 @@ fn trash_done_err_posts_and_closes_nothing() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
     let id = session.app().active;
+    explorer_common::drive_load_explorer(&mut session);
     send(&mut session, sup_backspace());
     let mut effects = send(&mut session, yes());
     let cmd = effects.cmds.remove(0);
@@ -169,6 +173,7 @@ fn stale_generation_trash_done_is_ignored() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
     let id = session.app().active;
+    explorer_common::drive_load_explorer(&mut session);
     send(&mut session, sup_backspace());
     send(&mut session, yes()); // mints generation 0, app.trash_gen == 0
 
@@ -205,6 +210,7 @@ fn path_equality_is_exact_not_resolved() {
     // even though the OS would treat them as the same file.
     let differently_spelled = PathBuf::from("/ROOT/a.md");
 
+    explorer_common::drive_load_explorer(&mut session);
     send(&mut session, sup_backspace());
     let mut effects = send(&mut session, yes());
     let cmd = effects.cmds.remove(0);

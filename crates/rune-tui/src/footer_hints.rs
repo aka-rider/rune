@@ -121,10 +121,15 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     }
 
     match app.focus() {
-        Pane::Explorer => entries.extend(EXPLORER_BINDINGS.iter().filter_map(|b| {
-            let spec = registry::spec(registry::rows::pane::adapt_explorer(b.cmd))?;
-            Some((labeled(b, &mut label_buf), spec.help, true))
-        })),
+        Pane::Explorer => entries.extend(
+            EXPLORER_BINDINGS
+                .iter()
+                .filter(|b| !b.secondary)
+                .filter_map(|b| {
+                    let spec = registry::spec(registry::rows::pane::adapt_explorer(b.cmd))?;
+                    Some((labeled(b, &mut label_buf), spec.help, true))
+                }),
+        ),
         Pane::Tabs => entries.extend(TABS_BINDINGS.iter().filter_map(|b| {
             let spec = registry::spec(registry::rows::pane::adapt_tabs(b.cmd))?;
             Some((labeled(b, &mut label_buf), spec.help, true))

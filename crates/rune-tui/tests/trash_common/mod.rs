@@ -65,10 +65,51 @@ pub fn sup_backspace() -> Msg {
     )
 }
 
+pub fn ctrl_backspace() -> Msg {
+    key(
+        KeyCode::Backspace,
+        Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    )
+}
+
+pub fn delete_key() -> Msg {
+    key(KeyCode::Delete, Mods::NONE)
+}
+
 pub fn escape() -> Msg {
     key(KeyCode::Escape, Mods::NONE)
 }
 
 pub fn yes() -> Msg {
     key(KeyCode::Char('y'), Mods::NONE)
+}
+
+pub fn ctrl_p() -> KeyInput {
+    KeyInput {
+        code: KeyCode::Char('P'),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    }
+}
+
+pub fn open_palette(session: &mut Session) {
+    session.key(ctrl_p());
+}
+
+/// The only interactive route left for trashing the ACTIVE document without
+/// Explorer focus: open the palette, filter down to the (unique) "trash"
+/// row, and run it. Trash's own global chords are gone (product decision);
+/// this is the palette row `registry/rows/global.rs` still exposes.
+pub fn trash_via_palette(session: &mut Session) {
+    open_palette(session);
+    session.type_("trash");
+    session.key(KeyInput {
+        code: KeyCode::Enter,
+        mods: Mods::NONE,
+    });
 }

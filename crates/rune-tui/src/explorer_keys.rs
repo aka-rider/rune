@@ -16,7 +16,18 @@ pub enum ExplorerCommand {
     Open,
     ParentDir,
     Leave,
+    /// Explorer-scoped Trash: `⌘⌫` and the forward-delete key, only while
+    /// the Explorer pane itself holds focus (never a global chord — no
+    /// text field competes for either key here).
+    Trash,
 }
+
+const SUP: Mods = Mods {
+    shift: false,
+    alt: false,
+    ctrl: false,
+    sup: true,
+};
 
 pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     Binding {
@@ -61,6 +72,18 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
         help: "back to editor",
         secondary: false,
     },
+    Binding {
+        key: KeyPattern::new(KeyCode::Delete, Mods::NONE),
+        cmd: ExplorerCommand::Trash,
+        help: "trash",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Backspace, SUP),
+        cmd: ExplorerCommand::Trash,
+        help: "trash",
+        secondary: true,
+    },
 ];
 
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
@@ -92,6 +115,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         ExplorerCommand::Open => open_selected(app, effects),
         ExplorerCommand::ParentDir => go_to_parent(app, effects),
         ExplorerCommand::Leave => leave(app, effects),
+        ExplorerCommand::Trash => crate::trash::request_trash(app, effects),
     }
     KeyOutcome::Consumed
 }

@@ -24,19 +24,7 @@ constitution and the entry is deleted in the same commit.
 
 ### SECURITY
 
-#### `⌘⌫` / `^⌫` are globally bound to Trash, shadowing delete-to-line-start in every field and the editor
-- **Where**: `crates/rune-tui/src/global.rs:217-228` + `crates/rune-tui/src/dispatch.rs:271-274` (global table consulted before any focus routing); layering issue at `crates/rune-tui/src/pane_bar_policy.rs:30-37`.
-- **Wrong**: on macOS `⌘⌫` means "delete to start of line" and `⌥⌫`/`^⌫` word-delete in every text field. Here they reach `GlobalCommand::Trash` from the editor, title field, search bar, finder and palette alike — no field sees them. In the title field the hoisted `blur_title` runs first, so `⌘⌫` *commits the in-progress rename* and then raises a Trash prompt for the file; a `y/N` guard is the only thing between muscle memory and the Trash. With the palette open, `bar_policy(Trash)==LeaveOpen` raises the trash confirmation *underneath* the still-painted palette overlay, violating "modal capture is total".
-- **Instead**: do not bind a destructive command to a chord that is a standard text-editing key; require an unambiguous Trash chord, and let fields consume backspace-family chords first.
-- **Confidence**: confirmed.
-
 ### CORRECTNESS
-
-#### Trash has no mutual exclusion with an in-flight rename
-- **Where**: `crates/rune-tui/src/trash.rs:25-47,81-94` (no `rename.in_flight()` check); contrast `crates/rune-tui/src/save/gate.rs:41-44` and `rename.rs:210-213`, the documented symmetric save/rename pair.
-- **Wrong**: ^R, type name, Enter (rename enqueued, ack async); before it lands, `⌘⌫` reads the still-old `file_path` and raises a Trash guard for the old file; `y` spawns `trash_cmd(old_path)` while `rename_excl(old→new)` is in flight on the same inode. Whichever loses reports a confusing failure. No bytes lost (both atomic), but two destructive ops race with no refusal, in a codebase that refuses the save/rename pair for exactly this reason.
-- **Instead**: refuse trash while a rename is in flight (mirror the save gate).
-- **Confidence**: confirmed.
 
 #### Any left-click while the finder is open cancels it — including a click on a result row
 - **Where**: `crates/rune-tui/src/commands/mouse.rs:97-100`.

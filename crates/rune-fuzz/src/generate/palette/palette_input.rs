@@ -400,8 +400,10 @@ pub(in crate::generate) const CTRL_E_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `⌘⌫` (`GlobalCommand::Trash`) — the recoverable-delete chord. Reaching
-/// it reliably is what exercises the trash guard and the async
+/// `⌘⌫` — the recoverable-delete chord, now Explorer-pane-scoped
+/// (`ExplorerCommand::Trash`) rather than global; `cluster_chrome` pairs it
+/// with `CTRL_B_KEY` first so it lands with the Explorer actually focused.
+/// Reaching it reliably is what exercises the trash guard and the async
 /// `CmdKind::Trash` discharge against the fuzzer's own generated sessions,
 /// not just the deterministic test suite.
 pub(in crate::generate) const TRASH_KEY: KeyInput = KeyInput {

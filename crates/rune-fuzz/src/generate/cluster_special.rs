@@ -26,7 +26,7 @@ pub(super) fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(CTRL_T_KEY)]),
         Just(vec![Action::Key(CTRL_P_KEY)]),
         Just(vec![Action::Key(CTRL_E_KEY)]),
-        Just(vec![Action::Key(TRASH_KEY)]),
+        Just(vec![Action::Key(CTRL_B_KEY), Action::Key(TRASH_KEY)]),
         Just(vec![Action::Key(FILESEARCH_KEY_CTRL)]),
         Just(vec![Action::Key(FILESEARCH_KEY_SUP)]),
         Just(vec![Action::OpenFileSearch]),

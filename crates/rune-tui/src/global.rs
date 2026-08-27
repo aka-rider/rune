@@ -215,18 +215,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         secondary: true,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Backspace, SUP),
-        cmd: GlobalCommand::Trash,
-        help: "trash",
-        secondary: false,
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::Backspace, CTRL),
-        cmd: GlobalCommand::Trash,
-        help: "trash",
-        secondary: true,
-    },
-    Binding {
         key: KeyPattern::new(KeyCode::Char('f'), CTRL),
         cmd: GlobalCommand::ToggleSearch,
         help: "search",
