@@ -107,6 +107,30 @@ fn line_starts_treats_a_lone_cr_as_its_own_line_boundary() {
     assert_eq!(line_starts(text), vec![0, 2, 5, 7]);
 }
 
+// A newline-terminated text has no trailing partial line after the last
+// terminator, so line_starts must not report a phantom start sitting at
+// the text's own length.
+#[test]
+fn line_starts_does_not_add_a_start_past_a_trailing_newline() {
+    assert_eq!(line_starts("line1\n"), vec![0]);
+}
+
+// A single changed word inside an otherwise-shared line must emphasize
+// exactly that word on each side — not the word plus a spurious
+// whole-line fallback range tacked on alongside it.
+#[test]
+fn a_single_changed_word_produces_exactly_one_emphasized_range() {
+    let left = "the quick fox\n";
+    let right = "the slow fox\n";
+
+    let spans = intraline(left, right, None);
+
+    assert_eq!(spans.left.len(), 1);
+    assert_eq!(spans.left[0].ranges.len(), 1);
+    assert_eq!(spans.right.len(), 1);
+    assert_eq!(spans.right[0].ranges.len(), 1);
+}
+
 #[test]
 fn line_starts_agrees_with_similar_s_own_line_count_across_a_lone_cr() {
     let left = "line1\rline2\nline3\n";

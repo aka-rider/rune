@@ -332,3 +332,70 @@ fn agreed_deletion_disappears_cleanly() {
 
     assert_eq!(hunks, vec![Hunk::Clean(b"keep\nkeep2\n".to_vec())]);
 }
+
+// Ours' edit ends exactly where theirs' edit begins (line2/line3 touch,
+// they don't overlap). Grouping them into one chunk anyway would compare
+// each side's reconstructed bytes over the *combined* span, and since
+// each side only rewrote its own untouched-by-the-other half, that
+// spurious comparison manufactures a conflict out of two disjoint,
+// individually clean changes.
+#[test]
+fn touching_but_non_overlapping_edits_from_each_side_merge_clean() {
+    let ancestor = b"a\nb\nc\nd\ne\n";
+    let ours = b"OURS_A\nOURS_B\nc\nd\ne\n";
+    let theirs = b"a\nb\nTHEIRS_C\nd\ne\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(
+        hunks,
+        vec![Hunk::Clean(b"OURS_A\nOURS_B\nTHEIRS_C\nd\ne\n".to_vec())]
+    );
+}
+
+// Theirs inserts right at the ancestor position where ours' own edit
+// begins. The insertion sits at that edge, not strictly inside ours'
+// range, so it must stay its own chunk rather than being absorbed into
+// ours' — both changes still merge clean, just as two adjacent hunks.
+#[test]
+fn insertion_exactly_at_a_later_edits_start_stays_its_own_chunk() {
+    let ancestor = b"a\nb\n";
+    let ours = b"OURS_A\nb\n";
+    let theirs = b"INSERTED\na\nb\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(hunks, vec![Hunk::Clean(b"INSERTED\nOURS_A\nb\n".to_vec())]);
+}
+
+// Theirs inserts at the very start of the document; ours separately
+// changes a line well past it, with ancestor lines between them that
+// neither side touched. Absorbing ours' distant edit into the
+// insertion's chunk would compare each side's bytes over that whole
+// combined span and manufacture a conflict, even though the two changes
+// never touch and merge clean on their own.
+#[test]
+fn insertion_well_before_an_unrelated_later_edit_merges_clean() {
+    let ancestor = b"a\nb\nc\nd\n";
+    let ours = b"a\nb\nOURS_C\nd\n";
+    let theirs = b"INSERTED\na\nb\nc\nd\n";
+
+    let hunks = merge_hunks(ancestor, ours, theirs);
+
+    assert_eq!(
+        hunks,
+        vec![Hunk::Clean(b"INSERTED\na\nb\nOURS_C\nd\n".to_vec())]
+    );
+}
+
+// With no ancestor, identical inputs carry no edits on either side; the
+// no-ancestor path must still fall back to one whole-content Clean hunk
+// instead of manufacturing a spurious empty conflict at the final flush.
+#[test]
+fn no_ancestor_identical_inputs_yield_one_whole_clean_hunk() {
+    let content = b"line1\nline2\n";
+
+    let hunks = merge_hunks_no_ancestor(content, content);
+
+    assert_eq!(hunks, vec![Hunk::Clean(content.to_vec())]);
+}
