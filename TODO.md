@@ -68,12 +68,6 @@ constitution and the entry is deleted in the same commit.
 
 ### CORRECTNESS
 
-#### `^M` cannot exit an active merge once the disk converges
-- **Where**: `crates/rune-tui/src/pane_command.rs:107-113` gating on `crates/rune-tui/src/registry/avail.rs:45-51`.
-- **Wrong**: `avail::merge` answers `Unavailable("no divergence to merge")` from `is_divergent`, and the `Merge` arm consults it before `merge::toggle` (the only exit). If the user resolves one hunk and an external process reverts the file (probe ack `Clean`), `retract_active_on_convergence` declines to retract (something is resolved) so the merge stays `Active`, but `^M` now refuses to exit and the palette row greys out. Escape still exits, but the advertised key is dead.
-- **Instead**: gate *entry* on divergence but let the same key exit an active session unconditionally.
-- **Confidence**: confirmed.
-
 #### Trash has no mutual exclusion with an in-flight rename
 - **Where**: `crates/rune-tui/src/trash.rs:25-47,81-94` (no `rename.in_flight()` check); contrast `crates/rune-tui/src/save/gate.rs:41-44` and `rename.rs:210-213`, the documented symmetric save/rename pair.
 - **Wrong**: ^R, type name, Enter (rename enqueued, ack async); before it lands, `⌘⌫` reads the still-old `file_path` and raises a Trash guard for the old file; `y` spawns `trash_cmd(old_path)` while `rename_excl(old→new)` is in flight on the same inode. Whichever loses reports a confusing failure. No bytes lost (both atomic), but two destructive ops race with no refusal, in a codebase that refuses the save/rename pair for exactly this reason.

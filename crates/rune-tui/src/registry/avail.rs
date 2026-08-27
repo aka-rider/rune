@@ -43,7 +43,8 @@ pub(crate) fn preview_locked(app: &App) -> Availability {
 }
 
 pub(crate) fn merge(app: &App) -> Availability {
-    if crate::merge::is_divergent(app.active_doc()) {
+    let session_exists_here = app.merge.doc() == Some(app.active);
+    if session_exists_here || crate::merge::is_divergent(app.active_doc()) {
         Availability::Available
     } else {
         Availability::Unavailable(crate::merge::NO_DIVERGENCE_REASON.into())
