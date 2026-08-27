@@ -39,12 +39,27 @@ fn bracketed_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Op
         FocusTarget::FileSearch => filesearch_paste_violation(prev, next, text),
         FocusTarget::Palette => palette_paste_violation(prev, next, text),
         FocusTarget::Title => title_paste_violation(prev, next, text),
-        FocusTarget::Explorer
-        | FocusTarget::Tabs
-        | FocusTarget::Editor
-        | FocusTarget::Messages
-        | FocusTarget::ReplaceField => document_paste_violation(prev, next, text),
+        FocusTarget::Editor | FocusTarget::ReplaceField => {
+            document_paste_violation(prev, next, text)
+        }
+        FocusTarget::Explorer | FocusTarget::Tabs | FocusTarget::Messages => {
+            chrome_pane_paste_refused_violation(prev, next)
+        }
     }
+}
+
+fn chrome_pane_paste_refused_violation(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
+    if next.content == prev.content {
+        return None;
+    }
+    Some(Violation::new(
+        "PASTE-VERBATIM",
+        format!(
+            "paste with a chrome pane focused must refuse, but the document changed: {:?} -> {:?}",
+            trunc(&prev.content, 120),
+            trunc(&next.content, 120)
+        ),
+    ))
 }
 
 fn first_line(text: &str) -> &str {

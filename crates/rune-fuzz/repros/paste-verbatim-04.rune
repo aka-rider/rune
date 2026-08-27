@@ -1,0 +1,7 @@
+content 
+type 
+type 
+key escape ----
+key char:h ----
+highlight-tree live 0 0
+paste hello world
