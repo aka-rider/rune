@@ -170,11 +170,11 @@ fn materialize_vfs_cmd(
 /// `true` only when `id` is still `Publishing` on exactly `ticket` — a
 /// document that closed, or moved on to a later attempt, mid-flight gets a
 /// typed, silent drop for every outcome that never touched disk
-/// (`Missing`/`Error`/`Conflict`), but a `Committed`/`Raced` write already
-/// took effect regardless of whether anything is still listening, so its
-/// bytes are still recorded durably via [`record_orphan_outcome`] — bytes a
-/// write displaces are captured before anything discards them, live
-/// document or not.
+/// (`PathDisagreement`/`Missing`/`Error`/`Conflict`), but a `Committed`/
+/// `Raced` write already took effect regardless of whether anything is
+/// still listening, so its bytes are still recorded durably via
+/// [`record_orphan_outcome`] — bytes a write displaces are captured before
+/// anything discards them, live document or not.
 pub(crate) fn handle_materialize_vfs_done(
     app: &mut App,
     id: DocumentId,
@@ -189,10 +189,13 @@ pub(crate) fn handle_materialize_vfs_done(
         .is_some_and(|d| d.save_ticket() == Some(ticket) && d.is_publishing());
     match outcome {
         MaterializeVfsOutcome::PathDisagreement => {
-            super::on_store_failure(
-                app,
-                "materialize refused: caller-supplied path does not match the bound path",
-            );
+            if live {
+                fail_materialize_locally(
+                    app,
+                    id,
+                    "save failed: caller-supplied path does not match the bound path",
+                );
+            }
         }
         MaterializeVfsOutcome::Error(e) => {
             if live {

@@ -94,12 +94,22 @@ fn record_outcome(
         target.seq,
         outcome,
     ) {
-        Ok(op_id) => {
-            app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
-            if let Some(doc) = app.doc_mut(id) {
-                doc.begin_recording(op_id, published);
+        Ok(op_id) => match app
+            .doc_mut(id)
+            .map(|doc| doc.begin_recording(op_id, published))
+        {
+            Some(true) => {
+                app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
             }
-        }
+            Some(false) => {
+                fail_materialize_locally(
+                    app,
+                    id,
+                    "save failed: the write was recorded but the document's own save state had already moved on",
+                );
+            }
+            None => {}
+        },
         Err(e) => {
             if published {
                 if let Some(binding) = app.doc_file_binding_mut(id) {
@@ -107,6 +117,8 @@ fn record_outcome(
                         Some(rune_db::hash_bytes(target.content.as_bytes()));
                 }
                 reactions::resolve_committed_ack(app, id);
+            } else {
+                fail_materialize_locally(app, id, format!("save failed: {e}"));
             }
             on_store_failure(app, &e.to_string());
         }

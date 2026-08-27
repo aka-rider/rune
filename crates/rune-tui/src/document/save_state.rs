@@ -172,6 +172,7 @@ impl SaveState {
         }
     }
 
+    #[must_use]
     pub(crate) fn advance_to_recording(&mut self, record_op: u64, published: bool) -> bool {
         match std::mem::take(self) {
             SaveState::Publishing {

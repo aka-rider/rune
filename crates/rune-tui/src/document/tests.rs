@@ -212,6 +212,26 @@ fn hydrate_keeps_a_cursor_offset_within_the_recovered_content() {
 }
 
 #[test]
+fn begin_recording_reports_failure_instead_of_silently_wedging_when_not_publishing() {
+    let mut doc = Document::new(Buffer::new("hello"));
+    assert_eq!(doc.save_phase(), SavePhase::Idle);
+
+    let succeeded = doc.begin_recording(1, true);
+
+    assert!(
+        !succeeded,
+        "begin_recording must report failure — its caller must be able to \
+         resolve the save state itself instead of assuming the transition \
+         always lands"
+    );
+    assert_eq!(
+        doc.save_phase(),
+        SavePhase::Idle,
+        "a rejected transition must leave the SaveState exactly as it was"
+    );
+}
+
+#[test]
 fn document_ids_are_distinct_and_ordered() {
     let mut app = crate::app::App::new(
         Buffer::new("a"),

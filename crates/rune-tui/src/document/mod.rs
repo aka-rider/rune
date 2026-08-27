@@ -204,6 +204,7 @@ impl Document {
         self.save.is_publishing()
     }
 
+    #[must_use]
     pub(crate) fn begin_recording(&mut self, record_op: u64, published: bool) -> bool {
         self.save.advance_to_recording(record_op, published)
     }
