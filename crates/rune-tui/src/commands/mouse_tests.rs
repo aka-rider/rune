@@ -189,6 +189,61 @@ fn click_on_a_synthetic_table_border_row_does_not_move_the_cursor() {
     assert!(!app.active_doc().cursors.primary().has_selection());
 }
 
+/// `Geometry::pane_at` deliberately classifies every `diff_left` column as
+/// `Pane::Editor` too, so a latched text drag that wanders from the editor
+/// into the diff-left pane must be stopped by `handle_left_drag`'s own
+/// containment check against the editor's rect, not by `pane_at`. Before
+/// that fix this reached `input.column - editor.x` with `input.column` left
+/// of `editor.x`, an unchecked `u16` subtraction that panics in debug and
+/// wraps to a garbage offset in release.
+#[test]
+fn drag_that_wanders_into_the_diff_left_pane_is_a_no_op() {
+    let content: String = (0..5).map(|i| format!("line {i}\n")).collect();
+    let mut app = app_with(&content, 100, 20);
+    let right = app.active;
+    crate::diff_view::install_text(
+        &mut app,
+        right,
+        "left text\n".to_string(),
+        "left.md".to_string(),
+    );
+    app.sync_view();
+
+    click(&mut app, MouseKind::Down(MouseButton::Left), 5, 0);
+    let cursor_before = app.active_doc().cursors.primary();
+
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let geo = crate::layout::geometry(area, &app);
+    let diff_left = geo
+        .diff_left
+        .expect("diff-left pane must be laid out at this width");
+    assert_eq!(
+        geo.pane_at(diff_left.x, diff_left.y),
+        Some(Pane::Editor),
+        "test setup: pane_at must still classify diff_left as Editor"
+    );
+
+    let mut effects = crate::runtime::Effects::default();
+    crate::app::update(
+        &mut app,
+        Msg::Mouse(MouseInput {
+            kind: MouseKind::Drag(MouseButton::Left),
+            column: diff_left.x,
+            row: diff_left.y,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        }),
+        &mut effects,
+    );
+
+    let cursor_after = app.active_doc().cursors.primary();
+    assert_eq!(
+        cursor_after, cursor_before,
+        "a drag into diff_left must not move or resize the selection"
+    );
+}
+
 /// Finding 6: the shared click-count -> cursor shape, document-agnostic.
 #[test]
 fn place_click_cursor_and_extend_drag_cursor_are_document_agnostic() {

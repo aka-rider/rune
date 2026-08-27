@@ -329,12 +329,20 @@ pub(crate) fn extend_drag_cursor(
 fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = crate::layout::geometry(area, app);
-    if geo.pane_at(input.column, input.row) != Some(Pane::Editor) {
+    let editor = geo.editor;
+    // Containment against the editor's OWN rect, never `pane_at` — `pane_at`
+    // deliberately classifies every `diff_left` column as `Pane::Editor` too
+    // (`Geometry::pane_at`'s own docs), so it can't tell a drag that has
+    // wandered into the diff-left pane from one still inside the editor,
+    // and `input.column`/`input.row` can then sit left of/above `editor.x`/
+    // `editor.y` — exactly the case `saturating_sub` below guards as a
+    // second line of defense.
+    let point = ratatui::layout::Position::new(input.column, input.row);
+    if !editor.contains(point) {
         return;
     }
-    let editor = geo.editor;
-    let col = input.column - editor.x;
-    let row = input.row - editor.y;
+    let col = input.column.saturating_sub(editor.x);
+    let row = input.row.saturating_sub(editor.y);
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;
     };

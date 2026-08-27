@@ -52,12 +52,6 @@ constitution and the entry is deleted in the same commit.
 
 ### CRASH / DoS
 
-#### Panic: `u16` underflow when a text drag crosses into the diff-left pane
-- **Where**: `crates/rune-tui/src/commands/mouse.rs:336` (`handle_left_drag`), with the guard reading `crates/rune-tui/src/layout.rs:176-178` (`Geometry::pane_at`).
-- **Wrong**: with a side-by-side diff view open, `layout.rs:340-343` puts every column of `diff_left` strictly left of `editor.x`. Start a left-button text drag in the right/editor pane (latches `Drag::Text{pane:Editor}`) and drag left into the diff-left pane. `handle_left_drag`'s guard is `pane_at(...) != Some(Pane::Editor)`, but `pane_at` deliberately returns `Some(Pane::Editor)` for a point inside `diff_left`, so the guard passes and `:336` does the unchecked `input.column - editor.x`. Executed: `pane_at(3,3)=Some(Editor)` then `panicked … attempt to subtract with overflow`. In release (no overflow checks) it wraps, hit-tests the *right* document from a click in the *left* pane, and snaps the selection to a garbage offset. The sibling `handle` uses `saturating_sub` at `:132-133`; only this path subtracts raw, and the function's doc comment claiming "wandered outside the editor mid-drag is a no-op" is falsified by `pane_at`'s diff-left fallthrough.
-- **Instead**: guard against the diff-left region explicitly (or `saturating_sub` plus a correct pane/document check) so a drag out of the editor pane is the intended no-op.
-- **Confidence**: confirmed (executed).
-
 ### SECURITY
 
 #### Terminal escape injection via breadcrumb path components — raw `set_symbol` bypasses ratatui's control-char filter
