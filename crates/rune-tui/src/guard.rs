@@ -294,23 +294,26 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
     }
 }
 
-/// `s`/`S` saves `prompt.doc` then closes it — but ONLY once `trigger_save`
-/// actually started a save (`doc.save_in_flight` true right after calling
-/// it): a document with no file path, or one that just armed the degraded-
-/// store confirm gate instead of saving, never gets its `save_in_flight`
-/// set, so `pending_close_on_save` is deliberately left `None` in that
-/// case — the close intent is dropped (the user must press `^w` again once
-/// ready), never silently mis-fired against a save that never happened.
-/// `d`/`D` discards and closes immediately. Every other key is a consumed
-/// no-op.
+/// `s`/`S` saves `prompt.doc` then closes it — but only once THIS press
+/// actually started the save: a save already in flight before the press
+/// returns the same `SaveStart::InFlight`, and its ack carries a version
+/// older than the user's latest edits, so the close intent is dropped
+/// instead of armed against it. `d`/`D` discards and closes immediately.
+/// Every other key is a consumed no-op.
 fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     if DIRTY_CLOSE_SAVE.answers(key) {
         clear_guard(app);
-        let _ = save::trigger_save(app, doc, SaveMode::Normal, SaveOrigin::Guard, effects);
-        if app
+        let already_in_flight = app
             .doc(doc)
-            .is_some_and(super::document::Document::save_in_flight)
-        {
+            .is_some_and(super::document::Document::save_in_flight);
+        let start = save::trigger_save(app, doc, SaveMode::Normal, SaveOrigin::Guard, effects);
+        if already_in_flight {
+            messages::warn(
+                app,
+                "close cancelled \u{2014} a save was already in progress; try again once it \
+                 finishes",
+            );
+        } else if matches!(start, SaveStart::InFlight) {
             app.pending_close_on_save = Some(doc);
         }
     } else if DIRTY_CLOSE_DISCARD.answers(key) {
@@ -349,6 +352,11 @@ fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// wait on, so no `QuitIntent` is armed at all and the user's status line
 /// already says why (`trigger_save`'s own refusal arms all set one).
 ///
+/// A save already in flight before the press returns the same
+/// `SaveStart::InFlight` as one this press started, but its ack carries a
+/// stale version — hitting one mid-fan-out abandons the whole quit intent
+/// rather than waiting on it.
+///
 /// `App::pending_save_confirm` is a single global slot, not one per
 /// document — a degraded store's FIRST `trigger_save`
 /// for a given document only arms that slot rather than saving. Churning
@@ -365,7 +373,19 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
     let docs = crate::pane::unpreserved_dirty_docs(app);
     let mut pending = BTreeMap::new();
     for id in docs {
+        let already_in_flight = app
+            .doc(id)
+            .is_some_and(super::document::Document::save_in_flight);
         match save::trigger_save(app, id, SaveMode::Normal, SaveOrigin::Guard, effects) {
+            SaveStart::InFlight if already_in_flight => {
+                messages::warn(
+                    app,
+                    "quit cancelled \u{2014} a save was already in progress; try again once it \
+                     finishes",
+                );
+                app.quit = crate::app::QuitNegotiation::Idle;
+                return;
+            }
             SaveStart::InFlight => {
                 if let Some(version) = app
                     .doc(id)
