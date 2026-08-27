@@ -281,6 +281,18 @@ mod tests {
     }
 
     #[test]
+    fn line_terminator_range_of_an_empty_first_line() {
+        let b = Buffer::new("\nx");
+        assert_eq!(b.line_terminator_range(0), Some(0..1));
+    }
+
+    #[test]
+    fn a_bare_line_feed_is_not_a_crlf_pair() {
+        let b = Buffer::new("a\nb");
+        assert_eq!(b.crlf_pair_at(1), None);
+    }
+
+    #[test]
     fn update_line_starts_when_edit_end_lands_on_a_line_start_boundary() {
         let b = Buffer::new("aa\nbb\ncc");
         let replaced = b.replace(0, 3, "xx\nyy\n").expect("edit should apply");
