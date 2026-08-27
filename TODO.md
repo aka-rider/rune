@@ -20,12 +20,6 @@ constitution and the entry is deleted in the same commit.
 
 ### DATA-LOSS
 
-#### Concurrent `ALTER TABLE ADD COLUMN` degrades a whole session to a recovery-less in-memory store
-- **Where**: `crates/rune-db/src/schema.rs:299-336` (`reconcile_additive_columns`/`add_column`), with `crates/rune-db/src/open_ladder.rs:26-54`.
-- **Wrong**: `schema::apply` runs the additive-column reconcile on every open with no transaction and no retry. Just after an upgrade that adds a nullable column, two processes launching together both read it missing and both `ALTER TABLE ADD COLUMN`; the loser gets `duplicate column name` (or an unrecovered BUSY), `open_recovery_store` returns `Err`, and `open_ladder` falls through both file rungs to the in-memory rung. That session runs degraded — every unsaved edit for its lifetime goes to a private in-memory DB and is lost on exit.
-- **Instead**: run the reconcile inside a transaction under `with_retry`, and treat "column already exists" as success rather than falling to the in-memory rung.
-- **Confidence**: plausible.
-
 #### A whitespace-only recovered draft is silently dropped and orphaned
 - **Where**: `crates/rune-cli/src/db_bootstrap.rs:213,335` — `if !recovered.content.trim().is_empty()`.
 - **Wrong**: after a crash, an untitled/named draft containing only whitespace/newlines is rejected by the `trim()` guard and never offered back; for the named case `bootstrap_new_file` then mints a fresh row, orphaning the old one permanently (scratch GC only sweeps rows with no events/snapshots, so the data survives in SQLite unreachable from the UI). Prime-directive-adjacent.

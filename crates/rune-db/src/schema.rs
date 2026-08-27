@@ -105,9 +105,9 @@ CREATE TABLE IF NOT EXISTS command_history (
 );
 "#;
 
-pub fn apply(conn: &Connection) -> Result<(), Error> {
+pub fn apply(conn: &mut Connection) -> Result<(), Error> {
     conn.execute_batch(SCHEMA)?;
-    reconcile_additive_columns(conn)?;
+    crate::retry::with_retry(conn, |tx| reconcile_additive_columns(tx))?;
     conn.pragma_update(None, "user_version", crate::versioning::SCHEMA_VERSION)?;
     Ok(())
 }
@@ -292,8 +292,26 @@ fn add_column(
             ddl.push_str(&fk.on_update);
         }
     }
-    conn.execute_batch(&ddl)?;
-    Ok(())
+    match conn.execute_batch(&ddl) {
+        Ok(()) => Ok(()),
+        Err(e) if is_duplicate_column_error(&e, &column.name) => Ok(()),
+        Err(e) => Err(Error::from(e)),
+    }
+}
+
+/// SQLite reports a concurrent writer having already added this exact
+/// column as plain `SQLITE_ERROR` with a `"duplicate column name"` message —
+/// no distinct extended code `retry::classify` recognizes — so it must be
+/// treated as success here, not surfaced as a failure.
+fn is_duplicate_column_error(err: &rusqlite::Error, column_name: &str) -> bool {
+    match err {
+        rusqlite::Error::SqliteFailure(_, Some(message)) => {
+            let message = message.to_ascii_lowercase();
+            message.contains("duplicate column name")
+                && message.contains(&column_name.to_ascii_lowercase())
+        }
+        _ => false,
+    }
 }
 
 fn reconcile_additive_columns(conn: &Connection) -> Result<(), Error> {

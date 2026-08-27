@@ -24,7 +24,7 @@ fn seed_minimal(conn: &Connection) -> (DocId, SessionId, String) {
 #[test]
 fn record_observation_without_confirmed_reads_back_none() {
     let mut conn = Connection::open_in_memory().expect("open");
-    apply(&conn).expect("apply");
+    apply(&mut conn).expect("apply");
     let (doc_id, session_id, hash) = seed_minimal(&conn);
 
     let tx = conn.transaction().expect("tx");
@@ -54,7 +54,7 @@ fn record_observation_without_confirmed_reads_back_none() {
 #[test]
 fn record_observation_with_confirmed_round_trips_both_values() {
     let mut conn = Connection::open_in_memory().expect("open");
-    apply(&conn).expect("apply");
+    apply(&mut conn).expect("apply");
     let (doc_id, session_id, hash) = seed_minimal(&conn);
 
     let tx = conn.transaction().expect("tx");
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS observations (
 
 #[test]
 fn additive_column_lands_in_place_old_rows_read_null_and_a_second_apply_is_a_noop() {
-    let conn = Connection::open_in_memory().expect("open");
+    let mut conn = Connection::open_in_memory().expect("open");
     conn.execute_batch(OBSERVATIONS_BEFORE_CONFIRMED_COLUMN)
         .expect("apply the pre-existing shape");
     conn.execute(
@@ -171,7 +171,7 @@ fn additive_column_lands_in_place_old_rows_read_null_and_a_second_apply_is_a_noo
     )
     .expect("seed a row written before the confirmed column existed");
 
-    apply(&conn).expect("apply reconciles the missing column");
+    apply(&mut conn).expect("apply reconciles the missing column");
 
     let read_confirmed = |conn: &Connection| -> Option<i64> {
         conn.query_row(
@@ -183,7 +183,7 @@ fn additive_column_lands_in_place_old_rows_read_null_and_a_second_apply_is_a_noo
     };
     assert_eq!(read_confirmed(&conn), None);
 
-    apply(&conn).expect("a second apply against an already-reconciled file is a no-op");
+    apply(&mut conn).expect("a second apply against an already-reconciled file is a no-op");
     assert_eq!(read_confirmed(&conn), None);
 }
 
@@ -207,12 +207,12 @@ CREATE TABLE IF NOT EXISTS observations (
 
 #[test]
 fn missing_not_null_column_without_a_default_is_refused_not_silently_added() {
-    let conn = Connection::open_in_memory().expect("open");
+    let mut conn = Connection::open_in_memory().expect("open");
     conn.execute_batch(OBSERVATIONS_MISSING_REQUIRED_ORIGIN_COLUMN)
         .expect("apply the shape missing a required column");
 
     let err =
-        apply(&conn).expect_err("a NOT NULL column with no default is not an additive change");
+        apply(&mut conn).expect_err("a NOT NULL column with no default is not an additive change");
     let message = err.to_string();
     assert!(message.contains("observations"));
     assert!(message.contains("origin"));
@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS observations (
 
 #[test]
 fn additive_column_carrying_a_foreign_key_enforces_it_after_reconciliation() {
-    let conn = Connection::open_in_memory().expect("open");
+    let mut conn = Connection::open_in_memory().expect("open");
     conn.execute_batch(OBSERVATIONS_BEFORE_PARENT_A_COLUMN)
         .expect("apply the shape missing parent_a");
     conn.pragma_update(None, "foreign_keys", true)
@@ -278,7 +278,7 @@ fn additive_column_carrying_a_foreign_key_enforces_it_after_reconciliation() {
     conn.execute("INSERT INTO blobs(hash, content) VALUES ('h', x'00')", [])
         .expect("seed blob");
 
-    apply(&conn).expect("apply adds parent_a with its foreign key intact");
+    apply(&mut conn).expect("apply adds parent_a with its foreign key intact");
 
     let result = conn.execute(
         "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at, parent_a) VALUES (?1, ?2, 'h', 'probe', 'x', 999999)",
@@ -352,7 +352,7 @@ CREATE TABLE IF NOT EXISTS search_history (
 
 #[test]
 fn apply_on_a_file_missing_command_history_creates_it_without_disturbing_other_rows() {
-    let conn = Connection::open_in_memory().expect("open");
+    let mut conn = Connection::open_in_memory().expect("open");
     conn.execute_batch(SCHEMA_BEFORE_COMMAND_HISTORY_TABLE)
         .expect("apply the shape missing command_history");
     conn.execute(
@@ -366,7 +366,7 @@ fn apply_on_a_file_missing_command_history_creates_it_without_disturbing_other_r
     )
     .expect("seed search_history");
 
-    apply(&conn).expect("apply creates the missing table");
+    apply(&mut conn).expect("apply creates the missing table");
 
     let doc_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
@@ -381,7 +381,7 @@ fn apply_on_a_file_missing_command_history_creates_it_without_disturbing_other_r
         .expect("count command_history");
     assert_eq!(command_count, 0);
 
-    apply(&conn).expect("a second apply against an already-reconciled file is a no-op");
+    apply(&mut conn).expect("a second apply against an already-reconciled file is a no-op");
     let doc_count_after: i64 = conn
         .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
         .expect("count documents again");
@@ -417,7 +417,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 #[test]
 fn apply_on_a_file_missing_the_events_kind_column_adds_it_without_disturbing_other_rows() {
-    let conn = Connection::open_in_memory().expect("open");
+    let mut conn = Connection::open_in_memory().expect("open");
     conn.execute_batch(SCHEMA_BEFORE_EVENTS_KIND_COLUMN)
         .expect("apply the shape missing events.kind");
     conn.execute(
@@ -439,7 +439,7 @@ fn apply_on_a_file_missing_the_events_kind_column_adds_it_without_disturbing_oth
     )
     .expect("seed a row written before the kind column existed");
 
-    apply(&conn).expect("apply reconciles the missing column");
+    apply(&mut conn).expect("apply reconciles the missing column");
 
     let read_kind = |conn: &Connection| -> Option<String> {
         conn.query_row(
@@ -460,7 +460,7 @@ fn apply_on_a_file_missing_the_events_kind_column_adds_it_without_disturbing_oth
         .expect("count events");
     assert_eq!(event_count, 1);
 
-    apply(&conn).expect("a second apply against an already-reconciled file is a no-op");
+    apply(&mut conn).expect("a second apply against an already-reconciled file is a no-op");
     assert_eq!(read_kind(&conn), None);
     let doc_count_after: i64 = conn
         .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
@@ -477,4 +477,41 @@ fn the_shipped_schema_ddl_carries_no_line_comments() {
          a comment-free shape — knowledge belongs in module docs and the \
          constitution, not the DDL"
     );
+}
+
+#[test]
+fn add_column_treats_a_concurrently_added_duplicate_column_as_a_successful_no_op() {
+    let dir = crate::conn::test_temp_dir("schema-race");
+    let path = dir.join("race.db");
+
+    {
+        let setup = Connection::open(&path).expect("open setup connection");
+        setup
+            .execute_batch(OBSERVATIONS_BEFORE_CONFIRMED_COLUMN)
+            .expect("apply the pre-existing shape");
+    }
+
+    let winner = Connection::open(&path).expect("open winner connection");
+    winner
+        .execute_batch("ALTER TABLE observations ADD COLUMN confirmed INTEGER")
+        .expect("winner adds the column first, simulating the process that won the race");
+
+    let canonical = Connection::open_in_memory().expect("open canonical");
+    canonical.execute_batch(SCHEMA).expect("apply real schema");
+    let column = table_columns(&canonical, "observations")
+        .expect("read canonical columns")
+        .into_iter()
+        .find(|c| c.name == "confirmed")
+        .expect("confirmed column exists in the canonical schema");
+
+    let loser = Connection::open(&path).expect("open loser connection");
+    let result = add_column(&loser, "observations", &column, None);
+
+    assert!(
+        result.is_ok(),
+        "a concurrent winner adding the same column first must not degrade this \
+         session to the in-memory recovery rung: {result:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

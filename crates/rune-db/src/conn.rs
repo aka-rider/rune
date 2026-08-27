@@ -15,7 +15,7 @@ pub(crate) enum RecoveryTarget<'a> {
 }
 
 pub(crate) fn open_recovery_store(target: RecoveryTarget) -> Result<Connection, Error> {
-    let conn = match target {
+    let mut conn = match target {
         RecoveryTarget::File(path) => {
             let conn = Connection::open(path)?;
             secure_recovery_files(path);
@@ -27,7 +27,7 @@ pub(crate) fn open_recovery_store(target: RecoveryTarget) -> Result<Connection, 
     if let RecoveryTarget::File(_) = target {
         verify_wal_mode(&conn)?;
     }
-    crate::schema::apply(&conn)?;
+    crate::schema::apply(&mut conn)?;
     Ok(conn)
 }
 
