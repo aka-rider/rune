@@ -5,8 +5,13 @@ CARGO ?= cargo
 RC ?= 512
 # Optional PROPTEST_RNG_SEED for a pinned re-run. Empty = fresh OS entropy.
 RS ?=
+# cargo-mutants parallel jobs. Conservative on purpose: each job cold-builds
+# its own tree copy (target/ is never copied), so more jobs mostly burn disk.
+J ?= 2
+# Extra cargo-mutants args, e.g. MUTANTS_ARGS='--iterate'.
+MUTANTS_ARGS ?=
 
-.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars dist-mac
+.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars mutants dist-mac
 
 SDK_CACHE := $(HOME)/.cache/rune/MacOSX14.5.sdk
 
@@ -64,6 +69,11 @@ test-fuzz:
 # non-ignored smoke test runs on every `make test`.
 test-grammars:
 	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1
+
+# Mutation testing (cargo-mutants, config in .cargo/mutants.toml).
+# PKG=<crate> scopes the run to one package.
+mutants:
+	$(CARGO) mutants $(if $(PKG),--package $(PKG)) --jobs $(J) $(MUTANTS_ARGS)
 
 dist-mac:
 	command -v nix >/dev/null || { echo "dist-mac needs nix on PATH (NixOS/macOS with nix installed)"; exit 1; }

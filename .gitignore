@@ -5,3 +5,4 @@ crates/.claude/
 .DS_Store
 .claude/worktrees
 scripts/demo/.devbox/
+/mutants.out*

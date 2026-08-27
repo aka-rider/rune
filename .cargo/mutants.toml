@@ -1,0 +1,16 @@
+# Keep .devbox (self-gitignored nix store, ~1.5 GB) and fuzz artifacts out of
+# the per-job tree copies; target/ is always excluded regardless of this flag.
+gitignore = true
+# The workspace denies dead_code; without capped lints every code-deleting
+# mutant fails the build as "unviable", each one costing a full compile.
+cap_lints = true
+# cap_lints also disables rustc's long-running-const-eval guard, so builds
+# need their own bound.
+build_timeout_multiplier = 4.0
+# Proptest suites make test time vary; floor the auto timeout above the
+# default 20 s.
+minimum_test_timeout = 60
+# Grows only during triage; every entry must be justified in the commit
+# that adds it.
+exclude_re = []
+exclude_globs = []
