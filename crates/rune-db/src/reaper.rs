@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use crate::Error;
 use crate::ids::{DocId, SessionId};
-use crate::inherit::most_recent_session_for_doc;
+use crate::observation;
 use crate::retry;
 use crate::session::parse_rfc3339_nanos;
 
@@ -54,13 +54,34 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bo
     };
 
     for doc_id in doc_ids {
-        if let Some(most_recent) = most_recent_session_for_doc(tx, doc_id)?
-            && most_recent == session_id
-        {
+        if doc_footprint_is_unmaterialized(tx, session_id, doc_id)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+fn doc_footprint_is_unmaterialized(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<bool, Error> {
+    let Some(baseline) = observation::saved_obs_for(tx, session_id, doc_id)? else {
+        return Ok(true);
+    };
+    let Some(materialized_seq) = baseline.seq else {
+        return Ok(true);
+    };
+    tx.query_row(
+        "SELECT EXISTS( \
+            SELECT 1 FROM events    WHERE session_id=?1 AND doc_id=?2 AND seq > ?3 \
+            UNION ALL \
+            SELECT 1 FROM snapshots WHERE session_id=?1 AND doc_id=?2 AND seq > ?3 \
+         )",
+        params![session_id, doc_id, materialized_seq],
+        |r| r.get(0),
+    )
+    .map_err(Error::from)
 }
 
 fn reap_session_footprint(tx: &Transaction<'_>, session_id: SessionId) -> Result<(), Error> {
@@ -120,17 +141,6 @@ mod tests {
         .expect("seed blob");
     }
 
-    fn seed_observation(conn: &Connection, session_id: SessionId, doc_id: DocId) {
-        let hash = format!("hash-{session_id}-{doc_id}");
-        seed_blob(conn, &hash);
-        conn.execute(
-            "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at) \
-             VALUES(?1, ?2, ?3, 'probe', 'x')",
-            params![doc_id, session_id, hash],
-        )
-        .expect("seed observation");
-    }
-
     fn seed_merges_row(
         conn: &Connection,
         merges_session_id: SessionId,
@@ -180,6 +190,31 @@ mod tests {
         tx.commit().expect("commit");
     }
 
+    fn materialize_footprint(conn: &mut Connection, session_id: SessionId, doc_id: DocId) {
+        let seq = retry::with_retry(conn, |tx| {
+            crate::journal::current_seq(tx, session_id, doc_id)
+        })
+        .expect("current_seq")
+        .0;
+        let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, b"materialized"))
+            .expect("put_blob");
+        crate::adopt::record_adoption(
+            conn,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash,
+                seq: Some(seq),
+                origin: crate::obs_origin::ObsOrigin::Save,
+                confirmed: crate::confirmation::Confirmation::Confirmed,
+            },
+            &observation::StatFacts::default(),
+            SystemTime::now(),
+            None,
+        )
+        .expect("record_adoption");
+    }
+
     fn sessions_row_exists(conn: &Connection, session_id: SessionId) -> bool {
         conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
@@ -195,7 +230,7 @@ mod tests {
         let session_old = seed_session(&conn, 111);
         let doc_id = seed_doc(&conn);
         journal_one_edit(&mut conn, session_old, doc_id);
-        seed_observation(&conn, session_old, doc_id);
+        materialize_footprint(&mut conn, session_old, doc_id);
 
         let session_new = seed_session(&conn, 222);
         journal_one_edit(&mut conn, session_new, doc_id);
@@ -220,7 +255,34 @@ mod tests {
     }
 
     #[test]
-    fn reaper_deletes_the_sessions_row_of_an_observation_free_superseded_dead_session() {
+    fn reaper_reaps_a_fully_materialized_dead_session_once_superseded() {
+        let mut conn = open();
+        let session_old = seed_session(&conn, 111);
+        let doc_id = seed_doc(&conn);
+        journal_one_edit(&mut conn, session_old, doc_id);
+        materialize_footprint(&mut conn, session_old, doc_id);
+
+        let session_new = seed_session(&conn, 222);
+        journal_one_edit(&mut conn, session_new, doc_id);
+
+        reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
+
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id=?1",
+                params![session_old],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            old_events, 0,
+            "a fully materialized dead session's footprint must still be reaped, \
+             keeping storage growth bounded"
+        );
+    }
+
+    #[test]
+    fn reaper_spares_an_unmaterialized_dead_session_even_when_superseded_by_a_later_session() {
         let mut conn = open();
         let session_old = seed_session(&conn, 111);
         let doc_id = seed_doc(&conn);
@@ -231,9 +293,20 @@ mod tests {
 
         reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
 
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id=?1",
+                params![session_old],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            old_events, 1,
+            "a dead session that never materialized its edit must survive being superseded"
+        );
         assert!(
-            !sessions_row_exists(&conn, session_old),
-            "an observation-free sessions row must be reaped alongside its footprint"
+            sessions_row_exists(&conn, session_old),
+            "an unmaterialized dead session's row must survive alongside its footprint"
         );
         assert!(
             sessions_row_exists(&conn, session_new),
@@ -370,6 +443,7 @@ mod tests {
         let session_new = seed_session(&conn, 222);
         let doc_id = seed_doc(&conn);
         journal_one_edit(&mut conn, session_old, doc_id);
+        materialize_footprint(&mut conn, session_old, doc_id);
         journal_one_edit(&mut conn, session_new, doc_id);
         seed_merges_row(&conn, session_old, session_new, doc_id);
 
@@ -422,6 +496,7 @@ mod tests {
         let session_old = seed_session_at(&conn, own_pid, "", &before_boot);
         let doc_id = seed_doc(&conn);
         journal_one_edit(&mut conn, session_old, doc_id);
+        materialize_footprint(&mut conn, session_old, doc_id);
 
         let session_new = seed_session(&conn, own_pid + 1);
         journal_one_edit(&mut conn, session_new, doc_id);

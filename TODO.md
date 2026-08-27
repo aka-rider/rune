@@ -32,12 +32,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: one CRLF-aware line-terminator chokepoint that the line-move rebuild, `line_end_offset`, and the rune-step navigation all go through, treating CRLF as a single boundary.
 - **Confidence**: confirmed (executed for move-line, End, Backspace, Right-arrow; clone-line traced).
 
-#### The reaper discards a crashed session's entire unsaved journal when another session touched the same document more recently
-- **Where**: `crates/rune-db/src/reaper.rs:43-64` (`session_is_reapable`), `:66-86` (`reap_session_footprint`).
-- **Wrong**: a dead session is spared only if it is `most_recent_session_for_doc` for one of its docs. Sequence: window A types unsaved edits on `/notes.md` (events to seq 100); window B opens the same file, anchors on disk (A still alive), journals its own edit → seq 101, so B is now most-recent; A crashes; the next `Store::open` reaps A, deleting all of A's events/snapshots. A's unsaved edits are gone and B never saw them. Also single-process: of two dead sessions on one doc, iteration by `sessions.id` reaps the lower-id one regardless of which kept editing. The crate's own test `reaper_deletes_footprint_but_spares_sessions_row_with_an_observation` demonstrates the deletion; whether this loss is intended is the open question.
-- **Instead**: spare a dead session that still owns unmaterialized journal content, independent of who most-recently touched the doc.
-- **Confidence**: confirmed (mechanism); intent unverified.
-
 #### `reconstruct_scratch` lacks the re-verify guard `inherit.rs` added for exactly this hole — it can return an empty draft
 - **Where**: `crates/rune-db/src/scratch.rs:160-176`.
 - **Wrong**: `inherit::find_inheritable_draft` re-checks `most_recent_session_for_doc` inside the same transaction as `recover_document`, with a comment that a raced reap would otherwise make recovery "reconstruct `""` — silently presenting an empty buffer for a document with real content". `reconstruct_scratch` (the untitled counterpart) runs three separate transactions and has no such guard: if the candidate's footprint is reaped in the gap, `recover_document` returns `Recovered{content:""}`, handed back as `Some(...)` — an empty recovered tab. Constitution: "an empty reset is never a user deletion." Needs a third session to have journaled onto the same scratch row (narrow), but the guard exists next door for this reason.

@@ -15,7 +15,7 @@ use crate::support::{
 };
 
 #[test]
-fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaims() {
+fn child_sigkilled_mid_storm_recovers_and_reaper_spares_its_unmaterialized_footprint() {
     let dir = temp_dir("kill-mid-storm");
     let path = dir.join("rune-v1.db");
     let doc_ids = seed_schema_and_docs(&path, 1);
@@ -140,8 +140,9 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
         )
         .expect("count killed session events after reap");
     assert_eq!(
-        killed_events_after_reap, 0,
-        "the killed, now-superseded session's footprint must be reaped"
+        killed_events_after_reap, checkpoint as i64,
+        "the killed session never materialized its checkpointed edits — being superseded \
+         by a later session's own edit must not make the reaper delete them"
     );
 
     let killed_session_row_exists: bool = reap_conn
@@ -152,8 +153,21 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
         )
         .expect("check sessions row");
     assert!(
-        !killed_session_row_exists,
-        "an observation-free sessions row must be reaped alongside its footprint"
+        killed_session_row_exists,
+        "a sessions row whose footprint the reaper spared must itself survive"
+    );
+
+    let recovered_after_reap = {
+        let tx = reap_conn.transaction().expect("tx");
+        let content = rune_db::recover_document(&tx, killed_session_id, doc_id)
+            .expect("recover_document")
+            .content;
+        tx.commit().expect("commit");
+        content
+    };
+    assert_eq!(
+        recovered_after_reap, expected,
+        "the killed session's own unsaved content must still reconstruct after the reap"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
