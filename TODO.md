@@ -311,3 +311,47 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: apply the heuristic crate-wide: keep only complex-algorithm explanations (inside the function), third-party quirks that save real debugging time, and constraints no type/name/test can carry; delete the rest by cleaning the code they were defending.
 - **Done when**: the purge has run and each surviving comment matches one of the three legitimate categories above.
 
+
+## Mutation testing (2026-08-27)
+
+cargo-mutants is integrated: config in `.cargo/mutants.toml`, `make mutants`
+(`PKG=<crate>` scopes, `J=` jobs, `MUTANTS_ARGS=` passthrough). Seven crates
+were driven to zero unjustified missed mutants; every exclusion in
+`.cargo/mutants.toml` carries its proof in the commit that added it.
+
+### Covered (missed mutants at pass end / total generated)
+- rune-image 0/143 · rune-nav 0/56 · rune-syntax 0/397 · rune-core 0/309 ·
+  rune-ts 0/103 · rune-cli 1/99 · rune-md 2/869 (final verify pass pending
+  at ledger time; residuals below)
+
+### Known residual misses (documented, deliberately not excluded)
+- `crates/rune-cli/src/main.rs` `AppGuard::drop -> ()` — proving the drop's
+  effect needs an interactive session or a sleep-free sync point that does
+  not exist; a future PTY harness can claim it.
+- `crates/rune-md/src/invariant.rs` `assert_no_duplicate_content{,_at} -> ()`
+  — killing them needs a document that violates the invariant; 100k+ fuzz
+  inputs found none because the pipeline appears correct. A regression should
+  still be able to surface them.
+
+### Not yet mutation-tested
+- rune-merge, rune-vfs, rune-db — deferred: they carried in-flight DATA-LOSS
+  fixes from the 2026-08-26 sweep during this pass; run them once that work
+  settles. rune-vfs/rune-db are the prime-directive crates — highest value
+  next.
+- rune-tui (51k LOC) and rune-fuzz (the harness itself) — out of scope this
+  pass by size and role.
+
+### Caveats and follow-ups
+- This pass ran on Linux. `#[cfg(target_os = "macos")]` blocks — including
+  the exchange/fsync branches in `crates/rune-vfs/src/disk.rs` and
+  `crates/rune-db/src/session.rs` — were never compiled, so no mutants were
+  generated for them. A macOS run is needed before "0 missed" means anything
+  for the durability paths.
+- Some `exclude_re` entries pin `file:line` (noted in their commits); they
+  need re-justification when those lines move.
+- Cheap CI follow-up: a PR-scoped `cargo mutants --in-diff` job (the book's
+  pr-diff workflow) once a macOS runner budget exists.
+- The `--skip` test-name filters matter: `dependency_guard` (rune-nav) and
+  the source-grep gate `self_state_assignment_is_scoped_to_the_two_transition_writers`
+  (rune-md) read the tree, not the mutant, and must not run under mutants —
+  the rune-md gate false-catches mutants if left in.
