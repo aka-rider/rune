@@ -1,4 +1,5 @@
 use super::*;
+use crate::decor::{DecorPiece, LineDecor};
 use crate::scope::ScopeId;
 
 const TEXT: ScopeId = ScopeId(0);
@@ -202,4 +203,100 @@ fn visual_col_does_not_fuse_a_zwj_across_a_span_boundary() {
         query::byte_col_from_visual(content, &spans, end),
         content.len()
     );
+}
+
+#[test]
+fn greedy_break_includes_a_grapheme_that_lands_exactly_on_the_width_limit() {
+    // Ten plain letters, no spaces to back off to: the greedy breaker's own
+    // width check is `curr_w + rw > content_width`, strictly greater, so a
+    // grapheme that brings the running width to EXACTLY the limit still
+    // belongs to this segment, not the next one.
+    let content = "abcdefghij";
+    let wrap = wrap_lines(content, 5);
+    let seg0 = &wrap.segments()[0];
+    let text: String = seg0.spans.iter().map(|s| s.text(content)).collect();
+    assert_eq!(
+        text, "abcde",
+        "a grapheme landing exactly on the width limit must still be included"
+    );
+}
+
+#[test]
+fn slice_spans_drops_a_zero_length_span_inside_the_slice_range() {
+    // A zero-length span sitting between two real ones (the shape a
+    // concealed-then-revealed edit can leave behind) contributes no text of
+    // its own and must not survive into a segment's `spans` — only the two
+    // real spans should.
+    let content = "abcdef";
+    let line = SyntaxLine {
+        spans: vec![
+            SyntaxSpan::Identical {
+                scope: TEXT,
+                range: 0..3,
+            },
+            SyntaxSpan::Identical {
+                scope: TEXT,
+                range: 3..3,
+            },
+            SyntaxSpan::Identical {
+                scope: TEXT,
+                range: 3..6,
+            },
+        ],
+        table: None,
+        decor: None,
+    };
+    let wrap = WrapMap::new(80).sync(content, &[line]);
+    let seg0 = &wrap.segments()[0];
+    assert_eq!(
+        seg0.spans.len(),
+        2,
+        "a zero-length span must not appear in the sliced output"
+    );
+    let text: String = seg0.spans.iter().map(|s| s.text(content)).collect();
+    assert_eq!(text, "abcdef");
+}
+
+#[test]
+fn wrapped_segments_use_first_decor_on_row_zero_and_cont_decor_on_every_later_row() {
+    let content = "one two three four five six seven eight nine ten";
+    let width = 8u16;
+    let decor = LineDecor {
+        pieces: vec![DecorPiece {
+            first: "F ".to_string(),
+            cont: "C ".to_string(),
+            scope: TEXT,
+        }],
+        is_rule: false,
+    };
+    let line = SyntaxLine {
+        spans: vec![SyntaxSpan::identical(content, TEXT, 0..content.len())],
+        table: None,
+        decor: Some(decor),
+    };
+    let wrap = WrapMap::new(width).sync(content, &[line]);
+    assert!(
+        wrap.total_rows() >= 3,
+        "fixture must wrap into at least three rows for this test to be meaningful"
+    );
+
+    let seg0 = wrap.segments()[0]
+        .decor
+        .as_ref()
+        .expect("row 0 must carry decor");
+    assert_eq!(
+        seg0.pieces[0].text, "F ",
+        "row 0 must use the first-row decor"
+    );
+
+    for row in 1..wrap.total_rows() {
+        let seg = wrap.segments()[row]
+            .decor
+            .as_ref()
+            .expect("every wrapped row must carry decor");
+        assert_eq!(
+            seg.pieces[0].text, "C ",
+            "row {row} must use the continuation decor, not the first-row one"
+        );
+    }
 }

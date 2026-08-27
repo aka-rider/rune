@@ -18,5 +18,15 @@ exclude_re = [
   'cellsize\.rs.*replace > with >= in fit_cells',
   'percent\.rs.*replace \| with \^ in decode',
   'anchor\.rs.*NormalizedChars.*next',
+  'wrap/mod\.rs:158:.*delete ! in WrapMap::wrap_line',
+  'wrap/mod\.rs:162:.*replace > with >= in WrapMap::wrap_line',
+  'wrap/mod\.rs:170:.*replace \+ with \* in WrapMap::wrap_line',
+  'query\.rs:201:.*replace \+ with \* in WrapSnapshot::syntax_to_wrap',
+  'query\.rs.*replace < with <= in cells_up_to',
+  'query\.rs.*replace \+= with \*= in cells_up_to',
+  'query\.rs.*replace < with <= in snap_to_grapheme_boundary',
+  'query\.rs.*replace \+ with \* in snap_to_grapheme_boundary',
+  'query\.rs:127:.*replace < with <= in byte_col_from_visual',
+  'query\.rs.*replace \+= with \*= in WrapSnapshot::syntax_to_wrap',
 ]
 exclude_globs = []

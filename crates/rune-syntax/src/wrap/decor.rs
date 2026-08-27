@@ -241,4 +241,63 @@ mod tests {
         assert_eq!(seg.cells, 0);
         assert!(seg.pieces.is_empty());
     }
+
+    #[test]
+    fn clamp_to_width_drops_a_piece_that_cannot_fit_even_one_grapheme() {
+        // The second piece is a single double-cell grapheme with only one
+        // cell left after the first piece — it must be omitted entirely,
+        // not pushed as an empty-text piece.
+        let decor = LineDecor {
+            pieces: vec![
+                DecorPiece {
+                    first: "\u{2500}\u{2500}".to_string(),
+                    cont: String::new(),
+                    scope: scope(),
+                },
+                DecorPiece {
+                    first: "\u{4e2d}".to_string(),
+                    cont: String::new(),
+                    scope: scope(),
+                },
+            ],
+            is_rule: true,
+        };
+        let seg = attach(Some(&decor), SegmentPosition::First, 3).unwrap();
+        assert_eq!(
+            seg.pieces.len(),
+            1,
+            "a piece with no room for even one grapheme must be dropped, not pushed empty"
+        );
+        assert_eq!(seg.cells, 2);
+    }
+
+    #[test]
+    fn clamp_to_width_shrinks_the_remaining_budget_by_what_the_previous_piece_used() {
+        // Width 5, a 3-cell first piece and a 5-cell second piece: only 2
+        // cells remain for the second piece once the first is placed, so the
+        // total must land on exactly 5 — never less (budget not shrunk) nor
+        // more (budget shrunk by the wrong amount or grown instead).
+        let decor = LineDecor {
+            pieces: vec![
+                DecorPiece {
+                    first: "\u{2500}".repeat(3),
+                    cont: String::new(),
+                    scope: scope(),
+                },
+                DecorPiece {
+                    first: "\u{2500}".repeat(5),
+                    cont: String::new(),
+                    scope: scope(),
+                },
+            ],
+            is_rule: true,
+        };
+        let seg = attach(Some(&decor), SegmentPosition::First, 5).unwrap();
+        assert_eq!(
+            seg.cells, 5,
+            "total rendered decor width must never exceed the line's own width"
+        );
+        let total_chars: usize = seg.pieces.iter().map(|p| p.text.chars().count()).sum();
+        assert_eq!(total_chars, 5);
+    }
 }

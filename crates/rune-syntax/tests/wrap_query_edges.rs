@@ -89,3 +89,120 @@ fn syntax_to_wrap_past_the_last_line_clamps_to_the_last_line() {
     let wp = wrap.syntax_to_wrap(SyntaxPoint { line: 999, col: 0 });
     assert_eq!(wp.row, 0);
 }
+
+fn three_lines(content: &str) -> Vec<SyntaxLine> {
+    vec![
+        SyntaxLine {
+            spans: vec![SyntaxSpan::identical(content, SCOPE, 0..1)],
+            table: None,
+            decor: None,
+        },
+        SyntaxLine {
+            spans: vec![SyntaxSpan::identical(content, SCOPE, 2..4)],
+            table: None,
+            decor: None,
+        },
+        SyntaxLine {
+            spans: vec![SyntaxSpan::identical(content, SCOPE, 5..8)],
+            table: None,
+            decor: None,
+        },
+    ]
+}
+
+#[test]
+fn syntax_to_wrap_maps_a_middle_line_to_its_own_row_not_line_zero() {
+    let content = "a\nbb\nccc";
+    let wrap = WrapMap::new(80).sync(content, &three_lines(content));
+    assert_eq!(wrap.total_rows(), 3);
+
+    let wp = wrap.syntax_to_wrap(SyntaxPoint { line: 2, col: 0 });
+    assert_eq!(wp, WrapPoint { row: 2, col: 0 });
+
+    // Past the last real line clamps to that same last line's own row —
+    // never to line 0's, and never to a fixed row regardless of input.
+    let clamped = wrap.syntax_to_wrap(SyntaxPoint { line: 999, col: 0 });
+    assert_eq!(clamped, wp);
+}
+
+#[test]
+fn per_row_queries_key_off_the_queried_row_not_a_fixed_row() {
+    let content = "a\nbb\nccc";
+    let wrap = WrapMap::new(80).sync(content, &three_lines(content));
+
+    assert_eq!(wrap.segment_len_at(0), 1);
+    assert_eq!(wrap.segment_len_at(1), 2);
+    assert_eq!(wrap.segment_len_at(2), 3);
+
+    assert_eq!(wrap.row_to_model_line(0), 0);
+    assert_eq!(wrap.row_to_model_line(1), 1);
+    assert_eq!(wrap.row_to_model_line(2), 2);
+
+    assert_eq!(wrap.model_line_to_first_row(0), 0);
+    assert_eq!(wrap.model_line_to_first_row(1), 1);
+    assert_eq!(wrap.model_line_to_first_row(2), 2);
+}
+
+#[test]
+fn syntax_to_wrap_on_an_unwrapped_single_segment_line_clamps_col_to_its_own_length() {
+    let content = "hello";
+    let line = one_span_line(content);
+    let wrap = WrapMap::new(80).sync(content, &[line]);
+
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 0 }),
+        WrapPoint { row: 0, col: 0 }
+    );
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 3 }),
+        WrapPoint { row: 0, col: 3 }
+    );
+    // Past the line's own end, the column clamps to the line's own length —
+    // it must never echo the raw overshoot back out unclamped.
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 9999 }),
+        WrapPoint { row: 0, col: 5 }
+    );
+}
+
+#[test]
+fn byte_col_from_visual_at_visual_col_zero_and_one_stay_in_step_with_visual_col() {
+    let content = "hello";
+    let line = one_span_line(content);
+    let wrap = WrapMap::new(80).sync(content, &[line]);
+
+    assert_eq!(wrap.byte_col_from_visual(content, 0, 0), 0);
+    assert_eq!(wrap.byte_col_from_visual(content, 0, 1), 1);
+}
+
+#[test]
+fn syntax_to_wrap_boundary_between_two_wrapped_segments_lands_at_the_start_of_the_next_row() {
+    let content = "aaaaaaaaaa";
+    let line = one_span_line(content);
+    let wrap = WrapMap::new(5).sync(content, &[line]);
+    assert_eq!(
+        wrap.total_rows(),
+        2,
+        "fixture must wrap into exactly two rows of five for this test to be meaningful"
+    );
+
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 0 }),
+        WrapPoint { row: 0, col: 0 }
+    );
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 3 }),
+        WrapPoint { row: 0, col: 3 }
+    );
+    // The exact boundary column belongs to the START of the next row, not
+    // the inclusive end of the row before it.
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 5 }),
+        WrapPoint { row: 1, col: 0 }
+    );
+    // Past the line's own end still clamps to the true last row's own end.
+    assert_eq!(
+        wrap.syntax_to_wrap(SyntaxPoint { line: 0, col: 50 }),
+        WrapPoint { row: 1, col: 5 }
+    );
+}
