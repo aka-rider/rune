@@ -32,12 +32,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: one CRLF-aware line-terminator chokepoint that the line-move rebuild, `line_end_offset`, and the rune-step navigation all go through, treating CRLF as a single boundary.
 - **Confidence**: confirmed (executed for move-line, End, Backspace, Right-arrow; clone-line traced).
 
-#### `reconstruct_scratch` lacks the re-verify guard `inherit.rs` added for exactly this hole — it can return an empty draft
-- **Where**: `crates/rune-db/src/scratch.rs:160-176`.
-- **Wrong**: `inherit::find_inheritable_draft` re-checks `most_recent_session_for_doc` inside the same transaction as `recover_document`, with a comment that a raced reap would otherwise make recovery "reconstruct `""` — silently presenting an empty buffer for a document with real content". `reconstruct_scratch` (the untitled counterpart) runs three separate transactions and has no such guard: if the candidate's footprint is reaped in the gap, `recover_document` returns `Recovered{content:""}`, handed back as `Some(...)` — an empty recovered tab. Constitution: "an empty reset is never a user deletion." Needs a third session to have journaled onto the same scratch row (narrow), but the guard exists next door for this reason.
-- **Instead**: re-verify most-recent + alive inside the same transaction as `recover_document`, mirroring `inherit.rs`.
-- **Confidence**: plausible.
-
 #### Concurrent `ALTER TABLE ADD COLUMN` degrades a whole session to a recovery-less in-memory store
 - **Where**: `crates/rune-db/src/schema.rs:299-336` (`reconcile_additive_columns`/`add_column`), with `crates/rune-db/src/open_ladder.rs:26-54`.
 - **Wrong**: `schema::apply` runs the additive-column reconcile on every open with no transaction and no retry. Just after an upgrade that adds a nullable column, two processes launching together both read it missing and both `ALTER TABLE ADD COLUMN`; the loser gets `duplicate column name` (or an unrecovered BUSY), `open_recovery_store` returns `Err`, and `open_ladder` falls through both file rungs to the in-memory rung. That session runs degraded — every unsaved edit for its lifetime goes to a private in-memory DB and is lost on exit.

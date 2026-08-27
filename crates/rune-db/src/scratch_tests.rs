@@ -366,3 +366,55 @@ fn find_named_scratch_lists_a_live_sessions_row_but_reconstruct_refuses_to_steal
         "a live session's own unsaved draft must never be handed to a concurrent launch"
     );
 }
+
+#[test]
+fn reconstruct_scratch_refuses_an_empty_draft_when_the_candidates_footprint_has_vanished() {
+    let mut conn = open();
+    let dead_session =
+        crate::session::establish_session(&conn, SystemTime::now()).expect("dead session");
+    let doc_id = create_scratch_with_intent(&mut conn, dead_session, SystemTime::now(), None)
+        .expect("create scratch");
+    {
+        let tx = conn.transaction().expect("tx");
+        crate::journal::append_edit(
+            &tx,
+            dead_session,
+            SystemTime::now(),
+            doc_id,
+            EditBatch {
+                edits: &text_insert("unsaved draft"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
+        )
+        .expect("append edit");
+        tx.commit().expect("commit");
+    }
+
+    conn.execute(
+        "DELETE FROM events WHERE session_id=?1",
+        rusqlite::params![dead_session],
+    )
+    .expect("simulate a reap racing between the candidate check and the recovery read");
+    conn.execute(
+        "DELETE FROM snapshots WHERE session_id=?1",
+        rusqlite::params![dead_session],
+    )
+    .expect("simulate a reap racing between the candidate check and the recovery read");
+
+    let unguarded_recovery =
+        crate::snapshot::recover_document(&conn, dead_session, doc_id).expect("recover_document");
+    assert_eq!(
+        unguarded_recovery.content, "",
+        "test setup: recover_document alone, given a vanished footprint, reconstructs empty — \
+         exactly what the guard below must never surface"
+    );
+
+    let reconstructed =
+        reconstruct_scratch(&mut conn, &always_dead, doc_id).expect("reconstruct_scratch");
+    assert_eq!(
+        reconstructed, None,
+        "a candidate whose footprint vanished must never surface as an empty draft"
+    );
+}

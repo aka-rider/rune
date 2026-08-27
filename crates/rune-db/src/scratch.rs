@@ -172,7 +172,13 @@ pub fn reconstruct_scratch(
     if alive {
         return Ok(None);
     }
-    crate::snapshot::recover_document(conn, other_session_id, doc_id).map(Some)
+    retry::with_retry(conn, |tx| {
+        let still_candidate = most_recent_session_for_doc(tx, doc_id)?;
+        if still_candidate != Some(other_session_id) {
+            return Ok(None);
+        }
+        crate::snapshot::recover_document(tx, other_session_id, doc_id).map(Some)
+    })
 }
 
 #[cfg(test)]
