@@ -48,18 +48,6 @@ constitution and the entry is deleted in the same commit.
 
 ### SECURITY
 
-#### Hostile SVG reads arbitrary local files, bypassing the `Vfs` chokepoint
-- **Where**: `crates/rune-image/src/svg.rs:7` — `usvg::Options::default()`; routed to by content-sniffing at `crates/rune-image/src/decode.rs:37-43,84-89`.
-- **Wrong**: `Options::default()` installs usvg's default string href resolver, which with `resources_dir: None` reads an absolute href unchanged via `std::fs::read`. `sniff_format` routes any file whose content starts with `<svg`/`<?xml…<svg` into `decode_svg` regardless of extension, and a hostile `.md` `![](evil.svg)` auto-decodes on open (see the image-OOM entry). `evil.svg` with `<image href="/Users/victim/.ssh/id_rsa"/>` makes rune read that file off disk — a direct violation of the "all user-file disk access goes through the injected `Vfs`" invariant, plus a file-existence/readability oracle and a rendering side channel for anything that is a valid image.
-- **Instead**: set `image_href_resolver.resolve_string` to a resolver that goes through the injected `Vfs` or refuses outright.
-- **Confidence**: confirmed.
-
-#### SVG parsing runs with DTD enabled (entity-expansion DoS) and no input size cap
-- **Where**: `crates/rune-image/src/svg.rs:8` — `usvg::Tree::from_data` with defaults (upstream `allow_dtd: true`).
-- **Wrong**: attacker-controlled SVG bytes go to a parser with internal-entity expansion enabled (not classic XXE — no external fetch — but a billion-laughs-shaped SVG is the obvious probe), and the image read path has no byte cap (same `None` as the OOM entry). rune makes no decision here.
-- **Instead**: cap SVG input size and pin a repro test; if roxmltree's caps are relied on, assert them.
-- **Confidence**: plausible.
-
 #### `⌘⌫` / `^⌫` are globally bound to Trash, shadowing delete-to-line-start in every field and the editor
 - **Where**: `crates/rune-tui/src/global.rs:217-228` + `crates/rune-tui/src/dispatch.rs:271-274` (global table consulted before any focus routing); layering issue at `crates/rune-tui/src/pane_bar_policy.rs:30-37`.
 - **Wrong**: on macOS `⌘⌫` means "delete to start of line" and `⌥⌫`/`^⌫` word-delete in every text field. Here they reach `GlobalCommand::Trash` from the editor, title field, search bar, finder and palette alike — no field sees them. In the title field the hoisted `blur_title` runs first, so `⌘⌫` *commits the in-progress rename* and then raises a Trash prompt for the file; a `y/N` guard is the only thing between muscle memory and the Trash. With the palette open, `bar_policy(Trash)==LeaveOpen` raises the trash confirmation *underneath* the still-painted palette overlay, violating "modal capture is total".

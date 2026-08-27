@@ -3,8 +3,19 @@ use crate::decode::Format;
 
 const MAX_AXIS: u32 = 4096;
 
+fn parse_options() -> usvg::Options<'static> {
+    let mut opt = usvg::Options::default();
+    opt.image_href_resolver.resolve_string = Box::new(|_href: &str, _opt: &usvg::Options| None);
+    opt
+}
+
 pub fn decode_svg(data: &[u8]) -> Result<Decoded, SvgError> {
-    let opt = usvg::Options::default();
+    // usvg::Tree::from_data hardcodes roxmltree's allow_dtd to true with no
+    // entity_resolver, so internal entities do resolve; roxmltree's own
+    // LoopDetector (10 levels deep, 255 references per level) is what
+    // actually stops a billion-laughs-shaped input, not anything configured
+    // here.
+    let opt = parse_options();
     let tree = usvg::Tree::from_data(data, &opt).map_err(SvgError::Parse)?;
 
     let size = tree.size();
@@ -103,5 +114,67 @@ mod tests {
     fn parse_error_variant_exposes_its_inner_error_as_the_source() {
         let err = decode_svg(b"not an svg document").expect_err("garbage must fail to parse");
         assert!(std::error::Error::source(&err).is_some());
+    }
+
+    fn write_real_png_fixture() -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "rune-image-svg-href-refusal-{}-{}.png",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]));
+        let mut buf = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .expect("encode fixture png");
+        std::fs::write(&path, &buf).expect("write fixture png");
+        path
+    }
+
+    #[test]
+    fn our_string_resolver_refuses_a_file_the_upstream_default_would_have_read() {
+        let path = write_real_png_fixture();
+        let href = path.to_string_lossy().into_owned();
+
+        let default_opt = usvg::Options::default();
+        let via_default = (default_opt.image_href_resolver.resolve_string)(&href, &default_opt);
+        assert!(
+            via_default.is_some(),
+            "sanity: the upstream default resolver does read local files by href"
+        );
+
+        let our_opt = parse_options();
+        let via_ours = (our_opt.image_href_resolver.resolve_string)(&href, &our_opt);
+        assert!(
+            via_ours.is_none(),
+            "our resolver must refuse the same href instead of reading the file"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    const BILLION_LAUGHS_SVG: &[u8] = br#"<?xml version="1.0"?>
+<!DOCTYPE svg [
+<!ENTITY lol "lol">
+<!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+<!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">
+<!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+<!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">
+<!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;">
+<!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;">
+<!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;">
+<!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;">
+<!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">
+]>
+<svg xmlns="http://www.w3.org/2000/svg"><text>&lol9;</text></svg>
+"#;
+
+    #[test]
+    fn a_billion_laughs_shaped_svg_is_refused_instead_of_expanded() {
+        let err = decode_svg(BILLION_LAUGHS_SVG).expect_err("entity blowup must not parse");
+        assert!(matches!(err, SvgError::Parse(_)));
     }
 }
