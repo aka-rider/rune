@@ -1,6 +1,5 @@
 use crate::app::App;
 use crate::document::{Document, DocumentId};
-use crate::guard::{GuardKind, GuardPrompt};
 use crate::runtime::Effects;
 
 pub fn toggle_pin(app: &mut App, id: DocumentId) {
@@ -47,21 +46,8 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
         .iter()
         .copied()
         .find(|&id| !app.doc(id).is_some_and(Document::is_dirty));
-    let had_guard = app.guard.is_some();
-    if let Some(victim) = clean.or_else(|| eligible.first().copied()) {
-        if clean.is_none() {
-            if had_guard {
-                crate::messages::warn(app, "Tab limit reached — close or unpin a tab");
-                return false;
-            }
-            crate::workspace::switch_to(app, victim);
-        }
+    if let Some(victim) = clean {
         crate::workspace::request_close(app, victim, effects);
-        let armed_for_victim = !had_guard
-            && matches!(&app.guard, Some(GuardPrompt { doc, kind: GuardKind::DirtyClose }) if *doc == victim);
-        if armed_for_victim {
-            return false;
-        }
         if room_available(app) {
             return true;
         }
@@ -76,6 +62,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::document::ReadOnly;
+    use crate::guard::{GuardKind, GuardPrompt};
     use crate::messages;
     use crate::workspace;
     use rune_core::buffer::Buffer;
@@ -179,23 +166,34 @@ mod tests {
         );
     }
 
+    /// Regression: when every eligible tab is dirty, `ensure_room` must
+    /// refuse the open outright — never switch the active document to a
+    /// victim it cannot silently close, and never leave a `DirtyClose` guard
+    /// armed against a document the user never asked to look at.
     #[test]
-    fn a_dirty_lra_victim_arms_the_dirty_close_guard() {
+    fn a_dirty_lra_victim_is_never_hijacked_and_the_open_is_refused_with_feedback() {
         let (mut app, ids) = filled_app(MAX_TABS);
         for &id in &ids[1..] {
             crate::commands::edit::insert_char(&mut app, id, '!');
         }
-        let expected_victim = ids[1];
+        let active_before = app.active;
 
         let mut effects = Effects::default();
         assert!(!ensure_room(&mut app, &mut effects));
 
-        assert!(matches!(
-            &app.guard,
-            Some(GuardPrompt { doc, kind: GuardKind::DirtyClose }) if *doc == expected_victim
-        ));
-        assert_eq!(app.active, expected_victim, "the victim was switched to");
+        assert!(
+            app.guard.is_none(),
+            "a dirty-only eligible set must never arm a guard the user never asked for"
+        );
+        assert_eq!(
+            app.active, active_before,
+            "the active document must never be switched away to make room"
+        );
         assert_eq!(app.documents.order().len(), MAX_TABS);
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("Tab limit reached — close or unpin a tab")
+        );
     }
 
     #[test]
@@ -291,9 +289,17 @@ mod tests {
                 path,
                 result,
                 anchor,
+                preview_generation,
             }) = cmd.run()
             {
-                crate::workspace::handle_file_opened(&mut app, &path, result, anchor, &mut effects);
+                crate::workspace::handle_file_opened(
+                    &mut app,
+                    &path,
+                    result,
+                    anchor,
+                    preview_generation,
+                    &mut effects,
+                );
             }
         }
 

@@ -169,8 +169,9 @@ pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Eff
         | crate::focus::FocusTarget::Title
         | crate::focus::FocusTarget::Messages => match app.focus() {
             Pane::Title => crate::title::keys::paste(app, app.active, text),
-            Pane::Explorer | Pane::Tabs | Pane::Editor | Pane::Messages => {
-                handle_paste_content(app, app.active, text)
+            Pane::Editor => handle_paste_content(app, app.active, text),
+            Pane::Explorer | Pane::Tabs | Pane::Messages => {
+                messages::warn(app, "nothing to paste into here");
             }
         },
     }
@@ -448,6 +449,42 @@ mod tests {
 
         assert_eq!(app.doc(id).unwrap().buffer.content(), "ac");
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+    }
+
+    /// Regression: bracketed paste while a non-editor chrome pane (Explorer,
+    /// Tabs, or Messages) holds focus must refuse with feedback rather than
+    /// silently landing the pasted text in the editor's document underneath
+    /// an unpainted caret.
+    #[test]
+    fn bracketed_paste_while_a_non_editor_pane_is_focused_refuses_with_feedback() {
+        use crate::app;
+        use crate::runtime::Msg;
+
+        for pane in [Pane::Explorer, Pane::Tabs, Pane::Messages] {
+            let mut app = app_with("ac", 1);
+            app.frame_width = 120;
+            app.frame_height = 34;
+            app.splits.left.show();
+            if pane == Pane::Messages {
+                crate::messages::toggle(&mut app, &mut Effects::default());
+            }
+            app.set_focus_pane(pane, &mut Effects::default());
+            assert_eq!(app.focus(), pane, "test setup: {pane:?} must be focusable");
+
+            let mut effects = Effects::default();
+            app::update(&mut app, Msg::Paste("b".to_string()), &mut effects);
+
+            assert_eq!(
+                app.doc(app.active).unwrap().buffer.content(),
+                "ac",
+                "{pane:?} focused must never let bracketed paste reach the editor's document"
+            );
+            assert_eq!(
+                crate::messages::newest_text(&app),
+                Some("nothing to paste into here"),
+                "{pane:?} focused must refuse the paste with feedback"
+            );
+        }
     }
 
     #[test]

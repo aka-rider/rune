@@ -41,8 +41,9 @@ use crate::navhistory;
 ///
 /// Message OWNERSHIP: a successful edit posts nothing at all — the log is
 /// append-only, so there is no shared slot to accidentally clear. This
-/// function only ever POSTS on its own failure path below; an earlier
-/// unrelated entry (e.g. a save failure) simply stays in the log.
+/// function only ever POSTS on a refusal — the read-only rung below, or its
+/// own failure path further down; an earlier unrelated entry (e.g. a save
+/// failure) simply stays in the log.
 ///
 /// The read-only CHOKEPOINT (review finding F1): every mutating command —
 /// typing, backspace/delete, indent/outdent, cut, paste, move/clone/delete
@@ -54,7 +55,10 @@ use crate::navhistory;
 /// its own guard (see `Document::read_only`'s docs for the bug this closes
 /// and why `edit::undo`/`redo` are deliberately exempt). Checked via
 /// `is_read_only()`, not the field directly — refusal must trigger on
-/// every `ReadOnly` variant, not only `Always`.
+/// every `ReadOnly` variant, not only `Always`. Posts `read_only`'s own
+/// wording via `messages::warn_if_new`, so a held key against a read-only
+/// document reports the reason once rather than flooding the log with an
+/// identical line per keystroke.
 ///
 /// Returns whether a batch actually applied (a journal `Step` was pushed) —
 /// `false` for every refusal below (missing doc, read-only, empty-after-
@@ -74,6 +78,9 @@ pub(crate) fn apply_edit_batch_with_cursors(
 ) -> bool {
     let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
+        if let Some(message) = doc.read_only.refusal_message() {
+            messages::warn_if_new(app, message);
+        }
         return false;
     }
     // A zero-width, insert-nothing edit (`start == end && insert.is_empty()`)

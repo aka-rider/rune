@@ -451,3 +451,37 @@ fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
         "the lower cursor id must be the survivor, matching CursorSet::merge's own rule"
     );
 }
+
+/// Regression: a mutating command against a read-only document used to
+/// refuse in total silence — the chokepoint returned `false` and every
+/// caller discarded it. Typing (or Backspace, or any other edit) now posts
+/// the same reason the palette already shows for the same document; a
+/// second, identical keystroke against the same unchanged reason collapses
+/// into the first post instead of flooding the log with a repeat per key.
+#[test]
+fn a_mutating_command_against_a_read_only_document_posts_the_reason_once_even_when_repeated() {
+    let mut app = app_with("hello");
+    let id = app.active;
+    app.doc_mut(id).expect("doc").read_only = crate::document::ReadOnly::Always;
+
+    edit::insert_char(&mut app, id, 'x');
+    edit::insert_char(&mut app, id, 'y');
+
+    assert_eq!(
+        app.doc(id).expect("doc").buffer.content(),
+        "hello",
+        "a read-only document must never be mutated"
+    );
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        crate::document::ReadOnly::Always.refusal_message(),
+        "the refusal must post the same wording the palette shows"
+    );
+    assert_eq!(
+        crate::messages::log_text(&app)
+            .matches("this document is read-only")
+            .count(),
+        1,
+        "a repeated identical refusal must collapse rather than flood the log"
+    );
+}

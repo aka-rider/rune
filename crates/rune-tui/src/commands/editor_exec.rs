@@ -5,9 +5,20 @@ use crate::commands::{
 use crate::keymap::{self, Command, Extend, Motion, QuitKey};
 use crate::navigate;
 use crate::pane;
+use crate::pane_refusal::registry_refusal;
+use crate::registry::CommandId;
 use crate::runtime::{Effects, PasteTarget};
 use crate::save;
 
+/// Stage 4's entry point for every `keymap::Command`, both from an ordinary
+/// chord (`dispatch::handle_editor_key`) and from the palette
+/// (`registry::exec::execute`, which already checked availability itself
+/// before calling here — this is a harmless repeat for that path, and the
+/// only gate at all for a direct chord). Refusing HERE, once, is what stops
+/// `Command::Paste` from spawning a `pbpaste` read for a document that will
+/// only reject the paste once the reply lands, and what gives every other
+/// read-only-gated command (Cut, DeleteLeft, Indent, ...) the same feedback
+/// the palette already shows for them.
 pub(crate) fn run(
     app: &mut App,
     command: Command,
@@ -15,6 +26,11 @@ pub(crate) fn run(
     effects: &mut Effects,
 ) -> keymap::KeyOutcome {
     if reading_nav::intercept(app, command) {
+        return keymap::KeyOutcome::Consumed;
+    }
+
+    if let Some(reason) = registry_refusal(app, CommandId::Editor(command)) {
+        crate::messages::warn(app, reason);
         return keymap::KeyOutcome::Consumed;
     }
 
@@ -88,15 +104,8 @@ pub(crate) fn run(
         }
         Command::FollowLink => navigate::follow(app, effects),
         Command::Reload => {
-            match crate::registry::availability(app, crate::registry::CommandId::Editor(command)) {
-                crate::registry::Availability::Available => {
-                    crate::graphics::reload_image(app, app.active, effects);
-                    crate::graphics::reload_embeds(app, app.active, effects);
-                }
-                crate::registry::Availability::Unavailable(reason) => {
-                    crate::messages::info(app, reason);
-                }
-            }
+            crate::graphics::reload_image(app, app.active, effects);
+            crate::graphics::reload_embeds(app, app.active, effects);
         }
         Command::QuitConfirm => {
             if let Some(quit_key) = quit_key {
@@ -111,4 +120,44 @@ fn at_buffer_top(app: &App) -> bool {
     let doc = app.active_doc();
     let offset = doc.cursors.primary().position;
     doc.buffer.offset_to_line_col(offset).line == 0
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::document::ReadOnly;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app_with(content: &str) -> App {
+        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
+        let id = app.active;
+        app.doc_mut(id).expect("doc").viewport.set_size(80, 23);
+        app
+    }
+
+    /// Regression: `⌘V` (`Command::Paste`) on a read-only document used to
+    /// spawn the `pbpaste` read anyway, only to have the insertion silently
+    /// dropped once the reply landed. It must now refuse up front, with
+    /// feedback, and never spawn the read at all.
+    #[test]
+    fn paste_on_a_read_only_document_refuses_up_front_and_spawns_no_cmd() {
+        let mut app = app_with("hello");
+        let id = app.active;
+        app.doc_mut(id).expect("doc").read_only = ReadOnly::Always;
+
+        let mut effects = Effects::default();
+        let _ = run(&mut app, Command::Paste, None, &mut effects);
+
+        assert!(
+            effects.cmds.is_empty(),
+            "a refused paste must never spawn the pbpaste read"
+        );
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            ReadOnly::Always.refusal_message()
+        );
+    }
 }

@@ -155,6 +155,22 @@ pub fn error(app: &mut App, text: impl Into<String>) {
     post(app, Severity::Error, text);
 }
 
+fn post_if_new(app: &mut App, severity: Severity, text: impl Into<String>) {
+    let text = text.into();
+    if newest(app).is_some_and(|m| m.severity == severity && m.text == text) {
+        return;
+    }
+    post(app, severity, text);
+}
+
+pub fn warn_if_new(app: &mut App, text: impl Into<String>) {
+    post_if_new(app, Severity::Warn, text);
+}
+
+pub fn error_if_new(app: &mut App, text: impl Into<String>) {
+    post_if_new(app, Severity::Error, text);
+}
+
 pub fn toggle(app: &mut App, effects: &mut Effects) {
     if !app.messages.open {
         app.messages.open = true;
@@ -168,9 +184,9 @@ pub fn toggle(app: &mut App, effects: &mut Effects) {
 }
 
 fn focus(app: &mut App, effects: &mut Effects) {
-    app.messages.doc.focused = true;
     app.messages.armed = None;
     app.set_focus_pane(Pane::Messages, effects);
+    app.messages.doc.focused = app.focus() == Pane::Messages;
 }
 
 pub fn collapse(app: &mut App) {

@@ -26,18 +26,6 @@ constitution and the entry is deleted in the same commit.
 
 ### CORRECTNESS
 
-#### Tab-limit eviction hijacks the active document and never says the requested open was refused
-- **Where**: `crates/rune-tui/src/opentabs/limit.rs:51-64` + `crates/rune-tui/src/workspace/mod.rs:262-264`.
-- **Wrong**: with the tab limit reached and every eligible tab dirty, `ensure_room` calls `switch_to(victim)` — moving the user to a doc they weren't looking at — then arms a `DirtyClose` guard and returns false *before* the "Tab limit reached" warn; the caller (e.g. `toggle_help`) then bare-returns. The user pressed F1, got teleported to an unrelated tab with a close prompt, and was never told Help was refused. Data safety itself is fine (pinned/preview/saving/pathless excluded, guard always armed on a dirty victim).
-- **Instead**: refuse the open with feedback *without* switching the active document, or only switch after the victim is actually closed.
-- **Confidence**: confirmed.
-
-#### Bracketed paste while a non-editor pane is focused inserts into the editor document invisibly
-- **Where**: `crates/rune-tui/src/commands/clipboard.rs:166-175`.
-- **Wrong**: `^E` focuses `Pane::Messages`; a terminal ⌘V routes `handle_paste_content(app, app.active, text)` into the *editor's* document at a caret that isn't even painted (`app_view` clears `focused` when focus≠Editor). Journaled/undoable, so not data loss, but an unannounced insertion into the user's words at an invisible point. The message pane is `ReadOnly::Always` and should refuse, not redirect.
-- **Instead**: route paste to the focused pane; refuse (with feedback) when it is read-only.
-- **Confidence**: confirmed.
-
 #### Kitty image IDs collide across documents — wrong image shown / another document's image deleted
 - **Where**: `crates/rune-tui/src/workspace/mod.rs:184` (`alloc_id`, no probing), `crates/rune-tui/src/graphics/embed/alloc.rs:15-26` (per-document allocator), `crates/rune-image/src/ids.rs:37-44` (FNV-1a truncated to 24 bits).
 - **Wrong**: the embed allocator only deconflicts *within* one document; whole-document image IDs bypass it, and Kitty IDs are terminal-global. FNV is trivially invertible, so a hostile vault can name `a.png`/`b.png` to collide at 24 bits: opening both notes makes one overwrite the terminal's data for that ID (the other renders its pixels), and `despawn_gone` emits `encode_delete(id)` that blanks the other document's image.
@@ -47,16 +35,12 @@ constitution and the entry is deleted in the same commit.
 ### MINOR
 
 - **Unbounded `rune_vfs::get(path, None)` cluster** (`max_bytes: None` disables the 64 MiB gate). Beyond the image-open OOM above, three more sites read attacker-growable files whole into memory: `crates/rune-vfs/src/publish.rs:39` (`current_sighting`, the *worst* placement — the CAS read during a save, buffer unsaved), `crates/rune-tui/src/filesearch/walk.rs:113` (every `.gitignore`-family file in the scan, then copied again by `String::from_utf8`), and `crates/rune-db/src/bracket.rs:35` (probe re-read). Make `max_bytes` non-optional so each caller must name a limit.
-- **Read-only edit refusal is completely silent** — `crates/rune-tui/src/commands/edit_core.rs:75-78` returns false with no message and every caller discards it; typing/Backspace/⌘X/⌘V on the Help tab or a reading-mode doc does nothing and says nothing (the palette path *does* explain via `registry/avail.rs`). `editor_exec.rs` even spawns `pbpaste` first and drops the result.
-- **Save gate has two silent rungs** — `crates/rune-tui/src/save/gate.rs:31-36`: a missing document and an image document both return `Refused` with no message (⌘S on an image does nothing), while every other rung posts; `pane_command.rs:79` discards the result. Contradicts `guard.rs:328-331`.
 - **`settle_pending_materialize` drains and discards every non-`MaterializeVfsDone` message at shutdown** — `crates/rune-tui/src/runtime/exit_settle.rs:29-45`; a last-moment `SaveDone(Err)` is swallowed, so the user quits believing a failed direct save landed. Loses the report, not bytes.
 - **`close_now` cancels the rename's feedback, not the rename** — `crates/rune-tui/src/workspace/close.rs:89,97`; the file is still renamed on disk (or, in the `Collided` case, not renamed) and the user is never told.
 - **No-store draft create leaves the document permanently dirty** — `crates/rune-tui/src/rename_create.rs:98-136`→`rename.rs:434-443`; `bind_to` binds the path without advancing the saved baseline, so a byte-matching file stays "unsaved" forever and arms a spurious quit guard.
 - **Rename can start while a confirmed trash Cmd is in flight** — the trash/rename mutex (landed 2026-08-27) refuses trash during a rename, but not the mirror: `trash::confirm` clears the Guard before spawning `trash_cmd`, so the UI is interactive and ^R can enqueue a rename against a path whose trash Cmd is mid-flight. Same race class, opposite direction; gate rename (and probably save) on `TrashState::Pending`.
 - **`messages.doc.focused` is cached shadow state** — `crates/rune-tui/src/messages/mod.rs:171,178`; set true in `focus()`, cleared only in `collapse()`, so the pane keeps painting its selection as focused after the editor regains focus, and a stray selection pins the pane open until the next post.
 - **Click in the message pane acts on a vetoed focus transition** — `crates/rune-tui/src/messages/mod.rs:355-375`; `mouse_down` hit-tests and latches a drag without re-checking that `focus()` succeeded (both sibling handlers do), so a click with an invalid title in the field still selects text and emits OSC 52 on mouse-up.
-- **`^1`–`^0` for a non-open tab moves focus then does nothing** — `crates/rune-tui/src/pane_global.rs:64-67`; `set_focus_pane(Editor)` fires before `select_tab` early-returns on an out-of-range index.
-- **Duplicate refusal message leaving an invalid title** — `crates/rune-tui/src/pane_command.rs:49` + `crates/rune-tui/src/focus/mod.rs:295-299`; hoisted `blur_title` posts the refusal, then the arm's `set_focus_pane` re-enters `on_blur` and posts it again; for `^E` the messages pane opens and paints as focused while the title still owns the keyboard.
 - **A `markdown` fence's highlight pass ignores its time budget** — `crates/rune-tui/src/runtime/highlight_cmd.rs:58-91`; the `RegionLang::Markdown` arm never uses `left`, so one pathological ```` ```markdown ```` fence runs an unbounded comrak parse on the highlight thread.
 - **Inline embeds are never re-fitted on a pane resize** — `crates/rune-tui/src/graphics/resize_refit.rs:7-49` handles only the whole-document image; every inline `![](…)` keeps its stale footprint until an mtime change re-decodes it.
 - **Snapshot debounce keys off `active_doc()` across a possible active-document change** — `crates/rune-tui/src/app.rs:227,235-238`; a message that switches tabs arms/omits the snapshot debounce for the wrong document (journaling is unaffected; only the snapshot anchor is mis-timed).

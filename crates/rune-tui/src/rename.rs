@@ -172,11 +172,12 @@ fn display_name(path: &Path) -> String {
 /// name, a successful enqueue, and an enqueue failure that has already been
 /// reported through `on_store_failure` all return `Accepted`, because none
 /// of them leaves the user needing to fix anything in the field. Every
-/// `Refused` path's SOLE side effect is posting a message to the log —
-/// that is what makes a refused blur running this twice in
-/// one keystroke
-/// harmless, since the second run just re-reports the same status. Every
-/// refusal below leaves the state `Idle`, the buffer byte-identical,
+/// `Refused` path's SOLE side effect is posting a message to the log, via
+/// `messages::warn_if_new`/`error_if_new` rather than the plain poster —
+/// that is what makes a refused blur running this twice in one keystroke
+/// harmless: the second run collapses into the first instead of doubling
+/// it in the log. Every refusal below leaves the state `Idle`, the buffer
+/// byte-identical,
 /// `file_path` unchanged, and the journal untouched — a refused rename must
 /// be indistinguishable from never having asked. Focus itself is never
 /// written here: the caller (`App::set_focus`) decides where it lands once
@@ -186,7 +187,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // in-flight op captured its own `from`, and letting a second one race
     // it would mean two ops disagreeing about where the file is.
     if app.rename.in_flight() {
-        messages::warn(app, "a rename is already in progress");
+        messages::warn_if_new(app, "a rename is already in progress");
         return Commit::Refused;
     }
 
@@ -208,13 +209,13 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // republish at the OLD name after the rename landed — a save that
     // silently resurrects the old file.
     if doc.save_in_flight() {
-        messages::warn(app, "can't rename while a save is in flight");
+        messages::warn_if_new(app, "can't rename while a save is in flight");
         return Commit::Refused;
     }
 
     let typed = app.title.text().to_string();
     if !title::is_valid_name(&typed) {
-        messages::error(app, "that name can't be used for a file");
+        messages::error_if_new(app, "that name can't be used for a file");
         return Commit::Refused;
     }
 

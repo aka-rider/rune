@@ -96,7 +96,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
         GlobalCommand::ToggleReadOnly => {
-            if let Some(reason) = registry_refusal(app, cmd) {
+            if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
                 messages::warn(app, reason);
             } else {
                 crate::commands::reading::toggle(app);
@@ -105,7 +105,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Starts a merge attempt, or exits an already-active
         // one in place — see `merge::toggle`'s own docs.
         GlobalCommand::Merge => {
-            if let Some(reason) = registry_refusal(app, cmd) {
+            if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
                 messages::warn(app, reason);
             } else {
                 crate::merge::toggle(app, effects);
@@ -117,7 +117,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
         GlobalCommand::Trash => pane_global::trash(app, effects),
         GlobalCommand::TogglePin => {
-            if let Some(reason) = registry_refusal(app, cmd) {
+            if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
                 messages::warn(app, reason);
             } else {
                 crate::opentabs::limit::toggle_pin(app, app.active);

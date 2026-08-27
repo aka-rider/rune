@@ -29,9 +29,11 @@ pub(crate) fn clear(
 
 fn materialize_rungs(app: &mut App, id: DocumentId) -> Result<(), SaveStart> {
     let Some(kind) = app.doc(id).map(|d| d.kind) else {
+        messages::warn(app, "can't save \u{2014} that document is no longer open");
         return Err(SaveStart::Refused);
     };
     if kind == DocumentKind::Image {
+        messages::warn(app, "images can't be edited or saved here");
         return Err(SaveStart::Refused);
     }
     if app.refuse_if_preview(id) {

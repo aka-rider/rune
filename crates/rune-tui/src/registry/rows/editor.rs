@@ -271,4 +271,5 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         true,
         reload,
     ),
+    row(Command::QuitConfirm, "quit", "quit", false),
 ];
