@@ -8,8 +8,8 @@ use crate::save::SaveMode;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SaveTicket(u64);
 
-#[derive(Clone)]
-pub(crate) struct SaveCapture {
+#[derive(Clone, Debug, PartialEq)]
+pub struct SaveCapture {
     pub(crate) version: u64,
     pub(crate) content: Arc<str>,
 }

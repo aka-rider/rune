@@ -92,6 +92,7 @@ pub enum RenameState {
         from: PathBuf,
         to: PathBuf,
         ticket: Ticket,
+        draft_baseline: Option<crate::document::SaveCapture>,
     },
     /// The destination exists and the user is being asked. `seen` is the
     /// destination's stat at the moment of the collision — the **consent**
@@ -190,6 +191,10 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
         messages::warn_if_new(app, "a rename is already in progress");
         return Commit::Refused;
     }
+    if app.trash.in_flight() {
+        messages::warn_if_new(app, "can't rename while a trash is in progress");
+        return Commit::Refused;
+    }
 
     let id = app.active;
     // No status is set on this branch — `app.active` naming a document that
@@ -262,6 +267,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
             from,
             to,
             ticket,
+            draft_baseline: None,
         };
     }
     Commit::Accepted
@@ -324,10 +330,14 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
     let Some(doc_id) = app.rename.doc() else {
         return;
     };
-    let (from, to) = match &app.rename {
-        RenameState::Committing { from, to, .. } | RenameState::Capturing { from, to, .. } => {
-            (from.clone(), to.clone())
-        }
+    let (from, to, draft_baseline) = match &app.rename {
+        RenameState::Committing {
+            from,
+            to,
+            draft_baseline,
+            ..
+        } => (from.clone(), to.clone(), draft_baseline.clone()),
+        RenameState::Capturing { from, to, .. } => (from.clone(), to.clone(), None),
         _ => return,
     };
     let was_capturing = matches!(app.rename, RenameState::Capturing { .. });
@@ -337,6 +347,12 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
             let created = from.as_os_str().is_empty();
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
+            if created
+                && let Some(capture) = draft_baseline
+                && let Some(doc) = app.doc_mut(doc_id)
+            {
+                doc.adopt_saved(capture.version, capture.content);
+            }
             let verb = if created { "created" } else { "renamed to" };
             messages::info(app, format!("{verb} {}", display_name(&to)));
             if !durable {
@@ -366,7 +382,18 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
             // no CAS baseline against a file we never observed).
             if from.as_os_str().is_empty() {
                 draft_collision_refusal(app, &to);
-                return_to_title(app);
+                return_to_title(app, doc_id);
+                return;
+            }
+            if app.doc(doc_id).is_none() {
+                app.rename = RenameState::Idle;
+                messages::error(
+                    app,
+                    format!(
+                        "{} already exists \u{2014} nothing was renamed",
+                        display_name(&to)
+                    ),
+                );
                 return;
             }
             // Enter `Collision` ONLY if the prompt is really on screen: a
@@ -416,7 +443,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
                 app,
                 format!("could not {what} {}: {e}", display_name(&from)),
             );
-            return_to_title(app);
+            return_to_title(app, doc_id);
         }
     }
 }
@@ -451,8 +478,10 @@ fn bind_to(app: &mut App, doc_id: DocumentId, to: &Path, effects: &mut Effects) 
 /// only), so this needs a focus change and nothing else — reseeding here
 /// would resurrect the old name and discard the undo history the user just
 /// built.
-fn return_to_title(app: &mut App) {
-    app.refocus_title();
+fn return_to_title(app: &mut App, doc_id: DocumentId) {
+    if app.active == doc_id {
+        app.refocus_title();
+    }
 }
 
 /// Clears the machine when `doc` is closed out from under it
@@ -460,6 +489,9 @@ fn return_to_title(app: &mut App) {
 /// alone: only a state belonging to `doc` is dropped.
 pub fn forget_document(app: &mut App, doc: DocumentId) {
     if app.rename.doc() != Some(doc) {
+        return;
+    }
+    if app.rename.in_flight() {
         return;
     }
     let had_prompt = matches!(app.rename, RenameState::Collision { .. });
@@ -485,3 +517,136 @@ fn draft_collision_refusal(app: &mut App, target: &Path) {
 #[path = "rename_collision.rs"]
 mod collision;
 pub use collision::{on_prompt_dismissed, replace_allowed, replace_confirmed};
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
+
+    use crate::app::App;
+    use crate::runtime::{CmdKind, Effects, Msg};
+
+    use super::{Commit, RenameState};
+
+    #[test]
+    fn closing_a_document_mid_rename_still_reports_the_acks_outcome() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/old.md"), b"hello")
+            .expect("seed old.md");
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/old.md")),
+            vfs,
+            None,
+        );
+        let id = app.active;
+        app.title.set_text("new.md");
+
+        let mut effects = Effects::default();
+        assert_eq!(super::begin(&mut app, &mut effects), Commit::Accepted);
+        assert!(app.rename.in_flight(), "test setup: a rename is in flight");
+
+        let outcome = crate::workspace::close_now(&mut app, id, &mut effects);
+        assert!(matches!(outcome, crate::workspace::CloseOutcome::Closed));
+        assert!(app.doc(id).is_none(), "the doc really closed");
+        assert!(
+            app.rename.in_flight(),
+            "closing the doc must not cancel the rename already in flight"
+        );
+
+        let cmd = effects
+            .cmds
+            .drain(..)
+            .find(|c| c.kind() == CmdKind::Rename)
+            .expect("begin spawns the no-store rename Cmd");
+        let Msg::RenameDone { generation, result } = cmd.run().expect("the rename Cmd replies")
+        else {
+            panic!("expected Msg::RenameDone");
+        };
+        super::handle_rename_done(&mut app, generation, result, &mut effects);
+
+        assert!(
+            matches!(app.rename, RenameState::Idle),
+            "the ack must resolve the machine even though the doc is gone"
+        );
+        assert_eq!(
+            mem.read(Path::new("/new.md")).expect("read new.md"),
+            b"hello",
+            "the rename itself must still land on disk"
+        );
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            Some("renamed to new.md"),
+            "the outcome must still be reported even though the tab already closed"
+        );
+    }
+
+    #[test]
+    fn a_no_store_draft_create_advances_the_dirty_baseline_to_what_was_written() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+        let mut app = App::new(Buffer::new(""), None, vfs, None);
+        app.set_root(PathBuf::from("/"));
+        let id = app.active;
+        crate::commands::edit::insert_char(&mut app, id, 'X');
+        assert!(
+            app.doc(id).expect("doc open").is_dirty(),
+            "test setup: typing must dirty the draft"
+        );
+        app.title.set_text("new.md");
+
+        let mut effects = Effects::default();
+        assert_eq!(super::begin(&mut app, &mut effects), Commit::Accepted);
+        let cmd = effects
+            .cmds
+            .drain(..)
+            .find(|c| c.kind() == CmdKind::Rename)
+            .expect("bind_new spawns the no-store create Cmd");
+        let Msg::RenameDone { generation, result } = cmd.run().expect("the create Cmd replies")
+        else {
+            panic!("expected Msg::RenameDone");
+        };
+        super::handle_rename_done(&mut app, generation, result, &mut effects);
+
+        assert_eq!(
+            mem.read(Path::new("/new.md")).expect("read new.md"),
+            b"X",
+            "test setup: the create must have actually published the typed byte"
+        );
+        assert!(
+            !app.doc(id).expect("doc open").is_dirty(),
+            "a file that byte-matches what was just written must not read as unsaved"
+        );
+    }
+
+    #[test]
+    fn begin_refuses_a_rename_while_a_trash_is_in_flight() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/old.md"), b"hello")
+            .expect("seed old.md");
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/old.md")),
+            vfs,
+            None,
+        );
+        app.trash = crate::trash::TrashState::Pending {
+            generation: app.next_trash_gen.mint(),
+        };
+        app.title.set_text("new.md");
+
+        let mut effects = Effects::default();
+        assert_eq!(super::begin(&mut app, &mut effects), Commit::Refused);
+        assert!(matches!(app.rename, RenameState::Idle));
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            Some("can't rename while a trash is in progress")
+        );
+    }
+}

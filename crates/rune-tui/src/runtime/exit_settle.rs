@@ -3,7 +3,7 @@ use std::thread::{self, JoinHandle};
 
 use crate::app::App;
 
-use super::Msg;
+use super::{Effects, Msg};
 
 pub(crate) fn join_save_handles(
     app: &mut App,
@@ -27,19 +27,41 @@ pub(crate) fn join_save_handles(
 }
 
 pub(crate) fn settle_pending_materialize(app: &mut App, rx: &Receiver<Msg>) {
+    let mut effects = Effects::default();
     while let Ok(msg) = rx.try_recv() {
-        if let Msg::MaterializeVfsDone {
-            id,
-            ticket,
-            db_id,
-            seq,
-            content,
-            outcome,
-        } = msg
-        {
-            crate::materialize_ack::handle_materialize_vfs_done(
-                app, id, ticket, db_id, seq, &content, outcome,
-            );
+        match msg {
+            Msg::MaterializeVfsDone {
+                id,
+                ticket,
+                db_id,
+                seq,
+                content,
+                outcome,
+            } => {
+                crate::materialize_ack::handle_materialize_vfs_done(
+                    app, id, ticket, db_id, seq, &content, outcome,
+                );
+            }
+            Msg::SaveDone {
+                id,
+                ticket,
+                version,
+                result,
+                detail,
+            } => {
+                crate::materialize_ack::handle_save_done(app, id, ticket, version, result, detail);
+            }
+            Msg::RenameDone { generation, result } => {
+                crate::rename::handle_rename_done(app, generation, result, &mut effects);
+            }
+            Msg::TrashDone {
+                generation,
+                path,
+                result,
+            } => {
+                crate::trash::handle_trash_done(app, generation, &path, result, &mut effects);
+            }
+            _ => {}
         }
     }
 }
@@ -210,6 +232,51 @@ mod tests {
             ),
             "a save thread that finishes only after the join loop starts \
              must still have its reply applied before shutdown proceeds"
+        );
+    }
+
+    #[test]
+    fn a_late_save_done_failure_at_shutdown_is_surfaced_not_swallowed() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/doc.md"), b"hello")
+            .expect("seed doc.md");
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(std::path::PathBuf::from("/doc.md")),
+            vfs,
+            None,
+        );
+        let id = app.active;
+        let (version, content) = {
+            let doc = app.doc(id).expect("doc open");
+            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+        };
+        let ticket = app
+            .doc_mut(id)
+            .expect("doc open")
+            .begin_save(version, content);
+
+        let (tx, rx) = mpsc::channel();
+        tx.send(Msg::SaveDone {
+            id,
+            ticket,
+            version,
+            result: Err(crate::runtime::CmdError::Refused("disk full".to_string())),
+            detail: crate::runtime::SaveOutcomeDetail {
+                durable: true,
+                stray_temp: None,
+                race: None,
+            },
+        })
+        .expect("park the reply in the channel");
+
+        settle_pending_materialize(&mut app, &rx);
+
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            Some("save failed: disk full"),
+            "a SaveDone(Err) drained at shutdown must still be reported, not discarded"
         );
     }
 }

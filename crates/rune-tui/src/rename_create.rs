@@ -112,10 +112,11 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     }
 
     crate::commands::strip_trailing::leave_reading_then_strip(app, id);
-    let bytes = app
-        .doc(id)
-        .map(|d| d.buffer.content().as_bytes().to_vec())
-        .unwrap_or_default();
+    let (version, content) = app.doc(id).map_or_else(
+        || (0, Arc::from("")),
+        |d| (d.buffer.version(), Arc::<str>::from(d.buffer.content())),
+    );
+    let bytes = content.as_bytes().to_vec();
     let generation = app.next_rename_gen.mint();
     let path_for_state = path.clone();
     effects
@@ -131,6 +132,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         from: PathBuf::new(),
         to: path_for_state,
         ticket: Ticket::Cmd(generation),
+        draft_baseline: Some(crate::document::SaveCapture { version, content }),
     };
     Commit::Accepted
 }

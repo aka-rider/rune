@@ -25,8 +25,14 @@ pub(crate) enum TrashState {
     },
 }
 
+impl TrashState {
+    pub(crate) fn in_flight(&self) -> bool {
+        !matches!(self, TrashState::Idle)
+    }
+}
+
 pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
-    if !matches!(app.trash, TrashState::Idle) {
+    if app.trash.in_flight() {
         messages::error(app, "a trash is already in progress");
         return;
     }
@@ -119,7 +125,7 @@ fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
 }
 
 pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
-    if !matches!(app.trash, TrashState::Idle) {
+    if app.trash.in_flight() {
         messages::error(app, "a trash is already in progress");
         return;
     }

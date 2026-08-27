@@ -394,7 +394,7 @@ fn resync_after_journal_jump(
     if merge_active_on(app, id) {
         crate::merge::ranges::rederive_after_jump(app, id, deltas);
     } else {
-        crate::db_enqueue::probe(app, id);
+        let _ = crate::db_enqueue::probe(app, id);
     }
 }
 

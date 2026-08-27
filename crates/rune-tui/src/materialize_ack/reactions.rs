@@ -157,7 +157,7 @@ fn finish_ack(app: &mut App, id: DocumentId, pending_version: Option<u64>, commi
         .is_some_and(|binding| std::mem::take(&mut binding.pending_probe));
     if deferred_probe && let Some(db_id) = db_id {
         for doc_id in app.documents_bound_to(db_id) {
-            crate::db_enqueue::probe(app, doc_id);
+            let _ = crate::db_enqueue::probe(app, doc_id);
         }
     }
     resolve_continuations(app, id, pending_version, committed);

@@ -102,7 +102,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 // (mirrors the `MergePrep` ticket check below). A fresh
                 // probe replaces it so `last_sync` doesn't stall until an
                 // unrelated event happens to probe again.
-                crate::db_enqueue::probe(app, pending.doc);
+                let _ = crate::db_enqueue::probe(app, pending.doc);
                 return;
             }
             if let Some(doc) = app.doc_mut(pending.doc) {
@@ -282,7 +282,7 @@ mod tests {
         ));
         app.install_or_join_file_binding(1, None);
 
-        crate::db_enqueue::probe(&mut app, id);
+        let _ = crate::db_enqueue::probe(&mut app, id);
         let op_id = *app
             .db_ops
             .iter()

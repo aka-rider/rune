@@ -72,9 +72,10 @@ pub fn replace_confirmed(app: &mut App) {
 /// Returns the user to the title field with the name they typed still in
 /// it, so a cancelled collision is one keystroke from a different name.
 pub fn on_prompt_dismissed(app: &mut App) {
-    if !matches!(app.rename, RenameState::Collision { .. }) {
+    let RenameState::Collision { doc, .. } = &app.rename else {
         return;
-    }
+    };
+    let doc = *doc;
     app.rename = RenameState::Idle;
-    return_to_title(app);
+    return_to_title(app, doc);
 }

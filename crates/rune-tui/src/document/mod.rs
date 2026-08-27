@@ -8,7 +8,7 @@ mod tests;
 pub use crate::read_only::ReadOnly;
 pub(crate) use replica::{Replica, ReplicaStep};
 pub(crate) use save_state::PublishParams;
-pub use save_state::{SavePhase, SaveTicket};
+pub use save_state::{SaveCapture, SavePhase, SaveTicket};
 use save_state::{SaveState, SaveTicketMint};
 
 use std::num::NonZeroU64;
@@ -236,6 +236,11 @@ impl Document {
 
     pub fn abandon_save(&mut self) {
         self.save.resolve();
+    }
+
+    pub(crate) fn adopt_saved(&mut self, version: u64, content: Arc<str>) {
+        self.saved_version = version;
+        self.saved_content = content;
     }
 
     pub fn pending_save_version(&self) -> Option<u64> {

@@ -32,7 +32,7 @@ use merge_common::{
 /// `workspace::switch_to`'s own auto-exit, which would tear the very
 /// session down this test means to reprobe underneath.
 fn reprobe_in_place(session: &mut Session, doc: DocumentId) {
-    rune_tui::db_enqueue::probe(session.app_mut(), doc);
+    let _ = rune_tui::db_enqueue::probe(session.app_mut(), doc);
     assert!(session.deliver_db().is_none());
 }
 

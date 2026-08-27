@@ -234,9 +234,9 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let nav_index_before = app.nav_history.index();
     let nav_caret_before = app.active_doc().cursors.primary().position;
     dispatch::update_inner(app, msg, effects);
-    if app.active_doc().journal.pos() != journal_pos_before {
-        let id = app.active;
-        save::schedule_snapshot_debounce(app, id);
+    let journal_pos_after = app.doc(active_before).map(|doc| doc.journal.pos());
+    if journal_pos_after.is_some_and(|pos| pos != journal_pos_before) {
+        save::schedule_snapshot_debounce(app, active_before);
     }
     if app.nav_history.index() == nav_index_before {
         crate::navhistory::observe_jump(app, active_before, nav_caret_before);
@@ -249,4 +249,97 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
         effects,
     );
     crate::explorer_preview::on_focus_changed(app, focus_before, app.focus());
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
+
+    use crate::db::{Db, DbBridge};
+    use crate::keymap::{KeyCode, KeyInput, Mods};
+    use crate::runtime::{Effects, Msg};
+    use crate::workspace;
+
+    use super::{App, update};
+
+    fn drain_db_ops(app: &mut App, bridge: &DbBridge, effects: &mut Effects) {
+        while !app.db_ops.is_empty() {
+            let evt = bridge.wait_for_bootstrap_event(|_| true);
+            update(app, Msg::Db(evt), effects);
+        }
+    }
+
+    #[test]
+    fn closing_the_active_document_never_arms_a_neighbors_snapshot_debounce() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/a.md"), b"a")
+            .expect("seed a.md");
+        mem.save_atomic(Path::new("/b.md"), b"b")
+            .expect("seed b.md");
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let bridge = DbBridge::bootstrap();
+        let clock: rune_db::ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = rune_db::Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event())
+            .expect("open store");
+        let db = Db::new(store, Arc::clone(&bridge), false);
+        let mut app = App::new(Buffer::new(""), None, vfs, Some(db));
+        let mut effects = Effects::default();
+
+        let a = workspace::open_path(&mut app, Path::new("/a.md")).expect("open a.md");
+        drain_db_ops(&mut app, &bridge, &mut effects);
+        let b = workspace::open_path(&mut app, Path::new("/b.md")).expect("open b.md");
+        drain_db_ops(&mut app, &bridge, &mut effects);
+
+        workspace::switch_to(&mut app, b);
+        update(
+            &mut app,
+            Msg::Key(KeyInput {
+                code: KeyCode::Char('x'),
+                mods: Mods::NONE,
+            }),
+            &mut effects,
+        );
+        drain_db_ops(&mut app, &bridge, &mut effects);
+        assert!(
+            app.doc(b).expect("doc open").journal.pos() > 0,
+            "test setup: b.md must have journal history distinct from a.md's"
+        );
+        let b_generation_before = app
+            .doc(b)
+            .expect("doc open")
+            .doc_db()
+            .expect("store-bound")
+            .snapshot_generation;
+
+        workspace::switch_to(&mut app, a);
+        update(
+            &mut app,
+            Msg::Key(KeyInput {
+                code: KeyCode::Char('w'),
+                mods: Mods {
+                    ctrl: true,
+                    ..Mods::NONE
+                },
+            }),
+            &mut effects,
+        );
+
+        assert!(app.doc(a).is_none(), "^w must close the clean active tab");
+        assert_eq!(app.active, b, "b.md is the only remaining tab");
+        assert_eq!(
+            app.doc(b)
+                .expect("doc open")
+                .doc_db()
+                .expect("store-bound")
+                .snapshot_generation,
+            b_generation_before,
+            "closing a.md must not arm a snapshot debounce for b.md, \
+             which this message never edited"
+        );
+    }
 }

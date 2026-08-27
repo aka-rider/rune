@@ -60,7 +60,7 @@ pub(crate) fn handle_prepare_ack(
         && enqueue_epoch != app.doc_file_binding(id).map(|b| b.baseline_epoch)
     {
         fail_materialize_locally(app, id, SAVE_RACED_BASELINE_REWRITE);
-        crate::db_enqueue::probe(app, id);
+        let _ = crate::db_enqueue::probe(app, id);
         return;
     }
     let (expect_hash, bound_path) = match prep {

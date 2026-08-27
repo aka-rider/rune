@@ -186,13 +186,15 @@ pub fn toggle(app: &mut App, effects: &mut Effects) {
 fn focus(app: &mut App, effects: &mut Effects) {
     app.messages.armed = None;
     app.set_focus_pane(Pane::Messages, effects);
-    app.messages.doc.focused = app.focus() == Pane::Messages;
 }
 
 pub fn collapse(app: &mut App) {
     app.messages.open = false;
-    app.messages.doc.focused = false;
     app.messages.armed = None;
+}
+
+pub(crate) fn refresh_focused_flag(app: &mut App) {
+    app.messages.doc.focused = app.focus() == Pane::Messages;
 }
 
 pub fn is_open(app: &App) -> bool {
@@ -370,6 +372,9 @@ pub fn mouse(app: &mut App, input: MouseInput, effects: &mut Effects) {
 
 fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
     focus(app, effects);
+    if app.focus() != Pane::Messages {
+        return;
+    }
     let Some((row, col)) = relative(app, input) else {
         return;
     };
@@ -413,4 +418,64 @@ fn copy_selection(app: &mut App, effects: &mut Effects) {
     }
     let text = extract_copy_text(&app.messages.doc.buffer, &app.messages.doc.cursors);
     write_to_clipboard_or_report(app, &text, effects);
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+
+    use super::*;
+
+    fn app_with_messages_open() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.frame_width = 120;
+        app.frame_height = 34;
+        info(&mut app, "seed a message so the pane has content");
+        app
+    }
+
+    #[test]
+    fn a_click_with_a_vetoed_focus_transition_never_selects_text() {
+        let mut app = app_with_messages_open();
+        app.focus_title();
+        app.title.set_text("bad/name");
+        assert_eq!(app.focus(), Pane::Title, "test setup: title holds focus");
+        app.sync_view();
+        let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+        let rect = crate::layout::geometry(area, &app)
+            .messages
+            .expect("test setup: the messages pane must be painted this frame");
+
+        let mut effects = Effects::default();
+        mouse(
+            &mut app,
+            MouseInput {
+                kind: MouseKind::Down(MouseButton::Left),
+                column: rect.x,
+                row: rect.y + 1,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            },
+            &mut effects,
+        );
+
+        assert_eq!(
+            app.focus(),
+            Pane::Title,
+            "the invalid name must keep vetoing the transition"
+        );
+        assert!(
+            app.pointer.drag.is_none(),
+            "a click that never focused the pane must not latch a drag"
+        );
+        assert!(
+            !app.messages.doc.cursors.primary().has_selection(),
+            "a click that never focused the pane must not place a selection"
+        );
+    }
 }

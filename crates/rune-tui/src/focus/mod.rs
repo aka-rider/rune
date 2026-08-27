@@ -309,6 +309,7 @@ impl App {
             self.explorer.browsing_origin = crate::returnto::ReturnTo::to(self.active);
         }
         self.focus = next;
+        crate::messages::refresh_focused_flag(self);
     }
 
     /// The ergonomic entry point every ordinary call site uses instead of

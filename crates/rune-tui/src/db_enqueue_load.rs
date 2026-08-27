@@ -130,32 +130,36 @@ fn load_document_inner(
 /// re-calls this function, for every document still bound to `db_id`, once
 /// ANY of their saves resolves — so the disk fact each of them ends up with
 /// is read fresh from the POST-save world, exactly once.
-pub fn probe(app: &mut App, id: DocumentId) {
+#[must_use]
+pub fn probe(app: &mut App, id: DocumentId) -> bool {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
+        return true;
     }
-    let Some(doc) = app.doc(id) else { return };
+    let Some(doc) = app.doc(id) else { return true };
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
-        return;
+        return true;
     };
     if doc.file_path.is_none() {
-        return;
+        return true;
     }
     if app.any_save_in_flight_for(db_id) {
-        if let Some(binding) = app.file_binding_mut(db_id) {
-            binding.pending_probe = true;
-        }
-        return;
+        let Some(binding) = app.file_binding_mut(db_id) else {
+            return false;
+        };
+        binding.pending_probe = true;
+        return true;
     }
     if app
         .db_ops
         .values()
         .any(|pending| pending.doc == id && pending.is_probe)
     {
-        return;
+        return true;
     }
     let baseline_epoch = app.file_binding(db_id).map_or(0, |b| b.baseline_epoch);
-    let Some(db) = app.db.as_ref() else { return };
+    let Some(db) = app.db.as_ref() else {
+        return true;
+    };
     match db.store.probe(rune_db::DocId(db_id)) {
         Ok(op_id) => {
             app.db_ops
@@ -163,6 +167,7 @@ pub fn probe(app: &mut App, id: DocumentId) {
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
     }
+    true
 }
 
 /// Enqueues a `CreateScratch` op registering `id` — a freshly minted
@@ -194,5 +199,91 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
             }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+
+    use crate::db::{Db, DbBridge, DocDb, PublishMode};
+    use crate::document::Replica;
+
+    use super::{App, probe};
+
+    fn in_memory_db() -> Db {
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
+        let clock: rune_db::ClockFn = Arc::new(std::time::SystemTime::now);
+        let store =
+            rune_db::Store::open_in_memory(clock, vfs, Box::new(|_evt| {})).expect("open store");
+        let bridge = DbBridge::bootstrap();
+        Db::new(store, bridge, false)
+    }
+
+    #[test]
+    fn a_deferral_with_no_file_binding_to_stash_it_in_is_reported_to_the_caller() {
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/doc.md")),
+            vfs,
+            Some(in_memory_db()),
+        );
+        let id = app.active;
+        app.doc_mut(id).expect("doc open").replica = Replica::Bound(DocDb::new(
+            1,
+            PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
+        let (version, content) = {
+            let doc = app.doc(id).expect("doc open");
+            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+        };
+        app.doc_mut(id)
+            .expect("doc open")
+            .begin_save(version, content);
+
+        assert!(
+            !probe(&mut app, id),
+            "a deferral that could not be recorded must be reported, not silently dropped"
+        );
+    }
+
+    #[test]
+    fn a_deferral_that_is_recorded_reports_success() {
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/doc.md")),
+            vfs,
+            Some(in_memory_db()),
+        );
+        let id = app.active;
+        app.doc_mut(id).expect("doc open").replica = Replica::Bound(DocDb::new(
+            1,
+            PublishMode::OverwriteExisting,
+            rune_db::Seq(0),
+        ));
+        app.install_or_join_file_binding(1, None);
+        let (version, content) = {
+            let doc = app.doc(id).expect("doc open");
+            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+        };
+        app.doc_mut(id)
+            .expect("doc open")
+            .begin_save(version, content);
+
+        assert!(probe(&mut app, id));
+        assert!(
+            app.file_binding(1)
+                .expect("binding installed")
+                .pending_probe,
+            "the probe must actually have been deferred"
+        );
     }
 }
