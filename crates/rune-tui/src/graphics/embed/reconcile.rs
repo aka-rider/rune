@@ -46,7 +46,7 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
         .as_deref()
         .and_then(Path::parent)
         .map(Path::to_path_buf);
-    let root = app.root.clone().unwrap_or_default();
+    let root = app.root.clone();
     let vfs = Arc::clone(&app.vfs);
 
     spawn_or_respawn(
@@ -54,7 +54,7 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
         id,
         &standalone,
         doc_dir.as_deref(),
-        &root,
+        root.as_deref(),
         &vfs,
         effects,
     );
@@ -66,7 +66,7 @@ fn spawn_or_respawn(
     id: DocumentId,
     standalone: &[ImageM],
     doc_dir: Option<&Path>,
-    root: &Path,
+    root: Option<&Path>,
     vfs: &Arc<dyn Vfs + Send + Sync>,
     effects: &mut Effects,
 ) {
@@ -157,7 +157,7 @@ fn resolve_embed_path(
     vfs: &dyn Vfs,
     m: &ImageM,
     doc_dir: Option<&Path>,
-    root: &Path,
+    root: Option<&Path>,
 ) -> Option<PathBuf> {
     let target = rune_md::catalogue::image_target(m);
     match rune_nav::resolve(

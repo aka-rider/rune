@@ -17,17 +17,19 @@ use crate::types::{Anchor, Destination, Target};
 
 /// Resolve `target` against the filesystem. `doc_dir` is the directory the
 /// referencing document lives in (checked before `root`); `root` is the
-/// vault/workspace root. `name_extension` is the file extension (without a
-/// leading dot, e.g. `"md"`) a `Target::Name` candidate gets when it has
-/// none of its own — supplied by the producer's resolution policy (e.g.
-/// rune-md's catalogue), never hardcoded here, so a non-markdown producer
-/// resolving symbol names against `.py` files needs no change to this
-/// crate. Every existence check goes through the injected `Vfs`.
+/// vault/workspace root, `None` when there is none (a draft, a window on a
+/// single file), in which case only `doc_dir` and absolute candidates are
+/// tried. `name_extension` is the file extension (without a leading dot,
+/// e.g. `"md"`) a `Target::Name` candidate gets when it has none of its
+/// own — supplied by the producer's resolution policy (e.g. rune-md's
+/// catalogue), never hardcoded here, so a non-markdown producer resolving
+/// symbol names against `.py` files needs no change to this crate. Every
+/// existence check goes through the injected `Vfs`.
 pub fn resolve(
     vfs: &dyn Vfs,
     target: &Target,
     doc_dir: Option<&Path>,
-    root: &Path,
+    root: Option<&Path>,
     name_extension: &str,
 ) -> Destination {
     match target {
@@ -54,24 +56,27 @@ pub fn resolve(
 /// Decode `raw` (infallibly — a malformed escape passes through verbatim,
 /// so there is exactly one candidate string, never two), trim it and strip
 /// a leading `./`, then search for a regular file in two passes: first the
-/// target verbatim, then — only if it is still unresolved and has no
-/// extension of its own — the same target with `name_extension` appended.
-/// This is the whole of the `Target::Name`/`Target::Path` distinction as
-/// far as resolution is concerned: neither ever influences which pass
-/// fires, so a link and an image embed naming the same string resolve
-/// identically. Each pass tries the candidate as an absolute path directly
-/// against the filesystem (a deliberate escape hatch: the user named a
-/// location outside the vault explicitly), or, if relative, joined onto
-/// `doc_dir` then `root` in turn (locality wins, per the module's
-/// contract) and lexically normalized before the `Vfs` ever sees it. There
-/// is no requirement that the normalized path stay within `root` — a
-/// document whose own directory lies outside the workspace root must still
-/// resolve its own relative references.
+/// target verbatim, then — unless it already ends in `.{name_extension}` —
+/// the same target with `.{name_extension}` appended. That suffix check,
+/// not `Path::extension()`, is the retry gate: it fires for any other
+/// interior dot (`2024.01.15`, `v1.2`) and only skips a target that would
+/// otherwise double up (`note.md` retrying as `note.md.md`). This is the
+/// whole of the `Target::Name`/`Target::Path` distinction as far as
+/// resolution is concerned: neither ever influences which pass fires, so a
+/// link and an image embed naming the same string resolve identically.
+/// Each pass tries the candidate as an absolute path directly against the
+/// filesystem (a deliberate escape hatch: the user named a location
+/// outside the vault explicitly), or, if relative, joined onto `doc_dir`
+/// then `root` in turn (locality wins, per the module's contract) and
+/// lexically normalized before the `Vfs` ever sees it. There is no
+/// requirement that the normalized path stay within `root` — a document
+/// whose own directory lies outside the workspace root must still resolve
+/// its own relative references.
 fn resolve_candidate(
     vfs: &dyn Vfs,
     raw: &str,
     doc_dir: Option<&Path>,
-    root: &Path,
+    root: Option<&Path>,
     anchor: Option<&Anchor>,
     name_extension: &str,
 ) -> Destination {
@@ -82,8 +87,9 @@ fn resolve_candidate(
     if let Some(dest) = try_candidate(vfs, stripped, doc_dir, root, anchor) {
         return dest;
     }
-    if Path::new(stripped).extension().is_none() {
-        let with_extension = format!("{stripped}.{name_extension}");
+    let extension_suffix = format!(".{name_extension}");
+    if !stripped.ends_with(extension_suffix.as_str()) {
+        let with_extension = format!("{stripped}{extension_suffix}");
         if let Some(dest) = try_candidate(vfs, &with_extension, doc_dir, root, anchor) {
             return dest;
         }
@@ -93,12 +99,13 @@ fn resolve_candidate(
 
 /// One resolution pass for an already-decoded, already-trimmed candidate
 /// string: absolute candidates are checked directly; relative candidates
-/// are tried against each non-empty base in turn, doc-dir first.
+/// are tried against each base in turn, doc-dir first, then `root` — a
+/// `None` root drops out of the search via `Iterator::flatten` below.
 fn try_candidate(
     vfs: &dyn Vfs,
     candidate: &str,
     doc_dir: Option<&Path>,
-    root: &Path,
+    root: Option<&Path>,
     anchor: Option<&Anchor>,
 ) -> Option<Destination> {
     let path = Path::new(candidate);
@@ -109,7 +116,7 @@ fn try_candidate(
         });
     }
 
-    for base in [doc_dir, Some(root)].into_iter().flatten() {
+    for base in [doc_dir, root].into_iter().flatten() {
         if base.as_os_str().is_empty() {
             continue;
         }

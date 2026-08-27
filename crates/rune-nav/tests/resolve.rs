@@ -38,7 +38,7 @@ fn a_path_target_carries_a_named_anchor_through_to_the_destination() {
         path: "note.md".to_string(),
         anchor: Some(named("Setup")),
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -55,7 +55,7 @@ fn a_name_target_carries_a_named_anchor_through_to_the_destination() {
         name: "note".to_string(),
         anchor: Some(named("Setup")),
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -72,7 +72,7 @@ fn a_line_anchor_survives_resolution_with_its_number_intact() {
         path: "note.md".to_string(),
         anchor: Some(Anchor::Line(42)),
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -89,7 +89,7 @@ fn an_absolute_target_also_carries_its_anchor_through() {
         path: "/elsewhere/note.md".to_string(),
         anchor: Some(Anchor::Line(7)),
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -154,7 +154,7 @@ fn a_fifo_or_device_node_never_resolves_as_a_link_target() {
         path: "/root/some-fifo".to_string(),
         anchor: None,
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Unresolved);
 }
 
@@ -165,7 +165,7 @@ fn a_directory_reported_by_stat_never_resolves_as_a_link_target() {
         path: "/root/sub".to_string(),
         anchor: None,
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Unresolved);
 }
 
@@ -176,7 +176,7 @@ fn a_name_target_with_an_extension_already_present_is_not_appended_twice() {
         name: "notes.txt".to_string(),
         anchor: None,
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -193,7 +193,7 @@ fn a_none_doc_dir_still_resolves_against_root() {
         path: "note.md".to_string(),
         anchor: None,
     };
-    let dest = rune_nav::resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = rune_nav::resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {

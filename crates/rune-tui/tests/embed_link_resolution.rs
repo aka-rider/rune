@@ -118,7 +118,7 @@ fn a_link_and_an_embed_with_the_same_relative_target_resolve_to_the_same_path() 
         app.vfs.as_ref(),
         &link_target,
         doc_dir.as_deref(),
-        app.root.as_deref().expect("root set by the fixture"),
+        app.root.as_deref(),
         rune_md::catalogue::NAME_RESOLUTION_EXTENSION,
     );
     match dest {

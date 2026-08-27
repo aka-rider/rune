@@ -31,7 +31,7 @@ fn name_target(name: &str) -> Target {
 fn percent_decoded_target_resolves_to_the_percent_containing_file() {
     let vfs = mem_with(&["/root/archive/Canary tokens.md"]);
     let target = path_target("archive/Canary%20tokens.md");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -45,7 +45,7 @@ fn percent_decoded_target_resolves_to_the_percent_containing_file() {
 fn a_literal_percent_that_is_not_a_valid_escape_resolves_via_the_verbatim_passthrough() {
     let vfs = mem_with(&["/root/100%.md"]);
     let target = path_target("100%.md");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -64,7 +64,13 @@ fn an_extension_less_target_is_tried_bare_first_then_with_extension_appended() {
     // same string can never diverge.
     let vfs = mem_with(&["/root/Setup.md"]);
 
-    let name_dest = resolve(&vfs, &name_target("Setup"), None, Path::new("/root"), MD);
+    let name_dest = resolve(
+        &vfs,
+        &name_target("Setup"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
     assert_eq!(
         name_dest,
         Destination::Location {
@@ -73,7 +79,13 @@ fn an_extension_less_target_is_tried_bare_first_then_with_extension_appended() {
         }
     );
 
-    let path_dest = resolve(&vfs, &path_target("Setup"), None, Path::new("/root"), MD);
+    let path_dest = resolve(
+        &vfs,
+        &path_target("Setup"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
     assert_eq!(
         path_dest,
         Destination::Location {
@@ -86,7 +98,13 @@ fn an_extension_less_target_is_tried_bare_first_then_with_extension_appended() {
 #[test]
 fn name_extension_is_a_caller_supplied_policy_not_a_hardcoded_choice() {
     let vfs = mem_with(&["/root/utils.py"]);
-    let dest = resolve(&vfs, &name_target("utils"), None, Path::new("/root"), "py");
+    let dest = resolve(
+        &vfs,
+        &name_target("utils"),
+        None,
+        Some(Path::new("/root")),
+        "py",
+    );
     assert_eq!(
         dest,
         Destination::Location {
@@ -103,7 +121,7 @@ fn a_name_target_that_already_has_an_extension_gets_no_second_one_appended() {
         &vfs,
         &name_target("notes.txt"),
         None,
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -116,6 +134,76 @@ fn a_name_target_that_already_has_an_extension_gets_no_second_one_appended() {
 }
 
 #[test]
+fn a_dotted_daily_note_name_still_gets_the_extension_retry() {
+    let vfs = mem_with(&["/root/2024.01.15.md"]);
+    let dest = resolve(
+        &vfs,
+        &name_target("2024.01.15"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
+    assert_eq!(
+        dest,
+        Destination::Location {
+            path: PathBuf::from("/root/2024.01.15.md"),
+            anchor: None,
+        }
+    );
+}
+
+#[test]
+fn a_dotted_version_style_name_still_gets_the_extension_retry() {
+    let vfs = mem_with(&["/root/v1.2.md"]);
+    let dest = resolve(
+        &vfs,
+        &name_target("v1.2"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
+    assert_eq!(
+        dest,
+        Destination::Location {
+            path: PathBuf::from("/root/v1.2.md"),
+            anchor: None,
+        }
+    );
+}
+
+#[test]
+fn a_link_that_already_names_the_md_file_resolves_without_a_double_extension() {
+    let vfs = mem_with(&["/root/note.md"]);
+    let dest = resolve(
+        &vfs,
+        &name_target("note.md"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
+    assert_eq!(
+        dest,
+        Destination::Location {
+            path: PathBuf::from("/root/note.md"),
+            anchor: None,
+        }
+    );
+}
+
+#[test]
+fn a_missing_md_named_link_is_unresolved_rather_than_doubling_its_extension() {
+    let vfs = mem_with(&["/root/note.md.md"]);
+    let dest = resolve(
+        &vfs,
+        &name_target("note.md"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
+    assert_eq!(dest, Destination::Unresolved);
+}
+
+#[test]
 fn doc_dir_wins_over_root_when_both_contain_the_name() {
     let vfs = mem_with(&["/root/note.md", "/root/sub/note.md"]);
     let target = path_target("note.md");
@@ -123,7 +211,7 @@ fn doc_dir_wins_over_root_when_both_contain_the_name() {
         &vfs,
         &target,
         Some(Path::new("/root/sub")),
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -139,7 +227,13 @@ fn doc_dir_wins_over_root_when_both_contain_the_name() {
 fn an_empty_doc_dir_is_skipped_and_root_is_still_tried() {
     let vfs = mem_with(&["/root/note.md"]);
     let target = path_target("note.md");
-    let dest = resolve(&vfs, &target, Some(Path::new("")), Path::new("/root"), MD);
+    let dest = resolve(
+        &vfs,
+        &target,
+        Some(Path::new("")),
+        Some(Path::new("/root")),
+        MD,
+    );
     assert_eq!(
         dest,
         Destination::Location {
@@ -150,10 +244,32 @@ fn an_empty_doc_dir_is_skipped_and_root_is_still_tried() {
 }
 
 #[test]
+fn a_none_root_still_resolves_through_doc_dir() {
+    let vfs = mem_with(&["/only/note.md"]);
+    let target = path_target("note.md");
+    let dest = resolve(&vfs, &target, Some(Path::new("/only")), None, MD);
+    assert_eq!(
+        dest,
+        Destination::Location {
+            path: PathBuf::from("/only/note.md"),
+            anchor: None,
+        }
+    );
+}
+
+#[test]
+fn a_none_root_leaves_a_root_only_relative_target_unresolved() {
+    let vfs = mem_with(&["/root/note.md"]);
+    let target = path_target("note.md");
+    let dest = resolve(&vfs, &target, None, None, MD);
+    assert_eq!(dest, Destination::Unresolved);
+}
+
+#[test]
 fn an_absolute_target_that_does_not_exist_is_unresolved() {
     let vfs = Mem::new();
     let target = path_target("/nowhere/ghost.md");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Unresolved);
 }
 
@@ -165,7 +281,7 @@ fn an_absolute_target_outside_the_vault_root_still_resolves_deliberately() {
     // no different in kind from any other resolution.
     let vfs = mem_with(&["/elsewhere/ghost.md"]);
     let target = path_target("/elsewhere/ghost.md");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -181,7 +297,7 @@ fn a_directory_target_is_unresolved() {
     // as a synthetic directory (WP1).
     let vfs = mem_with(&["/root/sub/nested.md"]);
     let target = path_target("sub");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Unresolved);
 }
 
@@ -192,7 +308,7 @@ fn a_percent_encoded_relative_escape_above_root_resolves_if_the_file_exists() {
     // still tried, and resolves because the file exists.
     let vfs = mem_with(&["/etc/hosts"]);
     let target = path_target("%2e%2e/%2e%2e/etc/hosts");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -210,7 +326,7 @@ fn a_relative_escape_through_doc_dir_above_root_resolves_if_the_file_exists() {
         &vfs,
         &target,
         Some(Path::new("/root/a/b")),
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -230,7 +346,7 @@ fn a_relative_traversal_that_stays_inside_root_still_resolves() {
         &vfs,
         &target,
         Some(Path::new("/root/sub")),
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -253,7 +369,7 @@ fn a_relative_target_resolves_against_a_doc_dir_that_lies_outside_root() {
         &vfs,
         &target,
         Some(Path::new("/elsewhere")),
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -277,7 +393,7 @@ fn a_bare_basename_resolves_against_a_doc_dir_outside_root() {
         &vfs,
         &target,
         Some(Path::new("/elsewhere")),
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -292,7 +408,13 @@ fn a_bare_basename_resolves_against_a_doc_dir_outside_root() {
 #[test]
 fn an_extension_less_target_prefers_a_real_extension_less_file_over_the_same_named_md() {
     let vfs = mem_with(&["/root/note", "/root/note.md"]);
-    let dest = resolve(&vfs, &name_target("note"), None, Path::new("/root"), MD);
+    let dest = resolve(
+        &vfs,
+        &name_target("note"),
+        None,
+        Some(Path::new("/root")),
+        MD,
+    );
     assert_eq!(
         dest,
         Destination::Location {
@@ -306,7 +428,7 @@ fn an_extension_less_target_prefers_a_real_extension_less_file_over_the_same_nam
 fn a_target_containing_spaces_resolves() {
     let vfs = mem_with(&["/root/my notes/weekly review.md"]);
     let target = path_target("my notes/weekly review.md");
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(
         dest,
         Destination::Location {
@@ -324,7 +446,7 @@ fn a_parent_dir_sibling_form_resolves() {
         &vfs,
         &target,
         Some(Path::new("/root/current")),
-        Path::new("/root"),
+        Some(Path::new("/root")),
         MD,
     );
     assert_eq!(
@@ -343,7 +465,7 @@ fn same_doc_target_is_unresolved_without_touching_the_filesystem() {
         role: AnchorRole::Heading,
         name: "setup".to_string(),
     });
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Unresolved);
 }
 
@@ -351,7 +473,7 @@ fn same_doc_target_is_unresolved_without_touching_the_filesystem() {
 fn url_target_resolves_without_touching_the_filesystem() {
     let vfs = Mem::new();
     let target = Target::Url("https://example.com".to_string());
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Url("https://example.com".to_string()));
 }
 
@@ -359,7 +481,7 @@ fn url_target_resolves_without_touching_the_filesystem() {
 fn resolve_returns_the_is_external_approved_value_not_the_raw_target() {
     let vfs = Mem::new();
     let target = Target::Url("  HTTPS://Example.com  ".to_string());
-    let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+    let dest = resolve(&vfs, &target, None, Some(Path::new("/root")), MD);
     assert_eq!(dest, Destination::Url("HTTPS://Example.com".to_string()));
 }
 
@@ -377,7 +499,7 @@ fn a_non_allowlisted_url_target_never_becomes_a_url_destination() {
     ] {
         let target = Target::Url(hostile.to_string());
         assert_eq!(
-            resolve(&vfs, &target, None, Path::new("/root"), MD),
+            resolve(&vfs, &target, None, Some(Path::new("/root")), MD),
             Destination::Unresolved,
             "{hostile} must not resolve to a Url destination"
         );

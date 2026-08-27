@@ -170,12 +170,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: dedup/coalesce overlapping identical per-cursor edits before `apply_edits` (a word-range case change from two cursors in one word is one edit), or validate-and-drop overlaps rather than reaching `build_edited_content`.
 - **Confidence**: confirmed (executed).
 
-#### `resolve_candidate`'s bare-then-`.md` retry never fires for a name containing a dot
-- **Where**: `crates/rune-nav/src/resolve.rs:85` — `if Path::new(stripped).extension().is_none()`.
-- **Wrong**: `Path::extension()` returns `Some` for anything after the last interior dot, so links to `2024.01.15`, `v1.2`, `RFC 2119.notes`, `README.v2` report an extension and the `.md` retry is skipped — the file resolves `Unresolved` though it is right there. Date-stamped daily notes and versioned filenames are exactly this feature's use case. Tests cover only dotless names.
-- **Instead**: attempt the `.md` retry whenever `{stripped}.md` exists, independent of an interior dot.
-- **Confidence**: confirmed.
-
 #### Kitty image IDs collide across documents — wrong image shown / another document's image deleted
 - **Where**: `crates/rune-tui/src/workspace/mod.rs:184` (`alloc_id`, no probing), `crates/rune-tui/src/graphics/embed/alloc.rs:15-26` (per-document allocator), `crates/rune-image/src/ids.rs:37-44` (FNV-1a truncated to 24 bits).
 - **Wrong**: the embed allocator only deconflicts *within* one document; whole-document image IDs bypass it, and Kitty IDs are terminal-global. FNV is trivially invertible, so a hostile vault can name `a.png`/`b.png` to collide at 24 bits: opening both notes makes one overwrite the terminal's data for that ID (the other renders its pixels), and `despawn_gone` emits `encode_delete(id)` that blanks the other document's image.
@@ -232,10 +226,10 @@ constitution and the entry is deleted in the same commit.
 - **Done when**: no test binary constructs an `App` through a `*_common` fixture that duplicates `Session`, and the driver gaps above are either closed or individually recorded as deliberate.
 
 ### Sentinel-value residue
-- **Where**: `crates/rune-tui/src/app.rs` (`frame_height/width: u16`, 0 = no resize yet — its own entry below defers it); `crates/rune-tui/src/filesearch/rank.rs` and `crates/rune-tui/src/messages/mod.rs` (`unwrap_or(usize::MAX)` — both documented deliberate orderings); `rune-nav`'s `resolve` still takes a bare `&Path`, so an unresolved root crosses that boundary as an empty `PathBuf` via `unwrap_or_default()`.
+- **Where**: `crates/rune-tui/src/app.rs` (`frame_height/width: u16`, 0 = no resize yet — its own entry below defers it); `crates/rune-tui/src/filesearch/rank.rs` and `crates/rune-tui/src/messages/mod.rs` (`unwrap_or(usize::MAX)` — both documented deliberate orderings). (`rune-nav`'s empty-`PathBuf` root is fixed: `resolve` takes `Option<&Path>`.)
 - **Wrong**: the class is otherwise closed (`CellMap`, table `buf`, `Cell.buf_offset` are `Option<u32>`; `App.root` is `Option<PathBuf>`); these are the remaining sites where an absent value borrows a valid-looking encoding.
-- **Instead**: `Option<&Path>` through `rune-nav::resolve` if the family sweep continues; the two `usize::MAX` orderings stay unless their modules change anyway.
-- **Done when**: `rune-nav` no longer receives an empty path for "no root", or the entry records why the boundary deliberately stays.
+- **Instead**: replace the two `usize::MAX` orderings with explicit `Option`-aware comparisons in the typed-newtypes pass.
+- **Done when**: no site encodes "absent" as `usize::MAX`.
 
 ### Unbounded thread-per-Cmd in `spawn_cmd`
 - **Where**: `crates/rune-tui/src/runtime/mod.rs` (`spawn_cmd`)
