@@ -30,7 +30,7 @@
 //! which is the actual fix (`CODE-REVIEW.md` rune-tui B finding 3) — a
 //! loose `resolve_char` arm here once let `⌘⇧S`/`⌘⌥S` through too.
 //!
-//! The 59 rows themselves are split across four sibling modules by natural
+//! The 61 rows themselves are split across four sibling modules by natural
 //! group — `motion` (plain cursor movement, viewport-only scroll, link
 //! follow), `selection` (chords that extend or create a selection),
 //! `editing` (chords that mutate the document, move/clone a line, add a
@@ -112,10 +112,6 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     motion::WORD_RIGHT_ARROW,
     selection::SELECT_WORD_LEFT_ARROW,
     selection::SELECT_WORD_RIGHT_ARROW,
-    selection::SELECT_WORD_LEFT_B,
-    selection::SELECT_WORD_LEFT_B_ALT,
-    selection::SELECT_WORD_RIGHT_F,
-    selection::SELECT_WORD_RIGHT_F_ALT,
     motion::LINE_UP,
     motion::LINE_DOWN,
     selection::SELECT_LINE_UP,
@@ -141,11 +137,9 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     editing::DELETE_WORD_RIGHT,
     editing::INDENT,
     editing::OUTDENT_SHIFT_TAB,
-    motion::WORD_LEFT_B,
-    motion::WORD_RIGHT_F,
-    motion::MATCH_BRACKET_M,
-    selection::SELECT_MATCH_BRACKET_M,
-    selection::SELECT_MATCH_BRACKET_M_ALT,
+    motion::MATCH_BRACKET,
+    selection::SELECT_MATCH_BRACKET,
+    selection::SELECT_MATCH_BRACKET_PIPE,
     selection::SELECT_ALL_CTRL,
     selection::SELECT_ALL_SUP,
     clipboard::COPY_SUP,
@@ -263,16 +257,6 @@ mod tests {
                 lowercase_shift: (KeyCode::Char('c'), super::CTRL_SHIFT),
                 uppercase_noshift: (KeyCode::Char('C'), super::CTRL),
                 help: "copy",
-            },
-            AffectedAction {
-                lowercase_shift: (KeyCode::Char('b'), super::SHIFT_ALT),
-                uppercase_noshift: (KeyCode::Char('B'), super::ALT),
-                help: "select word left",
-            },
-            AffectedAction {
-                lowercase_shift: (KeyCode::Char('f'), super::SHIFT_ALT),
-                uppercase_noshift: (KeyCode::Char('F'), super::ALT),
-                help: "select word right",
             },
         ];
 

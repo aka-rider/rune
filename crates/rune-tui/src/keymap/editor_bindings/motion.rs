@@ -87,22 +87,8 @@ pub(crate) const PAGE_UP_CTRL_U: Binding<Command> = Binding {
     secondary: false,
 };
 
-pub(crate) const WORD_LEFT_B: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('b'), ALT),
-    cmd: Command::Motion(Motion::WordLeft, Extend::No),
-    help: "word left",
-    secondary: false,
-};
-
-pub(crate) const WORD_RIGHT_F: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('f'), ALT),
-    cmd: Command::Motion(Motion::WordRight, Extend::No),
-    help: "word right",
-    secondary: false,
-};
-
-pub(crate) const MATCH_BRACKET_M: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('m'), ALT),
+pub(crate) const MATCH_BRACKET: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('\\'), SUP),
     cmd: Command::Motion(Motion::MatchBracket, Extend::No),
     help: "jump to matching bracket",
     secondary: false,

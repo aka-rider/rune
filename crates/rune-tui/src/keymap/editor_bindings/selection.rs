@@ -7,7 +7,7 @@
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{Command, Extend, KeyCode, Motion};
 
-use super::{ALT, CTRL, SHIFT, SHIFT_ALT, SUP};
+use super::{CTRL, SHIFT, SHIFT_ALT, SUP, SUP_SHIFT};
 
 pub(crate) const SELECT_CHAR_LEFT: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Left, SHIFT),
@@ -37,49 +37,15 @@ pub(crate) const SELECT_WORD_RIGHT_ARROW: Binding<Command> = Binding {
     secondary: false,
 };
 
-// The `Char('b')`/`Char('f')` word-motion mirror of the rows above:
-// plain ALT is already covered further down (`WordLeft`/`WordRight`),
-// these two complete the four-way mirror with the SHIFT+ALT "select"
-// variant — previously only reachable through a loose `resolve_char`
-// arm that didn't check `shift`, so `⌥⇧B`/`⌥⇧F` silently collapsed a
-// selection (moved) instead of extending it.
-pub(crate) const SELECT_WORD_LEFT_B: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('b'), SHIFT_ALT),
-    cmd: Command::Motion(Motion::WordLeft, Extend::Yes),
-    help: "select word left",
-    secondary: false,
-};
-
-pub(crate) const SELECT_WORD_LEFT_B_ALT: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('B'), ALT),
-    cmd: Command::Motion(Motion::WordLeft, Extend::Yes),
-    help: "select word left",
-    secondary: true,
-};
-
-pub(crate) const SELECT_WORD_RIGHT_F: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('f'), SHIFT_ALT),
-    cmd: Command::Motion(Motion::WordRight, Extend::Yes),
-    help: "select word right",
-    secondary: false,
-};
-
-pub(crate) const SELECT_WORD_RIGHT_F_ALT: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('F'), ALT),
-    cmd: Command::Motion(Motion::WordRight, Extend::Yes),
-    help: "select word right",
-    secondary: true,
-};
-
-pub(crate) const SELECT_MATCH_BRACKET_M: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('m'), SHIFT_ALT),
+pub(crate) const SELECT_MATCH_BRACKET: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('\\'), SUP_SHIFT),
     cmd: Command::Motion(Motion::MatchBracket, Extend::Yes),
     help: "select to matching bracket",
     secondary: false,
 };
 
-pub(crate) const SELECT_MATCH_BRACKET_M_ALT: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('M'), ALT),
+pub(crate) const SELECT_MATCH_BRACKET_PIPE: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('|'), SUP_SHIFT),
     cmd: Command::Motion(Motion::MatchBracket, Extend::Yes),
     help: "select to matching bracket",
     secondary: true,

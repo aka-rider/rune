@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_arrows_and_alt_bf_are_word_motion() {
+    fn alt_arrows_are_word_motion_and_alt_letters_stay_unbound() {
         let alt = Mods {
             alt: true,
             ..Mods::NONE
@@ -217,11 +217,13 @@ mod tests {
         );
         assert_eq!(
             resolve(key(KeyCode::Char('b'), alt)),
-            Some(Command::Motion(Motion::WordLeft, Extend::No))
+            None,
+            "macOS composes ⌥B into ∫ before any modifier reaches us"
         );
         assert_eq!(
             resolve(key(KeyCode::Char('f'), alt)),
-            Some(Command::Motion(Motion::WordRight, Extend::No))
+            None,
+            "macOS composes ⌥F into ƒ before any modifier reaches us"
         );
     }
 
@@ -400,22 +402,23 @@ mod tests {
     }
 
     /// Regression for `CODE-REVIEW.md` rune-tui B finding 3's other half:
-    /// `⌥⇧B`/`⌥⇧F` must SELECT word-left/right, not collapse a selection
+    /// `⌥⇧←`/`⌥⇧→` must SELECT word-left/right, not collapse a selection
     /// by silently falling back to plain word motion (the old
     /// `resolve_char` guard didn't check `shift` on the ALT arm either).
+    /// Carried over from `⌥⇧B`/`⌥⇧F`, which macOS composes away.
     #[test]
-    fn shift_alt_bf_selects_word_not_moves() {
+    fn shift_alt_arrows_select_word_not_move() {
         let shift_alt = Mods {
             shift: true,
             alt: true,
             ..Mods::NONE
         };
         assert_eq!(
-            resolve(key(KeyCode::Char('b'), shift_alt)),
+            resolve(key(KeyCode::Left, shift_alt)),
             Some(Command::Motion(Motion::WordLeft, Extend::Yes))
         );
         assert_eq!(
-            resolve(key(KeyCode::Char('f'), shift_alt)),
+            resolve(key(KeyCode::Right, shift_alt)),
             Some(Command::Motion(Motion::WordRight, Extend::Yes))
         );
     }

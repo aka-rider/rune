@@ -15,17 +15,17 @@ use rune_vfs::Mem;
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
-const ALT: Mods = Mods {
+const SUP: Mods = Mods {
     shift: false,
-    alt: true,
+    alt: false,
     ctrl: false,
-    sup: false,
+    sup: true,
 };
-const SHIFT_ALT: Mods = Mods {
+const SUP_SHIFT: Mods = Mods {
     shift: true,
-    alt: true,
+    alt: false,
     ctrl: false,
-    sup: false,
+    sup: true,
 };
 const SUP_ALT: Mods = Mods {
     shift: false,
@@ -54,25 +54,25 @@ fn position(app: &App) -> usize {
 }
 
 #[test]
-fn alt_m_jumps_between_the_two_endpoints_of_the_pair_under_the_caret() {
+fn sup_backslash_jumps_between_the_two_endpoints_of_the_pair_under_the_caret() {
     let content = "a (b [c] d) e";
     let open = content.find('(').unwrap();
     let close = content.find(')').unwrap();
     let mut app = app_for(content, open);
 
-    press(&mut app, KeyCode::Char('m'), ALT);
+    press(&mut app, KeyCode::Char('\\'), SUP);
     assert_eq!(position(&app), close);
 
-    press(&mut app, KeyCode::Char('m'), ALT);
+    press(&mut app, KeyCode::Char('\\'), SUP);
     assert_eq!(position(&app), open, "the jump must be its own inverse");
 }
 
 #[test]
-fn alt_m_off_a_bracket_scans_the_rest_of_the_line_for_one() {
+fn sup_backslash_off_a_bracket_scans_the_rest_of_the_line_for_one() {
     let content = "a (b) c";
     let mut app = app_for(content, 0);
 
-    press(&mut app, KeyCode::Char('m'), ALT);
+    press(&mut app, KeyCode::Char('\\'), SUP);
     assert_eq!(
         position(&app),
         content.find(')').unwrap(),
@@ -82,10 +82,10 @@ fn alt_m_off_a_bracket_scans_the_rest_of_the_line_for_one() {
 }
 
 #[test]
-fn alt_m_on_a_bracketless_line_leaves_the_caret_where_it_was() {
+fn sup_backslash_on_a_bracketless_line_leaves_the_caret_where_it_was() {
     let mut app = app_for("abc\n(d)", 1);
 
-    press(&mut app, KeyCode::Char('m'), ALT);
+    press(&mut app, KeyCode::Char('\\'), SUP);
     assert_eq!(
         position(&app),
         1,
@@ -94,11 +94,11 @@ fn alt_m_on_a_bracketless_line_leaves_the_caret_where_it_was() {
 }
 
 #[test]
-fn shift_alt_m_extends_the_selection_to_the_match() {
+fn sup_shift_backslash_extends_the_selection_to_the_match() {
     let content = "(abc)";
     let mut app = app_for(content, 0);
 
-    press(&mut app, KeyCode::Char('m'), SHIFT_ALT);
+    press(&mut app, KeyCode::Char('\\'), SUP_SHIFT);
 
     let c = app.active_doc().cursors.primary();
     assert_eq!(c.anchor, 0, "extending must leave the anchor put");
@@ -107,15 +107,16 @@ fn shift_alt_m_extends_the_selection_to_the_match() {
 }
 
 #[test]
-fn the_kitty_uppercase_alt_encoding_extends_exactly_like_shift_alt() {
+fn the_pipe_alternate_encoding_extends_exactly_like_sup_shift_backslash() {
     let content = "(abc)";
     let mut app = app_for(content, 0);
 
-    press(&mut app, KeyCode::Char('M'), ALT);
+    press(&mut app, KeyCode::Char('|'), SUP_SHIFT);
 
     let c = app.active_doc().cursors.primary();
     assert_eq!(c.anchor, 0);
     assert_eq!(c.position, content.find(')').unwrap());
+    assert!(c.has_selection());
 }
 
 #[test]
@@ -130,7 +131,7 @@ fn every_cursor_in_the_set_jumps_to_its_own_match() {
         "the fixture needs a real second cursor to prove per-cursor application"
     );
 
-    press(&mut app, KeyCode::Char('m'), ALT);
+    press(&mut app, KeyCode::Char('\\'), SUP);
 
     let positions: Vec<usize> = app
         .active_doc()
