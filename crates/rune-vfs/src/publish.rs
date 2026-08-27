@@ -1,8 +1,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::sighting::{GetRefusal, Sighted, Sighting, bracketed_stat, get};
-use crate::{Etag, Vfs, etag_of, published_not_durable};
+use crate::sighting::{GetRefusal, Sighted, Sighting, bracketed_stat, get_resolved};
+use crate::{Etag, FileKind, Vfs, etag_of, published_not_durable};
 
 pub(crate) use crate::put_result::{ForceOutcome, IfAbsentOutcome, Published};
 
@@ -35,8 +35,25 @@ pub enum PutOutcome {
     Missing,
 }
 
-fn current_sighting<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<Option<Sighting>> {
-    match get(vfs, path, None) {
+/// Resolves `path` once, treating a not-found-shaped resolve failure (a
+/// missing ancestor directory) as a plain absence rather than an error — the
+/// same case `current_sighting` used to fold into `PutOutcome::Missing` via
+/// `get`'s own resolve. Callers publish over the SAME `PathBuf` this returns
+/// instead of resolving `path` again, closing the symlink-swap TOCTOU window
+/// a second, independent `Vfs::resolve` call would reopen.
+fn resolve_or_missing<V: Vfs + ?Sized>(vfs: &V, path: &Path) -> io::Result<Option<PathBuf>> {
+    match vfs.resolve(path) {
+        Ok(resolved) => Ok(Some(resolved)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// `get_resolved` against a path the caller already resolved — see
+/// `resolve_or_missing`. `resolved` MUST be that single resolution, never a
+/// fresh, independently-resolved path.
+fn current_sighting<V: Vfs + ?Sized>(vfs: &V, resolved: &Path) -> io::Result<Option<Sighting>> {
+    match get_resolved(vfs, resolved, None) {
         Ok(sighting) => Ok(Some(sighting)),
         Err(GetRefusal::NotFound) => Ok(None),
         Err(other) => Err(other.into()),
@@ -111,11 +128,14 @@ pub(crate) fn put_if_match<V: Vfs + ?Sized>(
     bytes: &[u8],
     expect: &Etag,
 ) -> io::Result<PutOutcome> {
-    let Some(mut sighting) = current_sighting(vfs, path)? else {
+    let Some(dest) = resolve_or_missing(vfs, path)? else {
+        return Ok(PutOutcome::Missing);
+    };
+    let Some(mut sighting) = current_sighting(vfs, &dest)? else {
         return Ok(PutOutcome::Missing);
     };
     if !sighting.sighted.is_confirmed() || &sighting.etag != expect {
-        let Some(retry) = current_sighting(vfs, path)? else {
+        let Some(retry) = current_sighting(vfs, &dest)? else {
             return Ok(PutOutcome::Missing);
         };
         sighting = retry;
@@ -126,7 +146,6 @@ pub(crate) fn put_if_match<V: Vfs + ?Sized>(
             stray_temp: None,
         });
     }
-    let dest = vfs.resolve(path)?;
     let temp = vfs.write_durable(&dest, bytes)?;
     let publish = vfs.exchange(&temp, &dest);
     let new_etag = etag_of(bytes);
@@ -187,9 +206,9 @@ pub(crate) fn put_force<V: Vfs + ?Sized>(
     expect: Option<&Etag>,
 ) -> io::Result<ForceOutcome> {
     let dest = vfs.resolve(path)?;
-    let dest_existed = vfs.stat(&dest).is_ok();
+    let dest_stat = vfs.stat(&dest).ok();
     let temp = vfs.write_durable(&dest, bytes)?;
-    if !dest_existed {
+    let Some(dest_stat) = dest_stat else {
         let publish = match vfs.rename_excl(&temp, &dest) {
             Err(e) if !published_not_durable(&e) => {
                 return Err(remove_temp_noting_failure(vfs, &temp, e));
@@ -198,6 +217,10 @@ pub(crate) fn put_force<V: Vfs + ?Sized>(
         };
         let published = finish_fresh_create(vfs, &dest, bytes, publish)?;
         return Ok(ForceOutcome::Committed(published));
+    };
+    if dest_stat.kind != FileKind::File {
+        let refusal: io::Error = GetRefusal::NotAFile(dest_stat.kind).into();
+        return Err(remove_temp_noting_failure(vfs, &temp, refusal));
     }
     let publish = vfs.exchange(&temp, &dest);
     let new_etag = etag_of(bytes);

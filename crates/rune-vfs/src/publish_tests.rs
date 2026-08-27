@@ -348,3 +348,113 @@ fn if_match_over_a_directory_refuses_with_is_a_directory() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::IsADirectory);
 }
+
+#[test]
+fn force_over_a_directory_refuses_and_leaves_it_intact() {
+    let vfs = Mem::new();
+    publish_direct(&vfs, Path::new("/notes/a.md"), b"content");
+    let before = vfs.debug_paths().len();
+
+    let err = put(
+        &vfs,
+        Path::new("/notes"),
+        b"anything",
+        PutCondition::Force { expect: None },
+    )
+    .unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::IsADirectory);
+    assert_eq!(vfs.stat(Path::new("/notes")).unwrap().kind, FileKind::Dir);
+    assert_eq!(vfs.read(Path::new("/notes/a.md")).unwrap(), b"content");
+    assert_eq!(
+        vfs.debug_paths().len(),
+        before,
+        "no stray temp must remain after the refusal"
+    );
+}
+
+struct ResolveCountingVfs {
+    inner: Mem,
+    resolve_calls: AtomicU64,
+}
+
+impl Vfs for ResolveCountingVfs {
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<std::path::PathBuf> {
+        self.inner.write_durable(path, bytes)
+    }
+    fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
+        self.inner.exchange(a, b)
+    }
+    fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
+        self.inner.rename_excl(old, new)
+    }
+    fn remove(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove(path)
+    }
+    fn trash(&self, path: &Path) -> io::Result<()> {
+        self.inner.trash(path)
+    }
+    fn stat(&self, path: &Path) -> io::Result<crate::Stat> {
+        self.inner.stat(path)
+    }
+    fn resolve(&self, path: &Path) -> io::Result<std::path::PathBuf> {
+        self.resolve_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.resolve(path)
+    }
+    fn mkdir_all(&self, path: &Path) -> io::Result<()> {
+        self.inner.mkdir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<crate::DirEntry>> {
+        self.inner.read_dir(path)
+    }
+    fn read_link(&self, path: &Path) -> io::Result<std::path::PathBuf> {
+        self.inner.read_link(path)
+    }
+}
+
+#[test]
+fn if_match_resolves_the_path_exactly_once() {
+    let inner = Mem::new();
+    publish_direct(&inner, Path::new("/doc.md"), b"original");
+    let vfs = ResolveCountingVfs {
+        inner,
+        resolve_calls: AtomicU64::new(0),
+    };
+
+    let outcome = put(
+        &vfs,
+        Path::new("/doc.md"),
+        b"updated",
+        PutCondition::IfMatch(etag_of(b"original")),
+    )
+    .unwrap();
+
+    assert!(matches!(outcome, PutOutcome::Committed { .. }));
+    assert_eq!(
+        vfs.resolve_calls.load(Ordering::SeqCst),
+        1,
+        "the etag check and the publish must share one resolution of the path"
+    );
+}
+
+#[test]
+fn if_absent_conflict_resolves_the_path_exactly_once() {
+    let inner = Mem::new();
+    publish_direct(&inner, Path::new("/doc.md"), b"winner");
+    let vfs = ResolveCountingVfs {
+        inner,
+        resolve_calls: AtomicU64::new(0),
+    };
+
+    let outcome = put(&vfs, Path::new("/doc.md"), b"loser", PutCondition::IfAbsent).unwrap();
+
+    assert!(matches!(outcome, PutOutcome::Conflict { .. }));
+    assert_eq!(
+        vfs.resolve_calls.load(Ordering::SeqCst),
+        1,
+        "reporting the conflict winner must reuse the same resolution, not re-resolve"
+    );
+}

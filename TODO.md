@@ -44,12 +44,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: the uncoordinated save must preserve and report `displaced` the way the coordinated path does, or refuse rather than force-clobber.
 - **Confidence**: confirmed.
 
-#### `put_force` swaps a whole directory tree out from under its name and reports a clean `Committed`
-- **Where**: `crates/rune-vfs/src/publish.rs:190` (`dest_existed` via `stat`), `:202` (`exchange`), `:83-85` (silent early return); reachable from `SaveMode::Force` at `crates/rune-tui/src/save/materialize.rs:272-282` and `save.rs:143`.
-- **Wrong**: `put_force` decides create-vs-overwrite with `stat(dest).is_ok()`, which is `Ok` for a directory, and there is no `FileKind` gate on the `Force` path (unlike `put_if_match`, which gets one free via `get_resolved`). `renameat2(RENAME_EXCHANGE)`/`renamex_np(RENAME_SWAP)` happily exchange a regular file with a directory. Executed on Disk: `put(".../notes", bytes, Force)` renamed the user's `notes/` tree to a hidden `.notes.rune-tmp-…` dir and put a regular file in its place, returning `Committed{durable:true, stray_temp:None}` — announced as a clean success. The `finish_over_existing` early return at `:83` (read of the temp dir fails `EISDIR`) also leaves a temp on disk that no `PutOutcome` field names.
-- **Instead**: gate the `Force` path on `FileKind::File` (reuse `get_resolved`), and carry the stray temp in the outcome so it is reported/collectable.
-- **Confidence**: confirmed (executed).
-
 #### CRLF terminators are silently rewritten to LF by line-move and End-key edits
 - **Where**: `crates/rune-tui/src/commands/edit_lines_move.rs:98,161` (`move_line_up`/`down`), `:45` (`clone_line_down`), `crates/rune-tui/src/commands/nav_line.rs:46-62` (`line_end_offset`), and `crates/rune-tui/src/commands/nav.rs:93-109` (`prev_rune_offset`/`next_rune_offset`).
 - **Wrong**: `Buffer::line_end` returns the offset of `'\n'`, leaving the `'\r'` inside the line text, and the caret can land between CR and LF. Consequences, all executed: (a) `move_line_up`/`down` on the last, unterminated line rebuild as `"{text_l}\n{text_prev}"` — CRLF becomes a bare LF and a stray CR trails the file (`"A\r\nB"` → `"B\nA\r"`); (b) `line_end_offset` stops *after* the `'\r'`, so End then a keypress splits the terminator (`"abc\r\ndef\r\n"` + End + `X` → `"abc\rX\ndef\r\n"`); (c) Backspace from the start of `"def"` deletes only the `'\n'`, stranding an invisible CR mid-line (`"abc\rdef\r\n"`); (d) Right-arrow walks `3→4→5`, one press a no-op on screen. `clone_line_down` inserts an LF separator on the last line. The stray CR renders as zero cells (`render/cell.rs:59`), so the user cannot see or target it. Violates "line endings pass through verbatim". `line_range_incl_newline` and `LineMap` in the same area handle CRLF correctly, so the code disagrees with itself.
@@ -139,12 +133,6 @@ constitution and the entry is deleted in the same commit.
 - **Confidence**: confirmed.
 
 ### CORRECTNESS
-
-#### `put_if_match` resolves the path twice — the CAS verifies one file and publishes over another
-- **Where**: `crates/rune-vfs/src/publish.rs:114` (`current_sighting`→`get`→`resolve`) vs `:129` (`resolve(path)` again).
-- **Wrong**: `get` resolves and etag-checks `path`, then `put_if_match` resolves `path` a second time and publishes over that result. `get_resolved` exists in this crate specifically to close this symlink-swap TOCTOU (its doc comment names the hazard) but `put_if_match` does not use it. Executed with a symlink re-pointed between the two resolves: the etag was checked against `real.md`, the bytes landed on `victim.md` (its prior content returned as `displaced`). Production `run_materialize_vfs` pre-resolves and passes a canonical path, narrowing the window to "an intermediate dir component becomes a symlink between the two resolves" rather than the leaf.
-- **Instead**: resolve once and use `get_resolved` — the fix is free.
-- **Confidence**: confirmed (mechanism executed).
 
 #### `merge::begin` does not guard an already-`Active` session — it silently drops it
 - **Where**: `crates/rune-tui/src/merge/mod.rs:28-69` (only `Pending{doc==id}` checked), reached from `crates/rune-tui/src/guard.rs:439,445`.
