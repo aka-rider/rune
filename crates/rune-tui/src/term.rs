@@ -31,9 +31,24 @@ use termina::{EventReader, PlatformTerminal};
 /// `Tab` apart from `ctrl+i`, etc.) and report alternate keys (needed for
 /// `super+...` chords). A terminal without Kitty support ignores this CSI
 /// outright — the ctrl alternates in the keymap table are the fallback
-/// (plan Gotchas: "don't treat their absence as a bug").
-fn keyboard_flags() -> KittyKeyboardFlags {
+/// (plan Gotchas: "don't treat their absence as a bug"). `enter_app_mode`
+/// pairs every push with a `Keyboard::QueryFlags` read-back so `App` learns
+/// which of these two bits, if any, the terminal actually honoured, instead
+/// of assuming a silently-dropped push still means what it requested.
+pub(crate) fn keyboard_flags() -> KittyKeyboardFlags {
     KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES | KittyKeyboardFlags::REPORT_ALTERNATE_KEYS
+}
+
+/// Whether a `Keyboard::ReportFlags` reply confirms the terminal honoured
+/// every bit `keyboard_flags` pushed. `None` (no reply has landed yet, or
+/// none ever will) reads as reliable rather than broken — an unanswered
+/// query is an unknown, not proof the terminal dropped the CSI, and this is
+/// the one predicate both the unbound-⌘-chord warning
+/// (`dispatch::handle_keyboard_flags_report`) and the generated Help
+/// doc (`help::help_markdown`) consult, so the two never drift apart on
+/// what "reliable" means.
+pub(crate) fn sup_chords_reliable(flags: Option<KittyKeyboardFlags>) -> bool {
+    flags.is_none_or(|flags| flags.contains(keyboard_flags()))
 }
 
 /// `Guard::new` pushes exactly one Kitty keyboard flags entry
@@ -124,18 +139,16 @@ impl Guard {
     /// event loop with `Moved` events this crate has no gesture for.
     /// `SGRMouse` (mode 1006) is the extended coordinate encoding termina
     /// parses back into `Event::Mouse` without the classic protocol's
-    /// 223-column/-row ceiling.
+    /// 223-column/-row ceiling. The `Keyboard::QueryFlags` right after the
+    /// push asks the terminal to read the pushed flags back
+    /// (`Keyboard::ReportFlags`, consumed on `App` by
+    /// `dispatch::handle_keyboard_flags_report`) — a terminal that ignores
+    /// Kitty entirely also ignores this query, so it simply never answers
+    /// and `App::keyboard_flags` stays `None` (see `sup_chords_reliable`'s
+    /// docs for why that reads as reliable, not broken).
     fn enter_app_mode(&mut self) -> io::Result<()> {
         let backend = self.terminal.backend_mut();
-        write!(
-            backend,
-            "{}{}{}{}{}",
-            dec_set(DecPrivateModeCode::ClearAndEnableAlternateScreen),
-            dec_set(DecPrivateModeCode::BracketedPaste),
-            Csi::Keyboard(Keyboard::PushFlags(keyboard_flags())),
-            dec_set(DecPrivateModeCode::ButtonEventMouse),
-            dec_set(DecPrivateModeCode::SGRMouse),
-        )?;
+        write!(backend, "{}", app_mode_bytes())?;
         backend.flush()?;
         self.terminal.hide_cursor()
     }
@@ -194,6 +207,24 @@ impl Guard {
         backend.write_all(bytes)?;
         backend.flush()
     }
+}
+
+/// The exact bytes `enter_app_mode` writes — a pure function, kept apart
+/// from that method's own `io::Write` call, so the query this crate now
+/// pairs with every Kitty flags push is unit-testable without a live
+/// `PlatformTerminal` (which `Guard` can't be constructed without in a
+/// headless test environment, same reason `teardown_bytes` below is split
+/// out from `Drop`).
+fn app_mode_bytes() -> String {
+    format!(
+        "{}{}{}{}{}{}",
+        dec_set(DecPrivateModeCode::ClearAndEnableAlternateScreen),
+        dec_set(DecPrivateModeCode::BracketedPaste),
+        Csi::Keyboard(Keyboard::PushFlags(keyboard_flags())),
+        Csi::Keyboard(Keyboard::QueryFlags),
+        dec_set(DecPrivateModeCode::ButtonEventMouse),
+        dec_set(DecPrivateModeCode::SGRMouse),
+    )
 }
 
 /// The exact bytes `Guard::drop` writes to restore the terminal — a pure
@@ -260,5 +291,30 @@ mod tests {
                 .any(|w| w == b"\x1b_G"),
             "a non-Kitty terminal must see no image escape bytes at all"
         );
+    }
+
+    #[test]
+    fn app_mode_queries_back_the_kitty_flags_it_just_pushed() {
+        let bytes = app_mode_bytes();
+        assert!(bytes.contains(&Csi::Keyboard(Keyboard::PushFlags(keyboard_flags())).to_string()));
+        assert!(bytes.contains(&Csi::Keyboard(Keyboard::QueryFlags).to_string()));
+    }
+
+    #[test]
+    fn an_unanswered_probe_reads_as_reliable_not_broken() {
+        assert!(sup_chords_reliable(None));
+    }
+
+    #[test]
+    fn a_reply_confirming_both_requested_bits_reads_as_reliable() {
+        assert!(sup_chords_reliable(Some(keyboard_flags())));
+    }
+
+    #[test]
+    fn a_reply_missing_a_requested_bit_reads_as_unreliable() {
+        assert!(!sup_chords_reliable(Some(
+            KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES
+        )));
+        assert!(!sup_chords_reliable(Some(KittyKeyboardFlags::NONE)));
     }
 }

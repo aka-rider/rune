@@ -6,7 +6,7 @@ use rune_tui::app::{self};
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::runtime::{Effects, Msg};
 
-use tui_edit_common::{SHIFT, SUP, SUP_SHIFT, app_for, press};
+use tui_edit_common::{ALT, SHIFT, SUP, SUP_SHIFT, app_for, press};
 
 #[test]
 fn typing_inserts_characters_in_order_and_moves_the_caret() {
@@ -16,6 +16,33 @@ fn typing_inserts_characters_in_order_and_moves_the_caret() {
     }
     assert_eq!(app.active_doc_mut().buffer.content(), "hi!");
     assert_eq!(app.active_doc_mut().cursors.primary().position.get(), 3);
+}
+
+#[test]
+fn typing_a_non_latin_character_inserts_it_unmodified() {
+    let mut app = app_for("", 0);
+    press(&mut app, KeyCode::Char('\u{4e2d}'), Mods::NONE);
+    assert_eq!(app.active_doc_mut().buffer.content(), "\u{4e2d}");
+}
+
+#[test]
+fn an_alt_carrying_char_event_refuses_and_warns_instead_of_inserting() {
+    let mut app = app_for("", 0);
+    let posts_before = rune_tui::messages::posts(&app);
+
+    press(&mut app, KeyCode::Char('b'), ALT);
+
+    assert_eq!(
+        app.active_doc_mut().buffer.content(),
+        "",
+        "an unresolved \u{2325} chord must never insert the char termina reports for it"
+    );
+    assert!(rune_tui::messages::posts(&app) > posts_before);
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("not bound")),
+        "expected an unbound-chord warning, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
 }
 
 #[test]

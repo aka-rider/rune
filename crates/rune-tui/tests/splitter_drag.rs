@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 
-
 use rune_core::buffer::Buffer;
 use rune_core::coords::DisplayRow;
 use rune_tui::app::{self, App};

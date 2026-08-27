@@ -29,8 +29,7 @@ constitution and the entry is deleted in the same commit.
 ### MINOR
 
 
-- **The Kitty keyboard flags are pushed blind** — `crates/rune-tui/src/term.rs:135` sends `Csi::Keyboard(Keyboard::PushFlags(...))` unconditionally with no capability probe and no read-back, so rune cannot distinguish a terminal that honoured `DISAMBIGUATE_ESCAPE_CODES`/`REPORT_ALTERNATE_KEYS` from one that dropped the CSI on the floor. Every `secondary: true` alternate row in the binding tables is a guess about which of the two worlds we're in. A `CSI ? u` query would settle it and would let a one-time message name the terminal's own setting when a chord is unreachable.
-- **`is_insertable_key_char` is default-allow** — `crates/rune-tui/src/dispatch.rs:324` is just `!ch.is_control()`, so any codepoint that reaches the unbound-key fallback at `dispatch.rs:305` is written into the user's document. That is how macOS Option-composed characters (`µ`, `∫`, `ƒ`) landed in documents while the ⌥ chords they were meant to trigger stayed dead. The chords have moved off ⌥, but the policy behind them is still "insert anything we don't recognise" — against the prime directive it deserves to be a deliberate allow-list rather than a fall-through.
+- **`Cut`/`Paste` are ⌘-only with no ctrl fallback** — surfaced by the keyboard-flags probe work (2026-08-27): on a terminal that drops the Kitty disambiguation flags, every `⌘` chord is unreachable and the help now marks them `⚠`, but `Cut`/`Paste` have no `secondary` ctrl row at all, so those commands are entirely keyboard-unreachable there (palette only). Decide fallback chords or accept-and-document.
 
 ## Architecture
 

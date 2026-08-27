@@ -91,6 +91,7 @@ pub enum Msg {
     PumpGraphics,
     Paste(String),
     Resize(u16, u16),
+    KeyboardFlagsReport(termina::escape::csi::KittyKeyboardFlags),
     Mouse(MouseInput),
     ClipboardRead {
         text: String,

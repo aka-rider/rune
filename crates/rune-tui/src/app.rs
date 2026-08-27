@@ -110,6 +110,7 @@ pub struct App {
     pub root: Option<PathBuf>,
     pub(crate) timers: Arc<crate::runtime::TimerService>,
     pub nav_history: crate::navhistory::NavHistory,
+    pub keyboard_flags: Option<termina::escape::csi::KittyKeyboardFlags>,
 }
 
 impl App {
@@ -176,6 +177,7 @@ impl App {
             root: None,
             timers: crate::runtime::TimerService::new(),
             nav_history: crate::navhistory::NavHistory::default(),
+            keyboard_flags: None,
         }
     }
 

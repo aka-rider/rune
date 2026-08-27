@@ -314,7 +314,8 @@ pub fn toggle_help(app: &mut App, effects: &mut Effects) {
     }
 
     let previous = app.active;
-    let id = app.open_document(Buffer::new(help::help_markdown()));
+    let sup_chords_reliable = crate::term::sup_chords_reliable(app.keyboard_flags);
+    let id = app.open_document(Buffer::new(help::help_markdown(sup_chords_reliable)));
     if let Some(doc) = app.doc_mut(id) {
         doc.read_only = ReadOnly::Always;
         doc.display_name = Some("Help".to_string());

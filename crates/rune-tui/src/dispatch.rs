@@ -3,7 +3,7 @@ use crate::commands::{clipboard, edit, editor_exec, mouse};
 use crate::document::DocumentId;
 use crate::focus::FocusTarget;
 use crate::highlight::PassOutcome;
-use crate::keymap::{self, KeyCode, KeyInput, QuitKey};
+use crate::keymap::{self, KeyCode, KeyInput, Mods, QuitKey};
 use crate::pane;
 use crate::runtime::{Effects, Msg, PasteTarget, TimerKey, TimerMsgKey};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs};
@@ -158,9 +158,27 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::FileSearchScanned { generation, result } => {
             crate::filesearch::handle_scanned(app, generation, result, effects)
         }
+        Msg::KeyboardFlagsReport(flags) => handle_keyboard_flags_report(app, flags),
         Msg::Quit => {
             app.should_quit = true;
         }
+    }
+}
+
+/// The reply to the `Keyboard::QueryFlags` `term::Guard::enter_app_mode`
+/// sends right after pushing its Kitty flags — never sent by this app, only
+/// ever received (module docs on `Keyboard::ReportFlags`). Settles
+/// `app.keyboard_flags` from `None` to a real answer exactly once per
+/// session, and posts a one-time note when that answer confirms the
+/// terminal dropped a bit this app asked for, since a `⌘` chord built on a
+/// dropped bit is a guess no dropped chord should stay silent about.
+fn handle_keyboard_flags_report(app: &mut App, flags: termina::escape::csi::KittyKeyboardFlags) {
+    app.keyboard_flags = Some(flags);
+    if !crate::term::sup_chords_reliable(app.keyboard_flags) {
+        crate::messages::warn_if_new(
+            app,
+            "this terminal never confirmed key disambiguation \u{2014} \u{2318} chords marked \u{26a0} in Help (F1) may not reach rune here",
+        );
     }
 }
 
@@ -296,14 +314,18 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     }
 
     let Some(command) = keymap::resolve(key) else {
-        if let KeyCode::Char(ch) = key.code
-            && !key.mods.ctrl
-            && !key.mods.alt
-            && !key.mods.sup
-            && is_insertable_key_char(ch)
-        {
-            edit::insert_char(app, app.active, ch);
-            return keymap::KeyOutcome::Consumed;
+        if let KeyCode::Char(ch) = key.code {
+            if is_insertable_key(key.mods, ch) {
+                edit::insert_char(app, app.active, ch);
+                return keymap::KeyOutcome::Consumed;
+            }
+            if key.mods.alt {
+                crate::messages::warn_if_new(
+                    app,
+                    "\u{2325} chord not bound here \u{2014} nothing typed",
+                );
+                return keymap::KeyOutcome::Consumed;
+            }
         }
         return keymap::KeyOutcome::Ignored;
     };
@@ -311,9 +333,19 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     editor_exec::run(app, command, QuitKey::from_key(key), effects)
 }
 
-// A raw C0/DEL control byte can leak through as an unmodified `Char` on a
-// legacy (non-Kitty) terminal encoding; `char::is_control()` excludes it
-// without narrowing what a human can actually type, CJK/emoji included.
-fn is_insertable_key_char(ch: char) -> bool {
-    !ch.is_control()
+// The sole gate over the unbound-key fallback's printable-insert path — one
+// predicate over the whole key event, not a char-only check the call site
+// pre-filters by hand: a ctrl/alt/sup chord keymap left unresolved is a
+// request for a command, never text, so it must refuse right alongside a
+// raw C0/DEL control byte leaking through as an unmodified `Char` on a
+// legacy (non-Kitty) terminal encoding. Splitting "which mods" and "which
+// char" across two places is exactly how a real gap opened: macOS composes
+// an Option chord into text (⌥B into ∫) before any modifier survives a
+// legacy encoding, so a char-only filter had nothing left to refuse by the
+// time the composed glyph reached it. Kitty's CSI-u protocol reports that
+// same chord as the base key plus an explicit alt bit instead (this app
+// requests it — `term::keyboard_flags`), which is what lets `mods.alt` shut
+// the door here on any terminal that actually honours it.
+fn is_insertable_key(mods: Mods, ch: char) -> bool {
+    !mods.ctrl && !mods.alt && !mods.sup && !ch.is_control()
 }

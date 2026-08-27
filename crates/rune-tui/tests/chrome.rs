@@ -414,7 +414,7 @@ fn the_center_blocks_right_border_reaches_the_last_frame_column() {
 /// footer hides them — `^d` still works, so it must still be documented.
 #[test]
 fn help_markdown_still_lists_the_aliased_quit_chord() {
-    let markdown = rune_tui::help::help_markdown();
+    let markdown = rune_tui::help::help_markdown(true);
     assert!(
         markdown.contains("^D"),
         "expected the aliased quit chord to remain documented in Help:\n{markdown}"

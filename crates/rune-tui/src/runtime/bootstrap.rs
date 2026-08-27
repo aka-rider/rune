@@ -119,7 +119,7 @@ fn bootstrap_view_cmd(
         machine.set_width(width);
         machine.set_icons(icons);
         machine.sync_content(&buf);
-        machine.sync_cursors(&buf, &CursorSet::new(0));
+        machine.sync_cursors(&buf, &CursorSet::new(0), &[]);
         let view = machine.snapshot(&buf);
         Some(Msg::BootstrapViewReady {
             id,

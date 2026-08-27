@@ -159,20 +159,26 @@ pub(super) fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<
 }
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
+    use termina::escape::csi::{Csi, Keyboard};
+
     match event {
         termina::Event::Key(key) => keymap::from_termina(key).map(Msg::Key),
         termina::Event::Paste(text) => Some(Msg::Paste(text)),
         termina::Event::WindowResized(size) => Some(Msg::Resize(size.cols, size.rows)),
         termina::Event::Mouse(mouse) => crate::pointer::from_termina(mouse).map(Msg::Mouse),
+        termina::Event::Csi(Csi::Keyboard(Keyboard::ReportFlags(flags))) => {
+            Some(Msg::KeyboardFlagsReport(flags))
+        }
         _ => None,
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod translate_event_tests {
-    use termina::escape::csi::{Csi, Cursor};
+    use termina::escape::csi::{Csi, Cursor, Keyboard, KittyKeyboardFlags};
 
-    use super::translate_event;
+    use super::{Msg, translate_event};
 
     #[test]
     fn a_terminal_reply_nobody_asked_for_produces_no_message() {
@@ -184,5 +190,16 @@ mod translate_event_tests {
     fn a_focus_change_stays_silent() {
         assert!(translate_event(termina::Event::FocusIn).is_none());
         assert!(translate_event(termina::Event::FocusOut).is_none());
+    }
+
+    #[test]
+    fn a_keyboard_flags_reply_becomes_a_report_message() {
+        let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KittyKeyboardFlags::REPORT_ALTERNATE_KEYS;
+        let event = termina::Event::Csi(Csi::Keyboard(Keyboard::ReportFlags(flags)));
+        match translate_event(event) {
+            Some(Msg::KeyboardFlagsReport(reported)) => assert_eq!(reported, flags),
+            other => panic!("expected KeyboardFlagsReport, got {other:?}"),
+        }
     }
 }
