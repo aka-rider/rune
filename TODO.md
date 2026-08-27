@@ -7,6 +7,277 @@ future refactor plan. New code must not repeat these patterns even where
 legacy code still does. Fixes land with tests per the constitution, and an
 entry is deleted in the same commit that fixes it.
 
+## Bug-hunt sweep (2026-08-26)
+
+Product of a parallel multi-crate bug hunt (eight review passes, one per
+subsystem plus a cross-cutting security sweep). These are *defects*, not
+style — each carries a concrete failure scenario and a confidence tag.
+`confirmed (executed)` means the reviewer built a repro and ran it;
+`confirmed` means fully traced in source; `plausible` means the mechanism
+is certain but one link (usually a live user sequence) was not reproduced.
+Entries are ordered by severity. Fixes land with a regression test per the
+constitution and the entry is deleted in the same commit.
+
+### DATA-LOSS
+
+#### `merge_hunks` can silently collapse the ours-view to empty — whole-buffer deletion presented as a clean merge
+- **Where**: `crates/rune-merge/src/hunks.rs:236-238` (empty-section early return in `anchor_section`) and `:407-420` (`classify_clean_region`); consumed at `crates/rune-tui/src/merge/landing.rs:119-130,191-225` (`install_whole_range` on the ours-view).
+- **Wrong**: when `ours` deletes a region that `theirs` modified, diff3 emits a conflict block whose ours-section is empty. The empty-section return yields `0..0`, so `ours_pos` never advances while `theirs_pos` jumps ahead; the two cursors then index unrelated regions of two documents. At the trailing clean region `classify_clean_region` compares `ours_clean` (the whole buffer) against `merged_clean` (`""`), the `theirs_clean == merged_clean` branch matches (`"" == ""`), and it returns `Clean("")` — discarding the ours side without ever comparing it to the ancestor. The editor buffer is then replaced with the empty string and every conflict block carries `ours: ""`, so resolving "as ours" materializes an empty file. Repro: `ancestor="1\n2\n3\n"`, `ours="1x\n2\n"`, `theirs="1\n2\n3y\n"` → ours-view `""`. A 20 000-case fuzz found 378 events where an ours-only line vanished. Trigger shape — "I deleted the last paragraph and edited the intro while the file changed on disk" — is ordinary. Distinct from the ledgered `anchor_section` first-occurrence weakness below: here anchoring *succeeds*; the defect is the empty-section cursor desync plus the discard in `classify_clean_region`.
+- **Instead**: account consumed bytes on both sides so an empty ours-section still advances in lockstep; and in `classify_clean_region` never declare a side "clean" by two empty strings comparing equal without checking it against the ancestor. As a backstop, `merge/landing.rs` should refuse (surface an error, keep the buffer) when the merge result is empty but `ours` was not — trading a rung-1 silent corruption down to a rung-3 halt.
+- **Confidence**: confirmed (executed, plus fuzz).
+
+#### Writer's local→durable undo map is never truncated after edit-following-undo — the document's journal becomes permanently unrecoverable
+- **Where**: `crates/rune-db/src/writer.rs:81-97` (`DocUndoState::resolve`/`push_seq`), with `crates/rune-db/src/journal_append.rs:70-87` and the caller side `crates/rune-tui/src/db_enqueue.rs:296`.
+- **Wrong**: `DocUndoState.local_seq` is append-only; `push_seq` never truncates it to the current undo position. But `append_edit` deletes durable `events`/`snapshots` rows with `seq > current_seq` (mirroring the app journal's redo-tail truncation). After *type → undo → type*, local positions at/above the undo point map to deleted durable seqs. Traced through the public `Store` API: append a,b,c → undo to 1 → append d → undo/redo → append e deletes seq 4 ("d"), and `recover_document` then fails permanently with `ReplayFailed{OutOfBounds}`. Every subsequent recovery, `sync()`, and `prepare_materialize` errors out for that document — the unsaved work is unrecoverable, reached by the ordinary editing pattern. `push_seq`'s monotonicity `assert_invariant!` cannot catch it (4 > 3 holds). Existing test `undo_seq_writer_resolved.rs` stops one step short (no `MoveUndoPos` after the truncating append).
+- **Instead**: truncate `local_seq` to the current position in `push_seq`/`move_undo_pos` so it mirrors the durable delete, the same chokepoint the app-side journal already uses.
+- **Confidence**: confirmed (executed).
+
+#### Quit and close "Save" fan-out mistakes a pre-existing in-flight save for the one it started — app exits / tab closes with newer edits discarded
+- **Where**: `crates/rune-tui/src/guard.rs:364-388` (`start_quit_save_fan_out`) and `:306-320` (`handle_dirty_close_key`); acked at `crates/rune-tui/src/materialize_ack/reactions.rs:363-377` (`quit_if_pending`) and `:337-348` (`close_if_pending`); enabled by `crates/rune-tui/src/save/gate.rs:53-59`.
+- **Wrong**: ^S captures version V1 and spawns the save; the user keeps typing (buffer now V2, V1→V2 only in RAM); ^C^C→S (or ^W→S). `trigger_save` refuses with `SaveStart::InFlight`, but the refusal arm does not distinguish "I just started a save" from "someone else's save is already running": it reads `pending_save_version()` → `Some(V1)` and enrolls `{doc: V1}` in the fan-out (close path only checks `save_in_flight()`, same error). When the *original* V1 ack lands with success, `quit_if_pending`/`close_if_pending` sees `version == pending[doc]` and quits / closes. V1→V2 is gone; for an unpreserved (no-journal) doc it is unrecoverable. Contradicts the code's own doc comment at `guard.rs:329-334`. `handle_disk_conflict_key` (`:428-434`) already has the correct `already_in_flight` pre-check; the fan-out and dirty-close lack it.
+- **Instead**: discriminate "already in flight before I asked" from "I started this save" (the `already_in_flight` pre-check), and abandon the whole quit/close intent on an `InFlight` refusal as the doc comment claims.
+- **Confidence**: confirmed (quit path executed; close path identical shape, code-traced).
+
+#### `SaveState::Publishing` can wedge permanently — the document can never be saved again this session
+- **Where**: `crates/rune-tui/src/materialize_ack.rs:160` (the `Publishing => {}` no-op arm in the store-failure sweep), reached from `:103-113` (`record_outcome`'s `Err` arm with `published==false`) and `crates/rune-tui/src/materialize_ack/publish.rs:191-196` (the `PathDisagreement` arm).
+- **Wrong**: ^S with the disk changed externally → vfs `Conflict` → `record_outcome(published=false)`; if `materialize_record` then returns `Err` (writer thread dead / queue full), the `Err` arm skips the `if published` block, `begin_recording` was never called, the doc is still `Publishing`, and the sweep's `Publishing` arm is a no-op. Nothing else ever calls `abandon_save`/`finish_save_ok`. `save_in_flight()` stays true forever: every later ^S is refused, `request_close` defers on a save that never completes, a quit fan-out including this doc never retires. `PathDisagreement` reaches the same wedge unconditionally (and degrades the store even when the doc has closed). Escape is only `[D]iscard`-closing the tab.
+- **Instead**: the two downstream-of-the-vfs-reply callers must resolve the save state on failure rather than rely on "the vfs Cmd's reply will resolve it", which is only true upstream of that reply.
+- **Confidence**: confirmed.
+
+#### The direct-vfs fallback save is an unconditional force-clobber that silently destroys foreign edits and drops the displaced bytes
+- **Where**: `crates/rune-tui/src/save.rs:130-165` (`save_cmd`), reached via `save_directly` from `:77-82` and `crates/rune-tui/src/save/materialize.rs:63-125`.
+- **Wrong**: any document that is not store-bound (no `db`, degraded store, `Replica::Detached` from a refused hydration / committed-ack detach) saves via `PutCondition::Force{expect:None}`. In vfs that sets `race_baseline = new_etag`, so an external change returns `PutOutcome::Raced{displaced,..}` carrying the foreign bytes — but `save_cmd` collapses `Committed | Raced` to `(Ok(()), durable)`, drops `displaced`, the temp holding it was already removed, and the `Ok` arm posts no message unless `!durable`. Concrete: open `note.md`, store hiccups and detaches the doc, another program rewrites `note.md`, ^S → the other program's edits are gone, no warning, no blob. The coordinated path posts "a concurrent external change was overwritten; its bytes were preserved" and records the blob; this path does neither.
+- **Instead**: the uncoordinated save must preserve and report `displaced` the way the coordinated path does, or refuse rather than force-clobber.
+- **Confidence**: confirmed.
+
+#### `put_force` swaps a whole directory tree out from under its name and reports a clean `Committed`
+- **Where**: `crates/rune-vfs/src/publish.rs:190` (`dest_existed` via `stat`), `:202` (`exchange`), `:83-85` (silent early return); reachable from `SaveMode::Force` at `crates/rune-tui/src/save/materialize.rs:272-282` and `save.rs:143`.
+- **Wrong**: `put_force` decides create-vs-overwrite with `stat(dest).is_ok()`, which is `Ok` for a directory, and there is no `FileKind` gate on the `Force` path (unlike `put_if_match`, which gets one free via `get_resolved`). `renameat2(RENAME_EXCHANGE)`/`renamex_np(RENAME_SWAP)` happily exchange a regular file with a directory. Executed on Disk: `put(".../notes", bytes, Force)` renamed the user's `notes/` tree to a hidden `.notes.rune-tmp-…` dir and put a regular file in its place, returning `Committed{durable:true, stray_temp:None}` — announced as a clean success. The `finish_over_existing` early return at `:83` (read of the temp dir fails `EISDIR`) also leaves a temp on disk that no `PutOutcome` field names.
+- **Instead**: gate the `Force` path on `FileKind::File` (reuse `get_resolved`), and carry the stray temp in the outcome so it is reported/collectable.
+- **Confidence**: confirmed (executed).
+
+#### CRLF terminators are silently rewritten to LF by line-move and End-key edits
+- **Where**: `crates/rune-tui/src/commands/edit_lines_move.rs:98,161` (`move_line_up`/`down`), `:45` (`clone_line_down`), `crates/rune-tui/src/commands/nav_line.rs:46-62` (`line_end_offset`), and `crates/rune-tui/src/commands/nav.rs:93-109` (`prev_rune_offset`/`next_rune_offset`).
+- **Wrong**: `Buffer::line_end` returns the offset of `'\n'`, leaving the `'\r'` inside the line text, and the caret can land between CR and LF. Consequences, all executed: (a) `move_line_up`/`down` on the last, unterminated line rebuild as `"{text_l}\n{text_prev}"` — CRLF becomes a bare LF and a stray CR trails the file (`"A\r\nB"` → `"B\nA\r"`); (b) `line_end_offset` stops *after* the `'\r'`, so End then a keypress splits the terminator (`"abc\r\ndef\r\n"` + End + `X` → `"abc\rX\ndef\r\n"`); (c) Backspace from the start of `"def"` deletes only the `'\n'`, stranding an invisible CR mid-line (`"abc\rdef\r\n"`); (d) Right-arrow walks `3→4→5`, one press a no-op on screen. `clone_line_down` inserts an LF separator on the last line. The stray CR renders as zero cells (`render/cell.rs:59`), so the user cannot see or target it. Violates "line endings pass through verbatim". `line_range_incl_newline` and `LineMap` in the same area handle CRLF correctly, so the code disagrees with itself.
+- **Instead**: one CRLF-aware line-terminator chokepoint that the line-move rebuild, `line_end_offset`, and the rune-step navigation all go through, treating CRLF as a single boundary.
+- **Confidence**: confirmed (executed for move-line, End, Backspace, Right-arrow; clone-line traced).
+
+#### The reaper discards a crashed session's entire unsaved journal when another session touched the same document more recently
+- **Where**: `crates/rune-db/src/reaper.rs:43-64` (`session_is_reapable`), `:66-86` (`reap_session_footprint`).
+- **Wrong**: a dead session is spared only if it is `most_recent_session_for_doc` for one of its docs. Sequence: window A types unsaved edits on `/notes.md` (events to seq 100); window B opens the same file, anchors on disk (A still alive), journals its own edit → seq 101, so B is now most-recent; A crashes; the next `Store::open` reaps A, deleting all of A's events/snapshots. A's unsaved edits are gone and B never saw them. Also single-process: of two dead sessions on one doc, iteration by `sessions.id` reaps the lower-id one regardless of which kept editing. The crate's own test `reaper_deletes_footprint_but_spares_sessions_row_with_an_observation` demonstrates the deletion; whether this loss is intended is the open question.
+- **Instead**: spare a dead session that still owns unmaterialized journal content, independent of who most-recently touched the doc.
+- **Confidence**: confirmed (mechanism); intent unverified.
+
+#### `reconstruct_scratch` lacks the re-verify guard `inherit.rs` added for exactly this hole — it can return an empty draft
+- **Where**: `crates/rune-db/src/scratch.rs:160-176`.
+- **Wrong**: `inherit::find_inheritable_draft` re-checks `most_recent_session_for_doc` inside the same transaction as `recover_document`, with a comment that a raced reap would otherwise make recovery "reconstruct `""` — silently presenting an empty buffer for a document with real content". `reconstruct_scratch` (the untitled counterpart) runs three separate transactions and has no such guard: if the candidate's footprint is reaped in the gap, `recover_document` returns `Recovered{content:""}`, handed back as `Some(...)` — an empty recovered tab. Constitution: "an empty reset is never a user deletion." Needs a third session to have journaled onto the same scratch row (narrow), but the guard exists next door for this reason.
+- **Instead**: re-verify most-recent + alive inside the same transaction as `recover_document`, mirroring `inherit.rs`.
+- **Confidence**: plausible.
+
+#### Concurrent `ALTER TABLE ADD COLUMN` degrades a whole session to a recovery-less in-memory store
+- **Where**: `crates/rune-db/src/schema.rs:299-336` (`reconcile_additive_columns`/`add_column`), with `crates/rune-db/src/open_ladder.rs:26-54`.
+- **Wrong**: `schema::apply` runs the additive-column reconcile on every open with no transaction and no retry. Just after an upgrade that adds a nullable column, two processes launching together both read it missing and both `ALTER TABLE ADD COLUMN`; the loser gets `duplicate column name` (or an unrecovered BUSY), `open_recovery_store` returns `Err`, and `open_ladder` falls through both file rungs to the in-memory rung. That session runs degraded — every unsaved edit for its lifetime goes to a private in-memory DB and is lost on exit.
+- **Instead**: run the reconcile inside a transaction under `with_retry`, and treat "column already exists" as success rather than falling to the in-memory rung.
+- **Confidence**: plausible.
+
+#### Unbounded image read on document open — a hostile `.md` embed OOMs the editor, taking unsaved buffers with it
+- **Where**: `crates/rune-tui/src/graphics/decode_cmd.rs:48` — `rune_vfs::get(vfs, path, None)`; auto-triggered by `crates/rune-tui/src/graphics/embed/reconcile.rs:74-96` on open.
+- **Wrong**: `get`'s third arg `max_bytes: None` disables the size gate; every other document read passes `Some(MAX_DOCUMENT_BYTES)` (64 MiB). Image embeds decode automatically on open, so a hostile `.md` containing `![](payload.png)` next to an 8 GB `payload.png` OOMs on open before any decoder sees the bytes (the `image` crate's own alloc limit does not help — the OOM is in `Vfs::read`). See the clustered "unbounded `get(None)`" entry under MINOR for the other three sites.
+- **Instead**: pass `Some(limit)` on the image read; better, make `max_bytes` non-optional so every caller must name a limit.
+- **Confidence**: confirmed.
+
+#### Image decode has no dimension limit and amplifies 4× past the byte limit
+- **Where**: `crates/rune-image/src/decode.rs:91-101`.
+- **Wrong**: `ImageReader` never calls `.limits(...)`, so only `max_alloc: 512 MB` applies to the *native* buffer. A 22000×22000 Luma8 PNG of zeros is a few hundred KB on disk, ~484 MB decoded (passes), then `to_rgba8()` allocates a fresh 1.94 GB RGBA buffer outside any limit while the original is still alive (~2.4 GB peak). `MAX_TRANSMIT_PIXELS` only caps transmission, far downstream. `probe_dimensions` (header-only) exists and is used at `workspace/mod.rs:183` but never gates `decode_still`. An alloc-failure abort skips terminal restore and other tabs' unsaved buffers. Secondary: `to_rgba8` copies even when already RGBA (`into_rgba8` would move).
+- **Instead**: set `Limits` with max width/height and gate `decode_still` on `probe_dimensions`; use `into_rgba8`.
+- **Confidence**: confirmed (path); the exact OOM threshold is machine-dependent.
+
+#### A whitespace-only recovered draft is silently dropped and orphaned
+- **Where**: `crates/rune-cli/src/db_bootstrap.rs:213,335` — `if !recovered.content.trim().is_empty()`.
+- **Wrong**: after a crash, an untitled/named draft containing only whitespace/newlines is rejected by the `trim()` guard and never offered back; for the named case `bootstrap_new_file` then mints a fresh row, orphaning the old one permanently (scratch GC only sweeps rows with no events/snapshots, so the data survives in SQLite unreachable from the UI). Prime-directive-adjacent.
+- **Instead**: offer any recovered content back, whitespace included; distinguish "empty document" from "nothing recovered".
+- **Confidence**: confirmed.
+
+### CRASH / DoS
+
+#### Stack overflow (SIGABRT, no unwind) on deeply nested blockquotes — a ~2.5 KB file kills a release build
+- **Where**: `crates/rune-md/src/parse/block.rs:114-131` (`BlockQuote` → `build_blocks` → `build_block`), mirrored in `crates/rune-md/src/emit/walk.rs:317-336`, `crates/rune-md/src/catalogue.rs:42-46,111-115`, and the recursive `Drop` of the `Block` tree; on the synchronous render path via `crates/rune-tui/src/document/sync.rs:30-37`.
+- **Wrong**: comrak does not cap blockquote nesting (it caps lists at 100), and `build_block` walks the tree with no depth counter — tree depth equals the `>` count exactly. Measured: `">".repeat(2500) + " x"` overflows an 8 MiB stack in release (2400 is fine); 700 in debug. Because the constitution forbids `panic = "abort"` precisely so terminal restore runs on unwind, a stack overflow is *worse* than a panic — it aborts, so neither the terminal nor the unsaved buffer is recovered. Opening, or typing/pasting into, such a file aborts the process.
+- **Instead**: bound recursion depth in `build_block` (and the emit/catalogue walks), degrading over-deep nesting rather than recursing; treat the tree walk as the chokepoint.
+- **Confidence**: confirmed (executed).
+
+#### Panic: `u16` underflow when a text drag crosses into the diff-left pane
+- **Where**: `crates/rune-tui/src/commands/mouse.rs:336` (`handle_left_drag`), with the guard reading `crates/rune-tui/src/layout.rs:176-178` (`Geometry::pane_at`).
+- **Wrong**: with a side-by-side diff view open, `layout.rs:340-343` puts every column of `diff_left` strictly left of `editor.x`. Start a left-button text drag in the right/editor pane (latches `Drag::Text{pane:Editor}`) and drag left into the diff-left pane. `handle_left_drag`'s guard is `pane_at(...) != Some(Pane::Editor)`, but `pane_at` deliberately returns `Some(Pane::Editor)` for a point inside `diff_left`, so the guard passes and `:336` does the unchecked `input.column - editor.x`. Executed: `pane_at(3,3)=Some(Editor)` then `panicked … attempt to subtract with overflow`. In release (no overflow checks) it wraps, hit-tests the *right* document from a click in the *left* pane, and snaps the selection to a garbage offset. The sibling `handle` uses `saturating_sub` at `:132-133`; only this path subtracts raw, and the function's doc comment claiming "wandered outside the editor mid-drag is a no-op" is falsified by `pane_at`'s diff-left fallthrough.
+- **Instead**: guard against the diff-left region explicitly (or `saturating_sub` plus a correct pane/document check) so a drag out of the editor pane is the intended no-op.
+- **Confidence**: confirmed (executed).
+
+### SECURITY
+
+#### Terminal escape injection via breadcrumb path components — raw `set_symbol` bypasses ratatui's control-char filter
+- **Where**: `crates/rune-tui/src/breadcrumb.rs:136-148` (`put`), fed by `:99-114` (`crumb_spans`/`put_spans`) and `crates/rune-tui/src/breadcrumb_layout.rs:41-61` (`crumb_parts`, `to_string_lossy`, no filtering).
+- **Wrong**: `crumb_parts` keeps `Component::Normal` path bytes verbatim; `put_spans` iterates graphemes and calls `cell.set_symbol(cluster)` directly on the ratatui buffer. `Cell::set_symbol` does no filtering, unlike `Buffer::set_stringn`/`Span::styled_graphemes`, which both drop control chars — so this is the one sink that escapes the crate's control-picture chokepoint (`render/cell.rs:30-36` `control_placeholder`). A hostile workspace with a directory literally named `a<ESC>]0;pwned<BEL>b` (legal on Unix), opened as `.../a<ESC>…/notes.md`, emits raw OSC/BEL to the terminal: window-title spoof and screen corruption at minimum, OSC-52 clipboard writes / title-report answerback on terminals that honor them. Debug builds instead panic at ratatui's `cell_width` `debug_assert!` (independently reproduced). The same name is harmless everywhere else in the UI because those paths go through `Span`/`Paragraph`.
+- **Instead**: route `put`'s cluster through `render::cell::control_placeholder`/`push_grapheme_cells` so every direct-`set_symbol` site shares one control-char policy.
+- **Confidence**: confirmed (executed, two reviewers).
+
+#### Hostile SVG reads arbitrary local files, bypassing the `Vfs` chokepoint
+- **Where**: `crates/rune-image/src/svg.rs:7` — `usvg::Options::default()`; routed to by content-sniffing at `crates/rune-image/src/decode.rs:37-43,84-89`.
+- **Wrong**: `Options::default()` installs usvg's default string href resolver, which with `resources_dir: None` reads an absolute href unchanged via `std::fs::read`. `sniff_format` routes any file whose content starts with `<svg`/`<?xml…<svg` into `decode_svg` regardless of extension, and a hostile `.md` `![](evil.svg)` auto-decodes on open (see the image-OOM entry). `evil.svg` with `<image href="/Users/victim/.ssh/id_rsa"/>` makes rune read that file off disk — a direct violation of the "all user-file disk access goes through the injected `Vfs`" invariant, plus a file-existence/readability oracle and a rendering side channel for anything that is a valid image.
+- **Instead**: set `image_href_resolver.resolve_string` to a resolver that goes through the injected `Vfs` or refuses outright.
+- **Confidence**: confirmed.
+
+#### SVG parsing runs with DTD enabled (entity-expansion DoS) and no input size cap
+- **Where**: `crates/rune-image/src/svg.rs:8` — `usvg::Tree::from_data` with defaults (upstream `allow_dtd: true`).
+- **Wrong**: attacker-controlled SVG bytes go to a parser with internal-entity expansion enabled (not classic XXE — no external fetch — but a billion-laughs-shaped SVG is the obvious probe), and the image read path has no byte cap (same `None` as the OOM entry). rune makes no decision here.
+- **Instead**: cap SVG input size and pin a repro test; if roxmltree's caps are relied on, assert them.
+- **Confidence**: plausible.
+
+#### Recovery store holding unsaved document plaintext is created world-readable
+- **Where**: `crates/rune-db/src/conn.rs:16` (`Connection::open`), directory at `crates/rune-db/src/open_ladder.rs:37` (`create_dir_all`).
+- **Wrong**: neither the SQLite file (default `0644`) nor its parent dir (`0755`) is followed by a `set_permissions`/`fchmod` — no `0o600`/`0o700` anywhere in `rune-db`. The store holds journal entries, full-content snapshots and blobs — the plaintext of every document edited, including files whose own mode is `0600`. On a multi-user machine with a traversable home, any local user reads the whole store plus its `-wal`/`-shm` sidecars; the user's `chmod 600 secrets.md` is silently undone.
+- **Instead**: create the dir `0700` and the db file `0600` (fchmod immediately after open, before writing).
+- **Confidence**: confirmed.
+
+#### Save opens the temp world-readable and can silently downgrade a private file's mode
+- **Where**: `crates/rune-vfs/src/disk.rs:116-141`.
+- **Wrong**: two defects in one window. (a) the temp is opened without `.mode(0o600)`, so it is `0644`, and the full document content is `write_all`'d into it before `:139-141` copies the destination's permissions — a real window in which a `0600` document's plaintext is world-readable beside it. (b) `let _ = fs::set_permissions(&temp, …)` discards its error; because publish is `RENAME_SWAP`/`RENAME_EXCHANGE`, the destination afterwards is the temp's inode, so a failed `set_permissions` permanently downgrades the user's `0600` file to `0644` with no message ("no hidden failure modes"). Related ledger note: the swap also discards the destination's ACLs/xattrs/Finder-tags/quarantine on every save, since the published inode is brand-new.
+- **Instead**: set the mode at `open` time via `OpenOptionsExt::mode(0o600)` (fixes both halves) and surface any permission-copy failure.
+- **Confidence**: confirmed.
+
+#### `⌘⌫` / `^⌫` are globally bound to Trash, shadowing delete-to-line-start in every field and the editor
+- **Where**: `crates/rune-tui/src/global.rs:217-228` + `crates/rune-tui/src/dispatch.rs:271-274` (global table consulted before any focus routing); layering issue at `crates/rune-tui/src/pane_bar_policy.rs:30-37`.
+- **Wrong**: on macOS `⌘⌫` means "delete to start of line" and `⌥⌫`/`^⌫` word-delete in every text field. Here they reach `GlobalCommand::Trash` from the editor, title field, search bar, finder and palette alike — no field sees them. In the title field the hoisted `blur_title` runs first, so `⌘⌫` *commits the in-progress rename* and then raises a Trash prompt for the file; a `y/N` guard is the only thing between muscle memory and the Trash. With the palette open, `bar_policy(Trash)==LeaveOpen` raises the trash confirmation *underneath* the still-painted palette overlay, violating "modal capture is total".
+- **Instead**: do not bind a destructive command to a chord that is a standard text-editing key; require an unambiguous Trash chord, and let fields consume backspace-family chords first.
+- **Confidence**: confirmed.
+
+### CORRECTNESS
+
+#### `put_if_match` resolves the path twice — the CAS verifies one file and publishes over another
+- **Where**: `crates/rune-vfs/src/publish.rs:114` (`current_sighting`→`get`→`resolve`) vs `:129` (`resolve(path)` again).
+- **Wrong**: `get` resolves and etag-checks `path`, then `put_if_match` resolves `path` a second time and publishes over that result. `get_resolved` exists in this crate specifically to close this symlink-swap TOCTOU (its doc comment names the hazard) but `put_if_match` does not use it. Executed with a symlink re-pointed between the two resolves: the etag was checked against `real.md`, the bytes landed on `victim.md` (its prior content returned as `displaced`). Production `run_materialize_vfs` pre-resolves and passes a canonical path, narrowing the window to "an intermediate dir component becomes a symlink between the two resolves" rather than the leaf.
+- **Instead**: resolve once and use `get_resolved` — the fix is free.
+- **Confidence**: confirmed (mechanism executed).
+
+#### `merge::begin` does not guard an already-`Active` session — it silently drops it
+- **Where**: `crates/rune-tui/src/merge/mod.rs:28-69` (only `Pending{doc==id}` checked), reached from `crates/rune-tui/src/guard.rs:439,445`.
+- **Wrong**: hand-editing every conflict is a designed resting state (`Active`, unresolved==0), and then `refuses_save` returns false so ^S really saves; if disk moved, a `DiskConflict` guard is raised and pressing `m` runs `merge::begin`, which passes its `Pending` check and overwrites `app.merge` with `Pending` — dropping the `Active` session with no `diff_view::teardown`, no `enqueue_merge_close`, no `display_name` restore. Result: stale left/"disk" pane stays installed, the tab title is stuck at `file: editor <-> disk` for the session, and the merge row is left `Active` in the store, never closed. `merge::toggle` exits first; the guard route bypasses that.
+- **Instead**: `merge::begin` must tear down/close any existing session (or refuse) before installing a new one.
+- **Confidence**: confirmed (path); full user sequence plausible.
+
+#### `^M` cannot exit an active merge once the disk converges
+- **Where**: `crates/rune-tui/src/pane_command.rs:107-113` gating on `crates/rune-tui/src/registry/avail.rs:45-51`.
+- **Wrong**: `avail::merge` answers `Unavailable("no divergence to merge")` from `is_divergent`, and the `Merge` arm consults it before `merge::toggle` (the only exit). If the user resolves one hunk and an external process reverts the file (probe ack `Clean`), `retract_active_on_convergence` declines to retract (something is resolved) so the merge stays `Active`, but `^M` now refuses to exit and the palette row greys out. Escape still exits, but the advertised key is dead.
+- **Instead**: gate *entry* on divergence but let the same key exit an active session unconditionally.
+- **Confidence**: confirmed.
+
+#### Trash has no mutual exclusion with an in-flight rename
+- **Where**: `crates/rune-tui/src/trash.rs:25-47,81-94` (no `rename.in_flight()` check); contrast `crates/rune-tui/src/save/gate.rs:41-44` and `rename.rs:210-213`, the documented symmetric save/rename pair.
+- **Wrong**: ^R, type name, Enter (rename enqueued, ack async); before it lands, `⌘⌫` reads the still-old `file_path` and raises a Trash guard for the old file; `y` spawns `trash_cmd(old_path)` while `rename_excl(old→new)` is in flight on the same inode. Whichever loses reports a confusing failure. No bytes lost (both atomic), but two destructive ops race with no refusal, in a codebase that refuses the save/rename pair for exactly this reason.
+- **Instead**: refuse trash while a rename is in flight (mirror the save gate).
+- **Confidence**: confirmed.
+
+#### Any left-click while the finder is open cancels it — including a click on a result row
+- **Where**: `crates/rune-tui/src/commands/mouse.rs:97-100`.
+- **Wrong**: `Down(Left)` + `filesearch().is_some()` → unconditional `filesearch::cancel`, with no rect-containment test and a `return` before the finder mouse-routing arm at `:126`. The palette arm right below does test containment. Clicking the row you want discards the query; the only feedback is the overlay vanishing.
+- **Instead**: containment-test like the palette arm; route clicks inside the finder rect to its rows.
+- **Confidence**: confirmed.
+
+#### Preview reply and real file-open reply are indistinguishable — the real open is swallowed and its anchor lost
+- **Where**: `crates/rune-tui/src/explorer_preview/mod.rs:53-89`, consumed at `crates/rune-tui/src/workspace/mod.rs:116-118`.
+- **Wrong**: `read_preview_cmd` and `read_file_cmd` both reply `Msg::FileOpened`, correlated by path only, then by re-deriving `is_current_target` from the live cursor at arrival — exactly what the constitution forbids ("killed by a generation/version echo on the request, never by resolving live state on arrival"). If the explorer cursor sits on `notes.md` with a preview in flight and the user follows a link to `notes.md#section`, the link reply is consumed as the preview's, `handle_file_opened` returns early, the anchor is dropped and focus never moves — the user lands at the top of a preview tab with no explanation.
+- **Instead**: carry a generation/purpose on the preview request and match on it, as the explorer dir-loads already do.
+- **Confidence**: plausible (needs the race window).
+
+#### Tab-limit eviction hijacks the active document and never says the requested open was refused
+- **Where**: `crates/rune-tui/src/opentabs/limit.rs:51-64` + `crates/rune-tui/src/workspace/mod.rs:262-264`.
+- **Wrong**: with the tab limit reached and every eligible tab dirty, `ensure_room` calls `switch_to(victim)` — moving the user to a doc they weren't looking at — then arms a `DirtyClose` guard and returns false *before* the "Tab limit reached" warn; the caller (e.g. `toggle_help`) then bare-returns. The user pressed F1, got teleported to an unrelated tab with a close prompt, and was never told Help was refused. Data safety itself is fine (pinned/preview/saving/pathless excluded, guard always armed on a dirty victim).
+- **Instead**: refuse the open with feedback *without* switching the active document, or only switch after the victim is actually closed.
+- **Confidence**: confirmed.
+
+#### Bracketed paste while a non-editor pane is focused inserts into the editor document invisibly
+- **Where**: `crates/rune-tui/src/commands/clipboard.rs:166-175`.
+- **Wrong**: `^E` focuses `Pane::Messages`; a terminal ⌘V routes `handle_paste_content(app, app.active, text)` into the *editor's* document at a caret that isn't even painted (`app_view` clears `focused` when focus≠Editor). Journaled/undoable, so not data loss, but an unannounced insertion into the user's words at an invisible point. The message pane is `ReadOnly::Always` and should refuse, not redirect.
+- **Instead**: route paste to the focused pane; refuse (with feedback) when it is read-only.
+- **Confidence**: confirmed.
+
+#### Recents and the workspace walk race, so a file can be listed twice
+- **Where**: `crates/rune-tui/src/filesearch/mod.rs:167-181` vs `:275-290`.
+- **Wrong**: both Cmds run on their own threads, replies unordered. `handle_scanned` builds its dedup `seen` from `state.recents` at reply time; `handle_recents_loaded` only assigns `mru_rank` and never re-filters `walk`. Scan-lands-first → duplicate rows and a doubled `matched/total` count. The existing test pins only the recents-first ordering.
+- **Instead**: dedup at render time from the merged set regardless of arrival order.
+- **Confidence**: plausible.
+
+#### `CursorSet::merge` takes `desired_col` from the wrong cursor
+- **Where**: `crates/rune-core/src/cursor.rs:256-277` — survivor chosen by lowest id at `:256`, but `:276` hardcodes `desired_col: current.desired_col`.
+- **Wrong**: when the survivor is `next`, the merged cursor keeps its own position/anchor/id but the *other* cursor's remembered column, so the next Up/Down lands in the wrong column. The sibling `reversed` flag was deliberately fixed to read from `survivor` (pinned test at `:372`); `desired_col` was missed by the same fix.
+- **Instead**: read `desired_col` from `survivor`.
+- **Confidence**: confirmed.
+
+#### Undo refused (`DuplicateEditStart`) for a legal forward batch — `coalesce_touching_deletes` merges too narrowly
+- **Where**: `crates/rune-core/src/undo.rs:41-42`, consumed by `inverse_edits` at `:106`; rejection fires at `crates/rune-core/src/buffer/mod.rs:174-176`; shared by rune-tui via `crates/rune-tui/src/commands/edit_core.rs:197`.
+- **Wrong**: `coalesce_touching_deletes` merges a touching inverse pair only when *both* sides are pure deletes; the case "earlier inverse is a pure delete, later touches it and is not a pure delete" is never merged, and `apply_edits` then refuses the undo as a duplicate start. Executed at the public API: forward batch `[Edit{0,0,"AB"}, Edit{0,1,"YYY"}]` on `"x"` is accepted, but `apply_inverse` returns `Err(DuplicateEditStart{start:0})`. `inverse_edits`' own doc claims undo is total for legally-recorded batches — false, and it is also the recovery-store replay/rebase primitive. Reachability from a live keystroke was not proven (cursor-merge blocks the obvious routes); the persisted-journal replay path and the `pub fn` boundary reach it.
+- **Instead**: merge on `current.0.insert.is_empty() && current.0.end >= next.0.start`, taking `next`'s insert — closes the whole collision class.
+- **Confidence**: confirmed at the public API; live-keystroke reachability plausible.
+
+#### Multi-cursor uppercase/lowercase refuses with "edit failed" and does nothing
+- **Where**: `crates/rune-tui/src/commands/case.rs:33-57`; root cause at `crates/rune-tui/src/commands/edit_core.rs:92-98,197-199`.
+- **Wrong**: two cursors inside the same word (e.g. alt-click at byte 2 and byte 3 of `"hello world"` — `CursorSet::merge` leaves them separate since `2 >= 3` is false) both resolve `word_range_at` to `(0,5)`, so `per_cursor_selection_edits` builds two *identical* `Edit{0,5,"HELLO"}`. `coalesce_touching_edits` merges only when both inserts are empty, so both survive; `SortedEdits::sort` does not check overlap (only `validate` does), so `build_edited_content`'s second pass calls `content.get(5..0)` → `OutOfBounds`. Executed: content unchanged, log `edit failed: edit out of bounds: [5,0) len=11`, journal length 0. `edit_core.rs`'s own doc names this class but the fix was scoped to pure deletions. Distinct from the undo-path entry above and from the forward-batch undo entry: this is the *forward* path with two identical non-delete edits, reachable from a live keystroke.
+- **Instead**: dedup/coalesce overlapping identical per-cursor edits before `apply_edits` (a word-range case change from two cursors in one word is one edit), or validate-and-drop overlaps rather than reaching `build_edited_content`.
+- **Confidence**: confirmed (executed).
+
+#### `resolve_candidate`'s bare-then-`.md` retry never fires for a name containing a dot
+- **Where**: `crates/rune-nav/src/resolve.rs:85` — `if Path::new(stripped).extension().is_none()`.
+- **Wrong**: `Path::extension()` returns `Some` for anything after the last interior dot, so links to `2024.01.15`, `v1.2`, `RFC 2119.notes`, `README.v2` report an extension and the `.md` retry is skipped — the file resolves `Unresolved` though it is right there. Date-stamped daily notes and versioned filenames are exactly this feature's use case. Tests cover only dotless names.
+- **Instead**: attempt the `.md` retry whenever `{stripped}.md` exists, independent of an interior dot.
+- **Confidence**: confirmed.
+
+#### Kitty image IDs collide across documents — wrong image shown / another document's image deleted
+- **Where**: `crates/rune-tui/src/workspace/mod.rs:184` (`alloc_id`, no probing), `crates/rune-tui/src/graphics/embed/alloc.rs:15-26` (per-document allocator), `crates/rune-image/src/ids.rs:37-44` (FNV-1a truncated to 24 bits).
+- **Wrong**: the embed allocator only deconflicts *within* one document; whole-document image IDs bypass it, and Kitty IDs are terminal-global. FNV is trivially invertible, so a hostile vault can name `a.png`/`b.png` to collide at 24 bits: opening both notes makes one overwrite the terminal's data for that ID (the other renders its pixels), and `despawn_gone` emits `encode_delete(id)` that blanks the other document's image.
+- **Instead**: allocate whole-document IDs through a terminal-global probing allocator, not a content hash.
+- **Confidence**: confirmed (mechanism).
+
+#### Disk/Mem divergence: publishing through a dangling symlink
+- **Where**: `crates/rune-vfs/src/disk.rs:200-222` (`Disk::resolve` gates on `path.exists()`) vs `crates/rune-vfs/src/mem/mod.rs:277-299` + `path_util.rs:61-79`.
+- **Wrong**: `Disk::resolve` branches on `path.exists()` (follows the link, false for a dangling one) and returns the link's own path, so `put_force`→`stat`→`rename_excl` hits the existing dentry → `EEXIST`. `Mem::resolve` returns the *target* regardless of existence, so the publish creates the target and succeeds. Any test asserting this behavior passes on Mem and is false on Disk; on real disk, saving through a dangling symlink surfaces "File exists", the opposite of what happened.
+- **Instead**: make `Disk::resolve` and `Mem::follow_links` agree on the dangling-leaf case.
+- **Confidence**: confirmed (executed).
+
+#### `Document::hydrate` journals crash-recovery adoption with empty cursor sets
+- **Where**: `crates/rune-tui/src/document/mod.rs:287-292` — `cursors_before: Vec::new(), cursors_after: Vec::new()`.
+- **Wrong**: after crash recovery the first ⌘Z undoes the hydration and, because `cursors_before` is empty, restores a cursor set built from nothing. The empty cursor vectors are clearly wrong even if the buffer revert is intended.
+- **Instead**: record the real cursor sets on the hydration step.
+- **Confidence**: plausible.
+
+### MINOR
+
+- **Unbounded `rune_vfs::get(path, None)` cluster** (`max_bytes: None` disables the 64 MiB gate). Beyond the image-open OOM above, three more sites read attacker-growable files whole into memory: `crates/rune-vfs/src/publish.rs:39` (`current_sighting`, the *worst* placement — the CAS read during a save, buffer unsaved), `crates/rune-tui/src/filesearch/walk.rs:113` (every `.gitignore`-family file in the scan, then copied again by `String::from_utf8`), and `crates/rune-db/src/bracket.rs:35` (probe re-read). Make `max_bytes` non-optional so each caller must name a limit.
+- **`merge_close` cannot close a merge this session resumed** — `crates/rune-db/src/merge_state.rs:121-127` has only the own-active-row rung (unlike `merge_progress`'s two rungs), so a resumed-but-not-re-owned row (`resume_candidate` at `:144-149` never rewrites `session_id`) is silently `Ok(())`'d on close, left `active`, and re-offered next load. Related: `merge_open` leaves two active rows if one session opens twice.
+- **Read-only edit refusal is completely silent** — `crates/rune-tui/src/commands/edit_core.rs:75-78` returns false with no message and every caller discards it; typing/Backspace/⌘X/⌘V on the Help tab or a reading-mode doc does nothing and says nothing (the palette path *does* explain via `registry/avail.rs`). `editor_exec.rs` even spawns `pbpaste` first and drops the result.
+- **Save gate has two silent rungs** — `crates/rune-tui/src/save/gate.rs:31-36`: a missing document and an image document both return `Refused` with no message (⌘S on an image does nothing), while every other rung posts; `pane_command.rs:79` discards the result. Contradicts `guard.rs:328-331`.
+- **`settle_pending_materialize` drains and discards every non-`MaterializeVfsDone` message at shutdown** — `crates/rune-tui/src/runtime/exit_settle.rs:29-45`; a last-moment `SaveDone(Err)` is swallowed, so the user quits believing a failed direct save landed. Loses the report, not bytes.
+- **`close_now` cancels the rename's feedback, not the rename** — `crates/rune-tui/src/workspace/close.rs:89,97`; the file is still renamed on disk (or, in the `Collided` case, not renamed) and the user is never told.
+- **No-store draft create leaves the document permanently dirty** — `crates/rune-tui/src/rename_create.rs:98-136`→`rename.rs:434-443`; `bind_to` binds the path without advancing the saved baseline, so a byte-matching file stays "unsaved" forever and arms a spurious quit guard.
+- **Palette/finder swallow `⌘V` (and empty-list `Tab`) with no feedback** — `crates/rune-tui/src/palette/keys.rs:97-101,161-179`; `PasteTarget` has no `Palette` variant.
+- **After a trash the explorer selection jumps to `..`** — `crates/rune-tui/src/explorer_dirload.rs:41-55`; a Refresh keeps the vanished row's name so `by_name` misses and the cursor resets to index 0; the same handler's `clear_search` also wipes an in-progress type-to-search on any async refresh.
+- **`messages.doc.focused` is cached shadow state** — `crates/rune-tui/src/messages/mod.rs:171,178`; set true in `focus()`, cleared only in `collapse()`, so the pane keeps painting its selection as focused after the editor regains focus, and a stray selection pins the pane open until the next post.
+- **Click in the message pane acts on a vetoed focus transition** — `crates/rune-tui/src/messages/mod.rs:355-375`; `mouse_down` hit-tests and latches a drag without re-checking that `focus()` succeeded (both sibling handlers do), so a click with an invalid title in the field still selects text and emits OSC 52 on mouse-up.
+- **`^1`–`^0` for a non-open tab moves focus then does nothing** — `crates/rune-tui/src/pane_global.rs:64-67`; `set_focus_pane(Editor)` fires before `select_tab` early-returns on an out-of-range index.
+- **Duplicate refusal message leaving an invalid title** — `crates/rune-tui/src/pane_command.rs:49` + `crates/rune-tui/src/focus/mod.rs:295-299`; hoisted `blur_title` posts the refusal, then the arm's `set_focus_pane` re-enters `on_blur` and posts it again; for `^E` the messages pane opens and paints as focused while the title still owns the keyboard.
+- **A `markdown` fence's highlight pass ignores its time budget** — `crates/rune-tui/src/runtime/highlight_cmd.rs:58-91`; the `RegionLang::Markdown` arm never uses `left`, so one pathological ```` ```markdown ```` fence runs an unbounded comrak parse on the highlight thread.
+- **Inline embeds are never re-fitted on a pane resize** — `crates/rune-tui/src/graphics/resize_refit.rs:7-49` handles only the whole-document image; every inline `![](…)` keeps its stale footprint until an mtime change re-decodes it.
+- **Snapshot debounce keys off `active_doc()` across a possible active-document change** — `crates/rune-tui/src/app.rs:227,235-238`; a message that switches tabs arms/omits the snapshot debounce for the wrong document (journaling is unaffected; only the snapshot anchor is mis-timed).
+- **`probe`'s deferral is silently lost when the file binding is missing** — `crates/rune-tui/src/db_enqueue_load.rs:144-149` returns whether or not it stashed `pending_probe`, so `last_sync` can stall until an unrelated event probes again.
+- **`begin_recording`'s `bool` return is discarded** — `crates/rune-tui/src/materialize_ack.rs:97-102` / `document/mod.rs:207-209`; a `false` (doc not `Publishing`) leaves the ack unmatched and the save state stuck — same wedge class as the Publishing entry; a `#[must_use]`/typed transition would make it a compile error.
+- **`unreachable!` panics in the update loop** — `crates/rune-tui/src/dispatch.rs:61-63,161-163` (`Msg::Timer`/`RecentsLoaded` illegal pairings) and `crates/rune-vfs/src/testing.rs:20` (non-`cfg(test)`-gated, compiles into the release binary). All unreachable today, but the constitution routes "can't happen" through `assert_invariant!` or an enum shape, never a panic.
+- **`put_if_absent` leaks the temp on a non-`AlreadyExists` publish failure** — `crates/rune-vfs/src/publish.rs:146,179` returns `Err` with no cleanup, while `put_force`'s create path wraps the same failure in `remove_temp_noting_failure`. Same operation, two policies.
+- **Latent subtraction underflow in the fixed-indent hint builder** — `crates/rune-md/src/parse/indent.rs:30` (`candidate_end - scan_start`); no current producer overshoots the line, but a sibling test constructs exactly such an overshooting hint elsewhere, and this is the one site in the family that would panic rather than clamp. Use `saturating_sub` or an early continue.
+- **Two documents on one file from differing path spellings** — `crates/rune-tui/src/workspace/mod.rs:211-216` compares `file_path` byte-for-byte, so a relative CLI positional and an absolute Explorer open of the same file yield two documents each with its own `db_id`/`FileBinding`; the shared-baseline probe and epoch bump then don't cover the pair. `materialize_ack/reactions.rs:215-224` resolves paths for the same hazard; the tab-dedup chokepoint does not.
+- **`looks_like_svg` lowercases the entire file to test a 4-byte prefix** — `crates/rune-image/src/decode.rs:57-74`; a 500 MB UTF-8 file costs a full copy before anything decides it isn't an image. Also `sniff_format` reports `Format::Svg` without the `svg` feature, which `decode_still` then fails on.
+- **Tall images repeat their first row past 297 rows** — `crates/rune-tui/src/graphics/footprint.rs:12` leaves `rows` uncapped, so `placeholder.rs:305-309` silently falls back to `DIACRITICS[0]` for row indices ≥ 297; a 1080×9000 screenshot renders its bottom ~36 rows as repeats of its top row, with no truncation reported.
+- **`DecorPiece::cells()` measures `first` but is used as the width of `cont`** — `crates/rune-syntax/src/decor.rs:13-15`, consumed at `crates/rune-syntax/src/wrap/decor.rs:92,110` and read as truth at `crates/rune-tui/src/render/decor.rs:31`. `SegDecor.cells` is the number `mouse_hit::offset_at_ordinary` subtracts from a click column and `overlay::apply_cursor_overlays` adds to `visual_col`, but the actual cells on a continuation row are summed from `p.cont` while `cells` came from `p.first`. Any decor whose `cont` differs in display width from `first` would offset every click and caret on a wrapped continuation row. Kept equal today only by discipline in `rune-md/src/emit/decor.rs` — two independent derivations of one number ("no shadow state"). Latent, not reachable today.
+- **Diff fold view paints backgrounds from one document's offsets onto merged cells of two** — `crates/rune-tui/src/render/mod.rs:271-289`; in the fold path `augment_fold` interleaves left-document rows with right-document rows, then `paint_backgrounds` is called with the active (right) document's content and right-side region ranges, keyed purely on `Cell::buf_offset` with no document tag — a left-document cell whose offset falls inside a right region gets the wrong background. Cosmetic; no buffer bytes involved.
+- **Wrap segment can exceed the width budget when decor is present** — `crates/rune-syntax/src/wrap/mod.rs:147`; the force-include-one-cluster fallback can emit a 2-cell cluster into a 1-cell content budget (`"# 👍🏽"` at width 3). Documented "always make progress" behavior with no byte/coordinate consequence — recorded so it isn't mistaken for a new bug.
+
 ## Data-safety
 
 ### rune-merge re-anchors conflict sections by content search, not position accounting
