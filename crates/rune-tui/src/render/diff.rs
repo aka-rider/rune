@@ -118,3 +118,73 @@ pub(super) fn paint_intraline(rows: &mut [Vec<Cell>], ranges: &[Range<usize>], s
         paint_range(rows, range.clone(), style);
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use ratatui::style::Color;
+
+    use super::*;
+
+    fn cell_at(offset: u32) -> Cell {
+        Cell {
+            text: "x".into(),
+            width: 1,
+            style: Style::default(),
+            buf_offset: Some(offset),
+        }
+    }
+
+    #[test]
+    fn a_fold_views_left_virtual_row_never_takes_the_rights_background_even_when_offsets_collide() {
+        // The left document's own byte offsets and the right document's are
+        // two independent coordinate spaces — nothing stops them from
+        // numerically overlapping. A `Changed` region folds the right row
+        // first, then a `LeftVirtual` row beneath it; both rows here carry
+        // a cell at the SAME numeric offset (5), one from each document.
+        let alignment = AlignmentMap {
+            regions: vec![Region {
+                kind: RegionKind::Changed,
+                left_lines: 0..1,
+                right_lines: 0..1,
+            }],
+        };
+        let layout = rows::layout_rows(&alignment, &[1], &[1]);
+
+        let right_rows = vec![vec![cell_at(5)]];
+        let left_rows = vec![vec![cell_at(5)]];
+        let theirs_bg = Style::default().bg(Color::Red);
+        let ours_bg = Style::default().bg(Color::Blue);
+
+        let mut folded = augment_fold(&right_rows, &left_rows, &layout, 0, 0, theirs_bg, 2, 1);
+        assert_eq!(folded.len(), 2, "one right row, one left-virtual row");
+
+        let right_content = "hello\nworld\n";
+        paint_backgrounds(
+            &mut folded,
+            &alignment,
+            right_content,
+            |r| r.right_lines.clone(),
+            |k| matches!(k, RegionKind::Changed | RegionKind::RightOnly),
+            ours_bg,
+        );
+
+        assert_eq!(
+            folded[0][0].style,
+            Style::default().patch(ours_bg),
+            "the right row's own cell must take the right document's background"
+        );
+        assert_eq!(
+            folded[1][0].style,
+            Style::default().patch(theirs_bg),
+            "the left-virtual row must never take the right document's \
+             background, even though its cell's raw offset numerically \
+             collides with the right row's"
+        );
+        assert_eq!(
+            folded[1][0].buf_offset, None,
+            "a left-virtual cell must carry no buf_offset at all, so no \
+             later offset-keyed pass can paint it by accident"
+        );
+    }
+}

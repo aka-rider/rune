@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
+use rune_image::CellSize;
+
 use crate::app::App;
+use crate::document::DocumentId;
 use crate::graphics::ImageStatus;
 use crate::runtime::Effects;
 
@@ -10,6 +13,23 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
     let pane_width = doc.viewport.width as usize;
     let cell = app.graphics.cell;
     let kitty = app.graphics.kitty;
+
+    if doc.image().is_some() {
+        refit_whole_document(app, id, pane_width, cell, kitty, effects);
+    } else if doc.embeds().is_some() {
+        refit_embeds(app, id, pane_width, cell, kitty, effects);
+    }
+}
+
+fn refit_whole_document(
+    app: &mut App,
+    id: DocumentId,
+    pane_width: usize,
+    cell: CellSize,
+    kitty: bool,
+    effects: &mut Effects,
+) {
+    let Some(doc) = app.doc(id) else { return };
     let Some(image) = doc.image() else { return };
     let ImageStatus::Live {
         cells: current_cells,
@@ -19,7 +39,8 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
         return;
     };
     let Some(decoded_px) = image.dims else { return };
-    let cells = super::footprint::fit(decoded_px, pane_width, cell);
+    let fit = super::footprint::fit(decoded_px, pane_width, cell);
+    let cells = fit.cells;
     if cells == *current_cells {
         return;
     }
@@ -38,14 +59,91 @@ pub(crate) fn refit_on_resize(app: &mut App, effects: &mut Effects) {
         decoded: Arc::clone(&decoded),
         cells,
     };
-    if !kitty {
-        return;
+    if kitty {
+        let generation = image.next_generation.mint();
+        image.in_flight = Some(generation);
+        effects.cmds.push(super::decode_cmd::encode_image_cmd(
+            id, decoded, img_id, cells, cell, generation, true,
+        ));
     }
-    let generation = image.next_generation.mint();
-    image.in_flight = Some(generation);
-    effects.cmds.push(super::decode_cmd::encode_image_cmd(
-        id, decoded, img_id, cells, cell, generation, true,
-    ));
+    if fit.truncated {
+        crate::messages::warn(
+            app,
+            "image is taller than this terminal can address \u{2014} bottom rows are cropped",
+        );
+    }
+}
+
+fn refit_embeds(
+    app: &mut App,
+    id: DocumentId,
+    pane_width: usize,
+    cell: CellSize,
+    kitty: bool,
+    effects: &mut Effects,
+) {
+    let Some(doc) = app.doc(id) else { return };
+    let Some(embeds) = doc.embeds() else { return };
+    let changed: Vec<String> = embeds
+        .images
+        .iter()
+        .filter_map(|(target, state)| {
+            let ImageStatus::Live {
+                cells: current_cells,
+                ..
+            } = &state.status
+            else {
+                return None;
+            };
+            let decoded_px = state.dims?;
+            let fit = super::footprint::fit(decoded_px, pane_width, cell);
+            (fit.cells != *current_cells).then(|| target.clone())
+        })
+        .collect();
+
+    let mut any_truncated = false;
+    for target in changed {
+        let Some(doc) = app.doc_mut(id) else { return };
+        let Some(embeds) = doc.embeds_mut() else {
+            return;
+        };
+        let Some(state) = embeds.images.get_mut(&target) else {
+            continue;
+        };
+        let Some(decoded_px) = state.dims else {
+            continue;
+        };
+        let fit = super::footprint::fit(decoded_px, pane_width, cell);
+        any_truncated |= fit.truncated;
+        let cells = fit.cells;
+        let img_id = state.id;
+        let ImageStatus::Live { decoded, .. } =
+            std::mem::replace(&mut state.status, ImageStatus::Pending)
+        else {
+            continue;
+        };
+        state.status = ImageStatus::Live {
+            decoded: Arc::clone(&decoded),
+            cells,
+        };
+        if kitty {
+            embeds.next_generation = embeds.next_generation.wrapping_add(1);
+            let generation = embeds.next_generation;
+            let Some(state) = embeds.images.get_mut(&target) else {
+                continue;
+            };
+            state.in_flight = Some(generation);
+            effects.cmds.push(super::embed::encode_embed_cmd(
+                id, decoded, img_id, cells, cell, generation,
+            ));
+        }
+    }
+    if any_truncated {
+        crate::messages::warn(
+            app,
+            "an embedded image is taller than this terminal can address \u{2014} bottom rows are cropped",
+        );
+    }
 }
 
 #[cfg(test)]

@@ -89,7 +89,10 @@ pub fn attach(
         return Some(clamp_to_width(decor, position, width));
     }
 
-    let decor_cells = decor.cells();
+    let decor_cells = match position {
+        SegmentPosition::First => decor.cells(),
+        SegmentPosition::Continuation => decor.cont_cells(),
+    };
     if decor_cells >= width {
         return None;
     }
@@ -269,6 +272,32 @@ mod tests {
             "a piece with no room for even one grapheme must be dropped, not pushed empty"
         );
         assert_eq!(seg.cells, 2);
+    }
+
+    #[test]
+    fn a_continuation_row_reports_the_cont_strings_own_width_not_first() {
+        // `first` is a 2-cell bullet, `cont` is a single 1-cell pad — a
+        // decor whose two strings render at different widths, the way a
+        // real producer never emits (module docs) but nothing here should
+        // assume. The `SegDecor.cells` a continuation row carries must
+        // measure what it actually paints (`cont`), not `first`'s width —
+        // render/decor.rs's mouse hit-testing and cursor overlay both trust
+        // this number to know how many cells the decor occupies on THIS
+        // row.
+        let decor = LineDecor {
+            pieces: vec![DecorPiece {
+                first: "\u{2022} ".to_string(),
+                cont: " ".to_string(),
+                scope: scope(),
+            }],
+            is_rule: false,
+        };
+        let cont = attach(Some(&decor), SegmentPosition::Continuation, 10).unwrap();
+        assert_eq!(cont.pieces[0].text, " ");
+        assert_eq!(
+            cont.cells, 1,
+            "a continuation row's cells must measure cont's width, not first's"
+        );
     }
 
     #[test]

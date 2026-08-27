@@ -1,3 +1,4 @@
+mod alloc;
 mod caps;
 mod decode_cmd;
 pub mod embed;
@@ -5,6 +6,7 @@ mod footprint;
 mod resize_refit;
 mod state;
 
+pub use alloc::TerminalImageAllocator;
 pub use caps::{EnvSource, GraphicsCaps, ProcessEnv, detect};
 pub use embed::{EmbedSet, EmbedState};
 pub use state::{ImageState, ImageStatus};

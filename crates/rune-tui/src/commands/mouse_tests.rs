@@ -258,3 +258,107 @@ fn place_click_cursor_and_extend_drag_cursor_are_document_agnostic() {
     let c = doc.cursors.primary();
     assert_eq!((c.anchor, c.position), (0, 5));
 }
+
+fn app_with_filesearch_open(files: &[(&str, &str)]) -> App {
+    let mem = Mem::new();
+    for (path, content) in files {
+        rune_vfs::VfsTestExt::save_atomic(&mem, std::path::Path::new(path), content.as_bytes())
+            .expect("seed file");
+    }
+    let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(mem);
+    let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+    app.clock = Arc::new(ManualClock::new());
+    app.frame_width = 120;
+    app.frame_height = 34;
+    app.root = Some(std::path::PathBuf::from("/root"));
+    let mut effects = crate::runtime::Effects::default();
+    crate::filesearch::open(&mut app, &mut effects);
+    app
+}
+
+fn filesearch_candidate(path: &str) -> crate::filesearch::Candidate {
+    crate::filesearch::Candidate {
+        path: std::path::PathBuf::from(path),
+        display: path.trim_start_matches("/root/").to_string(),
+        in_tree: true,
+        mru_rank: None,
+    }
+}
+
+fn explorer_inner(app: &App) -> ratatui::layout::Rect {
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    crate::layout::geometry(area, app).explorer_inner
+}
+
+fn click_at(app: &mut App, column: u16, row: u16) {
+    let mut effects = crate::runtime::Effects::default();
+    crate::app::update(
+        app,
+        Msg::Mouse(MouseInput {
+            kind: MouseKind::Down(MouseButton::Left),
+            column,
+            row,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        }),
+        &mut effects,
+    );
+}
+
+/// Defect 3: a left-click on a finder result row must select and open it —
+/// the same landing a keyboard Down-then-Enter produces — not the
+/// unconditional cancel every click used to trigger regardless of where it
+/// landed.
+#[test]
+fn clicking_a_filesearch_result_row_opens_it() {
+    let mut app = app_with_filesearch_open(&[("/root/a.md", "a"), ("/root/b.md", "b")]);
+    let generation = app.filesearch().expect("open").generation;
+    let mut effects = crate::runtime::Effects::default();
+    crate::filesearch::handle_recents_loaded(
+        &mut app,
+        generation,
+        Ok(vec![
+            filesearch_candidate("/root/a.md"),
+            filesearch_candidate("/root/b.md"),
+        ]),
+        &mut effects,
+    );
+
+    let rect = explorer_inner(&app);
+    // Row 0 is the query bar; row 1 is the first result (a.md), row 2 the
+    // second (b.md).
+    click_at(&mut app, rect.x, rect.y + 2);
+
+    assert!(
+        app.filesearch().is_none(),
+        "opening a row must close the finder"
+    );
+    assert_eq!(app.focus(), Pane::Editor);
+    assert_eq!(
+        app.active_doc().file_path.as_deref(),
+        Some(std::path::Path::new("/root/b.md")),
+        "the row that was actually clicked (b.md) must be the one opened"
+    );
+}
+
+/// Defect 3: a click OUTSIDE the finder's own rect still cancels it, exactly
+/// as before — only a click landing inside its rect is routed to a row.
+#[test]
+fn clicking_outside_the_filesearch_rect_still_cancels_it() {
+    let mut app = app_with_filesearch_open(&[("/root/a.md", "a")]);
+    let generation = app.filesearch().expect("open").generation;
+    let mut effects = crate::runtime::Effects::default();
+    crate::filesearch::handle_recents_loaded(
+        &mut app,
+        generation,
+        Ok(vec![filesearch_candidate("/root/a.md")]),
+        &mut effects,
+    );
+
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let editor = crate::layout::geometry(area, &app).editor;
+    click_at(&mut app, editor.x, editor.y);
+
+    assert!(app.filesearch().is_none(), "an outside click must cancel");
+}

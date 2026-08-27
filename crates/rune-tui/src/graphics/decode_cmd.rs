@@ -139,7 +139,7 @@ pub(crate) fn handle_image_decoded(
         w: decoded.width,
         h: decoded.height,
     });
-    let cells = super::footprint::fit(
+    let fit = super::footprint::fit(
         rune_image::PixelSize {
             w: decoded.width,
             h: decoded.height,
@@ -147,23 +147,29 @@ pub(crate) fn handle_image_decoded(
         pane_width,
         cell,
     );
+    let cells = fit.cells;
     let decoded = Arc::new(decoded);
 
     if !kitty {
         image.in_flight = None;
         image.status = ImageStatus::Live { decoded, cells };
-        return;
+    } else {
+        let generation = image.next_generation.mint();
+        image.in_flight = Some(generation);
+        image.status = ImageStatus::Live {
+            decoded: Arc::clone(&decoded),
+            cells,
+        };
+        effects.cmds.push(encode_image_cmd(
+            id, decoded, img_id, cells, cell, generation, was_live,
+        ));
     }
-
-    let generation = image.next_generation.mint();
-    image.in_flight = Some(generation);
-    image.status = ImageStatus::Live {
-        decoded: Arc::clone(&decoded),
-        cells,
-    };
-    effects.cmds.push(encode_image_cmd(
-        id, decoded, img_id, cells, cell, generation, was_live,
-    ));
+    if fit.truncated {
+        crate::messages::warn(
+            app,
+            "image is taller than this terminal can address \u{2014} bottom rows are cropped",
+        );
+    }
 }
 
 pub(crate) fn handle_image_encoded(

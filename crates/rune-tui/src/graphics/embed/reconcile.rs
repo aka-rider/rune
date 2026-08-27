@@ -97,8 +97,17 @@ fn spawn_or_respawn(
             continue;
         }
 
+        // The embed and the whole-document image path share ONE
+        // terminal-global allocator (`App::image_ids`) keyed by this same
+        // resolved-path string, so a path that hashes to the same natural
+        // id as some other open document's image always probes to a
+        // distinct seat rather than silently sharing it.
         let key = abs_path.to_string_lossy().into_owned();
-        let embed_id = embeds.alloc.alloc_free_id(&key);
+        let embed_id = app.image_ids.alloc_free_id(&key);
+        let Some(doc) = app.doc_mut(id) else { return };
+        let Some(embeds) = doc.ensure_embeds() else {
+            continue;
+        };
         embeds.images.insert(
             target.to_string(),
             EmbedState {
@@ -145,11 +154,15 @@ fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effect
         .filter(|k| !present.contains(k.as_str()))
         .cloned()
         .collect();
+    let mut freed_paths = Vec::new();
     for key in gone {
         if let Some(state) = embeds.images.remove(&key) {
-            embeds.alloc.free_all_for(&state.abs_path.to_string_lossy());
+            freed_paths.push(state.abs_path.to_string_lossy().into_owned());
             effects.write(rune_image::encode_delete(state.id.get()).into_bytes());
         }
+    }
+    for path in freed_paths {
+        app.image_ids.free_all_for(&path);
     }
 }
 

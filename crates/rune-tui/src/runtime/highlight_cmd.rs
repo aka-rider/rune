@@ -67,7 +67,7 @@ fn parse_region(
             Some(tree) => (RegionOutcome::Replace(RegionPayload::Tree(tree)), true),
             None => (RegionOutcome::CarryForward { source }, false),
         },
-        RegionLang::Markdown => {
+        RegionLang::Markdown if markdown_fits_budget(source.len(), left) => {
             let fence = markdown_fence_spans(&source);
             *truncated |= fence.truncated;
             let spans = fence
@@ -87,7 +87,21 @@ fn parse_region(
                 true,
             )
         }
+        RegionLang::Markdown => (RegionOutcome::CarryForward { source }, false),
     }
+}
+
+/// comrak has no cooperative deadline hook the way `rune_ts::parse` does
+/// (a progress callback checked between tree-sitter's own internal parse
+/// steps) — once a fence's parse starts there is no way to stop it partway
+/// through. Respecting `left` here means never starting a parse this
+/// deliberately conservative byte-per-millisecond estimate says cannot
+/// finish in time, rather than starting one that then runs unbounded.
+const MARKDOWN_BYTES_PER_MS: u128 = 4096;
+
+fn markdown_fits_budget(source_len: usize, left: Duration) -> bool {
+    let allowed = left.as_millis().saturating_mul(MARKDOWN_BYTES_PER_MS);
+    (source_len as u128) <= allowed
 }
 
 pub(crate) fn run_regions(jobs: Vec<RegionJob>, budget: PassBudget) -> PassOutcome {
@@ -168,6 +182,47 @@ mod tests {
                 source: LINE.repeat(lines),
             },
         }
+    }
+
+    fn markdown_job(source_bytes: usize) -> RegionJob {
+        RegionJob {
+            map: LineMap::new("", Vec::new()),
+            work: RegionWork::Parse {
+                lang: RegionLang::Markdown,
+                source: "#".repeat(source_bytes),
+            },
+        }
+    }
+
+    #[test]
+    fn an_oversized_markdown_fence_defers_rather_than_running_unbounded() {
+        // A pass with almost no budget left offers this region a sliver of
+        // time (`next_region` never returns zero, only `None` — module
+        // invariant). A million-byte fence cannot possibly fit that sliver,
+        // and comrak has no cooperative deadline hook the way `rune_ts::
+        // parse` does — the only way to respect the budget here is to never
+        // start the parse at all.
+        let jobs = vec![markdown_job(1_000_000)];
+        let budget = PassBudget::with_clock(
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+            test_clock::frozen,
+        );
+        let outcome = run_regions(jobs, budget);
+        assert!(
+            matches!(outcome, PassOutcome::CarryForward),
+            "an oversized fence given almost no budget must defer, never parse"
+        );
+    }
+
+    #[test]
+    fn a_modestly_sized_markdown_fence_still_parses_with_a_fresh_budget() {
+        let jobs = vec![markdown_job(200)];
+        let outcome = run_regions(jobs, PassBudget::new(PARSE_BUDGET, PASS_BUDGET));
+        assert!(
+            matches!(outcome, PassOutcome::Replace(_)),
+            "an ordinary fence with a full budget must still parse"
+        );
     }
 
     #[test]

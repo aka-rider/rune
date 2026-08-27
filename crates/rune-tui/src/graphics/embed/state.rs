@@ -5,7 +5,6 @@ use std::time::SystemTime;
 use rune_image::{ImageId, PixelSize};
 use rune_md::snapshot::ImageDims;
 
-use super::EmbedAllocator;
 use crate::graphics::ImageStatus;
 
 pub struct EmbedState {
@@ -19,7 +18,6 @@ pub struct EmbedState {
 
 #[derive(Default)]
 pub struct EmbedSet {
-    pub alloc: EmbedAllocator,
     pub images: HashMap<String, EmbedState>,
     pub(crate) next_generation: u64,
 }

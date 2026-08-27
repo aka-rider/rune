@@ -70,10 +70,15 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
         crate::merge::auto_exit(app);
     }
     crate::diff_view::teardown(app, id);
-    if app.graphics.kitty
-        && let Some(image) = app.doc(id).and_then(|d| d.image())
-    {
-        effects.write(rune_image::encode_delete(image.id.get()).into_bytes());
+    let image_info = app
+        .doc(id)
+        .and_then(|d| d.image())
+        .map(|image| (image.id.get(), image.path.to_string_lossy().into_owned()));
+    if let Some((kitty_id, key)) = image_info {
+        if app.graphics.kitty {
+            effects.write(rune_image::encode_delete(kitty_id).into_bytes());
+        }
+        app.image_ids.free_all_for(&key);
     }
     let mut active_changed = false;
     if app.documents.len() == 1 {

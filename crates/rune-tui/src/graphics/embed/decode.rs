@@ -79,7 +79,7 @@ pub(crate) fn handle_embed_decoded(
         w: decoded.width,
         h: decoded.height,
     });
-    let cells = crate::graphics::footprint::fit(
+    let fit = crate::graphics::footprint::fit(
         rune_image::PixelSize {
             w: decoded.width,
             h: decoded.height,
@@ -87,28 +87,34 @@ pub(crate) fn handle_embed_decoded(
         pane_width,
         cell,
     );
+    let cells = fit.cells;
     let img_id = state.id;
     let decoded = Arc::new(decoded);
 
     if !kitty {
         state.in_flight = None;
         state.status = ImageStatus::Live { decoded, cells };
-        return;
+    } else {
+        embeds.next_generation = embeds.next_generation.wrapping_add(1);
+        let generation = embeds.next_generation;
+        let Some(state) = embeds.images.get_mut(&target) else {
+            return;
+        };
+        state.in_flight = Some(generation);
+        state.status = ImageStatus::Live {
+            decoded: Arc::clone(&decoded),
+            cells,
+        };
+        effects.cmds.push(encode_embed_cmd(
+            id, decoded, img_id, cells, cell, generation,
+        ));
     }
-
-    embeds.next_generation = embeds.next_generation.wrapping_add(1);
-    let generation = embeds.next_generation;
-    let Some(state) = embeds.images.get_mut(&target) else {
-        return;
-    };
-    state.in_flight = Some(generation);
-    state.status = ImageStatus::Live {
-        decoded: Arc::clone(&decoded),
-        cells,
-    };
-    effects.cmds.push(encode_embed_cmd(
-        id, decoded, img_id, cells, cell, generation,
-    ));
+    if fit.truncated {
+        crate::messages::warn(
+            app,
+            "an embedded image is taller than this terminal can address \u{2014} bottom rows are cropped",
+        );
+    }
 }
 
 pub(crate) fn handle_embed_encoded(
@@ -136,7 +142,7 @@ pub(crate) fn handle_embed_encoded(
     }
 }
 
-fn encode_embed_cmd(
+pub(crate) fn encode_embed_cmd(
     doc: DocumentId,
     decoded: Arc<rune_image::decode::Decoded>,
     img_id: rune_image::ImageId,

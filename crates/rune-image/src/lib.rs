@@ -14,7 +14,7 @@ pub use decode::{
     Decoded, Format, ImageError, MAX_IMAGE_BYTES, decode_still, probe_dimensions, sniff_format,
 };
 pub use ids::{ImageId, alloc_id, frame_id_seed};
-pub use placeholder::{PLACEHOLDER, diacritic};
+pub use placeholder::{ADDRESSABLE_ROWS, PLACEHOLDER, diacritic};
 pub use resize::{fit_box, resize};
 #[cfg(feature = "svg")]
 pub use svg::{SvgError, decode_svg};

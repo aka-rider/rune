@@ -302,6 +302,13 @@ static DIACRITICS: [char; 297] = [
     '\u{1D244}',
 ];
 
+/// The row (and column) diacritic table addresses at most this many
+/// indices — a taller cell footprint than this cannot be addressed by the
+/// Kitty Unicode placeholder protocol at all; index 297 and up would repeat
+/// `DIACRITICS[0]`. Callers computing a cell footprint must cap `rows` at
+/// this value rather than let `diacritic` silently degrade.
+pub const ADDRESSABLE_ROWS: usize = DIACRITICS.len();
+
 pub fn diacritic(i: usize) -> char {
     DIACRITICS.get(i).copied().unwrap_or(PLACEHOLDER_FALLBACK)
 }
