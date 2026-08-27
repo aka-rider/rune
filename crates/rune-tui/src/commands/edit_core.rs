@@ -90,6 +90,13 @@ pub(crate) fn apply_edit_batch_with_cursors(
         return false;
     }
     let mut infos = coalesce_touching_edits(infos);
+    if let Some(start) = first_overlap_start(&infos) {
+        messages::error(
+            app,
+            format!("edit failed: overlapping edits at byte {start}"),
+        );
+        return false;
+    }
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
 
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
@@ -170,23 +177,33 @@ pub(crate) fn apply_edit_batch_with_cursors(
 /// source instead of guarding against them downstream: two touching or
 /// overlapping ranges really are one edit over their union.
 ///
-/// Coalescing is restricted to PURE DELETIONS (`insert.is_empty()` on both
-/// sides) — the only shape where two touching ranges are genuinely the
+/// Two cursors landing on the byte-identical edit over a NON-ZERO-WIDTH
+/// range (same `start != end`, same `insert` — e.g. two cursors inside
+/// one word both extending to that word's range for a case change) are
+/// deduped to one first, keeping the lower cursor id. A zero-width pure
+/// insert is deliberately exempt from this dedup even when two cursors
+/// produce byte-identical ones (see the clone-line paragraph below — each
+/// insert is its own cursor's clone, not a duplicate of the other's).
+/// What remains after dedup is coalesced only when the EARLIER edit in a
+/// touching pair is a PURE DELETION (`insert.is_empty()`) — the only
+/// other shape where two touching, non-identical ranges are genuinely the
 /// same edit. Two cursors that legitimately share a line (clone-line's
 /// `per_line_edits(dedupe=false)` keys edits on `line_start`, not on
 /// selection, so this is reachable any time an edit joins two cursor-
-/// bearing lines) each build their OWN insert at the identical point —
-/// `Buffer::apply_edits` gives each one a distinct post-edit `start`
-/// (whichever insert the shift walk processes first lands before the
-/// other's in the final text), so leaving them uncoalesced does not
+/// bearing lines) each build their OWN distinct insert at the identical
+/// point — `Buffer::apply_edits` gives each one a distinct post-edit
+/// `start` (whichever insert the shift walk processes first lands before
+/// the other's in the final text), so leaving them uncoalesced does not
 /// collide; concatenating their inserts here instead would have silently
 /// dropped one cursor's own edit (the bug this replaces — see
-/// `edit_lines`'s clone-line-two-cursors-one-line test). A pure deletion
-/// pair (empty insert on both sides) has no such distinguishing content:
-/// `Buffer::apply_edits` would hand both the SAME post-edit start (nothing
-/// inserted to separate them), the exact illegal state `undo::reapply`'s
-/// precondition assert exists to catch — coalescing those two ranges into
-/// one is the only correct outcome.
+/// `edit_lines`'s clone-line-two-cursors-one-line test). A pure-deletion
+/// pair has no such distinguishing content: `Buffer::apply_edits` would
+/// hand both the SAME post-edit start (nothing inserted to separate
+/// them), the exact illegal state `undo::reapply`'s precondition assert
+/// exists to catch — coalescing those two ranges into one is the only
+/// correct outcome. A remaining pair that still overlaps after both
+/// passes is a genuine conflict, not a shape either pass is meant to
+/// resolve — see `first_overlap_start` below.
 ///
 /// Delegates the actual merge rule to `rune_core::undo::
 /// coalesce_touching_deletes` — the same chokepoint `inverse_edits` uses
@@ -195,7 +212,33 @@ pub(crate) fn apply_edit_batch_with_cursors(
 /// The surviving cursor id is the lower of the two merged edits' ids,
 /// matching this function's own doc above.
 fn coalesce_touching_edits(infos: Vec<(Edit, CursorId)>) -> Vec<(Edit, CursorId)> {
-    rune_core::undo::coalesce_touching_deletes(infos, CursorId::min)
+    let deduped = dedupe_identical_edits(infos);
+    rune_core::undo::coalesce_touching_deletes(deduped, CursorId::min)
+}
+
+fn dedupe_identical_edits(mut infos: Vec<(Edit, CursorId)>) -> Vec<(Edit, CursorId)> {
+    infos.sort_by(|a, b| {
+        a.0.start
+            .cmp(&b.0.start)
+            .then(a.0.end.cmp(&b.0.end))
+            .then(a.0.insert.cmp(&b.0.insert))
+    });
+    let mut deduped: Vec<(Edit, CursorId)> = Vec::with_capacity(infos.len());
+    for (edit, cid) in infos {
+        let replaces_a_range = edit.start != edit.end;
+        match deduped.last_mut() {
+            Some(last) if replaces_a_range && last.0 == edit => last.1 = last.1.min(cid),
+            _ => deduped.push((edit, cid)),
+        }
+    }
+    deduped
+}
+
+fn first_overlap_start(infos: &[(Edit, CursorId)]) -> Option<usize> {
+    infos.windows(2).find_map(|w| match w {
+        [a, b] if a.0.end > b.0.start => Some(b.0.start),
+        _ => None,
+    })
 }
 
 pub(crate) fn commit_edit_batch(

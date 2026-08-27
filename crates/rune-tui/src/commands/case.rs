@@ -124,6 +124,34 @@ mod tests {
     }
 
     #[test]
+    fn two_cursors_in_one_word_uppercase_as_a_single_coalesced_edit() {
+        let mut app = app_with("hello world", 2);
+        let id = app.active;
+        let two = CursorSet::new(2).add(CursorSpec {
+            position: 3,
+            anchor: 3,
+            desired_col: 0,
+        });
+        app.doc_mut(id).unwrap().cursors = two;
+
+        uppercase(&mut app, id);
+
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "HELLO world");
+        let steps = app.doc(id).unwrap().journal.steps();
+        assert_eq!(
+            steps.len(),
+            1,
+            "the uppercase press must journal exactly one step"
+        );
+        assert_eq!(
+            steps[0].edits.len(),
+            1,
+            "two cursors resolving to the same word must coalesce into one edit, \
+             not two identical edits that collide on the same range"
+        );
+    }
+
+    #[test]
     fn punctuation_under_the_cursor_refuses_with_a_visible_message() {
         let mut app = app_with("foo, bar", 3);
         let id = app.active;

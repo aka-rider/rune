@@ -118,6 +118,85 @@ fn leaves_genuinely_separated_edits_alone() {
     assert_eq!(merged.len(), 2, "a real gap must not be merged away");
 }
 
+#[test]
+fn two_cursors_on_the_byte_identical_edit_coalesce_to_one() {
+    let infos = vec![
+        (
+            Edit {
+                start: 0,
+                end: 5,
+                insert: "HELLO".to_string(),
+            },
+            cid(2),
+        ),
+        (
+            Edit {
+                start: 0,
+                end: 5,
+                insert: "HELLO".to_string(),
+            },
+            cid(1),
+        ),
+    ];
+    let merged = coalesce_touching_edits(infos);
+    assert_eq!(
+        merged,
+        vec![(
+            Edit {
+                start: 0,
+                end: 5,
+                insert: "HELLO".to_string(),
+            },
+            cid(1),
+        )],
+        "two cursors landing on the byte-identical edit must collapse to one, \
+         surviving as the lower cursor id"
+    );
+}
+
+#[test]
+fn first_overlap_start_finds_a_genuine_overlap_but_not_a_touching_pair() {
+    let touching = vec![
+        (
+            Edit {
+                start: 0,
+                end: 2,
+                insert: String::new(),
+            },
+            cid(1),
+        ),
+        (
+            Edit {
+                start: 2,
+                end: 4,
+                insert: "x".to_string(),
+            },
+            cid(2),
+        ),
+    ];
+    assert_eq!(first_overlap_start(&touching), None);
+
+    let overlapping = vec![
+        (
+            Edit {
+                start: 0,
+                end: 5,
+                insert: "HELLO".to_string(),
+            },
+            cid(1),
+        ),
+        (
+            Edit {
+                start: 3,
+                end: 8,
+                insert: "WORLD".to_string(),
+            },
+            cid(2),
+        ),
+    ];
+    assert_eq!(first_overlap_start(&overlapping), Some(3));
+}
+
 fn app_with(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
@@ -294,6 +373,48 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
         version_before + 1,
         "the surviving batch must bump the version exactly once"
     );
+}
+
+/// Two cursors whose derived edits genuinely OVERLAP with different
+/// content (not the same edit twice, and not a touching pure-deletion
+/// pair) must refuse visibly rather than reach `Buffer::apply_edits` and
+/// fail as an unrelated-looking `OutOfBounds`.
+#[test]
+fn genuinely_conflicting_overlapping_edits_refuse_with_a_visible_message() {
+    let mut app = app_with("hello world");
+    let id = app.active;
+    let cursors_before = app.doc(id).expect("doc").cursors.clone();
+    let version_before = app.doc(id).expect("doc").buffer.version();
+
+    let infos = vec![
+        (
+            Edit {
+                start: 0,
+                end: 5,
+                insert: "HELLO".to_string(),
+            },
+            cid(1),
+        ),
+        (
+            Edit {
+                start: 3,
+                end: 8,
+                insert: "WORLD".to_string(),
+            },
+            cid(2),
+        ),
+    ];
+    let applied = commit_edit_batch(&mut app, id, infos, &cursors_before, EditKind::Other);
+
+    assert!(!applied, "a genuine overlap must refuse, not apply");
+    let doc = app.doc(id).expect("doc");
+    assert_eq!(
+        doc.buffer.content(),
+        "hello world",
+        "the buffer must be untouched"
+    );
+    assert_eq!(doc.buffer.version(), version_before);
+    assert!(messages::log_text(&app).contains("edit failed"));
 }
 
 /// Pins `coalesce_touching_edits`'s cursor-survivor rule (review

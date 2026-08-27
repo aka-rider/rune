@@ -68,12 +68,6 @@ constitution and the entry is deleted in the same commit.
 - **Instead**: dedup at render time from the merged set regardless of arrival order.
 - **Confidence**: plausible.
 
-#### Multi-cursor uppercase/lowercase refuses with "edit failed" and does nothing
-- **Where**: `crates/rune-tui/src/commands/case.rs:33-57`; root cause at `crates/rune-tui/src/commands/edit_core.rs:92-98,197-199`.
-- **Wrong**: two cursors inside the same word (e.g. alt-click at byte 2 and byte 3 of `"hello world"` — `CursorSet::merge` leaves them separate since `2 >= 3` is false) both resolve `word_range_at` to `(0,5)`, so `per_cursor_selection_edits` builds two *identical* `Edit{0,5,"HELLO"}`. `coalesce_touching_edits` merges only when both inserts are empty, so both survive; `SortedEdits::sort` does not check overlap (only `validate` does), so `build_edited_content`'s second pass calls `content.get(5..0)` → `OutOfBounds`. Executed: content unchanged, log `edit failed: edit out of bounds: [5,0) len=11`, journal length 0. `edit_core.rs`'s own doc names this class but the fix was scoped to pure deletions. Distinct from the undo-path entry above and from the forward-batch undo entry: this is the *forward* path with two identical non-delete edits, reachable from a live keystroke.
-- **Instead**: dedup/coalesce overlapping identical per-cursor edits before `apply_edits` (a word-range case change from two cursors in one word is one edit), or validate-and-drop overlaps rather than reaching `build_edited_content`.
-- **Confidence**: confirmed (executed).
-
 #### Kitty image IDs collide across documents — wrong image shown / another document's image deleted
 - **Where**: `crates/rune-tui/src/workspace/mod.rs:184` (`alloc_id`, no probing), `crates/rune-tui/src/graphics/embed/alloc.rs:15-26` (per-document allocator), `crates/rune-image/src/ids.rs:37-44` (FNV-1a truncated to 24 bits).
 - **Wrong**: the embed allocator only deconflicts *within* one document; whole-document image IDs bypass it, and Kitty IDs are terminal-global. FNV is trivially invertible, so a hostile vault can name `a.png`/`b.png` to collide at 24 bits: opening both notes makes one overwrite the terminal's data for that ID (the other renders its pixels), and `despawn_gone` emits `encode_delete(id)` that blanks the other document's image.
