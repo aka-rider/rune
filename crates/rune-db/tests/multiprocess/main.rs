@@ -4,30 +4,31 @@
 //! cross-process locking this crate depends on).
 //!
 //! Split across sibling files (line-budget rule) but compiled as the ONE
-//! `multiprocess` test binary — `cargo test`'s directory convention (a
+//! `multiprocess` test binary — cargo's directory convention (a
 //! `main.rs` under a `tests/<name>/` directory is still exactly one
-//! integration-test target named `<name>`) — never several. Splitting into
-//! SEPARATE test binaries instead would have let cargo schedule them in
-//! parallel where they used to run sequentially inside one process, and
-//! every scenario here rendezvouses real child processes through
-//! filesystem marker files under its own freshly minted temp directory;
-//! nothing about that handshake is safe to race against another scenario's
-//! children sharing the same test run. Staying one binary preserves the
-//! exact sequential scheduling this file always had.
+//! integration-test target named `<name>`) — never several. Every scenario
+//! here rendezvouses real child processes through filesystem marker files
+//! under its own freshly minted temp directory; nothing about that
+//! handshake is safe to race against another scenario's children sharing
+//! the same test run, so sequential scheduling is enforced by the
+//! `multiprocess` test group (`max-threads = 1`) in `.config/nextest.toml`,
+//! not by staying one binary — nextest assigns the group by matching the
+//! binary id, so splitting into sibling binaries would still need (and get)
+//! the same serialization.
 //!
 //! # The re-exec-self pattern
 //!
 //! Each scenario test spawns `std::env::current_exe()` (THIS test binary) as
 //! a child process with `--exact helper_entrypoint --nocapture` and a
-//! `RUNE_DB_HELPER=<role>` environment variable. `cargo test`'s own harness
-//! then runs ONLY [`helper_entrypoint`] in the child (no custom `main`/
-//! `#[ctor]` needed); that test reads `RUNE_DB_HELPER`, dispatches to the
-//! matching role in `helper`, and the role function itself calls
+//! `RUNE_DB_HELPER=<role>` environment variable. This binary's own libtest
+//! harness then runs ONLY [`helper_entrypoint`] in the child (no custom
+//! `main`/`#[ctor]` needed); that test reads `RUNE_DB_HELPER`, dispatches to
+//! the matching role in `helper`, and the role function itself calls
 //! `std::process::exit` when it succeeds (a role panic — a `.expect`
-//! failure — makes `cargo test` report that one test as failed, which is
+//! failure — makes the child report that one test as failed, which is
 //! exactly "the child process exited non-zero").
 //!
-//! When `RUNE_DB_HELPER` is unset (an ordinary `cargo test` run),
+//! When `RUNE_DB_HELPER` is unset (an ordinary `cargo nextest run`),
 //! `helper_entrypoint` is a no-op passing test.
 //!
 //! # No wall-clock pacing
@@ -53,7 +54,7 @@ mod support;
 
 const ROLE_ENV: &str = "RUNE_DB_HELPER";
 
-/// When `RUNE_DB_HELPER` is unset (every normal `cargo test` run), a no-op
+/// When `RUNE_DB_HELPER` is unset (every normal `cargo nextest run`), a no-op
 /// passing test. When a scenario spawns this same binary with `--exact
 /// helper_entrypoint --nocapture` and `RUNE_DB_HELPER` set, runs the
 /// requested role and exits the process itself.

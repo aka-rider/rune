@@ -3,7 +3,7 @@
 //!
 //! This is a wall-clock bound that must ONLY run via the explicit release
 //! invocation in Make (rust-perf-guard). It is inherently flaky inside
-//! ordinary parallel debug `cargo test` and is marked #[ignore] for that
+//! ordinary parallel debug `cargo nextest run` and is marked #[ignore] for that
 //! reason.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -17,7 +17,7 @@ include!("shared_doc.rs.inc");
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn full_pipeline_5k_under_100ms() {
@@ -92,7 +92,7 @@ fn average_pipeline_cost(doc: &str, iterations: usize) -> Duration {
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn full_pipeline_cost_scales_linearly_not_quadratically_with_document_size() {

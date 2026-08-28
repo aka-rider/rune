@@ -31,7 +31,7 @@
 //! Mirrors `crates/rune-md/tests/perf_guard.rs`: a wall-clock bound, run
 //! only via the explicit release invocation in `make perf-guard`, `#[ignore]`
 //! everywhere else because it is inherently flaky inside ordinary parallel
-//! debug `cargo test`.
+//! debug `cargo nextest run`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
@@ -93,7 +93,7 @@ const KEYSTROKES: usize = 100;
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn keystroke_view_cost_under_budget_on_a_5k_line_code_document() {
@@ -258,7 +258,7 @@ const FENCED_FRAME_BUDGET: Duration = Duration::from_micros(400);
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn render_frame_cost_under_budget_on_a_5k_line_code_document() {
@@ -278,7 +278,7 @@ fn render_frame_cost_under_budget_on_a_5k_line_code_document() {
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn render_frame_cost_under_budget_on_a_many_fence_markdown_document() {
@@ -332,7 +332,7 @@ const BOOTSTRAP_FRAME_BUDGET: Duration = Duration::from_millis(100);
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn bootstrap_first_draw_stays_bounded_on_a_large_document() {
@@ -405,7 +405,7 @@ fn press(app: &mut App, code: KeyCode) {
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
             release invocation in Make (rust-perf-guard). It is inherently \
-            flaky inside ordinary parallel debug `cargo test` and is marked \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
             #[ignore] for that reason."]
 #[test]
 fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {

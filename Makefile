@@ -10,20 +10,28 @@ RS ?=
 J ?= 2
 # Extra cargo-mutants args, e.g. MUTANTS_ARGS='--iterate'.
 MUTANTS_ARGS ?=
+# nextest profile (see .config/nextest.toml), not a cargo profile. CI passes
+# PROFILE=ci. Applies to the `test` target only.
+PROFILE ?= default
 
-.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars mutants dist-mac
+.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars mutants \
+        cross-compile-from-linux-to-macos yo-build-and-fetch
 
 SDK_CACHE := $(HOME)/.cache/rune/MacOSX14.5.sdk
+MAC_BIN := target/aarch64-apple-darwin/release/rune
+# The Linux VM that produces the macOS binary, and its checkout of this repo.
+YO ?= yolobox
+YO_REPO ?= wrk/rune
 
 build:
 	$(CARGO) build --workspace
 
 test:
-	$(CARGO) test --workspace
+	$(CARGO) nextest run --profile $(PROFILE) --workspace
 	# Cargo feature unification already arms strict-invariants on rune-md for the
 	# whole --workspace run above (rune-fuzz requests it), but this isolated
 	# invocation stays so the suite still proves out if that unification ever goes away.
-	$(CARGO) test -p rune-md --features strict-invariants
+	$(CARGO) nextest run --profile $(PROFILE) -p rune-md --features strict-invariants
 
 lint:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
@@ -35,48 +43,43 @@ fmt:
 bench:
 	$(CARGO) bench -p rune-md --bench parse_bench
 
-# `--test perf_guard` + `--exact` scope each invocation to ONE test in ONE
-# binary. Without them, every other test binary prints `test result: ok. 0
-# passed ... filtered out` and exits 0, so the target stays green even if the
-# test is renamed or deleted — this is why the WP16 keystroke-latency guard
-# below needs its OWN invocation rather than widening the `--exact` filter on
-# this one, which by definition can never pick up a second test name.
+# Each guard keeps its own invocation: a merged filterset like
+# `test(=a) + test(=b)` is a union that still passes if `b` is deleted.
+# nextest exits 4 (NO_TESTS_RUN) when a filter matches nothing, so one
+# invocation per test is what makes a renamed or deleted guard fail loudly.
+# `-p <crate>` stays on every line: `-E` selects tests, not build targets, so
+# dropping it would widen the release build from one crate to the workspace.
 perf-guard:
-	$(CARGO) test -p rune-md --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 full_pipeline_5k_under_100ms
-	$(CARGO) test -p rune-md --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 full_pipeline_cost_scales_linearly_not_quadratically_with_document_size
-	$(CARGO) test -p rune-tui --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 keystroke_view_cost_under_budget_on_a_5k_line_code_document
-	$(CARGO) test -p rune-tui --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_5k_line_code_document
-	$(CARGO) test -p rune-tui --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_many_fence_markdown_document
-	$(CARGO) test -p rune-tui --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket
-	$(CARGO) test -p rune-tui --release --test perf_guard -- \
-	    --ignored --exact --test-threads=1 bootstrap_first_draw_stays_bounded_on_a_large_document
+	$(CARGO) nextest run -p rune-md --release --test perf_guard --run-ignored only -E 'test(=full_pipeline_5k_under_100ms)'
+	$(CARGO) nextest run -p rune-md --release --test perf_guard --run-ignored only -E 'test(=full_pipeline_cost_scales_linearly_not_quadratically_with_document_size)'
+	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=keystroke_view_cost_under_budget_on_a_5k_line_code_document)'
+	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_on_a_5k_line_code_document)'
+	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_on_a_many_fence_markdown_document)'
+	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket)'
+	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=bootstrap_first_draw_stays_bounded_on_a_large_document)'
 
-# `--test human_session` + `--exact` for the same reason as perf-guard.
+# One invocation, one test, for the same reason as perf-guard.
 # Debug profile on purpose: keeps the buffer/undo/render debug_asserts armed.
 test-fuzz:
 	PROPTEST_CASES=$(RC) PROPTEST_RNG_SEED=$(RS) \
-	    $(CARGO) test -p rune-fuzz --test human_session -- \
-	    --ignored --exact --test-threads=1 human_session
+	    $(CARGO) nextest run -p rune-fuzz --test human_session \
+	    --run-ignored only -E 'test(=human_session)'
 
 # The heavy per-grammar property test: every one of the 22 tree-sitter
 # grammars against many arbitrary sources, not just the handful the
 # non-ignored smoke test runs on every `make test`.
 test-grammars:
-	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1
+	$(CARGO) nextest run -p rune-ts --test grammar_props --run-ignored only
 
 # Mutation testing (cargo-mutants, config in .cargo/mutants.toml).
 # PKG=<crate> scopes the run to one package.
 mutants:
 	$(CARGO) mutants $(if $(PKG),--package $(PKG)) --jobs $(J) $(MUTANTS_ARGS)
 
-dist-mac:
-	command -v nix >/dev/null || { echo "dist-mac needs nix on PATH (NixOS/macOS with nix installed)"; exit 1; }
+# The macOS binary is built on Linux (the yolobox guest): zig is the cross
+# linker, the Apple SDK is cached under $(SDK_CACHE).
+cross-compile-from-linux-to-macos:
+	command -v nix >/dev/null || { echo "cross-compile-from-linux-to-macos needs nix on PATH"; exit 1; }
 	[ -d $(SDK_CACHE) ] || { \
 	    mkdir -p $(HOME)/.cache/rune; \
 	    curl -fL https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz \
@@ -85,3 +88,13 @@ dist-mac:
 	nix shell nixpkgs#rustup nixpkgs#gcc nixpkgs#zig nixpkgs#cargo-zigbuild -c \
 	    sh -c 'rustup target add aarch64-apple-darwin && \
 	        SDKROOT=$(SDK_CACHE) cargo zigbuild --target aarch64-apple-darwin --release --bin rune'
+
+# Host side of the same build: drive the guest, then pull the binary back.
+# The guest holds its own clone, so bring it to the commit you want first.
+yo-build-and-fetch:
+	limactl shell --workdir $(YO_REPO) $(YO) nix shell nixpkgs#gnumake -c \
+	    make cross-compile-from-linux-to-macos
+	mkdir -p $(dir $(MAC_BIN))
+	limactl copy $(YO):$(YO_REPO)/$(MAC_BIN) $(MAC_BIN)
+	chmod +x $(MAC_BIN)
+	@echo "fetched $(MAC_BIN)"

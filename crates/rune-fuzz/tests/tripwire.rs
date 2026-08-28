@@ -15,8 +15,9 @@
 //!
 //! `clean_session_trips_nothing`'s fixture is curated per plan Gotcha G1:
 //! plain ASCII + CJK markdown, no lists or blockquotes, no tab, no `\r` —
-//! this file is NOT `#[ignore]`d, so it runs under `cargo test --workspace`,
-//! which links `rune-md` with `strict-invariants` on.
+//! this file is NOT `#[ignore]`d, so it runs under `cargo nextest run
+//! --workspace` (`make test`), which links `rune-md` with `strict-invariants`
+//! on.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

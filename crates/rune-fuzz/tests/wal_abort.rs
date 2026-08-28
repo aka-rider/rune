@@ -33,8 +33,7 @@ fn armed_script() -> (String, String, Vec<Action>) {
 
 /// Child process entry point: arms the WAL with a fixed script and then
 /// dies by `abort()`. Does nothing when run as an ordinary (non-`--ignored`)
-/// test, so a stray `cargo test -- --ignored` sweep of this file is
-/// harmless.
+/// test, so a stray sweep of this file's `#[ignore]`d tests is harmless.
 #[test]
 #[ignore = "child-mode only: invoked by wal_survives_process_abort via self-exec"]
 fn child_arm_then_abort() {

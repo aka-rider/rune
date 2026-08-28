@@ -20,13 +20,19 @@
 #   those lines move (noted in their commits).
 # - CI follow-up: a PR-scoped `cargo mutants --in-diff` job once a macOS
 #   runner budget exists.
-# - The --skip test-name filters in the Makefile matter: dependency_guard
-#   (rune-nav) and the source-grep gate in rune-md read the tree, not the
-#   mutant, and false-catch mutants if left in.
+# - No test-name skip filters are configured anywhere (Makefile or here).
+#   Four tests read the source tree rather than the compiled mutant and so
+#   false-catch every mutant regardless: rune-nav's dependency_guard.rs,
+#   rune-md's conceal_roundtrip_invariants.rs, and rune-tui's
+#   testgrid_inventory.rs and force_redraw_no_terminal_query.rs. The
+#   per-crate "0 missed" tallies above are therefore optimistic for those
+#   four files, and any future re-baseline must account for that.
 #
 # Keep .devbox (self-gitignored nix store, ~1.5 GB) and fuzz artifacts out of
 # the per-job tree copies; target/ is always excluded regardless of this flag.
 gitignore = true
+# Runner swap: nextest instead of the cargo-test default.
+test_tool = "nextest"
 # The workspace denies dead_code; without capped lints every code-deleting
 # mutant fails the build as "unviable", each one costing a full compile.
 cap_lints = true

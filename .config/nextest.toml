@@ -1,0 +1,27 @@
+# Never add a default-filter to this file: nextest's NO_TESTS_RUN (exit 4) is an
+# allowed exit code to cargo-mutants, which scores any nonzero exit as "caught",
+# so filtering out the mutated test would make a whole run read as 100% caught.
+nextest-version = { required = "0.9.115", recommended = "0.9.143" }
+
+[test-groups]
+multiprocess = { max-threads = 1 }
+perf = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary_id(=rune-db::multiprocess)'
+test-group = 'multiprocess'
+
+[[profile.default.overrides]]
+filter = 'binary_id(=rune-md::perf_guard) or binary_id(=rune-tui::perf_guard)'
+test-group = 'perf'
+
+[profile.ci]
+fail-fast = false
+# Kill timeouts live only here, never in [profile.default]: cargo-mutants runs
+# with no --profile, and a runner kill would reach it as exit 100 "caught"
+# instead of the hang TIMEOUT its ledger records, corrupting the tallies.
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[[profile.ci.overrides]]
+filter = 'binary_id(=rune-db::multiprocess)'
+slow-timeout = { period = "120s", terminate-after = 5 }

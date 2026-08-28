@@ -1,7 +1,6 @@
 //! The session fuzz target. `#[ignore]` by design: a randomized soak, run
-//! only via `make test-fuzz` (rust/Makefile, owned by a parallel work
-//! package), never inside an ordinary parallel `cargo test`. Mirrors the
-//! `#[ignore]` convention set by `crates/rune-md/tests/perf_guard.rs`.
+//! only via `make test-fuzz`, never inside an ordinary `make test` sweep.
+//! Mirrors the `#[ignore]` convention set by the perf guards.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -16,10 +15,10 @@ use rune_fuzz::invariant::Violation;
 use rune_fuzz::{driver, generate, report, script, wal};
 
 #[ignore = "Randomized soak. Runs ONLY via the explicit invocation in \
-            rust/Makefile (`make test-fuzz`), which sets PROPTEST_CASES/ \
-            PROPTEST_RNG_SEED and scopes to `-p rune-fuzz --test \
-            human_session --exact --test-threads=1` rather than a bare \
-            `cargo test`."]
+            `make test-fuzz`, which sets PROPTEST_CASES/ \
+            PROPTEST_RNG_SEED and scopes to `cargo nextest run -p rune-fuzz \
+            --test human_session --run-ignored only -E 'test(=human_session)'` \
+            rather than a bare `cargo nextest run --workspace`."]
 #[test]
 fn human_session() {
     match wal::sweep(Path::new("artifacts")) {
