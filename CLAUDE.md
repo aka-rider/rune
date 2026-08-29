@@ -17,7 +17,7 @@ crates/rune-syntax   Producer-agnostic syntax layer: reveal vocabulary, SyntaxSp
 crates/rune-md       Markdown pipeline over comrak: parse -> emit -> wrap -> snapshot. Terminal-free
 crates/rune-tui      Elm-style runtime, terminal lifecycle, keymap resolver, panes, editor UI
 crates/rune-fuzz     Headless session fuzzer: drives the real update loop, checks named invariants
-crates/rune-ts       Terminal-free tree-sitter layer: 22 grammars, compile-free language lookup, whole-document highlight
+crates/rune-ts       Terminal-free tree-sitter layer: 32 grammars, compile-free language lookup, whole-document highlight
 crates/rune-merge    Editor<->disk hunk resolver: three-way diff, conflict markers, merge-mode dispatch intercept
 crates/rune-nav      Link/target resolution: bare-then-.md retry, one classifier shared by links and images
 crates/rune-image    Terminal-free image decode + Kitty graphics transmit: byte-parity framing, deterministic IDs
@@ -38,7 +38,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 
 ## Build & Test
 
-`make build` · `make test` · `make lint` · `make fmt` · `make bench` · `make perf-guard` · `make test-fuzz` (session fuzzer; `RC=` cases, `RS=` pinned seed) · `make test-grammars` (22 tree-sitter grammars)
+`make build` · `make test` · `make lint` · `make fmt` · `make bench` · `make perf-guard` · `make test-fuzz` (session fuzzer; `RC=` cases, `RS=` pinned seed) · `make test-grammars` (32 tree-sitter grammars)
 
 ## House Rules
 

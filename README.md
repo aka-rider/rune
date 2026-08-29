@@ -7,7 +7,7 @@
 ## Good News Everyone
 
 - **MacOS-native** look and feel with familiar **⌘** - combinations
-- **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code fences with real tree-sitter syntax highlighting across 22 languages, tables with adaptive layouts, task lists, thematic breaks, YAML frontmatter, `[[wikilinks]]`, and setext headings.
+- **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code fences with real tree-sitter syntax highlighting across 32 languages, tables with adaptive layouts, task lists, thematic breaks, YAML frontmatter, `[[wikilinks]]`, and setext headings.
 - **Task lists** - `- [x] buy milk` syntax
 - **Inline Images** — Render PNG, JPEG, GIF, WebP, BMP, TIFF, and SVG directly in your terminal via the Kitty graphics protocol. GIFs render as a still frame.
 - **Mouse Support** — Click to focus, drag to select, drag pane dividers, scroll through files, multi-click select.

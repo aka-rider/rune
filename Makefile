@@ -65,7 +65,7 @@ test-fuzz:
 	    $(CARGO) nextest run -p rune-fuzz --test human_session \
 	    --run-ignored only -E 'test(=human_session)'
 
-# The heavy per-grammar property test: every one of the 22 tree-sitter
+# The heavy per-grammar property test: every one of the 32 tree-sitter
 # grammars against many arbitrary sources, not just the handful the
 # non-ignored smoke test runs on every `make test`.
 test-grammars:

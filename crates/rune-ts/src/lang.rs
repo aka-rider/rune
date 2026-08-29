@@ -19,7 +19,7 @@ pub struct LangDef {
     pub highlights: fn() -> String,
 }
 
-/// The 22 supported languages, keyed by their canonical lowercase name.
+/// The 32 supported languages, keyed by their canonical lowercase name.
 pub static LANGUAGES: &[LangDef] = &[
     LangDef {
         name: "rust",

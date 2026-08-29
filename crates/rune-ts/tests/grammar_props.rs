@@ -1,4 +1,4 @@
-//! Grammar-robustness property test: every one of the 22 grammars must
+//! Grammar-robustness property test: every one of the 32 grammars must
 //! survive arbitrary bytes without panicking, and a returned highlight
 //! result must stay in-bounds, land on `char` boundaries, respect the span
 //! cap, and stay in painter order. Every language is walked exhaustively

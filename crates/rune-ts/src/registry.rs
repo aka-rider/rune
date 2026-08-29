@@ -79,7 +79,7 @@ impl LanguageRegistry {
     }
 
     /// The canonical names of every language in the registry, compiled or
-    /// not. All 22 languages are always listed, regardless of whether they
+    /// not. All 32 languages are always listed, regardless of whether they
     /// have been requested or have compiled successfully.
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.entries.iter().flatten().map(|(def, _)| def.name)
@@ -103,7 +103,7 @@ impl Default for LanguageRegistry {
     }
 }
 
-/// A lazily-initialized shared registry of all 22 supported languages. Each
+/// A lazily-initialized shared registry of all 32 supported languages. Each
 /// language's `Query` is compiled on its first request, not when this static
 /// is touched.
 pub fn registry() -> &'static LanguageRegistry {
