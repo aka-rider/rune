@@ -191,6 +191,13 @@ pub static LANGUAGES: &[LangDef] = &[
         language: || tree_sitter_lua::LANGUAGE.into(),
         highlights: || tree_sitter_lua::HIGHLIGHTS_QUERY.to_string(),
     },
+    LangDef {
+        name: "make",
+        language: || tree_sitter_make::LANGUAGE.into(),
+        // `tree-sitter-make` exports no query of its own; ours is
+        // hand-authored offline against its grammar.
+        highlights: || include_str!("../queries/make.scm").to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match
@@ -231,6 +238,10 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("sbt", "scala"),
     ("sc", "scala"),
     ("rlang", "r"),
+    ("makefile", "make"),
+    ("mk", "make"),
+    ("mak", "make"),
+    ("gnumakefile", "make"),
 ];
 
 /// Resolves a fence info string or a file extension (with or without a

@@ -62,6 +62,9 @@ pub static FILENAMES: &[(&str, &str)] = &[
     ("pipfile", "toml"),
     // yaml
     (".clang-format", "yaml"),
+    // make
+    ("makefile", "make"),
+    ("gnumakefile", "make"),
 ];
 
 /// Whole file names that open as markdown — the extension-less

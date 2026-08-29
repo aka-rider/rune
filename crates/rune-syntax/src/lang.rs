@@ -33,6 +33,7 @@ static NAMES: &[&str] = &[
     "scala",
     "r",
     "lua",
+    "make",
 ];
 
 impl LangId {

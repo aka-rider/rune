@@ -21,7 +21,7 @@ fn every_language_loads_and_its_query_compiles() {
         "language(s) failed to load or compile: {:?}",
         reg.failures()
     );
-    assert_eq!(names.len(), 29);
+    assert_eq!(names.len(), 30);
 }
 
 #[test]
@@ -39,8 +39,8 @@ fn registry_is_a_stable_shared_instance() {
     );
     assert_eq!(
         second.names().count(),
-        29,
-        "the shared registry must list all 29 languages"
+        30,
+        "the shared registry must list all 30 languages"
     );
 }
 
@@ -122,6 +122,13 @@ fn terraform_query_produces_spans() {
         !result.spans.is_empty(),
         "expected at least one terraform span"
     );
+}
+
+#[test]
+fn make_query_produces_spans() {
+    let source = "all:\n\t@echo hi\n";
+    let result = highlight("make", source, Duration::from_secs(5)).expect("parse");
+    assert!(!result.spans.is_empty(), "expected at least one make span");
 }
 
 #[test]

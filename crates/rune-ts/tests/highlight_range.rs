@@ -166,3 +166,59 @@ fn kotlin_float_literal_is_captured_as_a_number() {
         "kotlin's float literal must carry the number scope"
     );
 }
+
+const MAKE_SOURCE: &str =
+    "ifeq ($(OS),Linux)\nCC := gcc\nendif\n\n.PHONY: all\nall: main.o\n\t@echo $@ $(wildcard *.c)\n";
+
+#[test]
+fn make_conditional_directive_is_captured() {
+    let keyword = scope_table().resolve("keyword").expect("keyword scope");
+    assert!(
+        spans_of("make", MAKE_SOURCE)
+            .iter()
+            .any(|(range, id)| *id == keyword && range.start == 0 && range.end == 4),
+        "make's ifeq must carry the keyword scope"
+    );
+}
+
+#[test]
+fn make_automatic_variable_is_captured() {
+    let variable = scope_table().resolve("variable").expect("variable scope");
+    let at = MAKE_SOURCE.find("$@").expect("automatic variable present");
+    assert!(
+        spans_of("make", MAKE_SOURCE)
+            .iter()
+            .any(|(range, id)| *id == variable && range.start == at && range.end == at + 2),
+        "make's $@ must carry the variable scope"
+    );
+}
+
+#[test]
+fn make_rule_target_is_captured_as_a_function() {
+    let function = scope_table().resolve("function").expect("function scope");
+    let at = MAKE_SOURCE.find("all:").expect("target present");
+    assert!(
+        spans_of("make", MAKE_SOURCE)
+            .iter()
+            .any(|(range, id)| *id == function && range.start == at && range.end == at + 3),
+        "make's rule target must carry the function scope"
+    );
+}
+
+#[test]
+fn make_special_target_wins_over_the_plain_target_capture() {
+    let builtin = scope_table()
+        .resolve("constant.builtin")
+        .expect("constant.builtin scope");
+    let at = MAKE_SOURCE.find(".PHONY").expect("special target present");
+    let spans = spans_of("make", MAKE_SOURCE);
+    let last = spans
+        .iter()
+        .filter(|(range, _)| range.start == at && range.end == at + 6)
+        .next_back()
+        .expect("a span over .PHONY");
+    assert_eq!(
+        last.1, builtin,
+        "the last span painted over .PHONY must be constant.builtin, not function"
+    );
+}
