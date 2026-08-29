@@ -5,7 +5,7 @@ use crate::messages;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadOnly {
     No,
-    /// The user asked for reading view (⌃P) — the same chord returns it,
+    /// The user asked for reading view (⌃⇧P) — the same chord returns it,
     /// with the document's journal, `db` binding, and unsaved bytes intact.
     Reading,
     /// No editable form exists: the Help tab, the error banner, an image
@@ -22,7 +22,7 @@ impl ReadOnly {
     pub fn refusal_message(&self) -> Option<&'static str> {
         match self {
             ReadOnly::No => None,
-            ReadOnly::Reading => Some("reading view — ⌃P to edit"),
+            ReadOnly::Reading => Some("reading view — ⌃⇧P to edit"),
             ReadOnly::Always => Some("this document is read-only"),
             ReadOnly::Preview => Some("preview — not yet open for editing"),
         }

@@ -320,37 +320,52 @@ fn global_j_binding_is_not_already_bound_in_any_pane_table() {
 }
 
 #[test]
-fn filesearch_chords_are_not_already_bound_in_any_pane_table() {
+fn global_o_binding_is_not_already_bound_in_any_pane_table() {
     use crate::keymap::KeyInput;
 
-    let ctrl_cap_f = KeyInput {
-        code: KeyCode::Char('F'),
+    let ctrl_o = KeyInput {
+        code: KeyCode::Char('o'),
         mods: CTRL,
     };
-    let sup_cap_f = KeyInput {
-        code: KeyCode::Char('F'),
+    let sup_o = KeyInput {
+        code: KeyCode::Char('o'),
         mods: SUP,
     };
-    assert_unclaimed_by_any_pane_table(&[ctrl_cap_f, sup_cap_f]);
+    assert_unclaimed_by_any_pane_table(&[ctrl_o, sup_o]);
 }
 
 #[test]
-fn ctrl_shifted_f_resolves_to_toggle_filesearch() {
+fn ctrl_o_resolves_to_toggle_filesearch() {
     use crate::binding::resolve_in;
     use crate::keymap::KeyInput;
 
-    let ctrl_cap_f = KeyInput {
-        code: KeyCode::Char('F'),
+    let ctrl_o = KeyInput {
+        code: KeyCode::Char('o'),
         mods: CTRL,
     };
     assert_eq!(
-        resolve_in(GLOBAL_BINDINGS, ctrl_cap_f),
+        resolve_in(GLOBAL_BINDINGS, ctrl_o),
         Some(GlobalCommand::ToggleFileSearch)
     );
 }
 
 #[test]
-fn palette_chords_are_not_already_bound_in_any_pane_table() {
+fn ctrl_p_resolves_to_toggle_palette() {
+    use crate::binding::resolve_in;
+    use crate::keymap::KeyInput;
+
+    let ctrl_p = KeyInput {
+        code: KeyCode::Char('p'),
+        mods: CTRL,
+    };
+    assert_eq!(
+        resolve_in(GLOBAL_BINDINGS, ctrl_p),
+        Some(GlobalCommand::TogglePalette)
+    );
+}
+
+#[test]
+fn read_only_shifted_p_is_not_already_bound_in_any_pane_table() {
     use crate::keymap::KeyInput;
 
     let ctrl_cap_p = KeyInput {
@@ -365,7 +380,7 @@ fn palette_chords_are_not_already_bound_in_any_pane_table() {
 }
 
 #[test]
-fn ctrl_shifted_p_resolves_to_toggle_palette() {
+fn ctrl_shifted_p_resolves_to_toggle_read_only() {
     use crate::binding::resolve_in;
     use crate::keymap::KeyInput;
 
@@ -375,18 +390,18 @@ fn ctrl_shifted_p_resolves_to_toggle_palette() {
     };
     assert_eq!(
         resolve_in(GLOBAL_BINDINGS, ctrl_cap_p),
-        Some(GlobalCommand::TogglePalette)
+        Some(GlobalCommand::ToggleReadOnly)
     );
 }
 
 #[test]
-fn ctrl_shifted_p_reaches_toggle_palette_through_from_termina() {
+fn ctrl_shifted_p_reaches_toggle_read_only_through_from_termina() {
     use termina::event::{KeyCode as TerminaKeyCode, KeyEvent, Modifiers};
 
     let event = KeyEvent::new(TerminaKeyCode::Char('P'), Modifiers::CONTROL);
     let input = crate::keymap::from_termina(event);
     assert_eq!(
         input.and_then(|key| crate::binding::resolve_in(GLOBAL_BINDINGS, key)),
-        Some(GlobalCommand::TogglePalette)
+        Some(GlobalCommand::ToggleReadOnly)
     );
 }

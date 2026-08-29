@@ -26,9 +26,9 @@ const CTRL: Mods = Mods {
     sup: false,
 };
 
-fn ctrl_shift_p() -> KeyInput {
+fn ctrl_p() -> KeyInput {
     KeyInput {
-        code: KeyCode::Char('P'),
+        code: KeyCode::Char('p'),
         mods: CTRL,
     }
 }
@@ -37,7 +37,7 @@ fn ctrl_shift_p() -> KeyInput {
 fn the_toggle_chord_opens_the_palette() {
     let mut app = app();
     let mut effects = Effects::default();
-    crate::dispatch::handle_key(&mut app, ctrl_shift_p(), &mut effects);
+    crate::dispatch::handle_key(&mut app, ctrl_p(), &mut effects);
     assert!(app.palette().is_some());
 }
 
@@ -47,7 +47,7 @@ fn escape_closes_the_palette_and_leaves_prior_state_untouched() {
     let before_focus = app.focus();
     crate::search::open(&mut app, &mut crate::runtime::Effects::default());
     let mut effects = Effects::default();
-    crate::dispatch::handle_key(&mut app, ctrl_shift_p(), &mut effects);
+    crate::dispatch::handle_key(&mut app, ctrl_p(), &mut effects);
     assert!(app.palette().is_some());
     assert!(
         app.search().is_none(),

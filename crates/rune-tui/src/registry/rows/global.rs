@@ -92,7 +92,7 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     row(GlobalCommand::SearchNext, "next match", "next match"),
     row(GlobalCommand::SearchPrev, "prev match", "prev match"),
     availability_row(GlobalCommand::TogglePin, "pin", "pin", preview_locked),
-    row(GlobalCommand::ToggleFileSearch, "find file", "find file"),
+    row(GlobalCommand::ToggleFileSearch, "open file", "open file"),
     aliased_row(
         GlobalCommand::TogglePalette,
         "command palette",

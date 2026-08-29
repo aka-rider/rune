@@ -179,13 +179,13 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         secondary: true,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('p'), CTRL),
+        key: KeyPattern::new(KeyCode::Char('P'), CTRL),
         cmd: GlobalCommand::ToggleReadOnly,
         help: "reading",
         secondary: false,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('p'), SUP),
+        key: KeyPattern::new(KeyCode::Char('P'), SUP),
         cmd: GlobalCommand::ToggleReadOnly,
         help: "reading",
         secondary: true,
@@ -240,8 +240,8 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     },
     // This crate requests `REPORT_ALTERNATE_KEYS`, under which a shifted
     // chord arrives as the shifted character with `SHIFT` itself cleared
-    // — so `SearchPrev`/`ToggleFileSearch` below bind the shifted char
-    // (`'G'`/`'F'`), not the base char with a `SHIFT` bit set.
+    // — so `SearchPrev` below and `ToggleReadOnly` above bind the shifted
+    // char (`'G'`/`'P'`), not the base char with a `SHIFT` bit set.
     Binding {
         key: KeyPattern::new(KeyCode::Char('G'), CTRL),
         cmd: GlobalCommand::SearchPrev,
@@ -255,25 +255,25 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         secondary: true,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('F'), CTRL),
+        key: KeyPattern::new(KeyCode::Char('o'), CTRL),
         cmd: GlobalCommand::ToggleFileSearch,
-        help: "find file",
+        help: "open file",
         secondary: false,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('F'), SUP),
+        key: KeyPattern::new(KeyCode::Char('o'), SUP),
         cmd: GlobalCommand::ToggleFileSearch,
-        help: "find file",
+        help: "open file",
         secondary: true,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('P'), CTRL),
+        key: KeyPattern::new(KeyCode::Char('p'), CTRL),
         cmd: GlobalCommand::TogglePalette,
         help: "command palette",
         secondary: false,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('P'), SUP),
+        key: KeyPattern::new(KeyCode::Char('p'), SUP),
         cmd: GlobalCommand::TogglePalette,
         help: "command palette",
         secondary: true,

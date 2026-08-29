@@ -256,19 +256,23 @@ fn palette_availability_goes_stale_free_when_a_stage_two_chord_flips_read_only()
 
     assert_eq!(row_availability(&app, "uppercase"), Availability::Available);
 
-    let ctrl_p = KeyInput {
-        code: KeyCode::Char('p'),
+    let ctrl_shift_p = KeyInput {
+        code: KeyCode::Char('P'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE
         },
     };
-    crate::app::update(&mut app, crate::runtime::Msg::Key(ctrl_p), &mut effects);
+    crate::app::update(
+        &mut app,
+        crate::runtime::Msg::Key(ctrl_shift_p),
+        &mut effects,
+    );
 
     assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
     assert!(
         app.palette().is_some(),
-        "^P leaves the palette open (LeaveOpen policy)"
+        "^⇧P leaves the palette open (LeaveOpen policy)"
     );
     assert!(matches!(
         row_availability(&app, "uppercase"),
