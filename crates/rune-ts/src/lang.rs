@@ -156,6 +156,11 @@ pub static LANGUAGES: &[LangDef] = &[
         language: || tree_sitter_swift::LANGUAGE.into(),
         highlights: || tree_sitter_swift::HIGHLIGHTS_QUERY.to_string(),
     },
+    LangDef {
+        name: "erlang",
+        language: || tree_sitter_erlang::LANGUAGE.into(),
+        highlights: || tree_sitter_erlang::HIGHLIGHTS_QUERY.to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match
@@ -187,6 +192,8 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("hcl", "terraform"),
     ("rb", "ruby"),
     ("htm", "html"),
+    ("erl", "erlang"),
+    ("hrl", "erlang"),
 ];
 
 /// Resolves a fence info string or a file extension (with or without a
