@@ -186,6 +186,11 @@ pub static LANGUAGES: &[LangDef] = &[
         language: || tree_sitter_r::LANGUAGE.into(),
         highlights: || tree_sitter_r::HIGHLIGHTS_QUERY.to_string(),
     },
+    LangDef {
+        name: "lua",
+        language: || tree_sitter_lua::LANGUAGE.into(),
+        highlights: || tree_sitter_lua::HIGHLIGHTS_QUERY.to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match

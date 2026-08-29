@@ -57,6 +57,7 @@ const CAPTURE_ALIASES: &[(&str, &str)] = &[
     ("delimiter", "punctuation.delimiter"),
     ("method", "function.method"),
     ("method.call", "function.method"),
+    ("preproc", "keyword"),
 ];
 
 // Deliberately unstyled: spell is a spellcheck hint, embedded marks an

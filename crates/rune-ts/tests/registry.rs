@@ -21,7 +21,7 @@ fn every_language_loads_and_its_query_compiles() {
         "language(s) failed to load or compile: {:?}",
         reg.failures()
     );
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 29);
 }
 
 #[test]
@@ -39,8 +39,8 @@ fn registry_is_a_stable_shared_instance() {
     );
     assert_eq!(
         second.names().count(),
-        28,
-        "the shared registry must list all 28 languages"
+        29,
+        "the shared registry must list all 29 languages"
     );
 }
 
