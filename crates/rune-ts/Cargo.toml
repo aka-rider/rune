@@ -30,6 +30,7 @@ tree-sitter-kotlin-sg = "0.4.1"
 tree-sitter-swift = "0.7.3"
 tree-sitter-erlang = "0.20.0"
 tree-sitter-haskell = "0.23.1"
+tree-sitter-elixir = "0.3.5"
 
 [dev-dependencies]
 proptest = { workspace = true }
