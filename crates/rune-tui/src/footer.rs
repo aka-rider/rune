@@ -91,7 +91,7 @@ fn quit_hint(app: &App) -> &'static str {
 fn left_spans(app: &App) -> Vec<Span<'static>> {
     match mode(app) {
         Mode::Guard(prompt) => guard_spans(app, prompt),
-        Mode::Messages => hint_row(app, [("\u{2318}C", "copy"), ("Esc", "close")]),
+        Mode::Messages => hint_row(app, [("\u{2318}C", "copy"), ("\u{238b}", "close")]),
         Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::DiskChanged => disk_changed_spans(app),

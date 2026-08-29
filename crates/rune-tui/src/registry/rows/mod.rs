@@ -51,6 +51,10 @@ pub(crate) fn chords_for(id: CommandId) -> impl Iterator<Item = KeyPattern> {
         .iter()
         .filter(move |b| pane::adapt_diff(b.cmd) == id)
         .map(|b| b.key);
+    let palette_key = crate::palette::keys::PALETTE_BINDINGS
+        .iter()
+        .filter(move |b| pane::adapt_palette_key(b.cmd) == id)
+        .map(|b| b.key);
 
     global
         .chain(editor)
@@ -59,4 +63,5 @@ pub(crate) fn chords_for(id: CommandId) -> impl Iterator<Item = KeyPattern> {
         .chain(tabs)
         .chain(filesearch)
         .chain(diff)
+        .chain(palette_key)
 }

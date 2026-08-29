@@ -75,7 +75,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     }
 
     if focus::target(app) == FocusTarget::Palette {
-        entries.push(("Esc".to_string(), "close", true));
+        entries.push(("\u{238b}".to_string(), "close", true));
         entries.push(("\u{23ce}".to_string(), "run", true));
         entries.push(("\u{2191}\u{2193}".to_string(), "navigate", true));
         return entries;

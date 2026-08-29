@@ -73,16 +73,17 @@ fn help_content_covers_every_registry_section() {
     );
 
     type SectionPredicate = (&'static str, fn(CommandId) -> bool);
-    let sections: [SectionPredicate; 7] = [
+    let sections: [SectionPredicate; 8] = [
         ("Global", |id| matches!(id, CommandId::Global(_))),
         ("Explorer", |id| {
             matches!(id, CommandId::Explorer(_) | CommandId::ExplorerSearch(_))
         }),
-        ("File Search", |id| matches!(id, CommandId::FileSearch(_))),
+        ("Open File", |id| matches!(id, CommandId::FileSearch(_))),
         ("Open Tabs", |id| matches!(id, CommandId::Tabs(_))),
         ("Editor", |id| matches!(id, CommandId::Editor(_))),
         ("Diff View", |id| matches!(id, CommandId::Diff(_))),
         ("Palette", |id| matches!(id, CommandId::Palette(_))),
+        ("Palette Keys", |id| matches!(id, CommandId::PaletteKey(_))),
     ];
     for (title, pick) in sections {
         assert!(

@@ -32,6 +32,7 @@ const fn availability_row(
         name,
         fuzzy_aliases: &[],
         help,
+        detail: "",
         arg: ArgKind::None,
         listed,
         availability,

@@ -174,7 +174,7 @@ mod tests {
             );
         }
         assert!(
-            text.ends_with("S save  D discard  Esc cancel"),
+            text.ends_with("S save  D discard  \u{238b} cancel"),
             "key hints carry no brackets: {text:?}"
         );
     }

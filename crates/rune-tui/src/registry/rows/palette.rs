@@ -8,7 +8,7 @@ use super::super::{
 const fn row(
     cmd: PaletteCommand,
     name: &'static str,
-    help: &'static str,
+    prose: &'static str,
     arg: ArgKind,
     fuzzy_aliases: &'static [&'static str],
     availability: fn(&App) -> Availability,
@@ -17,7 +17,8 @@ const fn row(
         id: CommandId::Palette(cmd),
         name,
         fuzzy_aliases,
-        help,
+        help: prose,
+        detail: prose,
         arg,
         listed: true,
         availability,

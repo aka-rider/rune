@@ -111,7 +111,7 @@ impl GuardKey {
     pub fn label(self) -> String {
         match self {
             GuardKey::Char(c) => c.to_ascii_uppercase().to_string(),
-            GuardKey::Escape => "Esc".to_string(),
+            GuardKey::Escape => "\u{238b}".to_string(),
         }
     }
 }

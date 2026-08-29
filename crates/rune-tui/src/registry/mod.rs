@@ -11,6 +11,7 @@ use crate::filesearch::keys::FileSearchCommand;
 use crate::global::GlobalCommand;
 use crate::keymap;
 use crate::opentabs::TabsCommand;
+use crate::palette::keys::PaletteKeyCommand;
 
 mod avail;
 #[cfg(test)]
@@ -36,6 +37,7 @@ pub enum CommandId {
     FileSearch(FileSearchCommand),
     Diff(DiffCommand),
     Palette(PaletteCommand),
+    PaletteKey(PaletteKeyCommand),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +67,7 @@ pub struct CommandSpec {
     pub name: &'static str,
     pub(crate) fuzzy_aliases: &'static [&'static str],
     pub help: &'static str,
+    pub detail: &'static str,
     pub(crate) arg: ArgKind,
     pub listed: bool,
     pub(crate) availability: fn(&App) -> Availability,

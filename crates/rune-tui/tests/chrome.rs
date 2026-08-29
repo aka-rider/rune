@@ -415,8 +415,14 @@ fn the_center_blocks_right_border_reaches_the_last_frame_column() {
 #[test]
 fn help_markdown_still_lists_the_aliased_quit_chord() {
     let markdown = rune_tui::help::help_markdown(true);
+    let quit_row = markdown
+        .lines()
+        .find(|line| line.starts_with("| ") && line.contains("^C, ^D"))
+        .unwrap_or_else(|| {
+            panic!("expected the quit row to join both chords in one key cell:\n{markdown}")
+        });
     assert!(
-        markdown.contains("^D"),
-        "expected the aliased quit chord to remain documented in Help:\n{markdown}"
+        quit_row.contains("quit"),
+        "expected the joined chord row to be the quit row, got {quit_row:?}"
     );
 }

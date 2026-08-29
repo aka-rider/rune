@@ -1,5 +1,3 @@
-use std::fmt::Write as _;
-
 use crate::keymap::{KeyCode, KeyInput, Mods};
 
 // `Printable` matches any printable character regardless of which one, but
@@ -46,13 +44,19 @@ impl KeyPattern {
     }
 
     pub fn write_label(&self, out: &mut String) {
+        // With `REPORT_ALTERNATE_KEYS`, a shifted chord arrives as the
+        // shifted character with the `shift` bit itself cleared, so an
+        // uppercase ASCII `Char` is shift on its own even when the
+        // modifier is not set.
+        let implicit_shift =
+            matches!(self.key, KeyMatch::Code(KeyCode::Char(c)) if c.is_ascii_uppercase());
         if self.mods.ctrl {
             out.push('^');
         }
         if self.mods.alt {
             out.push('\u{2325}'); // ⌥
         }
-        if self.mods.shift {
+        if self.mods.shift || implicit_shift {
             out.push('\u{21e7}'); // ⇧
         }
         if self.mods.sup {
@@ -63,9 +67,17 @@ impl KeyPattern {
             KeyMatch::Code(KeyCode::F1) => out.push_str("F1"),
             KeyMatch::Code(KeyCode::Backspace) => out.push('\u{232b}'), // ⌫
             KeyMatch::Code(KeyCode::Delete) => out.push('\u{2326}'),    // ⌦
-            KeyMatch::Code(other) => {
-                let _ = write!(out, "{other:?}");
-            }
+            KeyMatch::Code(KeyCode::Enter) => out.push('\u{23ce}'),     // ⏎
+            KeyMatch::Code(KeyCode::Escape) => out.push('\u{238b}'),    // ⎋
+            KeyMatch::Code(KeyCode::Tab) => out.push('\u{21e5}'),       // ⇥
+            KeyMatch::Code(KeyCode::Left) => out.push('\u{2190}'),      // ←
+            KeyMatch::Code(KeyCode::Right) => out.push('\u{2192}'),     // →
+            KeyMatch::Code(KeyCode::Up) => out.push('\u{2191}'),        // ↑
+            KeyMatch::Code(KeyCode::Down) => out.push('\u{2193}'),      // ↓
+            KeyMatch::Code(KeyCode::Home) => out.push_str("Home"),
+            KeyMatch::Code(KeyCode::End) => out.push_str("End"),
+            KeyMatch::Code(KeyCode::PageUp) => out.push_str("PgUp"),
+            KeyMatch::Code(KeyCode::PageDown) => out.push_str("PgDn"),
             KeyMatch::Printable => out.push_str("A-Z"),
         }
     }
@@ -155,5 +167,49 @@ mod tests {
             mods: CTRL,
         };
         assert_eq!(resolve_in(TABLE, key), Some(TestCmd::Foo));
+    }
+
+    #[test]
+    fn write_label_distinguishes_implicit_shift_from_base_char() {
+        let base = KeyPattern::new(KeyCode::Char('g'), CTRL);
+        let shifted = KeyPattern::new(KeyCode::Char('G'), CTRL);
+        assert_eq!(base.label(), "^G");
+        assert_eq!(shifted.label(), "^\u{21e7}G");
+    }
+
+    #[test]
+    fn write_label_does_not_double_shift_prefix() {
+        const SUP_SHIFT: Mods = Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: true,
+        };
+        let pattern = KeyPattern::new(KeyCode::Char('|'), SUP_SHIFT);
+        assert_eq!(pattern.label(), "\u{21e7}\u{2318}|");
+    }
+
+    #[test]
+    fn write_label_uses_arrow_glyph_for_up() {
+        let pattern = KeyPattern::new(KeyCode::Up, Mods::NONE);
+        assert_eq!(pattern.label(), "\u{2191}");
+    }
+
+    #[test]
+    fn write_label_prefixes_ctrl_page_up_word() {
+        let pattern = KeyPattern::new(KeyCode::PageUp, CTRL);
+        assert_eq!(pattern.label(), "^PgUp");
+    }
+
+    #[test]
+    fn write_label_uses_escape_glyph() {
+        let pattern = KeyPattern::new(KeyCode::Escape, Mods::NONE);
+        assert_eq!(pattern.label(), "\u{238b}");
+    }
+
+    #[test]
+    fn write_label_prefixes_ctrl_home_word() {
+        let pattern = KeyPattern::new(KeyCode::Home, CTRL);
+        assert_eq!(pattern.label(), "^Home");
     }
 }

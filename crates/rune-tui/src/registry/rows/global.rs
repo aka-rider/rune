@@ -49,6 +49,7 @@ const fn full_row(
         name,
         fuzzy_aliases,
         help,
+        detail: "",
         arg: ArgKind::None,
         listed: true,
         availability,
@@ -99,6 +100,16 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         "command palette",
         &["palette"],
     ),
-    row(GlobalCommand::NavBack, "back", "back"),
-    row(GlobalCommand::NavForward, "forward", "forward"),
+    aliased_row(
+        GlobalCommand::NavBack,
+        "go back in history",
+        "back",
+        &["back"],
+    ),
+    aliased_row(
+        GlobalCommand::NavForward,
+        "go forward in history",
+        "forward",
+        &["forward"],
+    ),
 ];
