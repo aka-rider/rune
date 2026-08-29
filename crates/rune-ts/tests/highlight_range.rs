@@ -214,8 +214,7 @@ fn make_special_target_wins_over_the_plain_target_capture() {
     let spans = spans_of("make", MAKE_SOURCE);
     let last = spans
         .iter()
-        .filter(|(range, _)| range.start == at && range.end == at + 6)
-        .next_back()
+        .rfind(|(range, _)| range.start == at && range.end == at + 6)
         .expect("a span over .PHONY");
     assert_eq!(
         last.1, builtin,
