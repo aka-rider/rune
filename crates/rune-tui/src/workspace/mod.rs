@@ -111,6 +111,7 @@ pub(crate) fn handle_file_opened(
     effects: &mut Effects,
 ) {
     if crate::explorer_preview::maybe_consume_reply(app, path, preview_generation, &result) {
+        crate::projectsearch::apply_pending_center(app);
         return;
     }
 

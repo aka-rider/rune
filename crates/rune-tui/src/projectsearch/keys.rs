@@ -1,10 +1,17 @@
+use std::path::PathBuf;
+
+use rune_core::cursor::CursorSet;
+
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
+use crate::document::DocumentId;
 use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::pane::Pane;
 use crate::queryline;
 use crate::runtime::Effects;
+use crate::viewport::ScrollMode;
 
-use super::cancel;
+use super::{cancel, close};
 
 const SHIFT: Mods = Mods {
     shift: true,
@@ -23,6 +30,7 @@ pub enum ProjectSearchCommand {
     PageDown,
     Top,
     Bottom,
+    Enter,
     Cancel,
 }
 
@@ -82,6 +90,12 @@ pub const PROJECTSEARCH_BINDINGS: &[Binding<ProjectSearchCommand>] = &[
         secondary: false,
     },
     Binding {
+        key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
+        cmd: ProjectSearchCommand::Enter,
+        help: "open",
+        secondary: false,
+    },
+    Binding {
         key: KeyPattern::new(KeyCode::Escape, Mods::NONE),
         cmd: ProjectSearchCommand::Cancel,
         help: "cancel",
@@ -110,35 +124,81 @@ fn apply(app: &mut App, cmd: ProjectSearchCommand, key: KeyInput, effects: &mut 
                 super::restart_debounce(app);
             }
         }
-        ProjectSearchCommand::Up => nav_move(app, -1),
-        ProjectSearchCommand::Down => nav_move(app, 1),
-        ProjectSearchCommand::PageUp => nav_move(app, -page_amount(app)),
-        ProjectSearchCommand::PageDown => nav_move(app, page_amount(app)),
-        ProjectSearchCommand::Top => nav_edge(app, true),
-        ProjectSearchCommand::Bottom => nav_edge(app, false),
+        ProjectSearchCommand::Up => nav_move(app, -1, effects),
+        ProjectSearchCommand::Down => nav_move(app, 1, effects),
+        ProjectSearchCommand::PageUp => nav_move(app, -page_amount(app), effects),
+        ProjectSearchCommand::PageDown => nav_move(app, page_amount(app), effects),
+        ProjectSearchCommand::Top => nav_edge(app, true, effects),
+        ProjectSearchCommand::Bottom => nav_edge(app, false, effects),
+        ProjectSearchCommand::Enter => open_selected(app, effects),
         ProjectSearchCommand::Cancel => cancel(app, effects),
     }
+}
+
+pub(super) fn open_selected(app: &mut App, effects: &mut Effects) {
+    let Some((path, first_match)) = selected_hit(app) else {
+        crate::messages::info(app, "no file selected");
+        return;
+    };
+    let departed = app.projectsearch().and_then(|state| state.return_to.raw());
+
+    if let Some(id) = app.explorer.preview
+        && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(path.as_path())
+    {
+        close(app);
+        crate::explorer_preview::promote(app, id);
+        app.set_focus_pane(Pane::Editor, effects);
+        land_at(app, id, first_match);
+        crate::navhistory::record_departure_if_moved(app, departed);
+        return;
+    }
+
+    if let Some(id) = crate::workspace::open_path_checked(app, &path, effects) {
+        close(app);
+        app.set_focus_pane(Pane::Editor, effects);
+        land_at(app, id, first_match);
+        crate::navhistory::record_departure_if_moved(app, departed);
+    }
+}
+
+fn selected_hit(app: &App) -> Option<(PathBuf, usize)> {
+    let state = app.projectsearch()?;
+    state
+        .results
+        .get(state.list.cursor)
+        .map(|hit| (hit.path.clone(), hit.first_match))
+}
+
+fn land_at(app: &mut App, id: DocumentId, offset: usize) {
+    let Some(doc) = app.doc_mut(id) else {
+        return;
+    };
+    let clamped = offset.min(doc.buffer.content().len());
+    doc.cursors = CursorSet::new(clamped);
+    doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 
 fn page_amount(app: &App) -> isize {
     crate::filesearch::keys::page_amount(app)
 }
 
-pub(super) fn nav_move(app: &mut App, delta: isize) {
+pub(super) fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
     let height = page_amount(app).max(1) as usize;
     let Some(state) = app.projectsearch_mut() else {
         return;
     };
     let len = state.results.len();
     state.list.move_and_follow(delta, len, height);
+    super::after_selection_change(app, effects);
 }
 
-fn nav_edge(app: &mut App, top: bool) {
+fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
     let Some(state) = app.projectsearch_mut() else {
         return;
     };
     let len = state.results.len();
     state.list.jump_to_edge(len, top);
+    super::after_selection_change(app, effects);
 }
 
 pub(crate) fn paste(app: &mut App, text: &str) {

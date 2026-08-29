@@ -167,19 +167,29 @@ fn scroll_to(doc: &mut Document, target_row: DisplayRow) {
     doc.viewport.mode = ScrollMode::Independent;
 }
 
+fn display_row_of_byte(doc: &mut Document, target: usize) -> DisplayRow {
+    let view = doc.view();
+    let clamped = target.min(doc.buffer.content().len());
+    let bp = doc.buffer.offset_to_line_col(clamped);
+    let sp = view.syntax.buffer_to_syntax(bp);
+    let wrap_row = WrapRow(view.wrap.syntax_to_wrap(sp).row);
+    view.display.wrap_to_display(wrap_row)
+}
+
 /// Scrolls the viewport so the DISPLAY row containing byte offset `target`
 /// is visible — merge mode's own "jump to a hunk" primitive. Unlike every
 /// other command in this module, never touches a cursor: moving it here
 /// would pollute the next journal step's `cursors_before`, corrupting
 /// undo's reopen-the-hunk-you-just-resolved behavior.
 pub(crate) fn scroll_to_byte_offset(doc: &mut Document, target: usize) {
-    let view = doc.view();
-    let clamped = target.min(doc.buffer.content().len());
-    let bp = doc.buffer.offset_to_line_col(clamped);
-    let sp = view.syntax.buffer_to_syntax(bp);
-    let wrap_row = WrapRow(view.wrap.syntax_to_wrap(sp).row);
-    let row = view.display.wrap_to_display(wrap_row);
+    let row = display_row_of_byte(doc, target);
     scroll_to(doc, row);
+}
+
+pub(crate) fn centre_on_byte_offset(doc: &mut Document, target: usize) {
+    let row = display_row_of_byte(doc, target);
+    let half = doc.viewport.height as usize / 2;
+    scroll_to(doc, row - half);
 }
 
 pub fn centre_cursor(doc: &mut Document) {

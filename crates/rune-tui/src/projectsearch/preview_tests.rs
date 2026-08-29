@@ -1,0 +1,245 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::path::Path;
+
+use rune_core::buffer::Buffer;
+use rune_core::coords::WrapRow;
+
+use crate::app::App;
+use crate::document::Document;
+use crate::keymap::{KeyCode, Mods};
+use crate::runtime::{CmdKind, Effects, Msg, TimerMsgKey};
+use crate::viewport::ScrollMode;
+
+use super::tests::{CTRL, key, pump_index, seeded_app};
+
+fn search(app: &mut App, query: &str, effects: &mut Effects) {
+    key(app, KeyCode::Char('F'), CTRL, effects);
+    pump_index(app, effects);
+    for c in query.chars() {
+        key(app, KeyCode::Char(c), Mods::NONE, effects);
+    }
+    crate::app::update(
+        app,
+        Msg::Timer {
+            key: TimerMsgKey::ProjectSearchDebounce,
+            generation: 0,
+        },
+        effects,
+    );
+    let reply = run_one_cmd(effects, CmdKind::ProjectQuery).expect("query cmd dispatched");
+    crate::app::update(app, reply, effects);
+}
+
+fn run_one_cmd(effects: &mut Effects, kind: CmdKind) -> Option<Msg> {
+    let position = effects.cmds.iter().position(|cmd| cmd.kind() == kind)?;
+    effects.cmds.remove(position).run()
+}
+
+fn expected_display_row(doc: &mut Document, offset: usize) -> usize {
+    let view = doc.view();
+    let bp = doc.buffer.offset_to_line_col(offset);
+    let sp = view.syntax.buffer_to_syntax(bp);
+    let wrap_row = WrapRow(view.wrap.syntax_to_wrap(sp).row);
+    view.display.wrap_to_display(wrap_row).0
+}
+
+fn long_body() -> Vec<u8> {
+    let mut body = String::new();
+    for i in 0..100 {
+        if i == 60 {
+            body.push_str("needle here\n");
+        } else {
+            body.push_str(&format!("line {i:03}\n"));
+        }
+        body.push('\n');
+    }
+    body.into_bytes()
+}
+
+#[test]
+fn selecting_a_result_issues_a_preview_request() {
+    let mut app = seeded_app(&[("/root/deep.md", long_body().as_slice())]);
+    let mut effects = Effects::default();
+    search(&mut app, "needle", &mut effects);
+
+    key(&mut app, KeyCode::Down, Mods::NONE, &mut effects);
+
+    assert_eq!(
+        app.explorer.preview_awaiting.as_deref(),
+        Some(Path::new("/root/deep.md")),
+        "selection change must request a preview of the selected hit"
+    );
+    assert!(
+        effects
+            .cmds
+            .iter()
+            .any(|cmd| cmd.kind() == CmdKind::ReadFile),
+        "the preview read left the thread as a cmd"
+    );
+}
+
+#[test]
+fn the_consumed_preview_reply_centers_the_first_match() {
+    let mut app = seeded_app(&[("/root/deep.md", long_body().as_slice())]);
+    let mut effects = Effects::default();
+    search(&mut app, "needle", &mut effects);
+    let first_match = app
+        .projectsearch()
+        .expect("panel open")
+        .results
+        .first()
+        .expect("a hit")
+        .first_match;
+
+    key(&mut app, KeyCode::Down, Mods::NONE, &mut effects);
+    let reply = run_one_cmd(&mut effects, CmdKind::ReadFile).expect("preview cmd dispatched");
+    crate::app::update(&mut app, reply, &mut effects);
+
+    let id = app
+        .explorer
+        .preview
+        .expect("the reply created a preview doc");
+    let doc = app.doc_mut(id).expect("preview doc lives");
+    let h = doc.viewport.height as usize;
+    assert!(h > 0, "a zero-height viewport would make centering vacuous");
+    let expected_row = expected_display_row(doc, first_match);
+    assert!(
+        expected_row > h,
+        "test setup: the match sits below one page"
+    );
+    assert_eq!(
+        doc.viewport.scroll_row.0,
+        expected_row.saturating_sub(h / 2)
+    );
+    assert_eq!(doc.viewport.mode, ScrollMode::Independent);
+    assert!(
+        app.projectsearch()
+            .expect("panel open")
+            .pending_center
+            .is_none(),
+        "the consumed reply cleared the pending center"
+    );
+}
+
+#[test]
+fn selecting_an_already_open_file_centers_the_real_doc_without_moving_its_cursor() {
+    let mut app = seeded_app(&[("/root/deep.md", long_body().as_slice())]);
+    let mut effects = Effects::default();
+    let id =
+        crate::workspace::open_path_checked(&mut app, Path::new("/root/deep.md"), &mut effects)
+            .expect("open the file for real");
+    let cursor_before = app.doc(id).unwrap().cursors.primary().position.get();
+    search(&mut app, "needle", &mut effects);
+    let first_match = app
+        .projectsearch()
+        .expect("panel open")
+        .results
+        .first()
+        .expect("a hit")
+        .first_match;
+
+    key(&mut app, KeyCode::Down, Mods::NONE, &mut effects);
+
+    assert!(
+        app.explorer.preview.is_none(),
+        "an open file never grows a preview doc"
+    );
+    let doc = app.doc_mut(id).expect("doc lives");
+    let h = doc.viewport.height as usize;
+    assert!(h > 0);
+    let expected_row = expected_display_row(doc, first_match);
+    assert_eq!(
+        doc.viewport.scroll_row.0,
+        expected_row.saturating_sub(h / 2)
+    );
+    assert_eq!(doc.viewport.mode, ScrollMode::Independent);
+    assert_eq!(
+        app.doc(id).unwrap().cursors.primary().position.get(),
+        cursor_before,
+        "centering must never move the cursor"
+    );
+}
+
+#[test]
+fn enter_opens_the_file_with_the_cursor_at_the_match_and_closes_the_panel() {
+    let mut app = seeded_app(&[("/root/deep.md", long_body().as_slice())]);
+    let mut effects = Effects::default();
+    search(&mut app, "needle", &mut effects);
+    let first_match = app
+        .projectsearch()
+        .expect("panel open")
+        .results
+        .first()
+        .expect("a hit")
+        .first_match;
+    assert!(
+        first_match > 0,
+        "test setup: the match is not at offset zero"
+    );
+
+    key(&mut app, KeyCode::Enter, Mods::NONE, &mut effects);
+
+    assert!(app.projectsearch().is_none(), "activation closes the panel");
+    assert_eq!(
+        app.active_doc().file_path.as_deref(),
+        Some(Path::new("/root/deep.md"))
+    );
+    assert_eq!(
+        app.active_doc().cursors.primary().position.get(),
+        first_match
+    );
+    assert_eq!(app.active_doc().viewport.mode, ScrollMode::EnsureVisible);
+    assert_eq!(app.focus(), crate::pane::Pane::Editor);
+}
+
+#[test]
+fn enter_under_a_full_tab_limit_leaves_the_panel_open() {
+    let mut app = seeded_app(&[("/root/deep.md", long_body().as_slice())]);
+    for _ in 1..crate::opentabs::limit::MAX_TABS {
+        app.open_document(Buffer::new("draft"));
+    }
+    assert_eq!(
+        app.documents.order().len(),
+        crate::opentabs::limit::MAX_TABS,
+        "test setup: every tab slot is a draft no eviction may claim"
+    );
+    let mut effects = Effects::default();
+    search(&mut app, "needle", &mut effects);
+
+    key(&mut app, KeyCode::Enter, Mods::NONE, &mut effects);
+
+    assert!(
+        app.projectsearch().is_some(),
+        "a refused open must leave the panel and its results standing"
+    );
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        Some("Tab limit reached — close or unpin a tab")
+    );
+}
+
+#[test]
+fn reopening_prefills_the_last_query_and_reruns_it_against_the_corpus() {
+    let mut app = seeded_app(&[("/root/deep.md", long_body().as_slice())]);
+    let mut effects = Effects::default();
+    search(&mut app, "needle", &mut effects);
+    key(&mut app, KeyCode::Escape, Mods::NONE, &mut effects);
+    assert!(app.projectsearch().is_none(), "test setup: panel closed");
+
+    key(&mut app, KeyCode::Char('F'), CTRL, &mut effects);
+
+    let state = app.projectsearch().expect("panel reopened");
+    assert_eq!(state.query, "needle", "the last query comes back prefilled");
+    let reply = run_one_cmd(&mut effects, CmdKind::ProjectQuery)
+        .expect("reopening with a live query dispatches it without a debounce");
+    crate::app::update(&mut app, reply, &mut effects);
+    assert_eq!(
+        app.projectsearch()
+            .expect("panel open")
+            .results
+            .first()
+            .map(|hit| hit.display.clone()),
+        Some("deep.md".to_string())
+    );
+}

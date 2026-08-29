@@ -201,6 +201,11 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     ),
     projectsearch_row(ProjectSearchCommand::Top, "go to first result", "top"),
     projectsearch_row(ProjectSearchCommand::Bottom, "go to last result", "bottom"),
+    projectsearch_row(
+        ProjectSearchCommand::Enter,
+        "open the selected file",
+        "open",
+    ),
     projectsearch_row(ProjectSearchCommand::Cancel, "cancel", "cancel"),
     diff_row(DiffCommand::NextHunk, "next hunk", "next hunk"),
     diff_row(DiffCommand::PrevHunk, "prev hunk", "prev hunk"),

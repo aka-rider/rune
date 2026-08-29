@@ -159,7 +159,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
             filesearch::mouse(app, input, effects)
         }
         Some(Pane::Explorer) if app.projectsearch().is_some() => {
-            crate::projectsearch::mouse(app, input)
+            crate::projectsearch::mouse(app, input, effects)
         }
         Some(Pane::Explorer) => explorer_mouse::mouse(app, input, effects),
         Some(Pane::Tabs) => opentabs::mouse::mouse(app, input, effects),
@@ -214,7 +214,7 @@ fn handle_projectsearch_click(
     let Some(visible_row) = row_in_area.checked_sub(1) else {
         return;
     };
-    crate::projectsearch::click_row(app, visible_row as usize);
+    crate::projectsearch::click_row(app, visible_row as usize, effects);
 }
 
 fn handle_palette_down(

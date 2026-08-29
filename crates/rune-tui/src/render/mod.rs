@@ -92,6 +92,21 @@ pub fn build_rows(
         }
     }
 
+    if let Some(state) = app.projectsearch()
+        && let Some(hit) = state.results.get(state.list.cursor)
+        && doc_id.is_some()
+        && crate::workspace::existing_document_for(app, &hit.path) == doc_id
+        && let Some(window) = overlay::visible_byte_range(&rows)
+    {
+        for range in hit
+            .ranges
+            .iter()
+            .filter(|r| r.start < window.end && r.end > window.start)
+        {
+            paint_range(&mut rows, range.clone(), app.theme.chrome.search_match_bg);
+        }
+    }
+
     overlay::apply_cursor_overlays(
         overlay::OverlayGates {
             caret: doc.has_insertion_point(),

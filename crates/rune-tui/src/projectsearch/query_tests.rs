@@ -285,7 +285,7 @@ fn a_wheel_msg_over_the_panel_moves_the_selection() {
 }
 
 #[test]
-fn a_click_on_a_visible_row_selects_it() {
+fn a_click_on_a_visible_row_opens_it_at_its_first_match() {
     let mut app = seeded_app(&[
         ("/root/a.md", b"needle"),
         ("/root/b.md", b"needle"),
@@ -308,10 +308,17 @@ fn a_click_on_a_visible_row_selects_it() {
         &mut effects,
     );
 
-    let state = app
-        .projectsearch()
-        .expect("a row click keeps the panel open");
-    assert_eq!(state.list.cursor, 2, "row 2 sits under the third list line");
+    assert!(
+        app.projectsearch().is_none(),
+        "a row click activates the result and closes the panel"
+    );
+    assert_eq!(
+        app.active_doc().file_path.as_deref(),
+        Some(Path::new("/root/c.md")),
+        "row 2 sits under the third list line"
+    );
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
+    assert_eq!(app.focus(), crate::pane::Pane::Editor);
 }
 
 #[test]
