@@ -98,6 +98,9 @@ pub struct App {
     pub(crate) next_filesearch_gen: crate::generation::GenCounter<crate::generation::FileSearch>,
     pub(crate) next_projectsearch_gen:
         crate::generation::GenCounter<crate::generation::ProjectSearch>,
+    pub project_index: Option<crate::projectsearch::index::ProjectIndexState>,
+    pub(crate) next_project_index_gen:
+        crate::generation::GenCounter<crate::generation::ProjectIndex>,
     pub(crate) last_search_query: Option<String>,
     pub(crate) search_history: crate::history_persistence::HistoryPersistence,
     pub(crate) next_search_history_gen:
@@ -167,6 +170,8 @@ impl App {
             overlay: crate::overlay::Overlay::None,
             next_filesearch_gen: crate::generation::GenCounter::default(),
             next_projectsearch_gen: crate::generation::GenCounter::default(),
+            project_index: None,
+            next_project_index_gen: crate::generation::GenCounter::default(),
             last_search_query: None,
             search_history: crate::history_persistence::HistoryPersistence::new(),
             next_search_history_gen: crate::generation::GenCounter::default(),

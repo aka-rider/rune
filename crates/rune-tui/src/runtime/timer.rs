@@ -19,6 +19,7 @@ pub enum TimerMsgKey {
     SaveConfirm,
     QuitConfirm,
     MessagesCollapse,
+    ProjectSearchSpinner,
 }
 
 impl From<TimerMsgKey> for TimerKey {
@@ -63,6 +64,15 @@ impl TimerService {
         }
         drop(state);
         self.condvar.notify_one();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn armed_deadline(&self, key: TimerKey) -> Option<Instant> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.pending.get(&key).map(|&(deadline, _)| deadline)
     }
 
     pub fn arm(&self, key: TimerKey, delay: Duration, msg: Msg) {

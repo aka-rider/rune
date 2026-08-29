@@ -184,6 +184,14 @@ pub enum Msg {
         generation: crate::generation::FileSearchGen,
         result: Result<crate::filesearch::walk::ScanResult, String>,
     },
+    ProjectIndexScanned {
+        generation: crate::generation::ProjectIndexGen,
+        result: Result<crate::filesearch::walk::ScanResult, String>,
+    },
+    ProjectIndexBatch {
+        generation: crate::generation::ProjectIndexGen,
+        outcomes: Vec<crate::projectsearch::index::ReadOutcome>,
+    },
     Quit,
 }
 
@@ -239,6 +247,8 @@ mod filesearch_recents_cmd;
 pub use filesearch_recents_cmd::load_filesearch_recents_cmd;
 mod filesearch_cmd;
 pub(crate) use filesearch_cmd::filesearch_scan_cmd;
+mod projectsearch_cmd;
+pub(crate) use projectsearch_cmd::{project_read_batch_cmd, project_scan_cmd};
 
 mod command_history_cmd;
 pub use command_history_cmd::load_command_history_cmd;

@@ -107,7 +107,7 @@ pub(crate) fn sync(app: &mut App) {
     }
 }
 
-fn fold_with_map(s: &str) -> (String, Vec<Range<usize>>) {
+pub(crate) fn fold_with_map(s: &str) -> (String, Vec<Range<usize>>) {
     let mut folded = String::new();
     let mut map = Vec::with_capacity(s.len());
     for (start, c) in s.char_indices() {

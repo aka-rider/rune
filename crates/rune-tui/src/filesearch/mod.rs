@@ -328,7 +328,7 @@ pub(crate) fn handle_scanned(
     recompute(app, effects);
 }
 
-fn display_relative(root: &Path, path: &Path) -> String {
+pub(crate) fn display_relative(root: &Path, path: &Path) -> String {
     if root.as_os_str().is_empty() {
         return path.display().to_string();
     }

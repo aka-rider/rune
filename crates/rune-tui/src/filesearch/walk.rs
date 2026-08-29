@@ -13,7 +13,7 @@ pub const MAX_SCAN_DEPTH: usize = 32;
 // unbounded read would.
 const MAX_GITIGNORE_BYTES: u64 = 1024 * 1024;
 
-const SKIP_DIRS: [&str; 2] = ["node_modules", "target"];
+const SKIP_DIRS: [&str; 3] = ["node_modules", "target", "__pycache__"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanResult {
@@ -215,10 +215,11 @@ mod tests {
     }
 
     #[test]
-    fn node_modules_and_target_directories_are_skipped() {
+    fn node_modules_target_and_pycache_directories_are_skipped() {
         let vfs = Mem::new();
         put(&vfs, "/root/node_modules/pkg/index.js", "dep");
         put(&vfs, "/root/target/debug/bin", "build output");
+        put(&vfs, "/root/__pycache__/mod.cpython-312.pyc", "bytecode");
         put(&vfs, "/root/src/main.rs", "kept");
 
         let result = scanned(&vfs, "/root");

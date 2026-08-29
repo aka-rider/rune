@@ -51,6 +51,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                     app.pending_save_confirm = None;
                 }
             }
+            TimerMsgKey::ProjectSearchSpinner => {
+                crate::projectsearch::handle_spinner_tick(app, generation)
+            }
             TimerMsgKey::MessagesCollapse => {
                 let generation = crate::generation::MessagesCollapseGen::from_raw(generation);
                 if crate::messages::is_armed(app, generation) {
@@ -158,6 +161,13 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::FileSearchScanned { generation, result } => {
             crate::filesearch::handle_scanned(app, generation, result, effects)
         }
+        Msg::ProjectIndexScanned { generation, result } => {
+            crate::projectsearch::handle_index_scanned(app, generation, result, effects)
+        }
+        Msg::ProjectIndexBatch {
+            generation,
+            outcomes,
+        } => crate::projectsearch::handle_index_batch(app, generation, outcomes, effects),
         Msg::KeyboardFlagsReport(flags) => handle_keyboard_flags_report(app, flags),
         Msg::Quit => {
             app.should_quit = true;

@@ -193,7 +193,8 @@ pub(super) fn step_and_check(
             | CmdKind::ImageDecode
             | CmdKind::ImageEncode
             | CmdKind::SearchHistory
-            | CmdKind::BootstrapView => {}
+            | CmdKind::BootstrapView
+            | CmdKind::ProjectIndex => {}
         }
     }
 
