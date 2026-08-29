@@ -32,9 +32,9 @@ use rune_tui::pane::Pane;
 
 use trash_common::{app_with, ctrl_backspace, delete_key, open_palette, send, sup_backspace};
 
-fn ctrl_cap_f() -> KeyInput {
+fn ctrl_o() -> KeyInput {
     KeyInput {
-        code: KeyCode::Char('F'),
+        code: KeyCode::Char('o'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE
@@ -91,7 +91,7 @@ fn sup_backspace_in_the_title_field_does_not_raise_trash() {
 fn sup_backspace_with_the_finder_open_does_not_raise_trash() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
-    session.key(ctrl_cap_f());
+    session.key(ctrl_o());
     assert!(
         session.app().filesearch().is_some(),
         "test setup: finder open"

@@ -89,7 +89,7 @@ pub fn yes() -> Msg {
 
 pub fn ctrl_p() -> KeyInput {
     KeyInput {
-        code: KeyCode::Char('P'),
+        code: KeyCode::Char('p'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE

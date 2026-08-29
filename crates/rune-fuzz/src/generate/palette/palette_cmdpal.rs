@@ -1,7 +1,7 @@
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 
 pub(in crate::generate) const CMDPAL_KEY_CTRL: KeyInput = KeyInput {
-    code: KeyCode::Char('P'),
+    code: KeyCode::Char('p'),
     mods: Mods {
         shift: false,
         alt: false,
@@ -11,7 +11,7 @@ pub(in crate::generate) const CMDPAL_KEY_CTRL: KeyInput = KeyInput {
 };
 
 pub(in crate::generate) const CMDPAL_KEY_SUP: KeyInput = KeyInput {
-    code: KeyCode::Char('P'),
+    code: KeyCode::Char('p'),
     mods: Mods {
         shift: false,
         alt: false,

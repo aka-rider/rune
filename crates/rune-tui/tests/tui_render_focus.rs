@@ -150,7 +150,7 @@ fn caret_not_visible_on_a_read_only_document() {
 }
 
 const TOGGLE_PALETTE: KeyInput = KeyInput {
-    code: KeyCode::Char('P'),
+    code: KeyCode::Char('p'),
     mods: Mods {
         ctrl: true,
         ..Mods::NONE

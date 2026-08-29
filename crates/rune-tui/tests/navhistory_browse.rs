@@ -196,7 +196,7 @@ fn reopening_an_already_open_file_from_the_finder_records_the_departure() {
         rune_tui::workspace::open_path(&mut app, Path::new("/root/b.md")).expect("open b.md");
     assert_eq!(app.active, second);
 
-    press_and_settle(&mut app, ctrl(KeyCode::Char('F')));
+    press_and_settle(&mut app, ctrl(KeyCode::Char('o')));
     for c in "a.md".chars() {
         press_and_settle(&mut app, plain(KeyCode::Char(c)));
     }

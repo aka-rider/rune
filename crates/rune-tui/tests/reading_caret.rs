@@ -44,7 +44,7 @@ fn send(app: &mut App, msg: Msg) {
 }
 
 fn enter_reading(app: &mut App) {
-    send(app, ctrl('p'));
+    send(app, ctrl('P'));
     assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
 }
 
@@ -146,7 +146,7 @@ fn leaving_reading_view_does_not_move_the_caret() {
     }
     let caret_while_reading = app.active_doc().cursors.primary().position;
 
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
 
     assert_eq!(app.active_doc().read_only, ReadOnly::No);
     assert_eq!(

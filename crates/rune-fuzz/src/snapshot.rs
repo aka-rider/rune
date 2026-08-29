@@ -80,7 +80,7 @@ pub struct Snapshot {
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`, reachable now that `F1` is in `arb_any_keycode`,
-    /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃P`,
+    /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃⇧P`,
     /// `ReadOnly::Reading`), and a not-yet-committed preview (`ReadOnly::
     /// Preview`) are all live paths to a read-only document; `PASTE-
     /// VERBATIM` needs this to tell "production correctly refused the

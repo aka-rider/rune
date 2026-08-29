@@ -9,7 +9,7 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
 const OPEN_FILESEARCH: KeyInput = KeyInput {
-    code: KeyCode::Char('F'),
+    code: KeyCode::Char('o'),
     mods: Mods {
         shift: false,
         alt: false,

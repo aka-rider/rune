@@ -15,7 +15,7 @@
 - **Multi-Cursor Editing** — Add cursors above or below the current line.
 - **Crash Recovery** — Every edit lands in a durable journal with periodic snapshots; unsaved work survives a crash.
 - **Conflict Guard + Merge** — An external edit to the open file is caught before it can be overwritten, with a built-in 3-way merge resolver (`^M`) to reconcile both sides.
-- **Reading View** — Toggle a read-only rendered view with `^P`/`⌘P`.
+- **Reading View** — Toggle a read-only rendered view with `^⇧P`/`⌘⇧P`.
 - **Tabs + File Explorer** — Type-to-search jumps straight to a file.
 
 ### File Explorer

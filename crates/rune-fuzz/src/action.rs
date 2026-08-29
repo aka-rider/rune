@@ -5,7 +5,7 @@ use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
 pub const OPEN_FILESEARCH_KEY: KeyInput = KeyInput {
-    code: KeyCode::Char('F'),
+    code: KeyCode::Char('o'),
     mods: Mods {
         shift: false,
         alt: false,

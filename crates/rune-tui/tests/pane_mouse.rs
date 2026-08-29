@@ -60,9 +60,9 @@ fn ctrl_b() -> Msg {
     })
 }
 
-fn ctrl_shift_f() -> Msg {
+fn ctrl_o() -> Msg {
     Msg::Key(KeyInput {
-        code: KeyCode::Char('F'),
+        code: KeyCode::Char('o'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE
@@ -98,7 +98,7 @@ fn run_cmds(app: &mut App, mut effects: Effects) {
 
 fn open_file_finder(app: &mut App) {
     let mut effects = Effects::default();
-    app::update(app, ctrl_shift_f(), &mut effects);
+    app::update(app, ctrl_o(), &mut effects);
     run_cmds(app, effects);
     assert!(app.filesearch().is_some(), "test setup: the finder is open");
 }

@@ -20,7 +20,7 @@ use rename_common::{
 
 fn palette_chord() -> KeyInput {
     KeyInput {
-        code: KeyCode::Char('P'),
+        code: KeyCode::Char('p'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE

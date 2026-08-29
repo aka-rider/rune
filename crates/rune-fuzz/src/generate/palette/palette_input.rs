@@ -372,12 +372,12 @@ pub(in crate::generate) const CTRL_T_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `^p` (`GlobalCommand::ToggleReadOnly`) — the reading-view toggle (plan
+/// `^⇧P` (`GlobalCommand::ToggleReadOnly`) — the reading-view toggle (plan
 /// WP5/WP8). Reaching it is what exercises the reveal-follows-insertion-
 /// point machinery (plan WP1) against the fuzzer's own generated
 /// documents, not just the deterministic test suite.
 pub(in crate::generate) const CTRL_P_KEY: KeyInput = KeyInput {
-    code: KeyCode::Char('p'),
+    code: KeyCode::Char('P'),
     mods: Mods {
         shift: false,
         alt: false,
@@ -416,14 +416,14 @@ pub(in crate::generate) const TRASH_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `^⇧F` (`GlobalCommand::ToggleFileSearch`, primary binding) — the fuzzy
+/// `^O` (`GlobalCommand::ToggleFileSearch`, primary binding) — the fuzzy
 /// file finder's own chord. Without this, the finder's whole open/typing/
 /// close surface (and the close-gate/focus invariants it must hold under
 /// every other global command) was reachable only through `cluster_monkey_
 /// burst`'s ~0.4%-of-16-mods-per-key odds, the same reachability gap
 /// `CTRL_B_KEY`/`CTRL_T_KEY` closed for the Explorer/Tabs panes.
 pub(in crate::generate) const FILESEARCH_KEY_CTRL: KeyInput = KeyInput {
-    code: KeyCode::Char('F'),
+    code: KeyCode::Char('o'),
     mods: Mods {
         shift: false,
         alt: false,
@@ -432,9 +432,9 @@ pub(in crate::generate) const FILESEARCH_KEY_CTRL: KeyInput = KeyInput {
     },
 };
 
-/// `⌘⇧F`, the same command's alias binding.
+/// `⌘O`, the same command's alias binding.
 pub(in crate::generate) const FILESEARCH_KEY_SUP: KeyInput = KeyInput {
-    code: KeyCode::Char('F'),
+    code: KeyCode::Char('o'),
     mods: Mods {
         shift: false,
         alt: false,

@@ -211,7 +211,7 @@ fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
     // gesture's `editor` rect below, which reads `App::frame`) is already
     // sized to match.
     let mut session = app_for(content, 0, true);
-    send(session.app_mut(), ctrl('p'));
+    send(session.app_mut(), ctrl('P'));
     assert_eq!(session.app().active_doc().read_only, ReadOnly::Reading);
 
     let area = session.app().frame_area();
@@ -260,7 +260,7 @@ fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
 fn leaving_the_reading_view_does_not_move_the_caret() {
     let content: String = (0..100).map(|i| format!("line {i}\n")).collect();
     let mut app = app_basic(&content);
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
     assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
 
     send(&mut app, plain(KeyCode::End));
@@ -273,7 +273,7 @@ fn leaving_the_reading_view_does_not_move_the_caret() {
     assert_eq!(app.active_doc().viewport.mode, ScrollMode::FollowCursor);
     let caret_before_leaving = app.active_doc().cursors.primary().position;
 
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
     assert_eq!(app.active_doc().read_only, ReadOnly::No);
     assert_eq!(
         app.active_doc().cursors.primary().position,
@@ -306,7 +306,7 @@ fn match_bracket_in_reading_view_refuses_instead_of_moving_an_invisible_caret() 
         .chain((0..100).map(|i| format!("line {i}\n")))
         .collect();
     let mut app = app_basic(&content);
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
     assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
 
     let scroll_before = app.active_doc().viewport.scroll_row;

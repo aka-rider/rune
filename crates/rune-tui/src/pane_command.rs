@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn sup_shift_f_chord_opens_filesearch_on_a_never_shown_left_column() {
+    fn sup_o_chord_opens_filesearch_on_a_never_shown_left_column() {
         let mut app = app();
         app.frame = Some(crate::app::FrameSize::new(120, 34));
         assert!(!app.splits.left.is_shown(), "test setup: column hidden");
@@ -226,7 +226,7 @@ mod tests {
         crate::app::update(
             &mut app,
             Msg::Key(crate::keymap::KeyInput {
-                code: crate::keymap::KeyCode::Char('F'),
+                code: crate::keymap::KeyCode::Char('o'),
                 mods: crate::keymap::Mods {
                     shift: false,
                     alt: false,
@@ -242,14 +242,14 @@ mod tests {
     }
 
     #[test]
-    fn sup_shift_f_chord_again_closes_and_restores_return_to() {
+    fn sup_o_chord_again_closes_and_restores_return_to() {
         let mut app = app();
         app.frame = Some(crate::app::FrameSize::new(120, 34));
         let second = app.open_document(rune_core::buffer::Buffer::new("second"));
         crate::workspace::switch_to(&mut app, second);
         let mut effects = Effects::default();
         let chord = crate::keymap::KeyInput {
-            code: crate::keymap::KeyCode::Char('F'),
+            code: crate::keymap::KeyCode::Char('o'),
             mods: crate::keymap::Mods {
                 shift: false,
                 alt: false,

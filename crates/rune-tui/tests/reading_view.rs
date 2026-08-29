@@ -99,12 +99,12 @@ fn send(app: &mut App, msg: Msg) {
 }
 
 /// THE REGRESSION TEST. F1 opens the Help tab; the `## Global` table is the
-/// first table in `help_markdown()` (source line 5, `| Key | Action |`), so
+/// first table in `help_markdown()`, headed `| Command | Key, Alt Key |`, so
 /// it sits on screen at `scroll_row == 0` with no scrolling needed. Before
 /// Formerly, the root reveal grant keyed off `focused` alone, so a focused
 /// read-only document (Help always is) still revealed raw markdown under
 /// its invisible cursor — this is the exact bug report: box borders
-/// replaced by a literal `| Key | Action |` source row.
+/// replaced by a literal `| Command | Key, Alt Key |` source row.
 ///
 /// WP-A re-keyed every motion key in a read-only document to a viewport
 /// command (`commands::reading_nav`), so `Down` no longer moves the cursor
@@ -147,23 +147,23 @@ fn help_tab_table_stays_boxed_when_the_cursor_lands_inside_it() {
         "expected box-drawing borders around the Help table in reading view:\n{text}"
     );
     assert!(
-        !text.contains("| Key | Action |"),
+        !text.contains("| Command | Key, Alt Key |"),
         "the raw markdown table source leaked onto the screen instead of a rendered box:\n{text}"
     );
 }
 
 /// An ordinary (non-`Always`) document with a table, cursor inside it:
-/// `⌃P` boxes the table (root grant `Never`, cursor position irrelevant);
-/// `⌃P` again returns to `ReadOnly::No`, where the cursor still sitting
+/// `⌃⇧P` boxes the table (root grant `Never`, cursor position irrelevant);
+/// `⌃⇧P` again returns to `ReadOnly::No`, where the cursor still sitting
 /// inside the table's lines reveals its raw source again — pinning BOTH
 /// directions of the toggle.
 #[test]
-fn ctrl_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
+fn ctrl_shift_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
     let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
     let cursor = content.find("Alice").expect("fixture has a data row");
     let mut session = app_for(content, cursor, true);
 
-    send(session.app_mut(), ctrl('p'));
+    send(session.app_mut(), ctrl('P'));
     assert_eq!(session.app().active_doc().read_only, ReadOnly::Reading);
     session.app_mut().sync_view();
 
@@ -177,7 +177,7 @@ fn ctrl_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
         "reading view must not reveal the raw source row:\n{boxed}"
     );
 
-    send(session.app_mut(), ctrl('p'));
+    send(session.app_mut(), ctrl('P'));
     assert_eq!(session.app().active_doc().read_only, ReadOnly::No);
     session.app_mut().sync_view();
 
@@ -188,21 +188,21 @@ fn ctrl_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
     );
 }
 
-/// `⌃P` on the Help tab is a no-op: `ReadOnly::Always` has no editable form
+/// `⌃⇧P` on the Help tab is a no-op: `ReadOnly::Always` has no editable form
 /// to toggle back to, so `commands::reading::toggle` refuses and posts its
 /// status message instead of flipping state.
 #[test]
-fn ctrl_p_on_the_help_tab_refuses_and_posts_a_message() {
+fn ctrl_shift_p_on_the_help_tab_refuses_and_posts_a_message() {
     let mut app = app_basic("hello");
     send(&mut app, plain(KeyCode::F1));
     assert_eq!(app.active_doc().read_only, ReadOnly::Always);
 
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
 
     assert_eq!(
         app.active_doc().read_only,
         ReadOnly::Always,
-        "⌃P must not change the Help document's ReadOnly state"
+        "⌃⇧P must not change the Help document's ReadOnly state"
     );
     assert_eq!(
         rune_tui::messages::newest_text(&app),
@@ -296,11 +296,11 @@ fn reading_view_paints_no_caret_anywhere() {
 /// is_read_only()` (checked before `save_in_flight`) and refused with the
 /// READING wording instead of the save-in-flight one: a manufactured
 /// refusal reason from a keystroke the user never aimed at the title at
-/// all, and the typed name still trapped behind it. Pins that `⌃P` from
+/// all, and the typed name still trapped behind it. Pins that `⌃⇧P` from
 /// the title is now inert: the document stays `ReadOnly::No`, and the
-/// refusal reason — and the typed name — survive `⌃P` untouched.
+/// refusal reason — and the typed name — survive `⌃⇧P` untouched.
 #[test]
-fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
+fn ctrl_shift_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
     let mem = rename_common::seeded_vfs();
     let mut app = rename_common::app_with(&mem);
     let (version, content) = {
@@ -317,21 +317,21 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
     );
     assert_eq!(app.title.text(), "b.md");
 
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
     assert_eq!(
         app.focus(),
         Pane::Title,
-        "⌃P's own hoisted blur must already have refused (save in flight), leaving focus put"
+        "⌃⇧P's own hoisted blur must already have refused (save in flight), leaving focus put"
     );
     assert_eq!(
         app.active_doc().read_only,
         ReadOnly::No,
-        "⌃P must not flip the document read-only out from under a blur that just refused"
+        "⌃⇧P must not flip the document read-only out from under a blur that just refused"
     );
     assert_eq!(
         app.title.text(),
         "b.md",
-        "the typed name must survive ⌃P untouched"
+        "the typed name must survive ⌃⇧P untouched"
     );
 
     send(&mut app, plain(KeyCode::Enter));
@@ -339,7 +339,7 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
     assert_eq!(
         app.focus(),
         Pane::Title,
-        "still refused (save in flight), same as before ⌃P ever fired"
+        "still refused (save in flight), same as before ⌃⇧P ever fired"
     );
     assert_eq!(
         app.title.text(),
@@ -350,7 +350,7 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
         rune_tui::messages::newest_text(&app),
         Some("can't rename while a save is in flight"),
         "the refusal reason must stay the save-in-flight one, not flip to a \
-         read-only refusal ⌃P would otherwise have manufactured"
+         read-only refusal ⌃⇧P would otherwise have manufactured"
     );
     assert_ne!(
         rune_tui::messages::newest_text(&app),
@@ -358,7 +358,7 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
     );
 }
 
-/// `⌃P` fired from the Explorer must not touch a document the user isn't
+/// `⌃⇧P` fired from the Explorer must not touch a document the user isn't
 /// looking at: no visible change would result (an unfocused document is
 /// already `RevealMode::Never`), so a document silently flipped to
 /// `ReadOnly::Reading` would surface no explanation on returning to the
@@ -367,24 +367,24 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
 /// silently, matching `app.rs::refocus_title`'s precedent for a
 /// non-user-initiated precondition.
 #[test]
-fn ctrl_p_from_the_explorer_is_a_silent_no_op() {
+fn ctrl_shift_p_from_the_explorer_is_a_silent_no_op() {
     let mut app = app_basic("hello");
 
     send(&mut app, ctrl('b')); // GlobalCommand::FocusExplorer
     assert_eq!(app.focus(), Pane::Explorer);
     let log_before = rune_tui::messages::log_text(&app);
 
-    send(&mut app, ctrl('p'));
+    send(&mut app, ctrl('P'));
 
     assert_eq!(
         app.active_doc().read_only,
         ReadOnly::No,
-        "⌃P from the Explorer must not change the active document's ReadOnly state"
+        "⌃⇧P from the Explorer must not change the active document's ReadOnly state"
     );
     assert_eq!(
         rune_tui::messages::log_text(&app),
         log_before,
-        "⌃P from the Explorer must post no status message"
+        "⌃⇧P from the Explorer must post no status message"
     );
 }
 

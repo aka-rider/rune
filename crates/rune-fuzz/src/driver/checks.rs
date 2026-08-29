@@ -126,7 +126,7 @@ fn merge_active_key(state: &State) -> Option<KeyInput> {
 
 fn reading_view_key(state: &State) -> Option<KeyInput> {
     (state.app.active_doc().read_only == ReadOnly::Reading).then_some(KeyInput {
-        code: KeyCode::Char('p'),
+        code: KeyCode::Char('P'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE
