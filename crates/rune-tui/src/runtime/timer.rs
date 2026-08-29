@@ -20,6 +20,7 @@ pub enum TimerMsgKey {
     QuitConfirm,
     MessagesCollapse,
     ProjectSearchSpinner,
+    ProjectSearchDebounce,
 }
 
 impl From<TimerMsgKey> for TimerKey {

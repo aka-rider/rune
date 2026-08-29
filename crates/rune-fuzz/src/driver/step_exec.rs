@@ -194,7 +194,8 @@ pub(super) fn step_and_check(
             | CmdKind::ImageEncode
             | CmdKind::SearchHistory
             | CmdKind::BootstrapView
-            | CmdKind::ProjectIndex => {}
+            | CmdKind::ProjectIndex
+            | CmdKind::ProjectQuery => {}
         }
     }
 

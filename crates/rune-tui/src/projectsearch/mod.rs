@@ -1,20 +1,29 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::App;
 use crate::pane::Pane;
+use crate::pointer::{MouseInput, MouseKind};
 use crate::runtime::{Effects, Msg, TimerKey, TimerMsgKey};
 
 pub(crate) mod index;
 pub(crate) mod keys;
+pub(crate) mod query;
 
 use index::{ProjectIndexState, ReadOutcome};
+use query::FileHit;
+
+pub(crate) const MIN_QUERY_CHARS: usize = 2;
+const DEBOUNCE_INTERVAL: Duration = Duration::from_millis(120);
 
 pub struct ProjectSearchState {
     pub query: String,
     pub query_generation: crate::generation::ProjectSearchGen,
     pub return_to: crate::returnto::ReturnTo,
+    pub results: Vec<FileHit>,
+    pub results_truncated: bool,
+    pub list: crate::listnav::List,
 }
 
 pub(crate) fn open(app: &mut App, effects: &mut Effects) {
@@ -33,6 +42,9 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
             query: String::new(),
             query_generation,
             return_to,
+            results: Vec::new(),
+            results_truncated: false,
+            list: crate::listnav::List { cursor: 0, top: 0 },
         },
         clearance,
     );
@@ -159,6 +171,7 @@ fn dispatch_next_batch(app: &mut App, effects: &mut Effects) {
     }
     if state.pending.is_empty() {
         state.building = false;
+        dispatch_query(app, effects);
         return;
     }
     let take = state.pending.len().min(index::READ_BATCH);
@@ -173,6 +186,117 @@ fn dispatch_next_batch(app: &mut App, effects: &mut Effects) {
         state.root.clone(),
         state.build_generation,
     ));
+}
+
+pub(crate) fn restart_debounce(app: &App) {
+    if app.projectsearch().is_none() {
+        return;
+    }
+    app.timers.arm(
+        TimerKey::from(TimerMsgKey::ProjectSearchDebounce),
+        DEBOUNCE_INTERVAL,
+        Msg::Timer {
+            key: TimerMsgKey::ProjectSearchDebounce,
+            generation: 0,
+        },
+    );
+}
+
+pub(crate) fn handle_debounce(app: &mut App, effects: &mut Effects) {
+    if app.projectsearch().is_none() {
+        return;
+    }
+    dispatch_query(app, effects);
+}
+
+fn dispatch_query(app: &mut App, effects: &mut Effects) {
+    let Some(query) = app.projectsearch().map(|s| s.query.clone()) else {
+        return;
+    };
+    if query.chars().count() < MIN_QUERY_CHARS {
+        if let Some(state) = app.projectsearch_mut() {
+            state.results.clear();
+            state.results_truncated = false;
+            state.list = crate::listnav::List { cursor: 0, top: 0 };
+        }
+        return;
+    }
+    let Some((entries, root)) = app
+        .project_index
+        .as_ref()
+        .map(|index| (index.entries.clone(), index.root.clone()))
+    else {
+        return;
+    };
+    let overrides = gather_overrides(app, &root);
+    let generation = app.next_projectsearch_gen.mint();
+    let Some(state) = app.projectsearch_mut() else {
+        return;
+    };
+    state.query_generation = generation;
+    effects.cmds.push(crate::runtime::project_query_cmd(
+        entries, overrides, query, generation,
+    ));
+}
+
+fn gather_overrides(app: &App, root: &Path) -> Vec<(PathBuf, String)> {
+    app.documents
+        .values()
+        .filter_map(|doc| {
+            let path = doc.file_path.as_deref()?;
+            let resolved = app.vfs.resolve(path).ok()?;
+            if !resolved.starts_with(root) {
+                return None;
+            }
+            let content = doc.buffer.content();
+            if content.len() as u64 > index::MAX_INDEX_FILE_BYTES {
+                return None;
+            }
+            Some((resolved, content.to_string()))
+        })
+        .collect()
+}
+
+pub(crate) fn handle_queried(
+    app: &mut App,
+    generation: crate::generation::ProjectSearchGen,
+    results: Vec<FileHit>,
+    truncated: bool,
+) {
+    let Some(state) = app.projectsearch_mut() else {
+        return;
+    };
+    if state.query_generation != generation {
+        return;
+    }
+    state.results = results;
+    state.results_truncated = truncated;
+    state.list = crate::listnav::List { cursor: 0, top: 0 };
+}
+
+pub(crate) fn mouse(app: &mut App, input: MouseInput) {
+    match input.kind {
+        MouseKind::ScrollUp => keys::nav_move(app, -crate::commands::mouse::WHEEL_ROWS),
+        MouseKind::ScrollDown => keys::nav_move(app, crate::commands::mouse::WHEEL_ROWS),
+        _ => {}
+    }
+}
+
+pub(crate) fn click_row(app: &mut App, visible_row: usize) {
+    let Some(state) = app.projectsearch() else {
+        return;
+    };
+    let height = crate::filesearch::keys::page_amount(app).max(1) as usize;
+    let window = state.list.window(state.results.len(), height);
+    let Some(absolute) = window.start.checked_add(visible_row) else {
+        return;
+    };
+    if absolute >= window.end {
+        return;
+    }
+    if let Some(state) = app.projectsearch_mut() {
+        state.list.cursor = absolute;
+    }
 }
 
 pub(crate) fn close(app: &mut App) {
@@ -198,5 +322,7 @@ pub(crate) fn toggle(app: &mut App, effects: &mut Effects) {
     }
 }
 
+#[cfg(test)]
+mod query_tests;
 #[cfg(test)]
 mod tests;

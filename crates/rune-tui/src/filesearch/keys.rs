@@ -175,7 +175,7 @@ fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
     after_cursor_move(app, effects);
 }
 
-pub(super) fn page_amount(app: &App) -> isize {
+pub(crate) fn page_amount(app: &App) -> isize {
     let area = app.frame_area();
     (crate::layout::geometry(area, app).explorer_inner.height as isize)
         .saturating_sub(1)

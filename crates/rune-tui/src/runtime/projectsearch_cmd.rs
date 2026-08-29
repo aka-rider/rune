@@ -8,6 +8,7 @@ use crate::filesearch::walk;
 use crate::projectsearch::index::{
     Fingerprint, IndexEntry, MAX_INDEX_FILE_BYTES, ReadOutcome, is_indexable,
 };
+use crate::projectsearch::query::run_query;
 
 pub(crate) fn project_scan_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
@@ -42,6 +43,22 @@ pub(crate) fn project_read_batch_cmd(
         Some(Msg::ProjectIndexBatch {
             generation,
             outcomes,
+        })
+    })
+}
+
+pub(crate) fn project_query_cmd(
+    entries: Vec<Arc<IndexEntry>>,
+    overrides: Vec<(PathBuf, String)>,
+    query: String,
+    generation: crate::generation::ProjectSearchGen,
+) -> Cmd {
+    Cmd::project_query(move || {
+        let (results, truncated) = run_query(&entries, &overrides, &query);
+        Some(Msg::ProjectSearchQueried {
+            generation,
+            results,
+            truncated,
         })
     })
 }

@@ -15,6 +15,7 @@ pub enum CmdKind {
     SearchHistory,
     BootstrapView,
     ProjectIndex,
+    ProjectQuery,
 }
 
 pub struct Cmd {
@@ -88,5 +89,9 @@ impl Cmd {
 
     pub fn project_index(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
         Self::of(CmdKind::ProjectIndex, run)
+    }
+
+    pub fn project_query(run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
+        Self::of(CmdKind::ProjectQuery, run)
     }
 }

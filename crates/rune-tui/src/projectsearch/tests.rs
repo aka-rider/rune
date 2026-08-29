@@ -11,7 +11,7 @@ use crate::keymap::{KeyCode, KeyInput, Mods};
 use crate::pane::Pane;
 use crate::runtime::{CmdKind, Effects, Msg, TimerKey, TimerMsgKey};
 
-const CTRL: Mods = Mods {
+pub(super) const CTRL: Mods = Mods {
     shift: false,
     alt: false,
     ctrl: true,
@@ -30,7 +30,7 @@ fn app() -> App {
     app
 }
 
-fn key(app: &mut App, code: KeyCode, mods: Mods, effects: &mut Effects) {
+pub(super) fn key(app: &mut App, code: KeyCode, mods: Mods, effects: &mut Effects) {
     crate::app::update(app, Msg::Key(KeyInput { code, mods }), effects);
 }
 
@@ -152,7 +152,7 @@ fn a_paste_lands_in_the_query_not_the_editor() {
     assert_eq!(app.active_doc().buffer.content(), "hello");
 }
 
-fn seeded_app(files: &[(&str, &[u8])]) -> App {
+pub(super) fn seeded_app(files: &[(&str, &[u8])]) -> App {
     let vfs = Mem::new();
     for (path, content) in files {
         vfs.save_atomic(Path::new(path), content)
@@ -164,7 +164,7 @@ fn seeded_app(files: &[(&str, &[u8])]) -> App {
     app
 }
 
-fn run_one_index_cmd(effects: &mut Effects) -> Option<Msg> {
+pub(super) fn run_one_index_cmd(effects: &mut Effects) -> Option<Msg> {
     let position = effects
         .cmds
         .iter()
@@ -172,7 +172,7 @@ fn run_one_index_cmd(effects: &mut Effects) -> Option<Msg> {
     effects.cmds.remove(position).run()
 }
 
-fn pump_index(app: &mut App, effects: &mut Effects) {
+pub(super) fn pump_index(app: &mut App, effects: &mut Effects) {
     while let Some(msg) = run_one_index_cmd(effects) {
         crate::app::update(app, msg, effects);
     }

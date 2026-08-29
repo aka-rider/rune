@@ -54,6 +54,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             TimerMsgKey::ProjectSearchSpinner => {
                 crate::projectsearch::handle_spinner_tick(app, generation)
             }
+            TimerMsgKey::ProjectSearchDebounce => {
+                crate::projectsearch::handle_debounce(app, effects)
+            }
             TimerMsgKey::MessagesCollapse => {
                 let generation = crate::generation::MessagesCollapseGen::from_raw(generation);
                 if crate::messages::is_armed(app, generation) {
@@ -168,6 +171,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             generation,
             outcomes,
         } => crate::projectsearch::handle_index_batch(app, generation, outcomes, effects),
+        Msg::ProjectSearchQueried {
+            generation,
+            results,
+            truncated,
+        } => crate::projectsearch::handle_queried(app, generation, results, truncated),
         Msg::KeyboardFlagsReport(flags) => handle_keyboard_flags_report(app, flags),
         Msg::Quit => {
             app.should_quit = true;
