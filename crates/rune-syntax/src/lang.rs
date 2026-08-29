@@ -31,6 +31,7 @@ static NAMES: &[&str] = &[
     "elixir",
     "ocaml",
     "scala",
+    "r",
 ];
 
 impl LangId {

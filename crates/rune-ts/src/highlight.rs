@@ -62,7 +62,7 @@ const CAPTURE_ALIASES: &[(&str, &str)] = &[
 // Deliberately unstyled: spell is a spellcheck hint, embedded marks an
 // injected-language region, none is an explicit no-style marker, and a
 // leading `_` marks a query-internal capture.
-const IGNORED_CAPTURES: &[&str] = &["spell", "embedded", "none"];
+const IGNORED_CAPTURES: &[&str] = &["spell", "embedded", "none", "error"];
 
 enum CaptureResolution {
     Scope(ScopeId),

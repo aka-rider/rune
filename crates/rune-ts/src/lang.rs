@@ -181,6 +181,11 @@ pub static LANGUAGES: &[LangDef] = &[
         language: || tree_sitter_scala::LANGUAGE.into(),
         highlights: || tree_sitter_scala::HIGHLIGHTS_QUERY.to_string(),
     },
+    LangDef {
+        name: "r",
+        language: || tree_sitter_r::LANGUAGE.into(),
+        highlights: || tree_sitter_r::HIGHLIGHTS_QUERY.to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match
@@ -220,6 +225,7 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("ml", "ocaml"),
     ("sbt", "scala"),
     ("sc", "scala"),
+    ("rlang", "r"),
 ];
 
 /// Resolves a fence info string or a file extension (with or without a
