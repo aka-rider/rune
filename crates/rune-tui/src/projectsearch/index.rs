@@ -34,7 +34,7 @@ pub enum ReadOutcome {
 pub struct ProjectIndexState {
     pub root: PathBuf,
     pub entries: Vec<Arc<IndexEntry>>,
-    pub pending: Vec<PathBuf>,
+    pub pending: Vec<(PathBuf, Option<Fingerprint>)>,
     pub build_generation: crate::generation::ProjectIndexGen,
     pub truncated: bool,
     pub building: bool,

@@ -71,10 +71,15 @@ pub(crate) fn spinner_char(frame: u8) -> char {
 }
 
 fn ensure_index(app: &mut App, effects: &mut Effects) {
-    if app.project_index.is_some() {
+    let root = crate::filesearch::resolve_root(app);
+    if app
+        .project_index
+        .as_ref()
+        .is_some_and(|state| state.root == root)
+    {
+        refresh_index(app, effects);
         return;
     }
-    let root = crate::filesearch::resolve_root(app);
     let build_generation = app.next_project_index_gen.mint();
     app.project_index = Some(ProjectIndexState {
         root: root.clone(),
@@ -90,6 +95,24 @@ fn ensure_index(app: &mut App, effects: &mut Effects) {
     });
     effects.cmds.push(crate::runtime::project_scan_cmd(
         Arc::clone(&app.vfs),
+        root,
+        build_generation,
+    ));
+    arm_spinner(app, build_generation);
+}
+
+fn refresh_index(app: &mut App, effects: &mut Effects) {
+    let build_generation = app.next_project_index_gen.mint();
+    let vfs = Arc::clone(&app.vfs);
+    let Some(state) = app.project_index.as_mut() else {
+        return;
+    };
+    state.build_generation = build_generation;
+    state.building = true;
+    state.pending.clear();
+    let root = state.root.clone();
+    effects.cmds.push(crate::runtime::project_scan_cmd(
+        vfs,
         root,
         build_generation,
     ));
@@ -137,7 +160,24 @@ pub(crate) fn handle_index_scanned(
     match result {
         Ok(scan) => {
             state.truncated = scan.truncated;
-            state.pending = scan.files;
+            let fingerprints: std::collections::HashMap<&Path, index::Fingerprint> = state
+                .entries
+                .iter()
+                .map(|entry| (entry.path.as_path(), (entry.size, entry.mtime)))
+                .collect();
+            state.pending = scan
+                .files
+                .iter()
+                .map(|path| (path.clone(), fingerprints.get(path.as_path()).copied()))
+                .collect();
+            if !scan.truncated {
+                let scanned: std::collections::HashSet<&Path> =
+                    scan.files.iter().map(PathBuf::as_path).collect();
+                state
+                    .entries
+                    .retain(|entry| scanned.contains(entry.path.as_path()));
+                state.corpus_bytes = state.entries.iter().map(|entry| entry_bytes(entry)).sum();
+            }
             dispatch_next_batch(app, effects);
         }
         Err(e) => {
@@ -162,13 +202,31 @@ pub(crate) fn handle_index_batch(
     for outcome in outcomes {
         match outcome {
             ReadOutcome::Indexed(entry) => {
-                state.corpus_bytes += entry.text.len() + entry.folded.len();
+                let displaced = remove_entry(state, &entry.path);
+                state.corpus_bytes =
+                    state.corpus_bytes.saturating_sub(displaced) + entry_bytes(&entry);
                 state.entries.push(Arc::new(entry));
             }
-            ReadOutcome::Unchanged(_) | ReadOutcome::Skipped(_) => {}
+            ReadOutcome::Skipped(path) => {
+                let displaced = remove_entry(state, &path);
+                state.corpus_bytes = state.corpus_bytes.saturating_sub(displaced);
+            }
+            ReadOutcome::Unchanged(_) => {}
         }
     }
     dispatch_next_batch(app, effects);
+}
+
+fn entry_bytes(entry: &index::IndexEntry) -> usize {
+    entry.text.len() + entry.folded.len()
+}
+
+fn remove_entry(state: &mut ProjectIndexState, path: &Path) -> usize {
+    let Some(position) = state.entries.iter().position(|entry| entry.path == path) else {
+        return 0;
+    };
+    let removed = state.entries.remove(position);
+    entry_bytes(&removed)
 }
 
 fn dispatch_next_batch(app: &mut App, effects: &mut Effects) {
@@ -186,11 +244,7 @@ fn dispatch_next_batch(app: &mut App, effects: &mut Effects) {
         return;
     }
     let take = state.pending.len().min(index::READ_BATCH);
-    let batch: Vec<(PathBuf, Option<index::Fingerprint>)> = state
-        .pending
-        .drain(..take)
-        .map(|path| (path, None))
-        .collect();
+    let batch: Vec<(PathBuf, Option<index::Fingerprint>)> = state.pending.drain(..take).collect();
     effects.cmds.push(crate::runtime::project_read_batch_cmd(
         vfs,
         batch,
@@ -376,5 +430,7 @@ pub(crate) fn toggle(app: &mut App, effects: &mut Effects) {
 mod preview_tests;
 #[cfg(test)]
 mod query_tests;
+#[cfg(test)]
+mod refresh_tests;
 #[cfg(test)]
 mod tests;

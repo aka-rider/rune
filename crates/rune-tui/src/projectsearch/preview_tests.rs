@@ -31,7 +31,7 @@ fn search(app: &mut App, query: &str, effects: &mut Effects) {
     crate::app::update(app, reply, effects);
 }
 
-fn run_one_cmd(effects: &mut Effects, kind: CmdKind) -> Option<Msg> {
+pub(super) fn run_one_cmd(effects: &mut Effects, kind: CmdKind) -> Option<Msg> {
     let position = effects.cmds.iter().position(|cmd| cmd.kind() == kind)?;
     effects.cmds.remove(position).run()
 }
@@ -231,9 +231,29 @@ fn reopening_prefills_the_last_query_and_reruns_it_against_the_corpus() {
 
     let state = app.projectsearch().expect("panel reopened");
     assert_eq!(state.query, "needle", "the last query comes back prefilled");
-    let reply = run_one_cmd(&mut effects, CmdKind::ProjectQuery)
+    assert!(
+        effects
+            .cmds
+            .iter()
+            .any(|cmd| cmd.kind() == CmdKind::ProjectIndex),
+        "reopening kicks off a rescan of the workspace"
+    );
+    let immediate = run_one_cmd(&mut effects, CmdKind::ProjectQuery)
         .expect("reopening with a live query dispatches it without a debounce");
-    crate::app::update(&mut app, reply, &mut effects);
+    crate::app::update(&mut app, immediate, &mut effects);
+    assert_eq!(
+        app.projectsearch()
+            .expect("panel open")
+            .results
+            .first()
+            .map(|hit| hit.display.clone()),
+        Some("deep.md".to_string()),
+        "the immediate query answers from the existing corpus before the rescan lands"
+    );
+    pump_index(&mut app, &mut effects);
+    let rerun = run_one_cmd(&mut effects, CmdKind::ProjectQuery)
+        .expect("refresh completion reruns the current query");
+    crate::app::update(&mut app, rerun, &mut effects);
     assert_eq!(
         app.projectsearch()
             .expect("panel open")
