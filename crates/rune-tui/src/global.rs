@@ -21,6 +21,7 @@ pub enum GlobalCommand {
     SearchPrev,
     TogglePin,
     ToggleFileSearch,
+    ToggleProjectSearch,
     TogglePalette,
     NavBack,
     NavForward,
@@ -240,8 +241,9 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     },
     // This crate requests `REPORT_ALTERNATE_KEYS`, under which a shifted
     // chord arrives as the shifted character with `SHIFT` itself cleared
-    // — so `SearchPrev` below and `ToggleReadOnly` above bind the shifted
-    // char (`'G'`/`'P'`), not the base char with a `SHIFT` bit set.
+    // — so `SearchPrev` and `ToggleProjectSearch` below and
+    // `ToggleReadOnly` above bind the shifted char (`'G'`/`'F'`/`'P'`),
+    // not the base char with a `SHIFT` bit set.
     Binding {
         key: KeyPattern::new(KeyCode::Char('G'), CTRL),
         cmd: GlobalCommand::SearchPrev,
@@ -264,6 +266,18 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('o'), SUP),
         cmd: GlobalCommand::ToggleFileSearch,
         help: "open file",
+        secondary: true,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('F'), CTRL),
+        cmd: GlobalCommand::ToggleProjectSearch,
+        help: "search project",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('F'), SUP),
+        cmd: GlobalCommand::ToggleProjectSearch,
+        help: "search project",
         secondary: true,
     },
     Binding {

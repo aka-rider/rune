@@ -76,6 +76,7 @@ pub struct Snapshot {
     pub title_cursor: Cursor,
     pub title_window: Range<usize>,
     pub filesearch_query: Option<String>,
+    pub projectsearch_query: Option<String>,
     pub search_draft: Option<String>,
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
@@ -360,6 +361,7 @@ impl Snapshot {
             title_cursor: app.title.field().cursor(),
             title_window: app.title.window(),
             filesearch_query: app.filesearch().map(|state| state.query.clone()),
+            projectsearch_query: app.projectsearch().map(|state| state.query.clone()),
             search_draft: app.search_draft().map(str::to_string),
             palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,

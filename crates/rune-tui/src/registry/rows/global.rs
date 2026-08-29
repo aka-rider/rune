@@ -95,6 +95,12 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     availability_row(GlobalCommand::TogglePin, "pin", "pin", preview_locked),
     row(GlobalCommand::ToggleFileSearch, "open file", "open file"),
     aliased_row(
+        GlobalCommand::ToggleProjectSearch,
+        "Search in Project",
+        "search project",
+        &["grep", "find in files"],
+    ),
+    aliased_row(
         GlobalCommand::TogglePalette,
         "command palette",
         "command palette",

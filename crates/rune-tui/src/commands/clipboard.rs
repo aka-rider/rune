@@ -91,6 +91,7 @@ pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Eff
     match crate::focus::target(app) {
         crate::focus::FocusTarget::SearchField => crate::search::keys::paste(app, text),
         crate::focus::FocusTarget::FileSearch => crate::filesearch::keys::paste(app, text, effects),
+        crate::focus::FocusTarget::ProjectSearch => crate::projectsearch::keys::paste(app, text),
         crate::focus::FocusTarget::Palette => crate::palette::keys::paste(app, text),
         crate::focus::FocusTarget::ReplaceField => handle_paste_content(app, app.active, text),
         crate::focus::FocusTarget::Explorer

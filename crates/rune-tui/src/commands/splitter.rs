@@ -72,7 +72,7 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let Some(Drag::Splitter { which, grab_delta }) = app.pointer.drag else {
         return;
     };
-    if matches!(which, Splitter::LeftColumn) && app.filesearch().is_some() {
+    if matches!(which, Splitter::LeftColumn) && app.left_column_overlay() {
         return;
     }
     let area = app.frame_area();

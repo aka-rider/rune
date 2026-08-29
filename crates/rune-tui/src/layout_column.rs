@@ -96,7 +96,7 @@ pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> Co
         mode: LayoutMode::EditorOnly,
     };
 
-    if app.filesearch().is_some() && split_fits {
+    if app.left_column_overlay() && split_fits {
         // Visibility and width are decided here, once; `app.splits` is
         // never written to reflect the finder's forced-visible column.
         let cap = main_area.width.saturating_sub(MIN_CENTER_W);
@@ -133,7 +133,7 @@ pub(crate) fn resolve_column(main_area: Rect, split_fits: bool, app: &App) -> Co
         } else {
             no_column
         }
-    } else if (app.splits.left.is_shown() || app.filesearch().is_some()) && !split_fits {
+    } else if (app.splits.left.is_shown() || app.left_column_overlay()) && !split_fits {
         // Below `split_fits` there's no room to paint the column beside
         // a center pane, so it becomes the whole frame instead of being
         // dropped — otherwise a finder opened on a narrow frame would

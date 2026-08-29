@@ -220,6 +220,34 @@ fn paste_verbatim_detects_a_swallowed_filesearch_paste() {
     assert_eq!(v.id, "PASTE-VERBATIM");
 }
 
+#[test]
+fn paste_verbatim_checks_a_paste_landing_in_the_projectsearch_query() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::ProjectSearch;
+    prev.projectsearch_query = Some("gr".to_string());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::ProjectSearch;
+    next.projectsearch_query = Some("grep".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("ep\nignored second line".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_detects_a_swallowed_projectsearch_paste() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::ProjectSearch;
+    prev.projectsearch_query = Some("gr".to_string());
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::ProjectSearch;
+    next.projectsearch_query = Some("gr".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("ep".to_string());
+    let v = paste_verbatim(&prev, &next, &ctx)
+        .expect("a project-search paste that never appends must trip PASTE-VERBATIM");
+    assert_eq!(v.id, "PASTE-VERBATIM");
+}
+
 /// `route_bracketed_paste` refuses a bracketed paste while a chrome pane
 /// (Explorer/Tabs/Messages) holds focus — the invariant flags a document
 /// that changed anyway and accepts one left untouched.

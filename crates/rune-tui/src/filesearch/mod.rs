@@ -98,7 +98,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     }
 }
 
-fn resolve_root(app: &App) -> PathBuf {
+pub(crate) fn resolve_root(app: &App) -> PathBuf {
     let Some(root) = app.root.as_deref() else {
         return crate::explorer::initial_root(app);
     };

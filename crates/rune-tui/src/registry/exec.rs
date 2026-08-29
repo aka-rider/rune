@@ -61,6 +61,7 @@ pub(crate) fn execute(
         | CommandId::ExplorerSearch(_)
         | CommandId::Tabs(_)
         | CommandId::FileSearch(_)
+        | CommandId::ProjectSearch(_)
         | CommandId::Diff(_)
         | CommandId::PaletteKey(_) => {
             ExecOutcome::Refused("not reachable from the palette yet".to_string())

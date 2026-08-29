@@ -4,6 +4,7 @@ use crate::explorer_search::ExplorerSearchCommand;
 use crate::filesearch::keys::FileSearchCommand;
 use crate::opentabs::TabsCommand;
 use crate::palette::keys::PaletteKeyCommand;
+use crate::projectsearch::keys::ProjectSearchCommand;
 
 use super::super::{ArgKind, CommandId, CommandSpec, always};
 
@@ -21,6 +22,10 @@ pub(crate) fn adapt_tabs(cmd: TabsCommand) -> CommandId {
 
 pub(crate) fn adapt_filesearch(cmd: FileSearchCommand) -> CommandId {
     CommandId::FileSearch(cmd)
+}
+
+pub(crate) fn adapt_projectsearch(cmd: ProjectSearchCommand) -> CommandId {
+    CommandId::ProjectSearch(cmd)
 }
 
 pub(crate) fn adapt_diff(cmd: DiffCommand) -> CommandId {
@@ -81,6 +86,23 @@ const fn filesearch_row(
 ) -> CommandSpec {
     CommandSpec {
         id: CommandId::FileSearch(cmd),
+        name,
+        fuzzy_aliases: &[],
+        help,
+        detail: "",
+        arg: ArgKind::None,
+        listed: false,
+        availability: always,
+    }
+}
+
+const fn projectsearch_row(
+    cmd: ProjectSearchCommand,
+    name: &'static str,
+    help: &'static str,
+) -> CommandSpec {
+    CommandSpec {
+        id: CommandId::ProjectSearch(cmd),
         name,
         fuzzy_aliases: &[],
         help,
@@ -163,6 +185,13 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     filesearch_row(FileSearchCommand::Bottom, "go to last result", "bottom"),
     filesearch_row(FileSearchCommand::Enter, "open the selected file", "open"),
     filesearch_row(FileSearchCommand::Cancel, "cancel", "cancel"),
+    projectsearch_row(
+        ProjectSearchCommand::Type,
+        "start typing to search",
+        "type to search",
+    ),
+    projectsearch_row(ProjectSearchCommand::Erase, "erase", "erase"),
+    projectsearch_row(ProjectSearchCommand::Cancel, "cancel", "cancel"),
     diff_row(DiffCommand::NextHunk, "next hunk", "next hunk"),
     diff_row(DiffCommand::PrevHunk, "prev hunk", "prev hunk"),
     diff_row(DiffCommand::TakeTheirs, "take theirs", "take theirs"),

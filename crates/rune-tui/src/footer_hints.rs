@@ -74,6 +74,19 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         return entries;
     }
 
+    if focus::target(app) == FocusTarget::ProjectSearch {
+        entries.extend(
+            crate::projectsearch::keys::PROJECTSEARCH_BINDINGS
+                .iter()
+                .filter(|b| !b.secondary)
+                .filter_map(|b| {
+                    let spec = registry::spec(registry::rows::pane::adapt_projectsearch(b.cmd))?;
+                    Some((labeled(b, &mut label_buf), spec.help, true))
+                }),
+        );
+        return entries;
+    }
+
     if focus::target(app) == FocusTarget::Palette {
         entries.push(("\u{238b}".to_string(), "close", true));
         entries.push(("\u{23ce}".to_string(), "run", true));

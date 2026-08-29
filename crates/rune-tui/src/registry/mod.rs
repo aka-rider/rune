@@ -12,6 +12,7 @@ use crate::global::GlobalCommand;
 use crate::keymap;
 use crate::opentabs::TabsCommand;
 use crate::palette::keys::PaletteKeyCommand;
+use crate::projectsearch::keys::ProjectSearchCommand;
 
 mod avail;
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub enum CommandId {
     ExplorerSearch(ExplorerSearchCommand),
     Tabs(TabsCommand),
     FileSearch(FileSearchCommand),
+    ProjectSearch(ProjectSearchCommand),
     Diff(DiffCommand),
     Palette(PaletteCommand),
     PaletteKey(PaletteKeyCommand),

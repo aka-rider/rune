@@ -101,6 +101,7 @@ fn owns_keystroke(target: FocusTarget) -> bool {
         FocusTarget::SearchField
         | FocusTarget::ReplaceField
         | FocusTarget::FileSearch
+        | FocusTarget::ProjectSearch
         | FocusTarget::Palette => true,
         FocusTarget::Explorer
         | FocusTarget::Tabs

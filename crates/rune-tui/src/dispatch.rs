@@ -288,6 +288,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
             crate::search::keys::handle_key(app, key, effects)
         }
         FocusTarget::FileSearch => crate::filesearch::keys::handle_key(app, key, effects),
+        FocusTarget::ProjectSearch => crate::projectsearch::keys::handle_key(app, key, effects),
         FocusTarget::Palette => crate::palette::keys::handle_key(app, key, effects),
         FocusTarget::Editor => handle_editor_key(app, key, effects),
         FocusTarget::Explorer => explorer_keys::handle_key(app, key, effects),

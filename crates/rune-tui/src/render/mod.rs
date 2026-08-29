@@ -9,6 +9,7 @@ pub(crate) mod fuzzyspan;
 pub mod image;
 mod overlay;
 pub mod palette;
+pub mod projectsearch;
 pub mod rowbg;
 pub mod search;
 pub mod title;
@@ -331,9 +332,12 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     };
 
     let filesearch_active = app.filesearch().is_some();
+    let projectsearch_active = app.projectsearch().is_some();
 
     let title = if filesearch_active {
         " Open File ".to_string()
+    } else if projectsearch_active {
+        " Search Project ".to_string()
     } else if geo.explorer_inner.height == 0 {
         " Open ".to_string()
     } else if let Some(query) = app.explorer_find() {
@@ -358,6 +362,8 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
 
     if filesearch_active {
         filesearch::draw(app, geo.explorer_inner, frame);
+    } else if projectsearch_active {
+        projectsearch::draw(app, geo.explorer_inner, frame);
     } else if geo.explorer_inner.height > 0 {
         crate::explorer::draw(app, geo.explorer_inner, frame);
     }
