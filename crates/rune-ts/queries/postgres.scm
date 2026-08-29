@@ -1,10 +1,9 @@
-; highlights.scm — tree-sitter-postgres syntax highlighting queries
-
-; ── Comments ──────────────────────────────────────────────────────────────────
+; Vendored from tree-sitter-postgres 1.2.4's postgres/queries/highlights.scm,
+; since that crate exports no highlights query of its own; a trailing
+; `(dollar_quoted_string) @string` pattern was appended. Captures map onto
+; rune-syntax's CODE_SCOPES vocabulary by exact name or dotted prefix.
 
 (comment) @comment
-
-; ── Literals ──────────────────────────────────────────────────────────────────
 
 (integer_literal) @number
 (float_literal) @number.float
@@ -18,14 +17,10 @@
 
 (param) @variable.parameter
 
-; ── Identifiers ───────────────────────────────────────────────────────────────
-
 (identifier) @variable
 
 (columnref
   (ColId) @variable)
-
-; ── Types ─────────────────────────────────────────────────────────────────────
 
 [
   (Numeric)
@@ -81,14 +76,10 @@
     (ColId
       (identifier) @type) .))
 
-; ── Functions ─────────────────────────────────────────────────────────────────
-
 (func_application
   (func_name) @function.call)
 
 (func_expr_common_subexpr) @function.call
-
-; ── Operators ─────────────────────────────────────────────────────────────────
 
 (operator) @operator
 
@@ -104,15 +95,11 @@
   "="
 ] @operator
 
-; ── Punctuation ───────────────────────────────────────────────────────────────
-
 ["(" ")"] @punctuation.bracket
 ["[" "]"] @punctuation.bracket
 "," @punctuation.delimiter
 "." @punctuation.delimiter
 ";" @punctuation.delimiter
-
-; ── Statement keywords ────────────────────────────────────────────────────────
 
 [
   (kw_select)
@@ -142,8 +129,6 @@
   (kw_revoke)
 ] @keyword
 
-; ── Clause keywords ───────────────────────────────────────────────────────────
-
 [
   (kw_distinct)
   (kw_all)
@@ -170,8 +155,6 @@
   (kw_exists)
 ] @keyword
 
-; ── Join keywords ─────────────────────────────────────────────────────────────
-
 [
   (kw_join)
   (kw_inner)
@@ -182,8 +165,6 @@
   (kw_natural)
   (kw_lateral)
 ] @keyword
-
-; ── Logical / boolean keywords ────────────────────────────────────────────────
 
 [
   (kw_and)
@@ -200,15 +181,11 @@
   (kw_escape)
 ] @keyword.operator
 
-; ── Set operation keywords ────────────────────────────────────────────────────
-
 [
   (kw_union)
   (kw_intersect)
   (kw_except)
 ] @keyword
-
-; ── Conditional keywords ──────────────────────────────────────────────────────
 
 [
   (kw_case)
@@ -217,8 +194,6 @@
   (kw_else)
   (kw_end)
 ] @keyword
-
-; ── Transaction keywords ──────────────────────────────────────────────────────
 
 [
   (kw_begin)
@@ -229,8 +204,6 @@
   (kw_abort)
   (kw_start)
 ] @keyword
-
-; ── Type keywords ─────────────────────────────────────────────────────────────
 
 [
   (kw_int)
@@ -266,8 +239,6 @@
         (identifier) @type.builtin))))
   (#match? @type.builtin "(?i)^(bigserial|bool|inet|jsonb|timestamptz|uuid|void)$"))
 
-; ── Constraint / DDL keywords ─────────────────────────────────────────────────
-
 [
   (kw_primary)
   (kw_key)
@@ -281,8 +252,6 @@
   (kw_not)
 ] @keyword
 
-; ── Aggregate / window keywords ───────────────────────────────────────────────
-
 [
   (kw_over)
   (kw_partition)
@@ -294,8 +263,6 @@
   (kw_unbounded)
   (kw_current)
 ] @keyword
-
-; ── Other common keywords (catch-all) ─────────────────────────────────────────
 
 [
   (kw_to)

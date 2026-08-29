@@ -194,8 +194,6 @@ pub static LANGUAGES: &[LangDef] = &[
     LangDef {
         name: "make",
         language: || tree_sitter_make::LANGUAGE.into(),
-        // `tree-sitter-make` exports no query of its own; ours is
-        // hand-authored offline against its grammar.
         highlights: || include_str!("../queries/make.scm").to_string(),
     },
     LangDef {

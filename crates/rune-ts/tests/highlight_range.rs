@@ -167,8 +167,7 @@ fn kotlin_float_literal_is_captured_as_a_number() {
     );
 }
 
-const MAKE_SOURCE: &str =
-    "ifeq ($(OS),Linux)\nCC := gcc\nendif\n\n.PHONY: all\nall: main.o\n\t@echo $@ $(wildcard *.c)\n";
+const MAKE_SOURCE: &str = "ifeq ($(OS),Linux)\nCC := gcc\nendif\n\n.PHONY: all\nall: main.o\n\t@echo $@ $(wildcard *.c)\n";
 
 #[test]
 fn make_conditional_directive_is_captured() {
@@ -264,9 +263,9 @@ fn plpgsql_control_flow_keywords_are_captured() {
         "plpgsql's IF must carry the keyword scope"
     );
     assert!(
-        spans.iter().any(
-            |(range, id)| *id == keyword && range.start == at_raise && range.end == at_raise + 5
-        ),
+        spans.iter().any(|(range, id)| *id == keyword
+            && range.start == at_raise
+            && range.end == at_raise + 5),
         "plpgsql's RAISE must carry the keyword scope"
     );
 }

@@ -1,35 +1,25 @@
-; highlights.scm — tree-sitter-plpgsql syntax highlighting queries
+; Vendored from tree-sitter-postgres 1.2.4's plpgsql/queries/highlights.scm,
+; since that crate exports no highlights query of its own. Captures map onto
+; rune-syntax's CODE_SCOPES vocabulary by exact name or dotted prefix.
 ;
 ; Note: SQL expressions are opaque (captured by external scanner).
 ; Only PL/pgSQL structural tokens are highlighted here. SQL fragments
 ; get their highlighting via language injection into the postgres grammar.
 
-; ── Comments ──────────────────────────────────────────────────────────────────
-
 (comment) @comment
-
-; ── Literals ──────────────────────────────────────────────────────────────────
 
 (integer_literal) @number
 (string_literal) @string
 
 (kw_null) @constant.builtin
 
-; ── Identifiers ───────────────────────────────────────────────────────────────
-
 (identifier) @variable
-
-; ── Labels ────────────────────────────────────────────────────────────────────
 
 (block_label (identifier) @label)
 (loop_label (identifier) @label)
 (end_label) @label
 
-; ── Operators ─────────────────────────────────────────────────────────────────
-
 [":=" "=" ".."] @operator
-
-; ── Punctuation ───────────────────────────────────────────────────────────────
 
 ["(" ")"] @punctuation.bracket
 ["[" "]"] @punctuation.bracket
@@ -38,15 +28,11 @@
 "." @punctuation.delimiter
 ";" @punctuation.delimiter
 
-; ── Block structure keywords ──────────────────────────────────────────────────
-
 [
   (kw_begin)
   (kw_end)
   (kw_declare)
 ] @keyword
-
-; ── Control flow keywords ────────────────────────────────────────────────────
 
 [
   (kw_if)
@@ -56,8 +42,6 @@
   (kw_case)
   (kw_when)
 ] @keyword
-
-; ── Loop keywords ────────────────────────────────────────────────────────────
 
 [
   (kw_loop)
@@ -72,8 +56,6 @@
   (kw_exit)
   (kw_continue)
 ] @keyword
-
-; ── Statement keywords ───────────────────────────────────────────────────────
 
 [
   (kw_return)
@@ -97,8 +79,6 @@
   (kw_from)
 ] @keyword
 
-; ── Declaration keywords ─────────────────────────────────────────────────────
-
 [
   (kw_constant)
   (kw_alias)
@@ -113,15 +93,11 @@
   (kw_rowtype)
 ] @keyword
 
-; ── Exception keywords ───────────────────────────────────────────────────────
-
 [
   (kw_exception)
   (kw_or)
   (kw_sqlstate)
 ] @keyword
-
-; ── Transaction keywords ─────────────────────────────────────────────────────
 
 [
   (kw_commit)
@@ -130,11 +106,7 @@
   (kw_and)
 ] @keyword
 
-; ── RAISE level keywords ─────────────────────────────────────────────────────
-
 (raise_level) @keyword
-
-; ── RAISE option keywords ────────────────────────────────────────────────────
 
 (raise_option
   [
@@ -144,10 +116,6 @@
     (kw_errcode)
   ] @keyword)
 
-; ── GET DIAGNOSTICS items ────────────────────────────────────────────────────
-
 (getdiag_item) @keyword
-
-; ── Fetch direction keywords ─────────────────────────────────────────────────
 
 (fetch_direction) @keyword
