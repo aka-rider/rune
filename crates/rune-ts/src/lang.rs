@@ -171,6 +171,11 @@ pub static LANGUAGES: &[LangDef] = &[
         language: || tree_sitter_elixir::LANGUAGE.into(),
         highlights: || tree_sitter_elixir::HIGHLIGHTS_QUERY.to_string(),
     },
+    LangDef {
+        name: "ocaml",
+        language: || tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+        highlights: || tree_sitter_ocaml::HIGHLIGHTS_QUERY.to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match
@@ -207,6 +212,7 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("hs", "haskell"),
     ("ex", "elixir"),
     ("exs", "elixir"),
+    ("ml", "ocaml"),
 ];
 
 /// Resolves a fence info string or a file extension (with or without a
