@@ -34,6 +34,8 @@ static NAMES: &[&str] = &[
     "r",
     "lua",
     "make",
+    "postgres",
+    "plpgsql",
 ];
 
 impl LangId {

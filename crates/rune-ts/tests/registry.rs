@@ -21,7 +21,7 @@ fn every_language_loads_and_its_query_compiles() {
         "language(s) failed to load or compile: {:?}",
         reg.failures()
     );
-    assert_eq!(names.len(), 30);
+    assert_eq!(names.len(), 32);
 }
 
 #[test]
@@ -39,8 +39,8 @@ fn registry_is_a_stable_shared_instance() {
     );
     assert_eq!(
         second.names().count(),
-        30,
-        "the shared registry must list all 30 languages"
+        32,
+        "the shared registry must list all 32 languages"
     );
 }
 
@@ -129,6 +129,26 @@ fn make_query_produces_spans() {
     let source = "all:\n\t@echo hi\n";
     let result = highlight("make", source, Duration::from_secs(5)).expect("parse");
     assert!(!result.spans.is_empty(), "expected at least one make span");
+}
+
+#[test]
+fn postgres_query_produces_spans() {
+    let source = "SELECT id FROM t;\n";
+    let result = highlight("postgres", source, Duration::from_secs(5)).expect("parse");
+    assert!(
+        !result.spans.is_empty(),
+        "expected at least one postgres span"
+    );
+}
+
+#[test]
+fn plpgsql_query_produces_spans() {
+    let source = "BEGIN\n  RAISE NOTICE 'hi';\nEND\n";
+    let result = highlight("plpgsql", source, Duration::from_secs(5)).expect("parse");
+    assert!(
+        !result.spans.is_empty(),
+        "expected at least one plpgsql span"
+    );
 }
 
 #[test]

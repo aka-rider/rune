@@ -198,6 +198,16 @@ pub static LANGUAGES: &[LangDef] = &[
         // hand-authored offline against its grammar.
         highlights: || include_str!("../queries/make.scm").to_string(),
     },
+    LangDef {
+        name: "postgres",
+        language: || tree_sitter_postgres::LANGUAGE.into(),
+        highlights: || include_str!("../queries/postgres.scm").to_string(),
+    },
+    LangDef {
+        name: "plpgsql",
+        language: || tree_sitter_postgres::LANGUAGE_PLPGSQL.into(),
+        highlights: || include_str!("../queries/plpgsql.scm").to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match
@@ -242,6 +252,9 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("mk", "make"),
     ("mak", "make"),
     ("gnumakefile", "make"),
+    ("postgresql", "postgres"),
+    ("pgsql", "postgres"),
+    ("psql", "postgres"),
 ];
 
 /// Resolves a fence info string or a file extension (with or without a

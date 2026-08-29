@@ -222,3 +222,52 @@ fn make_special_target_wins_over_the_plain_target_capture() {
         "the last span painted over .PHONY must be constant.builtin, not function"
     );
 }
+
+const POSTGRES_SOURCE: &str =
+    "SELECT id FROM t;\nCREATE FUNCTION f() RETURNS int AS $$body$$ LANGUAGE sql;\n";
+
+#[test]
+fn postgres_statement_keyword_is_captured() {
+    let keyword = scope_table().resolve("keyword").expect("keyword scope");
+    assert!(
+        spans_of("postgres", POSTGRES_SOURCE)
+            .iter()
+            .any(|(range, id)| *id == keyword && range.start == 0 && range.end == 6),
+        "postgres's SELECT must carry the keyword scope"
+    );
+}
+
+#[test]
+fn postgres_dollar_quoted_body_is_a_string() {
+    let string = scope_table().resolve("string").expect("string scope");
+    let at = POSTGRES_SOURCE
+        .find("$$body$$")
+        .expect("dollar-quoted body present");
+    assert!(
+        spans_of("postgres", POSTGRES_SOURCE)
+            .iter()
+            .any(|(range, id)| *id == string && range.start == at && range.end == at + 8),
+        "postgres's dollar-quoted body must carry the string scope"
+    );
+}
+
+#[test]
+fn plpgsql_control_flow_keywords_are_captured() {
+    let source = "BEGIN\n  IF x THEN\n    RAISE NOTICE 'hi';\n  END IF;\nEND\n";
+    let keyword = scope_table().resolve("keyword").expect("keyword scope");
+    let spans = spans_of("plpgsql", source);
+    let at_if = source.find("IF").expect("IF present");
+    let at_raise = source.find("RAISE").expect("RAISE present");
+    assert!(
+        spans
+            .iter()
+            .any(|(range, id)| *id == keyword && range.start == at_if && range.end == at_if + 2),
+        "plpgsql's IF must carry the keyword scope"
+    );
+    assert!(
+        spans.iter().any(
+            |(range, id)| *id == keyword && range.start == at_raise && range.end == at_raise + 5
+        ),
+        "plpgsql's RAISE must carry the keyword scope"
+    );
+}
