@@ -161,6 +161,11 @@ pub static LANGUAGES: &[LangDef] = &[
         language: || tree_sitter_erlang::LANGUAGE.into(),
         highlights: || tree_sitter_erlang::HIGHLIGHTS_QUERY.to_string(),
     },
+    LangDef {
+        name: "haskell",
+        language: || tree_sitter_haskell::LANGUAGE.into(),
+        highlights: || tree_sitter_haskell::HIGHLIGHTS_QUERY.to_string(),
+    },
 ];
 
 /// Fence info-string and file-extension spellings that don't already match
@@ -194,6 +199,7 @@ pub static ALIASES: &[(&str, &str)] = &[
     ("htm", "html"),
     ("erl", "erlang"),
     ("hrl", "erlang"),
+    ("hs", "haskell"),
 ];
 
 /// Resolves a fence info string or a file extension (with or without a

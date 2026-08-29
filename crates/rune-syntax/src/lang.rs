@@ -27,6 +27,7 @@ static NAMES: &[&str] = &[
     "kotlin",
     "swift",
     "erlang",
+    "haskell",
 ];
 
 impl LangId {
