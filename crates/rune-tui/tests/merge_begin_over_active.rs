@@ -151,10 +151,11 @@ fn begin_over_an_active_resolved_merge_tears_down_the_old_session_first() {
         "expected a fresh Pending ticket, got {:?}",
         session.app().merge
     );
-    // The old session's `merge_close` op is already enqueued (alongside the
-    // fresh `merge_prep`) — drain just that one op, before the fresh
-    // attempt's own `merge_open` would otherwise land in the SAME sweep and
-    // mask a still-active old row behind a newly active one.
+    // Teardown enqueued two ops — `resolve_abandon` then `merge_close` (only
+    // the latter deactivates the row). Drain exactly those two, stopping
+    // short of the fresh attempt's `merge_open`, which would otherwise land
+    // in the SAME sweep and mask a still-active old row behind a new one.
+    assert!(session.deliver_db().is_none());
     assert!(session.deliver_db().is_none());
     assert_eq!(
         active_row_count(&db_path, doc_db_id),
