@@ -109,6 +109,7 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
         }
         None => {
             if app.documents.order().len() >= crate::opentabs::limit::MAX_TABS {
+                crate::messages::warn_if_new(app, "Tab limit reached — close or unpin a tab");
                 return;
             }
             let id = app.open_document(buffer);
@@ -144,6 +145,7 @@ fn apply_failed(app: &mut App, path: &Path, reason: &str) {
         }
         None => {
             if app.documents.order().len() >= crate::opentabs::limit::MAX_TABS {
+                crate::messages::warn_if_new(app, "Tab limit reached — close or unpin a tab");
                 return;
             }
             let id = app.open_document(Buffer::new(text));

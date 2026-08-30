@@ -239,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preview_open_at_cap_is_skipped_silently() {
+    fn a_preview_open_at_cap_warns_about_the_tab_limit() {
         let mem = Arc::new(Mem::new());
         for i in 0..MAX_TABS {
             mem.save_atomic(
@@ -274,7 +274,6 @@ mod tests {
             crate::generation::Generation::ZERO,
         );
         let tabs_before = app.documents.order().len();
-        let newest_before = messages::newest_text(&app).map(str::to_string);
 
         let mut effects = Effects::default();
         app.explorer.nav.cursor = MAX_TABS + 1;
@@ -305,9 +304,9 @@ mod tests {
             "no new tab at cap"
         );
         assert_eq!(
-            messages::newest_text(&app).map(str::to_string),
-            newest_before,
-            "a passive preview miss at cap must post nothing"
+            messages::newest_text(&app),
+            Some("Tab limit reached — close or unpin a tab"),
+            "a preview miss at cap must tell the user why"
         );
     }
 

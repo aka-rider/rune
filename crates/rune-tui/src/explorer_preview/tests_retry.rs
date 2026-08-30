@@ -127,11 +127,50 @@ fn a_failed_preview_at_the_tab_limit_mints_no_placeholder_and_does_not_reread() 
         Some(PathBuf::from("/root/bad.bin")),
         "the failure must still be recorded even without a placeholder"
     );
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        Some("Tab limit reached — close or unpin a tab")
+    );
 
     after_cursor_move(&mut app, &mut effects);
     assert!(
         effects.cmds.is_empty(),
         "sitting on the same failed entry must not re-read, even at the tab limit"
+    );
+}
+
+#[test]
+fn a_valid_preview_at_the_tab_limit_is_refused_with_a_warning() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/good.md"), b"content")
+        .unwrap();
+    let mut app = app_with(&mem);
+    for i in 0..crate::opentabs::limit::MAX_TABS {
+        let id = app.open_document(CoreBuffer::new("hello"));
+        app.doc_mut(id)
+            .unwrap()
+            .bind_path(PathBuf::from(format!("/root/doc{i}.md")));
+    }
+    load_entries(&mut app, &["good.md"]);
+    let mut effects = Effects::default();
+    let docs_before = app.documents.len();
+
+    app.explorer.nav.move_by(1, app.explorer.entries.len()); // ".." -> "good.md"
+    after_cursor_move(&mut app, &mut effects);
+    run_cmds(&mut app, &mut effects);
+
+    assert!(
+        app.explorer.preview.is_none(),
+        "a full tab strip must not mint a preview document"
+    );
+    assert_eq!(
+        app.documents.len(),
+        docs_before,
+        "no document was minted for the refused preview"
+    );
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        Some("Tab limit reached — close or unpin a tab")
     );
 }
 
