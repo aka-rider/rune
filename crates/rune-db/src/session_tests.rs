@@ -40,6 +40,7 @@ fn is_process_alive_detects_pid_reuse_via_started_at_mismatch() {
     assert!(!is_process_alive(pid, "0.000000"));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn proc_started_at_returns_a_parseable_clock_tick_count() {
     let pid = std::process::id() as i32;
@@ -50,12 +51,52 @@ fn proc_started_at_returns_a_parseable_clock_tick_count() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn proc_started_at_returns_a_darwin_timeval_string() {
+    let pid = std::process::id() as i32;
+    let started_at = proc_started_at(pid).expect("read own start time");
+    let (sec_str, usec_str) = started_at
+        .split_once('.')
+        .unwrap_or_else(|| panic!("must be sec.usec, got {started_at:?}"));
+    let sec: u64 = sec_str.parse().expect("sec part must be a u64");
+    assert_eq!(
+        usec_str.len(),
+        6,
+        "usec part must be exactly 6 digits, got {started_at:?}"
+    );
+    usec_str.parse::<u32>().expect("usec part must be a u32");
+
+    let boot_secs = boot_time()
+        .expect("read boot time")
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("boot time is after the epoch")
+        .as_secs();
+    let now_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("now is after the epoch")
+        .as_secs();
+    assert!(
+        sec >= boot_secs && sec <= now_secs,
+        "own process start ({sec}) must fall within [boot ({boot_secs}), now ({now_secs})]"
+    );
+}
+
+#[test]
+fn proc_started_at_is_stable_across_calls() {
+    let pid = std::process::id() as i32;
+    let first = proc_started_at(pid).expect("read own start time");
+    let second = proc_started_at(pid).expect("read own start time");
+    assert_eq!(first, second);
+}
+
 #[test]
 fn boot_time_reads_a_plausible_past_instant() {
     let bt = boot_time().expect("read boot time");
     assert!(bt < SystemTime::now(), "boot time must be in the past");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn boot_time_matches_proc_stat_btime_line() {
     let stat = std::fs::read_to_string("/proc/stat").expect("read /proc/stat");
@@ -70,6 +111,32 @@ fn boot_time_matches_proc_stat_btime_line() {
         .expect("btime value parses");
     let expected = SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
     assert_eq!(boot_time(), Some(expected));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn boot_time_matches_the_kern_boottime_sysctl() {
+    let output = std::process::Command::new("sysctl")
+        .args(["-n", "kern.boottime"])
+        .output()
+        .expect("run sysctl -n kern.boottime");
+    let stdout = String::from_utf8(output.stdout).expect("sysctl output is UTF-8");
+    let after_sec = stdout
+        .split_once("sec = ")
+        .expect("sysctl output has a sec field")
+        .1;
+    let digits: String = after_sec
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let expected_secs: u64 = digits.parse().expect("sec field is numeric");
+
+    let bt = boot_time().expect("read boot time");
+    let secs = bt
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("boot time is after the epoch")
+        .as_secs();
+    assert_eq!(secs, expected_secs);
 }
 
 #[test]
