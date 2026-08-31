@@ -37,7 +37,9 @@ quick search, just start typing
 
 ## Installation
 
-Requires macOS on Apple Silicon (arm64).
+Prebuilt binaries cover macOS (Apple Silicon) and Linux (x86_64/aarch64).
+
+### Homebrew
 
 ```sh
 brew tap aka-rider/tap
@@ -46,6 +48,15 @@ brew install aka-rider/tap/rune
 ```
 
 Upgrading from the old cask? First run `brew uninstall --cask rune-edit`.
+
+### Nix
+
+```sh
+nix run github:aka-rider/rune        # try it
+nix profile install github:aka-rider/rune   # install it
+```
+
+The flake builds from source at any tag, so it tracks releases with no extra publish step.
 
 ---
 

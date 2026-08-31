@@ -10,7 +10,7 @@ ci = "github"
 # The installers to generate for each app
 installers = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
-targets = ["aarch64-apple-darwin"]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 # The Homebrew tap to publish the formula to
 tap = "aka-rider/homebrew-tap"
 # The formula name (default would be the package name, rune-cli)
@@ -21,4 +21,10 @@ publish-jobs = ["homebrew"]
 dispatch-releases = true
 
 [dist.github-custom-runners]
-aarch64-apple-darwin = "macos-latest"
+aarch64-apple-darwin = "macos-15"
+x86_64-unknown-linux-gnu = "ubuntu-22.04"
+aarch64-unknown-linux-gnu = "ubuntu-22.04-arm"
+
+# Floor set to match the oldest builder image (ubuntu-22.04 ships glibc 2.35)
+[dist.min-glibc-version]
+"*" = "2.35"
