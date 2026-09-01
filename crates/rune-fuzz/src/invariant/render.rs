@@ -1,5 +1,5 @@
 //! Cell-model invariants: `CELL-OFFSET`/`CELL-NO-EOL`/`CELL-ORDER` over
-//! `Snapshot.cells`, plus the pure comparator half of `SYNC-IDEMPOTENT`.
+//! `Painted.cells`, plus the pure comparator half of `SYNC-IDEMPOTENT`.
 //!
 //! `SYNC-IDEMPOTENT` itself needs a SECOND live `app.sync_view()` call with
 //! no intervening message — it is a comparison of two consecutive renders
@@ -14,7 +14,7 @@ use ratatui::buffer::CellWidth;
 use rune_tui::render::Cell;
 
 use super::Violation;
-use crate::snapshot::Snapshot;
+use crate::snapshot::Painted;
 
 /// `SYNC-IDEMPOTENT`'s display-pipeline half — compares the production
 /// (WP16-memoized) render already cached on `Document` against a
@@ -99,22 +99,22 @@ pub fn sync_idempotent(
 /// gone: `Option<u32>` makes negative garbage unrepresentable by
 /// construction, which is the point of the type.
 ///
-/// Active-document-switch-safe: L0, checks one `Snapshot`'s `cells` against
+/// Active-document-switch-safe: L0, checks one `Painted`'s `cells` against
 /// its own `content`.
-pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
-    for row in &snap.cells {
+pub fn cell_offset(painted: &Painted) -> Option<Violation> {
+    for row in &painted.cells {
         for cell in row {
             let Some(offset) = cell.buf_offset else {
                 continue;
             };
             let offset = offset as usize;
-            if offset > snap.content.len() || !snap.content.is_char_boundary(offset) {
+            if offset > painted.content.len() || !painted.content.is_char_boundary(offset) {
                 return Some(Violation::new(
                     "CELL-OFFSET",
                     format!(
                         "cell buf_offset={offset} is out of bounds or not a char boundary \
                          (content.len()={})",
-                        snap.content.len()
+                        painted.content.len()
                     ),
                 ));
             }
@@ -140,9 +140,9 @@ pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
 /// grapheme cluster is never a bare `\n`/`\r` plus anything else (both
 /// break grapheme segmentation), so an exact string comparison is safe.
 ///
-/// Active-document-switch-safe: L0, single `Snapshot`.
-pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
-    for row in &snap.cells {
+/// Active-document-switch-safe: L0, single `Painted`.
+pub fn cell_no_eol(painted: &Painted) -> Option<Violation> {
+    for row in &painted.cells {
         for cell in row {
             if cell.text == "\n" || cell.text == "\r" {
                 return Some(Violation::new(
@@ -161,9 +161,9 @@ pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
 /// `CELL-ORDER` (L0, sampled per G19) — within each row, cells
 /// with a real (`Some`) `buf_offset` are non-decreasing left to right.
 ///
-/// Active-document-switch-safe: L0, single `Snapshot`.
-pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
-    for row in &snap.cells {
+/// Active-document-switch-safe: L0, single `Painted`.
+pub fn cell_order(painted: &Painted) -> Option<Violation> {
+    for row in &painted.cells {
         let mut last: Option<u32> = None;
         for cell in row {
             let Some(offset) = cell.buf_offset else {
@@ -185,18 +185,18 @@ pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
 
 /// `TABLE-ROW-WIDTH` (L0, sampled per G19; plan WP5.S3) — within one
 /// `table_group`, every row (a content row or a synthesised border) has
-/// the same summed cell width. `Snapshot.cells`/`Snapshot.row_meta` are
+/// the same summed cell width. `Painted.cells`/`Painted.row_meta` are
 /// index-aligned (`rune_tui::row_meta::row_meta` windows the exact same
 /// `viewport.scroll_row`/`height` `render::build_rows` does), so pairing
 /// `cells[i]` with `row_meta[i]` is always the SAME row. A border row
 /// whose width disagrees with its content rows is exactly the defect
 /// class this invariant exists to catch (plan WP5's own docs).
 ///
-/// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
-pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
+/// Active-document-switch-safe: L0, single `Painted`'s `cells`/`row_meta`.
+pub fn table_row_width(painted: &Painted) -> Option<Violation> {
     let mut first_of_group: std::collections::HashMap<usize, (usize, usize)> =
         std::collections::HashMap::new();
-    for (i, m) in snap.row_meta.iter().enumerate() {
+    for (i, m) in painted.row_meta.iter().enumerate() {
         let Some(group) = m.table_group else {
             continue;
         };
@@ -208,7 +208,7 @@ pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
         if !m.boxed {
             continue;
         }
-        let Some(row) = snap.cells.get(i) else {
+        let Some(row) = painted.cells.get(i) else {
             continue;
         };
         let width: usize = row.iter().map(|c| c.width as usize).sum();
@@ -237,13 +237,13 @@ pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
 /// (`DisplaySnapshot::expand_tables`'s docs), so none of its cells may
 /// claim a real buffer byte.
 ///
-/// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
-pub fn table_synthetic_decorative(snap: &Snapshot) -> Option<Violation> {
-    for (i, m) in snap.row_meta.iter().enumerate() {
+/// Active-document-switch-safe: L0, single `Painted`'s `cells`/`row_meta`.
+pub fn table_synthetic_decorative(painted: &Painted) -> Option<Violation> {
+    for (i, m) in painted.row_meta.iter().enumerate() {
         if !m.synthetic {
             continue;
         }
-        let Some(row) = snap.cells.get(i) else {
+        let Some(row) = painted.cells.get(i) else {
             continue;
         };
         for cell in row {

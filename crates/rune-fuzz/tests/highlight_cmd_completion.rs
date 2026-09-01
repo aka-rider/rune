@@ -16,9 +16,9 @@ fn a_real_highlight_cmd_discharges_end_to_end_via_deliver() {
     assert_eq!(session.deliver(), None);
 
     let snap = session.snapshot();
-    assert_eq!(snap.highlight_version, snap.version);
+    assert_eq!(snap.painted.highlight_version, snap.version);
     assert!(
-        !snap.highlight_spans.is_empty(),
+        !snap.painted.highlight_spans.is_empty(),
         "expected the real tree-sitter rust grammar to produce spans over the fence, got none"
     );
 }

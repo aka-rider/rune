@@ -21,12 +21,12 @@ const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
 fn app_for(content: &str, path: Option<&str>) -> App {
-    let mut app = App::new(
-        Buffer::new(content),
-        path.map(PathBuf::from),
-        Arc::new(Mem::new()),
-        None,
-    );
+    let vfs = Arc::new(Mem::new());
+    let launch = path.map(|path| {
+        rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), &PathBuf::from(path))
+            .expect("the launch path resolves")
+    });
+    let mut app = App::new(Buffer::new(content), launch, vfs, None);
     // Seeds through the real geometry chokepoint (plan gotcha 9) rather
     // than a bare `viewport.set_size` — `App::relayout` (run inside
     // `sync_view`) sizes the viewport from the SAME `layout::geometry`

@@ -106,7 +106,7 @@ pub(super) fn save_directly(
 pub(crate) fn bind_new_now(
     app: &mut App,
     id: DocumentId,
-    path: PathBuf,
+    path: crate::resolved::ResolvedPath,
     _clearance: &SaveClearance,
 ) {
     crate::commands::strip_trailing::leave_reading_then_strip(app, id);
@@ -136,7 +136,7 @@ pub(crate) fn bind_new_now(
                     version,
                     Arc::clone(&content),
                     PublishParams {
-                        path: path.clone(),
+                        path: path.clone().into_path_buf(),
                         publish_mode: crate::db::PublishMode::CreateOnly,
                         db_id,
                         seq,

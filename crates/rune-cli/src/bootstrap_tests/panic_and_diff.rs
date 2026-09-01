@@ -42,8 +42,7 @@ fn diff_launch_opens_file_b_normally_and_installs_file_a_read_only() {
     assert_eq!(app.active_doc().buffer.content(), "right content");
     assert!(
         app.active_doc()
-            .file_path
-            .as_deref()
+            .path()
             .is_some_and(|p| p == Path::new("/vault/b.md"))
     );
 

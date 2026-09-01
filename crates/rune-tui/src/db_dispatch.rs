@@ -54,6 +54,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 *load_result,
                 pending.issued_version,
                 pending.load_purpose,
+                effects,
             );
         }),
         DbEvent::Ok {
@@ -186,12 +187,13 @@ mod tests {
 
     #[test]
     fn stale_probe_ack_rearms() {
-        let mut app = App::new(
-            Buffer::new("body"),
-            Some(PathBuf::from("/vault/note.md")),
-            Arc::new(Mem::new()),
-            Some(in_memory_db()),
-        );
+        let vfs = Arc::new(Mem::new());
+        let launch = crate::resolved::ResolvedPath::resolve(
+            vfs.as_ref(),
+            std::path::Path::new("/vault/note.md"),
+        )
+        .expect("the launch path resolves");
+        let mut app = App::new(Buffer::new("body"), Some(launch), vfs, Some(in_memory_db()));
         let id = app.active;
         app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(
             1,
@@ -248,12 +250,13 @@ mod tests {
 
     #[test]
     fn stale_prepare_ack_abandons_the_save_without_reclassifying() {
-        let mut app = App::new(
-            Buffer::new("body"),
-            Some(PathBuf::from("/vault/note.md")),
-            Arc::new(Mem::new()),
-            Some(in_memory_db()),
-        );
+        let vfs = Arc::new(Mem::new());
+        let launch = crate::resolved::ResolvedPath::resolve(
+            vfs.as_ref(),
+            std::path::Path::new("/vault/note.md"),
+        )
+        .expect("the launch path resolves");
+        let mut app = App::new(Buffer::new("body"), Some(launch), vfs, Some(in_memory_db()));
         let id = app.active;
         app.doc_mut(id).expect("doc exists").replica = Replica::Bound(DocDb::new(
             1,

@@ -219,9 +219,6 @@ fn ladder_press(
 }
 
 pub fn undo(app: &mut App, id: DocumentId) {
-    if app.refuse_if_preview(id) {
-        return;
-    }
     let Some(read_only) = app.doc(id).map(|doc| doc.read_only) else {
         return;
     };
@@ -285,9 +282,6 @@ pub fn undo(app: &mut App, id: DocumentId) {
 }
 
 pub fn redo(app: &mut App, id: DocumentId) {
-    if app.refuse_if_preview(id) {
-        return;
-    }
     let Some(read_only) = app.doc(id).map(|doc| doc.read_only) else {
         return;
     };

@@ -86,7 +86,7 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
             );
             let _ = writeln!(out);
             let _ = writeln!(out, "rendered frame:");
-            out.push_str(&render_frame(&snap.cells));
+            out.push_str(&render_frame(&snap.painted.cells));
         }
         None => {
             let _ = writeln!(out, "<no snapshot captured>");

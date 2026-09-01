@@ -124,7 +124,10 @@ fn sync_marker(app: &App) -> &'static str {
 /// one: `line_visual_col` walks the cursor's own logical line from its own
 /// start, so a wrapped line's second-and-later visual row never resets the
 /// readout back to `Col 1`.
-pub fn position_text(app: &App) -> String {
+pub fn position_text(app: &App) -> Option<String> {
+    if app.showing_preview() {
+        return None;
+    }
     let doc = app.active_doc();
     let offset = doc.cursors.primary().position.get();
     let bp = doc.buffer.offset_to_line_col(offset);
@@ -133,13 +136,13 @@ pub fn position_text(app: &App) -> String {
         _ => "",
     };
     let col = line_visual_col(line_text, bp.col);
-    format!("Ln {}, Col {}", bp.line + 1, col + 1)
+    Some(format!("Ln {}, Col {}", bp.line + 1, col + 1))
 }
 
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let bg = app.theme.chrome.footer;
     let marker = sync_marker(app);
-    let right_text = position_text(app);
+    let right_text = position_text(app).unwrap_or_default();
     let right_width = display_width(marker) + display_width(&right_text);
     let available = area.width as usize;
     // Truncation only applies to `DefaultHints` — the one mode that grows
@@ -264,7 +267,7 @@ mod tests {
     #[test]
     fn position_text_reports_one_indexed_line_and_col() {
         let app = app_with("hello");
-        assert_eq!(position_text(&app), "Ln 1, Col 1");
+        assert_eq!(position_text(&app).as_deref(), Some("Ln 1, Col 1"));
     }
 
     // `footer_text` covers only the left side; this renders the full row,

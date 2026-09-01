@@ -29,19 +29,6 @@ pub(crate) fn toggle_read_only(app: &App) -> Availability {
     }
 }
 
-pub(crate) fn preview_locked(app: &App) -> Availability {
-    if app.active_doc().read_only == ReadOnly::Preview {
-        Availability::Unavailable(
-            ReadOnly::Preview
-                .refusal_message()
-                .unwrap_or_default()
-                .into(),
-        )
-    } else {
-        Availability::Available
-    }
-}
-
 pub(crate) fn merge(app: &App) -> Availability {
     let session_exists_here = app.merge.doc() == Some(app.active);
     if session_exists_here || crate::merge::is_divergent(app.active_doc()) {
@@ -71,10 +58,6 @@ pub(crate) fn save(app: &App) -> Availability {
     if app.active_doc().kind == DocumentKind::Image {
         return Availability::Unavailable("images can't be edited or saved here".into());
     }
-    let preview = preview_locked(app);
-    if !matches!(preview, Availability::Available) {
-        return preview;
-    }
     if app.active_doc().save_in_flight() {
         return Availability::Unavailable("a save is already in progress".into());
     }
@@ -82,10 +65,6 @@ pub(crate) fn save(app: &App) -> Availability {
         return Availability::Unavailable("can't save while a rename is in flight".into());
     }
     Availability::Available
-}
-
-pub(crate) fn rename(app: &App) -> Availability {
-    preview_locked(app)
 }
 
 pub(crate) fn tab_switch(app: &App) -> Availability {

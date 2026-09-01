@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_core::undo::EditKind;

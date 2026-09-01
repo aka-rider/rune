@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
+use rune_tui::resolved::ResolvedPath;
 use rune_tui::{workspace, workspaceroot};
 use rune_vfs::{FileKind, Vfs};
 
@@ -77,7 +78,7 @@ pub(crate) fn resolve_root(
 /// shape unchanged, in [`open_first_text`].
 pub(crate) fn open_first_positional(
     vfs: &Arc<dyn Vfs + Send + Sync>,
-    path: PathBuf,
+    path: ResolvedPath,
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     if rune_tui::document_support::is_image_path(&path) {
@@ -133,7 +134,7 @@ fn open_first_image(
 
 fn open_first_text(
     vfs: &Arc<dyn Vfs + Send + Sync>,
-    path: PathBuf,
+    path: ResolvedPath,
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     // One sighting decides both "does this path exist" and, if so, the

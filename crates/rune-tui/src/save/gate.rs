@@ -33,9 +33,6 @@ fn materialize_rungs(app: &mut App, id: DocumentId) -> Result<(), SaveStart> {
         messages::warn(app, "images can't be edited or saved here");
         return Err(SaveStart::Refused);
     }
-    if app.refuse_if_preview(id) {
-        return Err(SaveStart::Refused);
-    }
     refuse_while_saving(app, id)?;
     if app.rename.in_flight() {
         messages::error(app, "can't save while a rename is in flight");

@@ -6,7 +6,9 @@ use crate::runtime::Effects;
 use crate::workspace;
 
 pub fn reveal(app: &mut App, path: &Path, effects: &mut Effects) {
-    let Some(resolved) = workspace::resolve_or_report(app, path, "reveal") else {
+    let Some(resolved) = workspace::resolve_or_report(app, path, "reveal")
+        .map(crate::resolved::ResolvedPath::into_path_buf)
+    else {
         return;
     };
     let Some(parent) = resolved.parent().map(Path::to_path_buf) else {

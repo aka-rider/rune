@@ -13,9 +13,7 @@ pub(super) fn handle_committed_ack(
         .doc_mut(id)
         .and_then(crate::document::Document::take_bind_target)
     {
-        if let Some(doc) = app.doc_mut(id) {
-            doc.bind_path(path);
-        }
+        app.rebind_document_path(id, path);
         if app.active == id {
             let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
             app.title.seed(&name);
@@ -64,7 +62,7 @@ pub(super) fn handle_committed_ack(
 }
 
 fn reestablish_baseline_or_detach(app: &mut App, id: DocumentId, db_id: Option<i64>) {
-    let path = app.doc(id).and_then(|d| d.file_path.clone());
+    let path = app.doc(id).and_then(|d| d.resolved_path().cloned());
     let store_usable = app.db.as_ref().is_some_and(|db| !db.degraded);
     let re_baselined = match (path, store_usable) {
         (Some(path), true) => crate::db_enqueue::load_document_best_effort(app, id, &path),

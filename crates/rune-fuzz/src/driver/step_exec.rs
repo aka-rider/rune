@@ -207,7 +207,7 @@ pub(super) fn step_and_check(
     if let Some(path) = state
         .app
         .doc(state.seed_doc)
-        .and_then(|d| d.file_path.clone())
+        .and_then(|d| d.path().map(std::path::Path::to_path_buf))
     {
         state.path = path;
     }

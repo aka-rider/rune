@@ -30,7 +30,13 @@ pub fn app_with_embed(content: &str) -> (App, DocumentId) {
     let vfs: Arc<dyn Vfs + Send + Sync> = mem;
     let mut app = App::new(
         Buffer::new(content),
-        Some(Path::new("/vault/doc.md").to_path_buf()),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&Path::new("/vault/doc.md").to_path_buf()),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

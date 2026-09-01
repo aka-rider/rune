@@ -78,9 +78,7 @@ fn documents_at(session: &Session, path: &str) -> usize {
     app.documents
         .order()
         .iter()
-        .filter(|id| {
-            app.doc(**id).and_then(|doc| doc.file_path.as_deref()) == Some(Path::new(path))
-        })
+        .filter(|id| app.doc(**id).and_then(|doc| doc.path()) == Some(Path::new(path)))
         .count()
 }
 
@@ -106,7 +104,7 @@ fn previewing_a_symlink_and_then_opening_it_yields_exactly_one_document() {
         "no document ever binds the unresolved link path"
     );
     assert_eq!(
-        session.app().active_doc().file_path.as_deref(),
+        session.app().active_doc().path(),
         Some(Path::new("/root/b.md"))
     );
     assert_eq!(session.app().active_doc().buffer.content(), "b content");
@@ -167,16 +165,19 @@ fn a_symlinked_row_is_previewed_under_its_target_path() {
     let mut effects = arrow_onto(&mut session, "link.md");
     run_cmds(&mut session, &mut effects);
 
-    let preview = session
+    let previewed = session
         .app()
         .explorer
         .preview
-        .expect("hovering a link mints a preview");
+        .as_ref()
+        .expect("hovering a link mints a preview")
+        .doc
+        .path()
+        .map(std::path::Path::to_path_buf);
+    assert_eq!(previewed, Some(PathBuf::from("/root/b.md")));
     assert_eq!(
-        session
-            .app()
-            .doc(preview)
-            .and_then(|doc| doc.file_path.clone()),
-        Some(PathBuf::from("/root/b.md"))
+        documents_at(&session, "/root/b.md"),
+        0,
+        "a preview is not a workspace document"
     );
 }

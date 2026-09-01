@@ -2,18 +2,27 @@ use crate::app::App;
 use crate::focus::{self, FocusTarget};
 use crate::pane::Pane;
 
+const MIN_EDITOR_CELLS: u16 = 1;
+
 impl App {
+    pub(crate) fn editor_viewport_size(&self) -> (u16, u16) {
+        let geo = crate::layout::geometry(self.frame_area(), self);
+        (
+            geo.editor.width.max(MIN_EDITOR_CELLS),
+            geo.editor.height.max(MIN_EDITOR_CELLS),
+        )
+    }
+
     pub fn relayout(&mut self) {
         if self.frame.is_none() {
             return;
         }
-        let area = self.frame_area();
-        let geo = crate::layout::geometry(area, self);
-        // Floors both dimensions at 1: the fuzzer drives `Resize` down to a
-        // 1x2 frame, and a 0-width/0-height viewport would reach
-        // `Document::set_width`'s wrap engine with a wrap column of 0.
-        let (w, h) = (geo.editor.width.max(1), geo.editor.height.max(1));
+        let geo = crate::layout::geometry(self.frame_area(), self);
+        let (w, h) = self.editor_viewport_size();
         self.active_doc_mut().viewport.set_size(w, h);
+        if let Some(preview) = self.explorer.preview.as_mut() {
+            preview.doc.viewport.set_size(w, h);
+        }
         if let Some(diff) = self.diff.as_mut() {
             let (lw, lh) = geo.diff_left.map_or((w, h), |diff_left| {
                 (diff_left.width.max(1), diff_left.height.max(1))
@@ -69,7 +78,18 @@ impl App {
             .set_search_reveal_offsets(search_offsets);
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
+        self.sync_preview();
         crate::diff_view::sync(self);
+    }
+
+    fn sync_preview(&mut self) {
+        let icons = self.icons();
+        let Some(preview) = self.explorer.preview.as_mut() else {
+            return;
+        };
+        preview.doc.icons = icons;
+        let view = preview.doc.sync_without_caret();
+        preview.doc.view = Some(view);
     }
 }
 

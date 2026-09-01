@@ -32,7 +32,13 @@ fn a_direct_save_that_displaces_existing_disk_content_preserves_it_and_warns() {
         .expect("seed doc.md");
     let mut app = App::new(
         Buffer::new("already on disk"),
-        Some(path.clone()),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&path.clone()),
+            )
+            .expect("the launch path resolves"),
+        ),
         Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
         None,
     );
@@ -134,7 +140,13 @@ fn a_direct_save_whose_conflict_sibling_write_fails_still_saves_but_warns() {
         .expect("seed doc.md");
     let mut app = App::new(
         Buffer::new("already on disk"),
-        Some(path.clone()),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&path.clone()),
+            )
+            .expect("the launch path resolves"),
+        ),
         Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
         None,
     );

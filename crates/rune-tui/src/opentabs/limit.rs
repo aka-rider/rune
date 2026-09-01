@@ -3,9 +3,6 @@ use crate::document::{Document, DocumentId};
 use crate::runtime::Effects;
 
 pub fn toggle_pin(app: &mut App, id: DocumentId) {
-    if app.refuse_if_preview(id) {
-        return;
-    }
     if let Some(doc) = app.doc_mut(id) {
         doc.pinned = !doc.pinned;
     }
@@ -14,13 +11,7 @@ pub fn toggle_pin(app: &mut App, id: DocumentId) {
 pub const MAX_TABS: usize = 10;
 
 fn room_available(app: &App) -> bool {
-    let occupied = app.documents.order().len();
-    let occupied = if app.explorer.preview.is_some_and(|id| app.doc(id).is_some()) {
-        occupied.saturating_sub(1)
-    } else {
-        occupied
-    };
-    occupied < MAX_TABS
+    app.documents.order().len() < MAX_TABS
 }
 
 pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
@@ -34,12 +25,9 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
         .copied()
         .filter(|&id| {
             id != app.active
-                && app.doc(id).is_some_and(|doc| {
-                    !doc.pinned
-                        && !doc.is_preview()
-                        && doc.file_path.is_some()
-                        && !doc.save_in_flight()
-                })
+                && app
+                    .doc(id)
+                    .is_some_and(|doc| !doc.pinned && doc.path().is_some() && !doc.save_in_flight())
         })
         .collect();
     let clean = eligible
@@ -61,7 +49,6 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
 mod tests {
     use super::*;
     use crate::app::App;
-    use crate::document::ReadOnly;
     use crate::guard::{GuardKind, GuardPrompt};
     use crate::messages;
     use crate::workspace;
@@ -98,38 +85,32 @@ mod tests {
         assert_eq!(&active_row(&app, 20)[0..5], "  1: ");
     }
 
-    #[test]
-    fn toggle_pin_refuses_a_preview() {
-        let mut app = app();
-        let active = app.active;
-        app.doc_mut(active).unwrap().read_only = ReadOnly::Preview;
-
-        toggle_pin(&mut app, active);
-
-        assert!(!app.doc(active).unwrap().pinned);
-        assert_eq!(
-            messages::newest_text(&app),
-            ReadOnly::Preview.refusal_message()
-        );
-    }
-
     fn filled_app(n: usize) -> (App, Vec<DocumentId>) {
         filled_app_with(Arc::new(Mem::new()), n)
     }
 
     fn filled_app_with(mem: Arc<Mem>, n: usize) -> (App, Vec<DocumentId>) {
-        let mut app = App::new(Buffer::new("hello"), None, mem, None);
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(
+                crate::resolved::ResolvedPath::resolve(
+                    mem.as_ref(),
+                    std::path::Path::new(&std::path::PathBuf::from("/root/doc0.md")),
+                )
+                .expect("the launch path resolves"),
+            ),
+            mem,
+            None,
+        );
         app.active_doc_mut().viewport.set_size(80, 23);
-        app.doc_mut(app.active)
-            .unwrap()
-            .bind_path(std::path::PathBuf::from("/root/doc0.md"));
         let mut ids = vec![app.active];
         for i in 1..n {
-            let id = app.open_document(Buffer::new("hello"));
-            app.doc_mut(id)
-                .unwrap()
-                .bind_path(std::path::PathBuf::from(format!("/root/doc{i}.md")));
-            ids.push(id);
+            let path = crate::resolved::ResolvedPath::resolve(
+                app.vfs.as_ref(),
+                std::path::Path::new(&format!("/root/doc{i}.md")),
+            )
+            .expect("Mem resolves any spelling");
+            ids.push(app.open_document_bound(Buffer::new("hello"), path));
         }
         (app, ids)
     }
@@ -239,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preview_open_at_cap_warns_about_the_tab_limit() {
+    fn previewing_at_an_unevictable_cap_costs_no_tab_and_the_limit_is_heard_on_promotion() {
         let mem = Arc::new(Mem::new());
         for i in 0..MAX_TABS {
             mem.save_atomic(
@@ -250,7 +231,10 @@ mod tests {
         }
         mem.save_atomic(std::path::Path::new("/root/eleventh.md"), b"content")
             .unwrap();
-        let (mut app, _ids) = filled_app_with(Arc::clone(&mem), MAX_TABS);
+        let (mut app, ids) = filled_app_with(Arc::clone(&mem), MAX_TABS);
+        for &id in &ids {
+            app.doc_mut(id).unwrap().pinned = true;
+        }
 
         let entries: Vec<rune_vfs::DirEntry> = (0..MAX_TABS)
             .map(|i| rune_vfs::DirEntry {
@@ -298,15 +282,43 @@ mod tests {
             }
         }
 
+        assert!(
+            app.explorer.preview.is_some(),
+            "a preview holds no tab slot, so a full workspace never blocks browsing"
+        );
         assert_eq!(
             app.documents.order().len(),
             tabs_before,
-            "no new tab at cap"
+            "browsing at cap opens no tab"
+        );
+        assert_ne!(
+            messages::newest_text(&app),
+            Some("Tab limit reached — close or unpin a tab"),
+            "browsing claims no tab, so it must not report the limit"
+        );
+
+        let previewed = crate::explorer_preview::shown_path(&app)
+            .expect("the previewed file is on screen")
+            .to_path_buf();
+        assert_eq!(
+            crate::explorer_preview::promote(&mut app, &mut effects),
+            crate::explorer_preview::Promotion::Refused,
+            "promotion is where the tab is claimed, and at cap it is refused"
+        );
+        assert_eq!(
+            crate::explorer_preview::shown_path(&app),
+            Some(previewed.as_path()),
+            "a refused promotion must leave the file the user is reading on screen"
+        );
+        assert_eq!(
+            app.documents.order().len(),
+            tabs_before,
+            "a refused promotion opens no tab"
         );
         assert_eq!(
             messages::newest_text(&app),
             Some("Tab limit reached — close or unpin a tab"),
-            "a preview miss at cap must tell the user why"
+            "a refused promotion must tell the user why"
         );
     }
 
@@ -344,26 +356,6 @@ mod tests {
             messages::newest_text(&app),
             Some("Tab limit reached — close or unpin a tab")
         );
-    }
-
-    #[test]
-    fn a_live_preview_frees_its_slot_for_the_incoming_open() {
-        let (mut app, ids) = filled_app(MAX_TABS);
-        let preview = ids[1];
-        app.doc_mut(preview).unwrap().read_only = ReadOnly::Preview;
-        app.explorer.preview = Some(preview);
-
-        let mut effects = Effects::default();
-        assert!(ensure_room(&mut app, &mut effects));
-
-        assert_eq!(app.documents.order().len(), MAX_TABS, "no tab was evicted");
-        assert!(
-            app.documents.order().contains(&preview),
-            "the preview itself is still open — it is displaced by the switch \
-             the incoming document performs, not by ensure_room"
-        );
-        assert!(app.guard.is_none());
-        assert_eq!(messages::newest_text(&app), None);
     }
 
     #[test]

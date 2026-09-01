@@ -18,7 +18,7 @@ pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mu
     app.splits.left.show();
     app.splits.explorer.show();
     app.set_focus_pane(Pane::Explorer, effects);
-    match app.active_doc().file_path.clone() {
+    match app.active_doc().resolved_path().cloned() {
         Some(path) => crate::explorer_reveal::reveal(app, &path, effects),
         None => explorer::ensure_loaded(app, effects),
     }

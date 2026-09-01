@@ -7,18 +7,14 @@ use super::{NavHistory, Place, PlaceKind};
 const NAV_JUMP_LINES: usize = 10;
 
 pub(super) fn eligible(app: &App, id: DocumentId) -> bool {
-    match app.doc(id) {
-        Some(doc) if doc.is_preview() => false,
-        Some(_) => app.help_doc != Some(id),
-        None => false,
-    }
+    app.doc(id).is_some() && app.help_doc != Some(id)
 }
 
 fn place_for(app: &App, doc: DocumentId, offset: usize, kind: PlaceKind) -> Option<Place> {
     let document = app.doc(doc)?;
     Some(Place {
         doc,
-        path: document.file_path.clone(),
+        path: document.resolved_path().cloned(),
         offset: rune_core::buffer::clamp_to_char_boundary(document.buffer.content(), offset),
         kind,
     })
@@ -55,15 +51,8 @@ pub fn record_edit(app: &mut App, id: DocumentId, offset: usize) {
     app.nav_history.push(place, replace);
 }
 
-/// Where a navigation is departing FROM, read before that navigation moves
-/// anything: the browsing origin whenever the user is browsing the
-/// Explorer — `app.active` names an ineligible preview there, or the
-/// destination itself once the cursor lands on a file already open — and
-/// the active document otherwise.
 pub fn departure_origin(app: &App) -> Option<DocumentId> {
-    let browsing =
-        focus::target(app) == FocusTarget::Explorer || app.explorer.preview == Some(app.active);
-    if browsing {
+    if focus::target(app) == FocusTarget::Explorer {
         app.explorer.browsing_origin.raw()
     } else {
         Some(app.active)

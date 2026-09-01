@@ -34,7 +34,18 @@ pub const HEIGHT: u16 = 30;
 
 pub fn app_with(mem: &Arc<Mem>, path: &str, content: &str) -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new(Buffer::new(content), Some(PathBuf::from(path)), vfs, None);
+    let mut app = App::new(
+        Buffer::new(content),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(path)),
+            )
+            .expect("the launch path resolves"),
+        ),
+        vfs,
+        None,
+    );
     app.set_root(PathBuf::from("/root"));
     app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
     app.sync_view();
@@ -199,5 +210,5 @@ pub fn arrow_to(app: &mut App, name: &str) {
 }
 
 pub fn active_path(app: &App) -> Option<PathBuf> {
-    app.active_doc().file_path.clone()
+    app.active_doc().path().map(std::path::Path::to_path_buf)
 }

@@ -21,7 +21,7 @@ pub(crate) struct PublishParams {
     pub(crate) db_id: i64,
     pub(crate) seq: i64,
     pub(crate) mode: SaveMode,
-    pub(crate) bind_target: Option<PathBuf>,
+    pub(crate) bind_target: Option<crate::resolved::ResolvedPath>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -57,7 +57,7 @@ pub(crate) enum SaveState {
         capture: SaveCapture,
         record_op: u64,
         published: bool,
-        bind_target: Option<PathBuf>,
+        bind_target: Option<crate::resolved::ResolvedPath>,
     },
 }
 
@@ -203,7 +203,7 @@ impl SaveState {
         }
     }
 
-    pub(crate) fn take_bind_target(&mut self) -> Option<PathBuf> {
+    pub(crate) fn take_bind_target(&mut self) -> Option<crate::resolved::ResolvedPath> {
         match self {
             SaveState::Preparing { params, .. } | SaveState::Publishing { params, .. } => {
                 params.bind_target.take()
@@ -213,7 +213,7 @@ impl SaveState {
         }
     }
 
-    pub(crate) fn bind_target(&self) -> Option<&PathBuf> {
+    pub(crate) fn bind_target(&self) -> Option<&crate::resolved::ResolvedPath> {
         match self {
             SaveState::Preparing { params, .. } | SaveState::Publishing { params, .. } => {
                 params.bind_target.as_ref()

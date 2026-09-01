@@ -204,7 +204,7 @@ fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
     let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = rune_tui::render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = rune_tui::render::build_rows(app, rune_tui::render::RowSource::Shown, view);
     let meta = rune_tui::row_meta::row_meta(view, app);
 
     let widths: Vec<usize> = rows

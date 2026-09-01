@@ -35,10 +35,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     // itself must stay reachable whenever the chord is live, independent
     // of whatever the document's bytes are doing right now.
     if focus::target(app) == FocusTarget::Editor
-        && !matches!(
-            app.active_doc().read_only,
-            ReadOnly::Always | ReadOnly::Preview
-        )
+        && app.active_doc().read_only != ReadOnly::Always
         && let Some((label, _)) = crate::global::hint_for(GlobalCommand::Save)
         && let Some(spec) = registry::spec(CommandId::Global(GlobalCommand::Save))
     {

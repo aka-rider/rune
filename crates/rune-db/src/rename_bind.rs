@@ -45,10 +45,7 @@ pub(crate) fn rename_bind(
     };
 
     rebind(conn, vfs, ds, to, now)?;
-    Ok(RenameOutcome::Renamed {
-        to: to.to_path_buf(),
-        durable,
-    })
+    Ok(RenameOutcome::Renamed { durable })
 }
 
 #[cfg(test)]
@@ -59,7 +56,6 @@ pub(crate) fn rename_bind(
     clippy::panic
 )]
 mod tests {
-    use std::path::PathBuf;
 
     use rune_vfs::{Mem, OpKind as VfsOp};
     use rusqlite::{Connection, params};
@@ -145,13 +141,7 @@ mod tests {
         )
         .expect("rename_bind");
 
-        assert_eq!(
-            out,
-            RenameOutcome::Renamed {
-                to: PathBuf::from("/b.md"),
-                durable: true,
-            }
-        );
+        assert_eq!(out, RenameOutcome::Renamed { durable: true });
         assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"hello");
         assert!(gone(&f.vfs, Path::new("/a.md")), "from must be gone");
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");
@@ -214,13 +204,7 @@ mod tests {
         )
         .expect("an unconfirmed-durability publish must not fail the rename");
 
-        assert_eq!(
-            out,
-            RenameOutcome::Renamed {
-                to: PathBuf::from("/b.md"),
-                durable: false,
-            }
-        );
+        assert_eq!(out, RenameOutcome::Renamed { durable: false });
         assert_eq!(disk(&f.vfs, Path::new("/b.md")), b"hello");
         assert!(gone(&f.vfs, Path::new("/a.md")), "from must be gone");
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");

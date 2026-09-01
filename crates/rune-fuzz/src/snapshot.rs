@@ -27,6 +27,21 @@ use rune_tui::pane::Pane;
 use rune_tui::render::{self, Cell};
 use rune_tui::row_meta::{self, RowMeta};
 
+#[derive(Clone, Debug)]
+pub struct Painted {
+    pub doc: DocumentId,
+    pub content: String,
+    pub version: u64,
+    pub cursors: Vec<Cursor>,
+    pub caret_visible: bool,
+    pub reading_link_focus: Option<ByteRange>,
+    pub cells: Vec<Vec<Cell>>,
+    pub row_meta: Vec<RowMeta>,
+    pub highlight_spans: Vec<(usize, usize)>,
+    pub highlight_version: u64,
+    pub scroll_row: DisplayRow,
+}
+
 /// One point-in-time observation of `App`, built ONLY from its public
 /// accessors (`Buffer`'s fields are private — G16 — so line bounds come
 /// from `line_start`/`line_end`; `CursorSet` has no iterator, so cursors
@@ -80,61 +95,13 @@ pub struct Snapshot {
     pub search_draft: Option<String>,
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
-    /// toggle_help`, reachable now that `F1` is in `arb_any_keycode`,
-    /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃⇧P`,
-    /// `ReadOnly::Reading`), and a not-yet-committed preview (`ReadOnly::
-    /// Preview`) are all live paths to a read-only document; `PASTE-
-    /// VERBATIM` needs this to tell "production correctly refused the
-    /// edit" apart from "production silently dropped it" (a paste into a
-    /// read-only document is the former, by design — `Document::read_only`
-    /// is no longer dead code once any of these paths exists). The full
-    /// variant, not a collapsed `bool`: a checker that only ever asks "is
-    /// this read-only at all" still gets that from `!matches!(..,
-    /// ReadOnly::No)`, but a future checker that needs to tell `Preview`
-    /// apart from `Reading`/`Always` now can, rather than the enum being
-    /// invisible to every session the fuzzer drives.
+    /// toggle_help`) and reading view (`ReadOnly::Reading`) are both live
+    /// paths to a read-only document; `PASTE-VERBATIM` needs this to tell
+    /// "production correctly refused the edit" apart from "production
+    /// silently dropped it" (a paste into a read-only document is the
+    /// former, by design).
     pub read_only: ReadOnly,
-    /// `app.active_doc().has_insertion_point()` — the production predicate itself,
-    /// not a re-derivation from `focus`/`modal_open`/`read_only`, so
-    /// `CUR-NO-CARET-HIDDEN` cannot pass by duplicating the very logic it is
-    /// meant to police.
-    pub caret_visible: bool,
-    /// `doc.reading_link_focus` — the byte range reading mode paints
-    /// REVERSED on the focused link. `CUR-NO-CARET-HIDDEN` needs it to tell
-    /// that intended highlight apart from a caret that leaked past the
-    /// visibility gate.
-    pub reading_link_focus: Option<ByteRange>,
-    /// `render::build_rows(view, app)`. Empty when not sampled (G19: the
-    /// display pipeline runs on every `sync_view()`, dominating debug-build
-    /// runtime — later work packages sample this rather than paying for it
-    /// every step).
-    pub cells: Vec<Vec<Cell>>,
-    /// `row_meta::row_meta(view, app)` (plan WP5.S1) — table membership for
-    /// each of `cells`' own rows, same index, same sampling (empty
-    /// whenever `cells` is). Gives `TABLE-ROW-WIDTH`/
-    /// `TABLE-SYNTHETIC-DECORATIVE` the table/border signal `cells` alone
-    /// cannot express.
-    pub row_meta: Vec<RowMeta>,
-    /// `highlight::visible_spans` over the WHOLE document, as plain
-    /// `(start, end)` byte ranges — the `ScopeId` tag isn't needed by any
-    /// checker here, so it's dropped rather than carried.
-    ///
-    /// Deliberately the same function the renderer calls, not the stored
-    /// state behind it. Once every code region is tree-backed, the stored
-    /// span channel is empty for most documents, and a projection reading it
-    /// would leave `HL-CLAMPED`/`HL-STALE-DROP` passing while testing
-    /// nothing. Projecting the query instead keeps both invariants pointed
-    /// at exactly what a user would see, and extends them to the whole-file
-    /// path they never reached.
-    pub highlight_spans: Vec<(usize, usize)>,
-    /// `doc.highlight.version` — the buffer version the region state
-    /// `highlight_spans` was queried from describes. Production's own
-    /// `schedule_highlight` compares it against `doc.buffer.version()` as
-    /// its "regions still describe the live buffer" test. No checker keys
-    /// off it any more, now that the clamp lives in the query and staleness
-    /// is therefore never an excuse for a bad span; it is carried so a
-    /// failure report can still show whether the regions were current.
-    pub highlight_version: u64,
+    pub painted: Painted,
     /// `layout::geometry(app.frame_area(),
     /// app)` — every rect the frame is built from, captured once per step so
     /// `LAYOUT-FITS` (`invariant/pane.rs`) can check it as a plain function
@@ -187,15 +154,6 @@ pub struct Snapshot {
     pub merge_doc: Option<DocumentId>,
     /// `MergeState::unresolved_count()` — `0` outside `Active`.
     pub merge_unresolved: usize,
-    /// `doc.viewport.scroll_row` — the active document's own scroll
-    /// position, needed alongside `content`/`version`/`cursors` so a
-    /// checker can tell "this key moved the viewport" apart from "this key
-    /// did nothing": the merge-mode no-silent-swallow invariant treats a
-    /// key dispatched while the resolver is `Active` as a violation unless
-    /// it changed the buffer, cursors, scroll position, merge state, or the
-    /// status line — scroll is the one of those five this field alone
-    /// supplies.
-    pub scroll_row: DisplayRow,
     /// Every open document's own `display_name`, the same per-document
     /// shape as `dirty_by_doc` above — `MergeState::Inactive` must never
     /// leave a stale `"editor <-> disk"` retitle behind on ANY document,
@@ -259,9 +217,9 @@ impl Snapshot {
         }
 
         let (cells, row_meta) = if with_cells {
-            match &app.active_doc().view {
+            match &app.shown_doc().view {
                 Some(view) => (
-                    render::build_rows(app, app.active_doc(), Some(app.active), view),
+                    render::build_rows(app, render::RowSource::Shown, view),
                     row_meta::row_meta(view, app),
                 ),
                 None => (Vec::new(), Vec::new()),
@@ -310,19 +268,31 @@ impl Snapshot {
         let merge_doc = app.merge.doc();
         let merge_unresolved = app.merge.unresolved_count();
 
-        let doc = app.active_doc();
+        let shown = app.shown_doc();
         // The whole document, not a viewport window: a checker must see
         // every span the renderer could paint at any scroll position, and
         // `visible_spans` clamps and sorts identically whatever window it is
         // handed.
         let highlight_spans =
-            rune_tui::highlight::visible_spans(doc, 0..doc.buffer.content().len())
+            rune_tui::highlight::visible_spans(shown, 0..shown.buffer.content().len())
                 .into_iter()
                 .map(|(range, _scope)| (range.start, range.end))
                 .collect();
-        let highlight_version = doc.highlight.version;
+        let painted = Painted {
+            doc: app.shown(),
+            content: shown.buffer.content().to_string(),
+            version: shown.buffer.version(),
+            cursors: shown.cursors.all().to_vec(),
+            caret_visible: shown.has_insertion_point(),
+            reading_link_focus: shown.reading_link_focus,
+            cells,
+            row_meta,
+            highlight_spans,
+            highlight_version: shown.highlight.version,
+            scroll_row: shown.viewport.scroll_row,
+        };
+        let doc = app.active_doc();
         let geometry = layout::geometry(app.frame_area(), app);
-        let scroll_row = doc.viewport.scroll_row;
         Snapshot {
             content: doc.buffer.content().to_string(),
             version: doc.buffer.version(),
@@ -365,12 +335,7 @@ impl Snapshot {
             search_draft: app.search_draft().map(str::to_string),
             palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,
-            caret_visible: doc.has_insertion_point(),
-            reading_link_focus: doc.reading_link_focus,
-            cells,
-            row_meta,
-            highlight_spans,
-            highlight_version,
+            painted,
             geometry,
             guard,
             quit_intent_pending,
@@ -381,7 +346,6 @@ impl Snapshot {
             merge_pending,
             merge_doc,
             merge_unresolved,
-            scroll_row,
             display_name_by_doc,
             active_last_sync: doc.last_sync,
             message_posts: rune_tui::messages::posts(app),

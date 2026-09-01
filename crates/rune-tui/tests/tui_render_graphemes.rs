@@ -42,7 +42,7 @@ fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.len(),
@@ -72,7 +72,7 @@ fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.len(),
@@ -98,7 +98,7 @@ fn wide_cell_leaves_a_blank_continuation_column_in_the_real_backend() {
     let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     let first_row = rows.first().expect("at least one row");
     let family_cell = first_row.first().expect("family cell present");
     assert_eq!(family_cell.text, family);
@@ -185,7 +185,7 @@ fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
     let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     let first_row = rows.first().expect("at least one row");
     let heart_cell = first_row.first().expect("heart cell present");
     assert_eq!(heart_cell.text, heart);
@@ -254,7 +254,7 @@ fn lone_zero_width_cluster_derives_zero_width_matching_ratatui() {
         );
 
         let view = app.active_doc().view.as_ref().expect("synced view");
-        let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+        let rows = render::build_rows(app, render::RowSource::Shown, view);
         let cell = rows
             .first()
             .and_then(|row| row.iter().find(|c| c.text.chars().eq(std::iter::once(*ch))))

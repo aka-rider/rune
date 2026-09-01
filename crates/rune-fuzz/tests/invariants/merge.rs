@@ -253,7 +253,7 @@ fn merge_key_feedback_accepts_a_scroll_change() {
     prev.focus = Pane::Editor;
     prev.merge_doc = Some(prev.active);
     let mut next = prev.clone();
-    next.scroll_row = DisplayRow(3);
+    next.painted.scroll_row = DisplayRow(3);
     let ctx = verb_key_ctx();
     assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
 }

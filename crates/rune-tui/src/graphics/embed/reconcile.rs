@@ -41,11 +41,7 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
         .into_iter()
         .collect();
 
-    let doc_dir = doc
-        .file_path
-        .as_deref()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf);
+    let doc_dir = doc.path().and_then(Path::parent).map(Path::to_path_buf);
     let root = app.root.clone();
     let vfs = Arc::clone(&app.vfs);
 

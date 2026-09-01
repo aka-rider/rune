@@ -12,7 +12,7 @@ pub fn set_language(app: &mut App, id: DocumentId, choice: LanguageChoice, effec
     let kind = match choice {
         LanguageChoice::Auto => {
             doc.kind_pinned = false;
-            kind_for(doc.file_path.as_deref(), doc.buffer.content())
+            kind_for(doc.path(), doc.buffer.content())
         }
         LanguageChoice::Markdown => {
             doc.kind_pinned = true;
@@ -37,7 +37,7 @@ pub fn set_language(app: &mut App, id: DocumentId, choice: LanguageChoice, effec
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::Path;
     use std::sync::Arc;
 
     use rune_core::buffer::Buffer;
@@ -45,6 +45,12 @@ mod tests {
     use rune_vfs::Mem;
 
     use super::*;
+
+    fn bind(app: &mut App, id: DocumentId, name: &str) {
+        let path = crate::resolved::ResolvedPath::resolve(app.vfs.as_ref(), Path::new(name))
+            .expect("Mem resolves any spelling");
+        app.rebind_document_path(id, path);
+    }
 
     fn app_with(content: &str) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
@@ -77,7 +83,7 @@ mod tests {
     fn auto_restores_path_derived_detection() {
         let mut app = app_with("fn main() {}\n");
         let id = app.active;
-        app.doc_mut(id).unwrap().bind_path(PathBuf::from("main.rs"));
+        bind(&mut app, id, "main.rs");
         let rust = app.doc(id).unwrap().kind;
         assert_eq!(rust, DocumentKind::Code(LangId::from_name("rust").unwrap()));
 
@@ -99,9 +105,7 @@ mod tests {
         let mut effects = Effects::default();
         set_language(&mut app, id, LanguageChoice::Plain, &mut effects);
 
-        app.doc_mut(id)
-            .unwrap()
-            .bind_path(PathBuf::from("notes.md"));
+        bind(&mut app, id, "notes.md");
 
         assert_eq!(app.doc(id).unwrap().kind, DocumentKind::Plain);
     }

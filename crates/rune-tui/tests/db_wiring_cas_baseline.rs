@@ -26,10 +26,11 @@ fn bind_second_tab(
     path: &Path,
     content: &str,
 ) -> rune_tui::document::DocumentId {
-    let id = app.open_document(Buffer::new(content));
+    let resolved = rune_tui::resolved::ResolvedPath::resolve(app.vfs.as_ref(), path)
+        .expect("the seeded path resolves");
+    let id = app.open_document_bound(Buffer::new(content), resolved);
     {
         let doc = app.doc_mut(id).unwrap();
-        doc.file_path = Some(path.to_path_buf());
         doc.set_doc_db_for_test(DocDb::new(
             db_id,
             rune_tui::db::PublishMode::OverwriteExisting,

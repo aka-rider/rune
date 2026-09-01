@@ -22,7 +22,7 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
     assert_eq!(app.documents.len(), 2);
     let active = app.doc(app.active).expect("active doc exists");
     assert_eq!(
-        active.file_path.as_deref(),
+        active.path(),
         Some(Path::new("/vault/missing.md")),
         "the recovery-backed missing-path document must keep its intended name, \
          not fall back to an untitled draft"
@@ -37,7 +37,7 @@ fn launch_missing_first_positional_pins_file_path_and_only_the_first_docs_db() {
     let other = app
         .documents
         .values()
-        .find(|d| d.file_path.as_deref() == Some(Path::new("/vault/other.md")))
+        .find(|d| d.path() == Some(Path::new("/vault/other.md")))
         .expect("the second positional opened its own tab");
     assert!(
         !other.is_store_bound(),

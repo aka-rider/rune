@@ -1,5 +1,5 @@
 DEMO_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-FEATURES := explorer editing tables
+FEATURES := explorer editing tables showcase
 
 .NOTPARALLEL:
 

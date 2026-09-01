@@ -62,7 +62,13 @@ fn unsaved_named_app_with_file_store(mem: &Arc<Mem>, db_path: &Path) -> (App, Ar
 
     let mut app = App::new(
         Buffer::new(""),
-        Some(PathBuf::from(RACE_PATH)),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(RACE_PATH)),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );

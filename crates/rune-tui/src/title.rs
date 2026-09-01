@@ -116,18 +116,15 @@ pub fn ext_split(name: &str) -> usize {
 /// name can never disagree with what the tab bar shows for the same
 /// document mid-merge.
 pub fn name_for(doc: &Document) -> String {
-    if doc.file_path.is_some()
+    if doc.path().is_some()
         && let Some(name) = doc.display_name.as_deref()
     {
         return name.to_string();
     }
-    doc.file_path
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .map_or_else(
-            || format!(".{MARKDOWN_EXT}"),
-            |s| s.to_string_lossy().into_owned(),
-        )
+    doc.path().and_then(|p| p.file_name()).map_or_else(
+        || format!(".{MARKDOWN_EXT}"),
+        |s| s.to_string_lossy().into_owned(),
+    )
 }
 
 /// Not a security boundary — a refusal here is a UX courtesy; the atomic
@@ -213,7 +210,13 @@ mod tests {
         let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = mem;
         let app = crate::app::App::new(
             Buffer::new("hi"),
-            Some(std::path::PathBuf::from("/root/a.md")),
+            Some(
+                crate::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&std::path::PathBuf::from("/root/a.md")),
+                )
+                .expect("the launch path resolves"),
+            ),
             vfs,
             None,
         );

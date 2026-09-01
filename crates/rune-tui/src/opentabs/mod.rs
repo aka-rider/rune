@@ -224,26 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn preview_discard_keeps_mru_in_lockstep() {
-        let mut app = app();
-        let target = app.active;
-        let preview = app.open_document(Buffer::new("previewed"));
-        app.doc_mut(preview).unwrap().read_only = crate::document::ReadOnly::Preview;
-        app.explorer.preview = Some(preview);
-
-        crate::workspace::switch_to(&mut app, target);
-
-        assert!(!app.documents.order().contains(&preview));
-        assert!(!app.documents.mru().contains(&preview));
-
-        let mut order_sorted = app.documents.order().to_vec();
-        let mut mru_sorted = app.documents.mru().to_vec();
-        order_sorted.sort();
-        mru_sorted.sort();
-        assert_eq!(order_sorted, mru_sorted);
-    }
-
-    #[test]
     fn select_switches_to_the_cursor_tab() {
         let mut app = app();
         let second = app.open_document(Buffer::new("b"));

@@ -68,7 +68,7 @@ pub(crate) fn availability(app: &App) -> Availability {
     if app.focus() == Pane::Explorer {
         return selected_row_availability(app);
     }
-    if app.active_doc().file_path.is_some() {
+    if app.active_doc().path().is_some() {
         Availability::Available
     } else {
         Availability::Unavailable("nothing to trash \u{2014} draft has no file".into())
@@ -92,12 +92,12 @@ fn target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
     if app.focus() == Pane::Explorer {
         return selected_row_target(app);
     }
-    let Some(path) = app.active_doc().file_path.clone() else {
+    let Some(path) = app.active_doc().resolved_path().cloned() else {
         messages::error(app, "nothing to trash \u{2014} draft has no file");
         return None;
     };
     let resolved = workspace::resolve_or_report(app, &path, "trash")?;
-    Some((resolved, TrashSubject::File))
+    Some((resolved.into_path_buf(), TrashSubject::File))
 }
 
 fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
@@ -140,7 +140,7 @@ pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
 }
 
 fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
-    if let Some(id) = workspace::existing_document_for(app, path)
+    if let Some(id) = workspace::existing_document_for_spelling(app, path)
         && app.doc(id).is_some_and(Document::is_dirty)
     {
         messages::error(app, "unsaved changes \u{2014} save before trashing");
@@ -188,7 +188,7 @@ pub(crate) fn handle_trash_done(
         }
         Ok(()) => {
             let mut kept_open = false;
-            if let Some(id) = workspace::existing_document_for(app, path) {
+            if let Some(id) = workspace::existing_document_for_spelling(app, path) {
                 sweep_live_guard(app, id);
                 if app.doc(id).is_some_and(Document::is_dirty) {
                     kept_open = true;
@@ -201,6 +201,9 @@ pub(crate) fn handle_trash_done(
                 } else {
                     let _ = workspace::close_now(app, id, effects);
                 }
+            }
+            if crate::explorer_preview::shown_path(app) == Some(path) {
+                crate::explorer_preview::discard(app);
             }
             explorer::refresh_for(app, path, effects);
             if !kept_open {
@@ -234,18 +237,29 @@ mod tests {
     use rune_vfs::Mem;
 
     fn app() -> App {
-        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-        app.active_doc_mut().file_path = Some(PathBuf::from("/doc.md"));
-        app
+        let vfs = Arc::new(Mem::new());
+        let launch = crate::resolved::ResolvedPath::resolve(vfs.as_ref(), Path::new("/doc.md"))
+            .expect("the launch path resolves");
+        App::new(Buffer::new("hello"), Some(launch), vfs, None)
     }
 
     #[test]
     fn a_resolve_failing_target_aborts_the_trash_request_and_posts_a_message() {
         let mem = Arc::new(Mem::new());
-        mem.fail_resolve(Path::new("/doc.md"));
         let vfs: Arc<dyn Vfs + Send + Sync> = mem.clone();
-        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
-        app.active_doc_mut().file_path = Some(PathBuf::from("/doc.md"));
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(
+                crate::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&PathBuf::from("/doc.md")),
+                )
+                .expect("the launch path resolves"),
+            ),
+            vfs,
+            None,
+        );
+        mem.fail_resolve(Path::new("/doc.md"));
         let mut effects = Effects::default();
 
         request_trash(&mut app, &mut effects);

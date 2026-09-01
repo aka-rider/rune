@@ -21,7 +21,7 @@ pub fn toggle(app: &mut App) {
             doc.read_only = ReadOnly::No;
             doc.reading_link_focus = None;
         }
-        ReadOnly::Always | ReadOnly::Preview => {
+        ReadOnly::Always => {
             if let Some(message) = doc.read_only.refusal_message() {
                 messages::warn(app, message);
             }
@@ -118,19 +118,5 @@ mod tests {
         toggle(&mut app);
 
         assert_eq!(app.active_doc().read_only, ReadOnly::No);
-    }
-
-    #[test]
-    fn toggle_refuses_on_a_preview_document() {
-        let mut app = app();
-        app.active_doc_mut().read_only = ReadOnly::Preview;
-
-        toggle(&mut app);
-
-        assert_eq!(app.active_doc().read_only, ReadOnly::Preview);
-        assert_eq!(
-            crate::messages::newest_text(&app),
-            ReadOnly::Preview.refusal_message()
-        );
     }
 }

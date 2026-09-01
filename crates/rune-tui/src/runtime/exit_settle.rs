@@ -243,7 +243,13 @@ mod tests {
         let vfs: Arc<dyn Vfs + Send + Sync> = mem;
         let mut app = App::new(
             Buffer::new("hello"),
-            Some(std::path::PathBuf::from("/doc.md")),
+            Some(
+                crate::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&std::path::PathBuf::from("/doc.md")),
+                )
+                .expect("the launch path resolves"),
+            ),
             vfs,
             None,
         );

@@ -32,6 +32,7 @@ use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::db_wiring_common::{publish, restarted_store_at, store_at, temp_db_dir};
+
 use merge_common::{
     bare, ch, ctrl, external_write, reprobe, take_ours, take_theirs, untitled_draft,
 };
@@ -269,7 +270,13 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
     let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
     let mut app_b = App::new(
         Buffer::new(&disk),
-        Some(PathBuf::from("/doc.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/doc.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         Arc::clone(&vfs),
         Some(Db::new(store_b, Arc::clone(&bridge_b), false)),
     );

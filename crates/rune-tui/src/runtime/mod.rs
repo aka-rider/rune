@@ -141,12 +141,12 @@ pub enum Msg {
         preview_generation: Option<crate::generation::PreviewGen>,
     },
     Highlighted {
-        doc: DocumentId,
+        doc: crate::document::DocumentId,
         version: u64,
         result: PassOutcome,
     },
     BootstrapViewReady {
-        id: DocumentId,
+        id: crate::document::DocumentId,
         version: u64,
         machine: Box<rune_md::element::doc::DocMachine>,
         view: rune_md::element::doc::ViewSnapshots,

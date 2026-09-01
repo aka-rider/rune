@@ -1,12 +1,17 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rune_core::buffer::Buffer;
 
 use crate::app::App;
-use crate::document::{Document, DocumentId, ReadOnly};
+use crate::document::{Document, DocumentId};
 use crate::pane::Pane;
 use crate::runtime::{CmdError, Effects};
 use crate::workspace;
+
+pub struct Preview {
+    pub id: DocumentId,
+    pub doc: Document,
+}
 
 pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
     if app.explorer_find().is_some() {
@@ -26,18 +31,13 @@ pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effect
     let Some(resolved) = resolved_target(app, target) else {
         return;
     };
-    let target = resolved.as_path();
-    if let Some(id) = workspace::existing_document_for(app, target) {
+    if let Some(id) = workspace::existing_document_for(app, &resolved) {
         workspace::switch_to(app, id);
         return;
     }
+    let target = resolved.as_path();
 
-    let already_showing = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|doc| doc.file_path.as_deref())
-        == Some(target);
+    let already_showing = shown_path(app) == Some(target);
     let already_failed = app.explorer.preview_failed.as_deref() == Some(target);
     let already_awaiting = app.explorer.preview_awaiting.as_deref() == Some(target);
     if already_showing || already_failed || already_awaiting {
@@ -55,6 +55,13 @@ pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effect
     ));
 }
 
+pub(crate) fn shown_path(app: &App) -> Option<&Path> {
+    app.explorer
+        .preview
+        .as_ref()
+        .and_then(|preview| preview.doc.path())
+}
+
 /// A `Msg::FileOpened` reply belongs to the live preview only when its
 /// `preview_generation` echoes what `request_preview` minted — never a path
 /// match. A real file open always carries `preview_generation: None`, so it
@@ -64,6 +71,7 @@ pub(crate) fn maybe_consume_reply(
     path: &Path,
     preview_generation: Option<crate::generation::PreviewGen>,
     result: &Result<Vec<u8>, CmdError>,
+    effects: &mut Effects,
 ) -> bool {
     let Some(generation) = preview_generation else {
         return false;
@@ -72,167 +80,113 @@ pub(crate) fn maybe_consume_reply(
         return true;
     }
     app.explorer.preview_awaiting = None;
-    if workspace::existing_document_for(app, path).is_some() {
+    if workspace::existing_document_for_spelling(app, path).is_some() {
         return true;
     }
     match result {
-        Ok(bytes) => apply_loaded(app, path, bytes.clone()),
-        Err(reason) => apply_failed(app, path, &reason.to_string()),
+        Ok(bytes) => apply_loaded(app, path, bytes.clone(), effects),
+        Err(reason) => apply_failed(app, path, &reason.to_string(), effects),
     }
     true
 }
 
-fn resolved_target(app: &App, path: &Path) -> Option<PathBuf> {
-    workspace::resolve(app.vfs.as_ref(), path).ok()
+fn resolved_target(app: &App, path: &Path) -> Option<crate::resolved::ResolvedPath> {
+    crate::resolved::ResolvedPath::resolve(app.vfs.as_ref(), path).ok()
 }
 
-fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
+fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>, effects: &mut Effects) {
     let Ok(buffer) = Buffer::from_bytes(bytes) else {
-        apply_failed(app, path, "not valid UTF-8");
+        apply_failed(app, path, "not valid UTF-8", effects);
+        return;
+    };
+    let Some(resolved) = resolved_target(app, path) else {
+        apply_failed(app, path, "could not resolve this path", effects);
         return;
     };
     app.explorer.preview_failed = None;
-    let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
-        Some(id) => {
-            if app.merge.doc() == Some(id) {
-                crate::merge::auto_exit(app);
-            }
-            let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
-            let buffer = buffer.advance_past(floor);
-            app.nav_history.drop_doc(id);
-            if let Some(doc) = app.doc_mut(id) {
-                *doc = Document::new(buffer);
-                doc.bind_path(path.to_path_buf());
-                doc.read_only = ReadOnly::Preview;
-            }
-            id
-        }
-        None => {
-            if app.documents.order().len() >= crate::opentabs::limit::MAX_TABS {
-                crate::messages::warn_if_new(app, "Tab limit reached — close or unpin a tab");
-                return;
-            }
-            let id = app.open_document(buffer);
-            if let Some(doc) = app.doc_mut(id) {
-                doc.bind_path(path.to_path_buf());
-                doc.read_only = ReadOnly::Preview;
-            }
-            app.explorer.preview = Some(id);
-            id
-        }
-    };
-    workspace::switch_to(app, id);
+    install(app, Document::new_bound(buffer, resolved), effects);
 }
 
-fn apply_failed(app: &mut App, path: &Path, reason: &str) {
+fn apply_failed(app: &mut App, path: &Path, reason: &str, effects: &mut Effects) {
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("this file");
     let text = format!("cannot preview {file_name} — {reason}");
     app.explorer.preview_failed = Some(path.to_path_buf());
-    let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
-        Some(id) => {
-            let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
-            let buffer = Buffer::new(text).advance_past(floor);
-            app.nav_history.drop_doc(id);
-            if let Some(doc) = app.doc_mut(id) {
-                *doc = Document::new(buffer);
-                doc.read_only = ReadOnly::Preview;
-                doc.display_name = Some(file_name.to_string());
-            }
-            id
-        }
-        None => {
-            if app.documents.order().len() >= crate::opentabs::limit::MAX_TABS {
-                crate::messages::warn_if_new(app, "Tab limit reached — close or unpin a tab");
-                return;
-            }
-            let id = app.open_document(Buffer::new(text));
-            if let Some(doc) = app.doc_mut(id) {
-                doc.read_only = ReadOnly::Preview;
-                doc.display_name = Some(file_name.to_string());
-            }
-            app.explorer.preview = Some(id);
-            id
-        }
-    };
-    workspace::switch_to(app, id);
+    let mut doc = Document::new(Buffer::new(text));
+    doc.display_name = Some(file_name.to_string());
+    install(app, doc, effects);
 }
 
-pub(crate) fn discard_if_switching_away(app: &mut App, target: DocumentId) {
-    let Some(id) = app.explorer.preview else {
-        return;
-    };
-    if id == target {
-        return;
-    }
-    remove_preview_document(app, id);
+fn install(app: &mut App, mut doc: Document, effects: &mut Effects) {
+    let (width, height) = app.editor_viewport_size();
+    doc.viewport.set_size(width, height);
+    let id = app.mint_doc_id();
+    app.explorer.preview = Some(Preview { id, doc });
+    crate::highlight::schedule_highlight(app, id, effects);
 }
 
-pub(crate) fn on_focus_changed(app: &mut App, previous: Pane, current: Pane) {
+pub(crate) fn discard(app: &mut App) {
+    app.explorer.preview = None;
+    app.explorer.preview_failed = None;
+    app.explorer.preview_generation = app.explorer.mint_preview_generation();
+    app.explorer.preview_awaiting = None;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Promotion {
+    Promoted(DocumentId),
+    NothingToPromote,
+    Refused,
+}
+
+pub(crate) fn on_focus_changed(
+    app: &mut App,
+    previous: Pane,
+    current: Pane,
+    effects: &mut Effects,
+) {
     if previous == current {
         return;
     }
     match current {
         Pane::Editor => {
-            if let Some(id) = app.explorer.preview {
-                promote(app, id);
-            }
+            editor_takes_over(app, effects);
         }
-        Pane::Title | Pane::Tabs => discard_active(app),
+        Pane::Title | Pane::Tabs => discard(app),
         Pane::Explorer | Pane::Messages => {}
     }
 }
 
-pub(crate) fn promote(app: &mut App, id: DocumentId) {
-    if app.explorer.preview != Some(id) {
-        return;
-    }
-    if let Some(doc) = app.doc_mut(id) {
-        doc.read_only = ReadOnly::No;
-    }
-    app.explorer.preview = None;
-    let path = app.doc(id).and_then(|doc| doc.file_path.clone());
-    if let Some(path) = path {
-        let _ = crate::db_enqueue::load_document(
-            app,
-            id,
-            &path,
-            crate::db_enqueue::LoadIntent::Recover,
-        );
-    }
-}
-
-fn discard_active(app: &mut App) {
-    let Some(id) = app.explorer.preview else {
-        return;
+pub(crate) fn promote(app: &mut App, effects: &mut Effects) -> Promotion {
+    let Some(preview) = app.explorer.preview.take() else {
+        return Promotion::NothingToPromote;
     };
-    let was_active = app.active == id;
-    let target = was_active
-        .then(|| {
-            app.explorer
-                .browsing_origin
-                .live_excluding(app, id)
-                .or_else(|| workspace::close::neighbor_of(app, id))
-        })
-        .flatten();
-    remove_preview_document(app, id);
-    if let Some(target) = target {
-        workspace::switch_to(app, target);
+    let Some(path) = preview.doc.resolved_path().cloned() else {
+        return Promotion::NothingToPromote;
+    };
+    if !crate::opentabs::limit::ensure_room(app, effects) {
+        app.explorer.preview = Some(preview);
+        return Promotion::Refused;
     }
-    app.tabs.nav.cursor = app
-        .documents
-        .order()
-        .iter()
-        .position(|&t| t == app.active)
-        .unwrap_or(0);
+    app.explorer.preview_failed = None;
+    let departed = crate::navhistory::departure_origin(app);
+    let id = preview.id;
+    app.documents.insert(id, preview.doc);
+    let _ =
+        crate::db_enqueue::load_document(app, id, &path, crate::db_enqueue::LoadIntent::Recover);
+    workspace::switch_to(app, id);
+    crate::navhistory::record_departure_if_moved(app, departed);
+    Promotion::Promoted(id)
 }
 
-fn remove_preview_document(app: &mut App, id: DocumentId) {
-    app.documents.remove(&id);
-    app.explorer.preview = None;
-    app.explorer.preview_failed = None;
+pub(crate) fn editor_takes_over(app: &mut App, effects: &mut Effects) -> Promotion {
+    let outcome = promote(app, effects);
+    if outcome == Promotion::Refused {
+        discard(app);
+    }
+    outcome
 }
 
 #[cfg(test)]
@@ -241,6 +195,10 @@ mod tests_common;
 mod tests_focus;
 #[cfg(test)]
 mod tests_highlight;
+#[cfg(test)]
+mod tests_identity;
+#[cfg(test)]
+mod tests_paint;
 #[cfg(test)]
 mod tests_preview;
 #[cfg(test)]

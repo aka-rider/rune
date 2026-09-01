@@ -209,7 +209,8 @@ fn focus_title_stays_available_while_a_rename_is_in_flight() {
     app.rename = crate::rename::RenameState::Committing {
         doc,
         from: std::path::PathBuf::from("/a.md"),
-        to: std::path::PathBuf::from("/b.md"),
+        to: crate::resolved::ResolvedPath::resolve(app.vfs.as_ref(), std::path::Path::new("/b.md"))
+            .expect("Mem resolves any spelling"),
         ticket: crate::rename::Ticket::Cmd(app.next_rename_gen.mint()),
         draft_baseline: None,
     };

@@ -308,8 +308,7 @@ fn gather_overrides(app: &App, root: &Path) -> Vec<(PathBuf, String)> {
     app.documents
         .values()
         .filter_map(|doc| {
-            let path = doc.file_path.as_deref()?;
-            let resolved = app.vfs.resolve(path).ok()?;
+            let resolved = doc.resolved_path()?.clone().into_path_buf();
             if !resolved.starts_with(root) {
                 return None;
             }
@@ -388,10 +387,10 @@ pub(crate) fn apply_pending_center(app: &mut App) {
     else {
         return;
     };
-    let Some(id) = crate::workspace::existing_document_for(app, &path) else {
+    let Some(target) = crate::workspace::shown_document_for(app, &path) else {
         return;
     };
-    if let Some(doc) = app.doc_mut(id) {
+    if let Some(doc) = app.live_doc_mut(target) {
         crate::commands::nav_scroll::centre_on_byte_offset(doc, offset);
     }
     if let Some(state) = app.projectsearch_mut() {

@@ -171,13 +171,6 @@ fn version_starts_at_one_and_increments_per_edit() {
 }
 
 #[test]
-fn advance_past_bumps_version_past_the_floor_and_keeps_content() {
-    let b = Buffer::new("hi").advance_past(5);
-    assert_eq!(b.version(), 6);
-    assert_eq!(b.content(), "hi");
-}
-
-#[test]
 fn slice_returns_the_requested_range_and_none_out_of_bounds() {
     let b = Buffer::new("hello world");
     assert_eq!(b.slice(0, 5), Some("hello"));

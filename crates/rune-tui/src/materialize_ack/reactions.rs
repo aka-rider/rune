@@ -23,7 +23,7 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
     resolve_continuations(app, id, pending_version, false);
 }
 
-fn lost_create_race(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
+fn lost_create_race(app: &App, id: DocumentId) -> Option<crate::resolved::ResolvedPath> {
     let doc = app.doc(id)?;
     if !doc
         .doc_db()
@@ -34,10 +34,10 @@ fn lost_create_race(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
     if doc.bind_target().is_some() {
         return None;
     }
-    doc.file_path.clone()
+    doc.resolved_path().cloned()
 }
 
-fn naming_collision(app: &App, id: DocumentId) -> Option<std::path::PathBuf> {
+fn naming_collision(app: &App, id: DocumentId) -> Option<crate::resolved::ResolvedPath> {
     let doc = app.doc(id)?;
     if !doc
         .doc_db()
@@ -117,16 +117,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId, effects: &mut Effects) {
         doc.abandon_save();
     }
     if let Some(path) = race {
-        let hand_off_safe = match workspace::resolve(app.vfs.as_ref(), &path) {
-            Ok(resolved_path) => !app.documents.iter().any(|(other_id, other)| {
-                *other_id != id
-                    && other.file_path.as_deref().is_some_and(|p| {
-                        workspace::resolve(app.vfs.as_ref(), p)
-                            .map_or(true, |other_resolved| other_resolved == resolved_path)
-                    })
-            }),
-            Err(_) => false,
-        };
+        let hand_off_safe = workspace::existing_document_for(app, &path) == Some(id);
         let can_hand_off = hand_off_safe && app.db.as_ref().is_some_and(|db| !db.degraded);
         if can_hand_off {
             messages::error(

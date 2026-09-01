@@ -167,8 +167,8 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
             let col = input.column.saturating_sub(geo.editor.x);
             let row = input.row.saturating_sub(geo.editor.y);
             match input.kind {
-                MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
-                MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
+                MouseKind::ScrollUp => nav_scroll::scroll_lines(app.shown_doc_mut(), -WHEEL_ROWS),
+                MouseKind::ScrollDown => nav_scroll::scroll_lines(app.shown_doc_mut(), WHEEL_ROWS),
                 MouseKind::Down(MouseButton::Left) => {
                     handle_left_down(app, input, col, row, effects);
                 }
@@ -257,7 +257,13 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     if app.focus() != Pane::Editor {
         return;
     }
-    crate::navhistory::record_departure_if_moved(app, departed);
+    match crate::explorer_preview::editor_takes_over(app, effects) {
+        crate::explorer_preview::Promotion::Promoted(_) => {}
+        crate::explorer_preview::Promotion::NothingToPromote
+        | crate::explorer_preview::Promotion::Refused => {
+            crate::navhistory::record_departure_if_moved(app, departed);
+        }
+    }
 
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;

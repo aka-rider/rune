@@ -48,29 +48,6 @@ fn a_read_only_document_refuses_to_rename() {
     assert_eq!(session.app().active_doc().buffer.content(), before);
 }
 
-/// A `Preview` document's title cannot be focused either — same mechanism
-/// as `Always` above, `App::focus_title`'s generic `ReadOnly` refusal, now
-/// reached via a different variant.
-#[test]
-fn a_preview_document_refuses_to_rename() {
-    let (mut session, _mem) = bound_session();
-    session.app_mut().active_doc_mut().read_only = ReadOnly::Preview;
-    let before = session.app().active_doc().buffer.content().to_string();
-
-    assert!(session.key(ctrl_key('r')).is_none());
-
-    assert_eq!(
-        session.app().focus(),
-        Pane::Editor,
-        "the title must never gain focus"
-    );
-    assert_eq!(
-        rune_tui::messages::newest_text(session.app()),
-        ReadOnly::Preview.refusal_message()
-    );
-    assert_eq!(session.app().active_doc().buffer.content(), before);
-}
-
 /// Decision 12: the Help document is read-only, so its title can never gain
 /// focus at all — `^r` refuses with a status instead, and the title row
 /// still reads "Help".

@@ -209,8 +209,7 @@ pub(crate) fn after_update(
     let content_changed =
         app.active != active_before || app.active_doc().buffer.version() != buffer_version_before;
     if content_changed {
-        let id = app.active;
-        crate::highlight::schedule_highlight(app, id, effects);
+        crate::highlight::schedule_highlight(app, app.active, effects);
     }
     if app.active != active_before {
         crate::graphics::schedule_image_decode(app, app.active, effects);
@@ -236,12 +235,14 @@ pub(crate) fn after_update(
 
 fn handle_bootstrap_view_ready(
     app: &mut App,
-    id: DocumentId,
+    doc_id: DocumentId,
     version: u64,
     machine: Box<rune_md::element::doc::DocMachine>,
     view: rune_md::element::doc::ViewSnapshots,
 ) {
-    let Some(doc) = app.doc_mut(id) else { return };
+    let Some(doc) = app.live_doc_mut(doc_id) else {
+        return;
+    };
     if doc.buffer.version() != version {
         return;
     }
@@ -251,7 +252,7 @@ fn handle_bootstrap_view_ready(
 
 fn handle_highlighted(
     app: &mut App,
-    id: DocumentId,
+    doc_id: DocumentId,
     version: u64,
     result: PassOutcome,
     effects: &mut Effects,
@@ -259,7 +260,7 @@ fn handle_highlighted(
     let mut timed_out = false;
     let mut pending = false;
     let mut truncated = false;
-    if let Some(doc) = app.doc_mut(id) {
+    if let Some(doc) = app.live_doc_mut(doc_id) {
         doc.highlight.in_flight = None;
         pending = doc.highlight.pending;
         doc.highlight.pending = false;
@@ -286,7 +287,7 @@ fn handle_highlighted(
     }
 
     if pending && !timed_out {
-        crate::highlight::schedule_highlight(app, id, effects);
+        crate::highlight::schedule_highlight(app, doc_id, effects);
     }
 }
 

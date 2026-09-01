@@ -309,13 +309,13 @@ fn two_message_free_renders_produce_identical_rows() {
     let before = {
         let app = session.app();
         let view = app.active_doc().view.as_ref().expect("synced view");
-        render::build_rows(app, app.active_doc(), Some(app.active), view)
+        render::build_rows(app, render::RowSource::Shown, view)
     };
     session.app_mut().sync_view();
     let after = {
         let app = session.app();
         let view = app.active_doc().view.as_ref().expect("synced view");
-        render::build_rows(app, app.active_doc(), Some(app.active), view)
+        render::build_rows(app, render::RowSource::Shown, view)
     };
     assert_eq!(
         before, after,

@@ -1,8 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, BufferError};
-use rune_vfs::Vfs;
 
 use crate::app::App;
 use crate::db_enqueue as db;
@@ -11,14 +10,11 @@ use crate::graphics::{ImageState, ImageStatus};
 use crate::help;
 use crate::messages;
 use crate::pane::Pane;
+use crate::resolved::ResolvedPath;
 use crate::runtime::{CmdError, Effects};
 
-pub fn resolve(vfs: &dyn Vfs, path: &Path) -> std::io::Result<PathBuf> {
-    vfs.resolve(path)
-}
-
-pub fn resolve_or_report(app: &mut App, path: &Path, verb: &str) -> Option<PathBuf> {
-    match resolve(app.vfs.as_ref(), path) {
+pub fn resolve_or_report(app: &mut App, path: &Path, verb: &str) -> Option<ResolvedPath> {
+    match ResolvedPath::resolve(app.vfs.as_ref(), path) {
         Ok(resolved) => Some(resolved),
         Err(e) => {
             messages::error(app, format!("could not {verb} {}: {e}", path.display()));
@@ -50,7 +46,10 @@ pub fn open_path_checked(app: &mut App, path: &Path, effects: &mut Effects) -> O
 
 enum ReadOutcome {
     Reactivated(DocumentId),
-    Read { resolved: PathBuf, bytes: Vec<u8> },
+    Read {
+        resolved: ResolvedPath,
+        bytes: Vec<u8>,
+    },
     Failed,
 }
 
@@ -97,9 +96,11 @@ pub fn open_path_async(
     }
 
     let vfs = Arc::clone(&app.vfs);
-    effects
-        .cmds
-        .push(crate::runtime::read_file_cmd(vfs, resolved, anchor));
+    effects.cmds.push(crate::runtime::read_file_cmd(
+        vfs,
+        resolved.into_path_buf(),
+        anchor,
+    ));
 }
 
 pub(crate) fn handle_file_opened(
@@ -110,14 +111,19 @@ pub(crate) fn handle_file_opened(
     preview_generation: Option<crate::generation::PreviewGen>,
     effects: &mut Effects,
 ) {
-    if crate::explorer_preview::maybe_consume_reply(app, path, preview_generation, &result) {
+    if crate::explorer_preview::maybe_consume_reply(app, path, preview_generation, &result, effects)
+    {
         crate::projectsearch::apply_pending_center(app);
         return;
     }
 
     app.blur_title(effects);
 
-    if let Some(id) = existing_document_for(app, path) {
+    let Some(resolved) = resolve_or_report(app, path, "open") else {
+        return;
+    };
+
+    if let Some(id) = existing_document_for(app, &resolved) {
         switch_to(app, id);
         app.set_focus_pane(Pane::Editor, effects);
         if let Some(anchor) = anchor {
@@ -136,7 +142,7 @@ pub(crate) fn handle_file_opened(
     if !crate::opentabs::limit::ensure_room(app, effects) {
         return;
     }
-    let Some(id) = open_bytes(app, path, bytes) else {
+    let Some(id) = open_bytes(app, &resolved, bytes) else {
         return;
     };
     app.set_focus_pane(Pane::Editor, effects);
@@ -145,7 +151,7 @@ pub(crate) fn handle_file_opened(
     }
 }
 
-fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
+fn open_bytes(app: &mut App, resolved: &ResolvedPath, bytes: Vec<u8>) -> Option<DocumentId> {
     if crate::document_support::is_image_path(resolved) {
         return Some(open_image_bytes(app, resolved, &bytes));
     }
@@ -168,16 +174,13 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
         }
     };
 
-    let id = app.open_document(buffer);
-    if let Some(doc) = app.doc_mut(id) {
-        doc.bind_path(resolved.to_path_buf());
-    }
+    let id = app.open_document_bound(buffer, resolved.clone());
     let _ = db::load_document(app, id, resolved, db::LoadIntent::Recover);
     switch_to(app, id);
     Some(id)
 }
 
-fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId {
+fn open_image_bytes(app: &mut App, resolved: &ResolvedPath, bytes: &[u8]) -> DocumentId {
     let dims = rune_image::probe_dimensions(bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
     // Kitty image ids are terminal-global, so the whole-document image path
     // and the inline-embed path share one allocator keyed by this same
@@ -192,9 +195,8 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId 
         .unwrap_or("image")
         .to_string();
 
-    let doc_id = app.open_document(Buffer::new(""));
+    let doc_id = app.open_document_bound(Buffer::new(""), resolved.clone());
     if let Some(doc) = app.doc_mut(doc_id) {
-        doc.bind_path(resolved.to_path_buf());
         doc.read_only = ReadOnly::Always;
         doc.display_name = Some(file_name);
         doc.set_image(ImageState {
@@ -211,44 +213,29 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: &[u8]) -> DocumentId 
     doc_id
 }
 
-pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
-    let resolved_target = resolve(app.vfs.as_ref(), path).ok();
-    app.documents
-        .iter()
-        .find(|(_, doc)| {
-            names_same_file(
-                app,
-                doc.file_path.as_deref(),
-                path,
-                resolved_target.as_deref(),
-            )
-        })
-        .map(|(id, _)| *id)
+pub(crate) fn existing_document_for(app: &App, path: &ResolvedPath) -> Option<DocumentId> {
+    app.documents.document_for(path)
 }
 
-fn names_same_file(
-    app: &App,
-    candidate: Option<&Path>,
-    path: &Path,
-    resolved_target: Option<&Path>,
-) -> bool {
-    let Some(candidate) = candidate else {
-        return false;
-    };
-    if candidate == path {
-        return true;
+pub(crate) fn existing_document_for_spelling(app: &App, path: &Path) -> Option<DocumentId> {
+    let resolved = ResolvedPath::resolve(app.vfs.as_ref(), path).ok()?;
+    existing_document_for(app, &resolved)
+}
+
+pub(crate) fn shown_document_for(app: &App, path: &Path) -> Option<DocumentId> {
+    let resolved = ResolvedPath::resolve(app.vfs.as_ref(), path).ok()?;
+    if let Some(id) = existing_document_for(app, &resolved) {
+        return Some(id);
     }
-    let Some(target) = resolved_target else {
-        return false;
-    };
-    resolve(app.vfs.as_ref(), candidate).is_ok_and(|resolved| resolved == target)
+    let preview = app.explorer.preview.as_ref()?;
+    (preview.doc.resolved_path() == Some(&resolved)).then_some(preview.id)
 }
 
 pub fn switch_to(app: &mut App, id: DocumentId) {
     if app.doc(id).is_none() {
         return;
     }
-    crate::explorer_preview::discard_if_switching_away(app, id);
+    crate::explorer_preview::discard(app);
     if app.merge.doc().is_some_and(|merge_doc| merge_doc != id) {
         crate::merge::auto_exit(app);
     }
@@ -340,10 +327,7 @@ mod tests {
 
         assert_eq!(app.documents.len(), before + 1);
         assert_eq!(app.focus(), Pane::Editor);
-        assert_eq!(
-            app.active_doc().file_path.as_deref(),
-            Some(Path::new("/root/a.md"))
-        );
+        assert_eq!(app.active_doc().path(), Some(Path::new("/root/a.md")));
         assert!(!app.active_doc().is_store_bound());
     }
 
@@ -363,14 +347,11 @@ mod tests {
     }
 
     #[test]
-    fn opening_the_absolute_spelling_of_a_relatively_bound_document_reactivates_it() {
+    fn opening_the_absolute_spelling_of_a_relatively_opened_document_reactivates_it() {
         let mem = Arc::new(Mem::new());
         mem.save_atomic(Path::new("/note.md"), b"hello").unwrap();
         let mut app = app_with_seed(&mem);
-        let id = app.active;
-        if let Some(doc) = app.doc_mut(id) {
-            doc.bind_path(PathBuf::from("note.md"));
-        }
+        let id = open_path(&mut app, Path::new("note.md")).expect("the relative spelling opens");
         let before = app.documents.len();
 
         open_path(&mut app, Path::new("/note.md"));

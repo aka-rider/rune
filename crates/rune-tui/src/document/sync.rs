@@ -95,6 +95,12 @@ impl Document {
         self.cursors = self.cursors.collapse_to(snapped);
     }
 
+    pub fn sync_without_caret(&mut self) -> ViewSnapshots {
+        let view = self.view();
+        self.viewport.clamp_to_document(view.display.total_rows());
+        view
+    }
+
     pub fn sync(&mut self) -> ViewSnapshots {
         let view = self.view();
         self.scroll_to_cursor(&view);

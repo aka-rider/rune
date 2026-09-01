@@ -19,7 +19,13 @@ fn title_focus_hints_show_the_unlock_gesture_while_locked_with_an_extension() {
     let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = mem;
     let mut app = App::new(
         Buffer::new("hi"),
-        Some(std::path::PathBuf::from("/root/a.md")),
+        Some(
+            crate::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&std::path::PathBuf::from("/root/a.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );
@@ -154,42 +160,6 @@ fn default_hint_entries_keep_save_for_a_read_only_reading_document() {
     assert!(
         entries.iter().any(|(label, _, _)| *label == save_label),
         "expected a save hint for ReadOnly::Reading, got {entries:?}"
-    );
-}
-
-#[test]
-fn default_hint_entries_omit_save_close_and_rename_for_a_preview_document() {
-    let save_label = GLOBAL_BINDINGS
-        .iter()
-        .find(|b| matches!(b.cmd, GlobalCommand::Save))
-        .expect("a Save binding exists")
-        .label();
-    let close_label = GLOBAL_BINDINGS
-        .iter()
-        .find(|b| matches!(b.cmd, GlobalCommand::CloseFile))
-        .expect("a CloseFile binding exists")
-        .label();
-    let rename_label = GLOBAL_BINDINGS
-        .iter()
-        .find(|b| matches!(b.cmd, GlobalCommand::FocusTitle))
-        .expect("a FocusTitle binding exists")
-        .label();
-
-    let mut app = app_with("hello");
-    app.active_doc_mut().read_only = crate::document::ReadOnly::Preview;
-
-    let entries = default_hint_entries(&app);
-    assert!(
-        !entries.iter().any(|(label, _, _)| *label == save_label),
-        "expected no save hint for ReadOnly::Preview, got {entries:?}"
-    );
-    assert!(
-        !entries.iter().any(|(label, _, _)| *label == close_label),
-        "expected no close hint for ReadOnly::Preview, got {entries:?}"
-    );
-    assert!(
-        !entries.iter().any(|(label, _, _)| *label == rename_label),
-        "expected no rename hint for ReadOnly::Preview, got {entries:?}"
     );
 }
 

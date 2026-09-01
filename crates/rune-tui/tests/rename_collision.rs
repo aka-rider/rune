@@ -220,7 +220,7 @@ fn closing_the_renaming_document_clears_the_machine_and_the_prompt() {
         .app()
         .documents
         .iter()
-        .find(|(_, doc)| doc.file_path.as_deref() == Some(Path::new("/root/a.md")))
+        .find(|(_, doc)| doc.path() == Some(Path::new("/root/a.md")))
         .map(|(&id, _)| id)
         .expect("a.md is open");
     let index = session

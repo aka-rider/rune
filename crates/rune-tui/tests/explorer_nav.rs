@@ -97,7 +97,7 @@ fn enter_on_a_file_opens_a_second_document_and_focuses_editor() {
     assert_eq!(session.app().documents.len(), before_docs + 1);
     assert_eq!(session.app().focus(), Pane::Editor);
     assert_eq!(
-        session.app().active_doc().file_path.as_deref(),
+        session.app().active_doc().path(),
         Some(Path::new("/root/b.md"))
     );
     assert_eq!(session.app().active_doc().buffer.content(), "b content");
@@ -142,7 +142,7 @@ fn enter_on_a_non_utf8_named_file_opens_the_byte_exact_path() {
 
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(
-        session.app().active_doc().file_path.as_deref(),
+        session.app().active_doc().path(),
         Some(raw_path.as_path()),
         "the opened document's path must be the real, byte-exact path"
     );
@@ -333,7 +333,7 @@ fn enter_on_a_symlinked_file_opens_the_document_bound_to_the_target() {
     assert_eq!(session.app().documents.len(), before_docs + 1);
     assert_eq!(session.app().focus(), Pane::Editor);
     assert_eq!(
-        session.app().active_doc().file_path.as_deref(),
+        session.app().active_doc().path(),
         Some(Path::new("/root/real.md")),
         "the opened document is bound to the target, not to the link's own name"
     );

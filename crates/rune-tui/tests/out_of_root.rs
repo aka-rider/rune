@@ -46,7 +46,13 @@ fn app_with_content(mem: Arc<Mem>, content: &str) -> (App, DocumentId) {
     let vfs: Arc<dyn Vfs + Send + Sync> = mem;
     let mut app = App::new(
         Buffer::new(content),
-        Some(Path::new("/elsewhere/doc.md").to_path_buf()),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&Path::new("/elsewhere/doc.md").to_path_buf()),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );
@@ -163,7 +169,7 @@ fn a_relative_link_in_an_out_of_root_document_opens_its_target() {
         "a relative link in an out-of-root document must resolve and open"
     );
     assert_eq!(
-        app.active_doc().file_path.as_deref(),
+        app.active_doc().path(),
         Some(Path::new("/elsewhere/note.md")),
         "must resolve against doc_dir, not root"
     );

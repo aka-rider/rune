@@ -67,7 +67,7 @@ pub(crate) fn trigger_save(
         return SaveStart::Refused;
     };
     let version = doc.buffer.version();
-    let Some(path) = doc.file_path.clone() else {
+    let Some(path) = doc.path().map(std::path::Path::to_path_buf) else {
         app.focus_title();
         messages::info(
             app,

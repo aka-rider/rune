@@ -98,7 +98,7 @@ fn cursor_move_onto_an_unopened_candidate_queues_a_read_file_cmd() {
 }
 
 #[test]
-fn hand_delivered_preview_reply_lands_as_a_readonly_preview_document() {
+fn hand_delivered_preview_reply_lands_in_the_explorers_preview_slot() {
     let mut app = seeded_app(&[("/root/a.md", "content")]);
     let mut effects = Effects::default();
     open(&mut app, &mut effects);
@@ -112,11 +112,14 @@ fn hand_delivered_preview_reply_lands_as_a_readonly_preview_document() {
     );
     run_cmds(&mut app, &mut effects);
 
-    let id = app.explorer.preview.expect("preview minted");
-    assert_eq!(app.doc(id).expect("doc").read_only, ReadOnly::Preview);
     assert_eq!(
-        app.doc(id).and_then(|d| d.file_path.clone()),
-        Some(PathBuf::from("/root/a.md"))
+        crate::explorer_preview::shown_path(&app),
+        Some(std::path::Path::new("/root/a.md"))
+    );
+    assert_eq!(
+        app.documents.order().len(),
+        1,
+        "a preview opens no tab of its own"
     );
 }
 
@@ -137,12 +140,10 @@ fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
     let _ = keys::handle_key(&mut app, down_key(), &mut effects);
     run_cmds(&mut app, &mut effects);
 
-    let shown_after_fresh = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|d| d.file_path.clone());
-    assert_eq!(shown_after_fresh, Some(PathBuf::from("/root/b.md")));
+    assert_eq!(
+        crate::explorer_preview::shown_path(&app),
+        Some(std::path::Path::new("/root/b.md"))
+    );
 
     if let Some(Msg::FileOpened {
         path,
@@ -160,14 +161,9 @@ fn a_stale_reply_for_a_path_the_cursor_left_is_dropped() {
             &mut effects,
         );
     }
-    let shown_after_stale = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|d| d.file_path.clone());
     assert_eq!(
-        shown_after_stale,
-        Some(PathBuf::from("/root/b.md")),
+        crate::explorer_preview::shown_path(&app),
+        Some(std::path::Path::new("/root/b.md")),
         "the late a.md reply must not override the b.md preview already showing"
     );
 }
@@ -195,7 +191,7 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
         &mut effects,
     );
     run_cmds(&mut app, &mut effects);
-    let id = app.explorer.preview.expect("preview minted");
+    let id = app.explorer.preview.as_ref().expect("preview minted").id;
     let tabs_before = app.documents.order().len();
 
     let _ = keys::handle_key(&mut app, enter_key(), &mut effects);
@@ -203,10 +199,11 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     assert!(app.filesearch().is_none());
     assert_eq!(app.doc(id).expect("doc").read_only, ReadOnly::No);
     assert!(app.explorer.preview.is_none());
+    assert_eq!(app.active, id, "the promoted document becomes active");
     assert_eq!(
         app.documents.order().len(),
-        tabs_before,
-        "promotion mints no tab"
+        tabs_before + 1,
+        "promotion opens the tab the preview never held"
     );
     assert!(
         app.db_ops
@@ -263,10 +260,13 @@ fn esc_after_previewing_a_not_open_file_restores_return_to_and_discards_the_prev
         &mut effects,
     );
     run_cmds(&mut app, &mut effects);
-    let preview_id = app.explorer.preview.expect("a real preview was minted");
-    assert_ne!(
+    assert!(
+        app.explorer.preview.is_some(),
+        "test setup: a real preview was minted"
+    );
+    assert_eq!(
         app.active, return_to,
-        "test setup: previewing switched away"
+        "test setup: previewing never moves the caret off the real document"
     );
 
     let _ = keys::handle_key(&mut app, escape_key(), &mut effects);
@@ -275,7 +275,7 @@ fn esc_after_previewing_a_not_open_file_restores_return_to_and_discards_the_prev
     assert_eq!(app.active, return_to);
     assert_eq!(app.focus(), Pane::Editor);
     assert!(
-        app.doc(preview_id).is_none(),
+        app.explorer.preview.is_none(),
         "the discarded preview must not survive Esc"
     );
 }

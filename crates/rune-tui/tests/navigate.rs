@@ -36,7 +36,18 @@ const HEIGHT: u16 = 24;
 
 fn app_with(mem: &Arc<Mem>, path: &str, content: &str) -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new(Buffer::new(content), Some(PathBuf::from(path)), vfs, None);
+    let mut app = App::new(
+        Buffer::new(content),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(path)),
+            )
+            .expect("the launch path resolves"),
+        ),
+        vfs,
+        None,
+    );
     app.set_root(PathBuf::from("/root"));
     // `App::frame` (not a direct `viewport.set_size`) is what
     // `layout::geometry` — and so the mouse click tests' own
@@ -177,10 +188,7 @@ fn super_enter_follows_a_wikilink_into_a_new_tab() {
     press_and_open(&mut app, sup_enter());
 
     assert_eq!(app.documents.len(), before + 1);
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/note.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
 }
 
 #[test]
@@ -196,10 +204,7 @@ fn ctrl_enter_follows_a_wikilink_into_a_new_tab() {
     press_and_open(&mut app, ctrl_enter());
 
     assert_eq!(app.documents.len(), before + 1);
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/note.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
 }
 
 #[test]
@@ -214,10 +219,7 @@ fn ctrl_click_follows_a_link_while_a_plain_double_click_still_selects_a_word() {
 
     click_and_open(&mut app, note_col, 0, true);
     assert_eq!(app.documents.len(), 2, "ctrl-click must open the target");
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/note.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
 
     // Switch back and confirm a PLAIN double-click still selects a word —
     // the ctrl-click gesture above must never displace the ordinary
@@ -247,10 +249,7 @@ fn wikilink_with_anchor_lands_the_caret_on_the_headings_byte_offset() {
 
     press_and_open(&mut app, sup_enter());
 
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/note.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
     assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
 }
 
@@ -381,7 +380,7 @@ fn a_caret_at_the_links_own_range_end_still_follows_it() {
     press_and_open(&mut app, ctrl_enter());
 
     assert_eq!(
-        app.active_doc().file_path.as_deref(),
+        app.active_doc().path(),
         Some(Path::new("/root/url.md")),
         "a caret at the link's own range end must still resolve a Destination"
     );

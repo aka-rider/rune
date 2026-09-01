@@ -22,7 +22,7 @@ use rune_md::element::doc::ViewSnapshots;
 use rune_merge::RegionKind;
 
 use crate::app::App;
-use crate::document::{Document, DocumentId};
+use crate::document::Document;
 use crate::messages;
 use crate::pane::Pane;
 
@@ -30,17 +30,16 @@ pub use blit::blit;
 pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 pub(crate) use cell::{paint_range, push_grapheme_cells};
 
-// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: DISPLAY rows
-// in `[scroll_row, scroll_row + height)`, with cursor/selection overlays
-// applied. Generic over `doc` so the messages pane can render its own
-// read-only `Document` through the identical row-space pipeline the
-// editor uses, which mouse hit-testing depends on.
-pub fn build_rows(
-    app: &App,
-    doc: &Document,
-    doc_id: Option<DocumentId>,
-    view: &ViewSnapshots,
-) -> Vec<Vec<Cell>> {
+pub enum RowSource<'a> {
+    Shown,
+    Detached(&'a Document),
+}
+
+pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec<Vec<Cell>> {
+    let (doc, painted_doc) = match source {
+        RowSource::Shown => (app.shown_doc(), Some(app.shown())),
+        RowSource::Detached(doc) => (doc, None),
+    };
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
@@ -81,11 +80,10 @@ pub fn build_rows(
 
     // Painted AFTER the token overlay (so a match's background sits under
     // a token's foreground) and BEFORE the cursor overlays (so the
-    // caret/selection still wins). `build_rows` is generic over `doc` (the
-    // messages pane renders through it too), but `app.search()`'s matches
-    // only ever apply to the active document.
+    // caret/selection still wins). In-file search runs against the active
+    // workspace document alone.
     if let Some(state) = app.search()
-        && doc_id == Some(app.active)
+        && painted_doc == Some(app.active)
     {
         for m in &state.matches {
             paint_range(&mut rows, m.clone(), app.theme.chrome.search_match_bg);
@@ -94,8 +92,8 @@ pub fn build_rows(
 
     if let Some(state) = app.projectsearch()
         && let Some(hit) = state.results.get(state.list.cursor)
-        && doc_id.is_some()
-        && crate::workspace::existing_document_for(app, &hit.path) == doc_id
+        && painted_doc.is_some()
+        && crate::workspace::shown_document_for(app, &hit.path) == painted_doc
         && let Some(window) = overlay::visible_byte_range(&rows)
     {
         for range in hit
@@ -193,10 +191,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
         draw_diff_left(app, diff_left, frame);
     }
 
-    if let Some(view) = &app.active_doc().view {
-        let mut rows = build_rows(app, app.active_doc(), Some(app.active), view);
+    if let Some(view) = &app.shown_doc().view {
+        let mut rows = build_rows(app, RowSource::Shown, view);
         if let Some(diff_view) = app.diff.as_ref()
-            && diff_view.right == app.active
+            && app.shown() == diff_view.right
         {
             let layout = diff::layout(diff_view, &view.wrap);
             let right_scroll = app.active_doc().viewport.scroll_row.0;
@@ -215,7 +213,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
                     .left
                     .view
                     .as_ref()
-                    .map(|v| build_rows(app, &diff_view.left, None, v))
+                    .map(|v| build_rows(app, RowSource::Detached(&diff_view.left), v))
                     .unwrap_or_default();
                 diff::augment_fold(
                     &rows,
@@ -244,7 +242,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
         }
         blit(&rows, geo.editor, frame);
     } else {
-        draw_pending(app.active_doc(), geo.editor, frame);
+        draw_pending(app.shown_doc(), geo.editor, frame);
     }
 
     if geo.center_bordered {
@@ -270,7 +268,7 @@ fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
         .and_then(|d| d.view.as_ref())
         .map(|v| &v.wrap);
     if let (Some(view), Some(right_wrap)) = (diff_view.left.view.as_ref(), right_wrap) {
-        let native_rows = build_rows(app, &diff_view.left, None, view);
+        let native_rows = build_rows(app, RowSource::Detached(&diff_view.left), view);
         let layout = diff::layout(diff_view, right_wrap);
         let scroll = diff_view.left.viewport.scroll_row.0;
         let mut rows = diff::augment(

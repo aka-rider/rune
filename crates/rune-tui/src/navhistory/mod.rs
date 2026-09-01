@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::document::DocumentId;
 
 mod record;
@@ -23,7 +21,7 @@ pub enum PlaceKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
     pub doc: DocumentId,
-    pub path: Option<PathBuf>,
+    pub path: Option<crate::resolved::ResolvedPath>,
     pub offset: usize,
     pub kind: PlaceKind,
 }
@@ -129,17 +127,6 @@ impl NavHistory {
         self.places.remove(index);
         if index <= self.current {
             self.current = self.current.saturating_sub(1);
-        }
-    }
-
-    pub fn drop_doc(&mut self, doc: DocumentId) {
-        let mut i = 0;
-        while let Some(place) = self.places.get(i) {
-            if place.doc == doc {
-                self.drop_at(i);
-            } else {
-                i += 1;
-            }
         }
     }
 }

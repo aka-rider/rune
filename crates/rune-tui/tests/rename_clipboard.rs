@@ -71,7 +71,13 @@ fn cmd_c_then_cmd_x_then_cmd_v_round_trips_the_name_unchanged() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(
         Buffer::new("body"),
-        Some(PathBuf::from("/root/lessrc.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/root/lessrc.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

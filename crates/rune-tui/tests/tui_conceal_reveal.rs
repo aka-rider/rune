@@ -12,7 +12,7 @@ fn rows_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<Vec<rende
     let session = app_for(content, cursor_offset, focused);
     let app = session.app();
     let view = app.active_doc().view.as_ref().expect("synced view");
-    render::build_rows(app, app.active_doc(), Some(app.active), view)
+    render::build_rows(app, render::RowSource::Shown, view)
 }
 
 fn has_cell_at(rows: &[Vec<render::Cell>], offset: usize) -> bool {
@@ -51,7 +51,7 @@ fn a_selection_anchored_inside_a_concealed_link_reveals_the_whole_link() {
     let session = session_with_selection(content, inside_url, outside);
     let app = session.app();
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
 
     assert!(
         has_cell_at(&rows, link_open),

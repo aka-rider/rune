@@ -33,7 +33,6 @@ use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
 use rune_tui::runtime::CmdKind;
 
-use rune_fuzz::Session;
 use rune_vfs::Vfs;
 
 use trash_common::{app_with, escape, select_row, send, sup_backspace, trash_via_palette, yes};
@@ -97,8 +96,9 @@ fn dirty_doc_is_refused_with_no_guard() {
 /// even reaches `trash::request_trash`.
 #[test]
 fn pathless_draft_is_refused_via_the_palette() {
-    let mut session = Session::open("draft.md", "draft");
-    session.app_mut().active_doc_mut().file_path = None;
+    let mem = explorer_common::seeded_vfs();
+    let mut session = app_with(&mem);
+    rune_tui::workspace::new_untitled_document(session.app_mut());
 
     trash_via_palette(&mut session);
 

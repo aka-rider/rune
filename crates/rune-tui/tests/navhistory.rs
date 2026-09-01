@@ -21,26 +21,17 @@ fn link_follow_then_back_returns_and_forward_returns_again() {
     place_cursor(&mut app, link_offset);
 
     press_and_open(&mut app, sup_enter());
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/note.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
 
     press(&mut app, back_key());
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/a.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/a.md")));
     assert_eq!(
         app.active_doc().cursors.primary().position.get(),
         link_offset
     );
 
     press(&mut app, forward_key());
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/note.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
 }
 
 #[test]

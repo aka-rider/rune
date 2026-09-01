@@ -256,10 +256,7 @@ fn an_uncommitted_title_renames_the_outgoing_document_not_the_incoming_one() {
     let mut effects2 = send(&mut app, file_opened);
 
     // The active document is now the newly opened one...
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/other.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/other.md")));
     // ...but the rename Cmd the blur fired targeted the OLD document's own
     // directory and old name, never the new one.
     let rename_cmd = effects2

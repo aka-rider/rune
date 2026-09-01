@@ -8,8 +8,10 @@ use crate::document::DocumentId;
 use crate::generation::RenameGen as Generation;
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::messages;
+use crate::resolved::ResolvedPath;
 use crate::runtime::{CmdError, Effects};
 use crate::title;
+use crate::workspace::resolve_or_report;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ticket {
@@ -28,7 +30,7 @@ pub enum RenameState {
     Committing {
         doc: DocumentId,
         from: PathBuf,
-        to: PathBuf,
+        to: ResolvedPath,
         ticket: Ticket,
         draft_baseline: Option<crate::document::SaveCapture>,
     },
@@ -36,7 +38,7 @@ pub enum RenameState {
     Collision {
         doc: DocumentId,
         from: PathBuf,
-        to: PathBuf,
+        to: ResolvedPath,
         /// The destination's stat at the moment of collision — the
         /// **consent** baseline ("still the file you agreed to replace?"),
         /// not the safety mechanism; safety comes from `rune-db`'s own
@@ -47,7 +49,7 @@ pub enum RenameState {
     Capturing {
         doc: DocumentId,
         from: PathBuf,
-        to: PathBuf,
+        to: ResolvedPath,
         seen: Stat,
         ticket: Ticket,
     },
@@ -131,12 +133,18 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
         return Commit::Refused;
     }
 
-    let Some(from) = doc.file_path.clone() else {
+    let Some(from) = doc
+        .resolved_path()
+        .cloned()
+        .map(ResolvedPath::into_path_buf)
+    else {
         return crate::rename_create::bind_new(app, id, &typed, effects);
     };
 
-    let to = target_path(&from, &typed);
-    if to == from {
+    let Some(to) = resolve_or_report(app, &target_path(&from, &typed), "rename to") else {
+        return Commit::Refused;
+    };
+    if to.as_path() == from {
         return Commit::Accepted;
     }
 
@@ -225,10 +233,10 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
     let was_capturing = matches!(app.rename, RenameState::Capturing { .. });
 
     match result {
-        Ok(RenameOutcome::Renamed { to, durable }) => {
+        Ok(RenameOutcome::Renamed { durable }) => {
             let created = from.as_os_str().is_empty();
             app.rename = RenameState::Idle;
-            bind_to(app, doc_id, &to, effects);
+            bind_to(app, doc_id, to.clone(), effects);
             if created
                 && let Some(capture) = draft_baseline
                 && let Some(doc) = app.doc_mut(doc_id)
@@ -243,7 +251,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
         }
         Ok(RenameOutcome::Replaced { displaced, durable }) => {
             app.rename = RenameState::Idle;
-            bind_to(app, doc_id, &to, effects);
+            bind_to(app, doc_id, to.clone(), effects);
             let name = display_name(&to);
             let text = displaced.size.map_or_else(
                 || format!("replaced {name} \u{2014} its bytes were preserved in the recovery store"),
@@ -322,15 +330,13 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
     }
 }
 
-fn bind_to(app: &mut App, doc_id: DocumentId, to: &Path, effects: &mut Effects) {
-    if let Some(doc) = app.doc_mut(doc_id) {
-        doc.bind_path(to.to_path_buf());
-    }
+fn bind_to(app: &mut App, doc_id: DocumentId, to: ResolvedPath, effects: &mut Effects) {
+    app.rebind_document_path(doc_id, to.clone());
     if app.active == doc_id {
         let name = app.doc(doc_id).map(title::name_for).unwrap_or_default();
         app.title.seed(&name);
     }
-    crate::explorer::refresh_for(app, to, effects);
+    crate::explorer::refresh_for(app, to.as_path(), effects);
 }
 
 fn return_to_title(app: &mut App, doc_id: DocumentId) {
@@ -367,134 +373,5 @@ mod collision;
 pub use collision::{on_prompt_dismissed, replace_allowed, replace_confirmed};
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-
-    use rune_core::buffer::Buffer;
-    use rune_vfs::{Mem, Vfs, VfsTestExt};
-
-    use crate::app::App;
-    use crate::runtime::{CmdKind, Effects, Msg};
-
-    use super::{Commit, RenameState};
-
-    #[test]
-    fn closing_a_document_mid_rename_still_reports_the_acks_outcome() {
-        let mem = Arc::new(Mem::new());
-        mem.save_atomic(Path::new("/old.md"), b"hello")
-            .expect("seed old.md");
-        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
-        let mut app = App::new(
-            Buffer::new("hello"),
-            Some(PathBuf::from("/old.md")),
-            vfs,
-            None,
-        );
-        let id = app.active;
-        app.title.set_text("new.md");
-
-        let mut effects = Effects::default();
-        assert_eq!(super::begin(&mut app, &mut effects), Commit::Accepted);
-        assert!(app.rename.in_flight(), "test setup: a rename is in flight");
-
-        let outcome = crate::workspace::close_now(&mut app, id, &mut effects);
-        assert!(matches!(outcome, crate::workspace::CloseOutcome::Closed));
-        assert!(app.doc(id).is_none(), "the doc really closed");
-        assert!(
-            app.rename.in_flight(),
-            "closing the doc must not cancel the rename already in flight"
-        );
-
-        let cmd = effects
-            .cmds
-            .drain(..)
-            .find(|c| c.kind() == CmdKind::Rename)
-            .expect("begin spawns the no-store rename Cmd");
-        let Msg::RenameDone { generation, result } = cmd.run().expect("the rename Cmd replies")
-        else {
-            panic!("expected Msg::RenameDone");
-        };
-        super::handle_rename_done(&mut app, generation, result, &mut effects);
-
-        assert!(
-            matches!(app.rename, RenameState::Idle),
-            "the ack must resolve the machine even though the doc is gone"
-        );
-        assert_eq!(
-            mem.read(Path::new("/new.md")).expect("read new.md"),
-            b"hello",
-            "the rename itself must still land on disk"
-        );
-        assert_eq!(
-            crate::messages::newest_text(&app),
-            Some("renamed to new.md"),
-            "the outcome must still be reported even though the tab already closed"
-        );
-    }
-
-    #[test]
-    fn a_no_store_draft_create_advances_the_dirty_baseline_to_what_was_written() {
-        let mem = Arc::new(Mem::new());
-        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
-        let mut app = App::new(Buffer::new(""), None, vfs, None);
-        app.set_root(PathBuf::from("/"));
-        let id = app.active;
-        crate::commands::edit::insert_char(&mut app, id, 'X');
-        assert!(
-            app.doc(id).expect("doc open").is_dirty(),
-            "test setup: typing must dirty the draft"
-        );
-        app.title.set_text("new.md");
-
-        let mut effects = Effects::default();
-        assert_eq!(super::begin(&mut app, &mut effects), Commit::Accepted);
-        let cmd = effects
-            .cmds
-            .drain(..)
-            .find(|c| c.kind() == CmdKind::Rename)
-            .expect("bind_new spawns the no-store create Cmd");
-        let Msg::RenameDone { generation, result } = cmd.run().expect("the create Cmd replies")
-        else {
-            panic!("expected Msg::RenameDone");
-        };
-        super::handle_rename_done(&mut app, generation, result, &mut effects);
-
-        assert_eq!(
-            mem.read(Path::new("/new.md")).expect("read new.md"),
-            b"X",
-            "test setup: the create must have actually published the typed byte"
-        );
-        assert!(
-            !app.doc(id).expect("doc open").is_dirty(),
-            "a file that byte-matches what was just written must not read as unsaved"
-        );
-    }
-
-    #[test]
-    fn begin_refuses_a_rename_while_a_trash_is_in_flight() {
-        let mem = Arc::new(Mem::new());
-        mem.save_atomic(Path::new("/old.md"), b"hello")
-            .expect("seed old.md");
-        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
-        let mut app = App::new(
-            Buffer::new("hello"),
-            Some(PathBuf::from("/old.md")),
-            vfs,
-            None,
-        );
-        app.trash = crate::trash::TrashState::Pending {
-            generation: app.next_trash_gen.mint(),
-        };
-        app.title.set_text("new.md");
-
-        let mut effects = Effects::default();
-        assert_eq!(super::begin(&mut app, &mut effects), Commit::Refused);
-        assert!(matches!(app.rename, RenameState::Idle));
-        assert_eq!(
-            crate::messages::newest_text(&app),
-            Some("can't rename while a trash is in progress")
-        );
-    }
-}
+#[path = "rename_tests.rs"]
+mod tests;

@@ -128,13 +128,13 @@ pub(super) fn open_selected(app: &mut App, effects: &mut Effects) {
     };
     let departed = app.filesearch().and_then(|state| state.return_to.raw());
 
-    if let Some(id) = app.explorer.preview
-        && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(path.as_path())
-    {
+    if crate::explorer_preview::shown_path(app) == Some(path.as_path()) {
         close(app);
-        crate::explorer_preview::promote(app, id);
-        app.set_focus_pane(Pane::Editor, effects);
-        crate::navhistory::record_departure_if_moved(app, departed);
+        if let crate::explorer_preview::Promotion::Promoted(_) =
+            crate::explorer_preview::promote(app, effects)
+        {
+            app.set_focus_pane(Pane::Editor, effects);
+        }
         return;
     }
 
@@ -317,7 +317,7 @@ mod tests {
         assert!(app.filesearch().is_none());
         assert_eq!(app.focus(), crate::pane::Pane::Editor);
         assert_eq!(
-            app.active_doc().file_path.as_deref(),
+            app.active_doc().path(),
             Some(std::path::Path::new("/root/a.md"))
         );
     }

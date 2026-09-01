@@ -313,7 +313,7 @@ fn a_click_on_a_visible_row_opens_it_at_its_first_match() {
         "a row click activates the result and closes the panel"
     );
     assert_eq!(
-        app.active_doc().file_path.as_deref(),
+        app.active_doc().path(),
         Some(Path::new("/root/c.md")),
         "row 2 sits under the third list line"
     );

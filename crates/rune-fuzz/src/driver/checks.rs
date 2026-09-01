@@ -16,29 +16,26 @@ pub(super) fn should_sample(step: usize) -> bool {
 }
 
 fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
-    app.active_doc()
-        .view
-        .as_ref()
-        .map_or_else(Vec::new, |view| {
-            render::build_rows(app, app.active_doc(), Some(app.active), view)
-        })
+    app.shown_doc().view.as_ref().map_or_else(Vec::new, |view| {
+        render::build_rows(app, render::RowSource::Shown, view)
+    })
 }
 
 pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
     crate::fault::fire_before_sync_idempotent_check();
     let production_rows = build_rows_or_empty(app);
     let rebuilt_rows = {
-        let doc = app.active_doc();
+        let doc = app.shown_doc();
         let forced = doc.doc.force_rebuild(&doc.buffer);
-        render::build_rows(app, app.active_doc(), Some(app.active), &forced)
+        render::build_rows(app, render::RowSource::Shown, &forced)
     };
     if let Some(v) = invariant::sync_idempotent_rebuild(&production_rows, &rebuilt_rows) {
         return Some(v);
     }
 
-    let scroll_before = app.active_doc().viewport.scroll_row.0;
+    let scroll_before = app.shown_doc().viewport.scroll_row.0;
     app.sync_view();
-    let scroll_after = app.active_doc().viewport.scroll_row.0;
+    let scroll_after = app.shown_doc().viewport.scroll_row.0;
     let rows_after = build_rows_or_empty(app);
     invariant::sync_idempotent(&production_rows, scroll_before, &rows_after, scroll_after)
 }

@@ -39,7 +39,13 @@ fn app_with(mem: &Arc<Mem>) -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(
         Buffer::new("a content\nsecond line\nthird line\n"),
-        Some(PathBuf::from("/root/a.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/root/a.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );
@@ -280,10 +286,7 @@ fn a_double_click_on_an_explorer_file_row_opens_it() {
     click(&mut app, explorer.x + 1, explorer.y + 3);
 
     assert_eq!(app.documents.order().len(), 2);
-    assert_eq!(
-        app.active_doc().file_path.as_deref(),
-        Some(Path::new("/root/b.md"))
-    );
+    assert_eq!(app.active_doc().path(), Some(Path::new("/root/b.md")));
     assert_eq!(app.focus(), Pane::Editor);
 }
 

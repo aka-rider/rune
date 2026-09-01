@@ -8,12 +8,10 @@ use super::*;
 use crate::app::App;
 
 fn app_for(content: &str, path: &str) -> App {
-    App::new(
-        Buffer::new(content),
-        Some(PathBuf::from(path)),
-        Arc::new(Mem::new()),
-        None,
-    )
+    let vfs = Arc::new(Mem::new());
+    let launch = crate::resolved::ResolvedPath::resolve(vfs.as_ref(), &PathBuf::from(path))
+        .expect("the launch path resolves");
+    App::new(Buffer::new(content), Some(launch), vfs, None)
 }
 
 #[test]

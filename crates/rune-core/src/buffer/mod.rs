@@ -118,11 +118,6 @@ impl Buffer {
         self.version
     }
 
-    pub fn advance_past(mut self, floor: u64) -> Buffer {
-        self.version = self.version.max(floor.saturating_add(1));
-        self
-    }
-
     pub fn content(&self) -> &str {
         &self.content
     }

@@ -17,7 +17,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let name: &str = if focused {
         app.title.text()
     } else {
-        app.active_doc().file_name()
+        app.shown_doc().file_name()
     };
 
     let selection = focused.then(|| {
@@ -37,7 +37,8 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         theme,
     );
 
-    if !focused && app.active_doc().is_dirty() {
+    let previewing = app.showing_preview();
+    if !focused && !previewing && app.active_doc().is_dirty() {
         spans.push(Span::styled(" \u{2022}", theme.chrome.error));
     }
 

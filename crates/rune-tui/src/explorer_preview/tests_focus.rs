@@ -7,40 +7,50 @@ use rune_vfs::Mem;
 
 use super::tests_common::{app_with, load_entries, run_cmds};
 use super::*;
+use crate::document::ReadOnly;
 use crate::runtime::Msg;
 
-#[test]
-fn ctrl_2_while_previewing_discards_and_restores_the_original_tab_count() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/c.md"), b"content")
-        .unwrap();
-    let mut app = app_with(&mem);
-    // Two real tabs BEFORE the preview mints a third, so `^2` (`TabSwitch(1)`,
-    // the SECOND tab) targets the pre-existing real one, not the preview.
-    app.open_document(CoreBuffer::new("second"));
-    let tabs_before = app.documents.order().len();
-    load_entries(&mut app, &["c.md"]);
-    let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let preview_id = app.explorer.preview.expect("preview minted");
-    assert_eq!(app.documents.order().len(), tabs_before + 1);
-
-    let ctrl_2 = crate::keymap::KeyInput {
-        code: crate::keymap::KeyCode::Char('2'),
+fn ctrl(c: char) -> crate::keymap::KeyInput {
+    crate::keymap::KeyInput {
+        code: crate::keymap::KeyCode::Char(c),
         mods: crate::keymap::Mods {
             shift: false,
             alt: false,
             ctrl: true,
             sup: false,
         },
-    };
-    crate::app::update(&mut app, Msg::Key(ctrl_2), &mut effects);
+    }
+}
 
-    assert_eq!(app.documents.order().len(), tabs_before);
+const ESCAPE: crate::keymap::KeyInput = crate::keymap::KeyInput {
+    code: crate::keymap::KeyCode::Escape,
+    mods: crate::keymap::Mods::NONE,
+};
+
+fn preview_one_file(app: &mut App, effects: &mut Effects) {
+    app.explorer.nav.move_by(1, app.explorer.entries.len());
+    after_cursor_move(app, effects);
+    run_cmds(app, effects);
+}
+
+#[test]
+fn ctrl_2_while_previewing_discards_without_touching_the_tab_strip() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/c.md"), b"content")
+        .unwrap();
+    let mut app = app_with(&mem);
+    let second = app.open_document(CoreBuffer::new("second"));
+    let tabs_before = app.documents.order().len();
+    load_entries(&mut app, &["c.md"]);
+    let mut effects = Effects::default();
+    preview_one_file(&mut app, &mut effects);
+    assert!(app.explorer.preview.is_some(), "preview minted");
+
+    crate::app::update(&mut app, Msg::Key(ctrl('2')), &mut effects);
+
+    assert_eq!(app.documents.order().len(), tabs_before, "no tab moved");
     assert!(app.explorer.preview.is_none());
-    assert!(app.doc(preview_id).is_none(), "removed from app.documents");
+    assert_eq!(app.active, second, "^2 selects the second real tab");
 }
 
 /// `^e` (`GlobalCommand::FocusEditor`) no longer exists in the shipped
@@ -60,21 +70,15 @@ fn escape_from_the_explorer_promotes_the_live_preview() {
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md"]);
     let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let id = app.explorer.preview.expect("preview minted");
+    preview_one_file(&mut app, &mut effects);
+    let id = app.explorer.preview.as_ref().expect("preview minted").id;
     let tabs_before = app.documents.order().len();
     // `on_focus_changed` only reacts to an actual TRANSITION — land on the
     // Explorer first (browsing it is what minted the preview above in the
     // first place).
     app.set_focus_pane(Pane::Explorer, &mut effects);
 
-    let escape = crate::keymap::KeyInput {
-        code: crate::keymap::KeyCode::Escape,
-        mods: crate::keymap::Mods::NONE,
-    };
-    crate::app::update(&mut app, Msg::Key(escape), &mut effects);
+    crate::app::update(&mut app, Msg::Key(ESCAPE), &mut effects);
 
     assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(app.doc(id).unwrap().read_only, ReadOnly::No);
@@ -86,16 +90,12 @@ fn escape_from_the_explorer_promotes_the_live_preview() {
     );
     assert_eq!(
         app.documents.order().len(),
-        tabs_before,
-        "promotion mints no extra tab"
+        tabs_before + 1,
+        "promotion opens the tab the preview never held"
     );
+    assert_eq!(app.active, id, "the promoted document becomes active");
 }
 
-/// `^B` (`GlobalCommand::ToggleLeft`)'s hide branch: painted this frame ⇒
-/// hides the column and hands focus to the Editor. That's the second, and
-/// last, pure-focus route into the Editor the shipped keymap has —
-/// `pane::handle_global_command`'s `ToggleLeft` arm calls `set_focus_pane`
-/// directly, touching no document, exactly like Escape above.
 #[test]
 fn ctrl_b_hiding_the_column_promotes_the_live_preview() {
     let mem = Arc::new(Mem::new());
@@ -104,23 +104,12 @@ fn ctrl_b_hiding_the_column_promotes_the_live_preview() {
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md"]);
     let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let id = app.explorer.preview.expect("preview minted");
+    preview_one_file(&mut app, &mut effects);
+    let id = app.explorer.preview.as_ref().expect("preview minted").id;
     app.set_focus_pane(Pane::Explorer, &mut effects);
     assert!(app.splits.left.is_shown(), "column starts visible");
 
-    let ctrl_b = crate::keymap::KeyInput {
-        code: crate::keymap::KeyCode::Char('b'),
-        mods: crate::keymap::Mods {
-            shift: false,
-            alt: false,
-            ctrl: true,
-            sup: false,
-        },
-    };
-    crate::app::update(&mut app, Msg::Key(ctrl_b), &mut effects);
+    crate::app::update(&mut app, Msg::Key(ctrl('b')), &mut effects);
 
     assert!(!app.splits.left.is_shown(), "the column collapses");
     assert_eq!(app.focus(), Pane::Editor);
@@ -144,10 +133,8 @@ fn enter_on_a_file_row_promotes_the_preview_via_the_direct_call_path() {
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md"]);
     let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let id = app.explorer.preview.expect("preview minted");
+    preview_one_file(&mut app, &mut effects);
+    let id = app.explorer.preview.as_ref().expect("preview minted").id;
     let tabs_before = app.documents.order().len();
     app.set_focus_pane(Pane::Explorer, &mut effects);
 
@@ -167,21 +154,11 @@ fn enter_on_a_file_row_promotes_the_preview_via_the_direct_call_path() {
     );
     assert_eq!(
         app.documents.order().len(),
-        tabs_before,
-        "no second tab appears"
+        tabs_before + 1,
+        "the promoted document is the only new tab"
     );
 }
 
-/// Escape from the Tabs pane also lands on the Editor — the same
-/// `on_focus_changed` `Pane::Editor` arm Escape-from-Explorer and `^B`'s
-/// hide branch reach. The difference: reaching the Tabs pane at all
-/// (`^t`, `GlobalCommand::FocusTabs`) is itself a focus transition that
-/// `on_focus_changed`'s `Pane::Title | Pane::Tabs` arm discards the live
-/// preview for, in the SAME `app::update` call that moved focus there — so
-/// by the time a later, separate Escape keypress reaches the Tabs pane, no
-/// preview is left to promote. This pins that the code does NOT double-fire
-/// a promote against an already-discarded preview, and leaves no dangling
-/// document behind either.
 #[test]
 fn escape_from_the_tabs_pane_has_no_preview_left_to_promote() {
     let mem = Arc::new(Mem::new());
@@ -191,39 +168,84 @@ fn escape_from_the_tabs_pane_has_no_preview_left_to_promote() {
     let real = app.active;
     load_entries(&mut app, &["a.md"]);
     let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let preview_id = app.explorer.preview.expect("preview minted");
+    preview_one_file(&mut app, &mut effects);
+    let preview_id = app.explorer.preview.as_ref().expect("preview minted").id;
+    let tabs_before = app.documents.order().len();
     app.set_focus_pane(Pane::Explorer, &mut effects);
 
-    let ctrl_t = crate::keymap::KeyInput {
-        code: crate::keymap::KeyCode::Char('t'),
-        mods: crate::keymap::Mods {
-            shift: false,
-            alt: false,
-            ctrl: true,
-            sup: false,
-        },
-    };
-    crate::app::update(&mut app, Msg::Key(ctrl_t), &mut effects);
+    crate::app::update(&mut app, Msg::Key(ctrl('t')), &mut effects);
     assert!(
         app.explorer.preview.is_none(),
         "landing on Tabs already discarded it"
     );
-    assert!(app.doc(preview_id).is_none());
 
-    let escape = crate::keymap::KeyInput {
-        code: crate::keymap::KeyCode::Escape,
-        mods: crate::keymap::Mods::NONE,
-    };
-    crate::app::update(&mut app, Msg::Key(escape), &mut effects);
+    crate::app::update(&mut app, Msg::Key(ESCAPE), &mut effects);
 
     assert_eq!(app.focus(), Pane::Editor);
     assert!(app.explorer.preview.is_none());
     assert!(
         !app.documents.order().contains(&preview_id),
-        "the discarded preview never reappears"
+        "the discarded preview never becomes a tab"
     );
+    assert_eq!(app.documents.order().len(), tabs_before);
     assert_eq!(app.active, real, "the surviving real tab stays active");
+}
+
+fn pin_the_workspace_to_its_tab_cap(app: &mut App) {
+    while app.documents.order().len() < crate::opentabs::limit::MAX_TABS {
+        let id = app.open_document(CoreBuffer::new("pinned"));
+        app.doc_mut(id).unwrap().pinned = true;
+    }
+    let active = app.active;
+    app.doc_mut(active).unwrap().pinned = true;
+}
+
+fn click_editor(app: &mut App, col: u16, row: u16, effects: &mut Effects) {
+    let editor = crate::layout::geometry(app.frame_area(), app).editor;
+    crate::app::update(
+        app,
+        Msg::Mouse(crate::pointer::MouseInput {
+            kind: crate::pointer::MouseKind::Down(crate::pointer::MouseButton::Left),
+            column: editor.x + col,
+            row: editor.y + row,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        }),
+        effects,
+    );
+}
+
+#[test]
+fn a_click_the_tab_cap_refuses_to_promote_still_moves_the_caret_and_reports_the_limit() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/c.md"), b"content")
+        .unwrap();
+    let mut app = app_with(&mem);
+    pin_the_workspace_to_its_tab_cap(&mut app);
+    let active = app.active;
+    load_entries(&mut app, &["c.md"]);
+    let mut effects = Effects::default();
+    preview_one_file(&mut app, &mut effects);
+    app.set_focus_pane(Pane::Explorer, &mut effects);
+    app.sync_view();
+    assert!(app.explorer.preview.is_some(), "test setup: preview minted");
+
+    click_editor(&mut app, 3, 0, &mut effects);
+
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        Some("Tab limit reached \u{2014} close or unpin a tab"),
+        "a click that cannot open the previewed file must say why"
+    );
+    assert_eq!(app.active, active, "the refused file claimed no tab");
+    assert!(
+        !app.showing_preview(),
+        "the editor pane owns the screen once it owns the focus"
+    );
+    assert_eq!(
+        app.active_doc().cursors.primary().position,
+        rune_core::coords::BufferOffset(3),
+        "the click still lands the caret in the document it can reach"
+    );
 }

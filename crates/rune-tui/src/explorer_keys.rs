@@ -168,17 +168,15 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
         let Some(resolved) = workspace::resolve_or_report(app, &target, "open") else {
             return;
         };
-        explorer::request_dir(app, resolved, effects);
+        explorer::request_dir(app, resolved.into_path_buf(), effects);
         return;
     }
     let departed = crate::navhistory::departure_origin(app);
 
-    if let Some(id) = app.explorer.preview
-        && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(target.as_path())
-    {
-        explorer_preview::promote(app, id);
-        app.set_focus_pane(Pane::Editor, effects);
-        crate::navhistory::record_departure_if_moved(app, departed);
+    if explorer_preview::shown_path(app) == Some(target.as_path()) {
+        if let explorer_preview::Promotion::Promoted(_) = explorer_preview::promote(app, effects) {
+            app.set_focus_pane(Pane::Editor, effects);
+        }
         return;
     }
 
@@ -206,7 +204,7 @@ fn go_to_parent(app: &mut App, effects: &mut Effects) {
     let Some(resolved) = workspace::resolve_or_report(app, &parent, "open") else {
         return;
     };
-    explorer::request_dir(app, resolved, effects);
+    explorer::request_dir(app, resolved.into_path_buf(), effects);
 }
 
 #[cfg(test)]

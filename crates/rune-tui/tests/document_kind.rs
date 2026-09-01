@@ -1,8 +1,8 @@
-//! `Document::bind_path` derives `DocumentKind` from a modeline, a
-//! whole filename, the extension, or a shebang — via `rune_ts::detect`,
-//! never `registry()` (plan `[B5]`) — and a code document renders its
-//! source verbatim (no comrak parse, no concealment at all), while a `.md`
-//! path keeps today's markdown pipeline.
+//! `Document::new_bound` and `DocumentMap::rebind` derive `DocumentKind`
+//! from a modeline, a whole filename, the extension, or a shebang — via
+//! `rune_ts::detect`, never `registry()` (plan `[B5]`) — and a code
+//! document renders its source verbatim (no comrak parse, no concealment at
+//! all), while a `.md` path keeps today's markdown pipeline.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
@@ -23,12 +23,12 @@ fn lang(name: &str) -> LangId {
 }
 
 fn app_for(content: &str, path: Option<&str>) -> App {
-    let mut app = App::new(
-        Buffer::new(content),
-        path.map(PathBuf::from),
-        Arc::new(Mem::new()),
-        None,
-    );
+    let vfs = Arc::new(Mem::new());
+    let launch = path.map(|path| {
+        rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), &PathBuf::from(path))
+            .expect("the launch path resolves")
+    });
+    let mut app = App::new(Buffer::new(content), launch, vfs, None);
     let id = app.active;
     app.doc_mut(id)
         .expect("active document")
@@ -105,7 +105,7 @@ fn no_path_stays_markdown() {
 }
 
 /// An image extension resolves to
-/// `DocumentKind::Image` via `Document::bind_path` — same chokepoint every
+/// `DocumentKind::Image` via `Document::new_bound` — same chokepoint every
 /// other extension goes through.
 #[test]
 fn png_extension_is_image() {

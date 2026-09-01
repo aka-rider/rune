@@ -26,7 +26,7 @@ fn live_place(app: &App) -> Option<Place> {
     let doc = app.active_doc();
     Some(Place {
         doc: app.active,
-        path: doc.file_path.clone(),
+        path: doc.resolved_path().cloned(),
         offset: doc.cursors.primary().position.get(),
         kind: PlaceKind::Visited,
     })
@@ -77,7 +77,7 @@ pub fn forward(app: &mut App, effects: &mut Effects) {
 fn travel_to(app: &mut App, place: &Place, effects: &mut Effects) -> TravelOutcome {
     let resolved = place
         .path
-        .as_deref()
+        .as_ref()
         .and_then(|p| workspace::existing_document_for(app, p))
         .or_else(|| app.doc(place.doc).is_some().then_some(place.doc));
 

@@ -10,7 +10,6 @@ use ratatui::widgets::Paragraph;
 use rune_vfs::{DirEntry, FileKind, Link};
 
 use crate::app::App;
-use crate::document::DocumentId;
 use crate::listnav;
 use crate::pane::Pane;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
@@ -24,7 +23,7 @@ pub struct Explorer {
     pub request_generation: crate::generation::DirLoadGen,
     next_request_gen: crate::generation::GenCounter<crate::generation::DirLoad>,
     pub pending_reveal: Option<PathBuf>,
-    pub preview: Option<DocumentId>,
+    pub preview: Option<crate::explorer_preview::Preview>,
     pub browsing_origin: crate::returnto::ReturnTo,
     pub preview_awaiting: Option<PathBuf>,
     pub preview_generation: crate::generation::PreviewGen,
@@ -59,15 +58,10 @@ impl Default for Explorer {
 }
 
 pub fn initial_root(app: &App) -> PathBuf {
-    let base = app
-        .active_doc()
-        .file_path
-        .as_deref()
-        .and_then(Path::parent)
-        .map_or_else(
-            || app.root.clone().unwrap_or_else(|| PathBuf::from(".")),
-            Path::to_path_buf,
-        );
+    let base = app.active_doc().path().and_then(Path::parent).map_or_else(
+        || app.root.clone().unwrap_or_else(|| PathBuf::from(".")),
+        Path::to_path_buf,
+    );
     app.vfs.resolve(&base).unwrap_or(base)
 }
 
@@ -236,12 +230,13 @@ mod tests {
 
     #[test]
     fn initial_root_prefers_the_active_doc_directory_over_app_root() {
-        let mut app = App::new(
-            Buffer::new("hello"),
-            Some(PathBuf::from("/doc/dir/note.md")),
-            Arc::new(Mem::new()),
-            None,
-        );
+        let vfs = Arc::new(Mem::new());
+        let launch = crate::resolved::ResolvedPath::resolve(
+            vfs.as_ref(),
+            std::path::Path::new("/doc/dir/note.md"),
+        )
+        .expect("the launch path resolves");
+        let mut app = App::new(Buffer::new("hello"), Some(launch), vfs, None);
         app.set_root(PathBuf::from("/workspace/root"));
         assert_eq!(initial_root(&app), PathBuf::from("/doc/dir"));
     }

@@ -72,11 +72,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         } else {
             " "
         };
-        let name_style = if doc.is_preview() {
-            Style::default()
-                .fg(app.theme.chrome.subtle)
-                .add_modifier(ratatui::style::Modifier::ITALIC)
-        } else if id == app.active {
+        let name_style = if id == app.active {
             app.theme.chrome.tab_active
         } else {
             app.theme.chrome.tab_normal

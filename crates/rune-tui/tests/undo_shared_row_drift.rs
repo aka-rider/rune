@@ -65,7 +65,13 @@ fn file_store_app(mem: &Arc<Mem>, db_path: &Path, content: &str) -> (App, Arc<Db
 
     let mut app = App::new(
         Buffer::new(content),
-        Some(PathBuf::from(DOC)),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(DOC)),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
@@ -88,10 +94,11 @@ fn file_store_app(mem: &Arc<Mem>, db_path: &Path, content: &str) -> (App, Arc<Db
 /// comment): every real second open of an already-open path deduplicates
 /// to a reactivation of the existing tab.
 fn bind_second_tab(app: &mut App, db_id: i64, path: &Path, content: &str) -> DocumentId {
-    let id = app.open_document(Buffer::new(content));
+    let resolved = rune_tui::resolved::ResolvedPath::resolve(app.vfs.as_ref(), path)
+        .expect("the seeded path resolves");
+    let id = app.open_document_bound(Buffer::new(content), resolved);
     {
         let doc = app.doc_mut(id).unwrap();
-        doc.file_path = Some(path.to_path_buf());
         doc.set_doc_db_for_test(DocDb::new(db_id, PublishMode::OverwriteExisting, Seq(0)));
     }
     app.install_or_join_file_binding(db_id, None);
@@ -211,8 +218,10 @@ fn an_edit_right_after_a_clean_external_reload_lands_at_the_wrong_offset_in_reco
 
     external_write(mem.as_ref(), Path::new(DOC), b"1234567890");
 
+    let doc_path = rune_tui::resolved::ResolvedPath::resolve(app.vfs.as_ref(), Path::new(DOC))
+        .expect("the seeded path resolves");
     assert!(
-        db_enqueue::load_document(&mut app, id, Path::new(DOC), LoadIntent::Recover),
+        db_enqueue::load_document(&mut app, id, &doc_path, LoadIntent::Recover),
         "the reload must enqueue"
     );
     let load_evt = wait_for_load(&bridge);

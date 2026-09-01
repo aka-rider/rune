@@ -1,5 +1,5 @@
 //! Highlight overlay invariants: `HL-CLAMPED`, `HL-STALE-DROP`,
-//! `HL-NO-REFLOW`. All three key off `Snapshot.highlight_spans` — the output
+//! `HL-NO-REFLOW`. All three key off `Painted.highlight_spans` — the output
 //! of `highlight::visible_spans`, the same query the renderer runs, with the
 //! `ScopeId` tag dropped because no checker here needs it — and, for the L2
 //! pair, `StepCtx.msg` being a `MsgTag::Highlighted`.
@@ -11,7 +11,7 @@
 //! also extends both to the whole-file path they never reached.
 
 use super::{Violation, trunc};
-use crate::snapshot::Snapshot;
+use crate::snapshot::{Painted, Snapshot};
 use crate::step::{MsgTag, StepCtx};
 
 /// `HL-CLAMPED` (L0) — every span the render query would paint satisfies
@@ -28,22 +28,23 @@ use crate::step::{MsgTag, StepCtx};
 /// so a stale span is re-clamped rather than merely tolerated and there is
 /// no case left where an out-of-bounds span is legitimate.
 ///
-/// Active-document-switch-safe: L0, single `Snapshot`'s own
+/// Active-document-switch-safe: L0, single `Painted`'s own
 /// `highlight_spans`/`content`.
-pub fn hl_clamped(next: &Snapshot) -> Option<Violation> {
-    for &(start, end) in &next.highlight_spans {
-        let in_bounds = end <= next.content.len();
+pub fn hl_clamped(painted: &Painted) -> Option<Violation> {
+    for &(start, end) in &painted.highlight_spans {
+        let in_bounds = end <= painted.content.len();
         let ordered = start < end;
-        let boundary =
-            in_bounds && next.content.is_char_boundary(start) && next.content.is_char_boundary(end);
+        let boundary = in_bounds
+            && painted.content.is_char_boundary(start)
+            && painted.content.is_char_boundary(end);
         if !ordered || !in_bounds || !boundary {
             return Some(Violation::new(
                 "HL-CLAMPED",
                 format!(
                     "stored highlight span {start}..{end} is out of bounds or off a char \
                      boundary in content of length {} ({:?})",
-                    next.content.len(),
-                    trunc(&next.content, 80)
+                    painted.content.len(),
+                    trunc(&painted.content, 80)
                 ),
             ));
         }
@@ -70,16 +71,16 @@ pub fn hl_stale_drop(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
     else {
         return None;
     };
-    if delivered_version == next.version {
+    if delivered_version == next.painted.version {
         return None;
     }
-    if prev.highlight_spans != next.highlight_spans {
+    if prev.painted.highlight_spans != next.painted.highlight_spans {
         return Some(Violation::new(
             "HL-STALE-DROP",
             format!(
                 "a Msg::Highlighted delivered at version {delivered_version} (live version {}) \
                  changed stored spans from {:?} to {:?} instead of leaving them untouched",
-                next.version, prev.highlight_spans, next.highlight_spans
+                next.painted.version, prev.painted.highlight_spans, next.painted.highlight_spans
             ),
         ));
     }
@@ -125,20 +126,26 @@ pub fn hl_no_reflow(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<V
             ),
         ));
     }
-    if prev.cells.is_empty() || next.cells.is_empty() {
+    if prev.painted.cells.is_empty() || next.painted.cells.is_empty() {
         return None;
     }
-    if prev.cells.len() != next.cells.len() {
+    if prev.painted.cells.len() != next.painted.cells.len() {
         return Some(Violation::new(
             "HL-NO-REFLOW",
             format!(
                 "a Msg::Highlighted step changed the rendered row count: {} -> {}",
-                prev.cells.len(),
-                next.cells.len()
+                prev.painted.cells.len(),
+                next.painted.cells.len()
             ),
         ));
     }
-    for (r, (prow, nrow)) in prev.cells.iter().zip(next.cells.iter()).enumerate() {
+    for (r, (prow, nrow)) in prev
+        .painted
+        .cells
+        .iter()
+        .zip(next.painted.cells.iter())
+        .enumerate()
+    {
         if prow.len() != nrow.len() {
             return Some(Violation::new(
                 "HL-NO-REFLOW",

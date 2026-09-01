@@ -29,7 +29,13 @@ fn app_with(content: &str) -> (App, Arc<Mem>, DocumentId) {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
     let app = App::new(
         Buffer::new(content),
-        Some(PathBuf::from(DOC_PATH)),
+        Some(
+            crate::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(DOC_PATH)),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

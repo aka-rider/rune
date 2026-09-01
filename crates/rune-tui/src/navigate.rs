@@ -24,8 +24,7 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
 
     let doc_dir = app
         .active_doc()
-        .file_path
-        .as_deref()
+        .path()
         .and_then(|p| p.parent())
         .map(std::path::Path::to_path_buf);
     let destination = rune_nav::resolve(

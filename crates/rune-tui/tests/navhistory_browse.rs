@@ -65,7 +65,7 @@ fn escaping_the_explorer_onto_a_preview_records_the_departure() {
     press_and_settle(&mut app, plain(KeyCode::Escape));
 
     assert_eq!(active_path(&app).as_deref(), Some(Path::new("/root/b.md")));
-    assert!(!app.active_doc().is_preview(), "Escape commits the preview");
+    assert!(app.explorer.preview.is_none(), "Escape commits the preview");
 
     press(&mut app, back_key());
 
@@ -116,7 +116,7 @@ fn a_failed_explorer_open_records_nothing() {
 }
 
 #[test]
-fn travelling_back_and_forward_from_the_explorer_pane_records_nothing() {
+fn travelling_back_and_forward_from_the_explorer_pane_never_records_the_preview() {
     let mem = explorer_common::seeded_vfs();
     let mut app = browsing_app(&mem);
     let first = app.active;
@@ -129,28 +129,30 @@ fn travelling_back_and_forward_from_the_explorer_pane_records_nothing() {
     press_and_settle(&mut app, plain(KeyCode::Enter));
     arrow_to(&mut app, "c.md");
     assert!(
-        app.active_doc().is_preview(),
+        app.explorer.preview.is_some(),
         "a live preview to travel over"
     );
-    let entries_before = app.nav_history.len();
+    let preview = app.explorer.preview.as_ref().expect("a live preview").id;
 
     press(&mut app, back_key());
     assert_eq!(app.active, first);
+    assert!(
+        app.explorer.preview.is_none(),
+        "travelling away discards the preview"
+    );
 
     press(&mut app, forward_key());
 
+    assert_eq!(
+        app.active, second,
+        "forward returns to the file browsing started from"
+    );
     assert!(
         app.nav_history
             .places()
             .iter()
-            .all(|place| place.doc != second),
-        "travel must never record a departure of its own, not even while a \
-         preview is live for it to promote"
-    );
-    assert_eq!(
-        app.nav_history.len(),
-        entries_before,
-        "travel from a live preview must add no entry"
+            .all(|place| place.doc != preview),
+        "a preview must never be recorded as a place travel can reach"
     );
 }
 
@@ -166,10 +168,10 @@ fn a_live_explorer_preview_never_becomes_a_place_travel_can_land_on() {
     press_and_settle(&mut app, plain(KeyCode::Enter));
     arrow_to(&mut app, "c.md");
     assert!(
-        app.active_doc().is_preview(),
+        app.explorer.preview.is_some(),
         "a live preview to travel over"
     );
-    let preview = app.active;
+    let preview = app.explorer.preview.as_ref().expect("a live preview").id;
 
     press(&mut app, back_key());
     press(&mut app, forward_key());
@@ -182,8 +184,8 @@ fn a_live_explorer_preview_never_becomes_a_place_travel_can_land_on() {
         "a preview must never be recorded as a place"
     );
     assert!(
-        !app.active_doc().is_preview(),
-        "travel must never land on a preview"
+        app.explorer.preview.is_none(),
+        "travel discards the preview it travelled over"
     );
 }
 
@@ -222,7 +224,7 @@ fn arrowing_the_explorer_preview_records_nothing() {
         &mut effects,
     );
     settle_file_opens(&mut app, effects);
-    assert!(app.active_doc().is_preview());
+    assert!(app.explorer.preview.is_some());
     assert_eq!(app.nav_history.len(), 0);
 
     let mut effects = Effects::default();
@@ -281,7 +283,7 @@ fn escaping_a_narrow_explorer_records_nothing() {
     let mem = explorer_common::seeded_vfs();
     let mut app = browsing_app(&mem);
     arrow_to(&mut app, "b.md");
-    assert!(app.active_doc().is_preview());
+    assert!(app.explorer.preview.is_some());
 
     app.frame = Some(rune_tui::app::FrameSize::new(24, app.frame_height()));
     app.sync_view();
@@ -293,7 +295,7 @@ fn escaping_a_narrow_explorer_records_nothing() {
         "a narrow frame keeps focus on the Explorer"
     );
     assert!(
-        app.active_doc().is_preview(),
+        app.explorer.preview.is_some(),
         "the preview was never promoted"
     );
     assert_eq!(app.nav_history.len(), 0);
@@ -314,7 +316,7 @@ fn switching_tabs_while_a_preview_is_live_records_the_browsed_from_file() {
     press_and_settle(&mut app, plain(KeyCode::Enter));
     arrow_to(&mut app, "c.md");
     assert!(
-        app.active_doc().is_preview(),
+        app.explorer.preview.is_some(),
         "a live preview to switch off"
     );
 
@@ -350,7 +352,10 @@ fn a_new_document_while_a_preview_is_live_records_the_browsed_from_file() {
     let mut app = browsing_app(&mem);
     let first = app.active;
     arrow_to(&mut app, "b.md");
-    assert!(app.active_doc().is_preview(), "a live preview to mint over");
+    assert!(
+        app.explorer.preview.is_some(),
+        "a live preview to mint over"
+    );
 
     press_and_settle(&mut app, ctrl(KeyCode::Char('n')));
     press(&mut app, plain(KeyCode::Escape));

@@ -235,7 +235,13 @@ fn every_cmd_is_tagged_with_its_kind() {
     let vfs = Arc::new(Mem::new());
     let mut app = App::new(
         Buffer::new("x"),
-        Some(PathBuf::from("/doc.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/doc.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
         None,
     );

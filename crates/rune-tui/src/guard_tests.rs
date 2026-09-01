@@ -23,7 +23,13 @@ fn store_bound_app(degraded: bool) -> App {
     let doc_db = DocDb::new(1, crate::db::PublishMode::CreateOnly, rune_db::Seq(0));
     let mut app = App::new(
         Buffer::new("hi"),
-        Some(PathBuf::from("/doc.md")),
+        Some(
+            crate::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/doc.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         Some(db),
     );
@@ -185,7 +191,8 @@ fn clear_guard_on_a_rename_collision_returns_the_rename_machine_to_idle() {
     app.rename = crate::rename::RenameState::Collision {
         doc,
         from: std::path::PathBuf::new(),
-        to: std::path::PathBuf::from("/b.md"),
+        to: crate::resolved::ResolvedPath::resolve(app.vfs.as_ref(), std::path::Path::new("/b.md"))
+            .expect("Mem resolves any spelling"),
         seen: rune_vfs::Stat {
             size: 0,
             mtime: std::time::SystemTime::UNIX_EPOCH,

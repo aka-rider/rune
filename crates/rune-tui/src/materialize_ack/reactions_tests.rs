@@ -35,10 +35,6 @@ fn racer_observation(doc_id: i64) -> Observation {
     }
 }
 
-/// Builds the exact shape [`super::lost_create_race`] requires: a document
-/// already bound to `path`, create-only, and no `pending_bind_path` —
-/// a named-but-unpublished document whose create is about to be told it
-/// lost the race.
 fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let clock: ClockFn = Arc::new(std::time::SystemTime::now);
@@ -56,7 +52,13 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
 
     let mut app = App::new(
         Buffer::new("unpublished body"),
-        Some(PathBuf::from(path)),
+        Some(
+            crate::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(path)),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
@@ -69,17 +71,17 @@ fn app_bound_to(mem: &Arc<Mem>, path: &str) -> (App, i64) {
     (app, row_id)
 }
 
-/// The hand-off's own path-identity compare must take the SAME
-/// conservative branch a genuine collision-elsewhere takes when it can't
-/// even resolve the racer's path — proof positive that a resolve failure
-/// on the path itself, not just on some other document's binding, forces
-/// `hand_off_safe = false`.
 #[test]
-fn a_resolve_failure_on_the_racers_own_path_keeps_the_plain_refusal() {
+fn a_racer_path_another_tab_already_holds_keeps_the_plain_refusal() {
     let mem = Arc::new(Mem::new());
-    mem.fail_resolve(std::path::Path::new("/root/nope.md"));
     let (mut app, row_id) = app_bound_to(&mem, "/root/nope.md");
     let id = app.active;
+    let claimed = crate::resolved::ResolvedPath::resolve(
+        app.vfs.as_ref(),
+        std::path::Path::new("/root/nope.md"),
+    )
+    .expect("Mem resolves any spelling");
+    app.open_document_bound(Buffer::new("another tab's body"), claimed);
 
     handle_materialize_ack(
         &mut app,
@@ -106,14 +108,10 @@ fn a_resolve_failure_on_the_racers_own_path_keeps_the_plain_refusal() {
     );
     assert!(
         app.db_ops.is_empty(),
-        "no Load must have been enqueued when the hand-off's own resolve failed"
+        "no Load must have been enqueued when another tab holds the racer's path"
     );
 }
 
-/// The companion positive control: an ordinary, resolvable racer path
-/// DOES hand off (`^M` message, a Load enqueued) — proof the fixture
-/// itself reaches the hand-off branch at all whenever resolution isn't
-/// the thing standing in its way.
 #[test]
 fn a_resolvable_racer_path_hands_off_to_a_load() {
     let mem = Arc::new(Mem::new());
@@ -158,7 +156,13 @@ fn committed_save_warns_once_for_a_hardlinked_document_then_stops() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let mut app = App::new(
         Buffer::new("body"),
-        Some(PathBuf::from("/doc.md")),
+        Some(
+            crate::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/doc.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

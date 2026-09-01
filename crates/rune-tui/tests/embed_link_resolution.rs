@@ -62,7 +62,13 @@ fn app_with_content(content: &str, seed_paths: &[&str]) -> (App, DocumentId) {
     let vfs: Arc<dyn Vfs + Send + Sync> = mem;
     let mut app = App::new(
         Buffer::new(content),
-        Some(Path::new("/vault/doc.md").to_path_buf()),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&Path::new("/vault/doc.md").to_path_buf()),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );
@@ -109,11 +115,7 @@ fn a_link_and_an_embed_with_the_same_relative_target_resolve_to_the_same_path() 
         })
         .expect("a link Ref must be in the catalogue");
 
-    let doc_dir = doc
-        .file_path
-        .as_deref()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf);
+    let doc_dir = doc.path().and_then(Path::parent).map(Path::to_path_buf);
     let dest = rune_nav::resolve(
         app.vfs.as_ref(),
         &link_target,

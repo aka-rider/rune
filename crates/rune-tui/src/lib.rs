@@ -66,6 +66,7 @@ pub mod registry;
 pub mod rename;
 pub(crate) mod rename_create;
 pub mod render;
+pub mod resolved;
 pub mod returnto;
 pub mod row_meta;
 pub mod runtime;

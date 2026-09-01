@@ -121,14 +121,14 @@ pub struct App {
 impl App {
     pub fn new(
         buffer: Buffer,
-        file_path: Option<PathBuf>,
+        file_path: Option<crate::resolved::ResolvedPath>,
         vfs: Arc<dyn Vfs + Send + Sync>,
         db: Option<Db>,
     ) -> App {
-        let mut document = Document::new(buffer);
-        if let Some(path) = file_path {
-            document.bind_path(path);
-        }
+        let document = match file_path {
+            Some(path) => Document::new_bound(buffer, path),
+            None => Document::new(buffer),
+        };
 
         let id = DocumentId(NonZeroU64::MIN);
         let documents = DocumentMap::new(id, document);
@@ -200,7 +200,7 @@ impl App {
         app
     }
 
-    fn mint_doc_id(&mut self) -> DocumentId {
+    pub(crate) fn mint_doc_id(&mut self) -> DocumentId {
         let id = DocumentId(self.next_doc_id);
         self.next_doc_id = self.next_doc_id.saturating_add(1);
         id
@@ -210,6 +210,41 @@ impl App {
         let id = self.mint_doc_id();
         self.documents.insert(id, Document::new(buffer));
         id
+    }
+
+    pub fn open_document_bound(
+        &mut self,
+        buffer: Buffer,
+        path: crate::resolved::ResolvedPath,
+    ) -> DocumentId {
+        let id = self.mint_doc_id();
+        self.documents.insert(id, Document::new_bound(buffer, path));
+        id
+    }
+
+    pub fn rebind_document_path(&mut self, id: DocumentId, path: crate::resolved::ResolvedPath) {
+        self.documents.rebind(id, path);
+    }
+
+    pub fn live_doc(&self, id: DocumentId) -> Option<&Document> {
+        self.documents.get(&id).or_else(|| {
+            self.explorer
+                .preview
+                .as_ref()
+                .filter(|preview| preview.id == id)
+                .map(|preview| &preview.doc)
+        })
+    }
+
+    pub fn live_doc_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
+        if self.documents.contains_key(&id) {
+            return self.documents.get_mut(&id);
+        }
+        self.explorer
+            .preview
+            .as_mut()
+            .filter(|preview| preview.id == id)
+            .map(|preview| &mut preview.doc)
     }
 
     pub fn doc(&self, id: DocumentId) -> Option<&Document> {
@@ -226,6 +261,31 @@ impl App {
 
     pub fn active_doc_mut(&mut self) -> &mut Document {
         self.documents.get_or_anchor_mut(&self.active)
+    }
+
+    pub fn shown(&self) -> DocumentId {
+        match &self.explorer.preview {
+            Some(preview) => preview.id,
+            None => self.active,
+        }
+    }
+
+    pub fn showing_preview(&self) -> bool {
+        self.explorer.preview.is_some()
+    }
+
+    pub fn shown_doc(&self) -> &Document {
+        match &self.explorer.preview {
+            Some(preview) => &preview.doc,
+            None => self.documents.get_or_anchor(&self.active),
+        }
+    }
+
+    pub fn shown_doc_mut(&mut self) -> &mut Document {
+        match self.explorer.preview.as_mut() {
+            Some(preview) => &mut preview.doc,
+            None => self.documents.get_or_anchor_mut(&self.active),
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -280,7 +340,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
         frame_width_before,
         effects,
     );
-    crate::explorer_preview::on_focus_changed(app, focus_before, app.focus());
+    crate::explorer_preview::on_focus_changed(app, focus_before, app.focus(), effects);
 }
 
 #[cfg(test)]

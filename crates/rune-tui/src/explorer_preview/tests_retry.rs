@@ -3,7 +3,6 @@ use rune_vfs::VfsTestExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rune_core::buffer::Buffer as CoreBuffer;
 use rune_vfs::Mem;
 
 use super::tests_common::{app_with, load_entries, run_cmds};
@@ -21,7 +20,8 @@ fn a_failed_placeholder_is_not_promotable_and_enter_posts_the_real_error() {
     app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
-    let placeholder = app.explorer.preview.expect("placeholder minted");
+    let tabs_before = app.documents.order().len();
+    assert!(app.explorer.preview.is_some(), "a placeholder is shown");
     assert!(
         !crate::messages::is_open(&app),
         "no banner from the preview path itself"
@@ -34,10 +34,10 @@ fn a_failed_placeholder_is_not_promotable_and_enter_posts_the_real_error() {
     };
     crate::app::update(&mut app, Msg::Key(enter), &mut effects);
 
-    assert!(
-        app.doc(placeholder)
-            .is_none_or(|doc| doc.read_only == ReadOnly::Preview),
-        "Enter must not promote the placeholder in place"
+    assert_eq!(
+        app.documents.order().len(),
+        tabs_before,
+        "a placeholder never becomes a tab"
     );
     assert!(
         crate::messages::is_open(&app),
@@ -93,88 +93,6 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
 }
 
 #[test]
-fn a_failed_preview_at_the_tab_limit_mints_no_placeholder_and_does_not_reread() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/bad.bin"), &[0xFF, 0xFE, 0x00])
-        .unwrap();
-    let mut app = app_with(&mem);
-    for i in 0..crate::opentabs::limit::MAX_TABS {
-        let id = app.open_document(CoreBuffer::new("hello"));
-        app.doc_mut(id)
-            .unwrap()
-            .bind_path(PathBuf::from(format!("/root/doc{i}.md")));
-    }
-    load_entries(&mut app, &["bad.bin"]);
-    let mut effects = Effects::default();
-    let docs_before = app.documents.len();
-
-    app.explorer.nav.move_by(1, app.explorer.entries.len()); // ".." -> "bad.bin"
-    after_cursor_move(&mut app, &mut effects);
-    assert_eq!(effects.cmds.len(), 1, "the first visit reads once");
-    run_cmds(&mut app, &mut effects);
-
-    assert!(
-        app.explorer.preview.is_none(),
-        "a full tab strip must not mint a placeholder document"
-    );
-    assert_eq!(
-        app.documents.len(),
-        docs_before,
-        "no document was minted for the failed preview"
-    );
-    assert_eq!(
-        app.explorer.preview_failed,
-        Some(PathBuf::from("/root/bad.bin")),
-        "the failure must still be recorded even without a placeholder"
-    );
-    assert_eq!(
-        crate::messages::newest_text(&app),
-        Some("Tab limit reached — close or unpin a tab")
-    );
-
-    after_cursor_move(&mut app, &mut effects);
-    assert!(
-        effects.cmds.is_empty(),
-        "sitting on the same failed entry must not re-read, even at the tab limit"
-    );
-}
-
-#[test]
-fn a_valid_preview_at_the_tab_limit_is_refused_with_a_warning() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/good.md"), b"content")
-        .unwrap();
-    let mut app = app_with(&mem);
-    for i in 0..crate::opentabs::limit::MAX_TABS {
-        let id = app.open_document(CoreBuffer::new("hello"));
-        app.doc_mut(id)
-            .unwrap()
-            .bind_path(PathBuf::from(format!("/root/doc{i}.md")));
-    }
-    load_entries(&mut app, &["good.md"]);
-    let mut effects = Effects::default();
-    let docs_before = app.documents.len();
-
-    app.explorer.nav.move_by(1, app.explorer.entries.len()); // ".." -> "good.md"
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-
-    assert!(
-        app.explorer.preview.is_none(),
-        "a full tab strip must not mint a preview document"
-    );
-    assert_eq!(
-        app.documents.len(),
-        docs_before,
-        "no document was minted for the refused preview"
-    );
-    assert_eq!(
-        crate::messages::newest_text(&app),
-        Some("Tab limit reached — close or unpin a tab")
-    );
-}
-
-#[test]
 fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(std::path::Path::new("/root/a.bin"), &[0xFF, 0xFE, 0x00])
@@ -193,12 +111,7 @@ fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects); // resolves "b.md" first
 
-    let shown_after_fresh = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|d| d.file_path.clone());
-    assert_eq!(shown_after_fresh, Some(PathBuf::from("/root/b.md")));
+    assert_eq!(shown_path(&app), Some(std::path::Path::new("/root/b.md")));
 
     if let Some(Msg::FileOpened {
         path,
@@ -217,14 +130,9 @@ fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
         );
     }
 
-    let shown_after_stale = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|d| d.file_path.clone());
     assert_eq!(
-        shown_after_stale,
-        Some(PathBuf::from("/root/b.md")),
+        shown_path(&app),
+        Some(std::path::Path::new("/root/b.md")),
         "a stale Err reply must not override the fresh preview"
     );
     assert!(

@@ -363,9 +363,9 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
 
 /// Regression: naming a store-bound draft (^R -> Enter, routed through
 /// `save::bind_new_now`'s materialize) must switch the title to the real
-/// filename via the SAME `Document::bind_path` chokepoint the unbound
+/// filename via the SAME `DocumentMap::rebind` chokepoint the unbound
 /// route (`naming_a_draft_creates_the_file`, above) already goes through —
-/// not just set `file_path` while leaving a stale `display_name` override
+/// not just update the path while leaving a stale `display_name` override
 /// (e.g. "Untitled 1") to shadow it forever.
 #[test]
 fn store_bound_draft_create_ack_clears_the_untitled_display_name() {

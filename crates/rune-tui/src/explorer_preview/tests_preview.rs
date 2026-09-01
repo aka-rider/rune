@@ -7,10 +7,11 @@ use rune_vfs::{DirEntry, FileKind, Mem, Vfs};
 
 use super::tests_common::{app_with, load_entries, run_cmds};
 use super::*;
+use crate::document::ReadOnly;
 use crate::runtime::{DirCause, Msg};
 
 #[test]
-fn arrowing_down_n_files_leaves_exactly_one_extra_tab_and_one_preview_document() {
+fn arrowing_down_n_files_mints_no_tab_and_leaves_exactly_one_preview() {
     let mem = Arc::new(Mem::new());
     for name in ["a.md", "b.md", "c.md"] {
         mem.save_atomic(&PathBuf::from("/root").join(name), b"content")
@@ -19,6 +20,7 @@ fn arrowing_down_n_files_leaves_exactly_one_extra_tab_and_one_preview_document()
     let mut app = app_with(&mem);
     load_entries(&mut app, &["a.md", "b.md", "c.md"]);
     let tabs_before = app.documents.order().len();
+    let active_before = app.active;
     let mut effects = Effects::default();
 
     for _ in 0..3 {
@@ -27,60 +29,13 @@ fn arrowing_down_n_files_leaves_exactly_one_extra_tab_and_one_preview_document()
         run_cmds(&mut app, &mut effects);
     }
 
-    assert_eq!(app.documents.order().len(), tabs_before + 1);
-    let preview_docs = app
-        .documents
-        .values()
-        .filter(|d| d.read_only == ReadOnly::Preview)
-        .count();
-    assert_eq!(preview_docs, 1);
-}
-
-#[test]
-fn enter_on_a_file_promotes_the_preview() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/a.md"), b"content")
-        .unwrap();
-    let mut app = app_with(&mem);
-    load_entries(&mut app, &["a.md"]);
-    let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let id = app.explorer.preview.expect("preview minted");
-    let tabs_before = app.documents.order().len();
-
-    promote(&mut app, id);
-
-    assert_eq!(app.doc(id).unwrap().read_only, ReadOnly::No);
-    assert!(app.explorer.preview.is_none());
-    assert_eq!(app.documents.order().len(), tabs_before);
-}
-
-#[test]
-fn switching_away_discards_the_preview_from_both_collections() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/a.md"), b"content")
-        .unwrap();
-    let mut app = app_with(&mem);
-    let real = app.active;
-    load_entries(&mut app, &["a.md"]);
-    let mut effects = Effects::default();
-    app.explorer.nav.move_by(1, app.explorer.entries.len());
-    after_cursor_move(&mut app, &mut effects);
-    run_cmds(&mut app, &mut effects);
-    let preview_id = app.explorer.preview.expect("preview minted");
-    let tabs_before_preview_removed = app.documents.order().len();
-
-    workspace::switch_to(&mut app, real);
-
-    assert!(app.explorer.preview.is_none());
-    assert!(app.doc(preview_id).is_none(), "removed from documents");
-    assert!(
-        !app.documents.order().contains(&preview_id),
-        "removed from documents.order()"
+    assert_eq!(
+        app.documents.order().len(),
+        tabs_before,
+        "browsing three files must open no tab"
     );
-    assert_eq!(app.documents.order().len(), tabs_before_preview_removed - 1);
+    assert_eq!(app.active, active_before, "browsing never moves the caret");
+    assert_eq!(shown_path(&app), Some(std::path::Path::new("/root/c.md")));
 }
 
 #[test]
@@ -130,12 +85,7 @@ fn a_stale_reply_for_a_path_the_cursor_has_left_is_ignored() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects); // resolves "b.md" first
 
-    let shown_after_fresh = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|d| d.file_path.clone());
-    assert_eq!(shown_after_fresh, Some(PathBuf::from("/root/b.md")));
+    assert_eq!(shown_path(&app), Some(std::path::Path::new("/root/b.md")));
 
     // The late "a.md" reply must not override it.
     if let Some(Msg::FileOpened {
@@ -154,12 +104,7 @@ fn a_stale_reply_for_a_path_the_cursor_has_left_is_ignored() {
             &mut effects,
         );
     }
-    let shown_after_stale = app
-        .explorer
-        .preview
-        .and_then(|id| app.doc(id))
-        .and_then(|d| d.file_path.clone());
-    assert_eq!(shown_after_stale, Some(PathBuf::from("/root/b.md")));
+    assert_eq!(shown_path(&app), Some(std::path::Path::new("/root/b.md")));
 }
 
 #[test]
@@ -213,14 +158,17 @@ fn a_directory_row_produces_no_read_and_keeps_the_previous_preview() {
     app.explorer.nav.move_by(1, app.explorer.entries.len()); // "a.md"
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
-    let previewed = app.explorer.preview;
-    assert!(previewed.is_some());
+    assert_eq!(shown_path(&app), Some(std::path::Path::new("/root/a.md")));
 
     app.explorer.nav.move_by(1, app.explorer.entries.len()); // "sub"
     after_cursor_move(&mut app, &mut effects);
 
     assert!(effects.cmds.is_empty(), "a directory row must not read");
-    assert_eq!(app.explorer.preview, previewed, "previous preview stays");
+    assert_eq!(
+        shown_path(&app),
+        Some(std::path::Path::new("/root/a.md")),
+        "previous preview stays"
+    );
 }
 
 #[test]
@@ -237,12 +185,16 @@ fn an_oversized_file_renders_a_placeholder_with_no_banner() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
 
-    let id = app.explorer.preview.expect("a placeholder is minted");
-    let doc = app.doc(id).expect("placeholder document exists");
-    assert!(doc.buffer.content().contains("huge.md"));
-    assert!(doc.buffer.content().contains("too large to preview"));
-    assert_eq!(doc.read_only, ReadOnly::Preview);
-    assert!(doc.file_path.is_none(), "a placeholder is never bound");
+    let preview = app.explorer.preview.as_ref().expect("a placeholder");
+    assert!(preview.doc.buffer.content().contains("huge.md"));
+    assert!(
+        preview
+            .doc
+            .buffer
+            .content()
+            .contains("too large to preview")
+    );
+    assert!(preview.doc.path().is_none(), "a placeholder is never bound");
     assert!(
         !crate::messages::is_open(&app),
         "no message pane for a failed preview"
@@ -262,12 +214,10 @@ fn a_binary_file_renders_a_placeholder_with_no_banner() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
 
-    let id = app.explorer.preview.expect("a placeholder is minted");
-    let doc = app.doc(id).expect("placeholder document exists");
-    assert!(doc.buffer.content().contains("x.bin"));
-    assert!(doc.buffer.content().contains("not valid UTF-8"));
-    assert_eq!(doc.read_only, ReadOnly::Preview);
-    assert!(doc.file_path.is_none(), "a placeholder is never bound");
+    let preview = app.explorer.preview.as_ref().expect("a placeholder");
+    assert!(preview.doc.buffer.content().contains("x.bin"));
+    assert!(preview.doc.buffer.content().contains("not valid UTF-8"));
+    assert!(preview.doc.path().is_none(), "a placeholder is never bound");
     assert!(
         !crate::messages::is_open(&app),
         "no message pane for a failed preview"
@@ -359,4 +309,63 @@ fn a_real_open_racing_its_own_in_flight_preview_lands_with_its_anchor() {
         app.doc(id).map(|d| d.cursors.primary().position.get()),
         landed_at
     );
+}
+
+/// The finding this guards: `discard()` used to drop the preview without
+/// invalidating the in-flight read behind it. A user arrowing onto a file
+/// mints generation G and spawns its read, then switches to a real tab
+/// before the read lands — `switch_to` calls `discard`. If the reply for G
+/// still lands, it must die on arrival rather than re-installing a preview
+/// over the document the user switched to.
+#[test]
+fn switching_tabs_before_a_preview_read_lands_kills_the_stale_reply() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/a.md"), b"a content")
+        .unwrap();
+    mem.save_atomic(std::path::Path::new("/root/b.md"), b"b content")
+        .unwrap();
+    let mut app = app_with(&mem);
+    let opened = workspace::open_path(&mut app, std::path::Path::new("/root/a.md")).unwrap();
+    load_entries(&mut app, &["a.md", "b.md"]);
+    let mut effects = Effects::default();
+
+    app.explorer.nav.move_by(2, app.explorer.entries.len()); // "b.md"
+    after_cursor_move(&mut app, &mut effects);
+    let preview_cmd = effects.cmds.pop().expect("b.md read queued");
+    assert!(app.explorer.preview_awaiting.is_some());
+
+    // The user clicks the "a.md" tab before the read comes back.
+    workspace::switch_to(&mut app, opened);
+    assert!(
+        app.explorer.preview.is_none(),
+        "switching tabs must drop the preview"
+    );
+    assert!(
+        app.explorer.preview_awaiting.is_none(),
+        "switching tabs must stop waiting on the now-discarded read"
+    );
+
+    if let Some(Msg::FileOpened {
+        path,
+        result,
+        anchor,
+        preview_generation,
+    }) = preview_cmd.run()
+    {
+        workspace::handle_file_opened(
+            &mut app,
+            &path,
+            result,
+            anchor,
+            preview_generation,
+            &mut effects,
+        );
+    }
+
+    assert!(
+        app.explorer.preview.is_none(),
+        "the stale reply must not re-install a preview over the switched-to tab"
+    );
+    assert_eq!(app.shown(), opened, "the active document stays on screen");
+    assert_eq!(app.active, opened);
 }

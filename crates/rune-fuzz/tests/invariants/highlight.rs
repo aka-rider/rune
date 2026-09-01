@@ -30,38 +30,38 @@ fn highlighted_ctx(delivered_version: u64) -> rune_fuzz::step::StepCtx {
 #[test]
 fn hl_clamped_detects_an_inverted_span() {
     let mut snap = base_snapshot("abcdefgh");
-    snap.highlight_spans = vec![(5, 3)]; // start >= end
-    let v = hl_clamped(&snap).expect("an inverted stored span must trip HL-CLAMPED");
+    snap.painted.highlight_spans = vec![(5, 3)]; // start >= end
+    let v = hl_clamped(&snap.painted).expect("an inverted stored span must trip HL-CLAMPED");
     assert_eq!(v.id, "HL-CLAMPED");
 }
 
 #[test]
 fn hl_clamped_detects_a_span_past_content_len() {
     let mut snap = base_snapshot("abc");
-    snap.highlight_spans = vec![(0, 10)]; // content.len() == 3
-    let v = hl_clamped(&snap).expect("a span past content.len() must trip HL-CLAMPED");
+    snap.painted.highlight_spans = vec![(0, 10)]; // content.len() == 3
+    let v = hl_clamped(&snap.painted).expect("a span past content.len() must trip HL-CLAMPED");
     assert_eq!(v.id, "HL-CLAMPED");
 }
 
 #[test]
 fn hl_clamped_detects_a_mid_char_boundary() {
     let mut snap = base_snapshot("é"); // 2 bytes; offset 1 is mid-char
-    snap.highlight_spans = vec![(0, 1)];
-    let v = hl_clamped(&snap).expect("a mid-char stored span must trip HL-CLAMPED");
+    snap.painted.highlight_spans = vec![(0, 1)];
+    let v = hl_clamped(&snap.painted).expect("a mid-char stored span must trip HL-CLAMPED");
     assert_eq!(v.id, "HL-CLAMPED");
 }
 
 #[test]
 fn hl_clamped_accepts_a_well_formed_span() {
     let mut snap = base_snapshot("abcdefgh");
-    snap.highlight_spans = vec![(0, 3), (3, 8)];
-    assert_eq!(hl_clamped(&snap), None);
+    snap.painted.highlight_spans = vec![(0, 3), (3, 8)];
+    assert_eq!(hl_clamped(&snap.painted), None);
 }
 
 #[test]
 fn hl_clamped_accepts_no_spans() {
     let snap = base_snapshot("abcdefgh");
-    assert_eq!(hl_clamped(&snap), None);
+    assert_eq!(hl_clamped(&snap.painted), None);
 }
 
 /// The shape `make test-fuzz` first caught — a highlight stored for a
@@ -75,9 +75,9 @@ fn hl_clamped_accepts_no_spans() {
 fn hl_clamped_detects_an_out_of_bounds_span_even_at_a_stale_version() {
     let mut snap = base_snapshot("short"); // content.len() == 5
     snap.version = 2; // a further edit landed after the highlight was stored
-    snap.highlight_version = 1; // the regions still describe version 1
-    snap.highlight_spans = vec![(0, 40)]; // valid for the old, longer buffer only
-    let v = hl_clamped(&snap)
+    snap.painted.highlight_version = 1; // the regions still describe version 1
+    snap.painted.highlight_spans = vec![(0, 40)]; // valid for the old, longer buffer only
+    let v = hl_clamped(&snap.painted)
         .expect("the query must re-clamp a stale span, so this can only be a clamp bug");
     assert_eq!(v.id, "HL-CLAMPED");
 }
@@ -89,12 +89,12 @@ fn hl_clamped_detects_an_out_of_bounds_span_even_at_a_stale_version() {
 #[test]
 fn hl_stale_drop_detects_spans_changing_on_a_stale_reply() {
     let mut prev = base_snapshot("abcdefgh");
-    prev.version = 2;
-    prev.highlight_spans = vec![(0, 3)];
+    prev.painted.version = 2;
+    prev.painted.highlight_spans = vec![(0, 3)];
     let mut next = base_snapshot("abcdefgh");
-    next.version = 2; // live version has moved past the reply's delivered_version
-    next.highlight_spans = vec![(0, 5)]; // changed anyway — bug
-    let ctx = highlighted_ctx(1); // delivered_version=1 != next.version=2
+    next.painted.version = 2; // live version has moved past the reply's delivered_version
+    next.painted.highlight_spans = vec![(0, 5)]; // changed anyway — bug
+    let ctx = highlighted_ctx(1); // delivered_version=1 != next.painted.version=2
     let v = hl_stale_drop(&prev, &next, &ctx)
         .expect("a stale-version reply that still changed spans must trip HL-STALE-DROP");
     assert_eq!(v.id, "HL-STALE-DROP");
@@ -103,11 +103,11 @@ fn hl_stale_drop_detects_spans_changing_on_a_stale_reply() {
 #[test]
 fn hl_stale_drop_accepts_spans_left_untouched_on_a_stale_reply() {
     let mut prev = base_snapshot("abcdefgh");
-    prev.version = 2;
-    prev.highlight_spans = vec![(0, 3)];
+    prev.painted.version = 2;
+    prev.painted.highlight_spans = vec![(0, 3)];
     let mut next = base_snapshot("abcdefgh");
-    next.version = 2;
-    next.highlight_spans = vec![(0, 3)]; // unchanged, as required
+    next.painted.version = 2;
+    next.painted.highlight_spans = vec![(0, 3)]; // unchanged, as required
     let ctx = highlighted_ctx(1);
     assert_eq!(hl_stale_drop(&prev, &next, &ctx), None);
 }
@@ -115,11 +115,11 @@ fn hl_stale_drop_accepts_spans_left_untouched_on_a_stale_reply() {
 #[test]
 fn hl_stale_drop_accepts_a_live_reply_that_changes_spans() {
     let mut prev = base_snapshot("abcdefgh");
-    prev.version = 2;
-    prev.highlight_spans = vec![(0, 3)];
+    prev.painted.version = 2;
+    prev.painted.highlight_spans = vec![(0, 3)];
     let mut next = base_snapshot("abcdefgh");
-    next.version = 2;
-    next.highlight_spans = vec![(0, 5)]; // delivered_version matches — a real update
+    next.painted.version = 2;
+    next.painted.highlight_spans = vec![(0, 5)]; // delivered_version matches — a real update
     let ctx = highlighted_ctx(2);
     assert_eq!(hl_stale_drop(&prev, &next, &ctx), None);
 }
@@ -127,9 +127,9 @@ fn hl_stale_drop_accepts_a_live_reply_that_changes_spans() {
 #[test]
 fn hl_stale_drop_ignores_non_highlighted_messages() {
     let mut prev = base_snapshot("abcdefgh");
-    prev.highlight_spans = vec![(0, 3)];
+    prev.painted.highlight_spans = vec![(0, 3)];
     let mut next = base_snapshot("abcdefgh");
-    next.highlight_spans = vec![(0, 5)];
+    next.painted.highlight_spans = vec![(0, 5)];
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::DirLoaded; // not a Highlighted step
     assert_eq!(hl_stale_drop(&prev, &next, &ctx), None);
@@ -152,9 +152,9 @@ fn hl_no_reflow_detects_content_changing_on_a_highlighted_step() {
 #[test]
 fn hl_no_reflow_detects_a_cell_geometry_change() {
     let mut prev = base_snapshot("abc");
-    prev.cells = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
+    prev.painted.cells = vec![vec![cell('a', Some(0)), cell('b', Some(1))]];
     let mut next = base_snapshot("abc");
-    next.cells = vec![vec![cell('a', Some(0)), cell_wide('b', Some(1), 2)]]; // width changed
+    next.painted.cells = vec![vec![cell('a', Some(0)), cell_wide('b', Some(1), 2)]]; // width changed
     let ctx = highlighted_ctx(1);
     let v = hl_no_reflow(&prev, &next, &ctx)
         .expect("a cell geometry change on a Msg::Highlighted step must trip HL-NO-REFLOW");

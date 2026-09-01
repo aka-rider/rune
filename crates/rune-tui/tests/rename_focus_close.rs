@@ -28,7 +28,7 @@ fn tab_for(session: &rune_fuzz::Session, path: &str) -> (DocumentId, usize) {
         .app()
         .documents
         .iter()
-        .find(|(_, doc)| doc.file_path.as_deref() == Some(Path::new(path)))
+        .find(|(_, doc)| doc.path() == Some(Path::new(path)))
         .map(|(&id, _)| id)
         .expect("the document is open");
     let index = session

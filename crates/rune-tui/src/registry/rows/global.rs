@@ -3,8 +3,8 @@ use crate::global::GlobalCommand;
 use crate::keymap::QuitKey;
 
 use super::super::{
-    ArgKind, Availability, CommandId, CommandSpec, PaletteCommand, always, merge, preview_locked,
-    rename, save, toggle_read_only,
+    ArgKind, Availability, CommandId, CommandSpec, PaletteCommand, always, merge, save,
+    toggle_read_only,
 };
 
 pub(crate) fn adapt(cmd: GlobalCommand) -> CommandId {
@@ -64,7 +64,7 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         &["sidebar"],
     ),
     row(GlobalCommand::FocusTabs, "tabs", "tabs"),
-    availability_row(GlobalCommand::FocusTitle, "rename", "rename", rename),
+    row(GlobalCommand::FocusTitle, "rename", "rename"),
     full_row(GlobalCommand::Save, "save", "save", &["write"], save),
     row(GlobalCommand::Help, "help", "help"),
     aliased_row(
@@ -73,7 +73,7 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         "quit",
         &["exit"],
     ),
-    availability_row(GlobalCommand::CloseFile, "close", "close", preview_locked),
+    row(GlobalCommand::CloseFile, "close", "close"),
     row(GlobalCommand::NewDocument, "new", "new"),
     availability_row(
         GlobalCommand::ToggleReadOnly,
@@ -92,7 +92,7 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     row(GlobalCommand::ToggleSearch, "search", "search"),
     row(GlobalCommand::SearchNext, "next match", "next match"),
     row(GlobalCommand::SearchPrev, "prev match", "prev match"),
-    availability_row(GlobalCommand::TogglePin, "pin", "pin", preview_locked),
+    row(GlobalCommand::TogglePin, "pin", "pin"),
     row(GlobalCommand::ToggleFileSearch, "open file", "open file"),
     aliased_row(
         GlobalCommand::ToggleProjectSearch,

@@ -1,5 +1,5 @@
 //! Merge mode invariants (plan WP7.S1) — four named checks over the lean
-//! `merge_*`/`display_name_by_doc`/`scroll_row` projection `Snapshot`
+//! `merge_*`/`display_name_by_doc`/`painted.scroll_row` projection `Snapshot`
 //! carries (module docs there): `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
 //! `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` — plus the stateful
 //! `MERGE-NO-INSTANT-REDIVERGENCE` and `SAVE-AGREES-WITH-DIVERGENCE`
@@ -118,7 +118,7 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
     }
     let buffer_changed = prev.content != next.content || prev.version != next.version;
     let cursors_changed = prev.cursors != next.cursors;
-    let scroll_changed = prev.scroll_row != next.scroll_row;
+    let scroll_changed = prev.painted.scroll_row != next.painted.scroll_row;
     let merge_state_changed = prev.merge_active != next.merge_active
         || prev.merge_pending != next.merge_pending
         || prev.merge_doc != next.merge_doc

@@ -54,7 +54,13 @@ pub fn app_with(mem: &Arc<Mem>) -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(
         Buffer::new("a content"),
-        Some(PathBuf::from("/root/a.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/root/a.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

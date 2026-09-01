@@ -200,10 +200,16 @@ mod tests {
 
     #[test]
     fn on_blur_accepts_an_unchanged_name_without_starting_a_rename() {
+        let vfs = std::sync::Arc::new(rune_vfs::Mem::new());
+        let launch = crate::resolved::ResolvedPath::resolve(
+            vfs.as_ref(),
+            std::path::Path::new("/root/a.md"),
+        )
+        .expect("the launch path resolves");
         let mut app = crate::app::App::new(
             rune_core::buffer::Buffer::new("body"),
-            Some(std::path::PathBuf::from("/root/a.md")),
-            std::sync::Arc::new(rune_vfs::Mem::new()),
+            Some(launch),
+            vfs,
             None,
         );
         app.title.seed("a.md");

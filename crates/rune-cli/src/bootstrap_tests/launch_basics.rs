@@ -116,7 +116,7 @@ fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
     );
     assert!(
         app.doc(app.active)
-            .is_some_and(|d| d.file_path.as_deref() == Some(Path::new("/vault/x.png")))
+            .is_some_and(|d| d.path() == Some(Path::new("/vault/x.png")))
     );
 }
 

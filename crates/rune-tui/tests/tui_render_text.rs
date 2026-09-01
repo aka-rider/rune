@@ -45,7 +45,7 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     for row in &rows {
         for cell in row {
             assert!(
@@ -81,7 +81,7 @@ fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_c
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     for row in &rows {
         for cell in row {
             assert!(
@@ -162,7 +162,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
         "汉 (width 2) then a tab to the next 4-stop must land 'a' at column 4"
     );
 
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     let first_row = rows.first().expect("at least one row");
     assert_eq!(
         first_row.first().map(|c| (c.text.as_str(), c.width)),
@@ -207,7 +207,7 @@ fn control_char_gets_a_safe_placeholder_glyph() {
     );
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(app, render::RowSource::Shown, view);
     let placeholder = rows
         .first()
         .and_then(|row| row.iter().find(|c| c.text == "\u{2407}"))

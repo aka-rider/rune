@@ -79,7 +79,7 @@ fn launch_image_first_then_opening_markdown_enqueues_journaling() {
         app.db_ops.is_empty(),
         "nothing has opened yet besides the image"
     );
-    workspace::open_path(&mut app, Path::new("/vault/notes.md"));
+    rune_tui::workspace::open_path(&mut app, Path::new("/vault/notes.md"));
     assert!(
         !app.db_ops.is_empty(),
         "opening a markdown file after an image-first launch must enqueue a Load"

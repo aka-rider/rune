@@ -149,8 +149,8 @@ fn region_sources(content: &str, regions: &[CodeRegion]) -> Vec<RegionSource> {
 // the command gets stamped with the current one — a reply the version
 // check would then accept as authoritative, painting every region at a
 // shifted offset until the next keystroke.
-fn resolve_region_sources(app: &mut App, id: DocumentId) -> Vec<RegionSource> {
-    let Some(doc) = app.doc_mut(id) else {
+fn resolve_region_sources(app: &mut App, doc_id: DocumentId) -> Vec<RegionSource> {
+    let Some(doc) = app.live_doc_mut(doc_id) else {
         return Vec::new();
     };
     let view = doc.view();
@@ -229,11 +229,13 @@ pub(crate) fn apply_reply(doc: &mut Document, version: u64, reply: HighlightRepl
 // there is nothing to parse — the regions still need their refreshed maps,
 // and only a completed reply may write them; this function deliberately
 // never installs a map directly.
-pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    let Some(doc) = app.doc(id) else { return };
+pub(crate) fn schedule_highlight(app: &mut App, doc_id: DocumentId, effects: &mut Effects) {
+    let Some(doc) = app.live_doc(doc_id) else {
+        return;
+    };
     let version = doc.buffer.version();
     if doc.highlight.in_flight.is_some() {
-        if let Some(doc) = app.doc_mut(id) {
+        if let Some(doc) = app.live_doc_mut(doc_id) {
             doc.highlight.pending = true;
         }
         return;
@@ -241,8 +243,10 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
     if doc.highlight.version == version {
         return;
     }
-    let sources = resolve_region_sources(app, id);
-    let Some(doc) = app.doc_mut(id) else { return };
+    let sources = resolve_region_sources(app, doc_id);
+    let Some(doc) = app.live_doc_mut(doc_id) else {
+        return;
+    };
     let jobs = plan_jobs(doc, sources);
     // Nothing to say: no code region and nothing stored either, so no
     // explicit "is this a code document" check is needed here.
@@ -250,7 +254,9 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
         return;
     }
     doc.highlight.in_flight = Some(version);
-    effects.cmds.push(runtime::highlight_cmd(id, version, jobs));
+    effects
+        .cmds
+        .push(runtime::highlight_cmd(doc_id, version, jobs));
 }
 
 fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
@@ -293,13 +299,15 @@ fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
 // it. Missing a region costs nothing visible — the background pass follows
 // immediately at a full `PARSE_BUDGET` per region.
 pub(crate) fn first_paint_highlight(app: &mut App) {
-    let id = app.active;
-    let Some(doc) = app.doc(id) else { return };
+    let shown = app.shown();
+    let Some(doc) = app.live_doc(shown) else {
+        return;
+    };
     let version = doc.buffer.version();
     if doc.highlight.version == version {
         return;
     }
-    let jobs: Vec<RegionJob> = resolve_region_sources(app, id)
+    let jobs: Vec<RegionJob> = resolve_region_sources(app, shown)
         .into_iter()
         .map(|source| RegionJob {
             map: source.map,
@@ -316,7 +324,7 @@ pub(crate) fn first_paint_highlight(app: &mut App) {
     let PassOutcome::Replace(reply) = runtime::run_regions(jobs, budget) else {
         return;
     };
-    if let Some(doc) = app.doc_mut(id) {
+    if let Some(doc) = app.live_doc_mut(shown) {
         install_regions(doc, version, reply);
     }
 }

@@ -53,9 +53,9 @@ pub(crate) fn rename_cmd(
 ) -> Cmd {
     Cmd::rename(move || {
         let result = match vfs.rename_excl(&from, &to) {
-            Ok(()) => Ok(RenameOutcome::Renamed { to, durable: true }),
+            Ok(()) => Ok(RenameOutcome::Renamed { durable: true }),
             Err(e) if rune_vfs::published_not_durable(&e) => {
-                Ok(RenameOutcome::Renamed { to, durable: false })
+                Ok(RenameOutcome::Renamed { durable: false })
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match vfs.stat(&to) {
                 Ok(seen) => Ok(RenameOutcome::Collided { seen }),
@@ -76,10 +76,12 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         return Commit::Refused;
     };
     let dir = crate::explorer::initial_root(app);
-    let path = dir.join(name);
+    let Some(path) = crate::workspace::resolve_or_report(app, &dir.join(name), "create") else {
+        return Commit::Refused;
+    };
 
     if app.doc(id).and_then(|d| d.doc_db()).is_some() && app.db.is_some() {
-        // `save::trigger_save` reads `doc.file_path`, which is exactly
+        // `save::trigger_save` reads `Document::path()`, which is exactly
         // what does not exist yet, so it cannot be reused here — a
         // create-only `materialize` is instead an atomic `rename_excl`
         // create whose EEXIST branch refuses and records the winner's
@@ -96,9 +98,13 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     let bytes = content.as_bytes().to_vec();
     let generation = app.next_rename_gen.mint();
     let path_for_state = path.clone();
-    effects
-        .cmds
-        .push(create_cmd(Arc::clone(&app.vfs), path, bytes, generation));
+
+    effects.cmds.push(create_cmd(
+        Arc::clone(&app.vfs),
+        path.clone().into_path_buf(),
+        bytes,
+        generation,
+    ));
     // `from` is EMPTY, and that is the discriminant `apply_outcome`'s
     // `Collided` arm uses to tell a draft-create refusal from a rename
     // collision — structurally unreachable for a rename, which always has
@@ -131,10 +137,9 @@ fn create_cmd(
             &bytes,
             rune_vfs::PutCondition::IfAbsent,
         ) {
-            Ok(rune_vfs::PutOutcome::Committed { durable, .. }) => Ok(RenameOutcome::Renamed {
-                to: path.clone(),
-                durable,
-            }),
+            Ok(rune_vfs::PutOutcome::Committed { durable, .. }) => {
+                Ok(RenameOutcome::Renamed { durable })
+            }
             Ok(rune_vfs::PutOutcome::Conflict { current, .. }) => {
                 current.sighted.stat().map_or_else(
                     || Err(CmdError::Refused("target already exists".to_string())),

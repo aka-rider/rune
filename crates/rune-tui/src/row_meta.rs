@@ -23,7 +23,7 @@ pub struct RowMeta {
 // a run of such rows with no non-table row between them shares one
 // `table_group` id.
 pub fn row_meta(view: &ViewSnapshots, app: &App) -> Vec<RowMeta> {
-    let doc = app.active_doc();
+    let doc = app.shown_doc();
     let viewport = &doc.viewport;
     let segments = view.wrap.segments();
 

@@ -275,7 +275,13 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let mut app = App::new(
         Buffer::new("hello"),
-        Some(PathBuf::from("/doc.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from("/doc.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

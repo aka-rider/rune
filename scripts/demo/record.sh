@@ -7,10 +7,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT="${DEMO_OUT:-$HOME/artifacts/rune}"
 SOCKET=runedemo
-BINARY="$REPO_ROOT/target/release/rune"
-ENTRY_FILE=welcome.md
-READY_TEXT="Welcome to Rune"
+BINARY="${DEMO_BINARY:-$REPO_ROOT/target/release/rune}"
+ENTRY_FILE="${DEMO_ENTRY:-welcome.md}"
+READY_TEXT="${DEMO_READY:-Welcome to Rune}"
+LAUNCH_MODE="${DEMO_LAUNCH:-direct}"
+SHELL_PROMPT="rune-demo\$"
 WORKSPACE=""
+RECORDER_PID=""
+REC_LOG=""
 ASG=asg
 
 usage() {
@@ -56,9 +60,14 @@ check_tools() {
 }
 
 ensure_binary() {
-  if [ ! -x "$BINARY" ]; then
-    (cd "$REPO_ROOT" && cargo build --release)
+  if [ -x "$BINARY" ]; then
+    return 0
   fi
+  if [ -n "${DEMO_BINARY:-}" ]; then
+    echo "error: DEMO_BINARY=$DEMO_BINARY is not an executable" >&2
+    return 1
+  fi
+  (cd "$REPO_ROOT" && cargo build --release)
 }
 
 ensure_asg() {
@@ -84,6 +93,14 @@ keys() {
     tmux -L "$SOCKET" send-keys -- "$@"
   fi
   sleep "$pace"
+}
+
+type_text() {
+  local pace="$1" text="$2" i
+  for ((i = 0; i < ${#text}; i++)); do
+    tmux -L "$SOCKET" send-keys -l -- "${text:i:1}"
+    sleep "$pace"
+  done
 }
 
 capture_pane() {
@@ -112,17 +129,24 @@ wait_for_session() {
   return 1
 }
 
-wait_for_ready() {
-  local recorder_pid="$1" log="$2" attempt
-  for attempt in $(seq 1 50); do
-    recorder_alive_or_die "$recorder_pid" "$log"
-    if capture_pane | grep -qF "$READY_TEXT"; then
+wait_for_text() {
+  local text="$1" attempts="${2:-50}" attempt
+  for attempt in $(seq 1 "$attempts"); do
+    recorder_alive_or_die "$RECORDER_PID" "$REC_LOG"
+    if capture_pane | grep -qF "$text"; then
       return 0
     fi
     sleep 0.2
   done
-  echo "error: '$READY_TEXT' not on screen after $attempt attempts" >&2
+  echo "error: '$text' not on screen after $attempt attempts" >&2
   return 1
+}
+
+pane_child_pid() {
+  local pane_pid
+  pane_pid="$(tmux -L "$SOCKET" display-message -p '#{pane_pid}' 2>/dev/null)"
+  [ -n "$pane_pid" ] || return 1
+  pgrep -P "$pane_pid" | head -n 1
 }
 
 cancel_copy_mode() {
@@ -146,7 +170,8 @@ end_session() {
 
 trim_cast_tail() {
   local cast="$1"
-  awk 'index($0, "[?1049l") || /\[terminated\]|\[exited\]/ { exit } { print }' "$cast" >"$cast.trimmed"
+  awk 'NR==FNR { if (index($0, "[?1049l") || /\[terminated\]|\[exited\]/) cut = FNR; next }
+       cut && FNR >= cut { exit } { print }' "$cast" "$cast" >"$cast.trimmed"
   mv "$cast.trimmed" "$cast"
 }
 
@@ -166,6 +191,12 @@ record() {
     exit 1
   fi
 
+  local feature_env="$SCRIPT_DIR/$feature.env"
+  if [ -f "$feature_env" ]; then
+    # shellcheck source=/dev/null
+    source "$feature_env"
+  fi
+
   check_tools
   ensure_binary
   ensure_asg
@@ -174,26 +205,40 @@ record() {
   WORKSPACE="$(mktemp -d)"
   trap cleanup EXIT INT TERM
   cp "$SCRIPT_DIR"/fixtures/*.md "$WORKSPACE/"
+  cp "$REPO_ROOT/README.md" "$REPO_ROOT/CLAUDE.md" "$WORKSPACE/"
 
   local cast="$OUT/$feature.cast"
-  local rec_log="$OUT/$feature.rec.log"
+  REC_LOG="$OUT/$feature.rec.log"
   local rec_cmd
-  printf -v rec_cmd 'tmux -f %q -L %q new-session -x 100 -y 30 -- env HOME=%q %q %q' \
-    "$SCRIPT_DIR/tmux.conf" \
-    "$SOCKET" "$WORKSPACE" "$BINARY" "$WORKSPACE/$ENTRY_FILE"
+  if [ "$LAUNCH_MODE" = shell ]; then
+    # A kill -9'd rune cannot restore the terminal it put in raw mode, so the
+    # shell it drops back to has to do it before every prompt.
+    printf -v rec_cmd 'tmux -f %q -L %q new-session -x 100 -y 30 -c %q -- env HOME=%q PS1=%q PATH=%q PROMPT_COMMAND=%q bash --noprofile --norc' \
+      "$SCRIPT_DIR/tmux.conf" \
+      "$SOCKET" "$WORKSPACE" "$WORKSPACE" "$SHELL_PROMPT " \
+      "$(dirname "$BINARY"):$PATH" 'stty sane'
+  else
+    printf -v rec_cmd 'tmux -f %q -L %q new-session -x 100 -y 30 -- env HOME=%q %q %q' \
+      "$SCRIPT_DIR/tmux.conf" \
+      "$SOCKET" "$WORKSPACE" "$BINARY" "$WORKSPACE/$ENTRY_FILE"
+  fi
   asciinema rec --headless --overwrite --window-size 100x30 --idle-time-limit 2 \
-    --command "$rec_cmd" "$cast" 2>"$rec_log" &
-  local recorder_pid=$!
+    --command "$rec_cmd" "$cast" 2>"$REC_LOG" &
+  RECORDER_PID=$!
 
-  wait_for_session "$recorder_pid" "$rec_log"
-  wait_for_ready "$recorder_pid" "$rec_log"
+  wait_for_session "$RECORDER_PID" "$REC_LOG"
+  if [ "$LAUNCH_MODE" = shell ]; then
+    wait_for_text "$SHELL_PROMPT"
+  else
+    wait_for_text "$READY_TEXT"
+  fi
   cancel_copy_mode
 
   # shellcheck source=/dev/null
   source "$feature_script"
 
-  end_session "$recorder_pid"
-  wait "$recorder_pid" || true
+  end_session "$RECORDER_PID"
+  wait "$RECORDER_PID" || true
   trim_cast_tail "$cast"
 
   "$ASG" "$cast" "$OUT/$feature.svg" --window --fps 15

@@ -12,7 +12,7 @@ pub use save_state::{SaveCapture, SavePhase, SaveTicket};
 use save_state::{SaveState, SaveTicketMint};
 
 use std::num::NonZeroU64;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -50,7 +50,7 @@ pub struct Document {
     pub(crate) ladder_anchor: Option<usize>,
     pub read_only: ReadOnly,
     pub pinned: bool,
-    pub file_path: Option<PathBuf>,
+    file_path: Option<crate::resolved::ResolvedPath>,
     pub saved_version: u64,
     pub(crate) saved_content: Arc<str>,
     save: SaveState,
@@ -72,10 +72,6 @@ pub struct Document {
 impl Document {
     pub fn is_read_only(&self) -> bool {
         !matches!(self.read_only, ReadOnly::No)
-    }
-
-    pub fn is_preview(&self) -> bool {
-        matches!(self.read_only, ReadOnly::Preview)
     }
 
     pub fn has_insertion_point(&self) -> bool {
@@ -220,11 +216,11 @@ impl Document {
         self.save.record_op()
     }
 
-    pub fn bind_target(&self) -> Option<&PathBuf> {
+    pub fn bind_target(&self) -> Option<&crate::resolved::ResolvedPath> {
         self.save.bind_target()
     }
 
-    pub(crate) fn take_bind_target(&mut self) -> Option<PathBuf> {
+    pub(crate) fn take_bind_target(&mut self) -> Option<crate::resolved::ResolvedPath> {
         self.save.take_bind_target()
     }
 
@@ -319,9 +315,43 @@ impl Document {
             .unwrap_or("[No Name]")
     }
 
-    pub fn bind_path(&mut self, path: PathBuf) {
+    pub fn path(&self) -> Option<&Path> {
+        self.file_path.as_deref()
+    }
+
+    pub fn resolved_path(&self) -> Option<&crate::resolved::ResolvedPath> {
+        self.file_path.as_ref()
+    }
+
+    pub fn new_bound(buffer: Buffer, path: crate::resolved::ResolvedPath) -> Document {
+        let mut document = Document::new(buffer);
+        document.seat_path(path);
+        document
+    }
+
+    pub(crate) fn rebind_path(
+        &mut self,
+        path: crate::resolved::ResolvedPath,
+        _rekey: crate::document_map::PathRekey,
+    ) {
+        self.seat_path(path);
+    }
+
+    pub(crate) fn unbind_path(&mut self, _rekey: crate::document_map::PathRekey) {
+        let Some(path) = self.file_path.take() else {
+            return;
+        };
+        if self.display_name.is_none() {
+            self.display_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned);
+        }
+    }
+
+    fn seat_path(&mut self, path: crate::resolved::ResolvedPath) {
         if !self.kind_pinned {
-            let kind = kind_for(Some(&path), self.buffer.content());
+            let kind = kind_for(Some(path.as_path()), self.buffer.content());
             self.kind = kind;
             self.doc.set_kind(self.kind);
         }

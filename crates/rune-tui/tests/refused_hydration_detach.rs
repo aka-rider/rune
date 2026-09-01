@@ -64,6 +64,7 @@ fn refused_hydration_detaches() {
         load_result,
         Some(issued_version),
         LoadPurpose::Recover,
+        &mut rune_tui::runtime::Effects::default(),
     );
 
     assert!(

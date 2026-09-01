@@ -44,7 +44,13 @@ fn app_with_file() -> App {
     let vfs: Arc<dyn Vfs + Send + Sync> = mem;
     let mut app = App::new(
         Buffer::new("hello"),
-        Some(std::path::PathBuf::from("/root/a.md")),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&std::path::PathBuf::from("/root/a.md")),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );
@@ -148,7 +154,7 @@ fn ctrl_b_show_branch_reveals_the_active_documents_file() {
 #[test]
 fn ctrl_b_show_branch_on_a_pathless_draft_focuses_without_repositioning() {
     let mut app = app_for("hello");
-    assert!(app.active_doc().file_path.is_none());
+    assert!(app.active_doc().path().is_none());
     press(&mut app, KeyCode::Char('b'), CTRL);
     assert!(app.splits.left.is_shown());
     assert_eq!(app.focus(), Pane::Explorer);
@@ -288,7 +294,7 @@ fn a_third_escape_leaves_the_editor_for_the_explorer() {
 #[test]
 fn escape_on_a_pathless_draft_focuses_the_explorer_without_repositioning() {
     let mut app = app_for("hello");
-    assert!(app.active_doc().file_path.is_none());
+    assert!(app.active_doc().path().is_none());
 
     press(&mut app, KeyCode::Escape, NONE);
 

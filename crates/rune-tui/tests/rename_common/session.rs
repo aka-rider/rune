@@ -211,7 +211,12 @@ pub fn unsaved_named_session(mem: &Arc<Mem>) -> Session {
     };
 
     let app = session.app_mut();
-    app.doc_mut(id).unwrap().file_path = Some(PathBuf::from("/root/nope.md"));
+    let nowhere = rune_tui::resolved::ResolvedPath::resolve(
+        app.vfs.as_ref(),
+        &PathBuf::from("/root/nope.md"),
+    )
+    .expect("Mem resolves a path that does not exist yet");
+    app.rebind_document_path(id, nowhere);
     app.doc_mut(id).unwrap().set_doc_db_for_test(DocDb::new(
         row_id,
         PublishMode::CreateOnly,

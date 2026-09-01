@@ -34,7 +34,7 @@
 //! debug `cargo nextest run`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -153,12 +153,10 @@ fn build_fenced_markdown_fixture() -> String {
 }
 
 fn app_for(content: &str, path: &str) -> App {
-    let mut app = App::new(
-        Buffer::new(content),
-        Some(PathBuf::from(path)),
-        Arc::new(Mem::new()),
-        None,
-    );
+    let vfs = Arc::new(Mem::new());
+    let launch = rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), Path::new(path))
+        .expect("the launch path resolves");
+    let mut app = App::new(Buffer::new(content), Some(launch), vfs, None);
     app.doc_mut(app.active)
         .expect("doc")
         .viewport
@@ -212,20 +210,10 @@ fn average_frame_cost(app: &App) -> Duration {
     // One untimed frame first: the same settle-before-timing discipline the
     // keystroke guard uses, so a first-paint-only cost is never what the
     // budget is compared against.
-    std::hint::black_box(render::build_rows(
-        app,
-        app.active_doc(),
-        Some(app.active),
-        view,
-    ));
+    std::hint::black_box(render::build_rows(app, render::RowSource::Shown, view));
     let start = Instant::now();
     for _ in 0..RENDER_FRAMES {
-        std::hint::black_box(render::build_rows(
-            app,
-            app.active_doc(),
-            Some(app.active),
-            view,
-        ));
+        std::hint::black_box(render::build_rows(app, render::RowSource::Shown, view));
     }
     start.elapsed() / u32::try_from(RENDER_FRAMES).unwrap_or(1)
 }

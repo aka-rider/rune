@@ -140,19 +140,19 @@ pub(super) fn open_selected(app: &mut App, effects: &mut Effects) {
         crate::messages::info(app, "no file selected");
         return;
     };
-    let departed = app.projectsearch().and_then(|state| state.return_to.raw());
-
-    if let Some(id) = app.explorer.preview
-        && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(path.as_path())
-    {
+    if crate::explorer_preview::shown_path(app) == Some(path.as_path()) {
+        let crate::explorer_preview::Promotion::Promoted(id) =
+            crate::explorer_preview::promote(app, effects)
+        else {
+            return;
+        };
         close(app);
-        crate::explorer_preview::promote(app, id);
         app.set_focus_pane(Pane::Editor, effects);
         land_at(app, id, first_match);
-        crate::navhistory::record_departure_if_moved(app, departed);
         return;
     }
 
+    let departed = app.projectsearch().and_then(|state| state.return_to.raw());
     if let Some(id) = crate::workspace::open_path_checked(app, &path, effects) {
         close(app);
         app.set_focus_pane(Pane::Editor, effects);

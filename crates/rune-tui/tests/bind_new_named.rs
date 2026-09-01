@@ -157,11 +157,15 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
         .expect("a concurrent creator wins first");
 
     // A second, unrelated live document already bound to the racer's path.
-    let other = session
-        .app_mut()
-        .open_document(rune_core::buffer::Buffer::new("other tab's body"));
-    session.app_mut().doc_mut(other).unwrap().file_path =
-        Some(std::path::PathBuf::from("/root/nope.md"));
+    let racer_path = rune_tui::resolved::ResolvedPath::resolve(
+        session.app().vfs.as_ref(),
+        Path::new("/root/nope.md"),
+    )
+    .expect("the racer's path resolves");
+    session.app_mut().open_document_bound(
+        rune_core::buffer::Buffer::new("other tab's body"),
+        racer_path,
+    );
 
     assert!(session.key(sup_key('s')).is_none());
     drain_materialize_round_trip(&mut session);

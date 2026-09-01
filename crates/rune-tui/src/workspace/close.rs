@@ -13,9 +13,6 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     if app.doc(id).is_none() {
         return;
     }
-    if app.refuse_if_preview(id) {
-        return;
-    }
     if app.doc(id).is_some_and(Document::is_dirty) {
         let _ = guard::set_guard_or_warn(
             app,
@@ -138,8 +135,6 @@ mod tests {
     use rune_core::buffer::Buffer;
     use rune_vfs::{Mem, Vfs, VfsTestExt};
 
-    use crate::document::ReadOnly;
-
     use super::*;
     use crate::app::App;
 
@@ -260,27 +255,5 @@ mod tests {
         assert!(app.doc(id).is_none(), "the ack completes the close");
         assert!(app.pending_close_on_save.is_none());
         assert!(app.doc(extra).is_some());
-    }
-
-    #[test]
-    fn request_close_refuses_a_preview_document() {
-        let mem = Arc::new(Mem::new());
-        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
-        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
-        let id = app.active;
-        app.doc_mut(id).unwrap().read_only = ReadOnly::Preview;
-
-        let mut effects = Effects::default();
-        request_close(&mut app, id, &mut effects);
-
-        assert!(
-            app.documents.contains_key(&id),
-            "a preview document must not be closed"
-        );
-        assert_eq!(app.active, id, "active must stay on the refused document");
-        assert_eq!(
-            crate::messages::newest_text(&app),
-            ReadOnly::Preview.refusal_message()
-        );
     }
 }

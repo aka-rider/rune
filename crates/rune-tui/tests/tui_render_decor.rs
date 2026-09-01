@@ -29,7 +29,7 @@ fn rows_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<Vec<rende
     let session = app_for(content, cursor_offset, focused);
     let app = session.app();
     let view = app.active_doc().view.as_ref().expect("synced view");
-    render::build_rows(app, app.active_doc(), Some(app.active), view)
+    render::build_rows(app, render::RowSource::Shown, view)
 }
 
 /// (a) A concealed `# h` row's own decor prefix carries `buf_offset: None`
@@ -255,7 +255,7 @@ tail paragraph\n";
     app.sync_view();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = render::build_rows(&app, render::RowSource::Shown, view);
 
     let list_scope = scope_table()
         .resolve("markup.list")

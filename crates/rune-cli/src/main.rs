@@ -29,7 +29,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use rune_tui::app::App;
-use rune_tui::workspace;
 use rune_vfs::{Disk, Vfs};
 
 use cli::CliAction;
@@ -245,7 +244,7 @@ fn open_launch(
     let Some(path) = diff_right_path(launch) else {
         return Ok(open::open_untitled(vfs, home));
     };
-    let path = match workspace::resolve(vfs.as_ref(), path) {
+    let path = match rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), path) {
         Ok(path) => path,
         Err(e) => {
             eprintln!("rune: cannot resolve {}: {e}", path.display());

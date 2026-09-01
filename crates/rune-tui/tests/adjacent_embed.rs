@@ -29,7 +29,13 @@ fn app_with(content: &str) -> (App, rune_tui::document::DocumentId) {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(
         Buffer::new(content),
-        Some(Path::new("/notes/t.md").to_path_buf()),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&Path::new("/notes/t.md").to_path_buf()),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         None,
     );

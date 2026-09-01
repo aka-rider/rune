@@ -81,10 +81,14 @@ fn a_fatal_teardown_with_two_documents_in_flight_leaves_both_clean_and_unreporte
             other => panic!("expected a Load ack, got {other:?}"),
         }
     };
-    let id_b = app.open_document(rune_core::buffer::Buffer::new("b content"));
+    let b_path = rune_tui::resolved::ResolvedPath::resolve(
+        app.vfs.as_ref(),
+        std::path::Path::new("/root/b.md"),
+    )
+    .expect("the seeded path resolves");
+    let id_b = app.open_document_bound(rune_core::buffer::Buffer::new("b content"), b_path);
     {
         let doc = app.doc_mut(id_b).unwrap();
-        doc.file_path = Some(std::path::PathBuf::from("/root/b.md"));
         doc.set_doc_db_for_test(rune_tui::db::DocDb::new(
             db_id_b.doc_id.0,
             rune_tui::db::PublishMode::OverwriteExisting,

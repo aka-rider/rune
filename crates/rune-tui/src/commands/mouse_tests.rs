@@ -342,7 +342,7 @@ fn clicking_a_filesearch_result_row_opens_it() {
     );
     assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(
-        app.active_doc().file_path.as_deref(),
+        app.active_doc().path(),
         Some(std::path::Path::new("/root/b.md")),
         "the row that was actually clicked (b.md) must be the one opened"
     );

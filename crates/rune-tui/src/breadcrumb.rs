@@ -77,7 +77,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
 }
 
 fn crumb_spans(app: &App, budget: usize) -> Option<Vec<Span<'static>>> {
-    let path = app.active_doc().file_path.as_ref()?;
+    let path = app.shown_doc().resolved_path()?;
     let parts = crumb_parts(path, app.root.as_deref());
     if parts.is_empty() {
         return None;
@@ -130,12 +130,12 @@ mod tests {
     use std::sync::Arc;
 
     fn app_for(content: &str, path: Option<&str>) -> App {
-        App::new(
-            Buffer::new(content),
-            path.map(PathBuf::from),
-            Arc::new(Mem::new()),
-            None,
-        )
+        let vfs = Arc::new(Mem::new());
+        let launch = path.map(|path| {
+            crate::resolved::ResolvedPath::resolve(vfs.as_ref(), &PathBuf::from(path))
+                .expect("the launch path resolves")
+        });
+        App::new(Buffer::new(content), launch, vfs, None)
     }
 
     fn overlay_bottom_row(app: &App, width: u16, height: u16, focused: bool) -> String {

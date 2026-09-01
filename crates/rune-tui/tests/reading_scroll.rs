@@ -91,29 +91,6 @@ fn first_down_press_scrolls_a_read_only_document() {
     assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
 }
 
-/// `ReadOnly::Preview` has no insertion point either
-/// (`Document::has_insertion_point`), so `commands::reading_nav::intercept`
-/// gates on `is_read_only()` alone and treats it exactly like `Reading`/
-/// `Always`: a preview exists to be looked at, so the same
-/// motion-scrolls-on-first-press behaviour applies, not a dead viewport.
-#[test]
-fn first_down_press_scrolls_a_preview_document() {
-    let content: String = (0..100).map(|i| format!("line {i}\n")).collect();
-    let mut app = app_basic(&content);
-    app.active_doc_mut().read_only = ReadOnly::Preview;
-    app.sync_view();
-    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
-
-    send(&mut app, plain(KeyCode::Down));
-
-    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
-    assert_eq!(
-        app.active_doc().read_only,
-        ReadOnly::Preview,
-        "scrolling must not disturb the preview state"
-    );
-}
-
 #[test]
 fn up_scrolls_before_it_focuses_the_title() {
     let mut app = help_doc();

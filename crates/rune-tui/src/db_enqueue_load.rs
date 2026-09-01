@@ -3,7 +3,12 @@ use super::*;
 // Returns whether the op was actually enqueued: a re-baseline caller must
 // drop `id`'s existing `db` binding on `false` rather than leave it
 // standing with a baseline it can no longer refresh.
-pub fn load_document(app: &mut App, id: DocumentId, path: &Path, intent: LoadIntent) -> bool {
+pub fn load_document(
+    app: &mut App,
+    id: DocumentId,
+    path: &crate::resolved::ResolvedPath,
+    intent: LoadIntent,
+) -> bool {
     load_document_inner(app, id, path, intent, LoadErrorPolicy::Degrade)
 }
 
@@ -13,7 +18,11 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path, intent: LoadInt
 // would let its in-flight sweep drop a later document's still-queued save
 // before its own synthetic ack even lands. The re-baseline is best-effort
 // bookkeeping and must never tear the whole world down.
-pub fn load_document_best_effort(app: &mut App, id: DocumentId, path: &Path) -> bool {
+pub fn load_document_best_effort(
+    app: &mut App,
+    id: DocumentId,
+    path: &crate::resolved::ResolvedPath,
+) -> bool {
     load_document_inner(
         app,
         id,
@@ -38,7 +47,7 @@ enum LoadErrorPolicy {
 fn load_document_inner(
     app: &mut App,
     id: DocumentId,
-    path: &Path,
+    path: &crate::resolved::ResolvedPath,
     intent: LoadIntent,
     on_err: LoadErrorPolicy,
 ) -> bool {
@@ -57,7 +66,7 @@ fn load_document_inner(
     let Some(db) = app.db.as_ref() else {
         return false;
     };
-    let enqueued = db.store.load(path);
+    let enqueued = db.store.load(path.as_path());
     match enqueued {
         Ok(op_id) => {
             app.db_ops
@@ -101,7 +110,7 @@ pub fn probe(app: &mut App, id: DocumentId) -> bool {
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return true;
     };
-    if doc.file_path.is_none() {
+    if doc.path().is_none() {
         return true;
     }
     if app.any_save_in_flight_for(db_id) {
@@ -181,7 +190,13 @@ mod tests {
         let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
         let mut app = App::new(
             Buffer::new("hello"),
-            Some(PathBuf::from("/doc.md")),
+            Some(
+                crate::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&PathBuf::from("/doc.md")),
+                )
+                .expect("the launch path resolves"),
+            ),
             vfs,
             Some(in_memory_db()),
         );
@@ -210,7 +225,13 @@ mod tests {
         let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(Mem::new());
         let mut app = App::new(
             Buffer::new("hello"),
-            Some(PathBuf::from("/doc.md")),
+            Some(
+                crate::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&PathBuf::from("/doc.md")),
+                )
+                .expect("the launch path resolves"),
+            ),
             vfs,
             Some(in_memory_db()),
         );

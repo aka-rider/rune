@@ -77,7 +77,7 @@ fn footer_position_text_reports_the_first_visible_line_while_scrolling() {
         send(&mut app, plain(KeyCode::Down));
     }
 
-    assert_eq!(footer::position_text(&app), "Ln 8, Col 1");
+    assert_eq!(footer::position_text(&app).as_deref(), Some("Ln 8, Col 1"));
 }
 
 #[test]

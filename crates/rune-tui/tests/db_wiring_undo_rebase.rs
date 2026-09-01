@@ -27,6 +27,11 @@ use rune_tui::app::App;
 use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_tui::keymap::KeyCode;
 use rune_tui::runtime::{CmdKind, Msg};
+
+fn doc_path(app: &App) -> rune_tui::resolved::ResolvedPath {
+    rune_tui::resolved::ResolvedPath::resolve(app.vfs.as_ref(), Path::new(DOC))
+        .expect("the seeded path resolves")
+}
 use rune_vfs::{Mem, Vfs};
 
 use db_wiring_common::{publish, restarted_store_at, temp_db_dir};
@@ -54,7 +59,13 @@ fn file_store_app(mem: &Arc<Mem>, db_path: &Path) -> (App, Arc<DbBridge>) {
 
     let mut app = App::new(
         Buffer::new("a content"),
-        Some(PathBuf::from(DOC)),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(DOC)),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
@@ -137,7 +148,10 @@ fn undo_after_a_same_row_rebaseline_never_resurrects_undone_text() {
     assert!(app.db_ops.is_empty(), "every pre-reload ack is resolved");
 
     assert!(
-        rune_tui::db_enqueue::load_document_best_effort(&mut app, id, Path::new(DOC)),
+        {
+            let path = doc_path(&app);
+            rune_tui::db_enqueue::load_document_best_effort(&mut app, id, &path)
+        },
         "the re-baseline load must enqueue"
     );
     let load_evt = wait_for_load(&bridge);
@@ -210,7 +224,10 @@ fn deep_undo_after_a_same_row_rebaseline_resolves_without_re_basing() {
     save_round_trip(&mut app, &bridge);
 
     assert!(
-        rune_tui::db_enqueue::load_document_best_effort(&mut app, id, Path::new(DOC)),
+        {
+            let path = doc_path(&app);
+            rune_tui::db_enqueue::load_document_best_effort(&mut app, id, &path)
+        },
         "the re-baseline load must enqueue"
     );
     let load_evt = wait_for_load(&bridge);
@@ -352,7 +369,13 @@ fn undo_inside_the_binding_window_recovers_the_buffer_not_the_replayed_tail() {
 
     let mut app = App::new(
         Buffer::new("seed"),
-        Some(PathBuf::from(DOC)),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&PathBuf::from(DOC)),
+            )
+            .expect("the launch path resolves"),
+        ),
         vfs,
         Some(Db::new(store, Arc::clone(&bridge), false)),
     );
@@ -360,10 +383,11 @@ fn undo_inside_the_binding_window_recovers_the_buffer_not_the_replayed_tail() {
     app.active_doc_mut().viewport.set_size(80, 23);
     app.sync_view();
 
+    let path = doc_path(&app);
     assert!(rune_tui::db_enqueue::load_document(
         &mut app,
         id,
-        Path::new(DOC),
+        &path,
         rune_tui::db_enqueue::LoadIntent::Recover,
     ));
 

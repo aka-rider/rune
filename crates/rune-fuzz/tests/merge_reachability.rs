@@ -49,7 +49,15 @@ fn session_without_a_store_refuses_merge_and_stays_inactive() {
     let _ = mem.save_atomic(&path, b"hello");
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let mut app = App::new(Buffer::new("hello"), Some(path), vfs, None);
+    let mut app = App::new(
+        Buffer::new("hello"),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), std::path::Path::new(&path))
+                .expect("the launch path resolves"),
+        ),
+        vfs,
+        None,
+    );
     app.clock = Arc::new(rune_tui::pointer::ManualClock::new());
     app.active_doc_mut().focused = true;
     app.frame = Some(rune_tui::app::FrameSize::new(80, 24));

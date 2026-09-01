@@ -402,7 +402,7 @@ fn a_live_search_match_inside_a_concealed_links_url_reveals_the_whole_link() {
     app.sync_view();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = crate::render::build_rows(&app, app.active_doc(), Some(app.active), view);
+    let rows = crate::render::build_rows(&app, crate::render::RowSource::Shown, view);
     assert!(
         rows.iter()
             .flatten()

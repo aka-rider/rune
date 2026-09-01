@@ -124,8 +124,7 @@ fn id_to_rgb(id: u32) -> Color {
 fn info_card_lines(app: &App, doc: &Document) -> Vec<String> {
     let name = doc.file_name().to_string();
     let format = doc
-        .file_path
-        .as_deref()
+        .path()
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
         .map_or_else(|| "?".to_string(), str::to_uppercase);

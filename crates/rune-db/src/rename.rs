@@ -50,7 +50,7 @@
 //! design is the final `remove(from)`, which runs strictly after both the
 //! blob and the rebind have committed.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 use rune_vfs::{Stat, Vfs};
@@ -70,11 +70,12 @@ use crate::retry;
 /// rather than a halt.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RenameOutcome {
-    /// The document is now bound to `to`. Its dirty state and `saved_obs`
-    /// are unchanged — a rename is not a save. `durable: false` means the
-    /// publish took effect but its durability confirmation failed — still
-    /// a success, surfaced as a warning.
-    Renamed { to: PathBuf, durable: bool },
+    /// The document is now bound to the destination the caller asked for.
+    /// Its dirty state and `saved_obs` are unchanged — a rename is not a
+    /// save. `durable: false` means the publish took effect but its
+    /// durability confirmation failed — still a success, surfaced as a
+    /// warning.
+    Renamed { durable: bool },
     /// `to` already exists. **Nothing was written**, to disk or to the
     /// database. `seen` is what the destination looked like at the moment
     /// of the collision; it becomes the consent baseline the user is shown

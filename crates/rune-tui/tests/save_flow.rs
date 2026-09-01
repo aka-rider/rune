@@ -24,7 +24,7 @@ use save_flow_common::{press_save, settle_cmds};
 fn spawns_a_save(effects: &Effects) -> bool {
     effects.cmds.iter().any(|cmd| cmd.kind() == CmdKind::Save)
 }
-use rune_vfs::{Disk, Mem, Vfs, VfsTestExt};
+use rune_vfs::{Disk, Mem, Vfs};
 
 fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
@@ -261,7 +261,13 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
         // below to mean anything).
         let mut app = App::new(
             Buffer::new(""),
-            Some(path.clone()),
+            Some(
+                rune_tui::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&path.clone()),
+                )
+                .expect("the launch path resolves"),
+            ),
             Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
             None,
         );
@@ -293,7 +299,13 @@ fn save_strips_trailing_whitespace_and_keeps_crlf_bom_and_a_missing_final_newlin
         let path = PathBuf::from("/doc.md");
         let mut app = App::new(
             Buffer::new(""),
-            Some(path.clone()),
+            Some(
+                rune_tui::resolved::ResolvedPath::resolve(
+                    vfs.as_ref(),
+                    std::path::Path::new(&path.clone()),
+                )
+                .expect("the launch path resolves"),
+            ),
             Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
             None,
         );
@@ -321,7 +333,10 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
     let path = PathBuf::from("/doc.md");
     let mut app = App::new(
         Buffer::new("hello"),
-        Some(path),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), std::path::Path::new(&path))
+                .expect("the launch path resolves"),
+        ),
         Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
         None,
     );
@@ -340,12 +355,11 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
 
 #[test]
 fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
-    let mut app = App::new(
-        Buffer::new("hello"),
-        Some(PathBuf::from("/doc.md")),
-        Arc::new(Mem::new()),
-        None,
-    );
+    let vfs = Arc::new(Mem::new());
+    let launch =
+        rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), std::path::Path::new("/doc.md"))
+            .expect("the launch path resolves");
+    let mut app = App::new(Buffer::new("hello"), Some(launch), vfs, None);
     let id = app.active;
     app.doc_mut(id).unwrap().buffer = app
         .doc(id)
@@ -372,7 +386,10 @@ fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
     let path = PathBuf::from("/doc.md");
     let mut app = App::new(
         Buffer::new("hello"),
-        Some(path),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), std::path::Path::new(&path))
+                .expect("the launch path resolves"),
+        ),
         Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
         None,
     );
@@ -413,7 +430,18 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
     // CRLF/BOM test above for why: only an edit AWAY from the constructed
     // baseline is dirty, and it must land on the exact target bytes for the
     // byte-exact assertion below.
-    let mut app = App::new(Buffer::new(""), Some(path.clone()), vfs, None);
+    let mut app = App::new(
+        Buffer::new(""),
+        Some(
+            rune_tui::resolved::ResolvedPath::resolve(
+                vfs.as_ref(),
+                std::path::Path::new(&path.clone()),
+            )
+            .expect("the launch path resolves"),
+        ),
+        vfs,
+        None,
+    );
     let id = app.active;
     edit::insert_text(&mut app, id, "brand new file\n", EditKind::Insert);
 
@@ -429,11 +457,11 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
 
 /// Regression: `trigger_save`'s pathless arm must never touch
 /// `display_name` — that field is only ever cleared once a path is
-/// actually bound (`Document::bind_path`). A dirty untitled document (the
-/// default no-arg launch's own shape: `file_path: None`, `display_name:
-/// Some("Untitled 1")`) that gets ⌘S pressed on it has no path to save to,
-/// so the save is refused — but the title must still read "Untitled 1"
-/// afterward, not silently flip to the `"[No Name]"` placeholder.
+/// actually bound (via `Document::new_bound` or `DocumentMap::rebind`). A
+/// dirty untitled document (the default no-arg launch's own shape: no path,
+/// `display_name: Some("Untitled 1")`) that gets ⌘S pressed on it has no
+/// path to save to, so the save is refused — but the title must still read
+/// "Untitled 1" afterward, not silently flip to the `"[No Name]"` placeholder.
 #[test]
 fn save_on_a_dirty_untitled_document_leaves_the_title_unchanged() {
     let mut app = test_app();
@@ -448,49 +476,5 @@ fn save_on_a_dirty_untitled_document_leaves_the_title_unchanged() {
         app.doc(id).unwrap().file_name(),
         "Untitled 1",
         "a refused pathless save must never clear display_name"
-    );
-}
-
-/// The highest-value regression in the package: ⌘S on a `Preview`
-/// document must never reach `vfs.save_atomic` — every global save chord
-/// routes to `trigger_save` unconditionally, and the no-store fallback
-/// there would otherwise atomically overwrite the previewed file with
-/// this document's own (edited) buffer, a data-safety violation. The
-/// document is dirtied FIRST, while still `ReadOnly::No` (a preview has no
-/// production path to become dirty, since the edit chokepoint already
-/// refuses any read-only document), then flipped to `Preview` — the same
-/// sequence `reading_view_blocks_undo_and_redo` (`tests/edit_commands.rs`)
-/// uses for the identical reason.
-#[test]
-fn preview_document_refuses_save_and_never_touches_disk() {
-    let vfs = Arc::new(Mem::new());
-    let path = PathBuf::from("/doc.md");
-    vfs.save_atomic(&path, b"on disk").expect("seed doc.md");
-    let mut app = App::new(
-        Buffer::new("on disk"),
-        Some(path.clone()),
-        Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
-        None,
-    );
-    let id = app.active;
-    edit::insert_text(&mut app, id, "!", EditKind::Insert);
-    assert!(app.is_dirty(), "the fixture must actually be dirty");
-
-    app.doc_mut(id).unwrap().read_only = rune_tui::document::ReadOnly::Preview;
-
-    let effects = press_save(&mut app);
-    assert!(
-        !spawns_a_save(&effects),
-        "a refused preview save must spawn no save Cmd"
-    );
-
-    let saved = vfs.read(&path).expect("the seeded file must still exist");
-    assert_eq!(
-        saved, b"on disk",
-        "a preview save must never touch disk, dirty buffer or not"
-    );
-    assert_eq!(
-        rune_tui::messages::newest_text(&app),
-        rune_tui::document::ReadOnly::Preview.refusal_message()
     );
 }

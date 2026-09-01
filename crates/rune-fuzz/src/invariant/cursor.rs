@@ -5,7 +5,7 @@ use ratatui::style::Modifier;
 use rune_tui::render::Cell;
 
 use super::{Violation, trunc};
-use crate::snapshot::Snapshot;
+use crate::snapshot::{Painted, Snapshot};
 
 /// `CUR-BOUNDS` (L0) — every cursor's `position`/
 /// `anchor` is a valid byte offset into `content`: in range and on a char
@@ -115,16 +115,16 @@ pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
 /// above the viewport is legitimately never painted, and concealment can
 /// collapse two cursors onto one cell.
 ///
-/// Active-document-switch-safe: L0, one `Snapshot`'s own `cells` against
+/// Active-document-switch-safe: L0, one `Painted`'s own `cells` against
 /// its own `caret_visible`.
-pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
-    if snap.caret_visible {
+pub fn cur_no_caret_hidden(painted: &Painted) -> Option<Violation> {
+    if painted.caret_visible {
         return None;
     }
-    for row in &snap.cells {
+    for row in &painted.cells {
         for cell in row {
             if cell.style.add_modifier.contains(Modifier::REVERSED)
-                && !reading_link_highlight(snap, cell)
+                && !reading_link_highlight(painted, cell)
             {
                 return Some(Violation::new(
                     "CUR-NO-CARET-HIDDEN",
@@ -153,16 +153,16 @@ pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
 /// nothing is asserted for it; the same carve-out `CUR-NO-CARET-HIDDEN`
 /// already documents for a caret that is legitimately never painted.
 ///
-/// Active-document-switch-safe: L0, one `Snapshot`'s own `cursors`/`cells`.
-pub fn cur_cell_sync(snap: &Snapshot) -> Option<Violation> {
-    if !snap.caret_visible {
+/// Active-document-switch-safe: L0, one `Painted`'s own `cursors`/`cells`.
+pub fn cur_cell_sync(painted: &Painted) -> Option<Violation> {
+    if !painted.caret_visible {
         return None;
     }
-    for cursor in &snap.cursors {
+    for cursor in &painted.cursors {
         let Ok(target) = u32::try_from(cursor.position.get()) else {
             continue;
         };
-        let position_rendered = snap
+        let position_rendered = painted
             .cells
             .iter()
             .flatten()
@@ -170,12 +170,12 @@ pub fn cur_cell_sync(snap: &Snapshot) -> Option<Violation> {
         if !position_rendered {
             continue;
         }
-        let painted_correctly = snap.cells.iter().flatten().any(|cell| {
+        let caret_painted = painted.cells.iter().flatten().any(|cell| {
             cell.buf_offset == Some(target)
                 && cell.style.add_modifier.contains(Modifier::REVERSED)
-                && !reading_link_highlight(snap, cell)
+                && !reading_link_highlight(painted, cell)
         });
-        if !painted_correctly {
+        if !caret_painted {
             return Some(Violation::new(
                 "CUR-CELL-SYNC",
                 format!(
@@ -189,8 +189,8 @@ pub fn cur_cell_sync(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-fn reading_link_highlight(snap: &Snapshot, cell: &Cell) -> bool {
-    let Some(focus) = snap.reading_link_focus else {
+fn reading_link_highlight(painted: &Painted, cell: &Cell) -> bool {
+    let Some(focus) = painted.reading_link_focus else {
         return false;
     };
     let Some(offset) = cell.buf_offset else {
