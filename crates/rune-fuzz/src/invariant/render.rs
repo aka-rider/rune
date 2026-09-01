@@ -87,6 +87,32 @@ pub fn sync_idempotent(
     None
 }
 
+/// `SCROLL-IN-DOC` (L0) — `Painted.scroll_row` is strictly less than
+/// `Painted.total_rows`: the viewport never scrolls to or past a row the
+/// document doesn't have. `total_rows` is always >= 1 (an empty buffer
+/// still yields one row), so this also catches `scroll_row` left nonzero
+/// against a one-row document. Closes the hole `CUR-BOUNDS`/`CUR-NO-CARET-
+/// HIDDEN` deliberately leave open for a cursor legitimately scrolled
+/// outside the viewport (`invariant/cursor.rs`): this checks the viewport
+/// itself, not a cursor's relation to it, so no such carve-out applies —
+/// `scroll_row` past the document's last row is never legitimate
+/// (`Viewport::reconcile`'s clamp, `viewport.rs`).
+///
+/// Active-document-switch-safe: L0, one `Painted`'s own `scroll_row`
+/// against its own `total_rows`.
+pub fn scroll_in_doc(painted: &Painted) -> Option<Violation> {
+    if painted.scroll_row.0 >= painted.total_rows {
+        return Some(Violation::new(
+            "SCROLL-IN-DOC",
+            format!(
+                "scroll_row={} is not strictly less than total_rows={}",
+                painted.scroll_row.0, painted.total_rows
+            ),
+        ));
+    }
+    None
+}
+
 /// `CELL-OFFSET` (L0, sampled per G19) — every
 /// `Cell.buf_offset` is `None` (decorative) or a valid, in-bounds,
 /// char-boundary byte offset into `content`. A real offset's `width` may be

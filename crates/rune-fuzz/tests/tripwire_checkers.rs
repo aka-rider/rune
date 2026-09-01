@@ -19,7 +19,9 @@ use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferOffset, DisplayRow, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
-use rune_fuzz::invariant::{buf_line_index, cur_bounds, cur_id, cur_order, version_monotone};
+use rune_fuzz::invariant::{
+    buf_line_index, cur_bounds, cur_id, cur_order, scroll_in_doc, version_monotone,
+};
 use rune_fuzz::snapshot::Snapshot;
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
@@ -136,6 +138,7 @@ fn base_snapshot(content: &str) -> Snapshot {
             highlight_spans: Vec::new(),
             highlight_version: 1,
             scroll_row: DisplayRow(0),
+            total_rows: line_count.max(1),
         },
         geometry: base_geometry(),
         guard: None,
@@ -325,4 +328,42 @@ fn version_monotone_accepts_monotone_progress() {
     next.version = 6;
     next.saved_version = 6;
     assert_eq!(version_monotone(&prev, &next), None);
+}
+
+#[test]
+fn scroll_in_doc_detects_scroll_row_past_the_last_row() {
+    let mut snap = base_snapshot("a\nb\nc"); // 3 rows, total_rows == 3
+    snap.painted.total_rows = 3;
+    snap.painted.scroll_row = DisplayRow(3); // one past the last valid row (2)
+    let v = scroll_in_doc(&snap.painted)
+        .expect("scroll_row == total_rows must trip SCROLL-IN-DOC");
+    assert_eq!(v.id, "SCROLL-IN-DOC");
+}
+
+#[test]
+fn scroll_in_doc_detects_stale_scroll_row_on_a_shrunk_document() {
+    // The bug this invariant closes: a tall document is deleted down to one
+    // row, but scroll_row is left wherever it was before the shrink.
+    let mut snap = base_snapshot("");
+    snap.painted.total_rows = 1;
+    snap.painted.scroll_row = DisplayRow(180);
+    let v = scroll_in_doc(&snap.painted)
+        .expect("a stale scroll_row past a shrunk document must trip SCROLL-IN-DOC");
+    assert_eq!(v.id, "SCROLL-IN-DOC");
+}
+
+#[test]
+fn scroll_in_doc_accepts_scroll_row_at_the_last_row() {
+    let mut snap = base_snapshot("a\nb\nc");
+    snap.painted.total_rows = 3;
+    snap.painted.scroll_row = DisplayRow(2); // last valid row, strictly < total_rows
+    assert_eq!(scroll_in_doc(&snap.painted), None);
+}
+
+#[test]
+fn scroll_in_doc_accepts_an_empty_document_at_row_zero() {
+    let mut snap = base_snapshot("");
+    snap.painted.total_rows = 1;
+    snap.painted.scroll_row = DisplayRow(0);
+    assert_eq!(scroll_in_doc(&snap.painted), None);
 }

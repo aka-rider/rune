@@ -2,9 +2,10 @@
 
 mod tui_edit_common;
 
+use rune_core::coords::DisplayRow;
 use rune_tui::keymap::{KeyCode, Mods};
 
-use tui_edit_common::{ALT, SHIFT, SUP, app_for, press};
+use tui_edit_common::{ALT, SHIFT, SUP, app_for, full_text, press, render_to_test_backend};
 
 #[test]
 fn char_right_then_left_returns_to_start() {
@@ -59,6 +60,31 @@ fn select_all_selects_the_whole_buffer() {
     press(&mut app, KeyCode::Char('a'), SUP);
     let c = app.active_doc_mut().cursors.primary();
     assert_eq!((c.anchor.get(), c.position.get()), (0, 11));
+}
+
+#[test]
+fn editor_keeps_rendering_after_deleting_the_whole_document() {
+    let mut lines = String::new();
+    for i in 0..200 {
+        lines.push_str(&format!("line{i}\n"));
+    }
+    let mut app = app_for(&lines, 0);
+    press(&mut app, KeyCode::Char('a'), SUP);
+    press(&mut app, KeyCode::Backspace, Mods::NONE);
+    press(&mut app, KeyCode::Char('x'), Mods::NONE);
+
+    assert_eq!(app.active_doc_mut().buffer.content(), "x");
+    assert_eq!(
+        app.active_doc_mut().viewport.scroll_row,
+        DisplayRow(0),
+        "scroll_row must be pulled back onto the shrunken document"
+    );
+
+    let text = full_text(&render_to_test_backend(&app));
+    assert!(
+        text.contains('x'),
+        "the typed character must still be visible on screen"
+    );
 }
 
 #[test]

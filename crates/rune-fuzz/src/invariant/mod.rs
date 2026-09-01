@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 44 invariants total, one domain per file:
+//! 45 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
 //!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`
@@ -28,8 +28,9 @@
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
 //! - `pane` — `PANE-NO-BLEED`, `OVERLAY-TITLE-EXCLUSIVE`, `LAYOUT-FITS`,
 //!   `LAYOUT-TILES`
-//! - `render` — `SYNC-IDEMPOTENT`, `CELL-OFFSET`, `CELL-NO-EOL`,
-//!   `CELL-ORDER`, `TABLE-ROW-WIDTH`, `TABLE-SYNTHETIC-DECORATIVE`
+//! - `render` — `SYNC-IDEMPOTENT`, `SCROLL-IN-DOC`, `CELL-OFFSET`,
+//!   `CELL-NO-EOL`, `CELL-ORDER`, `TABLE-ROW-WIDTH`,
+//!   `TABLE-SYNTHETIC-DECORATIVE`
 //! - `wrap` — `WRAP-RT`
 //! - `undo` — `REDO-CLEAR`, `UNDO-TOTAL`, `REDO-TOTAL`
 //! - `session` — `SAVE-INFLIGHT-SM`, `QUIT-CHORD`, `CONFIRM-GEN`,
@@ -75,7 +76,7 @@ pub use nav::nav_bounds;
 pub use palette::{palette_focus_stable, palette_guard};
 pub use pane::{layout_fits, layout_tiles, overlay_title_exclusive, pane_no_bleed};
 pub use render::{
-    cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,
+    cell_no_eol, cell_offset, cell_order, scroll_in_doc, sync_idempotent, sync_idempotent_rebuild,
     table_row_width, table_synthetic_decorative,
 };
 pub use save::{save_clean_matches_disk, save_no_trailing_ws, save_verbatim};
@@ -152,6 +153,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| cur_cell_sync(&next.painted))
         .or_else(|| buf_line_index(next))
         .or_else(|| version_monotone(prev, next))
+        .or_else(|| scroll_in_doc(&next.painted))
         .or_else(|| cell_offset(&next.painted))
         .or_else(|| cell_no_eol(&next.painted))
         .or_else(|| cell_order(&next.painted))

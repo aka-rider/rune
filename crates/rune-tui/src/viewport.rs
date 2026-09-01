@@ -79,6 +79,7 @@ impl Viewport {
         }
         let off = self.effective_scrolloff();
         let last_row = DisplayRow(total_rows.saturating_sub(1));
+        self.scroll_row = self.scroll_row.min(last_row);
         let top = (self.scroll_row + off).min(last_row);
         let bottom = (self.scroll_row + height - 1 - off).min(last_row);
 
@@ -218,6 +219,20 @@ mod tests {
         assert_eq!(
             vp.scroll_row, scroll_before,
             "a second reconcile with the settled cursor row moved scroll_row"
+        );
+    }
+
+    #[test]
+    fn reconcile_pulls_scroll_row_back_when_the_document_shrinks_under_it() {
+        let mut vp = viewport(80, 20);
+        vp.scroll_row = DisplayRow(180);
+        vp.mode = ScrollMode::Independent;
+
+        vp.reconcile(DisplayRow(0), 1);
+        assert_eq!(
+            vp.scroll_row,
+            DisplayRow(0),
+            "clamped to the shrunken document's last row"
         );
     }
 

@@ -151,6 +151,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
             highlight_spans: Vec::new(),
             highlight_version: 1,
             scroll_row: DisplayRow(0),
+            total_rows: line_count.max(1),
         },
         geometry: base_geometry(),
         guard: None,

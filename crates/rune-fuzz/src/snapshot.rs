@@ -40,6 +40,12 @@ pub struct Painted {
     pub highlight_spans: Vec<(usize, usize)>,
     pub highlight_version: u64,
     pub scroll_row: DisplayRow,
+    /// `view.display.total_rows()` for the shown document, or `1` when
+    /// there is no view yet (a fresh document renders one empty row) —
+    /// captured unconditionally, unlike `cells`/`row_meta`, so
+    /// `SCROLL-IN-DOC` (`invariant/render.rs`) can check every step, not
+    /// just sampled ones.
+    pub total_rows: usize,
 }
 
 /// One point-in-time observation of `App`, built ONLY from its public
@@ -290,6 +296,7 @@ impl Snapshot {
             highlight_spans,
             highlight_version: shown.highlight.version,
             scroll_row: shown.viewport.scroll_row,
+            total_rows: shown.view.as_ref().map_or(1, |v| v.display.total_rows()),
         };
         let doc = app.active_doc();
         let geometry = layout::geometry(app.frame_area(), app);
