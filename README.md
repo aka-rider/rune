@@ -1,12 +1,17 @@
-<h1 align="center">rune — Markdown Editor for macOS terminal 📎</h1>
+<h1 align="center">rune — terminal editor to collaborate with agents 📎</h1>
 
-<p align="center"><img src="assets/rune-intro.gif" alt="Rune into screencast" width="80%" /></p>
+<p align="center"><img src="assets/showcase.svg" alt="Rune intro screencast" width="80%" /></p>
 
 ---
 
+## Why rune?
+
+Leave tactical programming, language server protocols, debuggers to your agents.
+Rune is a tool to read markdown and changes produced by them.
+
 ## Good News Everyone
 
-- **MacOS-native** look and feel with familiar **⌘** - combinations
+- VSCode x Obsidian keystrokes and feel with **⌘ -** - combinations
 - **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code fences with real tree-sitter syntax highlighting across 32 languages, tables with adaptive layouts, task lists, thematic breaks, YAML frontmatter, `[[wikilinks]]`, and setext headings.
 - **Task lists** - `- [x] buy milk` syntax
 - **Inline Images** — Render PNG, JPEG, GIF, WebP, BMP, TIFF, and SVG directly in your terminal via the Kitty graphics protocol. GIFs render as a still frame.
@@ -17,23 +22,8 @@
 - **Conflict Guard + Merge** — An external edit to the open file is caught before it can be overwritten, with a built-in 3-way merge resolver (`^M`) to reconcile both sides.
 - **Reading View** — Toggle a read-only rendered view with `^⇧P`/`⌘⇧P`.
 - **Tabs + File Explorer** — Type-to-search jumps straight to a file.
+- Fuzzy search everything, files, contents
 
-### File Explorer
-
-quick search, just start typing
-
-<p align="center"><img src="assets/rune-explorer.gif" alt="Rune file explorer screencast" width="80%" /></p>
-
-### Table rendering
-
-<p align="center"><img src="assets/rune-table-rendering.gif" alt="Rune Obsidian-style task list screencast" width="80%" /></p>
-
-### Task list
-
-<p align="center"><img src="assets/rune-task-list.gif" alt="Rune Obsidian-style task list screencast" width="80%" /></p>
- 
- 
----
 
 ## Installation
 
@@ -63,7 +53,7 @@ The flake builds from source at any tag, so it tracks releases with no extra pub
 ## Keybindings
 
 MacOS-native ⌘+c/v/z, and others should work.
-Sometimes, terminal emulator intercepts these combinations. 
+Sometimes, terminal emulator intercepts these combinations.
 Either configure the terminal emulator, or use fallback: ⌘⇧+... or Ctrl+...
 
 For example, select all: ⌘+a, ⌘⇧+a, ^a
@@ -80,7 +70,7 @@ Press `F1` inside Rune for the list of keyboard shortcuts — the help page is g
 |----------|-------|
 | [Ghostty](https://ghostty.org/) | Focused on compatibility with VT standards |
 
-Kitty, iTerm2, WezTerm work too, with all kinds of bugs. 
+Kitty, iTerm2, WezTerm work too, with all kinds of bugs.
 rune relies on terminal protocol extensions (super key, image rendering, clipboard, etc.).
 Inline image rendering needs a Kitty-graphics-protocol terminal (Kitty, Ghostty); other terminals fall back to an info card.
 
