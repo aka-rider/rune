@@ -335,8 +335,7 @@ fn scroll_in_doc_detects_scroll_row_past_the_last_row() {
     let mut snap = base_snapshot("a\nb\nc"); // 3 rows, total_rows == 3
     snap.painted.total_rows = 3;
     snap.painted.scroll_row = DisplayRow(3); // one past the last valid row (2)
-    let v = scroll_in_doc(&snap.painted)
-        .expect("scroll_row == total_rows must trip SCROLL-IN-DOC");
+    let v = scroll_in_doc(&snap.painted).expect("scroll_row == total_rows must trip SCROLL-IN-DOC");
     assert_eq!(v.id, "SCROLL-IN-DOC");
 }
 
