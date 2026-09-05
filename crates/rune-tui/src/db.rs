@@ -195,6 +195,13 @@ impl PendingOp {
         }
     }
 
+    pub fn housekeeping(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            doc_scoped: true,
+            ..PendingOp::new(doc)
+        }
+    }
+
     pub fn merge_prep(doc: DocumentId, generation: crate::generation::MergeGen) -> PendingOp {
         PendingOp {
             doc,

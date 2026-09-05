@@ -111,12 +111,29 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 rune_db::OpOutcome::None
                 | rune_db::OpOutcome::Ids(_)
                 | rune_db::OpOutcome::Reconstructed(_)
-                | rune_db::OpOutcome::Observation(_)
-                | rune_db::OpOutcome::Forget(_),
+                | rune_db::OpOutcome::Observation(_),
         } => {
             app.db_ops.remove(&op_id);
             app.search_history.ack(op_id);
             app.command_history.ack(op_id);
+        }
+        DbEvent::Ok {
+            id: op_id,
+            result: rune_db::OpOutcome::Forget(outcome),
+        } => {
+            app.db_ops.remove(&op_id);
+            match outcome {
+                rune_db::ForgetOutcome::Forgotten => {}
+                rune_db::ForgetOutcome::ClaimedByLiveSession => {
+                    crate::messages::info(app, "draft kept in recovery: another rune is using it");
+                }
+                rune_db::ForgetOutcome::NotScratch => {
+                    crate::messages::error(
+                        app,
+                        "internal error: forget targeted a file-backed row",
+                    );
+                }
+            }
         }
         DbEvent::Err { id: op_id, error } => {
             let pending = app.db_ops.remove(&op_id);

@@ -162,6 +162,19 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
     }
 }
 
+pub fn forget_scratch(app: &mut App, id: DocumentId, db_id: i64) {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
+        return;
+    }
+    let Some(db) = app.db.as_ref() else { return };
+    match db.store.forget_scratch(rune_db::DocId(db_id)) {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, PendingOp::housekeeping(id));
+        }
+        Err(e) => crate::materialize_ack::on_store_failure(app, &e.to_string()),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

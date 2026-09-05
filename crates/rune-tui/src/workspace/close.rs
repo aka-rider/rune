@@ -89,6 +89,11 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     let was_active = app.active == id;
     let neighbor = neighbor_of(app, id);
     let was_only = app.documents.len() == 1;
+    let forget = app
+        .doc(id)
+        .filter(|doc| doc.path().is_none())
+        .and_then(|doc| doc.doc_db())
+        .map(|db| db.db_id);
     let mut active_changed = false;
     if was_only {
         new_untitled_document_excluding(app, Some(id));
@@ -103,6 +108,9 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
         active_changed = true;
     }
     app.db_ops.retain(|_, pending| pending.doc != id);
+    if let Some(db_id) = forget {
+        crate::db_enqueue::forget_scratch(app, id, db_id);
+    }
     if app.pending_close_on_save == Some(id) {
         app.pending_close_on_save = None;
     }

@@ -303,5 +303,5 @@ fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
 #[path = "db_enqueue_load.rs"]
 mod db_enqueue_load;
 pub use db_enqueue_load::{
-    LoadIntent, create_scratch, load_document, load_document_best_effort, probe,
+    LoadIntent, create_scratch, forget_scratch, load_document, load_document_best_effort, probe,
 };
