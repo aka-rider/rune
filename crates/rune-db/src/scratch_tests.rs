@@ -418,3 +418,192 @@ fn reconstruct_scratch_refuses_an_empty_draft_when_the_candidates_footprint_has_
         "a candidate whose footprint vanished must never surface as an empty draft"
     );
 }
+
+#[test]
+fn forget_scratch_removes_a_row_with_events_and_snapshots_and_its_history() {
+    let mut conn = open();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let doc_id = create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
+        .expect("create scratch");
+    {
+        let tx = conn.transaction().expect("tx");
+        crate::journal::append_edit(
+            &tx,
+            session_id,
+            SystemTime::now(),
+            doc_id,
+            EditBatch {
+                edits: &text_insert("closed draft"),
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
+        )
+        .expect("append edit");
+        let seq = crate::journal::current_seq(&tx, session_id, doc_id).expect("current_seq");
+        crate::snapshot::create_snapshot(
+            &tx,
+            session_id,
+            SystemTime::now(),
+            doc_id,
+            "closed draft",
+            seq,
+        )
+        .expect("create snapshot");
+        tx.commit().expect("commit");
+    }
+
+    let outcome =
+        forget_scratch(&mut conn, session_id, doc_id, &always_dead).expect("forget_scratch");
+    assert_eq!(outcome, ForgetOutcome::Forgotten);
+
+    let still_present: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            rusqlite::params![doc_id.0],
+            |r| r.get(0),
+        )
+        .expect("check document row");
+    assert!(!still_present, "forgotten row must be gone");
+
+    let events_left: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE doc_id=?1",
+            rusqlite::params![doc_id.0],
+            |r| r.get(0),
+        )
+        .expect("count events");
+    assert_eq!(events_left, 0, "events must cascade away with the row");
+
+    let snapshots_left: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM snapshots WHERE doc_id=?1",
+            rusqlite::params![doc_id.0],
+            |r| r.get(0),
+        )
+        .expect("count snapshots");
+    assert_eq!(
+        snapshots_left, 0,
+        "snapshots must cascade away with the row"
+    );
+
+    let other_session =
+        crate::session::establish_session(&conn, SystemTime::now()).expect("other session");
+    let ids = recoverable_scratch(&conn, other_session.0).expect("recoverable_scratch");
+    assert!(
+        !ids.contains(&doc_id.0),
+        "a forgotten row must never surface as recoverable"
+    );
+}
+
+#[test]
+fn forget_scratch_refuses_a_bound_row_with_a_nonempty_path() {
+    let mut conn = open();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let at = crate::session::format_rfc3339_nanos(SystemTime::now());
+    conn.execute(
+        "INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('/vault/notes.md', 'file', ?1, ?1)",
+        rusqlite::params![at],
+    )
+    .expect("seed bound row");
+    let bound_id = DocId(conn.last_insert_rowid());
+
+    let outcome =
+        forget_scratch(&mut conn, session_id, bound_id, &always_dead).expect("forget_scratch");
+    assert_eq!(outcome, ForgetOutcome::NotScratch);
+
+    let still_present: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            rusqlite::params![bound_id.0],
+            |r| r.get(0),
+        )
+        .expect("check document row");
+    assert!(still_present, "a bound row must survive untouched");
+}
+
+#[test]
+fn forget_scratch_refuses_a_row_with_a_non_null_inode() {
+    let mut conn = open();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let at = crate::session::format_rfc3339_nanos(SystemTime::now());
+    conn.execute(
+        "INSERT INTO documents(path, inode, device, kind, created_at, last_seen_at) VALUES('', 42, 7, 'file', ?1, ?1)",
+        rusqlite::params![at],
+    )
+    .expect("seed evicted-but-bound row");
+    let evicted_id = DocId(conn.last_insert_rowid());
+
+    let outcome =
+        forget_scratch(&mut conn, session_id, evicted_id, &always_dead).expect("forget_scratch");
+    assert_eq!(outcome, ForgetOutcome::NotScratch);
+
+    let still_present: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            rusqlite::params![evicted_id.0],
+            |r| r.get(0),
+        )
+        .expect("check document row");
+    assert!(still_present, "an evicted bound row must survive untouched");
+}
+
+#[test]
+fn forget_scratch_spares_a_row_claimed_by_another_live_session_then_forgets_it_once_dead() {
+    let mut conn = open();
+    let claiming_session =
+        crate::session::establish_session(&conn, SystemTime::now()).expect("claiming session");
+    let doc_id = create_scratch_with_intent(&mut conn, claiming_session, SystemTime::now(), None)
+        .expect("create scratch");
+    let own_session =
+        crate::session::establish_session(&conn, SystemTime::now()).expect("own session");
+
+    let outcome =
+        forget_scratch(&mut conn, own_session, doc_id, &always_alive).expect("forget_scratch");
+    assert_eq!(outcome, ForgetOutcome::ClaimedByLiveSession);
+
+    let still_present: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            rusqlite::params![doc_id.0],
+            |r| r.get(0),
+        )
+        .expect("check document row");
+    assert!(
+        still_present,
+        "a row claimed by another live session must survive"
+    );
+
+    let outcome =
+        forget_scratch(&mut conn, own_session, doc_id, &always_dead).expect("forget_scratch");
+    assert_eq!(
+        outcome,
+        ForgetOutcome::Forgotten,
+        "once the claiming session is confirmed dead, the row is fair game"
+    );
+}
+
+#[test]
+fn forget_scratch_ignores_the_caller_s_own_claim() {
+    let mut conn = open();
+    let own_session =
+        crate::session::establish_session(&conn, SystemTime::now()).expect("own session");
+    let doc_id = create_scratch_with_intent(&mut conn, own_session, SystemTime::now(), None)
+        .expect("create scratch");
+
+    let liveness_check_called = std::sync::atomic::AtomicBool::new(false);
+    let outcome = forget_scratch(&mut conn, own_session, doc_id, &|_pid, _started_at| {
+        liveness_check_called.store(true, std::sync::atomic::Ordering::SeqCst);
+        true
+    })
+    .expect("forget_scratch");
+    assert!(
+        !liveness_check_called.load(std::sync::atomic::Ordering::SeqCst),
+        "liveness_check must never be consulted for the caller's own session"
+    );
+    assert_eq!(
+        outcome,
+        ForgetOutcome::Forgotten,
+        "the caller's own claim on the row must never block forgetting it"
+    );
+}

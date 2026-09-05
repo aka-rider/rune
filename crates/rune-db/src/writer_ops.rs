@@ -288,6 +288,11 @@ pub(crate) enum OpKind {
         liveness_check: LivenessCheckFn,
         doc_id: DocId,
     },
+    ForgetScratch {
+        session_id: SessionId,
+        doc_id: DocId,
+        liveness_check: LivenessCheckFn,
+    },
     /// Records `query` as just-used, bumping its `search_history` row's
     /// `last_used_at` (insert-or-touch — see `search_history::touch`). A
     /// cosmetic write: its own `Store` convenience method is the one place
@@ -359,6 +364,7 @@ pub enum OpOutcome {
     /// nothing to recover (no prior session ever touched the doc, or the
     /// most recent one is still alive).
     Reconstructed(Option<Recovered>),
+    Forget(crate::scratch::ForgetOutcome),
 }
 
 /// A completion posted by the writer thread for one `WriteOp`, or a fatal

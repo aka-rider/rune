@@ -8,7 +8,7 @@
 
 use std::time::SystemTime;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::Error;
 use crate::doc_kind::DocKind;
@@ -17,6 +17,17 @@ use crate::inherit::{is_session_alive, most_recent_session_for_doc};
 use crate::retry;
 use crate::session::format_rfc3339_nanos;
 use crate::snapshot::Recovered;
+
+pub fn is_blank(content: &str) -> bool {
+    content.trim().is_empty()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForgetOutcome {
+    Forgotten,
+    ClaimedByLiveSession,
+    NotScratch,
+}
 
 /// Mints a brand-new unbound scratch `documents` row. `intended_path` is
 /// `Some` when this scratch names a launch positional that does not exist
@@ -117,6 +128,45 @@ pub fn gc_empty_scratch(
             deleted += i64::try_from(rows).unwrap_or(i64::MAX);
         }
         Ok(deleted)
+    })
+}
+
+pub fn forget_scratch(
+    conn: &mut Connection,
+    own_session: SessionId,
+    doc_id: DocId,
+    liveness_check: &dyn Fn(i64, &str) -> bool,
+) -> Result<ForgetOutcome, Error> {
+    retry::with_retry(conn, |tx| {
+        let is_scratch: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM documents WHERE id=?1 AND path='' AND inode IS NULL",
+                params![doc_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if is_scratch.is_none() {
+            return Ok(ForgetOutcome::NotScratch);
+        }
+
+        let claiming_sessions: Vec<SessionId> = {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT session_id FROM session_documents WHERE doc_id=?1 AND session_id!=?2",
+            )?;
+            stmt.query_map(params![doc_id, own_session], |r| {
+                r.get::<_, i64>(0).map(SessionId)
+            })?
+            .collect::<Result<Vec<SessionId>, _>>()?
+        };
+
+        for claiming_session in claiming_sessions {
+            if is_session_alive(tx, liveness_check, claiming_session)? {
+                return Ok(ForgetOutcome::ClaimedByLiveSession);
+            }
+        }
+
+        tx.execute("DELETE FROM documents WHERE id=?1", params![doc_id])?;
+        Ok(ForgetOutcome::Forgotten)
     })
 }
 

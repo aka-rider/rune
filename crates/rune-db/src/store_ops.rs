@@ -424,6 +424,15 @@ impl Store {
             doc_id,
         })
     }
+
+    pub fn forget_scratch(&self, doc_id: DocId) -> Result<u64, Error> {
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::ForgetScratch {
+            session_id: self.session_id,
+            doc_id,
+            liveness_check,
+        })
+    }
 }
 
 #[cfg(test)]

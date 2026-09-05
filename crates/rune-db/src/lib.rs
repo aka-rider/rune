@@ -106,6 +106,7 @@ pub use reader::{ReaderQuery, ReaderReply, ReaderRequestKind};
 #[cfg(feature = "test-support")]
 pub use reaper::reap_dead_sessions;
 pub use rename::RenameOutcome;
+pub use scratch::{ForgetOutcome, is_blank};
 #[cfg(feature = "test-support")]
 pub use session::is_process_alive;
 pub use snapshot::Recovered;

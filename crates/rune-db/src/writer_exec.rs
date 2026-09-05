@@ -412,6 +412,17 @@ pub(crate) fn reconstruct_scratch(
     Ok(OpOutcome::Reconstructed(content))
 }
 
+pub(crate) fn forget_scratch(
+    conn: &mut Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+    liveness_check: &LivenessCheckFn,
+) -> Result<OpOutcome, Error> {
+    let outcome = crate::scratch::forget_scratch(conn, session_id, doc_id, liveness_check.as_ref())
+        .map_err(|e| Error::Invalid(format!("forget draft {doc_id}: {e}")))?;
+    Ok(OpOutcome::Forget(outcome))
+}
+
 pub(crate) fn touch_search_query(
     conn: &mut Connection,
     query: &str,

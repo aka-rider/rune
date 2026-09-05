@@ -130,6 +130,45 @@ fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
 }
 
 #[test]
+fn forget_scratch_op_runs_through_the_writer_and_echoes_forgotten() {
+    let mut conn = open_ready_connection();
+    let session_id = crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+    let doc_id =
+        crate::scratch::create_scratch_with_intent(&mut conn, session_id, SystemTime::now(), None)
+            .expect("create scratch");
+
+    let (tx, rx) = mpsc::channel::<DbEvent>();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    let handle = spawn(conn, test_vfs(), on_event);
+
+    handle
+        .try_send(WriteOp {
+            id: 1,
+            kind: OpKind::ForgetScratch {
+                session_id,
+                doc_id,
+                liveness_check: Arc::new(|_pid, _started_at| false),
+            },
+        })
+        .expect("enqueue ForgetScratch");
+
+    let evt = rx.recv().expect("forget scratch completion");
+    match evt {
+        DbEvent::Ok { id: 1, result } => {
+            assert_eq!(
+                result,
+                OpOutcome::Forget(crate::scratch::ForgetOutcome::Forgotten)
+            );
+        }
+        other => panic!("expected Ok(id:1, result:Forget(Forgotten)), got {other:?}"),
+    }
+
+    handle.shutdown(session_id, Arc::new(crate::session::is_process_alive));
+}
+
+#[test]
 fn stalled_writer_returns_full_without_blocking_or_panicking() {
     let (block_tx, block_rx) = mpsc::channel::<()>();
     let on_event: OnEvent = Box::new(|_evt| {});

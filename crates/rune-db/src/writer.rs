@@ -462,6 +462,11 @@ fn execute_op(
             liveness_check,
             doc_id,
         } => exec::reconstruct_scratch(conn, &liveness_check, doc_id),
+        OpKind::ForgetScratch {
+            session_id,
+            doc_id,
+            liveness_check,
+        } => exec::forget_scratch(conn, session_id, doc_id, &liveness_check),
         OpKind::TouchSearchQuery { query, now } => exec::touch_search_query(conn, &query, now),
         OpKind::TouchCommandName { name, now } => exec::touch_command_name(conn, &name, now),
         OpKind::Shutdown {
