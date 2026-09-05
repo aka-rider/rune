@@ -319,6 +319,10 @@ impl Document {
         self.file_path.as_deref()
     }
 
+    pub fn is_blank_draft(&self) -> bool {
+        self.path().is_none() && self.image().is_none() && self.buffer.content().trim().is_empty()
+    }
+
     pub fn resolved_path(&self) -> Option<&crate::resolved::ResolvedPath> {
         self.file_path.as_ref()
     }

@@ -53,6 +53,8 @@ pub(crate) fn merge_hint_spans(app: &App, unresolved: usize) -> Vec<Span<'static
 /// render can never drift from what those keys actually do.
 pub(crate) fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
+    let discarding_untitled_draft = matches!(prompt.kind, GuardKind::DirtyClose)
+        && app.doc(prompt.doc).is_some_and(|doc| doc.path().is_none());
 
     // Deliberately not `title::name_for`: for a pathless draft that answers
     // with the editable `.md` stub, and a prompt reading "unsaved changes
@@ -109,13 +111,12 @@ pub(crate) fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>>
     };
 
     for (i, opt) in options.iter().chain([&guard::GUARD_CANCEL]).enumerate() {
-        spans.extend(hint_entry_spans(
-            &app.theme,
-            i,
-            opt.key.label(),
-            opt.help,
-            true,
-        ));
+        let help = if discarding_untitled_draft && opt.key == guard::DIRTY_CLOSE_DISCARD.key {
+            "discard for good"
+        } else {
+            opt.help
+        };
+        spans.extend(hint_entry_spans(&app.theme, i, opt.key.label(), help, true));
     }
     spans
 }
@@ -131,6 +132,14 @@ mod tests {
 
     fn app_with(content: &str) -> App {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    fn app_with_path(content: &str) -> App {
+        let vfs = Arc::new(Mem::new());
+        let launch =
+            crate::resolved::ResolvedPath::resolve(vfs.as_ref(), std::path::Path::new("/doc.md"))
+                .expect("the launch path resolves");
+        App::new(Buffer::new(content), Some(launch), vfs, None)
     }
 
     #[test]
@@ -155,7 +164,7 @@ mod tests {
 
     #[test]
     fn guard_mode_offers_every_answer_as_a_plain_key_hint() {
-        let mut app = app_with("hello");
+        let mut app = app_with_path("hello");
         let doc = app.active;
         app.guard = Some(crate::guard::GuardPrompt {
             doc,
@@ -176,6 +185,38 @@ mod tests {
         assert!(
             text.ends_with("S save  D discard  \u{238b} cancel"),
             "key hints carry no brackets: {text:?}"
+        );
+    }
+
+    #[test]
+    fn guard_mode_on_an_untitled_draft_warns_the_discard_is_permanent() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.guard = Some(crate::guard::GuardPrompt {
+            doc,
+            kind: crate::guard::GuardKind::DirtyClose,
+        });
+
+        let text = footer_text(&app);
+        assert!(
+            text.ends_with("S save  D discard for good  \u{238b} cancel"),
+            "an untitled draft's discard must warn it forgets the recovery record too: {text:?}"
+        );
+    }
+
+    #[test]
+    fn guard_mode_dirty_quit_on_an_untitled_draft_keeps_the_plain_wording() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.guard = Some(crate::guard::GuardPrompt {
+            doc,
+            kind: crate::guard::GuardKind::DirtyQuit,
+        });
+
+        let text = footer_text(&app);
+        assert!(
+            text.ends_with("S save  D discard  \u{238b} cancel"),
+            "quitting discards every dirty document at once, not just the one shown: {text:?}"
         );
     }
 }

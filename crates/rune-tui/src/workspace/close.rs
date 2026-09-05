@@ -13,6 +13,10 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     if app.doc(id).is_none() {
         return;
     }
+    if app.documents.len() == 1 && app.doc(id).is_some_and(Document::is_blank_draft) {
+        crate::messages::info(app, "nothing to close");
+        return;
+    }
     if app.doc(id).is_some_and(Document::is_dirty) {
         let _ = guard::set_guard_or_warn(
             app,
@@ -35,7 +39,11 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 }
 
 pub fn new_untitled_document(app: &mut App) -> DocumentId {
-    let name = next_untitled_name(app);
+    new_untitled_document_excluding(app, None)
+}
+
+fn new_untitled_document_excluding(app: &mut App, exclude: Option<DocumentId>) -> DocumentId {
+    let name = format!("Untitled {}", next_untitled_number_excluding(app, exclude));
     let id = app.open_document(rune_core::buffer::Buffer::new(""));
     if let Some(doc) = app.doc_mut(id) {
         doc.display_name = Some(name);
@@ -46,13 +54,14 @@ pub fn new_untitled_document(app: &mut App) -> DocumentId {
 }
 
 pub fn next_untitled_name(app: &App) -> String {
-    format!("Untitled {}", next_untitled_number(app))
+    format!("Untitled {}", next_untitled_number_excluding(app, None))
 }
 
-fn next_untitled_number(app: &App) -> usize {
+fn next_untitled_number_excluding(app: &App, exclude: Option<DocumentId>) -> usize {
     app.documents
-        .values()
-        .filter_map(|doc| doc.display_name.as_deref())
+        .iter()
+        .filter(|&(&candidate, _)| Some(candidate) != exclude)
+        .filter_map(|(_, doc)| doc.display_name.as_deref())
         .filter_map(|name| name.strip_prefix("Untitled ")?.parse::<usize>().ok())
         .max()
         .unwrap_or(0)
@@ -77,17 +86,22 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
         }
         app.image_ids.free_all_for(&key);
     }
+    let was_active = app.active == id;
+    let neighbor = neighbor_of(app, id);
+    let was_only = app.documents.len() == 1;
     let mut active_changed = false;
-    if app.documents.len() == 1 {
-        new_untitled_document(app);
+    if was_only {
+        new_untitled_document_excluding(app, Some(id));
         active_changed = true;
-    } else if app.active == id
-        && let Some(neighbor) = neighbor_of(app, id)
+    }
+    app.documents.remove(&id);
+    if !was_only
+        && was_active
+        && let Some(neighbor) = neighbor
     {
         app.active = neighbor;
         active_changed = true;
     }
-    app.documents.remove(&id);
     app.db_ops.retain(|_, pending| pending.doc != id);
     if app.pending_close_on_save == Some(id) {
         app.pending_close_on_save = None;
@@ -199,6 +213,7 @@ mod tests {
         let vfs: Arc<dyn Vfs + Send + Sync> = mem;
         let mut app = App::new(Buffer::new("hello"), None, vfs, None);
         let only = app.active;
+        app.doc_mut(only).unwrap().display_name = Some("Untitled 1".to_string());
 
         let mut effects = Effects::default();
         let outcome = close_now(&mut app, only, &mut effects);
@@ -207,6 +222,57 @@ mod tests {
         assert_eq!(app.documents.len(), 1);
         assert!(!app.documents.contains_key(&only));
         assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
+        assert_eq!(
+            app.title.committed(),
+            crate::title::name_for(app.active_doc())
+        );
+        assert_eq!(app.tabs.nav.cursor, 0);
+        assert!(crate::messages::newest_text(&app).is_none());
+    }
+
+    #[test]
+    fn closing_the_last_blank_draft_is_a_noop_with_feedback() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new(""), None, vfs, None);
+        let only = app.active;
+
+        let mut effects = Effects::default();
+        request_close(&mut app, only, &mut effects);
+
+        assert_eq!(app.documents.len(), 1);
+        assert!(app.documents.contains_key(&only));
+        assert_eq!(app.active, only);
+        assert_eq!(crate::messages::newest_text(&app), Some("nothing to close"));
+    }
+
+    #[test]
+    fn closing_the_last_whitespace_draft_is_also_a_noop() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("   \n\t"), None, vfs, None);
+        let only = app.active;
+
+        let mut effects = Effects::default();
+        request_close(&mut app, only, &mut effects);
+
+        assert_eq!(app.documents.len(), 1);
+        assert!(app.documents.contains_key(&only));
+        assert_eq!(crate::messages::newest_text(&app), Some("nothing to close"));
+    }
+
+    #[test]
+    fn closing_a_blank_draft_that_is_not_the_last_tab_still_closes() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        let blank = app.open_document(Buffer::new(""));
+
+        let mut effects = Effects::default();
+        request_close(&mut app, blank, &mut effects);
+
+        assert_eq!(app.documents.len(), 1);
+        assert!(!app.documents.contains_key(&blank));
         assert!(crate::messages::newest_text(&app).is_none());
     }
 

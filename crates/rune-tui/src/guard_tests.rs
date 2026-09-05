@@ -372,6 +372,34 @@ fn an_unfocused_search_bar_survives_a_guard_raise() {
 }
 
 #[test]
+fn discarding_the_last_non_empty_untitled_draft_mints_untitled_one() {
+    let mut app = app();
+    let doc = app.active;
+    crate::commands::edit::insert_char(&mut app, doc, '!');
+    assert!(app.doc(doc).unwrap().is_dirty());
+
+    let mut effects = crate::runtime::Effects::default();
+    assert_eq!(
+        set_guard(&mut app, prompt(doc, GuardKind::DirtyClose), &mut effects),
+        GuardRaise::Raised
+    );
+
+    handle_guard_key(
+        &mut app,
+        crate::keymap::KeyInput {
+            code: crate::keymap::KeyCode::Char('d'),
+            mods: crate::keymap::Mods::NONE,
+        },
+        &mut effects,
+    );
+
+    assert!(app.guard.is_none());
+    assert!(!app.documents.contains_key(&doc));
+    assert_eq!(app.documents.len(), 1);
+    assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
+}
+
+#[test]
 fn a_focused_search_bar_closes_on_a_guard_raise() {
     let mut app = app();
     let doc = app.active;
