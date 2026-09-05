@@ -90,7 +90,7 @@ fn bootstrap_store_only_surfaces_the_degraded_banner() {
 }
 
 #[test]
-fn bootstrap_untitled_db_offers_back_a_whitespace_only_dead_session_draft() {
+fn bootstrap_untitled_db_drops_a_whitespace_only_dead_session_draft() {
     let home = ScratchHome::new("untitled-whitespace");
     let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
 
@@ -117,16 +117,78 @@ fn bootstrap_untitled_db_offers_back_a_whitespace_only_dead_session_draft() {
     assert_eq!(
         result.scratch_docs.len(),
         1,
-        "the whitespace-only draft is backed by a real snapshot and must be offered back, not orphaned"
+        "bootstrap must always leave the user with exactly one draft, minting a fresh empty one once the whitespace-only row is dropped"
     );
+    assert!(
+        result.scratch_docs[0].recovered.content.is_empty(),
+        "the whitespace-only draft must never resurrect as if it carried real content"
+    );
+
+    let (bridge2, store2) = open_store_at(&home.0);
+    let reconstruct_op = store2
+        .reconstruct_scratch(rune_db::DocId(old_db_id))
+        .expect("enqueue reconstruct_scratch");
+    match await_ack(&bridge2, reconstruct_op) {
+        OpOutcome::Reconstructed(None) => {}
+        other => panic!("expected the forgotten row to reconstruct to None, got {other:?}"),
+    }
+    store2.shutdown();
+}
+
+#[test]
+fn bootstrap_untitled_db_keeps_the_draft_with_words_and_drops_the_emptied_one() {
+    let home = ScratchHome::new("untitled-mixed");
+    let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
+
+    let (kept_id, emptied_id) = {
+        let (bridge, store) = open_store_at(&home.0);
+
+        let kept_create = store.create_scratch().expect("enqueue create_scratch");
+        let kept_id = match await_ack(&bridge, kept_create) {
+            OpOutcome::ScratchDocId(id) => id.0,
+            other => panic!("expected a CreateScratch ack, got {other:?}"),
+        };
+        let kept_snapshot = store
+            .create_snapshot(rune_db::DocId(kept_id), "real text")
+            .expect("enqueue create_snapshot");
+        await_ack(&bridge, kept_snapshot);
+
+        let emptied_create = store.create_scratch().expect("enqueue create_scratch");
+        let emptied_id = match await_ack(&bridge, emptied_create) {
+            OpOutcome::ScratchDocId(id) => id.0,
+            other => panic!("expected a CreateScratch ack, got {other:?}"),
+        };
+        let emptied_snapshot = store
+            .create_snapshot(rune_db::DocId(emptied_id), "")
+            .expect("enqueue create_snapshot");
+        await_ack(&bridge, emptied_snapshot);
+
+        store.shutdown();
+        (kept_id, emptied_id)
+    };
+
+    mark_every_session_dead(&db_path);
+
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let result = bootstrap_untitled_db(vfs, Some(&home.0));
+
     assert_eq!(
-        result.scratch_docs[0].db_id, old_db_id,
-        "the crashed session's own row must be adopted, never a fresh one copying nothing in"
+        result.scratch_docs.len(),
+        1,
+        "only the draft with real words must be offered back"
     );
-    assert_eq!(
-        result.scratch_docs[0].recovered.content, "   ",
-        "the whitespace the user's session actually journaled must round-trip verbatim"
-    );
+    assert_eq!(result.scratch_docs[0].db_id, kept_id);
+    assert_eq!(result.scratch_docs[0].recovered.content, "real text");
+
+    let (bridge2, store2) = open_store_at(&home.0);
+    let reconstruct_op = store2
+        .reconstruct_scratch(rune_db::DocId(emptied_id))
+        .expect("enqueue reconstruct_scratch");
+    match await_ack(&bridge2, reconstruct_op) {
+        OpOutcome::Reconstructed(None) => {}
+        other => panic!("expected the emptied draft's row to be forgotten, got {other:?}"),
+    }
+    store2.shutdown();
 }
 
 #[test]

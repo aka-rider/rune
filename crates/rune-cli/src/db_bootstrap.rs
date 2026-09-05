@@ -181,6 +181,18 @@ fn degrade_untitled(store: Store, msg: impl Into<String>) -> DbBootstrapUntitled
     }
 }
 
+fn forget_blank_scratch(bridge: &DbBridge, store: &Store, db_id: i64) {
+    match blocking_call(bridge, || store.forget_scratch(rune_db::DocId(db_id))) {
+        Ok(OpOutcome::Forget(rune_db::ForgetOutcome::Forgotten)) => {}
+        Ok(other) => {
+            eprintln!("rune: forget_scratch failed (non-fatal): unexpected reply {other:?}");
+        }
+        Err(e) => {
+            eprintln!("rune: forget_scratch failed (non-fatal): {e}");
+        }
+    }
+}
+
 pub(crate) fn bootstrap_untitled_db(
     vfs: Arc<dyn Vfs + Send + Sync>,
     home: Option<&Path>,
@@ -210,7 +222,11 @@ pub(crate) fn bootstrap_untitled_db(
     for db_id in recoverable_ids {
         match blocking_call(&bridge, || store.reconstruct_scratch(rune_db::DocId(db_id))) {
             Ok(OpOutcome::Reconstructed(Some(recovered))) => {
-                scratch_docs.push(ScratchDoc { db_id, recovered });
+                if rune_db::is_blank(&recovered.content) {
+                    forget_blank_scratch(&bridge, &store, db_id);
+                } else {
+                    scratch_docs.push(ScratchDoc { db_id, recovered });
+                }
             }
             Ok(OpOutcome::Reconstructed(None)) => {}
             Ok(_) => {

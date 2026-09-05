@@ -320,7 +320,7 @@ impl Document {
     }
 
     pub fn is_blank_draft(&self) -> bool {
-        self.path().is_none() && self.image().is_none() && self.buffer.content().trim().is_empty()
+        self.path().is_none() && self.image().is_none() && rune_db::is_blank(self.buffer.content())
     }
 
     pub fn resolved_path(&self) -> Option<&crate::resolved::ResolvedPath> {
