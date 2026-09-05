@@ -184,6 +184,9 @@ fn degrade_untitled(store: Store, msg: impl Into<String>) -> DbBootstrapUntitled
 fn forget_blank_scratch(bridge: &DbBridge, store: &Store, db_id: i64) {
     match blocking_call(bridge, || store.forget_scratch(rune_db::DocId(db_id))) {
         Ok(OpOutcome::Forget(rune_db::ForgetOutcome::Forgotten)) => {}
+        Ok(OpOutcome::Forget(rune_db::ForgetOutcome::ClaimedByLiveSession)) => {
+            eprintln!("rune: kept blank draft {db_id}: another rune is using it");
+        }
         Ok(other) => {
             eprintln!("rune: forget_scratch failed (non-fatal): unexpected reply {other:?}");
         }

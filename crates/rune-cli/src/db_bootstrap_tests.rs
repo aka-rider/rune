@@ -90,6 +90,43 @@ fn bootstrap_store_only_surfaces_the_degraded_banner() {
 }
 
 #[test]
+fn forget_blank_scratch_keeps_a_draft_claimed_by_a_live_session() {
+    let home = ScratchHome::new("forget-blank-claimed-live");
+    let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");
+
+    let (claiming_bridge, claiming_store) = open_store_at(&home.0);
+    let create_op = claiming_store
+        .create_scratch()
+        .expect("enqueue create_scratch");
+    let db_id = match await_ack(&claiming_bridge, create_op) {
+        OpOutcome::ScratchDocId(id) => id.0,
+        other => panic!("expected a CreateScratch ack, got {other:?}"),
+    };
+    // `claiming_store` is deliberately left running (never shut down) so its
+    // session still reads as alive and still claims `db_id`.
+
+    let (own_bridge, own_store) = open_store_at(&home.0);
+    forget_blank_scratch(&own_bridge, &own_store, db_id);
+    own_store.shutdown();
+
+    let raw =
+        rune_db::open_raw_connection_at_path_for_test(&db_path).expect("open db file directly");
+    let still_present: bool = raw
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE id=?1)",
+            [db_id],
+            |r| r.get(0),
+        )
+        .expect("check document row");
+    assert!(
+        still_present,
+        "a draft claimed by a still-live session must survive forget_blank_scratch"
+    );
+
+    claiming_store.shutdown();
+}
+
+#[test]
 fn bootstrap_untitled_db_drops_a_whitespace_only_dead_session_draft() {
     let home = ScratchHome::new("untitled-whitespace");
     let db_path = db_path_for(Some(&home.0)).expect("db path for a real home");

@@ -138,14 +138,14 @@ pub fn forget_scratch(
     liveness_check: &dyn Fn(i64, &str) -> bool,
 ) -> Result<ForgetOutcome, Error> {
     retry::with_retry(conn, |tx| {
-        let is_scratch: Option<i64> = tx
+        let scratch_row: Option<i64> = tx
             .query_row(
                 "SELECT 1 FROM documents WHERE id=?1 AND path='' AND inode IS NULL",
                 params![doc_id],
                 |r| r.get(0),
             )
             .optional()?;
-        if is_scratch.is_none() {
+        if scratch_row.is_none() {
             return Ok(ForgetOutcome::NotScratch);
         }
 
