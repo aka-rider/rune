@@ -29,3 +29,22 @@ read-only document should still copy the selection to the clipboard (just skip t
 the fuzzer's own `CLIP-OSC52` invariant needs a documented read-only carve-out if that refusal
 is intentional product behavior. Not investigated further — out of scope for the viewport-clamp
 fix this TODO was filed alongside.
+
+## Named drafts left behind on discard
+
+A launch positional that does not exist on disk yet is opened as a named scratch row
+(`bootstrap_new_file` in crates/rune-cli/src/db_bootstrap.rs, `create_named_scratch`). Closing
+it with ^W and answering discard leaves that row in the recovery store, so it is offered back
+on the next launch of the same path. Untitled drafts now go through `Store::forget_scratch` on
+close; named drafts should too once it is decided whether a discarded named draft must still be
+offered back.
+
+## Double adoption of a dead session's draft
+
+Adopting a recovered scratch row at launch claims nothing in `session_documents` until the first
+journal write (see `adopt_scratch_doc` in crates/rune-tui/src/db_ack.rs and `reconstruct_scratch`
+in crates/rune-db/src/scratch.rs). Two launches racing before either journals can both adopt the
+same row. Now that `forget_scratch` can delete a row and SQLite reuses the freed rowid
+(`documents.id` has no AUTOINCREMENT), the loser can journal onto a rowid that was re-minted for
+a different draft. Fix candidate: claim the row in `session_documents` at adoption time, before
+binding.

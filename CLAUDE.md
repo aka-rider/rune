@@ -30,7 +30,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 - **materialize** — the write turning a buffer into the destination `.md`; ⌘S, evict, quit, rename all funnel through it (not "save", "flush" — autosave targets the recovery store).
 - **journal / snapshot** — durable per-document edit stream / content-addressed full-content version (not "undo stack", "backup").
 - **observation / probe** — a recorded disk fact (hash, size, mtime, inode) / the async re-read that classifies sync state (not "stat cache", "poll").
-- **draft** — untitled doc, recovery-backed, no file until named.
+- **draft** — untitled doc, recovery-backed, no file until named; a blank draft is dropped at launch, and a closed draft is forgotten in the store.
 - **pane** — a focusable region of the workspace (Editor, Explorer, Tabs); focus routing keys off it.
 - **snapshot (display)** — the `SyntaxSnapshot` a buffer parses to; distinct from a *document* snapshot in the recovery store. Say which one you mean.
 - **highlight overlay** — a `(Range<usize>, ScopeId)` list from `rune-ts` painted onto cell styles at render time, never emitted as a `SyntaxSpan`; distinct from *snapshot (display)* (the emitted syntax model) and from a *document* snapshot (the recovery store).
