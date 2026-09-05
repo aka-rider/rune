@@ -177,10 +177,6 @@ fn a_create_snapshot_row_id_ack_does_not_bind_a_doc_db() {
     );
 }
 
-/// Closing a draft that was actually bound to a scratch row (a real
-/// `CreateScratch` ack landed, and it carries journaled history) enqueues
-/// `forget_scratch`; once its ack lands the row is gone for good — a fresh
-/// `recoverable_scratch` sweep must never offer it back.
 #[test]
 fn closing_a_bound_draft_enqueues_forget_scratch_and_the_row_is_gone() {
     let mut session = Session::open("/doc.md", "seed");
@@ -235,10 +231,6 @@ fn closing_a_bound_draft_enqueues_forget_scratch_and_the_row_is_gone() {
     }
 }
 
-/// A `forget_scratch` op is `doc_scoped`, so its failure must post an error
-/// message scoped to the (already-closed) document without degrading
-/// recovery for every other open document — the same rule any other
-/// doc-scoped op already follows, now proven for this one specifically.
 #[test]
 fn a_failed_forget_posts_an_error_without_degrading_recovery() {
     let mut session = Session::open("/doc.md", "seed");
@@ -271,9 +263,6 @@ fn a_failed_forget_posts_an_error_without_degrading_recovery() {
     );
 }
 
-/// A draft still in `Replica::Binding` (its `CreateScratch` ack never
-/// landed) has no `db_id` to forget: closing it must enqueue nothing new,
-/// it just loses its own still-pending create op like today.
 #[test]
 fn closing_a_binding_draft_enqueues_no_forget() {
     let mut session = Session::open("/doc.md", "seed");
@@ -296,8 +285,6 @@ fn closing_a_binding_draft_enqueues_no_forget() {
     );
 }
 
-/// Closing a file-backed document is never a scratch row: no forget op is
-/// ever enqueued for it, whatever its own `DocDb` binding looks like.
 #[test]
 fn closing_a_file_backed_document_enqueues_no_forget() {
     let mut session = Session::open("/doc.md", "seed");
@@ -317,8 +304,6 @@ fn closing_a_file_backed_document_enqueues_no_forget() {
     );
 }
 
-/// `ClaimedByLiveSession` means the row survives (another live `rune` still
-/// owns it): the user is told their draft was kept, not silently dropped.
 #[test]
 fn a_claimed_by_live_session_ack_keeps_the_user_informed() {
     let mut session = Session::open("/doc.md", "seed");
