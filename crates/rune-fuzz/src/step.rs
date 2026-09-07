@@ -140,6 +140,7 @@ pub struct StepCtx {
     /// unreachable here, since only `save_atomic` (not `read`) ever
     /// consults the one-shot fault injector.
     pub disk: Option<Vec<u8>>,
+    pub disk_before: Option<Vec<u8>>,
     /// Bytes the pending `save_cmd` was handed at construction, if one is
     /// deferred right now.
     pub pending_save_bytes: Option<Vec<u8>>,

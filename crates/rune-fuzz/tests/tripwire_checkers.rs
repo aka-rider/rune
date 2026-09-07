@@ -125,6 +125,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         find_draft: None,
         replace_draft: None,
         replace_field_focused: false,
+        find_walk_queued: None,
         palette_query: None,
         read_only: rune_tui::document::ReadOnly::No,
         painted: rune_fuzz::snapshot::Painted {

@@ -116,3 +116,13 @@ pub(in crate::generate) static FIND_PANEL_KEYS: &[KeyInput] = &[
 
 pub(in crate::generate) static FIND_CHARS: &[char] =
     &['a', 'e', 'o', 't', 'h', 'n', ' ', '.', '(', '*', '$', '1'];
+
+pub(in crate::generate) const REPLACE_ALL_KEY: KeyInput = KeyInput {
+    code: KeyCode::Enter,
+    mods: SHIFT,
+};
+
+pub(in crate::generate) const PROJECT_REPLACE_KEY_CTRL: KeyInput = KeyInput {
+    code: KeyCode::Char('R'),
+    mods: CTRL,
+};

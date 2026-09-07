@@ -78,3 +78,13 @@ and `GlobalCommand::ToggleReadOnly` is `BarPolicy::LeaveOpen`, so pressing the r
 with the find panel focused consumes the key and changes nothing. Either the toggle should apply
 to the active document regardless of which overlay holds the keyboard (the panel already works on
 a read-only document), or it should say why it refused.
+
+## The fuzzer never sees project search results
+
+`driver/step_exec.rs` drops every `CmdKind::ProjectIndex` and `CmdKind::ProjectQuery` the update
+loop spawns, and the session fixture seeds one file with no project root. So `cluster_find`'s
+Project-scope steps (open the top hit, `⇧⏎` replace-all across files) always run against an empty
+result list, and `FIND-REPLACE-NO-DISK` / `FIND-WALK-DRAINS` hold trivially. Fix candidates: seed a
+small multi-file `Mem` project under a root in `Session::open` and run the index/query cmds inline
+the way `ReadFile` replies are already driven, so a real walk (tab limit, queued loads, evicted
+origin) is reachable from generated sessions.

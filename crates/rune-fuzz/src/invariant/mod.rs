@@ -25,7 +25,7 @@
 //!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`
 //! - `palette` — `PALETTE-FOCUS-STABLE`, `PALETTE-GUARD`
-//! - `find` — `FIND-PREVIEW-PURE`
+//! - `find` — `FIND-PREVIEW-PURE`, `FIND-REPLACE-NO-DISK`, `FIND-WALK-DRAINS`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
 //! - `pane` — `PANE-NO-BLEED`, `OVERLAY-TITLE-EXCLUSIVE`, `LAYOUT-FITS`,
 //!   `LAYOUT-TILES`
@@ -69,7 +69,7 @@ mod wrap;
 pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_cell_sync, cur_id, cur_no_caret_hidden, cur_order};
-pub use find::find_preview_pure;
+pub use find::{find_preview_pure, find_replace_no_disk, find_walk_drains};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use merge::{
     DivergentSaveTracker, RedivergenceTracker, merge_doc_active, merge_key_feedback,
@@ -188,4 +188,6 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| palette_focus_stable(prev, next, ctx))
         .or_else(|| palette_guard(next))
         .or_else(|| find_preview_pure(prev, next, ctx))
+        .or_else(|| find_replace_no_disk(prev, ctx))
+        .or_else(|| find_walk_drains(next))
 }

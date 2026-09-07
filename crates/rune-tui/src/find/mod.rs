@@ -18,6 +18,7 @@ pub(crate) mod history;
 pub(crate) mod keys;
 pub(crate) mod matcher;
 pub(crate) mod project;
+pub(crate) mod project_replace;
 pub(crate) mod replace;
 
 #[cfg(test)]
@@ -43,6 +44,15 @@ mod project_preview_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod project_query_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+pub(crate) mod project_replace_fixture;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod project_replace_limit_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod project_replace_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod project_tests;
@@ -305,8 +315,9 @@ pub(crate) fn close(app: &mut App, restore: bool) {
     if !state.find.draft.trim().is_empty() {
         app.last_find = Some((state.find.draft, state.options));
     }
-    if state.project.is_some() {
+    if let Some(project) = state.project {
         crate::explorer_preview::discard(app);
+        project_replace::abandon(app, project.walk);
     }
     if restore {
         if app.active != state.origin.doc {

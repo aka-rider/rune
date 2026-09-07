@@ -146,6 +146,7 @@ pub(super) fn step_and_check(
 ) -> bool {
     state.steps += 1;
     let step_index = state.steps;
+    let disk_before = state.mem.read(&state.path).ok();
     let is_save_done_ok = tag_delivers_seed_save(&tag, state.seed_doc);
     let publishes_seed_doc = tag_publishes_seed_doc(&tag, state.seed_doc);
     if publishes_seed_doc {
@@ -251,6 +252,7 @@ pub(super) fn step_and_check(
         msg: tag,
         raw: raw_bytes,
         disk,
+        disk_before,
         pending_save_bytes,
         save_newly_parked,
         delivered_save_bytes,

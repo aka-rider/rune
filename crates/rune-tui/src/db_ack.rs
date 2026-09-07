@@ -413,3 +413,7 @@ pub fn bind_loaded_doc(app: &mut App, id: DocumentId, doc_db: DocDb, row_content
 #[cfg(test)]
 #[path = "db_ack_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "db_ack_rebind_tests.rs"]
+mod rebind_tests;

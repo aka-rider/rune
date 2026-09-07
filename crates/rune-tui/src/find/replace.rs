@@ -116,7 +116,10 @@ fn apply(app: &mut App, edits: Vec<Edit>) -> usize {
     if applied { count } else { 0 }
 }
 
-fn collapsed_after_the_last_edit(applied: &[AppliedEdit], ids: &[CursorId]) -> Vec<Cursor> {
+pub(crate) fn collapsed_after_the_last_edit(
+    applied: &[AppliedEdit],
+    ids: &[CursorId],
+) -> Vec<Cursor> {
     let end = applied.first().map_or(0, |edit| edit.end);
     vec![Cursor {
         position: BufferOffset(end),

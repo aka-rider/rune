@@ -100,6 +100,7 @@ pub struct Snapshot {
     pub find_draft: Option<String>,
     pub replace_draft: Option<String>,
     pub replace_field_focused: bool,
+    pub find_walk_queued: Option<usize>,
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`) and reading view (`ReadOnly::Reading`) are both live
@@ -345,6 +346,7 @@ impl Snapshot {
             find_draft: app.find_draft().map(str::to_string),
             replace_draft: app.replace_draft().map(str::to_string),
             replace_field_focused: app.replace_field_focused(),
+            find_walk_queued: app.find_walk_queued(),
             palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,
             painted,

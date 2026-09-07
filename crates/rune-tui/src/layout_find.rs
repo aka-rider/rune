@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::layout::Rect;
 
 use crate::find::{Control, FindState};
@@ -44,6 +46,15 @@ pub(crate) const REPLACE_ROW_CHIPS: [Chip; 2] = [
     },
 ];
 
+pub(crate) fn chip_label(state: &FindState, chip: Chip) -> Cow<'static, str> {
+    match (chip.control, &state.project) {
+        (Control::ReplaceAll, Some(project)) => {
+            Cow::Owned(format!("[All {}]", project.results.len()))
+        }
+        _ => Cow::Borrowed(chip.label),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FindPanelGeometry {
     pub outer: Rect,
@@ -71,7 +82,7 @@ pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPan
     );
     let replace_shown = height == WITH_REPLACE_ROWS;
 
-    let strip_w = chip_strip_width(replace_shown);
+    let strip_w = chip_strip_width(replace_shown, state);
     let chips_fit = outer.width >= strip_w.saturating_add(FIND_PANEL_MIN_BOX_W);
     let frame = if chips_fit {
         Rect::new(
@@ -102,9 +113,9 @@ pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPan
     if chips_fit {
         let x0 = frame.right().saturating_add(1);
         let mut slots = chips.iter_mut();
-        lay_chip_row(&mut slots, &FIND_ROW_CHIPS, x0, find_field.y);
+        lay_chip_row(&mut slots, &FIND_ROW_CHIPS, x0, find_field.y, state);
         if let Some(replace_field) = replace_field {
-            lay_chip_row(&mut slots, &REPLACE_ROW_CHIPS, x0, replace_field.y);
+            lay_chip_row(&mut slots, &REPLACE_ROW_CHIPS, x0, replace_field.y, state);
         }
     }
 
@@ -125,10 +136,11 @@ fn lay_chip_row<'a>(
     row: &[Chip],
     x0: u16,
     y: u16,
+    state: &FindState,
 ) {
     let mut x = x0;
     for chip in row {
-        let width = cells(chip.label);
+        let width = cells(&chip_label(state, *chip));
         if let Some(slot) = slots.next() {
             *slot = Some((*chip, Rect::new(x, y, width, 1)));
         }
@@ -136,16 +148,19 @@ fn lay_chip_row<'a>(
     }
 }
 
-fn chip_row_width(row: &[Chip]) -> u16 {
-    let labels: u16 = row.iter().map(|chip| cells(chip.label)).sum();
+fn chip_row_width(row: &[Chip], state: &FindState) -> u16 {
+    let labels: u16 = row
+        .iter()
+        .map(|chip| cells(&chip_label(state, *chip)))
+        .sum();
     let gaps = u16::try_from(row.len().saturating_sub(1)).unwrap_or(u16::MAX);
     labels.saturating_add(gaps)
 }
 
-fn chip_strip_width(replace_shown: bool) -> u16 {
-    let find_row = chip_row_width(&FIND_ROW_CHIPS);
+fn chip_strip_width(replace_shown: bool, state: &FindState) -> u16 {
+    let find_row = chip_row_width(&FIND_ROW_CHIPS, state);
     let widest = if replace_shown {
-        find_row.max(chip_row_width(&REPLACE_ROW_CHIPS))
+        find_row.max(chip_row_width(&REPLACE_ROW_CHIPS, state))
     } else {
         find_row
     };

@@ -138,6 +138,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         find_draft: None,
         replace_draft: None,
         replace_field_focused: false,
+        find_walk_queued: None,
         palette_query: None,
         read_only: rune_tui::document::ReadOnly::No,
         painted: rune_fuzz::snapshot::Painted {
@@ -183,6 +184,7 @@ pub(crate) fn base_ctx() -> StepCtx {
         msg: MsgTag::Resize(80, 23),
         raw: Vec::new(),
         disk: None,
+        disk_before: None,
         pending_save_bytes: None,
         save_newly_parked: false,
         delivered_save_bytes: None,

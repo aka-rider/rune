@@ -138,6 +138,11 @@ impl App {
             .is_some_and(|state| state.focused && state.focus == crate::find::Control::Replace)
     }
 
+    pub fn find_walk_queued(&self) -> Option<usize> {
+        let walk = self.find()?.project.as_ref()?.walk.as_ref()?;
+        Some(walk.queued.len())
+    }
+
     overlay_get!(pub filesearch, FileSearch, FileSearchState);
     overlay_get_mut!(filesearch_mut, FileSearch, FileSearchState);
     overlay_open!(open_filesearch, FileSearch, FileSearchState);

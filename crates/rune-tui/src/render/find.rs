@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
 use crate::find::{Control, FindState, Scope};
-use crate::layout_find::{Chip, FindPanelGeometry};
+use crate::layout_find::{Chip, FindPanelGeometry, chip_label};
 use crate::render::queryrow::{QueryRow, build_spans};
 use crate::theme::Theme;
 use crate::width::{display_width, truncate_to_width};
@@ -80,6 +80,7 @@ fn draw_rule(frame: &mut Frame, panel_frame: Rect, y: u16, border: Style) {
 }
 
 fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme: &Theme) {
+    let label = chip_label(state, chip);
     let mut spans = match chip.control {
         Control::Scope => scope_spans(state.scope(), theme),
         Control::Case | Control::Word | Control::Regex => {
@@ -89,14 +90,14 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
             } else {
                 theme.chrome.footer_key_inactive
             };
-            vec![Span::styled(chip.label, style)]
+            vec![Span::styled(label, style)]
         }
         Control::Find
         | Control::Replace
         | Control::ReplaceOne
         | Control::ReplaceAll
         | Control::Results => {
-            vec![Span::styled(chip.label, theme.chrome.footer_key)]
+            vec![Span::styled(label, theme.chrome.footer_key)]
         }
     };
     if state.focused && state.focus == chip.control {

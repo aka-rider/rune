@@ -7,7 +7,7 @@ use crate::action::Action;
 
 use super::palette::{
     ESCAPE_KEY, FIND_CHARS, FIND_KEY_CTRL, FIND_PANEL_KEYS, PROJECT_FIND_KEY_CTRL,
-    REPLACE_KEY_CTRL, RESULTS_KEYS,
+    PROJECT_REPLACE_KEY_CTRL, REPLACE_ALL_KEY, REPLACE_KEY_CTRL, RESULTS_KEYS,
 };
 
 fn panel_open() -> impl Strategy<Value = KeyInput> {
@@ -53,8 +53,14 @@ pub(super) fn cluster_find() -> impl Strategy<Value = Vec<Action>> {
                 actions.extend(results);
             }
             if let Some((replacement, keys)) = replace {
-                actions.push(Action::Key(REPLACE_KEY_CTRL));
-                actions.push(Action::Type(replacement));
+                if open == PROJECT_FIND_KEY_CTRL {
+                    actions.push(Action::Key(PROJECT_REPLACE_KEY_CTRL));
+                    actions.push(Action::Type(replacement));
+                    actions.push(Action::Key(REPLACE_ALL_KEY));
+                } else {
+                    actions.push(Action::Key(REPLACE_KEY_CTRL));
+                    actions.push(Action::Type(replacement));
+                }
                 actions.extend(keys);
             }
             actions.push(Action::Key(ESCAPE_KEY));

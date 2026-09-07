@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use crate::app::App;
 use crate::commands::mouse::{WHEEL_ROWS, select_range};
 use crate::document::DocumentId;
+use crate::find::project_replace::{self, Walk};
 use crate::find::{Control, FindState, Origin, Scope, history};
 use crate::listnav::List;
 use crate::messages;
@@ -25,6 +26,7 @@ pub(crate) struct ProjectResults {
     pub list: List,
     pub query_generation: crate::generation::ProjectSearchGen,
     pub pending_center: Option<(PathBuf, usize)>,
+    pub walk: Option<Box<Walk>>,
 }
 
 impl ProjectResults {
@@ -35,6 +37,7 @@ impl ProjectResults {
             list: List { cursor: 0, top: 0 },
             query_generation,
             pending_center: None,
+            walk: None,
         }
     }
 
@@ -80,13 +83,14 @@ pub(crate) fn detach(app: &mut App) {
     let Some(state) = app.find_mut() else {
         return;
     };
-    if state.project.take().is_none() {
+    let Some(project) = state.project.take() else {
         return;
-    }
+    };
     if state.focus == Control::Results {
         state.focus = Control::Find;
     }
     crate::explorer_preview::discard(app);
+    project_replace::abandon(app, project.walk);
 }
 
 pub(crate) fn set_scope(app: &mut App, scope: Scope, effects: &mut Effects) {

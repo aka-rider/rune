@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::db::PendingOp;
+use crate::document::Replica;
 use crate::materialize_ack;
 use crate::runtime::Effects;
 use rune_db::DbEvent;
@@ -154,6 +155,12 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             if let Some(pending) = pending
                 && pending.doc_scoped
             {
+                if pending.issued_version.is_some()
+                    && let Some(doc) = app.doc_mut(pending.doc)
+                    && matches!(doc.replica, Replica::Binding { .. })
+                {
+                    doc.replica = Replica::Detached;
+                }
                 let text = match app.doc(pending.doc) {
                     Some(doc) => format!("{}: {error}", doc.file_name()),
                     None => error,
@@ -181,7 +188,6 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
 mod tests {
     use super::*;
     use crate::db::{Db, DbBridge, DocDb};
-    use crate::document::Replica;
     use rune_core::buffer::Buffer;
     use rune_db::{BlobHash, ClockFn, Store, SyncKind, SyncState, Version};
     use rune_vfs::{Mem, Vfs};

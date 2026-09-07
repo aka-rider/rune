@@ -6,7 +6,7 @@ use crate::clipboard::pbpaste_cmd;
 use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
-use crate::find::{Control, Scope, close, follow, project, replace};
+use crate::find::{Control, FindState, Scope, close, follow, project, project_replace, replace};
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
 use crate::layout_find::FindPanelGeometry;
 use crate::messages;
@@ -48,8 +48,8 @@ fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) 
             (Control::Find, Scope::Project) | (Control::Results, _) => {
                 project::open_hit(app, effects);
             }
-            (Control::Replace | Control::ReplaceOne, _) => replace::replace_current(app),
-            (Control::ReplaceAll, _) => replace::replace_all(app),
+            (Control::Replace | Control::ReplaceOne, _) => replace_one(app, scope, effects),
+            (Control::ReplaceAll, _) => replace_every(app, scope, effects),
             (Control::Scope | Control::Case | Control::Word | Control::Regex, _) => {
                 activate(app, focus, effects);
             }
@@ -59,7 +59,7 @@ fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) 
             (Control::Find, Scope::Project) => project::step_hit(app, false, effects),
             (Control::Results, _) => project::open_hit(app, effects),
             (Control::Replace | Control::ReplaceOne | Control::ReplaceAll, _) => {
-                replace::replace_all(app);
+                replace_every(app, scope, effects);
             }
             (Control::Scope | Control::Case | Control::Word | Control::Regex, _) => {
                 activate(app, focus, effects);
@@ -112,15 +112,32 @@ impl ListKey {
 }
 
 pub(crate) fn activate(app: &mut App, control: Control, effects: &mut Effects) {
+    let Some(scope) = app.find().map(FindState::scope) else {
+        return;
+    };
     match control {
         Control::Find | Control::Replace => focus_control(app, control),
         Control::Scope => project::toggle_scope(app, effects),
         Control::Case => toggle_option(app, |o| &mut o.case_sensitive),
         Control::Word => toggle_option(app, |o| &mut o.whole_word),
         Control::Regex => toggle_option(app, |o| &mut o.regex),
-        Control::ReplaceOne => replace::replace_current(app),
-        Control::ReplaceAll => replace::replace_all(app),
+        Control::ReplaceOne => replace_one(app, scope, effects),
+        Control::ReplaceAll => replace_every(app, scope, effects),
         Control::Results => project::open_hit(app, effects),
+    }
+}
+
+fn replace_one(app: &mut App, scope: Scope, effects: &mut Effects) {
+    match scope {
+        Scope::File => replace::replace_current(app),
+        Scope::Project => project_replace::replace_selected(app, effects),
+    }
+}
+
+fn replace_every(app: &mut App, scope: Scope, effects: &mut Effects) {
+    match scope {
+        Scope::File => replace::replace_all(app),
+        Scope::Project => project_replace::replace_all_project(app, effects),
     }
 }
 

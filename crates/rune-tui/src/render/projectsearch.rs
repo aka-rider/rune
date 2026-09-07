@@ -125,6 +125,7 @@ mod tests {
             list: List { cursor: 0, top: 0 },
             query_generation: crate::generation::ProjectSearchGen::from_raw(1),
             pending_center: None,
+            walk: None,
         }
     }
 
