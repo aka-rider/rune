@@ -329,3 +329,33 @@ fn clip_osc52_ignores_a_key_swallowed_by_an_open_overlay() {
     ctx.raw = Vec::new();
     assert_eq!(clip_osc52(&prev, &ctx), None);
 }
+
+#[test]
+fn clip_osc52_ignores_a_cut_that_a_read_only_document_refused() {
+    let mut prev = base_snapshot("hello world");
+    prev.cursors = vec![selection_cursor(1, 0, 5)];
+    prev.read_only = rune_tui::document::ReadOnly::Always;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Char('x'), sup()),
+        command: Some(Command::Cut),
+    };
+    ctx.raw = Vec::new();
+    assert_eq!(clip_osc52(&prev, &ctx), None);
+}
+
+#[test]
+fn clip_osc52_still_requires_a_copy_on_a_read_only_document() {
+    let mut prev = base_snapshot("hello world");
+    prev.cursors = vec![selection_cursor(1, 0, 5)];
+    prev.read_only = rune_tui::document::ReadOnly::Always;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Char('c'), sup()),
+        command: Some(Command::Copy),
+    };
+    ctx.raw = Vec::new();
+    let v = clip_osc52(&prev, &ctx)
+        .expect("a read-only document still copies, so a missing chunk must trip CLIP-OSC52");
+    assert_eq!(v.id, "CLIP-OSC52");
+}

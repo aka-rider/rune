@@ -93,10 +93,6 @@ fn append_violation(
     ))
 }
 
-/// The panel routes a paste to whichever of its two fields holds the
-/// focus ring, and a chip-focused paste falls back to the Find field; the
-/// snapshot does not record the ring, so exactly one of the two fields must
-/// have grown by the sanitized text while the other stayed put.
 fn find_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
     let sanitized = strip_control(text);
     let into_find = append_violation("find field", &prev.find_draft, &next.find_draft, &sanitized);
@@ -251,6 +247,9 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
         return None;
     };
     if !matches!(cmd, Command::Copy | Command::Cut) {
+        return None;
+    }
+    if *cmd == Command::Cut && prev.read_only != rune_tui::document::ReadOnly::No {
         return None;
     }
     // `ctx.msg.command` is `keymap::resolve(input)` computed unconditionally
