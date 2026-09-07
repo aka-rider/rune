@@ -43,6 +43,8 @@ pub struct ChromeStyles {
     // once, so this stays its own field rather than reusing `selection_bg`.
     pub search_match_bg: Style,
     pub search_current_bg: Style,
+    pub replace_preview_bg: Style,
+    pub replace_preview_current_bg: Style,
     pub selection_match_bg: Style,
     pub bracket_match_bg: Style,
     // A left-column cursor row and an editor text selection can both be on
@@ -100,6 +102,8 @@ impl Theme {
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
             search_current_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.85))),
+            replace_preview_bg: Style::new().bg(c(blend(p.surface0, p.teal, 0.45))),
+            replace_preview_current_bg: Style::new().bg(c(blend(p.surface0, p.teal, 0.85))),
             selection_match_bg: Style::new().bg(c(blend(p.surface0, p.lavender, 0.3))),
             bracket_match_bg: Style::new().bg(c(blend(p.surface0, p.sky, 0.45))),
             row_cursor_bg: Style::new().bg(c(p.surface2)),
@@ -379,6 +383,25 @@ mod tests {
                     hint, other,
                     "selection_match_bg is indistinguishable from {name} (quantized {quantized})"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn a_replacement_preview_is_distinct_from_a_match_highlight_in_both_tints() {
+        for quantized in [false, true] {
+            let chrome = Theme::catppuccin_mocha(quantized).chrome;
+            let preview = chrome.replace_preview_bg.bg;
+            let preview_current = chrome.replace_preview_current_bg.bg;
+            assert!(preview.is_some() && preview_current.is_some());
+            assert_ne!(preview, preview_current, "quantized {quantized}");
+            for (name, other) in [
+                ("search_match_bg", chrome.search_match_bg.bg),
+                ("search_current_bg", chrome.search_current_bg.bg),
+                ("selection_bg", Some(chrome.selection_bg)),
+            ] {
+                assert_ne!(preview, other, "{name} (quantized {quantized})");
+                assert_ne!(preview_current, other, "{name} (quantized {quantized})");
             }
         }
     }

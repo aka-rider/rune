@@ -12,6 +12,7 @@ mod overlay;
 pub mod palette;
 pub mod projectsearch;
 pub mod queryrow;
+mod replace_preview;
 pub mod rowbg;
 mod selection_match;
 pub mod title;
@@ -104,6 +105,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
                 app.theme.chrome.search_current_bg,
             );
         }
+        replace_preview::apply(&mut rows, app, doc, view);
     }
 
     if let Some(state) = app.projectsearch()

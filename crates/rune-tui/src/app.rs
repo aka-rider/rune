@@ -105,6 +105,9 @@ pub struct App {
     pub(crate) search_history: crate::history_persistence::HistoryPersistence,
     pub(crate) next_search_history_gen:
         crate::generation::GenCounter<crate::generation::SearchHistory>,
+    pub(crate) replace_history: crate::history_persistence::HistoryPersistence,
+    pub(crate) next_replace_history_gen:
+        crate::generation::GenCounter<crate::generation::ReplaceHistory>,
     pub(crate) next_palette_gen: crate::generation::GenCounter<crate::generation::Palette>,
     pub(crate) command_history: crate::history_persistence::HistoryPersistence,
     pub should_quit: bool,
@@ -175,6 +178,8 @@ impl App {
             last_find: None,
             search_history: crate::history_persistence::HistoryPersistence::new(),
             next_search_history_gen: crate::generation::GenCounter::default(),
+            replace_history: crate::history_persistence::HistoryPersistence::new(),
+            next_replace_history_gen: crate::generation::GenCounter::default(),
             next_palette_gen: crate::generation::GenCounter::default(),
             command_history: crate::history_persistence::HistoryPersistence::new(),
             should_quit: false,

@@ -147,6 +147,13 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                     result,
                 )
             }
+            crate::runtime::RecentsResult::Replace(result) => {
+                crate::find::history::handle_replace_history_loaded(
+                    app,
+                    crate::generation::ReplaceHistoryGen::from_raw(generation),
+                    result,
+                )
+            }
             crate::runtime::RecentsResult::FileSearch(result) => {
                 crate::filesearch::handle_recents_loaded(
                     app,

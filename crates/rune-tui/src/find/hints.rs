@@ -32,7 +32,21 @@ pub(crate) fn entries(app: &App) -> Vec<HintEntry> {
                 out.push((label, Cow::Borrowed(help), true));
             }
         }
-        Control::Replace | Control::ReplaceOne | Control::ReplaceAll => {
+        Control::Replace => {
+            out.push(row_as(FindCommand::Commit, "replace"));
+            out.push(row_as(FindCommand::Alt, "replace all"));
+            out.push(skip_row());
+            out.push(row(FindCommand::NextControl));
+        }
+        Control::ReplaceOne => {
+            out.push(row_as(FindCommand::Activate, "replace"));
+            out.push(row_as(FindCommand::Alt, "replace all"));
+            out.push(skip_row());
+            out.push(row(FindCommand::NextControl));
+        }
+        Control::ReplaceAll => {
+            out.push(row_as(FindCommand::Activate, "replace all"));
+            out.push(skip_row());
             out.push(row(FindCommand::NextControl));
         }
         Control::Scope => {
@@ -53,4 +67,12 @@ fn row(cmd: FindCommand) -> HintEntry {
 
 fn row_as(cmd: FindCommand, help: &'static str) -> HintEntry {
     (label_for(cmd), Cow::Borrowed(help), true)
+}
+
+fn skip_row() -> HintEntry {
+    (
+        crate::global::label_for(GlobalCommand::SearchNext),
+        Cow::Borrowed("skip"),
+        true,
+    )
 }

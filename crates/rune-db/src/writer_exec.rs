@@ -441,6 +441,15 @@ pub(crate) fn touch_command_name(
     Ok(OpOutcome::None)
 }
 
+pub(crate) fn touch_replace_text(
+    conn: &mut Connection,
+    text: &str,
+    now: SystemTime,
+) -> Result<OpOutcome, Error> {
+    retry::with_retry(conn, |tx| crate::replace_history::touch(tx, text, now))?;
+    Ok(OpOutcome::None)
+}
+
 pub(crate) fn shutdown(
     conn: &mut Connection,
     session_id: SessionId,

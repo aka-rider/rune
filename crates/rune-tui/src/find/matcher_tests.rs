@@ -96,3 +96,72 @@ fn an_empty_or_whitespace_only_query_compiles_and_matches_nothing() {
     assert!(hits("   ", TEXT, "hello   world").is_empty());
     assert!(hits("   ", REGEX, "hello   world").is_empty());
 }
+
+fn replacements(
+    query: &str,
+    options: MatchOptions,
+    hay: &str,
+    replacement: &str,
+) -> Vec<(Range<usize>, String)> {
+    Matcher::compile(query, options)
+        .expect("the pattern compiles")
+        .replacements(hay, replacement)
+}
+
+#[test]
+fn regex_mode_expands_capture_groups_in_the_replacement() {
+    assert_eq!(
+        replacements(r"(\w+)@", REGEX, "bob@ amy@", "$1 at"),
+        vec![(0..4, "bob at".to_string()), (5..9, "amy at".to_string())]
+    );
+    assert_eq!(
+        replacements(r"(?<user>\w+)@", REGEX, "bob@", "${user} costs $$1"),
+        vec![(0..4, "bob costs $1".to_string())]
+    );
+}
+
+#[test]
+fn text_mode_leaves_dollar_sequences_in_the_replacement_verbatim() {
+    assert_eq!(
+        replacements("bob@", TEXT, "bob@ x", "$1 at"),
+        vec![(0..4, "$1 at".to_string())]
+    );
+}
+
+#[test]
+fn replacements_and_hits_agree_on_every_range_and_skip_empty_matches() {
+    let matcher = Matcher::compile("a*", REGEX).expect("compiles");
+    let hay = "baab";
+    let ranges: Vec<Range<usize>> = matcher
+        .replacements(hay, "x")
+        .into_iter()
+        .map(|(range, _)| range)
+        .collect();
+    assert_eq!(ranges, matcher.hits(hay));
+}
+
+#[test]
+fn the_replacement_for_one_hit_sees_the_same_captures_as_the_batch() {
+    let matcher = Matcher::compile(r"\b(\w)(\w*)", REGEX).expect("compiles");
+    let hay = "dog cat";
+    assert_eq!(
+        matcher.replacement_at(hay, &(4..7), "$2$1"),
+        Some("atc".to_string())
+    );
+    assert_eq!(
+        matcher.replacement_at(hay, &(5..7), "$2$1"),
+        None,
+        "a range that is not a hit yields no replacement"
+    );
+}
+
+#[test]
+fn a_blank_query_has_no_replacements() {
+    assert!(replacements("", TEXT, "anything", "x").is_empty());
+    assert_eq!(
+        Matcher::compile("", TEXT)
+            .expect("compiles")
+            .replacement_at("anything", &(0..1), "x"),
+        None
+    );
+}

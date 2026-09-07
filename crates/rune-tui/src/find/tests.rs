@@ -1,5 +1,3 @@
-use ratatui::style::Color;
-
 use super::test_support::*;
 use super::*;
 use crate::commands::test_support::selecting;
@@ -13,18 +11,6 @@ fn footer_row(rows: &[String]) -> &str {
 fn readout_row(app: &mut App) -> String {
     let top = panel_top_row(app);
     grid(app).get(top + 1).cloned().unwrap_or_default()
-}
-
-fn bg_at(app: &mut App, x: u16, y: u16) -> Option<Color> {
-    app.sync_view();
-    let buf = crate::testgrid::draw(app, FRAME_W, FRAME_H);
-    buf.cell((x, y)).and_then(|cell| cell.style().bg)
-}
-
-fn occurrences(row: &str, needle: &str) -> Vec<u16> {
-    row.match_indices(needle)
-        .map(|(byte, _)| row[..byte].chars().count() as u16)
-        .collect()
 }
 
 #[test]

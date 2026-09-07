@@ -90,6 +90,14 @@ impl Store {
         })
     }
 
+    pub fn touch_replace_text(&self, text: &str) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::TouchReplaceText {
+            text: text.to_string(),
+            now,
+        })
+    }
+
     /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
     /// `doc_id` at this session's CURRENT durable journal position, resolved
     /// fresh by the writer thread at execution time (`OpKind::CreateSnapshot`'s

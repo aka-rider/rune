@@ -59,3 +59,22 @@ change, and the find panel's "finish the merge first" refusal now reads its chor
 the rest will rot the same way the day their chord moves. Fix: one chokepoint that formats a
 message's chord from its `GlobalCommand` (or pane command), and tests that assert the label comes
 from the table.
+
+## `replace_history` and `command_history` tables were added in place
+
+`CONSTITUTION.md` names a nullable column as the one schema change that may land under the same
+`rune-vN.db` filename; a new table is supposed to ship as a new file. `command_history` set the
+precedent of appending a `CREATE TABLE IF NOT EXISTS` to `SCHEMA` without a `SCHEMA_VERSION`
+bump, and `replace_history` (the Replace field's own history, same shape as `search_history`)
+followed it, because a bump would strand every unsaved document's recovery journal in the old
+file for the sake of a history table nobody depends on. Decide whether the rule or the precedent
+wins: either the constitution admits "a new table with no foreign keys" as an additive change,
+or both tables move to `rune-v3.db` together with a migration that carries the journals across.
+
+## `^⇧P` is swallowed silently while the find panel has focus
+
+`commands::reading::toggle` returns without a word unless the editor or the palette owns focus,
+and `GlobalCommand::ToggleReadOnly` is `BarPolicy::LeaveOpen`, so pressing the reading-view chord
+with the find panel focused consumes the key and changes nothing. Either the toggle should apply
+to the active document regardless of which overlay holds the keyboard (the panel already works on
+a read-only document), or it should say why it refused.

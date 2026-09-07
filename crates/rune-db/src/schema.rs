@@ -103,6 +103,11 @@ CREATE TABLE IF NOT EXISTS command_history (
 	name         TEXT PRIMARY KEY,
 	last_used_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS replace_history (
+	text         TEXT PRIMARY KEY,
+	last_used_at TEXT NOT NULL
+);
 "#;
 
 pub fn apply(conn: &mut Connection) -> Result<(), Error> {

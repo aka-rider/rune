@@ -139,3 +139,33 @@ fn cluster_highlight_edit_survives_focus_parked_off_editor() {
         );
     }
 }
+
+#[test]
+fn cluster_find_sessions_settle_and_reach_the_replace_field() {
+    let mut runner = TestRunner::default();
+    let mut replaced_at_least_once = false;
+
+    for _ in 0..48 {
+        let tree = cluster_find()
+            .new_tree(&mut runner)
+            .expect("cluster_find strategy generation failed");
+        let actions = tree.current();
+        let typed_into_replace = actions
+            .iter()
+            .position(|action| *action == Action::Key(super::super::palette::REPLACE_KEY_CTRL))
+            .is_some_and(|at| matches!(actions.get(at + 1), Some(Action::Type(_))));
+        replaced_at_least_once |= typed_into_replace;
+
+        let result = driver::run(driver::DOC_PATH, "dog cat dog", &actions);
+
+        assert_eq!(
+            result.violation.as_ref().map(|v| v.id),
+            None,
+            "a find/replace session must settle with no invariant violation: {actions:?}"
+        );
+    }
+    assert!(
+        replaced_at_least_once,
+        "48 samples never typed into the Replace field; the cluster no longer covers replace"
+    );
+}

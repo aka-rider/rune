@@ -125,6 +125,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         projectsearch_query: None,
         find_draft: None,
         replace_draft: None,
+        replace_field_focused: false,
         palette_query: None,
         read_only: rune_tui::document::ReadOnly::No,
         painted: rune_fuzz::snapshot::Painted {
@@ -157,6 +158,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         nav_places: Vec::new(),
         nav_current: 0,
         buffer_len_by_doc: std::collections::BTreeMap::new(),
+        version_by_doc: std::collections::BTreeMap::new(),
     }
 }
 

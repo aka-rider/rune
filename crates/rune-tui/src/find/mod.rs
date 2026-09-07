@@ -17,6 +17,7 @@ pub(crate) mod hints;
 pub(crate) mod history;
 pub(crate) mod keys;
 pub(crate) mod matcher;
+pub(crate) mod replace;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -34,7 +35,10 @@ mod keys_tests;
 mod matcher_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod test_support;
+mod replace_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+pub(crate) mod test_support;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests;
@@ -86,7 +90,7 @@ pub(crate) struct Origin {
 }
 
 impl Origin {
-    fn capture(app: &App) -> Origin {
+    pub(crate) fn capture(app: &App) -> Origin {
         let doc = app.active_doc();
         Origin {
             doc: app.active,
@@ -109,6 +113,7 @@ pub(crate) struct FindState {
     pub matches: Vec<Range<usize>>,
     pub current: Option<usize>,
     pub history_generation: crate::generation::SearchHistoryGen,
+    pub replace_history_generation: crate::generation::ReplaceHistoryGen,
 }
 
 impl FindState {
@@ -155,7 +160,7 @@ impl FindState {
 
 pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
     if app.find().is_some() {
-        refocus(app, expand_replace);
+        refocus(app, expand_replace, effects);
         return;
     }
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
@@ -170,17 +175,14 @@ pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
     let origin = Origin::capture(app);
     let seed = selection_seed(app.active_doc()).unwrap_or_default();
     let history_generation = app.next_search_history_gen.mint();
+    let replace_history_generation = app.next_replace_history_gen.mint();
     app.open_find(
         FindState {
             focused: true,
             options: MatchOptions::default(),
-            focus: if expand_replace {
-                Control::Replace
-            } else {
-                Control::Find
-            },
+            focus: Control::Find,
             find: FieldState::seeded(seed),
-            replace: expand_replace.then(FieldState::default),
+            replace: None,
             pattern: Matcher::compile("", MatchOptions::default()),
             origin,
             doc: app.active,
@@ -188,6 +190,7 @@ pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
             matches: Vec::new(),
             current: None,
             history_generation,
+            replace_history_generation,
         },
         clearance,
     );
@@ -197,26 +200,46 @@ pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
             history_generation,
         ));
     }
+    if expand_replace {
+        expand_replace_field(app, effects);
+    }
     follow::recompute(app);
     follow::follow(app);
 }
 
-fn refocus(app: &mut App, expand_replace: bool) {
+fn refocus(app: &mut App, expand_replace: bool, effects: &mut Effects) {
+    if expand_replace {
+        expand_replace_field(app, effects);
+        return;
+    }
     let Some(state) = app.find_mut() else {
         return;
     };
-    if expand_replace {
-        state.replace.get_or_insert_default();
-        state.focused = true;
-        state.focus = Control::Replace;
-        return;
-    }
     if !state.focused || state.focus != Control::Find {
         state.focused = true;
         state.focus = Control::Find;
         return;
     }
     close(app, false);
+}
+
+fn expand_replace_field(app: &mut App, effects: &mut Effects) {
+    let Some(state) = app.find_mut() else {
+        return;
+    };
+    state.focused = true;
+    state.focus = Control::Replace;
+    if state.replace.is_some() {
+        return;
+    }
+    state.replace = Some(FieldState::default());
+    let generation = state.replace_history_generation;
+    if let Some(db) = app.db.as_ref() {
+        effects.cmds.push(crate::runtime::load_replace_history_cmd(
+            db.store.reader_query(),
+            generation,
+        ));
+    }
 }
 
 fn selection_seed(doc: &Document) -> Option<String> {

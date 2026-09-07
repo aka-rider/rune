@@ -413,18 +413,6 @@ fn typing_in_the_replace_field_never_moves_the_cursor_or_touches_the_buffer() {
 }
 
 #[test]
-fn enter_in_the_replace_field_reports_that_replace_is_not_ready() {
-    let mut app = app_with("dog dog");
-    open_replace(&mut app);
-    type_str(&mut app, "x");
-    press(&mut app, enter());
-    assert_eq!(
-        crate::messages::newest_text(&app),
-        Some("replace is not available yet")
-    );
-}
-
-#[test]
 fn paste_appends_to_the_draft_and_never_touches_the_buffer() {
     let mut app = app_with("hello world");
     open_find(&mut app);

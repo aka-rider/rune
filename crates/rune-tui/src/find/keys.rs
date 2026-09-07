@@ -6,7 +6,7 @@ use crate::clipboard::pbpaste_cmd;
 use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
-use crate::find::{Control, close, follow};
+use crate::find::{Control, close, follow, replace};
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
 use crate::layout_find::FindPanelGeometry;
 use crate::messages;
@@ -45,14 +45,17 @@ fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) 
         FindCommand::Close => close(app, true),
         FindCommand::Commit => match focus {
             Control::Find => follow::advance(app, true),
-            Control::Replace | Control::ReplaceOne | Control::ReplaceAll => replace_not_ready(app),
+            Control::Replace | Control::ReplaceOne => replace::replace_current(app),
+            Control::ReplaceAll => replace::replace_all(app),
             Control::Scope | Control::Case | Control::Word | Control::Regex => {
                 activate(app, focus, effects);
             }
         },
         FindCommand::Alt => match focus {
             Control::Find => follow::advance(app, false),
-            Control::Replace | Control::ReplaceOne | Control::ReplaceAll => replace_not_ready(app),
+            Control::Replace | Control::ReplaceOne | Control::ReplaceAll => {
+                replace::replace_all(app);
+            }
             Control::Scope | Control::Case | Control::Word | Control::Regex => {
                 activate(app, focus, effects);
             }
@@ -81,7 +84,8 @@ pub(crate) fn activate(app: &mut App, control: Control, effects: &mut Effects) {
         Control::Case => toggle_option(app, |o| &mut o.case_sensitive),
         Control::Word => toggle_option(app, |o| &mut o.whole_word),
         Control::Regex => toggle_option(app, |o| &mut o.regex),
-        Control::ReplaceOne | Control::ReplaceAll => replace_not_ready(app),
+        Control::ReplaceOne => replace::replace_current(app),
+        Control::ReplaceAll => replace::replace_all(app),
     }
 }
 
@@ -215,10 +219,6 @@ fn chip_hint(app: &mut App) {
         app,
         format!("press {} to toggle", label_for(FindCommand::Activate)),
     );
-}
-
-fn replace_not_ready(app: &mut App) {
-    messages::info(app, "replace is not available yet");
 }
 
 fn hand_off_to_project_search(app: &mut App, effects: &mut Effects) {

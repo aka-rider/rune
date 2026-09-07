@@ -443,3 +443,26 @@ fn is_duplicate_column_error_requires_the_message_to_name_the_specific_column() 
     assert!(is_duplicate_column_error(&err, "foo"));
     assert!(!is_duplicate_column_error(&err, "bar"));
 }
+
+#[test]
+fn apply_on_a_file_missing_replace_history_creates_it_without_disturbing_other_rows() {
+    let before_replace_history = format!(
+        "{SCHEMA_BEFORE_COMMAND_HISTORY_TABLE}\
+         CREATE TABLE IF NOT EXISTS command_history (name TEXT PRIMARY KEY, last_used_at TEXT NOT NULL);"
+    );
+    let mut conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch(&before_replace_history)
+        .expect("apply the shape missing replace_history");
+    conn.execute(
+        "INSERT INTO search_history(query, last_used_at) VALUES ('hello', 't')",
+        [],
+    )
+    .expect("seed search_history");
+
+    apply(&mut conn).expect("apply creates the missing table");
+    apply(&mut conn).expect("a second apply against an already-reconciled file is a no-op");
+
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count rows") };
+    assert_eq!(count("SELECT COUNT(*) FROM search_history"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM replace_history"), 0);
+}

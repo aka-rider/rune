@@ -138,6 +138,11 @@ impl App {
             .map(|field| field.draft.as_str())
     }
 
+    pub fn replace_field_focused(&self) -> bool {
+        self.find()
+            .is_some_and(|state| state.focused && state.focus == crate::find::Control::Replace)
+    }
+
     overlay_get!(pub filesearch, FileSearch, FileSearchState);
     overlay_get_mut!(filesearch_mut, FileSearch, FileSearchState);
     overlay_open!(open_filesearch, FileSearch, FileSearchState);

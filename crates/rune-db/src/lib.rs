@@ -66,6 +66,7 @@ mod rebind;
 mod rename;
 mod rename_bind;
 mod rename_replace;
+mod replace_history;
 mod retry;
 mod schema;
 mod scratch;

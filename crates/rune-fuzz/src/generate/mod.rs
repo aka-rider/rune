@@ -1,6 +1,7 @@
 mod arb;
 mod cluster;
 mod cluster_cmdpal;
+mod cluster_find;
 mod cluster_input;
 mod cluster_special;
 mod palette;

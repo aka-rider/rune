@@ -306,6 +306,10 @@ pub(crate) enum OpKind {
         name: String,
         now: SystemTime,
     },
+    TouchReplaceText {
+        text: String,
+        now: SystemTime,
+    },
     /// The writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER

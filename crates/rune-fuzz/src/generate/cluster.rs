@@ -23,6 +23,7 @@ pub(super) use super::cluster_special::{
 };
 
 pub(super) use super::cluster_cmdpal::cluster_cmdpal;
+pub(super) use super::cluster_find::cluster_find;
 
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
@@ -47,6 +48,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         1 => cluster_quit_guard().boxed(),
         3 => cluster_merge().boxed(),
         6 => cluster_cmdpal().boxed(),
+        6 => cluster_find().boxed(),
     ]
 }
 

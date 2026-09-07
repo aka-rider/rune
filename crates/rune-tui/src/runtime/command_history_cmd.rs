@@ -22,6 +22,7 @@ fn load(reader: &rune_db::ReaderQuery) -> Result<Vec<String>, CmdError> {
         rune_db::ReaderReply::Pong
         | rune_db::ReaderReply::Blob(_)
         | rune_db::ReaderReply::RecentSearches(_)
+        | rune_db::ReaderReply::RecentReplacements(_)
         | rune_db::ReaderReply::RecentDocuments(_) => {
             Err(CmdError::Refused("unexpected reader reply".to_string()))
         }

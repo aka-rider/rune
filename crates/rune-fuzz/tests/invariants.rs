@@ -37,6 +37,8 @@
 mod clipboard;
 #[path = "invariants/divergent_save.rs"]
 mod divergent_save;
+#[path = "invariants/find.rs"]
+mod find;
 #[path = "invariants/highlight.rs"]
 mod highlight;
 #[path = "invariants/journal.rs"]

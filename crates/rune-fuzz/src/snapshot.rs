@@ -100,6 +100,7 @@ pub struct Snapshot {
     pub projectsearch_query: Option<String>,
     pub find_draft: Option<String>,
     pub replace_draft: Option<String>,
+    pub replace_field_focused: bool,
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`) and reading view (`ReadOnly::Reading`) are both live
@@ -185,6 +186,7 @@ pub struct Snapshot {
     pub nav_places: Vec<(DocumentId, usize, bool)>,
     pub nav_current: usize,
     pub buffer_len_by_doc: BTreeMap<DocumentId, usize>,
+    pub version_by_doc: BTreeMap<DocumentId, u64>,
 }
 
 /// `Snapshot.status`'s builder: the footer's own text, plus the message
@@ -249,6 +251,7 @@ impl Snapshot {
         let mut display_name_by_doc = BTreeMap::new();
         let mut saved_version_by_doc = BTreeMap::new();
         let mut buffer_len_by_doc = BTreeMap::new();
+        let mut version_by_doc = BTreeMap::new();
         for doc_id in doc_ids {
             if let Some(d) = app.doc(doc_id) {
                 dirty_by_doc.insert(doc_id, d.is_dirty());
@@ -256,6 +259,7 @@ impl Snapshot {
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
                 saved_version_by_doc.insert(doc_id, d.saved_version);
                 buffer_len_by_doc.insert(doc_id, d.buffer.content().len());
+                version_by_doc.insert(doc_id, d.buffer.version());
             }
         }
         let nav_places = app
@@ -342,6 +346,7 @@ impl Snapshot {
             projectsearch_query: app.projectsearch().map(|state| state.query.clone()),
             find_draft: app.find_draft().map(str::to_string),
             replace_draft: app.replace_draft().map(str::to_string),
+            replace_field_focused: app.replace_field_focused(),
             palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,
             painted,
@@ -361,6 +366,7 @@ impl Snapshot {
             nav_places,
             nav_current,
             buffer_len_by_doc,
+            version_by_doc,
         }
     }
 }

@@ -1,5 +1,6 @@
 mod palette_cmdpal;
 mod palette_doc;
+mod palette_find;
 mod palette_input;
 
 pub(super) use palette_cmdpal::{
@@ -8,6 +9,7 @@ pub(super) use palette_cmdpal::{
 };
 pub use palette_doc::TYPE_PALETTE;
 pub(super) use palette_doc::{MARKDOWN_FRAGMENTS, PASTE_PALETTE, SEEDS};
+pub(super) use palette_find::{FIND_CHARS, FIND_KEY_CTRL, FIND_PANEL_KEYS, REPLACE_KEY_CTRL};
 pub(super) use palette_input::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_P_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS,

@@ -61,3 +61,22 @@ pub fn load_search_history_cmd(
         })
     })
 }
+
+pub fn load_replace_history_cmd(
+    reader: rune_db::ReaderQuery,
+    generation: crate::generation::ReplaceHistoryGen,
+) -> Cmd {
+    Cmd::search_history(move || {
+        let result = reader
+            .query(rune_db::ReaderRequestKind::RecentReplacements { limit: 200 })
+            .map(|reply| match reply {
+                rune_db::ReaderReply::RecentReplacements(entries) => entries,
+                _ => Vec::new(),
+            })
+            .map_err(CmdError::from);
+        Some(Msg::RecentsLoaded {
+            generation: generation.raw(),
+            result: RecentsResult::Replace(result),
+        })
+    })
+}

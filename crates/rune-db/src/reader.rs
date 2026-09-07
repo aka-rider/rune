@@ -13,6 +13,7 @@ pub enum ReaderRequestKind {
     RecentSearches { limit: u32 },
     RecentDocuments { limit: u32 },
     RecentCommands { limit: u32 },
+    RecentReplacements { limit: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub enum ReaderReply {
     RecentSearches(Vec<String>),
     RecentDocuments(Vec<String>),
     RecentCommands(Vec<String>),
+    RecentReplacements(Vec<String>),
 }
 
 struct Request {
@@ -119,6 +121,9 @@ fn execute(conn: &Connection, kind: ReaderRequestKind) -> Result<ReaderReply, Er
         }
         ReaderRequestKind::RecentCommands { limit } => {
             crate::command_history::recent(conn, limit).map(ReaderReply::RecentCommands)
+        }
+        ReaderRequestKind::RecentReplacements { limit } => {
+            crate::replace_history::recent(conn, limit).map(ReaderReply::RecentReplacements)
         }
     }
 }
@@ -291,6 +296,46 @@ mod tests {
         assert_eq!(
             reply,
             ReaderReply::RecentDocuments(vec!["/doc/b.md".to_string(), "/doc/a.md".to_string()])
+        );
+        handle.shutdown();
+
+        drop(bootstrap);
+    }
+
+    #[test]
+    fn recent_replacements_round_trips_through_the_reader() {
+        let uri = crate::conn::memory_uri();
+        let mut bootstrap =
+            crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(&uri))
+                .expect("bootstrap shared memdb");
+
+        let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        for (i, text) in ["cat", "bird"].into_iter().enumerate() {
+            let tx = bootstrap.transaction().expect("tx");
+            crate::replace_history::touch(
+                &tx,
+                text,
+                base + std::time::Duration::from_secs(i as u64 * 10),
+            )
+            .expect("touch");
+            tx.commit().expect("commit");
+        }
+
+        let handle = spawn(&uri).expect("spawn reader");
+        let reply = handle
+            .query(ReaderRequestKind::RecentReplacements { limit: 10 })
+            .expect("recent replacements");
+        assert_eq!(
+            reply,
+            ReaderReply::RecentReplacements(vec!["bird".to_string(), "cat".to_string()])
+        );
+        let searches = handle
+            .query(ReaderRequestKind::RecentSearches { limit: 10 })
+            .expect("recent searches");
+        assert_eq!(
+            searches,
+            ReaderReply::RecentSearches(Vec::new()),
+            "replace text never leaks into find history"
         );
         handle.shutdown();
 

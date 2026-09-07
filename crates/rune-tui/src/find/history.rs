@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::find::matcher::MatchOptions;
-use crate::find::{Control, FieldState, follow};
+use crate::find::{Control, FieldState, FindState, follow};
 use crate::messages;
 use crate::runtime::CmdError;
 
@@ -9,22 +9,38 @@ pub(crate) fn handle_history_loaded(
     generation: crate::generation::SearchHistoryGen,
     result: Result<Vec<String>, CmdError>,
 ) {
-    let current = app.find().map(|s| s.history_generation);
-    if current != Some(generation) {
+    if app.find().map(|s| s.history_generation) != Some(generation) {
         return;
     }
-    match result {
-        Ok(entries) => {
-            if let Some(state) = app.find_mut() {
-                state.find.history = entries;
-            }
-        }
-        Err(e) => {
-            if let Some(state) = app.find_mut() {
-                state.find.history = Vec::new();
-            }
-            messages::error(app, format!("search history not loaded: {e}"));
-        }
+    land(app, "search", result, |state| Some(&mut state.find));
+}
+
+pub(crate) fn handle_replace_history_loaded(
+    app: &mut App,
+    generation: crate::generation::ReplaceHistoryGen,
+    result: Result<Vec<String>, CmdError>,
+) {
+    if app.find().map(|s| s.replace_history_generation) != Some(generation) {
+        return;
+    }
+    land(app, "replace", result, |state| state.replace.as_mut());
+}
+
+fn land(
+    app: &mut App,
+    noun: &str,
+    result: Result<Vec<String>, CmdError>,
+    field: impl FnOnce(&mut FindState) -> Option<&mut FieldState>,
+) {
+    let (entries, failure) = match result {
+        Ok(entries) => (entries, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    if let Some(field) = app.find_mut().and_then(field) {
+        field.history = entries;
+    }
+    if let Some(e) = failure {
+        messages::error(app, format!("{noun} history not loaded: {e}"));
     }
 }
 
@@ -35,6 +51,18 @@ pub(crate) fn persist_query(app: &mut App, query: &str, options: MatchOptions) {
     });
     if let Some(Err(e)) = result {
         messages::error(app, format!("search history not saved: {e}"));
+    }
+}
+
+pub(crate) fn persist_replacement(app: &mut App, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let result = app.replace_history.touch(app.db.as_ref(), text, |db| {
+        db.store.touch_replace_text(text)
+    });
+    if let Some(Err(e)) = result {
+        messages::error(app, format!("replace history not saved: {e}"));
     }
 }
 
