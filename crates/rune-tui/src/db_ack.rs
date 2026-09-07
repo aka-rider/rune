@@ -20,11 +20,7 @@ pub fn handle_load_ack(
         return;
     }
     let Some(expect_obs) = load_result.saved_obs else {
-        detach_file_binding(app, id);
-        messages::error(
-            app,
-            "crash recovery unavailable for this tab: load returned no baseline observation",
-        );
+        detach_unrecoverable(app, id, "load returned no baseline observation");
         return;
     };
 
@@ -331,6 +327,18 @@ fn bind_document_row(
             pending
         }
     }
+}
+
+pub(crate) fn detach_unrecoverable(app: &mut App, id: DocumentId, reason: impl std::fmt::Display) {
+    detach_file_binding(app, id);
+    let text = match app.doc(id) {
+        Some(doc) => format!(
+            "crash recovery unavailable for {}: {reason}",
+            doc.file_name()
+        ),
+        None => format!("crash recovery unavailable: {reason}"),
+    };
+    messages::error(app, text);
 }
 
 fn detach_file_binding(app: &mut App, id: DocumentId) {

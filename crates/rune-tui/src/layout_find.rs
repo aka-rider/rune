@@ -149,10 +149,10 @@ fn lay_chip_row<'a>(
 }
 
 fn chip_row_width(row: &[Chip], state: &FindState) -> u16 {
-    let labels: u16 = row
+    let labels = row
         .iter()
         .map(|chip| cells(&chip_label(state, *chip)))
-        .sum();
+        .fold(0u16, u16::saturating_add);
     let gaps = u16::try_from(row.len().saturating_sub(1)).unwrap_or(u16::MAX);
     labels.saturating_add(gaps)
 }

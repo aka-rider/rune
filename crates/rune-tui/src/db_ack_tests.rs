@@ -400,7 +400,8 @@ fn a_failed_load_detaches_the_replica_so_later_edits_are_not_buffered_forever() 
     );
     assert_eq!(
         messages::newest_text(&app),
-        Some("doc.md: disk read failed")
+        Some("crash recovery unavailable for doc.md: disk read failed"),
+        "the user must learn that this tab is no longer crash-recoverable"
     );
 
     crate::app::update(

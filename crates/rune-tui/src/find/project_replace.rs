@@ -22,8 +22,10 @@ pub(crate) struct Walk {
     pub replacement: String,
     pub queued: Vec<DocumentId>,
     pub done: usize,
+    pub unmatched: usize,
     pub skipped: usize,
     pub diverged: Vec<String>,
+    pub unrecoverable: Vec<String>,
     pub total: usize,
     pub stopped_at_limit: bool,
 }
@@ -35,8 +37,10 @@ impl Walk {
             replacement,
             queued: Vec::new(),
             done: 0,
+            unmatched: 0,
             skipped: 0,
             diverged: Vec::new(),
+            unrecoverable: Vec::new(),
             total,
             stopped_at_limit: false,
         }
@@ -44,10 +48,12 @@ impl Walk {
 
     fn record(&mut self, outcome: FileOutcome) {
         match outcome {
-            FileOutcome::Applied | FileOutcome::NoMatches => self.done += 1,
-            FileOutcome::ReadOnly | FileOutcome::ReadFailed | FileOutcome::Diverged => {
-                self.skipped += 1;
-            }
+            FileOutcome::Applied => self.done += 1,
+            FileOutcome::NoMatches => self.unmatched += 1,
+            FileOutcome::ReadOnly
+            | FileOutcome::ReadFailed
+            | FileOutcome::Diverged
+            | FileOutcome::Unrecoverable => self.skipped += 1,
             FileOutcome::Queued => {}
             FileOutcome::TabLimit => self.stopped_at_limit = true,
         }
@@ -60,6 +66,7 @@ pub(crate) enum FileOutcome {
     NoMatches,
     ReadOnly,
     Diverged,
+    Unrecoverable,
     Queued,
     ReadFailed,
     TabLimit,
@@ -172,10 +179,7 @@ pub(crate) fn apply_to_document(app: &mut App, id: DocumentId) -> FileOutcome {
         return FileOutcome::ReadFailed;
     };
     if doc.last_sync == Some(rune_db::SyncKind::Diverged) {
-        let name = doc.file_name().to_string();
-        if let Some(walk) = walk_mut(app) {
-            walk.diverged.push(name);
-        }
+        keep_unchanged(app, id, |walk| &mut walk.diverged);
         return FileOutcome::Diverged;
     }
     let cursors_before = doc.cursors.clone();
@@ -218,16 +222,13 @@ pub(crate) fn settle(app: &mut App, effects: &mut Effects) {
     };
     let mut waiting = Vec::new();
     for id in queued {
-        let outcome = match app.doc(id) {
-            None => FileOutcome::ReadFailed,
-            Some(doc) if matches!(doc.replica, Replica::Binding { .. }) => {
-                waiting.push(id);
-                continue;
+        match settled_outcome(app, id) {
+            None => waiting.push(id),
+            Some(outcome) => {
+                if let Some(walk) = walk_mut(app) {
+                    walk.record(outcome);
+                }
             }
-            Some(_) => apply_to_document(app, id),
-        };
-        if let Some(walk) = walk_mut(app) {
-            walk.record(outcome);
         }
     }
     let Some(walk) = walk_mut(app) else {
@@ -236,6 +237,29 @@ pub(crate) fn settle(app: &mut App, effects: &mut Effects) {
     walk.queued = waiting;
     if walk.queued.is_empty() {
         finish(app, effects);
+    }
+}
+
+fn settled_outcome(app: &mut App, id: DocumentId) -> Option<FileOutcome> {
+    let Some(doc) = app.doc(id) else {
+        return Some(FileOutcome::ReadFailed);
+    };
+    if matches!(doc.replica, Replica::Binding { .. }) {
+        return None;
+    }
+    if doc.replica.is_bound() {
+        return Some(apply_to_document(app, id));
+    }
+    keep_unchanged(app, id, |walk| &mut walk.unrecoverable);
+    Some(FileOutcome::Unrecoverable)
+}
+
+fn keep_unchanged(app: &mut App, id: DocumentId, kept: fn(&mut Walk) -> &mut Vec<String>) {
+    let Some(name) = app.doc(id).map(|doc| doc.file_name().to_string()) else {
+        return;
+    };
+    if let Some(walk) = walk_mut(app) {
+        kept(walk).push(name);
     }
 }
 
@@ -277,11 +301,21 @@ fn summary(walk: &Walk, origin_evicted: bool) -> String {
     if walk.skipped > 0 {
         let _ = write!(text, ", {} skipped", walk.skipped);
     }
+    if walk.unmatched > 0 {
+        let _ = write!(text, ", {} already had no matches", walk.unmatched);
+    }
     if !walk.diverged.is_empty() {
         let _ = write!(
             text,
             "; {} kept unchanged: disk changed under recovered edits, merge first",
             walk.diverged.join(", ")
+        );
+    }
+    if !walk.unrecoverable.is_empty() {
+        let _ = write!(
+            text,
+            "; {} kept unchanged: crash recovery unavailable",
+            walk.unrecoverable.join(", ")
         );
     }
     if origin_evicted {

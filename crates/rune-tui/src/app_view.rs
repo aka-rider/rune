@@ -48,10 +48,6 @@ impl App {
             && self.guard.is_none()
             && self.find().is_none();
         self.active_doc_mut().focused = focused;
-        // Not gated on the find panel like `focused` above: the panel's match
-        // navigation drives the document cursor, and a jump into a
-        // concealed element must reveal it even though the caret stays
-        // blurred.
         self.active_doc_mut().reveal_engaged = engaged;
         // `Document` holds no reference to `App`, so `icon_tier` is pushed
         // down onto it here rather than read directly.

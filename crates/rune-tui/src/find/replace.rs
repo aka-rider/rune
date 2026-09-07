@@ -23,11 +23,14 @@ pub(crate) fn replace_current(app: &mut App) {
         select_next_or_report(app);
         return;
     };
-    let Ok(matcher) = &state.pattern else {
-        return;
-    };
     let content = app.active_doc().buffer.content();
-    let Some(insert) = matcher.replacement_at(content, &range, &replacement) else {
+    let insert = state
+        .pattern
+        .as_ref()
+        .ok()
+        .and_then(|matcher| matcher.replacement_at(content, &range, &replacement));
+    let Some(insert) = insert else {
+        messages::info(app, "no match to replace");
         return;
     };
     let query = state.find.draft.clone();

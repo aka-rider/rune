@@ -96,8 +96,6 @@ impl App {
         }
     }
 
-    // Skips a kept, unfocused find panel; only the overlay that owns the
-    // keyboard is closed here.
     pub(crate) fn close_focus_overlays(&mut self, effects: &mut Effects) {
         if self.overlay_owns_focus() {
             self.close_all_overlays(effects);

@@ -25,15 +25,6 @@ fn labeled<C: Copy + 'static>(binding: &Binding<C>, buf: &mut String) -> String 
 
 pub(crate) type HintEntry = (String, Cow<'static, str>, bool);
 
-/// Default-mode hints, contextual per focused pane rather than a blind
-/// `GLOBAL_BINDINGS` walk: a priority-ordered `(label, help, active)` list,
-/// pane-specific chords placed last so they are the first thing width
-/// truncation drops, not the always-available global tail. Read by both
-/// the untruncated renderer and the width-truncated one `draw` uses, so
-/// the two can never disagree about WHAT the hints are, only how many fit.
-/// A surface that captures the keyboard (find panel, file finder, palette)
-/// lists only its own keys: the global chords are not what its keystrokes
-/// reach.
 pub(crate) fn default_hint_entries(app: &App) -> Vec<HintEntry> {
     let mut entries: Vec<HintEntry> = Vec::new();
     let mut label_buf = String::new();

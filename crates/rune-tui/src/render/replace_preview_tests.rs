@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::find::test_support::*;
 use crate::keymap::KeyCode;
 use crate::render::{RowSource, build_rows};
-use crate::width::display_width;
+use ratatui::buffer::CellWidth;
 
 fn preview_for(content: &str, needle: &str, replacement: &str) -> App {
     let mut app = app_with(content);
@@ -150,10 +150,15 @@ fn a_zero_width_joiner_in_the_replacement_never_yields_a_cell_ratatui_would_wide
         .map(|cell| cell.text.as_str())
         .collect();
     assert_eq!(previewed, "\u{200d}ab");
-    for cell in rows.iter().flatten().filter(|c| c.buf_offset.is_some()) {
-        if cell.width == 0 {
-            assert_eq!(display_width(&cell.text), 0, "{:?}", cell.text);
-        }
+    let zero_width: Vec<&str> = rows
+        .iter()
+        .flatten()
+        .filter(|cell| cell.buf_offset.is_some() && cell.width == 0)
+        .map(|cell| cell.text.as_str())
+        .collect();
+    assert_eq!(zero_width, vec!["\u{200d}"]);
+    for text in zero_width {
+        assert_eq!(text.cell_width(), 0, "{text:?}");
     }
 }
 

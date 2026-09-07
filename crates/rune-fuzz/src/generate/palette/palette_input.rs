@@ -263,11 +263,6 @@ pub(in crate::generate) const CTRL_C_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `F2` (`GlobalCommand::FocusTitle`) — reaching `Pane::Title` is what
-/// extends `PANE-NO-BLEED` to cover "typing a filename never touches a
-/// buffer byte". Every subsequent generated character then lands in the
-/// title field instead of the document, which is precisely the property
-/// worth fuzzing.
 pub(in crate::generate) const F2_KEY: KeyInput = KeyInput {
     code: KeyCode::F2,
     mods: Mods::NONE,

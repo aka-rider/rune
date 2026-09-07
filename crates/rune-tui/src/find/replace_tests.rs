@@ -178,6 +178,30 @@ fn enter_in_replace_with_no_current_match_selects_one_before_editing() {
 }
 
 #[test]
+fn enter_in_replace_with_an_invalid_regex_says_no_match_instead_of_swallowing_the_key() {
+    let mut app = app_with("dog [cat]");
+    open_find(&mut app);
+    type_str(&mut app, "[");
+    press(&mut app, key(KeyCode::Char('r'), ALT));
+    assert!(
+        find(&app).pattern.is_err(),
+        "test setup: an unclosed class is an invalid regex"
+    );
+    open_replace(&mut app);
+    type_str(&mut app, "x");
+    let version = app.active_doc().buffer.version();
+
+    press(&mut app, enter());
+
+    assert_eq!(content(&app), "dog [cat]");
+    assert_eq!(app.active_doc().buffer.version(), version);
+    assert_eq!(
+        crate::messages::newest_text(&app),
+        Some("no match to replace")
+    );
+}
+
+#[test]
 fn replace_all_with_nothing_to_replace_says_so() {
     let mut app = app_with("cat");
     open_replace_for(&mut app, "dog", "x");

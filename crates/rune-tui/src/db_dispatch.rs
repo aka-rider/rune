@@ -155,11 +155,13 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             if let Some(pending) = pending
                 && pending.doc_scoped
             {
-                if pending.issued_version.is_some()
-                    && let Some(doc) = app.doc_mut(pending.doc)
-                    && matches!(doc.replica, Replica::Binding { .. })
-                {
-                    doc.replica = Replica::Detached;
+                let failed_load_was_binding = pending.issued_version.is_some()
+                    && app
+                        .doc(pending.doc)
+                        .is_some_and(|doc| matches!(doc.replica, Replica::Binding { .. }));
+                if failed_load_was_binding {
+                    crate::db_ack::detach_unrecoverable(app, pending.doc, &error);
+                    return;
                 }
                 let text = match app.doc(pending.doc) {
                     Some(doc) => format!("{}: {error}", doc.file_name()),

@@ -90,10 +90,6 @@ fn run_if_available(
     }
 }
 
-// `ToggleSearch`'s own arm needs the finder-only half of
-// `App::close_all_overlays` without the find-panel half: pre-closing the panel
-// here would make that arm's own open/close branch always see the panel
-// already closed and reopen it instead of ever closing it.
 fn close_filesearch(app: &mut App, effects: &mut Effects) {
     if app.filesearch().is_some() {
         crate::filesearch::cancel(app, effects);

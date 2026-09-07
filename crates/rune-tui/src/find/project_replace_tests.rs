@@ -215,6 +215,67 @@ fn pressing_all_during_a_walk_reports_replace_in_progress_and_starts_nothing() {
 }
 
 #[test]
+fn a_queued_file_whose_recovered_draft_is_refused_is_left_unchanged_and_named() {
+    let mut fx = fixture(StoreKind::Silent);
+    fx.prepare("dog", "cat");
+    fx.replace_all();
+
+    fx.ack_clean_load(A);
+    fx.ack_load(B, "x", SyncKind::Clean);
+    fx.ack_clean_load(C);
+
+    assert_eq!(fx.content_of(A), "cat one cat");
+    assert_eq!(fx.content_of(B), "a dog here");
+    assert_eq!(fx.content_of(C), "cat and cat");
+    assert_eq!(
+        fx.newest(),
+        "replaced in 2 files, 1 skipped; b.md kept unchanged: crash recovery unavailable"
+    );
+    assert_eq!(fx.app.find_walk_queued(), None);
+}
+
+#[test]
+fn a_queued_file_whose_load_fails_is_left_unchanged_and_named() {
+    let mut fx = fixture(StoreKind::Silent);
+    fx.prepare("dog", "cat");
+    fx.replace_all();
+    let b = fx.doc_for(B).expect("b.md is open");
+    let op_id = fx.pending_load_op(b);
+
+    fx.ack_clean_load(A);
+    crate::app::update(
+        &mut fx.app,
+        Msg::Db(DbEvent::Err {
+            id: op_id,
+            error: "store hiccup".to_string(),
+        }),
+        &mut fx.effects,
+    );
+    fx.ack_clean_load(C);
+
+    assert_eq!(fx.content_of(A), "cat one cat");
+    assert_eq!(fx.content_of(B), "a dog here");
+    assert_eq!(fx.content_of(C), "cat and cat");
+    assert_eq!(
+        fx.newest(),
+        "replaced in 2 files, 1 skipped; b.md kept unchanged: crash recovery unavailable"
+    );
+}
+
+#[test]
+fn pressing_all_again_before_the_results_refresh_counts_only_files_it_edited() {
+    let mut fx = fixture(StoreKind::Absent);
+    fx.prepare("dog", "cat");
+    fx.replace_all();
+    assert_eq!(fx.newest(), "replaced in 3 files");
+
+    fx.replace_all();
+
+    assert_all_replaced(&fx);
+    assert_eq!(fx.newest(), "replaced in 0 files, 3 already had no matches");
+}
+
+#[test]
 fn the_panel_stays_open_and_focused_after_replace_all() {
     let mut fx = fixture(StoreKind::Absent);
     fx.prepare("dog", "cat");
