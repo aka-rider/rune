@@ -367,3 +367,7 @@ fn canonical(cmd: GlobalCommand) -> Option<&'static Binding<GlobalCommand>> {
 #[cfg(test)]
 #[path = "global_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "global_replace_tests.rs"]
+mod replace_tests;
