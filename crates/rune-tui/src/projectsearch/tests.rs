@@ -237,7 +237,6 @@ fn opening_scans_then_batch_reads_exactly_the_indexable_files() {
         .find(|e| e.path == Path::new("/root/notes.md"))
         .expect("notes.md indexed");
     assert_eq!(entry.text, "Hello World");
-    assert_eq!(entry.folded, "hello world");
     assert_eq!(entry.display, "notes.md");
 }
 
@@ -287,7 +286,6 @@ fn a_stale_generation_batch_is_dropped() {
         path: PathBuf::from("/root/ghost.md"),
         display: "ghost.md".to_string(),
         text: "ghost".to_string(),
-        folded: "ghost".to_string(),
         size: 5,
         mtime: std::time::SystemTime::UNIX_EPOCH,
     };

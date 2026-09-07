@@ -151,12 +151,12 @@ mod tests {
         let theirs_bg = Style::default().bg(Color::Red);
         let ours_bg = Style::default().bg(Color::Blue);
 
-        let mut folded = augment_fold(&right_rows, &left_rows, &layout, 0, 0, theirs_bg, 2, 1);
-        assert_eq!(folded.len(), 2, "one right row, one left-virtual row");
+        let mut painted = augment_fold(&right_rows, &left_rows, &layout, 0, 0, theirs_bg, 2, 1);
+        assert_eq!(painted.len(), 2, "one right row, one left-virtual row");
 
         let right_content = "hello\nworld\n";
         paint_backgrounds(
-            &mut folded,
+            &mut painted,
             &alignment,
             right_content,
             |r| r.right_lines.clone(),
@@ -165,19 +165,19 @@ mod tests {
         );
 
         assert_eq!(
-            folded[0][0].style,
+            painted[0][0].style,
             Style::default().patch(ours_bg),
             "the right row's own cell must take the right document's background"
         );
         assert_eq!(
-            folded[1][0].style,
+            painted[1][0].style,
             Style::default().patch(theirs_bg),
             "the left-virtual row must never take the right document's \
              background, even though its cell's raw offset numerically \
              collides with the right row's"
         );
         assert_eq!(
-            folded[1][0].buf_offset, None,
+            painted[1][0].buf_offset, None,
             "a left-virtual cell must carry no buf_offset at all, so no \
              later offset-keyed pass can paint it by accident"
         );

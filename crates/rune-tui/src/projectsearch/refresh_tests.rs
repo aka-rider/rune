@@ -46,10 +46,9 @@ fn reopening_after_an_edit_reindexes_the_new_content() {
     );
     let entry = index.entries.first().expect("one entry");
     assert_eq!(entry.text, "Fresh words");
-    assert_eq!(entry.folded, "fresh words");
     assert_eq!(
         index.corpus_bytes,
-        entry.text.len() + entry.folded.len(),
+        entry.text.len(),
         "replacing an entry keeps the corpus accounting exact"
     );
 }

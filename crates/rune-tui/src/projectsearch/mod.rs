@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::App;
+use crate::find::matcher::{MatchOptions, Matcher, PatternError};
 use crate::pane::Pane;
 use crate::pointer::{MouseInput, MouseKind};
 use crate::runtime::{Effects, Msg, TimerKey, TimerMsgKey};
@@ -218,7 +219,7 @@ pub(crate) fn handle_index_batch(
 }
 
 fn entry_bytes(entry: &index::IndexEntry) -> usize {
-    entry.text.len() + entry.folded.len()
+    entry.text.len()
 }
 
 fn remove_entry(state: &mut ProjectIndexState, path: &Path) -> usize {
@@ -293,6 +294,17 @@ fn dispatch_query(app: &mut App, effects: &mut Effects) {
     else {
         return;
     };
+    let options = MatchOptions {
+        case_sensitive: query.chars().any(char::is_uppercase),
+        ..MatchOptions::default()
+    };
+    let matcher = match Matcher::compile(&query, options) {
+        Ok(matcher) => matcher,
+        Err(PatternError(text)) => {
+            crate::messages::error(app, format!("project search pattern rejected: {text}"));
+            return;
+        }
+    };
     let overrides = gather_overrides(app, &root);
     let generation = app.next_projectsearch_gen.mint();
     let Some(state) = app.projectsearch_mut() else {
@@ -300,7 +312,7 @@ fn dispatch_query(app: &mut App, effects: &mut Effects) {
     };
     state.query_generation = generation;
     effects.cmds.push(crate::runtime::project_query_cmd(
-        entries, overrides, query, generation,
+        entries, overrides, matcher, generation,
     ));
 }
 

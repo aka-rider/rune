@@ -26,6 +26,7 @@ nucleo-matcher = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }

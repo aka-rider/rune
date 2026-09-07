@@ -147,26 +147,6 @@ fn an_all_lowercase_query_matches_case_insensitively() {
 }
 
 #[test]
-fn a_multi_char_folded_scalar_still_matches_and_maps_back_to_text_offsets() {
-    let city = "\u{130}stanbul is big".to_string();
-    let mut app = seeded_app(&[("/root/turkish.md", city.as_bytes())]);
-    let mut effects = Effects::default();
-
-    search(&mut app, "i\u{307}st", &mut effects);
-
-    let state = app.projectsearch().expect("panel open");
-    let hit = state.results.first().expect("the folded form matches");
-    assert_eq!(hit.display, "turkish.md");
-    assert_eq!(hit.first_match, 0);
-    assert_eq!(
-        hit.ranges.first(),
-        Some(&(0..4)),
-        "the range spans the two-byte \u{130} plus \"st\" in the original text"
-    );
-    assert_eq!(hit.line, 1);
-}
-
-#[test]
 fn a_stale_reply_is_dropped() {
     let mut app = seeded_app(&[("/root/a.md", b"needle")]);
     let mut effects = Effects::default();

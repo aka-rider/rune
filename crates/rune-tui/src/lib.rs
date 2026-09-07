@@ -26,6 +26,7 @@ pub mod explorer_search;
 pub(crate) mod field;
 pub(crate) mod fileicons;
 mod filesearch;
+pub(crate) mod find;
 pub mod focus;
 pub mod footer;
 pub(crate) mod footer_hints;

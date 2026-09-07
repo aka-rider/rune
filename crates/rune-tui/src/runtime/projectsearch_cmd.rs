@@ -5,6 +5,7 @@ use rune_vfs::{FileKind, Vfs};
 
 use super::{Cmd, Msg};
 use crate::filesearch::walk;
+use crate::find::matcher::Matcher;
 use crate::projectsearch::index::{
     Fingerprint, IndexEntry, MAX_INDEX_FILE_BYTES, ReadOutcome, is_indexable,
 };
@@ -50,11 +51,11 @@ pub(crate) fn project_read_batch_cmd(
 pub(crate) fn project_query_cmd(
     entries: Vec<Arc<IndexEntry>>,
     overrides: Vec<(PathBuf, String)>,
-    query: String,
+    matcher: Matcher,
     generation: crate::generation::ProjectSearchGen,
 ) -> Cmd {
     Cmd::project_query(move || {
-        let (results, truncated) = run_query(&entries, &overrides, &query);
+        let (results, truncated) = run_query(&entries, &overrides, &matcher);
         Some(Msg::ProjectSearchQueried {
             generation,
             results,
@@ -84,13 +85,11 @@ fn read_one(
     let Ok(text) = String::from_utf8(sighting.bytes) else {
         return ReadOutcome::Skipped(path);
     };
-    let (folded, _) = crate::search::fold_with_map(&text);
     let display = crate::filesearch::display_relative(root, &path);
     ReadOutcome::Indexed(IndexEntry {
         path,
         display,
         text,
-        folded,
         size: stat.size,
         mtime: stat.mtime,
     })

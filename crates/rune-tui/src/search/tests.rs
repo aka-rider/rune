@@ -21,14 +21,6 @@ fn compute_matches_finds_ascii_case_insensitive_hits() {
 }
 
 #[test]
-fn compute_matches_snaps_expanding_fold_to_whole_original_char() {
-    // 'İ' U+0130 folds to two chars ("i\u{0307}") under `to_lowercase`.
-    let haystack = "\u{0130}stanbul";
-    let matches = compute_matches(haystack, "i");
-    assert_eq!(matches, vec![0.."\u{0130}".len()]);
-}
-
-#[test]
 fn compute_matches_finds_hit_after_a_multibyte_char() {
     let haystack = "café needle";
     assert_eq!(compute_matches(haystack, "needle"), vec![6..12]);
@@ -87,7 +79,7 @@ fn concealed_ranges_coalesces_adjacent_substituted_spans() {
 }
 
 #[test]
-fn concealed_ranges_never_includes_identical_folded_text() {
+fn concealed_ranges_never_includes_identical_rendered_text() {
     let content = "**bold**\n";
     let wrap = wrap_for(content);
     let ranges = concealed_ranges(&wrap);
@@ -97,7 +89,7 @@ fn concealed_ranges_never_includes_identical_folded_text() {
     let bold_range = bold_at..bold_at + "bold".len();
     assert!(
         !is_concealed(&ranges, &bold_range),
-        "folded Identical text must not be reported concealed: {:?}",
+        "text rendered identically to its source must not be reported concealed: {:?}",
         ranges
     );
 }

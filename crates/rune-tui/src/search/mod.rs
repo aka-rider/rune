@@ -4,6 +4,7 @@ use rune_syntax::wrap::WrapSnapshot;
 
 use crate::app::App;
 use crate::document::DocumentId;
+use crate::find::matcher::{MatchOptions, Matcher};
 use crate::runtime::{CmdError, Effects};
 
 pub(crate) mod keys;
@@ -107,39 +108,10 @@ pub(crate) fn sync(app: &mut App) {
     }
 }
 
-pub(crate) fn fold_with_map(s: &str) -> (String, Vec<Range<usize>>) {
-    let mut folded = String::new();
-    let mut map = Vec::with_capacity(s.len());
-    for (start, c) in s.char_indices() {
-        let end = start + c.len_utf8();
-        for lc in c.to_lowercase() {
-            folded.push(lc);
-            for _ in 0..lc.len_utf8() {
-                map.push(start..end);
-            }
-        }
-    }
-    (folded, map)
-}
-
 pub(crate) fn compute_matches(haystack: &str, query: &str) -> Vec<Range<usize>> {
-    if query.trim().is_empty() {
-        return Vec::new();
-    }
-    let (folded_hay, map) = fold_with_map(haystack);
-    let folded_query: String = query.chars().flat_map(char::to_lowercase).collect();
-    if folded_query.is_empty() {
-        return Vec::new();
-    }
-    folded_hay
-        .match_indices(&folded_query)
-        .filter_map(|(s, matched)| {
-            let e = s + matched.len();
-            let start = map.get(s)?.start;
-            let end = map.get(e - 1)?.end;
-            Some(start..end)
-        })
-        .collect()
+    Matcher::compile(query, MatchOptions::default())
+        .map(|matcher| matcher.hits(haystack))
+        .unwrap_or_default()
 }
 
 pub(crate) fn concealed_ranges(wrap: &WrapSnapshot) -> Vec<Range<usize>> {

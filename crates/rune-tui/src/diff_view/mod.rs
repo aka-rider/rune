@@ -112,7 +112,7 @@ pub fn sync(app: &mut App) {
         .unwrap_or_default();
     let deadline = Some(app.clock.now() + INTRALINE_BUDGET);
     let area = app.frame_area();
-    let folded = crate::layout::geometry(area, app).diff_left.is_none();
+    let left_collapsed = crate::layout::geometry(area, app).diff_left.is_none();
 
     let Some(diff) = app.diff.as_mut() else {
         return;
@@ -132,7 +132,7 @@ pub fn sync(app: &mut App) {
         .map(|v| rows::line_heights(&v.wrap))
         .unwrap_or_default();
     let layout = rows::layout_rows(&diff.alignment, &left_heights, &right_heights);
-    diff.left.viewport.scroll_row = if folded {
+    diff.left.viewport.scroll_row = if left_collapsed {
         let plan = rows::plan_fold(&layout, right_scroll.0, right_height);
         let left_scroll = plan
             .iter()

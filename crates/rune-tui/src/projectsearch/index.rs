@@ -17,7 +17,6 @@ pub struct IndexEntry {
     pub path: PathBuf,
     pub display: String,
     pub text: String,
-    pub folded: String,
     pub size: u64,
     pub mtime: SystemTime,
 }
@@ -48,7 +47,7 @@ pub(crate) fn is_indexable(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return true;
     };
-    let folded = ext.to_ascii_lowercase();
-    !BINARY_EXTENSIONS.contains(&folded.as_str())
-        && !rune_image::decode::extensions().contains(&folded.as_str())
+    let lowercased = ext.to_ascii_lowercase();
+    !BINARY_EXTENSIONS.contains(&lowercased.as_str())
+        && !rune_image::decode::extensions().contains(&lowercased.as_str())
 }
