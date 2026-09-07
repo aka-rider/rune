@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
-use crate::find::{Control, FindState};
+use crate::find::{Control, FindState, Scope};
 use crate::layout_find::{Chip, FindPanelGeometry};
 use crate::render::queryrow::{QueryRow, build_spans};
 use crate::theme::Theme;
@@ -27,7 +27,7 @@ pub fn draw(app: &App, panel: &FindPanelGeometry, frame: &mut Frame) {
         .title(" Find ");
     frame.render_widget(block, panel.frame);
 
-    let readout = readout(state, theme);
+    let readout = readout(app, state, theme);
     draw_field(
         frame,
         panel.find_field,
@@ -81,7 +81,7 @@ fn draw_rule(frame: &mut Frame, panel_frame: Rect, y: u16, border: Style) {
 
 fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme: &Theme) {
     let mut spans = match chip.control {
-        Control::Scope => scope_spans(theme),
+        Control::Scope => scope_spans(state.scope(), theme),
         Control::Case | Control::Word | Control::Regex => {
             let on = state.option(chip.control).is_some_and(|(_, on)| on);
             let style = if on {
@@ -91,7 +91,11 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
             };
             vec![Span::styled(chip.label, style)]
         }
-        Control::Find | Control::Replace | Control::ReplaceOne | Control::ReplaceAll => {
+        Control::Find
+        | Control::Replace
+        | Control::ReplaceOne
+        | Control::ReplaceAll
+        | Control::Results => {
             vec![Span::styled(chip.label, theme.chrome.footer_key)]
         }
     };
@@ -103,24 +107,34 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
     frame.render_widget(Paragraph::new(Line::from(spans)), rect);
 }
 
-fn scope_spans(theme: &Theme) -> Vec<Span<'static>> {
+fn scope_spans(scope: Scope, theme: &Theme) -> Vec<Span<'static>> {
+    let (file, project) = match scope {
+        Scope::File => (theme.chrome.footer_key, theme.chrome.footer_key_inactive),
+        Scope::Project => (theme.chrome.footer_key_inactive, theme.chrome.footer_key),
+    };
     vec![
         Span::styled("[", theme.chrome.footer_key_inactive),
-        Span::styled("File", theme.chrome.footer_key),
-        Span::styled("|Project]", theme.chrome.footer_key_inactive),
+        Span::styled("File", file),
+        Span::styled("|", theme.chrome.footer_key_inactive),
+        Span::styled("Project", project),
+        Span::styled("]", theme.chrome.footer_key_inactive),
     ]
 }
 
-fn readout(state: &FindState, theme: &Theme) -> Option<(String, Style)> {
-    let text = match (&state.pattern, state.current, state.matches.len()) {
-        (Err(error), _, _) => {
-            let flat: Vec<&str> = error.0.split_whitespace().collect();
-            return Some((flat.join(" "), theme.chrome.error));
-        }
-        (Ok(_), Some(current), count) => format!("{}/{count}", current.saturating_add(1)),
-        (Ok(_), None, count) if count > 0 => count.to_string(),
-        (Ok(_), None, _) if !state.find.draft.trim().is_empty() => "no matches".to_string(),
-        (Ok(_), None, _) => return None,
+fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style)> {
+    if let Err(error) = &state.pattern {
+        let flat: Vec<&str> = error.0.split_whitespace().collect();
+        return Some((flat.join(" "), theme.chrome.error));
+    }
+    if state.project.is_some() {
+        return crate::find::project::readout_text(app, state)
+            .map(|text| (text, theme.chrome.title_text));
+    }
+    let text = match (state.current, state.matches.len()) {
+        (Some(current), count) => format!("{}/{count}", current.saturating_add(1)),
+        (None, count) if count > 0 => count.to_string(),
+        (None, _) if !state.find.draft.trim().is_empty() => "no matches".to_string(),
+        (None, _) => return None,
     };
     Some((text, theme.chrome.title_text))
 }

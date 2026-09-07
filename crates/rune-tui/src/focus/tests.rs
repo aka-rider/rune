@@ -19,7 +19,12 @@ fn target_checks_the_find_panel_before_falling_back_to_the_pane() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
     assert_eq!(target(&app), FocusTarget::Editor);
 
-    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        false,
+        &mut crate::runtime::Effects::default(),
+    );
     assert_eq!(target(&app), FocusTarget::Find);
 
     crate::find::close(&mut app, false);

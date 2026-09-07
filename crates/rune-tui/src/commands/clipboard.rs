@@ -91,7 +91,6 @@ pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Eff
     match crate::focus::target(app) {
         crate::focus::FocusTarget::Find => crate::find::keys::paste(app, text),
         crate::focus::FocusTarget::FileSearch => crate::filesearch::keys::paste(app, text, effects),
-        crate::focus::FocusTarget::ProjectSearch => crate::projectsearch::keys::paste(app, text),
         crate::focus::FocusTarget::Palette => crate::palette::keys::paste(app, text),
         crate::focus::FocusTarget::Explorer
         | crate::focus::FocusTarget::Tabs
@@ -338,7 +337,12 @@ mod tests {
         use crate::runtime::Msg;
 
         let mut app = app_with("ac", 1);
-        crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+        crate::find::open(
+            &mut app,
+            crate::find::Scope::File,
+            false,
+            &mut crate::runtime::Effects::default(),
+        );
         let id = app.active;
         let before = app.doc(id).unwrap().buffer.content().to_string();
 

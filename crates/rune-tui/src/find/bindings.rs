@@ -16,6 +16,10 @@ pub enum FindCommand {
     ToggleRegex,
     Up,
     Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
 }
 
 const SHIFT: Mods = Mods {
@@ -115,6 +119,30 @@ pub const FIND_BINDINGS: &[Binding<FindCommand>] = &[
         key: KeyPattern::new(KeyCode::Down, Mods::NONE),
         cmd: FindCommand::Down,
         help: "newer",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::PageUp, Mods::NONE),
+        cmd: FindCommand::PageUp,
+        help: "results page up",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::PageDown, Mods::NONE),
+        cmd: FindCommand::PageDown,
+        help: "results page down",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Home, Mods::NONE),
+        cmd: FindCommand::Home,
+        help: "first result",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::End, Mods::NONE),
+        cmd: FindCommand::End,
+        help: "last result",
         secondary: false,
     },
 ];

@@ -98,10 +98,7 @@ pub fn overlay_title_exclusive(next: &Snapshot) -> Option<Violation> {
 /// `FocusTarget` must be classified here rather than silently defaulting.
 fn owns_keystroke(target: FocusTarget) -> bool {
     match target {
-        FocusTarget::Find
-        | FocusTarget::FileSearch
-        | FocusTarget::ProjectSearch
-        | FocusTarget::Palette => true,
+        FocusTarget::Find | FocusTarget::FileSearch | FocusTarget::Palette => true,
         FocusTarget::Explorer
         | FocusTarget::Tabs
         | FocusTarget::Editor

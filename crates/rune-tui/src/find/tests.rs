@@ -292,7 +292,7 @@ fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
 }
 
 #[test]
-fn the_scope_chip_hands_the_query_to_project_search() {
+fn the_scope_chip_switches_the_open_panel_to_project_scope_and_keeps_the_query() {
     let mut app = app_with("hello");
     app.set_root(std::path::PathBuf::from("/root"));
     open_find(&mut app);
@@ -301,11 +301,10 @@ fn the_scope_chip_hands_the_query_to_project_search() {
     assert_eq!(find(&app).focus, Control::Scope);
     press(&mut app, space());
 
-    assert!(app.find().is_none());
-    assert_eq!(
-        app.projectsearch().map(|state| state.query.as_str()),
-        Some("hel")
-    );
+    assert_eq!(find(&app).scope(), Scope::Project);
+    assert!(find(&app).focused);
+    assert_eq!(find(&app).find.draft, "hel");
+    assert_eq!(find(&app).control_ring().last(), Some(&Control::Results));
 }
 
 #[test]

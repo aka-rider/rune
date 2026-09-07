@@ -49,4 +49,16 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     ),
     row(FindCommand::Up, "recall older history", "history"),
     row(FindCommand::Down, "recall newer history", "newer"),
+    row(
+        FindCommand::PageUp,
+        "go up a page of results",
+        "results page up",
+    ),
+    row(
+        FindCommand::PageDown,
+        "go down a page of results",
+        "results page down",
+    ),
+    row(FindCommand::Home, "go to first result", "first result"),
+    row(FindCommand::End, "go to last result", "last result"),
 ];

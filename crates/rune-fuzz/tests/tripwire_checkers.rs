@@ -122,7 +122,6 @@ fn base_snapshot(content: &str) -> Snapshot {
         title_cursor: collapsed_cursor(1, 0),
         title_window: 0..0,
         filesearch_query: None,
-        projectsearch_query: None,
         find_draft: None,
         replace_draft: None,
         replace_field_focused: false,

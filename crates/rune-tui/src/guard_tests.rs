@@ -353,7 +353,12 @@ fn force_save_bypasses_not_dirty() {
 fn an_unfocused_find_panel_survives_a_guard_raise() {
     let mut app = app();
     let doc = app.active;
-    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        false,
+        &mut crate::runtime::Effects::default(),
+    );
     crate::find::unfocus(&mut app);
 
     assert_eq!(
@@ -403,7 +408,12 @@ fn discarding_the_last_non_empty_untitled_draft_mints_untitled_one() {
 fn a_focused_find_panel_closes_on_a_guard_raise() {
     let mut app = app();
     let doc = app.active;
-    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        false,
+        &mut crate::runtime::Effects::default(),
+    );
     assert!(app.find().expect("the panel is open").focused);
 
     assert_eq!(

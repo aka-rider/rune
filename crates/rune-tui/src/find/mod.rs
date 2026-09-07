@@ -17,6 +17,7 @@ pub(crate) mod hints;
 pub(crate) mod history;
 pub(crate) mod keys;
 pub(crate) mod matcher;
+pub(crate) mod project;
 pub(crate) mod replace;
 
 #[cfg(test)]
@@ -35,6 +36,18 @@ mod keys_tests;
 mod matcher_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod project_index_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod project_preview_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod project_query_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod project_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod replace_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -42,6 +55,12 @@ pub(crate) mod test_support;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scope {
+    File,
+    Project,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Control {
@@ -53,6 +72,7 @@ pub(crate) enum Control {
     Replace,
     ReplaceOne,
     ReplaceAll,
+    Results,
 }
 
 impl Control {
@@ -112,11 +132,20 @@ pub(crate) struct FindState {
     pub buffer_version: u64,
     pub matches: Vec<Range<usize>>,
     pub current: Option<usize>,
+    pub project: Option<project::ProjectResults>,
     pub history_generation: crate::generation::SearchHistoryGen,
     pub replace_history_generation: crate::generation::ReplaceHistoryGen,
 }
 
 impl FindState {
+    pub(crate) fn scope(&self) -> Scope {
+        if self.project.is_some() {
+            Scope::Project
+        } else {
+            Scope::File
+        }
+    }
+
     pub(crate) fn focused_field_mut(&mut self) -> Option<&mut FieldState> {
         match self.focus {
             Control::Find => Some(&mut self.find),
@@ -126,7 +155,8 @@ impl FindState {
             | Control::Word
             | Control::Regex
             | Control::ReplaceOne
-            | Control::ReplaceAll => None,
+            | Control::ReplaceAll
+            | Control::Results => None,
         }
     }
 
@@ -141,6 +171,9 @@ impl FindState {
         if self.replace.is_some() {
             ring.extend([Control::Replace, Control::ReplaceOne, Control::ReplaceAll]);
         }
+        if self.project.is_some() {
+            ring.push(Control::Results);
+        }
         ring
     }
 
@@ -153,14 +186,15 @@ impl FindState {
             | Control::Scope
             | Control::Replace
             | Control::ReplaceOne
-            | Control::ReplaceAll => None,
+            | Control::ReplaceAll
+            | Control::Results => None,
         }
     }
 }
 
-pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
+pub(crate) fn open(app: &mut App, scope: Scope, expand_replace: bool, effects: &mut Effects) {
     if app.find().is_some() {
-        refocus(app, expand_replace, effects);
+        refocus(app, scope, expand_replace, effects);
         return;
     }
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
@@ -189,6 +223,7 @@ pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
             buffer_version: app.active_doc().buffer.version(),
             matches: Vec::new(),
             current: None,
+            project: None,
             history_generation,
             replace_history_generation,
         },
@@ -200,14 +235,23 @@ pub(crate) fn open(app: &mut App, expand_replace: bool, effects: &mut Effects) {
             history_generation,
         ));
     }
+    if scope == Scope::Project {
+        project::attach(app, effects);
+    }
     if expand_replace {
         expand_replace_field(app, effects);
     }
-    follow::recompute(app);
-    follow::follow(app);
+    requery(app);
 }
 
-fn refocus(app: &mut App, expand_replace: bool, effects: &mut Effects) {
+fn refocus(app: &mut App, scope: Scope, expand_replace: bool, effects: &mut Effects) {
+    let Some(current) = app.find().map(FindState::scope) else {
+        return;
+    };
+    let switched = current != scope;
+    if switched {
+        project::set_scope(app, scope, effects);
+    }
     if expand_replace {
         expand_replace_field(app, effects);
         return;
@@ -215,12 +259,18 @@ fn refocus(app: &mut App, expand_replace: bool, effects: &mut Effects) {
     let Some(state) = app.find_mut() else {
         return;
     };
-    if !state.focused || state.focus != Control::Find {
+    if switched || !state.focused || state.focus != Control::Find {
         state.focused = true;
         state.focus = Control::Find;
         return;
     }
     close(app, false);
+}
+
+pub(crate) fn requery(app: &mut App) {
+    follow::recompute(app);
+    follow::follow(app);
+    project::restart_debounce(app);
 }
 
 fn expand_replace_field(app: &mut App, effects: &mut Effects) {
@@ -255,7 +305,13 @@ pub(crate) fn close(app: &mut App, restore: bool) {
     if !state.find.draft.trim().is_empty() {
         app.last_find = Some((state.find.draft, state.options));
     }
+    if state.project.is_some() {
+        crate::explorer_preview::discard(app);
+    }
     if restore {
+        if app.active != state.origin.doc {
+            crate::workspace::switch_to(app, state.origin.doc);
+        }
         restore_origin(app, &state.origin);
     }
 }

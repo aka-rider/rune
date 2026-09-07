@@ -9,7 +9,6 @@ use crate::filesearch::keys::FILESEARCH_BINDINGS;
 use crate::global::GLOBAL_BINDINGS;
 use crate::keymap::editor_bindings::EDITOR_BINDINGS;
 use crate::opentabs::TABS_BINDINGS;
-use crate::projectsearch::keys::PROJECTSEARCH_BINDINGS;
 
 use super::rows;
 use super::*;
@@ -81,19 +80,6 @@ fn every_filesearch_binding_maps_to_exactly_one_registry_row() {
             row_count_for(id),
             1,
             "filesearch binding {:?}",
-            binding.help
-        );
-    }
-}
-
-#[test]
-fn every_projectsearch_binding_maps_to_exactly_one_registry_row() {
-    for binding in PROJECTSEARCH_BINDINGS {
-        let id = rows::pane::adapt_projectsearch(binding.cmd);
-        assert_eq!(
-            row_count_for(id),
-            1,
-            "projectsearch binding {:?}",
             binding.help
         );
     }

@@ -10,7 +10,6 @@ pub enum FocusTarget {
     Title,
     Find,
     FileSearch,
-    ProjectSearch,
     Palette,
     Messages,
 }
@@ -29,7 +28,6 @@ pub fn target(app: &App) -> FocusTarget {
     match &app.overlay {
         crate::overlay::Overlay::Find(state) if state.focused => FocusTarget::Find,
         crate::overlay::Overlay::FileSearch(_) => FocusTarget::FileSearch,
-        crate::overlay::Overlay::ProjectSearch(_) => FocusTarget::ProjectSearch,
         crate::overlay::Overlay::Palette(_) => FocusTarget::Palette,
         _ => from_pane(app.focus()),
     }

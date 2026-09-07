@@ -127,11 +127,6 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         return;
     }
 
-    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.projectsearch().is_some() {
-        handle_projectsearch_click(app, geo.explorer_inner, input, effects);
-        return;
-    }
-
     if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.palette().is_some() {
         let inside = geo.palette.is_some_and(|rect| {
             rect.contains(ratatui::layout::Position::new(input.column, input.row))
@@ -171,8 +166,8 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         Some(Pane::Explorer) if app.filesearch().is_some() => {
             filesearch::mouse(app, input, effects)
         }
-        Some(Pane::Explorer) if app.projectsearch().is_some() => {
-            crate::projectsearch::mouse(app, input, effects)
+        Some(Pane::Explorer) if crate::find::project::active(app) => {
+            crate::find::project::mouse(app, geo.explorer_inner, input, effects)
         }
         Some(Pane::Explorer) => explorer_mouse::mouse(app, input, effects),
         Some(Pane::Tabs) => opentabs::mouse::mouse(app, input, effects),
@@ -210,24 +205,6 @@ fn handle_filesearch_click(
         return;
     };
     filesearch::click_row(app, visible_row as usize, effects);
-}
-
-fn handle_projectsearch_click(
-    app: &mut App,
-    rect: ratatui::layout::Rect,
-    input: MouseInput,
-    effects: &mut Effects,
-) {
-    let point = ratatui::layout::Position::new(input.column, input.row);
-    if !rect.contains(point) {
-        crate::projectsearch::cancel(app, effects);
-        return;
-    }
-    let row_in_area = input.row.saturating_sub(rect.y);
-    let Some(visible_row) = row_in_area.checked_sub(1) else {
-        return;
-    };
-    crate::projectsearch::click_row(app, visible_row as usize, effects);
 }
 
 fn handle_palette_down(

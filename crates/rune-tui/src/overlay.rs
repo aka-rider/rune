@@ -3,7 +3,6 @@ use crate::filesearch::FileSearchState;
 use crate::find::FindState;
 use crate::palette::PaletteState;
 use crate::pane::Pane;
-use crate::projectsearch::ProjectSearchState;
 use crate::runtime::Effects;
 
 #[derive(Default)]
@@ -12,7 +11,6 @@ pub(crate) enum Overlay {
     None,
     Find(FindState),
     FileSearch(FileSearchState),
-    ProjectSearch(ProjectSearchState),
     Palette(PaletteState),
     ExplorerFind(String),
 }
@@ -93,9 +91,6 @@ impl App {
         if self.filesearch().is_some() {
             crate::filesearch::cancel(self, effects);
         }
-        if self.projectsearch().is_some() {
-            crate::projectsearch::cancel(self, effects);
-        }
         if self.palette().is_some() {
             crate::palette::close(self);
         }
@@ -112,13 +107,13 @@ impl App {
     // The finder and project search both paint over the left column and
     // force it visible; layout and the splitter treat them identically.
     pub(crate) fn left_column_overlay(&self) -> bool {
-        self.filesearch().is_some() || self.projectsearch().is_some()
+        self.filesearch().is_some() || crate::find::project::active(self)
     }
 
     pub(crate) fn overlay_owns_focus(&self) -> bool {
         match &self.overlay {
             Overlay::Find(state) => state.focused,
-            Overlay::FileSearch(_) | Overlay::ProjectSearch(_) | Overlay::Palette(_) => true,
+            Overlay::FileSearch(_) | Overlay::Palette(_) => true,
             Overlay::None | Overlay::ExplorerFind(_) => false,
         }
     }
@@ -147,11 +142,6 @@ impl App {
     overlay_get_mut!(filesearch_mut, FileSearch, FileSearchState);
     overlay_open!(open_filesearch, FileSearch, FileSearchState);
     overlay_close!(close_filesearch, FileSearch);
-
-    overlay_get!(pub projectsearch, ProjectSearch, ProjectSearchState);
-    overlay_get_mut!(projectsearch_mut, ProjectSearch, ProjectSearchState);
-    overlay_open!(open_projectsearch, ProjectSearch, ProjectSearchState);
-    overlay_close!(close_projectsearch, ProjectSearch);
 
     overlay_get!(pub palette, Palette, PaletteState);
     overlay_get_mut!(palette_mut, Palette, PaletteState);

@@ -102,7 +102,12 @@ mod tests {
         app.sync_view();
         assert!(app.active_doc().focused, "editor is focused before ^F");
 
-        crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+        crate::find::open(
+            &mut app,
+            crate::find::Scope::File,
+            false,
+            &mut crate::runtime::Effects::default(),
+        );
         app.sync_view();
 
         assert!(

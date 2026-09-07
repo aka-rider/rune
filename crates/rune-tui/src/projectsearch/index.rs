@@ -37,7 +37,6 @@ pub struct ProjectIndexState {
     pub build_generation: crate::generation::ProjectIndexGen,
     pub truncated: bool,
     pub building: bool,
-    pub last_query: String,
     pub corpus_bytes: usize,
     pub corpus_cap: usize,
     pub spinner_frame: u8,

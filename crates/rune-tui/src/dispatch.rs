@@ -55,7 +55,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 crate::projectsearch::handle_spinner_tick(app, generation)
             }
             TimerMsgKey::ProjectSearchDebounce => {
-                crate::projectsearch::handle_debounce(app, effects)
+                crate::find::project::handle_debounce(app, effects)
             }
             TimerMsgKey::MessagesCollapse => {
                 let generation = crate::generation::MessagesCollapseGen::from_raw(generation);
@@ -184,7 +184,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             generation,
             results,
             truncated,
-        } => crate::projectsearch::handle_queried(app, generation, results, truncated),
+        } => crate::find::project::handle_queried(app, generation, results, truncated, effects),
         Msg::KeyboardFlagsReport(flags) => handle_keyboard_flags_report(app, flags),
         Msg::Quit => {
             app.should_quit = true;
@@ -314,7 +314,6 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     let _ = match crate::focus::target(app) {
         FocusTarget::Find => crate::find::keys::handle_key(app, key, effects),
         FocusTarget::FileSearch => crate::filesearch::keys::handle_key(app, key, effects),
-        FocusTarget::ProjectSearch => crate::projectsearch::keys::handle_key(app, key, effects),
         FocusTarget::Palette => crate::palette::keys::handle_key(app, key, effects),
         FocusTarget::Editor => handle_editor_key(app, key, effects),
         FocusTarget::Explorer => explorer_keys::handle_key(app, key, effects),

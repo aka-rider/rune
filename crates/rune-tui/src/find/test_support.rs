@@ -178,3 +178,99 @@ pub(crate) fn document_rows(app: &mut App) -> Vec<String> {
     let top = panel_top_row(app);
     grid(app).into_iter().take(top).collect()
 }
+
+pub(crate) const PROJECT_W: u16 = 120;
+pub(crate) const PROJECT_H: u16 = 34;
+
+pub(crate) fn open_project_find(app: &mut App) -> Effects {
+    press(app, key(KeyCode::Char('F'), CTRL))
+}
+
+pub(crate) fn seeded_app(files: &[(&str, &[u8])]) -> App {
+    use rune_vfs::VfsTestExt;
+    let vfs = Mem::new();
+    for (path, content) in files {
+        vfs.save_atomic(std::path::Path::new(path), content)
+            .expect("seed file");
+    }
+    let mut app = App::new(Buffer::new("hello"), None, Arc::new(vfs), None);
+    app.frame = Some(crate::app::FrameSize::new(PROJECT_W, PROJECT_H));
+    app.root = Some(std::path::PathBuf::from("/root"));
+    app.sync_view();
+    app
+}
+
+pub(crate) fn press_into(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    crate::app::update(app, Msg::Key(key), effects);
+}
+
+pub(crate) fn type_into(app: &mut App, text: &str, effects: &mut Effects) {
+    for c in text.chars() {
+        press_into(app, char_key(c), effects);
+    }
+}
+
+pub(crate) fn run_one_cmd(effects: &mut Effects, kind: crate::runtime::CmdKind) -> Option<Msg> {
+    let position = effects.cmds.iter().position(|cmd| cmd.kind() == kind)?;
+    effects.cmds.remove(position).run()
+}
+
+pub(crate) fn pump_index(app: &mut App, effects: &mut Effects) {
+    while let Some(msg) = run_one_cmd(effects, crate::runtime::CmdKind::ProjectIndex) {
+        crate::app::update(app, msg, effects);
+    }
+}
+
+pub(crate) fn fire_debounce(app: &mut App, effects: &mut Effects) {
+    crate::app::update(
+        app,
+        Msg::Timer {
+            key: crate::runtime::TimerMsgKey::ProjectSearchDebounce,
+            generation: 0,
+        },
+        effects,
+    );
+}
+
+pub(crate) fn deliver_query(app: &mut App, effects: &mut Effects) {
+    let reply = run_one_cmd(effects, crate::runtime::CmdKind::ProjectQuery)
+        .expect("the debounce dispatched a query cmd");
+    crate::app::update(app, reply, effects);
+}
+
+pub(crate) fn search_project(app: &mut App, query: &str, effects: &mut Effects) {
+    press_into(app, key(KeyCode::Char('F'), CTRL), effects);
+    pump_index(app, effects);
+    type_into(app, query, effects);
+    fire_debounce(app, effects);
+    deliver_query(app, effects);
+}
+
+pub(crate) fn project(app: &App) -> &crate::find::project::ProjectResults {
+    find(app)
+        .project
+        .as_ref()
+        .expect("the panel is in Project scope")
+}
+
+pub(crate) fn result_displays(app: &App) -> Vec<String> {
+    project(app)
+        .results
+        .iter()
+        .map(|hit| hit.display.clone())
+        .collect()
+}
+
+pub(crate) fn project_grid(app: &mut App) -> Vec<String> {
+    app.sync_view();
+    crate::testgrid::grid(app, PROJECT_W, PROJECT_H)
+}
+
+pub(crate) fn project_readout_row(app: &mut App) -> String {
+    let rows = project_grid(app);
+    let top = rows
+        .iter()
+        .position(|row| row.contains("\u{256d} Find"))
+        .expect("the panel's top border row is on screen");
+    rows.get(top + 1).cloned().unwrap_or_default()
+}

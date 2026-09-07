@@ -6,7 +6,7 @@ use crate::clipboard::pbpaste_cmd;
 use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
-use crate::find::{Control, close, follow, replace};
+use crate::find::{Control, Scope, close, follow, project, replace};
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
 use crate::layout_find::FindPanelGeometry;
 use crate::messages;
@@ -32,7 +32,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) ->
 }
 
 fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) {
-    let Some(focus) = app.find().map(|state| state.focus) else {
+    let Some((focus, scope)) = app.find().map(|state| (state.focus, state.scope())) else {
         return;
     };
     match cmd {
@@ -43,20 +43,25 @@ fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) 
         }
         FindCommand::Erase => erase(app),
         FindCommand::Close => close(app, true),
-        FindCommand::Commit => match focus {
-            Control::Find => follow::advance(app, true),
-            Control::Replace | Control::ReplaceOne => replace::replace_current(app),
-            Control::ReplaceAll => replace::replace_all(app),
-            Control::Scope | Control::Case | Control::Word | Control::Regex => {
+        FindCommand::Commit => match (focus, scope) {
+            (Control::Find, Scope::File) => follow::advance(app, true),
+            (Control::Find, Scope::Project) | (Control::Results, _) => {
+                project::open_hit(app, effects);
+            }
+            (Control::Replace | Control::ReplaceOne, _) => replace::replace_current(app),
+            (Control::ReplaceAll, _) => replace::replace_all(app),
+            (Control::Scope | Control::Case | Control::Word | Control::Regex, _) => {
                 activate(app, focus, effects);
             }
         },
-        FindCommand::Alt => match focus {
-            Control::Find => follow::advance(app, false),
-            Control::Replace | Control::ReplaceOne | Control::ReplaceAll => {
+        FindCommand::Alt => match (focus, scope) {
+            (Control::Find, Scope::File) => follow::advance(app, false),
+            (Control::Find, Scope::Project) => project::step_hit(app, false, effects),
+            (Control::Results, _) => project::open_hit(app, effects),
+            (Control::Replace | Control::ReplaceOne | Control::ReplaceAll, _) => {
                 replace::replace_all(app);
             }
-            Control::Scope | Control::Case | Control::Word | Control::Regex => {
+            (Control::Scope | Control::Case | Control::Word | Control::Regex, _) => {
                 activate(app, focus, effects);
             }
         },
@@ -72,20 +77,50 @@ fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) 
         FindCommand::ToggleCase => toggle_option(app, |o| &mut o.case_sensitive),
         FindCommand::ToggleWord => toggle_option(app, |o| &mut o.whole_word),
         FindCommand::ToggleRegex => toggle_option(app, |o| &mut o.regex),
-        FindCommand::Up => browse(app, focus, BrowseDir::Prev),
-        FindCommand::Down => browse(app, focus, BrowseDir::Next),
+        FindCommand::Up => match focus {
+            Control::Results => project::nav_move(app, -1, effects),
+            _ => browse(app, focus, BrowseDir::Prev),
+        },
+        FindCommand::Down => match focus {
+            Control::Results => project::nav_move(app, 1, effects),
+            _ => browse(app, focus, BrowseDir::Next),
+        },
+        FindCommand::PageUp => list_move(app, focus, ListKey::PageUp, effects),
+        FindCommand::PageDown => list_move(app, focus, ListKey::PageDown, effects),
+        FindCommand::Home => list_move(app, focus, ListKey::Home, effects),
+        FindCommand::End => list_move(app, focus, ListKey::End, effects),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ListKey {
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+impl ListKey {
+    fn command(self) -> FindCommand {
+        match self {
+            ListKey::PageUp => FindCommand::PageUp,
+            ListKey::PageDown => FindCommand::PageDown,
+            ListKey::Home => FindCommand::Home,
+            ListKey::End => FindCommand::End,
+        }
     }
 }
 
 pub(crate) fn activate(app: &mut App, control: Control, effects: &mut Effects) {
     match control {
         Control::Find | Control::Replace => focus_control(app, control),
-        Control::Scope => hand_off_to_project_search(app, effects),
+        Control::Scope => project::toggle_scope(app, effects),
         Control::Case => toggle_option(app, |o| &mut o.case_sensitive),
         Control::Word => toggle_option(app, |o| &mut o.whole_word),
         Control::Regex => toggle_option(app, |o| &mut o.regex),
         Control::ReplaceOne => replace::replace_current(app),
         Control::ReplaceAll => replace::replace_all(app),
+        Control::Results => project::open_hit(app, effects),
     }
 }
 
@@ -140,7 +175,7 @@ pub(crate) fn paste(app: &mut App, text: &str) {
     field.draft.push_str(&sanitized);
     field.leave_history();
     if !into_replace {
-        refollow(app);
+        crate::find::requery(app);
     }
 }
 
@@ -173,12 +208,7 @@ fn toggle_option(app: &mut App, pick: fn(&mut MatchOptions) -> &mut bool) {
     };
     let flag = pick(&mut state.options);
     *flag = !*flag;
-    refollow(app);
-}
-
-fn refollow(app: &mut App) {
-    follow::recompute(app);
-    follow::follow(app);
+    crate::find::requery(app);
 }
 
 fn type_char(app: &mut App, c: char) {
@@ -199,10 +229,10 @@ fn edit_focused_field(app: &mut App, edit: impl FnOnce(&mut String)) {
             edit(&mut field.draft);
             field.leave_history();
             if focus == Control::Find {
-                refollow(app);
+                crate::find::requery(app);
             }
         }
-        None => chip_hint(app),
+        None => control_hint(app, focus),
     }
 }
 
@@ -210,25 +240,45 @@ fn browse(app: &mut App, focus: Control, dir: BrowseDir) {
     if focus.is_field() {
         history::step(app, dir);
     } else {
-        chip_hint(app);
+        control_hint(app, focus);
     }
 }
 
-fn chip_hint(app: &mut App) {
-    messages::info(
-        app,
-        format!("press {} to toggle", label_for(FindCommand::Activate)),
-    );
+fn list_move(app: &mut App, focus: Control, key: ListKey, effects: &mut Effects) {
+    if focus != Control::Results {
+        list_key_hint(app, key.command());
+        return;
+    }
+    let page = project::list_height(app) as isize;
+    match key {
+        ListKey::PageUp => project::nav_move(app, -page, effects),
+        ListKey::PageDown => project::nav_move(app, page, effects),
+        ListKey::Home => project::nav_edge(app, true, effects),
+        ListKey::End => project::nav_edge(app, false, effects),
+    }
 }
 
-fn hand_off_to_project_search(app: &mut App, effects: &mut Effects) {
-    let draft = app
-        .find()
-        .map(|state| state.find.draft.clone())
-        .unwrap_or_default();
-    crate::projectsearch::open(app, effects);
-    if let Some(state) = app.projectsearch_mut() {
-        state.query = draft;
-    }
-    crate::projectsearch::restart_debounce(app);
+fn control_hint(app: &mut App, focus: Control) {
+    let text = if focus == Control::Results {
+        format!(
+            "press {} to open the result",
+            label_for(FindCommand::Commit)
+        )
+    } else {
+        format!("press {} to toggle", label_for(FindCommand::Activate))
+    };
+    messages::info(app, text);
+}
+
+fn list_key_hint(app: &mut App, cmd: FindCommand) {
+    let text = if project::active(app) {
+        format!(
+            "{} moves the results \u{2014} {} reaches them",
+            label_for(cmd),
+            label_for(FindCommand::PrevControl)
+        )
+    } else {
+        format!("{} moves the results in Project scope", label_for(cmd))
+    };
+    messages::info(app, text);
 }

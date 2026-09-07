@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::find::Scope;
 use crate::keymap::GlobalCommand;
 use crate::messages;
 use crate::pane_bar_policy::{self, BarPolicy};
@@ -59,13 +60,16 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::TogglePin => run_if_available(app, cmd, effects, |app, _| {
             crate::opentabs::limit::toggle_pin(app, app.active);
         }),
-        GlobalCommand::ToggleSearch => crate::find::open(app, false, effects),
-        GlobalCommand::SearchNext => search_step(app, true),
-        GlobalCommand::SearchPrev => search_step(app, false),
+        GlobalCommand::ToggleSearch => crate::find::open(app, Scope::File, false, effects),
+        GlobalCommand::SearchNext => search_step(app, true, effects),
+        GlobalCommand::SearchPrev => search_step(app, false, effects),
         GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
-        GlobalCommand::ToggleProjectSearch => crate::projectsearch::toggle(app, effects),
-        GlobalCommand::ToggleReplace | GlobalCommand::ToggleProjectReplace => {
-            crate::find::open(app, true, effects);
+        GlobalCommand::ToggleProjectSearch => {
+            crate::find::open(app, Scope::Project, false, effects);
+        }
+        GlobalCommand::ToggleReplace => crate::find::open(app, Scope::File, true, effects),
+        GlobalCommand::ToggleProjectReplace => {
+            crate::find::open(app, Scope::Project, true, effects);
         }
         GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
@@ -96,8 +100,10 @@ fn close_filesearch(app: &mut App, effects: &mut Effects) {
     }
 }
 
-fn search_step(app: &mut App, forward: bool) {
-    if app.find().is_some() {
+fn search_step(app: &mut App, forward: bool, effects: &mut Effects) {
+    if crate::find::project::active(app) {
+        crate::find::project::step_hit(app, forward, effects);
+    } else if app.find().is_some() {
         crate::find::follow::advance(app, forward);
     } else if !crate::find::follow::advance_closed(app, forward) {
         messages::info(app, "no previous search");
@@ -210,7 +216,7 @@ mod tests {
             GlobalCommand::Merge,
         ] {
             let mut app = app();
-            crate::find::open(&mut app, false, &mut fx());
+            crate::find::open(&mut app, Scope::File, false, &mut fx());
             assert!(app.find().is_some(), "test setup: panel is open");
 
             let mut effects = Effects::default();

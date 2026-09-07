@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::find::matcher::MatchOptions;
-use crate::find::{Control, FieldState, FindState, follow};
+use crate::find::{Control, FieldState, FindState};
 use crate::messages;
 use crate::runtime::CmdError;
 
@@ -138,7 +138,6 @@ pub(crate) fn step(app: &mut App, dir: BrowseDir) {
         .focused_field_mut()
         .is_some_and(|field| step_field(field, dir));
     if changed && focus == Control::Find {
-        follow::recompute(app);
-        follow::follow(app);
+        crate::find::requery(app);
     }
 }

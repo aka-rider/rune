@@ -31,6 +31,22 @@ pub(in crate::generate) const REPLACE_KEY_CTRL: KeyInput = KeyInput {
     mods: CTRL,
 };
 
+pub(in crate::generate) const PROJECT_FIND_KEY_CTRL: KeyInput = KeyInput {
+    code: KeyCode::Char('F'),
+    mods: CTRL,
+};
+
+pub(in crate::generate) static RESULTS_KEYS: &[KeyInput] = &[
+    KeyInput {
+        code: KeyCode::Tab,
+        mods: SHIFT,
+    },
+    KeyInput {
+        code: KeyCode::Enter,
+        mods: Mods::NONE,
+    },
+];
+
 pub(in crate::generate) static FIND_PANEL_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Tab,
@@ -79,6 +95,22 @@ pub(in crate::generate) static FIND_PANEL_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Char('g'),
         mods: CTRL,
+    },
+    KeyInput {
+        code: KeyCode::PageUp,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::PageDown,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Home,
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::End,
+        mods: Mods::NONE,
     },
 ];
 

@@ -66,7 +66,6 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<HintEntry> {
         | FocusTarget::Tabs
         | FocusTarget::Editor
         | FocusTarget::Title
-        | FocusTarget::ProjectSearch
         | FocusTarget::Messages => {}
     }
 
@@ -93,19 +92,6 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<HintEntry> {
                 Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
             }),
     );
-
-    if focus::target(app) == FocusTarget::ProjectSearch {
-        entries.extend(
-            crate::projectsearch::keys::PROJECTSEARCH_BINDINGS
-                .iter()
-                .filter(|b| !b.secondary)
-                .filter_map(|b| {
-                    let spec = registry::spec(registry::rows::pane::adapt_projectsearch(b.cmd))?;
-                    Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
-                }),
-        );
-        return entries;
-    }
 
     match app.focus() {
         Pane::Explorer => entries.extend(

@@ -34,6 +34,9 @@ pub(crate) fn follow(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
+    if state.project.is_some() {
+        return;
+    }
     let from = state.origin.cursors.primary().selection_start().get();
     let concealed = current_concealed(app);
     let found = at_or_after(&state.matches, from, |m| is_concealed(&concealed, m))

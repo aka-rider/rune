@@ -108,8 +108,10 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         replace_preview::apply(&mut rows, app, doc, view);
     }
 
-    if let Some(state) = app.projectsearch()
-        && let Some(hit) = state.results.get(state.list.cursor)
+    if let Some(hit) = app
+        .find()
+        .and_then(|state| state.project.as_ref())
+        .and_then(|project| project.selected())
         && painted_doc.is_some()
         && crate::workspace::shown_document_for(app, &hit.path) == painted_doc
         && let Some(window) = overlay::visible_byte_range(&rows)
@@ -120,6 +122,9 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
             .filter(|r| r.start < window.end && r.end > window.start)
         {
             paint_range(&mut rows, range.clone(), app.theme.chrome.search_match_bg);
+        }
+        if let Some(first) = hit.ranges.first() {
+            paint_range(&mut rows, first.clone(), app.theme.chrome.search_current_bg);
         }
     }
 
@@ -363,7 +368,10 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     };
 
     let filesearch_active = app.filesearch().is_some();
-    let projectsearch_active = app.projectsearch().is_some();
+    let projectsearch_active = crate::find::project::active(app);
+    let results_focused = app
+        .find()
+        .is_some_and(|state| state.focused && state.focus == crate::find::Control::Results);
 
     let title = if filesearch_active {
         " Open File ".to_string()
@@ -383,7 +391,7 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(if app.focus() == Pane::Explorer {
+        .border_style(if app.focus() == Pane::Explorer || results_focused {
             app.theme.chrome.active_border
         } else {
             app.theme.chrome.inactive_border

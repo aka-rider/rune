@@ -37,7 +37,6 @@ fn bracketed_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Op
     match prev.focus_target {
         FocusTarget::Find => find_paste_violation(prev, next, text),
         FocusTarget::FileSearch => filesearch_paste_violation(prev, next, text),
-        FocusTarget::ProjectSearch => projectsearch_paste_violation(prev, next, text),
         FocusTarget::Palette => palette_paste_violation(prev, next, text),
         FocusTarget::Title => title_paste_violation(prev, next, text),
         FocusTarget::Editor => document_paste_violation(prev, next, text),
@@ -122,20 +121,6 @@ fn filesearch_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> O
         "file-search query",
         &prev.filesearch_query,
         &next.filesearch_query,
-        &sanitized,
-    )
-}
-
-fn projectsearch_paste_violation(
-    prev: &Snapshot,
-    next: &Snapshot,
-    text: &str,
-) -> Option<Violation> {
-    let sanitized = strip_control(text);
-    append_violation(
-        "project-search query",
-        &prev.projectsearch_query,
-        &next.projectsearch_query,
         &sanitized,
     )
 }

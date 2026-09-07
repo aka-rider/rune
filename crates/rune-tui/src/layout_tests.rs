@@ -11,7 +11,12 @@ fn an_open_find_panel_takes_three_rows_directly_above_the_footer() {
     let closed = geometry(area, &app);
     assert!(closed.find_panel.is_none());
 
-    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        false,
+        &mut crate::runtime::Effects::default(),
+    );
     let open = geometry(area, &app);
     let panel = open
         .find_panel
@@ -29,7 +34,12 @@ fn an_open_find_panel_takes_three_rows_directly_above_the_footer() {
 fn expanding_replace_grows_the_panel_to_five_rows() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
     let area = Rect::new(0, 0, 120, 34);
-    crate::find::open(&mut app, true, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        true,
+        &mut crate::runtime::Effects::default(),
+    );
     let geo = geometry(area, &app);
     let panel = geo.find_panel.expect("panel open");
     assert_eq!(panel.outer.height, 5);
@@ -43,7 +53,7 @@ fn the_messages_pane_opens_above_the_find_panel_and_leaves_it_in_place() {
     app.frame = Some(crate::app::FrameSize::new(120, 34));
     let area = Rect::new(0, 0, 120, 34);
     let mut effects = crate::runtime::Effects::default();
-    crate::find::open(&mut app, false, &mut effects);
+    crate::find::open(&mut app, crate::find::Scope::File, false, &mut effects);
     let before = geometry(area, &app).find_panel.expect("panel open").outer;
 
     crate::messages::info(&mut app, "hello there");
@@ -59,7 +69,12 @@ fn the_messages_pane_opens_above_the_find_panel_and_leaves_it_in_place() {
 #[test]
 fn a_narrow_frame_drops_the_chips_and_gives_the_box_the_full_width() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        false,
+        &mut crate::runtime::Effects::default(),
+    );
     let geo = geometry(Rect::new(0, 0, 30, 20), &app);
     let panel = geo.find_panel.expect("panel open");
     assert!(panel.chips.iter().all(Option::is_none));
@@ -69,7 +84,12 @@ fn a_narrow_frame_drops_the_chips_and_gives_the_box_the_full_width() {
 #[test]
 fn a_two_row_frame_gives_the_panel_no_room_and_never_panics() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::open(
+        &mut app,
+        crate::find::Scope::File,
+        false,
+        &mut crate::runtime::Effects::default(),
+    );
     let geo = geometry(Rect::new(0, 0, 40, 2), &app);
     assert!(geo.find_panel.is_none());
     assert!(

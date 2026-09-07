@@ -49,10 +49,6 @@ pub(crate) fn chords_for(id: CommandId) -> impl Iterator<Item = KeyPattern> {
         .iter()
         .filter(move |b| pane::adapt_filesearch(b.cmd) == id)
         .map(|b| b.key);
-    let projectsearch = crate::projectsearch::keys::PROJECTSEARCH_BINDINGS
-        .iter()
-        .filter(move |b| pane::adapt_projectsearch(b.cmd) == id)
-        .map(|b| b.key);
     let find = crate::find::bindings::FIND_BINDINGS
         .iter()
         .filter(move |b| find::adapt(b.cmd) == id)
@@ -72,7 +68,6 @@ pub(crate) fn chords_for(id: CommandId) -> impl Iterator<Item = KeyPattern> {
         .chain(explorer_search)
         .chain(tabs)
         .chain(filesearch)
-        .chain(projectsearch)
         .chain(find)
         .chain(diff)
         .chain(palette_key)
