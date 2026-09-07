@@ -22,6 +22,8 @@ pub enum GlobalCommand {
     TogglePin,
     ToggleFileSearch,
     ToggleProjectSearch,
+    ToggleReplace,
+    ToggleProjectReplace,
     TogglePalette,
     NavBack,
     NavForward,
@@ -66,7 +68,7 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         secondary: true,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('r'), CTRL),
+        key: KeyPattern::new(KeyCode::F2, Mods::NONE),
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
         secondary: false,
@@ -241,9 +243,9 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     },
     // This crate requests `REPORT_ALTERNATE_KEYS`, under which a shifted
     // chord arrives as the shifted character with `SHIFT` itself cleared
-    // — so `SearchPrev` and `ToggleProjectSearch` below and
-    // `ToggleReadOnly` above bind the shifted char (`'G'`/`'F'`/`'P'`),
-    // not the base char with a `SHIFT` bit set.
+    // — so `SearchPrev`, `ToggleProjectSearch`, and `ToggleProjectReplace`
+    // below and `ToggleReadOnly` above bind the shifted char
+    // (`'G'`/`'F'`/`'R'`/`'P'`), not the base char with a `SHIFT` bit set.
     Binding {
         key: KeyPattern::new(KeyCode::Char('G'), CTRL),
         cmd: GlobalCommand::SearchPrev,
@@ -278,6 +280,30 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('F'), SUP),
         cmd: GlobalCommand::ToggleProjectSearch,
         help: "search project",
+        secondary: true,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('r'), CTRL),
+        cmd: GlobalCommand::ToggleReplace,
+        help: "replace",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('r'), SUP),
+        cmd: GlobalCommand::ToggleReplace,
+        help: "replace",
+        secondary: true,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('R'), CTRL),
+        cmd: GlobalCommand::ToggleProjectReplace,
+        help: "replace in project",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('R'), SUP),
+        cmd: GlobalCommand::ToggleProjectReplace,
+        help: "replace in project",
         secondary: true,
     },
     Binding {

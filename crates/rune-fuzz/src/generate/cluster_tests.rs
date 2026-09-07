@@ -13,7 +13,7 @@ use proptest::test_runner::TestRunner;
 
 use crate::driver;
 
-use super::super::palette::{CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY, CTRL_R_KEY, CTRL_T_KEY};
+use super::super::palette::{CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY, CTRL_T_KEY, F2_KEY};
 use super::*;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 
@@ -57,8 +57,8 @@ fn park_cases() -> Vec<ParkCase> {
             expected_content: "h",
         },
         ParkCase {
-            label: "^R (Title)",
-            prefix: vec![Action::Key(CTRL_R_KEY)],
+            label: "F2 (Title)",
+            prefix: vec![Action::Key(F2_KEY)],
             expected_content: "h",
         },
         ParkCase {

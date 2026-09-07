@@ -90,6 +90,7 @@ pub(super) fn arb_any_keycode() -> impl Strategy<Value = KeyCode> {
         Just(KeyCode::PageDown).boxed(),
         Just(KeyCode::Delete).boxed(),
         Just(KeyCode::F1).boxed(),
+        Just(KeyCode::F2).boxed(),
     ]
 }
 

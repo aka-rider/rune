@@ -243,11 +243,11 @@ fn a_printable_key_in_reading_view_never_mutates_the_buffer() {
 /// `ReadOnly` variant, and a mechanical widening to a blanket
 /// `is_read_only()` would have collapsed them onto the same message.
 #[test]
-fn ctrl_r_in_reading_view_refuses_with_the_reading_wording_not_the_always_wording() {
+fn f2_in_reading_view_refuses_with_the_reading_wording_not_the_always_wording() {
     let mut app = app_basic("hello");
     app.active_doc_mut().read_only = ReadOnly::Reading;
 
-    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::F2));
 
     assert_eq!(
         rune_tui::messages::newest_text(&app),

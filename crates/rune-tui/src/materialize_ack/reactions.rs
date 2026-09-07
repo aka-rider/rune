@@ -134,7 +134,10 @@ fn handle_refused_ack(app: &mut App, id: DocumentId, effects: &mut Effects) {
         } else {
             messages::error(
                 app,
-                "save failed: the target was created by something else; your buffer is intact \u{2014} ^R to a different name to save it",
+                format!(
+                    "save failed: the target was created by something else; your buffer is intact \u{2014} {} to a different name to save it",
+                    crate::global::label_for(crate::keymap::GlobalCommand::FocusTitle)
+                ),
             );
         }
     } else if let Some(target) = naming {

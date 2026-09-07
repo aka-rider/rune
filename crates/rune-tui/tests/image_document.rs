@@ -384,12 +384,12 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
     );
 }
 
-/// Driven through the real `⌘R` key rather than
+/// Driven through the palette's reload row rather than
 /// calling `graphics::reload_image` directly: reloading a live image
 /// document re-emits a transmit and forces a redraw, under the exact same
 /// allocated id as the original open.
 #[test]
-fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
+fn reload_on_a_live_image_document_reloads_under_the_same_id() {
     let (mut app, id) = app_with_image();
     app.graphics.kitty = true;
     app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
@@ -398,18 +398,7 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
     app.active = id;
     app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
-    let mut effects = Effects::default();
-    update(
-        &mut app,
-        Msg::Key(KeyInput {
-            code: KeyCode::Char('r'),
-            mods: Mods {
-                sup: true,
-                ..Mods::NONE
-            },
-        }),
-        &mut effects,
-    );
+    let effects = pick_reload_via_palette(&mut app);
     assert_eq!(effects.cmds.len(), 1, "reload must spawn exactly one Cmd");
 
     let mut reply_effects = Effects::default();
@@ -442,12 +431,11 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
     );
 }
 
-/// `⌘R` on an ordinary (non-image, no-embed) document must not decode or
-/// retransmit anything — only refuse with a status message — exercised
-/// through the real key pipeline against the markdown document `App::new`
-/// starts on.
+/// Reload on an ordinary (non-image, no-embed) document must not decode or
+/// retransmit anything — only refuse — exercised through the real palette
+/// pipeline against the markdown document `App::new` starts on.
 #[test]
-fn super_r_on_a_non_image_document_refuses_with_a_message() {
+fn reload_on_a_non_image_document_is_refused() {
     let (mut app, _image_id) = app_with_image();
     let markdown_id = app
         .documents
@@ -458,18 +446,7 @@ fn super_r_on_a_non_image_document_refuses_with_a_message() {
     workspace::switch_to(&mut app, markdown_id);
     app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
-    let mut effects = Effects::default();
-    update(
-        &mut app,
-        Msg::Key(KeyInput {
-            code: KeyCode::Char('r'),
-            mods: Mods {
-                sup: true,
-                ..Mods::NONE
-            },
-        }),
-        &mut effects,
-    );
+    let effects = pick_reload_via_palette(&mut app);
 
     assert!(
         effects.raw_bytes().is_empty(),
@@ -480,7 +457,42 @@ fn super_r_on_a_non_image_document_refuses_with_a_message() {
         "nothing to decode or retransmit"
     );
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
-        Some("nothing to reload")
+        app.palette().and_then(|s| s.refusal.clone()),
+        Some("nothing to reload".to_string())
     );
+}
+
+fn pick_reload_via_palette(app: &mut App) -> Effects {
+    let mut opening = Effects::default();
+    update(
+        app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('p'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut opening,
+    );
+    for c in "reload graphics".chars() {
+        update(
+            app,
+            Msg::Key(KeyInput {
+                code: KeyCode::Char(c),
+                mods: Mods::NONE,
+            }),
+            &mut opening,
+        );
+    }
+    let mut picked = Effects::default();
+    update(
+        app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Enter,
+            mods: Mods::NONE,
+        }),
+        &mut picked,
+    );
+    picked
 }

@@ -12,7 +12,7 @@ use super::arb::{
 };
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
-    CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL,
+    CTRL_P_KEY, CTRL_T_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS, F2_KEY, FILESEARCH_KEY_CTRL,
     FILESEARCH_KEY_SUP, MERGE_KEY, MERGE_RESOLVE_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE,
 };
 
@@ -21,7 +21,7 @@ pub(super) fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
         Just(vec![Action::FailNextSave]),
         Just(vec![Action::Key(CTRL_C_KEY)]),
-        Just(vec![Action::Key(CTRL_R_KEY)]),
+        Just(vec![Action::Key(F2_KEY)]),
         Just(vec![Action::Key(CTRL_B_KEY)]),
         Just(vec![Action::Key(CTRL_T_KEY)]),
         Just(vec![Action::Key(CTRL_P_KEY)]),
@@ -31,7 +31,7 @@ pub(super) fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(FILESEARCH_KEY_SUP)]),
         Just(vec![Action::OpenFileSearch]),
         Just(vec![Action::ConfirmTimeout]),
-        select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
+        select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(F2_KEY), Action::Key(k)]),
         proptest::collection::vec(select(EXPLORER_SEARCH_KEYS), 1..=3).prop_map(|keys| {
             let mut actions = vec![Action::Key(CTRL_B_KEY)];
             actions.extend(keys.into_iter().map(Action::Key));

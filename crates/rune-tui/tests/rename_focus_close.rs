@@ -19,8 +19,8 @@ use rune_tui::workspace;
 use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
-    app_with, bound_session, commit_name, ctrl, plain, plain_key, rename_to, seeded_vfs, send,
-    set_name, sup, sup_key, unbound_session,
+    app_with, bound_session, commit_name, plain, plain_key, rename_to, seeded_vfs, send, set_name,
+    sup, sup_key, unbound_session,
 };
 
 fn tab_for(session: &rune_fuzz::Session, path: &str) -> (DocumentId, usize) {
@@ -159,7 +159,7 @@ fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
 
-    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::F2));
     assert_eq!(app.focus(), Pane::Title);
     send(&mut app, plain(KeyCode::Escape));
     assert_eq!(app.focus(), Pane::Editor);

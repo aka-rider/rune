@@ -263,23 +263,18 @@ pub(in crate::generate) const CTRL_C_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `^r` (`GlobalCommand::FocusTitle`) — reaching `Pane::Title` is what
+/// `F2` (`GlobalCommand::FocusTitle`) — reaching `Pane::Title` is what
 /// extends `PANE-NO-BLEED` to cover "typing a filename never touches a
 /// buffer byte". Every subsequent generated character then lands in the
 /// title field instead of the document, which is precisely the property
 /// worth fuzzing.
-pub(in crate::generate) const CTRL_R_KEY: KeyInput = KeyInput {
-    code: KeyCode::Char('r'),
-    mods: Mods {
-        shift: false,
-        alt: false,
-        ctrl: true,
-        sup: false,
-    },
+pub(in crate::generate) const F2_KEY: KeyInput = KeyInput {
+    code: KeyCode::F2,
+    mods: Mods::NONE,
 };
 
 /// ⌥←/⌥→ (word motion), ⇧←/⇧→ (shift-selection) and `UNDO_KEY` (⌘Z) —
-/// paired with `CTRL_R_KEY` by `cluster_chrome` so a single generated
+/// paired with `F2_KEY` by `cluster_chrome` so a single generated
 /// cluster both parks focus on the title AND immediately exercises one of
 /// its own editing bindings, resolved through the SAME `EDITOR_BINDINGS`
 /// table the document editor uses (plan WP3 decision 3). `⌥←`/`⌥→` are

@@ -22,7 +22,7 @@ use rename_common::{
 };
 
 /// Decision 12: a read-only document's title cannot be focused AT ALL — the
-/// refusal now happens at `^r` itself (`App::focus_title`), before there is
+/// refusal now happens at `F2` itself (`App::focus_title`), before there is
 /// ever anything to type. Focusing the Help document's title would
 /// otherwise hold the user in a field describing a document they can never
 /// rename; removing the illegal state beats guarding it later inside
@@ -34,7 +34,7 @@ fn a_read_only_document_refuses_to_rename() {
     session.app_mut().active_doc_mut().read_only = ReadOnly::Always;
     let before = session.app().active_doc().buffer.content().to_string();
 
-    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::F2)).is_none());
 
     assert_eq!(
         session.app().focus(),
@@ -49,7 +49,7 @@ fn a_read_only_document_refuses_to_rename() {
 }
 
 /// Decision 12: the Help document is read-only, so its title can never gain
-/// focus at all — `^r` refuses with a status instead, and the title row
+/// focus at all — `F2` refuses with a status instead, and the title row
 /// still reads "Help".
 #[test]
 fn the_help_document_refuses_title_focus() {
@@ -58,7 +58,7 @@ fn the_help_document_refuses_title_focus() {
     assert!(session.key(plain_key(KeyCode::F1)).is_none());
     assert_eq!(session.app().active_doc().file_name(), "Help");
 
-    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::F2)).is_none());
 
     assert_eq!(
         session.app().focus(),

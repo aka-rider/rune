@@ -81,6 +81,7 @@ fn parse_code(s: &str, line: usize) -> Result<KeyCode, ScriptError> {
         "pagedown" => KeyCode::PageDown,
         "delete" => KeyCode::Delete,
         "f1" => KeyCode::F1,
+        "f2" => KeyCode::F2,
         _ => {
             let invalid = || ScriptError::InvalidKeyCode {
                 line,

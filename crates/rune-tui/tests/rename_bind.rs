@@ -32,7 +32,7 @@ use rename_common::{
 
 // ── Focus and typing ────────────────────────────────────────────────────
 
-/// `^r` focuses the title, seeded with the file's FULL NAME (extension
+/// `F2` focuses the title, seeded with the file's FULL NAME (extension
 /// included), and typing there never touches the buffer — the
 /// `PANE-NO-BLEED` property, asserted directly.
 #[test]
@@ -361,7 +361,7 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
     assert_eq!(mem.read(&existing).unwrap(), b"someone else's file");
 }
 
-/// Regression: naming a store-bound draft (^R -> Enter, routed through
+/// Regression: naming a store-bound draft (F2 -> Enter, routed through
 /// `save::bind_new_now`'s materialize) must switch the title to the real
 /// filename via the SAME `DocumentMap::rebind` chokepoint the unbound
 /// route (`naming_a_draft_creates_the_file`, above) already goes through —

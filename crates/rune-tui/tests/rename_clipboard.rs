@@ -37,7 +37,7 @@ fn cmd_c_in_the_title_copies_the_window_not_the_whole_name() {
     let mut app = app_with(&mem);
     let before = app.active_doc().buffer.content().to_string();
 
-    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::F2));
     assert_eq!(app.title.text(), "a.md");
     assert!(
         !app.title.ext_unlocked(),
@@ -82,7 +82,7 @@ fn cmd_c_then_cmd_x_then_cmd_v_round_trips_the_name_unchanged() {
         None,
     );
 
-    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::F2));
     assert_eq!(app.title.text(), "lessrc.md");
     assert!(!app.title.ext_unlocked());
     // The oracle: what the window covers right now, independent of
@@ -137,7 +137,7 @@ fn a_clipboard_read_targeted_at_the_title_inserts_filtered_text_into_the_field()
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
 
-    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::F2));
     send(&mut app, ctrl('a'));
     send(&mut app, plain(KeyCode::Backspace));
     assert_eq!(

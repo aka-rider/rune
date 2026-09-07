@@ -101,6 +101,18 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         &["grep", "find in files"],
     ),
     aliased_row(
+        GlobalCommand::ToggleReplace,
+        "Replace in File",
+        "replace",
+        &["substitute"],
+    ),
+    aliased_row(
+        GlobalCommand::ToggleProjectReplace,
+        "Replace in Project",
+        "replace in project",
+        &["replace in files"],
+    ),
+    aliased_row(
         GlobalCommand::TogglePalette,
         "command palette",
         "command palette",

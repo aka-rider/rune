@@ -9,7 +9,7 @@ use std::path::Path;
 
 use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{CursorSet, CursorSpec};
-use rune_tui::app::update;
+use rune_tui::app::{App, update};
 use rune_tui::graphics::ImageStatus;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{CmdError, CmdKind, Effects, Msg};
@@ -372,13 +372,13 @@ fn the_geometry_variant_and_build_rows_agree_on_cell_count_for_an_image_row() {
 
 /// Review finding (formerly-silent `Command::Reload`): once a markdown
 /// document's only embed has finished decoding (`ImageStatus::Live`, no
-/// `in_flight` left to reschedule), `⌘R` must refuse with the same status
-/// message an embed-less document gets — `Document::has_reloadable_graphics`
+/// `in_flight` left to reschedule), reload must refuse with the same reason
+/// an embed-less document gets — `Document::has_reloadable_graphics`
 /// is the single predicate `dispatch::Command::Reload`'s gate and `reload_
 /// embeds`'s own rescheduling both read, so neither can drift from the
 /// other into a reload that silently does nothing.
 #[test]
-fn super_r_on_a_document_with_only_live_embeds_refuses_with_a_message() {
+fn reload_on_a_document_with_only_live_embeds_is_refused() {
     let (mut app, id) = app_with_embed("![caption](x.png)\n");
     discover_and_decode(&mut app);
     assert!(
@@ -396,18 +396,7 @@ fn super_r_on_a_document_with_only_live_embeds_refuses_with_a_message() {
         "the embed must have finished decoding before this test's own assertion means anything"
     );
 
-    let mut effects = Effects::default();
-    update(
-        &mut app,
-        Msg::Key(KeyInput {
-            code: KeyCode::Char('r'),
-            mods: Mods {
-                sup: true,
-                ..Mods::NONE
-            },
-        }),
-        &mut effects,
-    );
+    let effects = pick_reload_via_palette(&mut app);
 
     assert!(
         !effects
@@ -417,7 +406,42 @@ fn super_r_on_a_document_with_only_live_embeds_refuses_with_a_message() {
         "no decode Cmd may be armed for an all-Live embed set"
     );
     assert_eq!(
-        rune_tui::messages::newest_text(&app),
-        Some("nothing to reload")
+        app.palette().and_then(|s| s.refusal.clone()),
+        Some("nothing to reload".to_string())
     );
+}
+
+fn pick_reload_via_palette(app: &mut App) -> Effects {
+    let mut opening = Effects::default();
+    update(
+        app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('p'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut opening,
+    );
+    for c in "reload graphics".chars() {
+        update(
+            app,
+            Msg::Key(KeyInput {
+                code: KeyCode::Char(c),
+                mods: Mods::NONE,
+            }),
+            &mut opening,
+        );
+    }
+    let mut picked = Effects::default();
+    update(
+        app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Enter,
+            mods: Mods::NONE,
+        }),
+        &mut picked,
+    );
+    picked
 }

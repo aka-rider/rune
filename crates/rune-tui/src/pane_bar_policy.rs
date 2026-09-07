@@ -30,6 +30,8 @@ pub(crate) fn bar_policy(cmd: GlobalCommand) -> BarPolicy {
         | GlobalCommand::TogglePin
         | GlobalCommand::ToggleFileSearch
         | GlobalCommand::ToggleProjectSearch
+        | GlobalCommand::ToggleReplace
+        | GlobalCommand::ToggleProjectReplace
         | GlobalCommand::TogglePalette => BarPolicy::LeaveOpen,
     }
 }

@@ -136,25 +136,15 @@ fn merge_refusal_matches_across_chord_palette_and_footer() {
 }
 
 #[test]
-fn reload_refusal_matches_between_the_chord_and_the_palette() {
+fn reload_refusal_matches_between_the_row_and_the_palette_pick() {
     let mut app = app_with("hello");
     let mut effects = Effects::default();
     assert!(!app.active_doc().has_reloadable_graphics());
 
-    let cmd_r = KeyInput {
-        code: KeyCode::Char('r'),
-        mods: Mods {
-            sup: true,
-            ..Mods::NONE
-        },
-    };
-    crate::dispatch::handle_key(&mut app, cmd_r, &mut effects);
-    let chord_reason = crate::messages::newest_text(&app)
-        .expect("the chord must post a refusal")
-        .to_string();
+    crate::palette::open(&mut app, &mut effects);
+    let chord_reason = unavailable_reason(row_availability(&app, "reload graphics"));
     assert_eq!(chord_reason, "nothing to reload");
 
-    crate::palette::open(&mut app, &mut effects);
     let reload_idx = row_position(&app, "reload graphics");
     if let Some(state) = app.palette_mut() {
         state.nav.cursor = reload_idx;

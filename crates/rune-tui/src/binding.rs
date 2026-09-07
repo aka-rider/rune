@@ -63,8 +63,10 @@ impl KeyPattern {
             out.push('\u{2318}'); // ⌘
         }
         match self.key {
+            KeyMatch::Code(KeyCode::Char(' ')) => out.push('\u{2423}'),
             KeyMatch::Code(KeyCode::Char(c)) => out.push(c.to_ascii_uppercase()),
             KeyMatch::Code(KeyCode::F1) => out.push_str("F1"),
+            KeyMatch::Code(KeyCode::F2) => out.push_str("F2"),
             KeyMatch::Code(KeyCode::Backspace) => out.push('\u{232b}'), // ⌫
             KeyMatch::Code(KeyCode::Delete) => out.push('\u{2326}'),    // ⌦
             KeyMatch::Code(KeyCode::Enter) => out.push('\u{23ce}'),     // ⏎
@@ -205,6 +207,18 @@ mod tests {
     fn write_label_uses_escape_glyph() {
         let pattern = KeyPattern::new(KeyCode::Escape, Mods::NONE);
         assert_eq!(pattern.label(), "\u{238b}");
+    }
+
+    #[test]
+    fn write_label_prints_f2_as_a_word() {
+        let pattern = KeyPattern::new(KeyCode::F2, Mods::NONE);
+        assert_eq!(pattern.label(), "F2");
+    }
+
+    #[test]
+    fn write_label_prints_space_as_the_open_box_glyph() {
+        let pattern = KeyPattern::new(KeyCode::Char(' '), Mods::NONE);
+        assert_eq!(pattern.label(), "\u{2423}");
     }
 
     #[test]

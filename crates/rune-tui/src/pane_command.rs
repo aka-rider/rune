@@ -64,6 +64,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::SearchPrev => search_step(app, false),
         GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
         GlobalCommand::ToggleProjectSearch => crate::projectsearch::toggle(app, effects),
+        GlobalCommand::ToggleReplace | GlobalCommand::ToggleProjectReplace => {
+            crate::search::open(app, effects)
+        }
         GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
         GlobalCommand::NavForward => crate::navhistory::forward(app, effects),

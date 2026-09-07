@@ -3,7 +3,7 @@
 //! yet, the shape a launch onto a not-yet-existing positional leaves
 //! behind. `rename_common::unsaved_named_session` is the shared
 //! fixture; the end-to-end tests here drive it through the same public
-//! entry points a user reaches (⌘S, `^R`), through `rune_fuzz::Session` now
+//! entry points a user reaches (⌘S, `F2`), through `rune_fuzz::Session` now
 //! that `SAVE-INFLIGHT-SM` recognizes the title-focused Enter that commits
 //! a `bind_new_now` create.
 
@@ -142,7 +142,7 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
 /// is already bound to the very path the race collided on — that other
 /// document's row may carry this-session history, which `hydrate` would
 /// replace this buffer's typing with. Instead the refusal stays plain, with
-/// the actionable message telling the user their buffer is intact and `^R`
+/// the actionable message telling the user their buffer is intact and `F2`
 /// is the way out, and the document stays create-only so a later ⌘S keeps retrying
 /// create-only semantics rather than ever falling back to a direct-vfs
 /// overwrite of a file this session has never observed.
@@ -171,7 +171,7 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
     drain_materialize_round_trip(&mut session);
 
     assert!(
-        rune_tui::messages::newest_text(session.app()).is_some_and(|m| m.contains("^R")),
+        rune_tui::messages::newest_text(session.app()).is_some_and(|m| m.contains("F2")),
         "got {:?}",
         rune_tui::messages::newest_text(session.app())
     );
@@ -199,7 +199,7 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
     );
 }
 
-/// `^R` + a new name on a never-published document creates the new name
+/// `F2` + a new name on a never-published document creates the new name
 /// in the document's OWN directory (A3), and the old name is never
 /// created.
 #[test]
@@ -229,7 +229,7 @@ fn rename_on_a_never_published_document_creates_at_the_new_name() {
     );
 }
 
-/// `^R` + a new name that ALREADY exists (A3's own lost-create-race): the
+/// `F2` + a new name that ALREADY exists (A3's own lost-create-race): the
 /// EEXIST refusal must never route through the `lost_create_race`
 /// hand-off — `bind_new_now` deliberately leaves `file_path` at the OLD,
 /// never-published name (`/root/nope.md`) until the publish commits, so a
@@ -289,8 +289,8 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
 }
 
 /// A refused create's `bind_target` must never survive to bind a LATER,
-/// unrelated successful create. `^R` into a collision, refused, THEN a
-/// plain ⌘S — never a second `^R`, which would route through
+/// unrelated successful create. `F2` into a collision, refused, THEN a
+/// plain ⌘S — never a second `F2`, which would route through
 /// `bind_new_now` and unconditionally overwrite `bind_target` before the
 /// commit ever consumes the stale one, masking the leak this test exists
 /// to catch. ⌘S instead goes through `materialize_now`, which never

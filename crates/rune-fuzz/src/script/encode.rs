@@ -212,6 +212,7 @@ fn encode_code(code: KeyCode) -> String {
         KeyCode::PageDown => "pagedown".into(),
         KeyCode::Delete => "delete".into(),
         KeyCode::F1 => "f1".into(),
+        KeyCode::F2 => "f2".into(),
     }
 }
 

@@ -15,6 +15,7 @@ pub enum KeyCode {
     PageDown,
     Delete,
     F1,
+    F2,
 }
 
 // Field names avoid `super` (a reserved path keyword) and spell out `sup`
@@ -72,6 +73,7 @@ pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
         TK::PageDown => KeyCode::PageDown,
         TK::Delete => KeyCode::Delete,
         TK::Function(1) => KeyCode::F1,
+        TK::Function(2) => KeyCode::F2,
         _ => return None,
     };
 

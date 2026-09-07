@@ -48,3 +48,13 @@ same row. Now that `forget_scratch` can delete a row and SQLite reuses the freed
 (`documents.id` has no AUTOINCREMENT), the loser can journal onto a rowid that was re-minted for
 a different draft. Fix candidate: claim the row in `session_documents` at adoption time, before
 binding.
+
+## Chord labels hard-coded in user-facing text
+
+Several messages and footer rows spell a chord by hand instead of reading it from the binding
+table through `global::label_for` / `hint_for`: `^M` in `pane_global.rs` ("finish the merge
+first"), `materialize_ack/reactions.rs` ("^M to merge") and `db_ack.rs` ("[^M]erge"), and `^K` in
+`footer_modes.rs`. The rename hint in `reactions.rs` rotted exactly this way when rename moved
+from `^R` to `F2` and was fixed in that change; the rest will rot the same way the day their
+chord moves. Fix: one chokepoint that formats a message's chord from its `GlobalCommand` (or
+pane command), and tests that assert the label comes from the table.

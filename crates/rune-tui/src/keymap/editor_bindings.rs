@@ -14,7 +14,6 @@
 mod clipboard;
 mod editing;
 mod motion;
-pub(crate) use editing::RELOAD;
 mod selection;
 
 use crate::binding::Binding;
@@ -133,7 +132,6 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     motion::CURSOR_TO_BOTTOM,
     motion::FOLLOW_LINK_SUP,
     motion::FOLLOW_LINK_CTRL,
-    RELOAD,
 ];
 
 #[cfg(test)]
@@ -169,24 +167,6 @@ mod tests {
                 binding.help
             );
         }
-    }
-
-    // `index::validate` already rejects any two rows in this table sharing
-    // a key; this test pins that fact specifically for the reload binding,
-    // by identity, since different tables are allowed to reuse a physical
-    // key and only a same-table collision is ever invalid.
-    #[test]
-    fn reload_key_is_not_already_bound_elsewhere_in_the_editor_table() {
-        let claimants: Vec<&'static str> = EDITOR_BINDINGS
-            .iter()
-            .filter(|b| b.key == editing::RELOAD.key)
-            .map(|b| b.help)
-            .collect();
-        assert_eq!(
-            claimants,
-            vec![editing::RELOAD.help],
-            "⌘R must be claimed by exactly the reload binding, not shared with any other row"
-        );
     }
 
     #[test]

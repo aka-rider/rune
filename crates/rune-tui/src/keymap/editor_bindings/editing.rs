@@ -142,10 +142,3 @@ pub(crate) const SAVE: Binding<Command> = Binding {
     help: "save",
     secondary: false,
 };
-
-pub(crate) const RELOAD: Binding<Command> = Binding {
-    key: KeyPattern::new(KeyCode::Char('r'), SUP),
-    cmd: Command::Reload,
-    help: "reload graphics",
-    secondary: false,
-};

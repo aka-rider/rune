@@ -56,7 +56,7 @@ fn leaving_the_title_for_the_explorer_commits_the_rename() {
 #[test]
 fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
     let (mut session, mem) = bound_session();
-    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::F2)).is_none());
     assert!(session.key(plain_key(KeyCode::Right)).is_none());
     assert!(session.key(ctrl_key('a')).is_none());
     assert!(session.key(plain_key(KeyCode::Backspace)).is_none());
@@ -86,7 +86,7 @@ fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
 #[test]
 fn an_invalid_name_vetoes_the_focus_change() {
     let (mut session, _mem) = bound_session();
-    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::F2)).is_none());
     assert!(session.key(plain_key(KeyCode::Right)).is_none());
     assert!(session.key(ctrl_key('a')).is_none());
     assert!(session.key(plain_key(KeyCode::Backspace)).is_none());
@@ -114,7 +114,7 @@ fn an_invalid_name_still_lets_the_user_quit_and_save() {
     // A real edit — `trigger_save` gates on `buffer.version() !=
     // saved_version`, which only an actual edit moves.
     assert!(session.key(plain_key(KeyCode::Char('!'))).is_none());
-    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::F2)).is_none());
     assert!(session.key(plain_key(KeyCode::Right)).is_none());
     assert!(session.key(ctrl_key('a')).is_none());
     assert!(session.key(plain_key(KeyCode::Backspace)).is_none());

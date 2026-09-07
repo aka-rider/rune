@@ -94,11 +94,8 @@ fn focused_title_row_shows_the_extension_too() {
     app::update(
         &mut app,
         Msg::Key(KeyInput {
-            code: KeyCode::Char('r'),
-            mods: Mods {
-                ctrl: true,
-                ..Mods::NONE
-            },
+            code: KeyCode::F2,
+            mods: Mods::NONE,
         }),
         &mut effects,
     );

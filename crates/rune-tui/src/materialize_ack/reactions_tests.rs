@@ -93,7 +93,7 @@ fn a_racer_path_another_tab_already_holds_keeps_the_plain_refusal() {
     );
 
     assert!(
-        messages::newest_text(&app).is_some_and(|m| m.contains("^R")),
+        messages::newest_text(&app).is_some_and(|m| m.contains("F2")),
         "got {:?}",
         messages::newest_text(&app)
     );

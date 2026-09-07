@@ -133,7 +133,7 @@ mod tests {
     use crate::global::GLOBAL_BINDINGS;
     use crate::global::GlobalCommand;
     use crate::keymap::Command;
-    use crate::keymap::editor_bindings::{EDITOR_BINDINGS, RELOAD};
+    use crate::keymap::editor_bindings::EDITOR_BINDINGS;
     use crate::palette::keys::PaletteKeyCommand;
     use crate::registry::PaletteCommand;
 
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_section_row_count_matches_the_table() {
+    fn editor_section_lists_every_bound_command_plus_the_chordless_listed_rows() {
         let md = help_markdown(true);
         let section = section_of(&md, "Editor");
         let mut unique_cmds: Vec<Command> = Vec::new();
@@ -253,7 +253,10 @@ mod tests {
                 unique_cmds.push(binding.cmd);
             }
         }
-        assert_eq!(row_count(section), unique_cmds.len());
+        assert!(unique_cmds.contains(&Command::Save));
+        assert!(!unique_cmds.contains(&Command::Reload));
+        assert_eq!(row_count(section), expected_row_count(is_editor));
+        assert!(row_count(section) > unique_cmds.len());
     }
 
     #[test]
@@ -264,19 +267,14 @@ mod tests {
     }
 
     #[test]
-    fn the_reload_binding_appears_via_the_registry() {
+    fn reload_stays_listed_without_a_chord() {
         let md = help_markdown(true);
         let spec = registry::spec(CommandId::Editor(Command::Reload)).expect("reload row exists");
-        assert!(
-            md.contains(spec.name),
-            "missing reload name {:?}",
-            spec.name
-        );
-        assert!(
-            md.contains(&RELOAD.label()),
-            "missing reload key label {:?}",
-            RELOAD.label()
-        );
+        let row = md
+            .lines()
+            .find(|line| line.starts_with(&format!("| {} |", spec.name)))
+            .expect("reload row rendered");
+        assert_eq!(row, format!("| {} | \u{2014} |", spec.name));
     }
 
     #[test]

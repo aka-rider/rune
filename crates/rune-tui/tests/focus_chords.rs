@@ -170,15 +170,10 @@ fn ctrl_t_and_cmd_t_both_show_and_focus_tabs() {
     }
 }
 
-/// `^R` focuses the title field for a rename. `⌘R` is deliberately NOT
-/// bound here — `EDITOR_BINDINGS`' `Reload` command already claims `⌘R` for
-/// re-decoding an image document, and `GLOBAL_BINDINGS` resolves before any
-/// pane ever sees the key, so binding `⌘R` globally too would make Reload
-/// permanently unreachable by keyboard.
 #[test]
-fn ctrl_r_focuses_the_title() {
+fn f2_focuses_the_title() {
     let mut app = app_for("hello");
-    press(&mut app, KeyCode::Char('r'), CTRL);
+    press(&mut app, KeyCode::F2, Mods::NONE);
     assert_eq!(app.focus(), Pane::Title);
 }
 

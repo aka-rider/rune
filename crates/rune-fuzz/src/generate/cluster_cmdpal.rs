@@ -7,7 +7,7 @@ use crate::action::{Action, PaletteGenClaim};
 
 use super::palette::{
     CMDPAL_BACKSPACE_KEY, CMDPAL_KEY_CTRL, CMDPAL_KEY_SUP, CMDPAL_NAV_KEYS, CMDPAL_PARAM_QUERIES,
-    CMDPAL_TAB_KEY, CTRL_B_KEY, CTRL_R_KEY, CTRL_T_KEY, ENTER_KEY, ESCAPE_KEY, FILESEARCH_KEY_CTRL,
+    CMDPAL_TAB_KEY, CTRL_B_KEY, CTRL_T_KEY, ENTER_KEY, ESCAPE_KEY, F2_KEY, FILESEARCH_KEY_CTRL,
     FILESEARCH_KEY_SUP, TYPE_PALETTE,
 };
 
@@ -94,7 +94,7 @@ pub(super) fn cluster_cmdpal_global_interleave() -> impl Strategy<Value = Vec<Ac
         prop_oneof![
             Just(CTRL_T_KEY),
             Just(CTRL_B_KEY),
-            Just(CTRL_R_KEY),
+            Just(F2_KEY),
             Just(FILESEARCH_KEY_CTRL),
             Just(FILESEARCH_KEY_SUP),
         ],

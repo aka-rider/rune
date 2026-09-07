@@ -106,13 +106,13 @@ pub fn bound_draft_session() -> (Session, Arc<Mem>) {
     (session, mem)
 }
 
-/// `^r`, asserting the title actually took focus.
+/// `F2`, asserting the title actually took focus.
 pub fn open_title(session: &mut Session) {
-    assert!(session.key(ctrl_key('r')).is_none());
+    assert!(session.key(plain_key(KeyCode::F2)).is_none());
     assert_eq!(session.app().focus(), Pane::Title);
 }
 
-/// `^r` then clear the STEM (the extension is fenced off by the gate) and
+/// `F2` then clear the STEM (the extension is fenced off by the gate) and
 /// type `name` — WITHOUT pressing Enter, so the caller can drive a
 /// different blur gesture against the still-uncommitted name.
 pub fn set_name(session: &mut Session, name: &str) {
@@ -129,7 +129,7 @@ pub fn commit_name(session: &mut Session, name: &str) {
 }
 
 /// A draft's title seeds as a bare `.md` with the gate unlocked, so there
-/// is no stem to clear: `^r`, type `name` in front of the extension, Enter.
+/// is no stem to clear: `F2`, type `name` in front of the extension, Enter.
 pub fn name_draft(session: &mut Session, name: &str) {
     open_title(session);
     assert!(session.type_(name).is_none());
