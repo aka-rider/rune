@@ -12,6 +12,7 @@ pub mod palette;
 pub mod projectsearch;
 pub mod rowbg;
 pub mod search;
+mod selection_match;
 pub mod title;
 
 use ratatui::Frame;
@@ -77,6 +78,8 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
     overlay::apply_highlight_spans(&mut rows, &spans, &app.theme);
 
     bracket::apply_bracket_match(&mut rows, doc, &app.theme);
+
+    selection_match::apply_selection_matches(&mut rows, doc, &app.theme);
 
     // Painted AFTER the token overlay (so a match's background sits under
     // a token's foreground) and BEFORE the cursor overlays (so the

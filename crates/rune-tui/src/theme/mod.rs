@@ -42,6 +42,7 @@ pub struct ChromeStyles {
     // A match highlight and a live text selection can both be on screen at
     // once, so this stays its own field rather than reusing `selection_bg`.
     pub search_match_bg: Style,
+    pub selection_match_bg: Style,
     pub bracket_match_bg: Style,
     // A left-column cursor row and an editor text selection can both be on
     // screen in the same frame, so this stays its own field rather than
@@ -97,6 +98,7 @@ impl Theme {
             merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
+            selection_match_bg: Style::new().bg(c(blend(p.surface0, p.lavender, 0.3))),
             bracket_match_bg: Style::new().bg(c(blend(p.surface0, p.sky, 0.45))),
             row_cursor_bg: Style::new().bg(c(p.surface2)),
             row_active_bg: Style::new().bg(c(p.surface0)),
@@ -348,6 +350,35 @@ mod tests {
             level(chrome.row_cursor_bg) > level(chrome.row_active_bg),
             "row_cursor_bg must out-brighten row_active_bg"
         );
+    }
+
+    #[test]
+    fn the_selection_match_hint_is_distinct_from_every_background_it_can_share_a_frame_with() {
+        for quantized in [false, true] {
+            let theme = Theme::catppuccin_mocha(quantized);
+            let chrome = &theme.chrome;
+            let hint = chrome.selection_match_bg.bg;
+            let inline_code_bg = scope_table()
+                .resolve("markup.raw.inline")
+                .map(|id| theme.scope_style(id).bg);
+            let others = [
+                ("selection_bg", Some(chrome.selection_bg)),
+                ("search_match_bg", chrome.search_match_bg.bg),
+                ("bracket_match_bg", chrome.bracket_match_bg.bg),
+                ("code_bg", Some(chrome.code_bg)),
+                ("markup.raw.inline", inline_code_bg.unwrap_or(None)),
+            ];
+            assert!(
+                hint.is_some(),
+                "the selection match hint has no background at all (quantized {quantized})"
+            );
+            for (name, other) in others {
+                assert_ne!(
+                    hint, other,
+                    "selection_match_bg is indistinguishable from {name} (quantized {quantized})"
+                );
+            }
+        }
     }
 
     #[test]

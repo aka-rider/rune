@@ -50,6 +50,13 @@ use rune_vfs::Mem;
 /// document rather than the whole of it.
 const VIEWPORT: (u16, u16) = (120, 40);
 
+const SHIFT: Mods = Mods {
+    shift: true,
+    alt: false,
+    ctrl: false,
+    sup: false,
+};
+
 /// A large (~5,000-line) Rust source fixture — `DocumentKind::Code("rust")`
 /// via its `.rs` path, so this exercises the SAME whole-document highlight-
 /// scheduling path a large open code file would in
@@ -378,17 +385,7 @@ fn bootstrap_first_draw_stays_bounded_on_a_large_document() {
 const UNMATCHED_BRACKET_FRAME_BUDGET: Duration = Duration::from_micros(2_000);
 
 fn press(app: &mut App, code: KeyCode) {
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Key(KeyInput {
-            code,
-            mods: Mods::NONE,
-        }),
-        &mut effects,
-    );
-    effects.cmds.clear();
-    app.sync_view();
+    press_with(app, code, Mods::NONE);
 }
 
 #[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
@@ -445,5 +442,64 @@ fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {
          5k-line code document was {:.3} ms over {RENDER_FRAMES} frames (budget: {:.3} ms)",
         per_frame.as_secs_f64() * 1_000.0,
         UNMATCHED_BRACKET_FRAME_BUDGET.as_secs_f64() * 1_000.0
+    );
+}
+
+fn press_with(app: &mut App, code: KeyCode, mods: Mods) {
+    let mut effects = Effects::default();
+    app::update(app, Msg::Key(KeyInput { code, mods }), &mut effects);
+    effects.cmds.clear();
+    app.sync_view();
+}
+
+/// The worst case of the per-frame selection-match scan: a word that recurs
+/// on hundreds of the document's lines, selected, so every visible line
+/// carries a hit. The budget is the same one the plain code-document frame
+/// is held to — the scan is bounded by the visible byte window, so selecting
+/// a common word must not move the per-frame cost at all.
+#[ignore = "This is a wall-clock bound that must ONLY run via the explicit \
+            release invocation in Make (rust-perf-guard). It is inherently \
+            flaky inside ordinary parallel debug `cargo nextest run` and is marked \
+            #[ignore] for that reason."]
+#[test]
+fn render_frame_cost_under_budget_with_a_common_word_selected_on_a_5k_line_code_document() {
+    let mut app = app_for(&build_5k_line_rust_fixture(), "/x/big.rs");
+    settle_highlights(&mut app);
+
+    // `settle_highlights` leaves the caret at end-of-buffer: page back to
+    // the top, walk down onto the first `let` line and across to the word,
+    // then select it — all through the real update seam.
+    let mut pages = 0usize;
+    while app.active_doc().cursors.primary().position.get() > 0 {
+        press(&mut app, KeyCode::PageUp);
+        pages += 1;
+        assert!(pages <= 500, "the caret never paged back to the top");
+    }
+    for _ in 0..3 {
+        press(&mut app, KeyCode::Down);
+    }
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Right);
+    }
+    for _ in 0..3 {
+        press_with(&mut app, KeyCode::Right, SHIFT);
+    }
+
+    let doc = app.active_doc();
+    let (from, to) = doc.cursors.primary().selection_range();
+    assert_eq!(
+        doc.buffer.slice(from.get(), to.get()),
+        Some("let"),
+        "the key walk must have selected exactly `let`, or this gate measures nothing"
+    );
+
+    let per_frame = average_frame_cost(&app);
+
+    assert!(
+        per_frame < CODE_FRAME_BUDGET,
+        "average render::build_rows cost with a common word selected in a 5k-line code \
+         document was {:.3} ms over {RENDER_FRAMES} frames (budget: {:.3} ms)",
+        per_frame.as_secs_f64() * 1_000.0,
+        CODE_FRAME_BUDGET.as_secs_f64() * 1_000.0
     );
 }

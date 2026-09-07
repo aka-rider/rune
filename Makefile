@@ -56,6 +56,7 @@ perf-guard:
 	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_on_a_5k_line_code_document)'
 	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_on_a_many_fence_markdown_document)'
 	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket)'
+	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=render_frame_cost_under_budget_with_a_common_word_selected_on_a_5k_line_code_document)'
 	$(CARGO) nextest run -p rune-tui --release --test perf_guard --run-ignored only -E 'test(=bootstrap_first_draw_stays_bounded_on_a_large_document)'
 
 # One invocation, one test, for the same reason as perf-guard.
