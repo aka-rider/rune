@@ -194,20 +194,23 @@ fn an_unfocused_document_hints_nothing() {
     );
 }
 
-// An open search bar blurs the document (`sync_view` clears `focused` while
+// An open find panel blurs the document (`sync_view` clears `focused` while
 // one is open), so the two backgrounds can never contend for the same cell:
-// the search bar's own match painting is what survives.
+// the panel's own match painting is what survives. The selection seeds the
+// query, so the selected occurrence is the current match.
 #[test]
 fn an_in_file_search_keeps_its_own_match_background() {
     let mut app = app_sized(FOXES);
     select_bytes(&mut app, 4, 3);
     key(&mut app, KeyCode::Char('f'), CTRL);
-    for ch in "fox".chars() {
-        key(&mut app, KeyCode::Char(ch), Mods::NONE);
-    }
+    assert_eq!(
+        app.find_draft(),
+        Some("fox"),
+        "the selection seeds the query"
+    );
     assert!(
         app.active_doc().cursors.primary().has_selection(),
-        "the selection must outlive opening the search bar"
+        "the selection must outlive opening the find panel"
     );
 
     let buf = render_to_test_backend(&app);
@@ -218,8 +221,19 @@ fn an_in_file_search_keeps_its_own_match_background() {
         .search_match_bg
         .bg
         .expect("the search match carries a background");
+    let current_bg = app
+        .theme
+        .chrome
+        .search_current_bg
+        .bg
+        .expect("the current match carries a background");
 
-    for column in [4, 14, 22] {
+    assert_eq!(
+        bg_of(&buf, ox, oy, 4),
+        current_bg,
+        "the seeded occurrence is the current match"
+    );
+    for column in [14, 22] {
         assert_eq!(
             bg_of(&buf, ox, oy, column),
             search_bg,

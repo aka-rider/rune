@@ -5,13 +5,14 @@ mod code_bg;
 pub(crate) mod decor;
 mod diff;
 pub mod filesearch;
+pub mod find;
 pub(crate) mod fuzzyspan;
 pub mod image;
 mod overlay;
 pub mod palette;
 pub mod projectsearch;
+pub mod queryrow;
 pub mod rowbg;
-pub mod search;
 mod selection_match;
 pub mod title;
 
@@ -85,11 +86,23 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
     // a token's foreground) and BEFORE the cursor overlays (so the
     // caret/selection still wins). In-file search runs against the active
     // workspace document alone.
-    if let Some(state) = app.search()
+    if let Some(state) = app.find()
         && painted_doc == Some(app.active)
+        && let Some(window) = overlay::visible_byte_range(&rows)
     {
-        for m in &state.matches {
+        for m in state
+            .matches
+            .iter()
+            .filter(|m| m.start < window.end && m.end > window.start)
+        {
             paint_range(&mut rows, m.clone(), app.theme.chrome.search_match_bg);
+        }
+        if let Some(current) = state.current.and_then(|idx| state.matches.get(idx)) {
+            paint_range(
+                &mut rows,
+                current.clone(),
+                app.theme.chrome.search_current_bg,
+            );
         }
     }
 
@@ -186,8 +199,8 @@ pub fn draw(app: &App, frame: &mut Frame) {
         }
     }
 
-    if let Some(bar_area) = geo.search_bar {
-        search::draw(app, bar_area, frame);
+    if let Some(panel) = &geo.find_panel {
+        find::draw(app, panel, frame);
     }
 
     if let Some(diff_left) = geo.diff_left {

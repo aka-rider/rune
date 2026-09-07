@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::text::Span;
 
 use crate::app::App;
@@ -21,15 +23,52 @@ fn labeled<C: Copy + 'static>(binding: &Binding<C>, buf: &mut String) -> String 
     buf.clone()
 }
 
+pub(crate) type HintEntry = (String, Cow<'static, str>, bool);
+
 /// Default-mode hints, contextual per focused pane rather than a blind
 /// `GLOBAL_BINDINGS` walk: a priority-ordered `(label, help, active)` list,
 /// pane-specific chords placed last so they are the first thing width
 /// truncation drops, not the always-available global tail. Read by both
 /// the untruncated renderer and the width-truncated one `draw` uses, so
 /// the two can never disagree about WHAT the hints are, only how many fit.
-pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
-    let mut entries: Vec<(String, &'static str, bool)> = Vec::new();
+/// A surface that captures the keyboard (find panel, file finder, palette)
+/// lists only its own keys: the global chords are not what its keystrokes
+/// reach.
+pub(crate) fn default_hint_entries(app: &App) -> Vec<HintEntry> {
+    let mut entries: Vec<HintEntry> = Vec::new();
     let mut label_buf = String::new();
+
+    match focus::target(app) {
+        FocusTarget::Find => return crate::find::hints::entries(app),
+        FocusTarget::FileSearch => {
+            entries.extend(
+                FILESEARCH_BINDINGS
+                    .iter()
+                    .filter(|b| !b.secondary)
+                    .filter_map(|b| {
+                        let spec = registry::spec(registry::rows::pane::adapt_filesearch(b.cmd))?;
+                        Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
+                    }),
+            );
+            return entries;
+        }
+        FocusTarget::Palette => {
+            entries.push(("\u{238b}".to_string(), Cow::Borrowed("close"), true));
+            entries.push(("\u{23ce}".to_string(), Cow::Borrowed("run"), true));
+            entries.push((
+                "\u{2191}\u{2193}".to_string(),
+                Cow::Borrowed("navigate"),
+                true,
+            ));
+            return entries;
+        }
+        FocusTarget::Explorer
+        | FocusTarget::Tabs
+        | FocusTarget::Editor
+        | FocusTarget::Title
+        | FocusTarget::ProjectSearch
+        | FocusTarget::Messages => {}
+    }
 
     // Keyed on the `ReadOnly` variant, never on dirtiness: the label
     // itself must stay reachable whenever the chord is live, independent
@@ -39,7 +78,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         && let Some((label, _)) = crate::global::hint_for(GlobalCommand::Save)
         && let Some(spec) = registry::spec(CommandId::Global(GlobalCommand::Save))
     {
-        entries.push((label, spec.help, app.is_dirty()));
+        entries.push((label, Cow::Borrowed(spec.help), app.is_dirty()));
     }
 
     entries.extend(
@@ -51,25 +90,9 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             })
             .filter_map(|b| {
                 let spec = registry::spec(registry::rows::global::adapt(b.cmd))?;
-                Some((labeled(b, &mut label_buf), spec.help, true))
+                Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
             }),
     );
-
-    // The finder is never a `Pane` (chrome stays `Explorer` throughout), so
-    // this has to be checked ahead of the `app.focus()` match below, or its
-    // rows would always read as ordinary Explorer hints.
-    if focus::target(app) == FocusTarget::FileSearch {
-        entries.extend(
-            FILESEARCH_BINDINGS
-                .iter()
-                .filter(|b| !b.secondary)
-                .filter_map(|b| {
-                    let spec = registry::spec(registry::rows::pane::adapt_filesearch(b.cmd))?;
-                    Some((labeled(b, &mut label_buf), spec.help, true))
-                }),
-        );
-        return entries;
-    }
 
     if focus::target(app) == FocusTarget::ProjectSearch {
         entries.extend(
@@ -78,16 +101,9 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
                 .filter(|b| !b.secondary)
                 .filter_map(|b| {
                     let spec = registry::spec(registry::rows::pane::adapt_projectsearch(b.cmd))?;
-                    Some((labeled(b, &mut label_buf), spec.help, true))
+                    Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
                 }),
         );
-        return entries;
-    }
-
-    if focus::target(app) == FocusTarget::Palette {
-        entries.push(("\u{238b}".to_string(), "close", true));
-        entries.push(("\u{23ce}".to_string(), "run", true));
-        entries.push(("\u{2191}\u{2193}".to_string(), "navigate", true));
         return entries;
     }
 
@@ -98,21 +114,21 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
                 .filter(|b| !b.secondary)
                 .filter_map(|b| {
                     let spec = registry::spec(registry::rows::pane::adapt_explorer(b.cmd))?;
-                    Some((labeled(b, &mut label_buf), spec.help, true))
+                    Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
                 }),
         ),
         Pane::Tabs => entries.extend(TABS_BINDINGS.iter().filter_map(|b| {
             let spec = registry::spec(registry::rows::pane::adapt_tabs(b.cmd))?;
-            Some((labeled(b, &mut label_buf), spec.help, true))
+            Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
         })),
         // The title field has no binding table of its own — its keys are
         // matched directly in `title::keys::handle_key` — but the
         // Right-at-end-of-stem unlock and the commit are worth surfacing.
         Pane::Title => {
             if crate::title::keys::can_unlock_extension(&app.title) {
-                entries.push(("\u{2192}".to_string(), "extension", true));
+                entries.push(("\u{2192}".to_string(), Cow::Borrowed("extension"), true));
             }
-            entries.push(("\u{23ce}".to_string(), "rename", true));
+            entries.push(("\u{23ce}".to_string(), Cow::Borrowed("rename"), true));
         }
         Pane::Editor => {
             if app
@@ -126,7 +142,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
                         .filter(|b| !b.secondary)
                         .filter_map(|b| {
                             let spec = registry::spec(registry::rows::pane::adapt_diff(b.cmd))?;
-                            Some((labeled(b, &mut label_buf), spec.help, true))
+                            Some((labeled(b, &mut label_buf), Cow::Borrowed(spec.help), true))
                         }),
                 );
             }
@@ -146,7 +162,7 @@ pub(crate) fn hint_entry_spans(
     theme: &crate::theme::Theme,
     index: usize,
     label: String,
-    help: &'static str,
+    help: impl Into<Cow<'static, str>>,
     active: bool,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
@@ -160,7 +176,7 @@ pub(crate) fn hint_entry_spans(
     };
     spans.push(Span::styled(label, key_style));
     spans.push(Span::styled(" ", theme.chrome.footer_hint));
-    spans.push(Span::styled(help, theme.chrome.footer_hint));
+    spans.push(Span::styled(help.into(), theme.chrome.footer_hint));
     spans
 }
 

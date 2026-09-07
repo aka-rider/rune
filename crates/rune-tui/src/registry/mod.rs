@@ -8,6 +8,7 @@ use crate::diff_view::keys::DiffCommand;
 use crate::explorer_keys::ExplorerCommand;
 use crate::explorer_search::ExplorerSearchCommand;
 use crate::filesearch::keys::FileSearchCommand;
+use crate::find::bindings::FindCommand;
 use crate::global::GlobalCommand;
 use crate::keymap;
 use crate::opentabs::TabsCommand;
@@ -35,6 +36,7 @@ pub enum CommandId {
     ExplorerSearch(ExplorerSearchCommand),
     Tabs(TabsCommand),
     FileSearch(FileSearchCommand),
+    Find(FindCommand),
     ProjectSearch(ProjectSearchCommand),
     Diff(DiffCommand),
     Palette(PaletteCommand),

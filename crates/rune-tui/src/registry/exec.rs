@@ -61,6 +61,7 @@ pub(crate) fn execute(
         | CommandId::ExplorerSearch(_)
         | CommandId::Tabs(_)
         | CommandId::FileSearch(_)
+        | CommandId::Find(_)
         | CommandId::ProjectSearch(_)
         | CommandId::Diff(_)
         | CommandId::PaletteKey(_) => {

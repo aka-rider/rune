@@ -23,7 +23,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::ClipboardRead { text, target } => match target {
             PasteTarget::Title(doc) => crate::title::keys::paste(app, doc, &text),
             PasteTarget::Document(id) => clipboard::handle_paste_content(app, id, &text),
-            PasteTarget::Search => crate::search::keys::paste(app, &text),
+            PasteTarget::Find => crate::find::keys::paste(app, &text),
             PasteTarget::Palette => crate::palette::keys::paste(app, &text),
         },
         Msg::SaveDone {
@@ -140,11 +140,13 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         } => crate::graphics::handle_embed_encoded(app, doc, generation, result, effects),
         Msg::Posted { severity, text } => crate::messages::post(app, severity, text),
         Msg::RecentsLoaded { generation, result } => match result {
-            crate::runtime::RecentsResult::Search(result) => crate::search::handle_history_loaded(
-                app,
-                crate::generation::SearchHistoryGen::from_raw(generation),
-                result,
-            ),
+            crate::runtime::RecentsResult::Search(result) => {
+                crate::find::history::handle_history_loaded(
+                    app,
+                    crate::generation::SearchHistoryGen::from_raw(generation),
+                    result,
+                )
+            }
             crate::runtime::RecentsResult::FileSearch(result) => {
                 crate::filesearch::handle_recents_loaded(
                     app,
@@ -303,9 +305,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     }
 
     let _ = match crate::focus::target(app) {
-        FocusTarget::SearchField | FocusTarget::ReplaceField => {
-            crate::search::keys::handle_key(app, key, effects)
-        }
+        FocusTarget::Find => crate::find::keys::handle_key(app, key, effects),
         FocusTarget::FileSearch => crate::filesearch::keys::handle_key(app, key, effects),
         FocusTarget::ProjectSearch => crate::projectsearch::keys::handle_key(app, key, effects),
         FocusTarget::Palette => crate::palette::keys::handle_key(app, key, effects),

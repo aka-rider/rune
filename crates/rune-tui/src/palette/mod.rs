@@ -67,7 +67,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     let Some(clearance) = app.clear_title_for_overlay(effects) else {
         return;
     };
-    crate::search::close(app);
+    crate::find::close(app, false);
     crate::filesearch::cancel(app, effects);
     let generation = app.next_palette_gen.mint();
     let mut state = PaletteState {

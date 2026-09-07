@@ -136,7 +136,8 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         title_window: 0..0,
         filesearch_query: None,
         projectsearch_query: None,
-        search_draft: None,
+        find_draft: None,
+        replace_draft: None,
         palette_query: None,
         read_only: rune_tui::document::ReadOnly::No,
         painted: rune_fuzz::snapshot::Painted {

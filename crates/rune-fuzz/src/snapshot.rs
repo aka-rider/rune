@@ -98,7 +98,8 @@ pub struct Snapshot {
     pub title_window: Range<usize>,
     pub filesearch_query: Option<String>,
     pub projectsearch_query: Option<String>,
-    pub search_draft: Option<String>,
+    pub find_draft: Option<String>,
+    pub replace_draft: Option<String>,
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`) and reading view (`ReadOnly::Reading`) are both live
@@ -339,7 +340,8 @@ impl Snapshot {
             title_window: app.title.window(),
             filesearch_query: app.filesearch().map(|state| state.query.clone()),
             projectsearch_query: app.projectsearch().map(|state| state.query.clone()),
-            search_draft: app.search_draft().map(str::to_string),
+            find_draft: app.find_draft().map(str::to_string),
+            replace_draft: app.replace_draft().map(str::to_string),
             palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,
             painted,

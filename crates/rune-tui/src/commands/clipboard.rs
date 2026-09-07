@@ -89,11 +89,10 @@ pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
 /// the safer failure mode than losing it.
 pub(crate) fn route_bracketed_paste(app: &mut App, text: &str, effects: &mut Effects) {
     match crate::focus::target(app) {
-        crate::focus::FocusTarget::SearchField => crate::search::keys::paste(app, text),
+        crate::focus::FocusTarget::Find => crate::find::keys::paste(app, text),
         crate::focus::FocusTarget::FileSearch => crate::filesearch::keys::paste(app, text, effects),
         crate::focus::FocusTarget::ProjectSearch => crate::projectsearch::keys::paste(app, text),
         crate::focus::FocusTarget::Palette => crate::palette::keys::paste(app, text),
-        crate::focus::FocusTarget::ReplaceField => handle_paste_content(app, app.active, text),
         crate::focus::FocusTarget::Explorer
         | crate::focus::FocusTarget::Tabs
         | crate::focus::FocusTarget::Editor
@@ -334,12 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_paste_while_the_search_bar_is_focused_lands_in_the_draft() {
+    fn bracketed_paste_while_the_find_panel_is_focused_lands_in_the_draft() {
         use crate::app;
         use crate::runtime::Msg;
 
         let mut app = app_with("ac", 1);
-        crate::search::open(&mut app, &mut crate::runtime::Effects::default());
+        crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
         let id = app.active;
         let before = app.doc(id).unwrap().buffer.content().to_string();
 
@@ -349,9 +348,9 @@ mod tests {
         assert_eq!(
             app.doc(id).unwrap().buffer.content(),
             before,
-            "the document buffer must be untouched while the bar is focused"
+            "the document buffer must be untouched while the panel is focused"
         );
-        assert_eq!(app.search().unwrap().draft, "b");
+        assert_eq!(app.find_draft(), Some("b"));
     }
 
     #[test]

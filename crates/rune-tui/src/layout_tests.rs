@@ -4,35 +4,79 @@ use rune_vfs::Mem;
 use std::sync::Arc;
 
 #[test]
-fn an_open_search_bar_reserves_one_row_between_title_and_editor() {
+fn an_open_find_panel_takes_three_rows_directly_above_the_footer() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
     let area = Rect::new(0, 0, 120, 34);
 
     let closed = geometry(area, &app);
-    assert!(closed.search_bar.is_none());
+    assert!(closed.find_panel.is_none());
 
-    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
+    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
     let open = geometry(area, &app);
-    let bar = open.search_bar.expect("bar row while App::search is open");
-    let title = open.title.expect("title row at this frame size");
+    let panel = open
+        .find_panel
+        .expect("panel while the find overlay is open");
 
-    assert_eq!(bar.y, title.y + 1);
-    assert_eq!(bar.height, 1);
-    assert_eq!(bar.x, title.x);
-    assert_eq!(bar.width, title.width);
-    assert_eq!(open.editor.y, closed.editor.y + 1);
-    assert_eq!(open.editor.height, closed.editor.height - 1);
+    assert_eq!(panel.outer.height, 3);
+    assert_eq!(panel.outer.bottom(), open.footer.y);
+    assert_eq!(panel.outer.width, area.width);
+    assert_eq!(open.main.bottom(), panel.outer.y);
+    assert_eq!(open.editor.height, closed.editor.height - 3);
+    assert_eq!(open.editor.y, closed.editor.y);
 }
 
 #[test]
-fn a_one_row_content_area_gives_the_bar_no_room_and_never_panics() {
+fn expanding_replace_grows_the_panel_to_five_rows() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
-    // Tall enough for the footer alone plus one content row.
-    let geo = geometry(Rect::new(0, 0, 40, 2), &app);
-    assert!(geo.search_bar.is_none());
+    let area = Rect::new(0, 0, 120, 34);
+    crate::find::open(&mut app, true, &mut crate::runtime::Effects::default());
+    let geo = geometry(area, &app);
+    let panel = geo.find_panel.expect("panel open");
+    assert_eq!(panel.outer.height, 5);
+    assert!(panel.replace_field.is_some());
+    assert_eq!(panel.chips.iter().flatten().count(), 6);
 }
 
+#[test]
+fn the_messages_pane_opens_above_the_find_panel_and_leaves_it_in_place() {
+    let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+    app.frame = Some(crate::app::FrameSize::new(120, 34));
+    let area = Rect::new(0, 0, 120, 34);
+    let mut effects = crate::runtime::Effects::default();
+    crate::find::open(&mut app, false, &mut effects);
+    let before = geometry(area, &app).find_panel.expect("panel open").outer;
+
+    crate::messages::info(&mut app, "hello there");
+    crate::messages::toggle(&mut app, &mut effects);
+    let geo = geometry(area, &app);
+    let messages = geo.messages.expect("messages pane open");
+    let after = geo.find_panel.expect("panel still open").outer;
+
+    assert_eq!(after, before);
+    assert_eq!(messages.bottom(), after.y);
+}
+
+#[test]
+fn a_narrow_frame_drops_the_chips_and_gives_the_box_the_full_width() {
+    let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    let geo = geometry(Rect::new(0, 0, 30, 20), &app);
+    let panel = geo.find_panel.expect("panel open");
+    assert!(panel.chips.iter().all(Option::is_none));
+    assert_eq!(panel.frame.width, 30);
+}
+
+#[test]
+fn a_two_row_frame_gives_the_panel_no_room_and_never_panics() {
+    let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    let geo = geometry(Rect::new(0, 0, 40, 2), &app);
+    assert!(geo.find_panel.is_none());
+    assert!(
+        app.find().is_some(),
+        "the overlay stays open without a rect"
+    );
+}
 #[test]
 fn explorer_budget_matches_the_inner_rect_geometry_actually_splits() {
     for left_area in [
@@ -185,8 +229,8 @@ fn assert_geometry_within(geo: &Geometry, frame: Rect) {
     if let Some(r) = geo.title {
         rects.push(("title", r));
     }
-    if let Some(r) = geo.search_bar {
-        rects.push(("search_bar", r));
+    if let Some(r) = geo.find_panel.map(|p| p.outer) {
+        rects.push(("find_panel", r));
     }
     if let Some(r) = geo.left_splitter {
         rects.push(("left_splitter", r));

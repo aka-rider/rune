@@ -350,11 +350,11 @@ fn force_save_bypasses_not_dirty() {
 }
 
 #[test]
-fn an_unfocused_search_bar_survives_a_guard_raise() {
+fn an_unfocused_find_panel_survives_a_guard_raise() {
     let mut app = app();
     let doc = app.active;
-    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
-    app.search_mut().expect("the bar is open").focused = false;
+    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    crate::find::unfocus(&mut app);
 
     assert_eq!(
         set_guard(
@@ -366,8 +366,8 @@ fn an_unfocused_search_bar_survives_a_guard_raise() {
     );
 
     assert!(
-        app.search().is_some(),
-        "a kept, unfocused search bar must outlive a guard raise"
+        app.find().is_some(),
+        "a kept, unfocused find panel must outlive a guard raise"
     );
 }
 
@@ -400,11 +400,11 @@ fn discarding_the_last_non_empty_untitled_draft_mints_untitled_one() {
 }
 
 #[test]
-fn a_focused_search_bar_closes_on_a_guard_raise() {
+fn a_focused_find_panel_closes_on_a_guard_raise() {
     let mut app = app();
     let doc = app.active;
-    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
-    assert!(app.search().expect("the bar is open").focused);
+    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    assert!(app.find().expect("the panel is open").focused);
 
     assert_eq!(
         set_guard(
@@ -416,7 +416,7 @@ fn a_focused_search_bar_closes_on_a_guard_raise() {
     );
 
     assert!(
-        app.search().is_none(),
-        "a focused bar must yield the keyboard"
+        app.find().is_none(),
+        "a focused panel must yield the keyboard"
     );
 }

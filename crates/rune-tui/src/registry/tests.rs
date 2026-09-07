@@ -100,6 +100,14 @@ fn every_projectsearch_binding_maps_to_exactly_one_registry_row() {
 }
 
 #[test]
+fn every_find_binding_maps_to_exactly_one_registry_row() {
+    for binding in crate::find::bindings::FIND_BINDINGS {
+        let id = rows::find::adapt(binding.cmd);
+        assert_eq!(row_count_for(id), 1, "find binding {:?}", binding.help);
+    }
+}
+
+#[test]
 fn every_diff_binding_maps_to_exactly_one_registry_row() {
     for binding in DIFF_BINDINGS {
         let id = rows::pane::adapt_diff(binding.cmd);

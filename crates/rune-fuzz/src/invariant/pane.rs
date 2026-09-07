@@ -98,8 +98,7 @@ pub fn overlay_title_exclusive(next: &Snapshot) -> Option<Violation> {
 /// `FocusTarget` must be classified here rather than silently defaulting.
 fn owns_keystroke(target: FocusTarget) -> bool {
     match target {
-        FocusTarget::SearchField
-        | FocusTarget::ReplaceField
+        FocusTarget::Find
         | FocusTarget::FileSearch
         | FocusTarget::ProjectSearch
         | FocusTarget::Palette => true,
@@ -162,15 +161,16 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     let geo = &next.geometry;
 
     // The frame `geometry` was computed for is not itself a field of
-    // `Geometry` — reconstruct it from the three rects that partition it
-    // exactly: `main` (post-messages-pane) plus whatever the messages pane
-    // and footer splits carved off. Both splits partition their input rect
-    // with no gap and no overlap, so the union reconstructs the original
-    // frame exactly.
+    // `Geometry` — reconstruct it from the rects that partition it
+    // exactly: `main` (post-messages-pane, post-find-panel) plus whatever
+    // the messages pane, find panel, and footer splits carved off. Every
+    // split partitions its input rect with no gap and no overlap, so the
+    // union reconstructs the original frame exactly.
     let frame = geo
         .main
         .union(geo.footer)
-        .union(geo.messages.unwrap_or_default());
+        .union(geo.messages.unwrap_or_default())
+        .union(geo.find_panel.map(|p| p.outer).unwrap_or_default());
 
     let mut rects: Vec<(&str, Rect)> = vec![
         ("footer", geo.footer),
@@ -192,8 +192,8 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     if let Some(r) = geo.title {
         rects.push(("title", r));
     }
-    if let Some(r) = geo.search_bar {
-        rects.push(("search_bar", r));
+    if let Some(r) = geo.find_panel.map(|p| p.outer) {
+        rects.push(("find_panel", r));
     }
     if let Some(r) = geo.left_splitter {
         rects.push(("left_splitter", r));

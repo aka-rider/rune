@@ -42,6 +42,7 @@ pub(crate) mod history_persistence;
 pub mod keymap;
 pub mod layout;
 mod layout_column;
+mod layout_find;
 pub mod linemap;
 pub(crate) mod listnav;
 pub mod materialize_ack;
@@ -72,7 +73,6 @@ pub mod returnto;
 pub mod row_meta;
 pub mod runtime;
 pub(crate) mod save;
-mod search;
 pub(crate) mod split;
 pub(crate) mod term;
 #[cfg(any(test, feature = "testgrid"))]

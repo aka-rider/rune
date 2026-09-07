@@ -151,11 +151,11 @@ fn paste_verbatim_detects_a_mismatched_selection_replace() {
 #[test]
 fn paste_verbatim_checks_a_paste_landing_in_the_search_field() {
     let mut prev = base_snapshot("ac");
-    prev.focus_target = FocusTarget::SearchField;
-    prev.search_draft = Some("q".to_string());
+    prev.focus_target = FocusTarget::Find;
+    prev.find_draft = Some("q".to_string());
     let mut next = base_snapshot("ac");
-    next.focus_target = FocusTarget::SearchField;
-    next.search_draft = Some("qb".to_string());
+    next.focus_target = FocusTarget::Find;
+    next.find_draft = Some("qb".to_string());
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Paste("b".to_string());
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
@@ -164,11 +164,11 @@ fn paste_verbatim_checks_a_paste_landing_in_the_search_field() {
 #[test]
 fn paste_verbatim_detects_a_swallowed_search_field_paste() {
     let mut prev = base_snapshot("ac");
-    prev.focus_target = FocusTarget::SearchField;
-    prev.search_draft = Some("q".to_string());
+    prev.focus_target = FocusTarget::Find;
+    prev.find_draft = Some("q".to_string());
     let mut next = base_snapshot("ac");
-    next.focus_target = FocusTarget::SearchField;
-    next.search_draft = Some("q".to_string()); // wrong: never appended
+    next.focus_target = FocusTarget::Find;
+    next.find_draft = Some("q".to_string()); // wrong: never appended
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Paste("b".to_string());
     let v = paste_verbatim(&prev, &next, &ctx)

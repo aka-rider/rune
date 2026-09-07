@@ -42,6 +42,7 @@ pub struct ChromeStyles {
     // A match highlight and a live text selection can both be on screen at
     // once, so this stays its own field rather than reusing `selection_bg`.
     pub search_match_bg: Style,
+    pub search_current_bg: Style,
     pub selection_match_bg: Style,
     pub bracket_match_bg: Style,
     // A left-column cursor row and an editor text selection can both be on
@@ -98,6 +99,7 @@ impl Theme {
             merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
+            search_current_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.85))),
             selection_match_bg: Style::new().bg(c(blend(p.surface0, p.lavender, 0.3))),
             bracket_match_bg: Style::new().bg(c(blend(p.surface0, p.sky, 0.45))),
             row_cursor_bg: Style::new().bg(c(p.surface2)),

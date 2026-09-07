@@ -8,8 +8,7 @@ pub enum FocusTarget {
     Tabs,
     Editor,
     Title,
-    SearchField,
-    ReplaceField,
+    Find,
     FileSearch,
     ProjectSearch,
     Palette,
@@ -28,7 +27,7 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
 
 pub fn target(app: &App) -> FocusTarget {
     match &app.overlay {
-        crate::overlay::Overlay::Search(state) if state.focused => FocusTarget::SearchField,
+        crate::overlay::Overlay::Find(state) if state.focused => FocusTarget::Find,
         crate::overlay::Overlay::FileSearch(_) => FocusTarget::FileSearch,
         crate::overlay::Overlay::ProjectSearch(_) => FocusTarget::ProjectSearch,
         crate::overlay::Overlay::Palette(_) => FocusTarget::Palette,

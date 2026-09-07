@@ -11,7 +11,7 @@ fn derives_from_each_pane() {
 }
 
 #[test]
-fn target_checks_the_search_bar_before_falling_back_to_the_pane() {
+fn target_checks_the_find_panel_before_falling_back_to_the_pane() {
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -19,10 +19,10 @@ fn target_checks_the_search_bar_before_falling_back_to_the_pane() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
     assert_eq!(target(&app), FocusTarget::Editor);
 
-    crate::search::open(&mut app, &mut crate::runtime::Effects::default());
-    assert_eq!(target(&app), FocusTarget::SearchField);
+    crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
+    assert_eq!(target(&app), FocusTarget::Find);
 
-    crate::search::close(&mut app);
+    crate::find::close(&mut app, false);
     assert_eq!(target(&app), FocusTarget::Editor);
 }
 

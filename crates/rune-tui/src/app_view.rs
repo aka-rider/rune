@@ -46,9 +46,9 @@ impl App {
         let focused = (target == FocusTarget::Editor
             || (target == FocusTarget::Palette && self.focus() == Pane::Editor))
             && self.guard.is_none()
-            && self.search().is_none();
+            && self.find().is_none();
         self.active_doc_mut().focused = focused;
-        // Not gated on the search bar like `focused` above: the bar's match
+        // Not gated on the find panel like `focused` above: the panel's match
         // navigation drives the document cursor, and a jump into a
         // concealed element must reveal it even though the caret stays
         // blurred.
@@ -61,19 +61,8 @@ impl App {
         // offsets can reach the reveal decision that sync makes — a match
         // sitting inside concealed markup must reveal it, the same way the
         // caret already does.
-        crate::search::sync(self);
-        let active = self.active;
-        let search_offsets = self
-            .search()
-            .filter(|state| state.doc == active)
-            .map(|state| {
-                state
-                    .matches
-                    .iter()
-                    .flat_map(|m| [m.start, m.end.saturating_sub(1).max(m.start)])
-                    .collect()
-            })
-            .unwrap_or_default();
+        crate::find::sync(self);
+        let search_offsets = crate::find::reveal_offsets(self);
         self.active_doc_mut()
             .set_search_reveal_offsets(search_offsets);
         let view = self.active_doc_mut().sync();
@@ -108,17 +97,17 @@ mod tests {
     }
 
     #[test]
-    fn the_document_loses_focus_while_the_search_bar_is_open() {
+    fn the_document_loses_focus_while_the_find_panel_is_open() {
         let mut app = app();
         app.sync_view();
         assert!(app.active_doc().focused, "editor is focused before ^F");
 
-        crate::search::open(&mut app, &mut crate::runtime::Effects::default());
+        crate::find::open(&mut app, false, &mut crate::runtime::Effects::default());
         app.sync_view();
 
         assert!(
             !app.active_doc().focused,
-            "the document must not paint a caret while the bar is open"
+            "the document must not paint a caret while the panel is open"
         );
     }
 }

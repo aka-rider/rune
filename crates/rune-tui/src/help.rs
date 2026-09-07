@@ -16,6 +16,7 @@ pub fn help_markdown(sup_chords_reliable: bool) -> String {
     push_section(&mut out, "Global", is_global, sup_chords_reliable);
     push_section(&mut out, "Explorer", is_explorer, sup_chords_reliable);
     push_section(&mut out, "Open File", is_file_search, sup_chords_reliable);
+    push_section(&mut out, "Find", is_find, sup_chords_reliable);
     push_section(
         &mut out,
         "Project Search",
@@ -45,6 +46,10 @@ fn is_explorer(id: CommandId) -> bool {
 
 fn is_file_search(id: CommandId) -> bool {
     matches!(id, CommandId::FileSearch(_))
+}
+
+fn is_find(id: CommandId) -> bool {
+    matches!(id, CommandId::Find(_))
 }
 
 fn is_project_search(id: CommandId) -> bool {
@@ -173,6 +178,7 @@ mod tests {
             "## Global",
             "## Explorer",
             "## Open File",
+            "## Find",
             "## Project Search",
             "## Open Tabs",
             "## Editor",

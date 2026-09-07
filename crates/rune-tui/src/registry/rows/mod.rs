@@ -5,6 +5,7 @@ use crate::binding::KeyPattern;
 use super::{CommandId, CommandSpec};
 
 pub(crate) mod editor;
+pub(crate) mod find;
 pub(crate) mod global;
 pub(crate) mod palette;
 pub(crate) mod pane;
@@ -14,6 +15,7 @@ static REGISTRY: LazyLock<Vec<CommandSpec>> = LazyLock::new(|| {
     all.extend_from_slice(global::ROWS);
     all.extend_from_slice(editor::ROWS);
     all.extend_from_slice(pane::ROWS);
+    all.extend_from_slice(find::ROWS);
     all.extend_from_slice(palette::ROWS);
     all
 });
@@ -51,6 +53,10 @@ pub(crate) fn chords_for(id: CommandId) -> impl Iterator<Item = KeyPattern> {
         .iter()
         .filter(move |b| pane::adapt_projectsearch(b.cmd) == id)
         .map(|b| b.key);
+    let find = crate::find::bindings::FIND_BINDINGS
+        .iter()
+        .filter(move |b| find::adapt(b.cmd) == id)
+        .map(|b| b.key);
     let diff = crate::diff_view::keys::DIFF_BINDINGS
         .iter()
         .filter(move |b| pane::adapt_diff(b.cmd) == id)
@@ -67,6 +73,7 @@ pub(crate) fn chords_for(id: CommandId) -> impl Iterator<Item = KeyPattern> {
         .chain(tabs)
         .chain(filesearch)
         .chain(projectsearch)
+        .chain(find)
         .chain(diff)
         .chain(palette_key)
 }

@@ -57,7 +57,7 @@ pub(crate) fn open(app: &mut App, effects: &mut Effects) {
     let Some(clearance) = app.clear_title_for_overlay(effects) else {
         return;
     };
-    crate::search::close(app);
+    crate::find::close(app, false);
     crate::explorer_search::clear_search(app);
     let return_to = crate::returnto::ReturnTo::to(app.active);
     let generation = app.next_filesearch_gen.mint();

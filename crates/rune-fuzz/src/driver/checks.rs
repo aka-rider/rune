@@ -78,8 +78,8 @@ fn title_focused_key(state: &State) -> Option<KeyInput> {
     (state.app.focus() == Pane::Title).then_some(ESCAPE)
 }
 
-fn search_field_focused_key(state: &State) -> Option<KeyInput> {
-    (focus::target(&state.app) == FocusTarget::SearchField).then_some(ESCAPE)
+fn find_panel_focused_key(state: &State) -> Option<KeyInput> {
+    (focus::target(&state.app) == FocusTarget::Find).then_some(ESCAPE)
 }
 
 fn palette_focused_key(state: &State) -> Option<KeyInput> {
@@ -135,7 +135,7 @@ const RESTORE_STEPS: [fn(&State) -> Option<KeyInput>; 11] = [
     guard_up_key,
     help_active_key,
     title_focused_key,
-    search_field_focused_key,
+    find_panel_focused_key,
     palette_focused_key,
     filesearch_focused_key,
     messages_focused_key,

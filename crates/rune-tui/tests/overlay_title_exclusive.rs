@@ -108,14 +108,14 @@ fn rename_ack_does_not_refocus_title_under_overlay() {
 }
 
 #[test]
-fn a_guard_answered_from_an_open_search_bar_reaches_the_title() {
+fn a_guard_answered_from_an_open_find_panel_reaches_the_title() {
     let (mut session, _mem) = draft_session();
     assert!(session.type_("draft body").is_none());
 
     assert!(session.key(ctrl_key('f')).is_none());
     assert!(
-        session.app().search_draft().is_some(),
-        "the search bar must own focus before the guard is raised"
+        session.app().find_draft().is_some(),
+        "the find panel must own focus before the guard is raised"
     );
 
     session.key(ctrl_key('c'));
@@ -125,8 +125,8 @@ fn a_guard_answered_from_an_open_search_bar_reaches_the_title() {
         "the dirty-quit guard must arm"
     );
     assert!(
-        session.app().search_draft().is_none(),
-        "raising a guard must close the search bar"
+        session.app().find_draft().is_none(),
+        "raising a guard must close the find panel"
     );
 
     session.key(plain_key(KeyCode::Char('s')));

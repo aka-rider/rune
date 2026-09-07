@@ -35,14 +35,12 @@ fn bracketed_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Op
         return None;
     }
     match prev.focus_target {
-        FocusTarget::SearchField => search_paste_violation(prev, next, text),
+        FocusTarget::Find => find_paste_violation(prev, next, text),
         FocusTarget::FileSearch => filesearch_paste_violation(prev, next, text),
         FocusTarget::ProjectSearch => projectsearch_paste_violation(prev, next, text),
         FocusTarget::Palette => palette_paste_violation(prev, next, text),
         FocusTarget::Title => title_paste_violation(prev, next, text),
-        FocusTarget::Editor | FocusTarget::ReplaceField => {
-            document_paste_violation(prev, next, text)
-        }
+        FocusTarget::Editor => document_paste_violation(prev, next, text),
         FocusTarget::Explorer | FocusTarget::Tabs | FocusTarget::Messages => {
             chrome_pane_paste_refused_violation(prev, next)
         }
@@ -96,14 +94,26 @@ fn append_violation(
     ))
 }
 
-fn search_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
+/// The panel routes a paste to whichever of its two fields holds the
+/// focus ring, and a chip-focused paste falls back to the Find field; the
+/// snapshot does not record the ring, so exactly one of the two fields must
+/// have grown by the sanitized text while the other stayed put.
+fn find_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
     let sanitized = strip_control(text);
-    append_violation(
-        "search field",
-        &prev.search_draft,
-        &next.search_draft,
+    let into_find = append_violation("find field", &prev.find_draft, &next.find_draft, &sanitized);
+    if into_find.is_none() && prev.replace_draft == next.replace_draft {
+        return None;
+    }
+    let into_replace = append_violation(
+        "replace field",
+        &prev.replace_draft,
+        &next.replace_draft,
         &sanitized,
-    )
+    );
+    if into_replace.is_none() && prev.find_draft == next.find_draft {
+        return None;
+    }
+    into_find.or(into_replace)
 }
 
 fn filesearch_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {

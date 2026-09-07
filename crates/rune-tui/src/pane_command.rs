@@ -59,13 +59,13 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::TogglePin => run_if_available(app, cmd, effects, |app, _| {
             crate::opentabs::limit::toggle_pin(app, app.active);
         }),
-        GlobalCommand::ToggleSearch => pane_global::toggle_search(app, effects),
+        GlobalCommand::ToggleSearch => crate::find::open(app, false, effects),
         GlobalCommand::SearchNext => search_step(app, true),
         GlobalCommand::SearchPrev => search_step(app, false),
         GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
         GlobalCommand::ToggleProjectSearch => crate::projectsearch::toggle(app, effects),
         GlobalCommand::ToggleReplace | GlobalCommand::ToggleProjectReplace => {
-            crate::search::open(app, effects)
+            crate::find::open(app, true, effects);
         }
         GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
@@ -87,8 +87,8 @@ fn run_if_available(
 }
 
 // `ToggleSearch`'s own arm needs the finder-only half of
-// `App::close_all_overlays` without the search-bar half: pre-closing the bar
-// here would make that arm's own open/close branch always see the bar
+// `App::close_all_overlays` without the find-panel half: pre-closing the panel
+// here would make that arm's own open/close branch always see the panel
 // already closed and reopen it instead of ever closing it.
 fn close_filesearch(app: &mut App, effects: &mut Effects) {
     if app.filesearch().is_some() {
@@ -97,9 +97,9 @@ fn close_filesearch(app: &mut App, effects: &mut Effects) {
 }
 
 fn search_step(app: &mut App, forward: bool) {
-    if app.search().is_some() {
-        crate::search::keys::advance(app, forward);
-    } else if !crate::search::keys::advance_closed(app, forward) {
+    if app.find().is_some() {
+        crate::find::follow::advance(app, forward);
+    } else if !crate::find::follow::advance_closed(app, forward) {
         messages::info(app, "no previous search");
     }
 }
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn every_focus_moving_global_closes_an_open_search_bar() {
+    fn every_focus_moving_global_closes_an_open_find_panel() {
         for cmd in [
             GlobalCommand::ToggleLeft,
             GlobalCommand::FocusTitle,
@@ -210,13 +210,13 @@ mod tests {
             GlobalCommand::Merge,
         ] {
             let mut app = app();
-            crate::search::open(&mut app, &mut fx());
-            assert!(app.search().is_some(), "test setup: bar is open");
+            crate::find::open(&mut app, false, &mut fx());
+            assert!(app.find().is_some(), "test setup: panel is open");
 
             let mut effects = Effects::default();
             handle_global_command(&mut app, cmd, &mut effects);
 
-            assert!(app.search().is_none(), "{cmd:?} must close the search bar");
+            assert!(app.find().is_none(), "{cmd:?} must close the find panel");
         }
     }
 
@@ -365,12 +365,18 @@ mod tests {
         };
         let mut effects = Effects::default();
 
-        handle_global_command(&mut app, GlobalCommand::ToggleSearch, &mut effects);
+        for cmd in [
+            GlobalCommand::ToggleSearch,
+            GlobalCommand::ToggleReplace,
+            GlobalCommand::ToggleProjectReplace,
+        ] {
+            handle_global_command(&mut app, cmd, &mut effects);
 
-        assert!(app.search().is_none(), "the bar must not open mid-merge");
-        assert_eq!(
-            messages::newest_text(&app),
-            Some("finish the merge first (^M)")
-        );
+            assert!(app.find().is_none(), "{cmd:?} must not open mid-merge");
+            assert_eq!(
+                messages::newest_text(&app),
+                Some("finish the merge first (^M)")
+            );
+        }
     }
 }

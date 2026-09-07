@@ -88,7 +88,7 @@ pub struct Geometry {
     pub center: Rect,
     pub center_bordered: bool,
     pub title: Option<Rect>,
-    pub search_bar: Option<Rect>,
+    pub find_panel: Option<crate::layout_find::FindPanelGeometry>,
     pub diff_left: Option<Rect>,
     pub editor: Rect,
     pub main: Rect,
@@ -128,6 +128,7 @@ impl Geometry {
 struct Resolved {
     footer: Rect,
     messages: Option<Rect>,
+    find_panel: Option<crate::layout_find::FindPanelGeometry>,
     main_area: Rect,
     left_block: Option<Rect>,
     explorer_inner: Rect,
@@ -149,6 +150,11 @@ fn resolve(area: Rect, app: &App) -> Resolved {
         .get(1)
         .copied()
         .unwrap_or_else(|| Rect::new(area.x, area.y, area.width, 0));
+
+    let (main_area, find_panel) = match app.find() {
+        Some(state) => crate::layout_find::carve(main_area, state),
+        None => (main_area, None),
+    };
 
     let (main_area, messages_area) = if messages::is_open(app) {
         let messages_h = messages::height(app, area.height);
@@ -183,6 +189,7 @@ fn resolve(area: Rect, app: &App) -> Resolved {
     Resolved {
         footer,
         messages: messages_area,
+        find_panel,
         main_area,
         left_block,
         explorer_inner,
@@ -201,6 +208,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     let Resolved {
         footer,
         messages: messages_area,
+        find_panel,
         main_area,
         left_block,
         explorer_inner,
@@ -230,12 +238,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     // second content row.
     let title = (content.height >= 1).then(|| Region::carve_top(content, 1).rect());
 
-    // A one-row-tall content area keeps that single row for the title
-    // instead of the search bar.
-    let search_bar = (app.search().is_some() && content.height >= 2)
-        .then(|| Region::row(content, content.y.saturating_add(1), 1).rect());
-    let editor_y = 1u16.saturating_add(u16::from(search_bar.is_some()));
-    let editor = Region::carve_bottom(content, content.height.saturating_sub(editor_y)).rect();
+    let editor = Region::carve_bottom(content, content.height.saturating_sub(1)).rect();
 
     let diff_left = diff_left_rect(editor, app);
     let diff_splitter = diff_left.map(|left| {
@@ -296,7 +299,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         center,
         center_bordered,
         title,
-        search_bar,
+        find_panel,
         diff_left,
         editor,
         main: main_area,

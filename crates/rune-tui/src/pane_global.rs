@@ -62,28 +62,6 @@ pub(crate) fn trash(app: &mut App, effects: &mut Effects) {
     }
 }
 
-pub(crate) fn toggle_search(app: &mut App, effects: &mut Effects) {
-    if app.search().is_some() {
-        crate::search::close(app);
-    } else if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active)
-    {
-        messages::info(app, "finish the merge first (^M)");
-    } else {
-        crate::search::open(app, effects);
-        // Never gated on `Db::degraded` — that's a write-path flag; reads
-        // run on their own connection, unaffected by it. No store at all
-        // just leaves history empty, same as an ordinary reader failure.
-        if let (Some(db), Some(generation)) =
-            (app.db.as_ref(), app.search().map(|s| s.history_generation))
-        {
-            effects.cmds.push(crate::runtime::load_search_history_cmd(
-                db.store.reader_query(),
-                generation,
-            ));
-        }
-    }
-}
-
 pub(crate) fn toggle_file_search(app: &mut App, effects: &mut Effects) {
     if app.filesearch().is_some() {
         crate::filesearch::cancel(app, effects);

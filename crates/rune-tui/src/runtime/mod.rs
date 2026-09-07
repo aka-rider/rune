@@ -12,7 +12,7 @@ use crate::pointer::MouseInput;
 pub enum PasteTarget {
     Document(DocumentId),
     Title(DocumentId),
-    Search,
+    Find,
     Palette,
 }
 

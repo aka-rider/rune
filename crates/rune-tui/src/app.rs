@@ -101,7 +101,7 @@ pub struct App {
     pub project_index: Option<crate::projectsearch::index::ProjectIndexState>,
     pub(crate) next_project_index_gen:
         crate::generation::GenCounter<crate::generation::ProjectIndex>,
-    pub(crate) last_search_query: Option<String>,
+    pub(crate) last_find: Option<(String, crate::find::matcher::MatchOptions)>,
     pub(crate) search_history: crate::history_persistence::HistoryPersistence,
     pub(crate) next_search_history_gen:
         crate::generation::GenCounter<crate::generation::SearchHistory>,
@@ -172,7 +172,7 @@ impl App {
             next_projectsearch_gen: crate::generation::GenCounter::default(),
             project_index: None,
             next_project_index_gen: crate::generation::GenCounter::default(),
-            last_search_query: None,
+            last_find: None,
             search_history: crate::history_persistence::HistoryPersistence::new(),
             next_search_history_gen: crate::generation::GenCounter::default(),
             next_palette_gen: crate::generation::GenCounter::default(),

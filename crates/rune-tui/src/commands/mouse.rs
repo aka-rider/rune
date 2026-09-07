@@ -109,6 +109,19 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let area = app.frame_area();
     let geo = crate::layout::geometry(area, app);
 
+    if let Some(panel) = &geo.find_panel {
+        let point = ratatui::layout::Position::new(input.column, input.row);
+        if panel.outer.contains(point) {
+            if matches!(input.kind, MouseKind::Down(MouseButton::Left)) {
+                crate::find::keys::click(app, panel, point, effects);
+            }
+            return;
+        }
+        if matches!(input.kind, MouseKind::Down(MouseButton::Left)) {
+            crate::find::unfocus(app);
+        }
+    }
+
     if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && app.filesearch().is_some() {
         handle_filesearch_click(app, geo.explorer_inner, input, effects);
         return;

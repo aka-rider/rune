@@ -1,16 +1,16 @@
 use crate::app::App;
 use crate::filesearch::FileSearchState;
+use crate::find::FindState;
 use crate::palette::PaletteState;
 use crate::pane::Pane;
 use crate::projectsearch::ProjectSearchState;
 use crate::runtime::Effects;
-use crate::search::SearchState;
 
 #[derive(Default)]
 pub(crate) enum Overlay {
     #[default]
     None,
-    Search(SearchState),
+    Find(FindState),
     FileSearch(FileSearchState),
     ProjectSearch(ProjectSearchState),
     Palette(PaletteState),
@@ -89,7 +89,7 @@ impl App {
     // The finder closes through `filesearch::cancel` rather than a bare
     // overlay reset, so its own focus/return-to restore stays coherent.
     pub(crate) fn close_all_overlays(&mut self, effects: &mut Effects) {
-        crate::search::close(self);
+        crate::find::close(self, false);
         if self.filesearch().is_some() {
             crate::filesearch::cancel(self, effects);
         }
@@ -101,8 +101,8 @@ impl App {
         }
     }
 
-    // Skips a kept, unfocused search highlight; only the overlay that owns
-    // the keyboard is closed here.
+    // Skips a kept, unfocused find panel; only the overlay that owns the
+    // keyboard is closed here.
     pub(crate) fn close_focus_overlays(&mut self, effects: &mut Effects) {
         if self.overlay_owns_focus() {
             self.close_all_overlays(effects);
@@ -117,19 +117,25 @@ impl App {
 
     pub(crate) fn overlay_owns_focus(&self) -> bool {
         match &self.overlay {
-            Overlay::Search(state) => state.focused,
+            Overlay::Find(state) => state.focused,
             Overlay::FileSearch(_) | Overlay::ProjectSearch(_) | Overlay::Palette(_) => true,
             Overlay::None | Overlay::ExplorerFind(_) => false,
         }
     }
 
-    overlay_get!(pub(crate) search, Search, SearchState);
-    overlay_get_mut!(search_mut, Search, SearchState);
-    overlay_open!(open_search, Search, SearchState);
-    overlay_take!(take_search, Search, SearchState);
+    overlay_get!(pub(crate) find, Find, FindState);
+    overlay_get_mut!(find_mut, Find, FindState);
+    overlay_open!(open_find, Find, FindState);
+    overlay_take!(take_find, Find, FindState);
 
-    pub fn search_draft(&self) -> Option<&str> {
-        self.search().map(|state| state.draft.as_str())
+    pub fn find_draft(&self) -> Option<&str> {
+        self.find().map(|state| state.find.draft.as_str())
+    }
+
+    pub fn replace_draft(&self) -> Option<&str> {
+        self.find()
+            .and_then(|state| state.replace.as_ref())
+            .map(|field| field.draft.as_str())
     }
 
     overlay_get!(pub filesearch, FileSearch, FileSearchState);
