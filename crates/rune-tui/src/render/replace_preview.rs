@@ -135,13 +135,29 @@ fn splice(row: &mut Vec<Cell>, span: Range<usize>, start: usize, replacement: &s
         .get(span.start)
         .map_or_else(Style::default, |cell| cell.style);
     let style = base.patch(tint);
-    let mut visual_col: usize = row.get(..span.start).map_or(0, |cells| {
-        cells.iter().map(|cell| usize::from(cell.width)).sum()
-    });
-    let mut cells = Vec::new();
-    for grapheme in replacement.graphemes(true) {
-        push_grapheme_cells(&mut cells, &mut visual_col, grapheme, offset, style);
-    }
+    let cells = if replacement.is_empty() {
+        let width: usize = row.get(span.clone()).map_or(0, |cells| {
+            cells.iter().map(|cell| usize::from(cell.width)).sum()
+        });
+        vec![
+            Cell {
+                text: " ".into(),
+                width: 1,
+                style,
+                buf_offset: offset,
+            };
+            width
+        ]
+    } else {
+        let mut visual_col: usize = row.get(..span.start).map_or(0, |cells| {
+            cells.iter().map(|cell| usize::from(cell.width)).sum()
+        });
+        let mut cells = Vec::new();
+        for grapheme in replacement.graphemes(true) {
+            push_grapheme_cells(&mut cells, &mut visual_col, grapheme, offset, style);
+        }
+        cells
+    };
     row.splice(span, cells);
 }
 

@@ -163,12 +163,54 @@ fn a_zero_width_joiner_in_the_replacement_never_yields_a_cell_ratatui_would_wide
 }
 
 #[test]
-fn an_empty_replacement_previews_the_deletion() {
+fn an_empty_replacement_previews_match_width_blanks_instead_of_deleting() {
+    let mut app = preview_for("dog cat dog cat dog", "dog", "");
+    let (y, row) = document_row(&mut app, "cat");
+    let cats = occurrences(&row, "cat");
+    assert_eq!(cats.len(), 2, "{row:?}");
+    assert!(!row.contains("dog"), "{row:?}");
+    let current = app.theme.chrome.replace_preview_current_bg.bg;
+    let other = app.theme.chrome.replace_preview_bg.bg;
+
+    let first_dog = cats[0] - 4;
+    for x in first_dog..first_dog + 3 {
+        assert_eq!(bg_at(&mut app, x, y), current, "column {x}: {row:?}");
+    }
+    let second_dog = cats[1] - 4;
+    for x in second_dog..second_dog + 3 {
+        assert_eq!(bg_at(&mut app, x, y), other, "column {x}: {row:?}");
+    }
+    let third_dog = cats[1] + 4;
+    for x in third_dog..third_dog + 3 {
+        assert_eq!(bg_at(&mut app, x, y), other, "column {x}: {row:?}");
+    }
+    assert_eq!(app.active_doc().buffer.content(), "dog cat dog cat dog");
+}
+
+#[test]
+fn an_empty_replacement_previews_a_wide_match_as_that_many_blank_columns() {
+    let mut app = preview_for("日本 cat", "日本", "");
+    let (y, row) = document_row(&mut app, "cat");
+    assert!(!row.contains('日'), "{row:?}");
+    assert!(!row.contains('本'), "{row:?}");
+    let current = app.theme.chrome.replace_preview_current_bg.bg;
+
+    let cat = occurrences(&row, "cat")[0];
+    let blank = cat - 5;
+    for x in blank..blank + 4 {
+        assert_eq!(bg_at(&mut app, x, y), current, "column {x}: {row:?}");
+    }
+    assert_eq!(app.active_doc().buffer.content(), "日本 cat");
+}
+
+#[test]
+fn typing_after_an_empty_replacement_swaps_the_blank_preview_for_the_typed_text() {
     let mut app = preview_for("dog cat dog", "dog", "");
 
-    let (_, row) = document_row(&mut app, " cat ");
+    type_str(&mut app, "c");
 
-    assert!(!row.contains("dog"), "{row:?}");
+    document_row(&mut app, "c cat c");
+    assert_eq!(app.active_doc().buffer.content(), "dog cat dog");
 }
 
 #[test]
