@@ -33,7 +33,6 @@ Prebuilt binaries cover macOS (Apple Silicon) and Linux (x86_64/aarch64).
 
 ```sh
 brew tap aka-rider/tap
-brew trust aka-rider/tap
 brew install aka-rider/tap/rune
 ```
 
