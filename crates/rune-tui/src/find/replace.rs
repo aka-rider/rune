@@ -13,7 +13,11 @@ pub(crate) fn replace_current(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
-    let Some(replacement) = state.replace.as_ref().map(|field| field.draft.clone()) else {
+    let Some(replacement) = state
+        .replace
+        .as_ref()
+        .map(|field| field.editor.text().to_string())
+    else {
         return;
     };
     let Some(range) = state
@@ -33,7 +37,7 @@ pub(crate) fn replace_current(app: &mut App) {
         messages::info(app, "no match to replace");
         return;
     };
-    let query = state.find.draft.clone();
+    let query = state.find.editor.text().to_string();
     let options = state.options;
     let edit = Edit {
         start: range.start,
@@ -59,7 +63,11 @@ pub(crate) fn replace_all(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
-    let Some(replacement) = state.replace.as_ref().map(|field| field.draft.clone()) else {
+    let Some(replacement) = state
+        .replace
+        .as_ref()
+        .map(|field| field.editor.text().to_string())
+    else {
         return;
     };
     let content = app.active_doc().buffer.content();
@@ -76,7 +84,7 @@ pub(crate) fn replace_all(app: &mut App) {
             insert,
         })
         .collect();
-    let query = state.find.draft.clone();
+    let query = state.find.editor.text().to_string();
     let options = state.options;
     if edits.is_empty() {
         messages::info(app, "no match to replace");

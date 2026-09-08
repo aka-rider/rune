@@ -1,5 +1,6 @@
 mod blit;
 mod bracket;
+pub(crate) mod caret;
 mod cell;
 mod code_bg;
 pub(crate) mod decor;

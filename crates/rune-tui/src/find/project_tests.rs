@@ -130,7 +130,7 @@ fn a_paste_lands_in_the_find_field_not_the_editor() {
     );
 
     assert_eq!(
-        find(&app).find.draft,
+        find(&app).find.editor.text(),
         "grep",
         "only the first pasted line survives sanitization"
     );
@@ -182,7 +182,7 @@ fn the_scope_chip_toggled_to_file_keeps_the_query_and_selects_the_first_in_file_
 
     assert_eq!(find(&app).scope(), Scope::File);
     assert!(find(&app).project.is_none());
-    assert_eq!(find(&app).find.draft, "needle");
+    assert_eq!(find(&app).find.editor.text(), "needle");
     assert_eq!(find(&app).current, Some(0));
     assert_eq!(selection_start(&app), 4);
     assert_eq!(chip_fg(&mut app, "File"), app.theme.chrome.footer_key.fg);
@@ -248,7 +248,7 @@ fn typing_on_the_results_tells_the_user_how_to_open() {
 
     press_into(&mut app, char_key('x'), &mut effects);
 
-    assert_eq!(find(&app).find.draft, "needle");
+    assert_eq!(find(&app).find.editor.text(), "needle");
     assert_eq!(
         crate::messages::newest_text(&app),
         Some("press \u{23ce} to open the result")
@@ -268,12 +268,30 @@ fn list_keys_in_the_find_field_give_feedback_instead_of_vanishing() {
 
     press(&mut app, escape());
     open_project_find(&mut app);
-    press(&mut app, key(KeyCode::Home, Mods::NONE));
+    press(&mut app, key(KeyCode::PageUp, Mods::NONE));
     assert!(
         crate::messages::newest_text(&app).is_some_and(|text| text.contains("reaches them")),
         "{:?}",
         crate::messages::newest_text(&app)
     );
+}
+
+// Home/End are list-paging keys ONLY once the panel command table has no
+// field claim left on them — with a field focused they move the caret
+// instead, in every scope, Project included; only Results itself still
+// reads them as list-paging (`the_tab_ring_reaches_the_results_and_arrows_
+// move_the_selection` covers that half).
+#[test]
+fn home_in_a_focused_field_moves_the_caret_instead_of_paging_results_even_in_project_scope() {
+    let mut app = seeded_app(&[("/root/a.md", b"needle")]);
+    let mut effects = Effects::default();
+    search_project(&mut app, "needle", &mut effects);
+    assert_eq!(find(&app).focus, Control::Find);
+
+    press_into(&mut app, key(KeyCode::Home, Mods::NONE), &mut effects);
+
+    assert_eq!(find(&app).find.editor.cursor().position.get(), 0);
+    assert_eq!(find(&app).find.editor.text(), "needle");
 }
 
 #[test]

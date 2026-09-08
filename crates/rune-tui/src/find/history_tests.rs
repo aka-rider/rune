@@ -40,7 +40,7 @@ fn up_filters_history_against_the_currently_typed_draft() {
 
     press(&mut app, up());
 
-    assert_eq!(find(&app).find.draft, "hay");
+    assert_eq!(find(&app).find.editor.text(), "hay");
 }
 
 #[test]
@@ -50,11 +50,11 @@ fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
     with_history(&mut app, &["one", "two"]);
 
     press(&mut app, up());
-    assert_eq!(find(&app).find.draft, "one");
+    assert_eq!(find(&app).find.editor.text(), "one");
     press(&mut app, up());
-    assert_eq!(find(&app).find.draft, "two");
+    assert_eq!(find(&app).find.editor.text(), "two");
     press(&mut app, up());
-    assert_eq!(find(&app).find.draft, "two");
+    assert_eq!(find(&app).find.editor.text(), "two");
 }
 
 #[test]
@@ -65,11 +65,11 @@ fn down_past_the_newest_entry_restores_the_in_progress_draft() {
     type_str(&mut app, "h");
 
     press(&mut app, up());
-    assert_eq!(find(&app).find.draft, "hello world");
+    assert_eq!(find(&app).find.editor.text(), "hello world");
 
     press(&mut app, down());
     assert_eq!(
-        find(&app).find.draft,
+        find(&app).find.editor.text(),
         "h",
         "walking down past the newest entry restores the pre-browse draft"
     );
@@ -84,7 +84,7 @@ fn down_with_no_browse_session_active_is_a_no_op() {
     type_str(&mut app, "x");
 
     press(&mut app, down());
-    assert_eq!(find(&app).find.draft, "x");
+    assert_eq!(find(&app).find.editor.text(), "x");
 }
 
 #[test]
@@ -93,10 +93,10 @@ fn typing_after_browsing_history_resets_the_browse_session() {
     open_find(&mut app);
     with_history(&mut app, &["one"]);
     press(&mut app, up());
-    assert_eq!(find(&app).find.draft, "one");
+    assert_eq!(find(&app).find.editor.text(), "one");
 
     press(&mut app, char_key('!'));
-    assert_eq!(find(&app).find.draft, "one!");
+    assert_eq!(find(&app).find.editor.text(), "one!");
     assert!(find(&app).find.history_pos.is_none());
 }
 
@@ -125,7 +125,7 @@ fn up_on_the_results_moves_the_selection_instead_of_browsing_history() {
     press_into(&mut app, up(), &mut effects);
     assert_eq!(project(&app).list.cursor, 0);
     assert_eq!(
-        find(&app).find.draft,
+        find(&app).find.editor.text(),
         "needle",
         "the query field is untouched"
     );

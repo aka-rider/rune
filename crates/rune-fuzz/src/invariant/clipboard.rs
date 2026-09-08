@@ -5,6 +5,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
 use rune_core::buffer::Buffer;
+use rune_core::cursor::Cursor;
 use rune_tui::focus::FocusTarget;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
@@ -93,22 +94,77 @@ fn append_violation(
     ))
 }
 
+// Unlike the file-search/palette queries below (append-only), the find and
+// replace fields are full `TextField` line editors now: a paste lands at
+// the caret, replacing any selection, so the expected text is computed
+// from `prev`'s cursor rather than assumed to land at the end.
+// `replace_field_focused` is the exact same test `find::keys::paste` uses
+// to decide which of the two fields a paste targets, so this checks
+// against whichever one production actually wrote to.
 fn find_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
     let sanitized = strip_control(text);
-    let into_find = append_violation("find field", &prev.find_draft, &next.find_draft, &sanitized);
-    if into_find.is_none() && prev.replace_draft == next.replace_draft {
+    if prev.replace_field_focused {
+        field_insertion_violation(
+            "replace field",
+            &prev.replace_draft,
+            &next.replace_draft,
+            prev.replace_cursor,
+            &sanitized,
+        )
+    } else {
+        field_insertion_violation(
+            "find field",
+            &prev.find_draft,
+            &next.find_draft,
+            prev.find_cursor,
+            &sanitized,
+        )
+    }
+}
+
+fn selection_bounds(cursor: Cursor) -> (usize, usize) {
+    if cursor.has_selection() {
+        let (start, end) = cursor.selection_range();
+        (start.get(), end.get())
+    } else {
+        (cursor.position.get(), cursor.position.get())
+    }
+}
+
+fn field_insertion_violation(
+    field: &str,
+    prev_text: &Option<String>,
+    next_text: &Option<String>,
+    cursor: Option<Cursor>,
+    sanitized: &str,
+) -> Option<Violation> {
+    let prev_text = prev_text.clone().unwrap_or_default();
+    let next_text = next_text.clone().unwrap_or_default();
+    let cursor = cursor?;
+    let (raw_start, raw_end) = selection_bounds(cursor);
+    let len = prev_text.len();
+    let start = prev_text.floor_char_boundary(raw_start.min(len));
+    let end = prev_text.floor_char_boundary(raw_end.min(len));
+    if start > end || end > len {
+        return None; // a malformed field cursor is CUR-BOUNDS's job to report
+    }
+
+    let mut expected = String::with_capacity(len + sanitized.len());
+    expected.push_str(&prev_text[..start]);
+    expected.push_str(sanitized);
+    expected.push_str(&prev_text[end..]);
+
+    if next_text == expected {
         return None;
     }
-    let into_replace = append_violation(
-        "replace field",
-        &prev.replace_draft,
-        &next.replace_draft,
-        &sanitized,
-    );
-    if into_replace.is_none() && prev.find_draft == next.find_draft {
-        return None;
-    }
-    into_find.or(into_replace)
+    Some(Violation::new(
+        "PASTE-VERBATIM",
+        format!(
+            "pasted text not inserted into the {field} at [{start}, {end}): expected={:?} got={:?}",
+            trunc(&expected, 120),
+            trunc(&next_text, 120)
+        ),
+    ))
 }
 
 fn filesearch_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option<Violation> {
@@ -151,13 +207,7 @@ fn title_paste_violation(prev: &Snapshot, next: &Snapshot, text: &str) -> Option
         ));
     }
 
-    let cursor = prev.title_cursor;
-    let (raw_start, raw_end) = if cursor.has_selection() {
-        let (s, e) = cursor.selection_range();
-        (s.get(), e.get())
-    } else {
-        (cursor.position.get(), cursor.position.get())
-    };
+    let (raw_start, raw_end) = selection_bounds(prev.title_cursor);
     let window = &prev.title_window;
     let start = prev
         .title_text

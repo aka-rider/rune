@@ -115,6 +115,22 @@ pub(crate) fn down() -> KeyInput {
     key(KeyCode::Down, Mods::NONE)
 }
 
+pub(crate) fn left() -> KeyInput {
+    key(KeyCode::Left, Mods::NONE)
+}
+
+pub(crate) fn shift_right() -> KeyInput {
+    key(KeyCode::Right, SHIFT)
+}
+
+pub(crate) fn alt_left() -> KeyInput {
+    key(KeyCode::Left, ALT)
+}
+
+pub(crate) fn end() -> KeyInput {
+    key(KeyCode::End, Mods::NONE)
+}
+
 pub(crate) fn find(app: &App) -> &FindState {
     app.find().expect("the find panel is open")
 }

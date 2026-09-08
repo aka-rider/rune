@@ -175,7 +175,7 @@ fn a_single_line_selection_seeds_the_field_and_a_multi_line_one_does_not() {
     let id = app.active;
     selecting(&mut app, id, 0, 3);
     open_find(&mut app);
-    assert_eq!(find(&app).find.draft, "dog");
+    assert_eq!(find(&app).find.editor.text(), "dog");
     assert_eq!(
         find(&app).current,
         Some(0),
@@ -185,7 +185,40 @@ fn a_single_line_selection_seeds_the_field_and_a_multi_line_one_does_not() {
 
     selecting(&mut app, id, 0, 7);
     open_find(&mut app);
-    assert_eq!(find(&app).find.draft, "");
+    assert_eq!(find(&app).find.editor.text(), "");
+}
+
+#[test]
+fn typing_over_a_seeded_selection_replaces_it_instead_of_appending() {
+    let mut app = app_with("dog");
+    let id = app.active;
+    selecting(&mut app, id, 0, 2); // "do" selected inside "dog"
+    open_find(&mut app);
+    assert_eq!(find(&app).find.editor.text(), "do");
+    assert!(find(&app).find.editor.cursor().has_selection());
+
+    press(&mut app, char_key('x'));
+
+    assert_eq!(
+        find(&app).find.editor.text(),
+        "x",
+        "a plain typed character replaces the whole seeded selection"
+    );
+}
+
+#[test]
+fn end_then_typing_after_a_seeded_selection_extends_it_and_requeries() {
+    let mut app = app_with("dog");
+    let id = app.active;
+    selecting(&mut app, id, 0, 2); // "do" selected inside "dog"
+    open_find(&mut app);
+
+    press(&mut app, end());
+    press(&mut app, char_key('g'));
+
+    assert_eq!(find(&app).find.editor.text(), "dog");
+    assert_eq!(find(&app).matches, vec![0..3]);
+    assert_eq!(find(&app).current, Some(0));
 }
 
 #[test]
@@ -205,7 +238,7 @@ fn opening_the_panel_seeds_an_empty_focused_draft_with_no_matches() {
     open_find(&mut app);
     let state = find(&app);
     assert!(state.focused);
-    assert_eq!(state.find.draft, "");
+    assert_eq!(state.find.editor.text(), "");
     assert!(state.matches.is_empty());
     assert!(state.replace.is_none());
 
@@ -222,7 +255,7 @@ fn expanding_replace_never_clobbers_an_in_progress_draft() {
     open_find(&mut app);
     type_str(&mut app, "h");
     open_replace(&mut app);
-    assert_eq!(find(&app).find.draft, "h");
+    assert_eq!(find(&app).find.editor.text(), "h");
     assert_eq!(find(&app).matches, vec![0..1]);
 }
 
@@ -301,7 +334,7 @@ fn alt_p_switches_the_open_panel_to_project_scope_and_keeps_the_query() {
 
     assert_eq!(find(&app).scope(), Scope::Project);
     assert!(find(&app).focused);
-    assert_eq!(find(&app).find.draft, "hel");
+    assert_eq!(find(&app).find.editor.text(), "hel");
     assert_eq!(find(&app).control_ring().last(), Some(&Control::Results));
 }
 
@@ -310,7 +343,7 @@ fn an_unbound_key_reports_instead_of_vanishing() {
     let mut app = app_with("hello");
     open_find(&mut app);
     press(&mut app, key(KeyCode::Char('x'), CTRL));
-    assert_eq!(find(&app).find.draft, "");
+    assert_eq!(find(&app).find.editor.text(), "");
     assert!(
         crate::messages::newest_text(&app).is_some_and(|text| text.contains("not bound")),
         "{:?}",
@@ -328,5 +361,5 @@ fn command_v_spawns_a_pbpaste_cmd_tagged_for_the_panel() {
         effects.cmds[0].kind(),
         crate::runtime::CmdKind::ClipboardRead
     );
-    assert!(find(&app).find.draft.is_empty());
+    assert!(find(&app).find.editor.text().is_empty());
 }

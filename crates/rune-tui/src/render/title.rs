@@ -1,12 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
 use crate::pane::Pane;
+use crate::render::caret::caret_spans;
 use crate::theme::Theme;
 use crate::title::ext_split;
 
@@ -57,49 +57,9 @@ fn build_spans(
     selection: Option<(usize, usize, usize)>,
     theme: &Theme,
 ) -> Vec<Span<'static>> {
-    let len = name.len();
-    let mut bounds = vec![
-        0usize,
-        name.floor_char_boundary(split),
-        name.floor_char_boundary(len),
-    ];
-    if let Some((start, end, cursor)) = selection {
-        bounds.push(name.floor_char_boundary(start));
-        bounds.push(name.floor_char_boundary(end));
-        bounds.push(name.floor_char_boundary(cursor));
-        bounds.push(name.floor_char_boundary(next_grapheme_end(name, cursor)));
-    }
-    bounds.sort_unstable();
-    bounds.dedup();
-
-    let mut spans = Vec::new();
-    for pair in bounds.windows(2) {
-        let &[a, b] = pair else { continue };
-        let text = name.get(a..b).unwrap_or("");
-        if text.is_empty() {
-            continue;
-        }
-        let mut style = base_style(a, split, always_bright, theme);
-        if let Some((start, end, cursor)) = selection {
-            if start != end && a >= start && b <= end {
-                style = style.bg(theme.chrome.selection_bg);
-            }
-            if a == cursor {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-        }
-        spans.push(Span::styled(text.to_string(), style));
-    }
-
-    if let Some((_, _, cursor)) = selection
-        && cursor == len
-    {
-        let style =
-            base_style(cursor, split, always_bright, theme).add_modifier(Modifier::REVERSED);
-        spans.push(Span::styled(" ", style));
-    }
-
-    spans
+    caret_spans(name, &[split], selection, theme.chrome.selection_bg, |at| {
+        base_style(at, split, always_bright, theme)
+    })
 }
 
 fn base_style(at: usize, split: usize, always_bright: bool, theme: &Theme) -> Style {
@@ -110,16 +70,11 @@ fn base_style(at: usize, split: usize, always_bright: bool, theme: &Theme) -> St
     }
 }
 
-fn next_grapheme_end(name: &str, at: usize) -> usize {
-    let at = at.min(name.len());
-    name.get(at..)
-        .and_then(|rest| rest.graphemes(true).next())
-        .map_or(name.len(), |g| at + g.len())
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
+    use ratatui::style::Modifier;
+
     use super::*;
 
     fn theme() -> Theme {

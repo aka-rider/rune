@@ -13,7 +13,7 @@ pub(crate) fn recompute(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
-    let pattern = Matcher::compile(&state.find.draft, state.options);
+    let pattern = Matcher::compile(state.find.editor.text(), state.options);
     let doc = app.active_doc();
     let matches = pattern
         .as_ref()
@@ -69,7 +69,7 @@ pub(crate) fn advance(app: &mut App, forward: bool) {
     let Some(state) = app.find() else {
         return;
     };
-    let query = state.find.draft.clone();
+    let query = state.find.editor.text().to_string();
     let options = state.options;
     let match_count = state.matches.len();
     let concealed = current_concealed(app);

@@ -62,7 +62,7 @@ fn space_in_the_find_field_types_a_space() {
     type_str(&mut app, "a");
     press(&mut app, space());
     type_str(&mut app, "b");
-    assert_eq!(find(&app).find.draft, "a b");
+    assert_eq!(find(&app).find.editor.text(), "a b");
     assert_eq!(find(&app).matches, vec![0..3]);
 }
 
@@ -216,6 +216,79 @@ fn ctrl_r_on_a_closed_panel_opens_it_with_the_replace_field_focused() {
     open_replace(&mut app);
     assert_eq!(find(&app).focus, Control::Replace);
     assert_eq!(find(&app).control_ring().len(), 2);
+}
+
+#[test]
+fn the_focused_field_paints_a_reversed_caret_and_the_unfocused_field_does_not() {
+    let mut app = app_with("hi");
+    open_find(&mut app);
+    type_str(&mut app, "do");
+    press(&mut app, left()); // caret now sits between 'd' and 'o'
+
+    let panel = crate::layout::geometry(app.frame_area(), &app)
+        .find_panel
+        .expect("panel open");
+    let caret_x = panel.find_field.x + 1;
+    app.sync_view();
+    let focused_buf = crate::testgrid::draw(&app, FRAME_W, FRAME_H);
+    let focused_cell = focused_buf
+        .cell((caret_x, panel.find_field.y))
+        .expect("caret cell is on screen");
+    assert!(
+        focused_cell
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "the focused field shows a reversed caret over the character it sits on"
+    );
+
+    let geo = crate::layout::geometry(app.frame_area(), &app);
+    click(&mut app, geo.editor.x, geo.editor.y);
+    app.sync_view();
+    let unfocused_buf = crate::testgrid::draw(&app, FRAME_W, FRAME_H);
+    let unfocused_cell = unfocused_buf
+        .cell((caret_x, panel.find_field.y))
+        .expect("cell is still on screen");
+    assert!(
+        !unfocused_cell
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "an unfocused field shows no caret at all"
+    );
+}
+
+#[test]
+fn a_selection_in_the_find_field_paints_the_selection_background() {
+    let mut app = app_with("hi");
+    open_find(&mut app);
+    type_str(&mut app, "cat");
+    press(&mut app, left());
+    press(&mut app, left());
+    press(&mut app, left());
+    press(&mut app, shift_right());
+    press(&mut app, shift_right());
+    assert_eq!(find(&app).find.editor.selected_text(), "ca");
+
+    let panel = crate::layout::geometry(app.frame_area(), &app)
+        .find_panel
+        .expect("panel open");
+    app.sync_view();
+    let buf = crate::testgrid::draw(&app, FRAME_W, FRAME_H);
+    let bg_at = |x: u16| buf.cell((x, panel.find_field.y)).and_then(|c| c.style().bg);
+    assert_eq!(
+        bg_at(panel.find_field.x),
+        Some(app.theme.chrome.selection_bg)
+    );
+    assert_eq!(
+        bg_at(panel.find_field.x + 1),
+        Some(app.theme.chrome.selection_bg)
+    );
+    assert_ne!(
+        bg_at(panel.find_field.x + 2),
+        Some(app.theme.chrome.selection_bg),
+        "the unselected 't' must not carry the selection background"
+    );
 }
 
 #[test]

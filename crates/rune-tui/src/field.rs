@@ -8,10 +8,17 @@ use rune_core::undo::{self, EditKind, Journal, Step};
 use crate::commands::nav;
 use crate::keymap::{Command, Extend, KeyOutcome, Motion};
 
+#[derive(Debug)]
 pub struct TextField {
     buffer: Buffer,
     cursor: Cursor,
     journal: Journal,
+}
+
+impl Default for TextField {
+    fn default() -> TextField {
+        TextField::new("")
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

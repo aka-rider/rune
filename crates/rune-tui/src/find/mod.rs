@@ -5,6 +5,7 @@ use rune_core::cursor::CursorSet;
 
 use crate::app::App;
 use crate::document::{Document, DocumentId};
+use crate::field::TextField;
 use crate::find::matcher::{MatchOptions, Matcher, PatternError};
 use crate::keymap::GlobalCommand;
 use crate::messages;
@@ -91,16 +92,21 @@ pub(crate) enum ChipKind {
 
 #[derive(Debug, Default)]
 pub(crate) struct FieldState {
-    pub draft: String,
+    pub editor: TextField,
     pub history: Vec<String>,
     pub history_pos: Option<usize>,
     pub history_draft: Option<String>,
 }
 
 impl FieldState {
-    fn seeded(draft: String) -> FieldState {
+    // A seeded selection is inserted whole and then selected end-to-start,
+    // so the very next keystroke — a plain typed character, replacing the
+    // selection — overwrites it rather than appending after it.
+    fn seeded(text: String) -> FieldState {
+        let mut editor = TextField::new(&text);
+        editor.set_cursor(editor.len(), 0);
         FieldState {
-            draft,
+            editor,
             ..FieldState::default()
         }
     }
@@ -293,8 +299,9 @@ pub(crate) fn close(app: &mut App, restore: bool) {
     let Some(state) = app.take_find() else {
         return;
     };
-    if !state.find.draft.trim().is_empty() {
-        app.last_find = Some((state.find.draft, state.options));
+    let find_text = state.find.editor.text().to_string();
+    if !find_text.trim().is_empty() {
+        app.last_find = Some((find_text, state.options));
     }
     if let Some(project) = state.project {
         crate::explorer_preview::discard(app);

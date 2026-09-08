@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
+use crate::field::TextField;
 use crate::find::{ChipKind, Control, FindState, Scope};
 use crate::layout_find::{Chip, FindPanelGeometry, chip_chord, chip_text};
 use crate::render::queryrow::{QueryRow, build_spans};
@@ -28,30 +29,38 @@ pub fn draw(app: &App, panel: &FindPanelGeometry, frame: &mut Frame) {
     frame.render_widget(block, panel.frame);
 
     let readout = readout(app, state, theme);
+    let find_focused = state.focused && state.focus == Control::Find;
+    let (find_cursor, find_selection) = caret_state(&state.find.editor);
     draw_field(
         frame,
         panel.find_field,
         QueryRow {
             prompt: "",
-            draft: &state.find.draft,
+            text: state.find.editor.text(),
             readout: readout
                 .as_ref()
                 .map(|(text, style)| (text.as_str(), *style)),
-            focused: state.focused && state.focus == Control::Find,
+            focused: find_focused,
+            cursor: find_cursor,
+            selection: find_selection,
         },
         theme,
     );
 
     if let (Some(replace), Some(field)) = (&state.replace, panel.replace_field) {
         draw_rule(frame, panel.frame, field.y.saturating_sub(1), border);
+        let replace_focused = state.focused && state.focus == Control::Replace;
+        let (replace_cursor, replace_selection) = caret_state(&replace.editor);
         draw_field(
             frame,
             field,
             QueryRow {
                 prompt: "",
-                draft: &replace.draft,
+                text: replace.editor.text(),
                 readout: None,
-                focused: state.focused && state.focus == Control::Replace,
+                focused: replace_focused,
+                cursor: replace_cursor,
+                selection: replace_selection,
             },
             theme,
         );
@@ -65,6 +74,18 @@ pub fn draw(app: &App, panel: &FindPanelGeometry, frame: &mut Frame) {
 fn draw_field(frame: &mut Frame, area: Rect, row: QueryRow<'_>, theme: &Theme) {
     let spans = build_spans(row, area.width as usize, theme);
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn caret_state(editor: &TextField) -> (usize, (usize, usize)) {
+    let cursor = editor.cursor();
+    let position = cursor.position.get();
+    let selection = if cursor.has_selection() {
+        let (start, end) = cursor.selection_range();
+        (start.get(), end.get())
+    } else {
+        (position, position)
+    };
+    (position, selection)
 }
 
 fn draw_rule(frame: &mut Frame, panel_frame: Rect, y: u16, border: Style) {
@@ -129,7 +150,7 @@ fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style
     let text = match (state.current, state.matches.len()) {
         (Some(current), count) => format!("{}/{count}", current.saturating_add(1)),
         (None, count) if count > 0 => count.to_string(),
-        (None, _) if !state.find.draft.trim().is_empty() => "no matches".to_string(),
+        (None, _) if !state.find.editor.text().trim().is_empty() => "no matches".to_string(),
         (None, _) => return None,
     };
     Some((text, theme.chrome.title_text))

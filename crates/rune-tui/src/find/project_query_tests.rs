@@ -323,7 +323,7 @@ fn a_reply_never_reminted_by_typing_keeps_its_generation_until_the_debounce_fire
     type_into(&mut app, "hi", &mut effects);
     press_into(&mut app, backspace(), &mut effects);
 
-    assert_eq!(find(&app).find.draft, "h");
+    assert_eq!(find(&app).find.editor.text(), "h");
     assert_eq!(project(&app).query_generation, minted);
     assert_eq!(
         app.active_doc().buffer.content(),

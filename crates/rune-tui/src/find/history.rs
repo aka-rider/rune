@@ -92,16 +92,20 @@ fn browse_needle(field: &FieldState) -> String {
     field
         .history_draft
         .clone()
-        .unwrap_or_else(|| field.draft.clone())
+        .unwrap_or_else(|| field.editor.text().to_string())
 }
 
+// `TextField::set_text` always lands the caret at the end of the new
+// text, which is exactly where a recalled entry wants it — a browsed
+// entry reads as freshly typed, ready to keep extending.
 fn step_field(field: &mut FieldState, dir: BrowseDir) -> bool {
     if let BrowseDir::Next = dir {
         let Some(pos) = field.history_pos else {
             return false;
         };
         if pos == 0 {
-            field.draft = field.history_draft.take().unwrap_or_default();
+            let text = field.history_draft.take().unwrap_or_default();
+            field.editor.set_text(&text);
             field.history_pos = None;
             return true;
         }
@@ -125,7 +129,7 @@ fn step_field(field: &mut FieldState, dir: BrowseDir) -> bool {
         field.history_draft.get_or_insert(needle);
     }
     field.history_pos = Some(next_pos);
-    field.draft = entry;
+    field.editor.set_text(&entry);
     true
 }
 

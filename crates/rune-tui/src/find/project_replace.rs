@@ -108,7 +108,7 @@ fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
     let Some(replacement) = app
         .find()
         .and_then(|state| state.replace.as_ref())
-        .map(|field| field.draft.clone())
+        .map(|field| field.editor.text().to_string())
     else {
         return;
     };
@@ -268,7 +268,7 @@ fn finish(app: &mut App, effects: &mut Effects) {
         let walk = state.project.as_mut()?.walk.take()?;
         Some((
             walk,
-            state.find.draft.clone(),
+            state.find.editor.text().to_string(),
             state.options,
             state.origin.doc,
         ))

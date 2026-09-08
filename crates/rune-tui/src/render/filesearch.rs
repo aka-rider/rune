@@ -21,12 +21,15 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
 
     let bar_area = Rect::new(area.x, area.y, area.width, 1);
     let readout = readout_text(state);
+    let cursor = state.query.len();
     let spans = crate::render::queryrow::build_spans(
         crate::render::queryrow::QueryRow {
             prompt: "/ ",
-            draft: &state.query,
+            text: &state.query,
             readout: Some((readout.as_str(), app.theme.chrome.title_text)),
             focused: true,
+            cursor,
+            selection: (cursor, cursor),
         },
         area.width as usize,
         &app.theme,

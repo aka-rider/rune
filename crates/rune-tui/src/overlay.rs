@@ -9,7 +9,10 @@ use crate::runtime::Effects;
 pub(crate) enum Overlay {
     #[default]
     None,
-    Find(FindState),
+    // Boxed: `FieldState` now carries a full `TextField` (buffer, cursor,
+    // undo journal) per field, which would otherwise make `FindState` by
+    // far the largest variant and bloat every `Overlay` value to its size.
+    Find(Box<FindState>),
     FileSearch(FileSearchState),
     Palette(PaletteState),
     ExplorerFind(String),
@@ -116,19 +119,52 @@ impl App {
         }
     }
 
-    overlay_get!(pub(crate) find, Find, FindState);
-    overlay_get_mut!(find_mut, Find, FindState);
-    overlay_open!(open_find, Find, FindState);
-    overlay_take!(take_find, Find, FindState);
+    pub(crate) fn find(&self) -> Option<&FindState> {
+        match &self.overlay {
+            Overlay::Find(state) => Some(state.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn find_mut(&mut self) -> Option<&mut FindState> {
+        match &mut self.overlay {
+            Overlay::Find(state) => Some(state.as_mut()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn open_find(&mut self, state: FindState, _: OverlayClearance) {
+        self.overlay = Overlay::Find(Box::new(state));
+    }
+
+    pub(crate) fn take_find(&mut self) -> Option<FindState> {
+        match std::mem::take(&mut self.overlay) {
+            Overlay::Find(state) => Some(*state),
+            other => {
+                self.overlay = other;
+                None
+            }
+        }
+    }
 
     pub fn find_draft(&self) -> Option<&str> {
-        self.find().map(|state| state.find.draft.as_str())
+        self.find().map(|state| state.find.editor.text())
     }
 
     pub fn replace_draft(&self) -> Option<&str> {
         self.find()
             .and_then(|state| state.replace.as_ref())
-            .map(|field| field.draft.as_str())
+            .map(|field| field.editor.text())
+    }
+
+    pub fn find_cursor(&self) -> Option<rune_core::cursor::Cursor> {
+        self.find().map(|state| state.find.editor.cursor())
+    }
+
+    pub fn replace_cursor(&self) -> Option<rune_core::cursor::Cursor> {
+        self.find()
+            .and_then(|state| state.replace.as_ref())
+            .map(|field| field.editor.cursor())
     }
 
     pub fn replace_field_focused(&self) -> bool {

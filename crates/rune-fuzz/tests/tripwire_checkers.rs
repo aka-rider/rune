@@ -124,6 +124,8 @@ fn base_snapshot(content: &str) -> Snapshot {
         filesearch_query: None,
         find_draft: None,
         replace_draft: None,
+        find_cursor: None,
+        replace_cursor: None,
         replace_field_focused: false,
         find_walk_queued: None,
         palette_query: None,

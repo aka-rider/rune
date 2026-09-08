@@ -282,13 +282,13 @@ fn the_replace_field_has_its_own_history() {
     assert_eq!(replace_field(&app).history, vec!["cat".to_string()]);
 
     press(&mut app, up());
-    assert_eq!(replace_field(&app).draft, "cat");
+    assert_eq!(replace_field(&app).editor.text(), "cat");
 
     press(&mut app, key(KeyCode::Char('f'), CTRL));
     assert_eq!(find(&app).focus, Control::Find);
     press(&mut app, up());
     assert_eq!(
-        find(&app).find.draft,
+        find(&app).find.editor.text(),
         "",
         "the Find field never offers replace text"
     );
@@ -334,7 +334,7 @@ fn a_failed_replace_history_load_reports_and_leaves_the_field_usable() {
         Some("replace history not loaded: reader gone")
     );
     type_str(&mut app, "x");
-    assert_eq!(replace_field(&app).draft, "x");
+    assert_eq!(replace_field(&app).editor.text(), "x");
 }
 
 #[test]

@@ -47,7 +47,8 @@ pub(super) fn apply(rows: &mut [Vec<Cell>], app: &App, doc: &Document, view: &Vi
         if boxed.get(row_idx).copied().unwrap_or(false) {
             continue;
         }
-        let Some(replacement) = matcher.replacement_at(content, range, &replace.draft) else {
+        let Some(replacement) = matcher.replacement_at(content, range, replace.editor.text())
+        else {
             continue;
         };
         let tint = if current == Some(range) {

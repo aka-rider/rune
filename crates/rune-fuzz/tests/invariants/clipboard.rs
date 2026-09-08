@@ -153,6 +153,7 @@ fn paste_verbatim_checks_a_paste_landing_in_the_search_field() {
     let mut prev = base_snapshot("ac");
     prev.focus_target = FocusTarget::Find;
     prev.find_draft = Some("q".to_string());
+    prev.find_cursor = Some(collapsed_cursor(1, 1)); // caret at the end of "q"
     let mut next = base_snapshot("ac");
     next.focus_target = FocusTarget::Find;
     next.find_draft = Some("qb".to_string());
@@ -166,6 +167,7 @@ fn paste_verbatim_detects_a_swallowed_search_field_paste() {
     let mut prev = base_snapshot("ac");
     prev.focus_target = FocusTarget::Find;
     prev.find_draft = Some("q".to_string());
+    prev.find_cursor = Some(collapsed_cursor(1, 1));
     let mut next = base_snapshot("ac");
     next.focus_target = FocusTarget::Find;
     next.find_draft = Some("q".to_string()); // wrong: never appended
@@ -173,6 +175,72 @@ fn paste_verbatim_detects_a_swallowed_search_field_paste() {
     ctx.msg = MsgTag::Paste("b".to_string());
     let v = paste_verbatim(&prev, &next, &ctx)
         .expect("a search-field paste that never appends must trip PASTE-VERBATIM");
+    assert_eq!(v.id, "PASTE-VERBATIM");
+}
+
+/// The find field is a full `TextField` line editor: a paste with the
+/// caret parked mid-text must insert there, not tack onto the end.
+#[test]
+fn paste_verbatim_checks_a_paste_landing_mid_text_in_the_search_field() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::Find;
+    prev.find_draft = Some("hlo".to_string());
+    prev.find_cursor = Some(collapsed_cursor(1, 1)); // caret between 'h' and "lo"
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::Find;
+    next.find_draft = Some("hello".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("el".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+/// A paste over a selected span in the find field must replace it, the
+/// same byte-displacing path the document and title fields already cover.
+#[test]
+fn paste_verbatim_checks_a_paste_replacing_a_search_field_selection() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::Find;
+    prev.find_draft = Some("hello".to_string());
+    prev.find_cursor = Some(selection_cursor(1, 0, 5)); // "hello" selected
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::Find;
+    next.find_draft = Some("bye".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("bye".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_checks_a_paste_landing_in_the_replace_field() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::Find;
+    prev.replace_field_focused = true;
+    prev.replace_draft = Some("q".to_string());
+    prev.replace_cursor = Some(collapsed_cursor(1, 1));
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::Find;
+    next.replace_field_focused = true;
+    next.replace_draft = Some("qb".to_string());
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_detects_a_swallowed_replace_field_paste() {
+    let mut prev = base_snapshot("ac");
+    prev.focus_target = FocusTarget::Find;
+    prev.replace_field_focused = true;
+    prev.replace_draft = Some("q".to_string());
+    prev.replace_cursor = Some(collapsed_cursor(1, 1));
+    let mut next = base_snapshot("ac");
+    next.focus_target = FocusTarget::Find;
+    next.replace_field_focused = true;
+    next.replace_draft = Some("q".to_string()); // wrong: never appended
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    let v = paste_verbatim(&prev, &next, &ctx)
+        .expect("a replace-field paste that never lands must trip PASTE-VERBATIM");
     assert_eq!(v.id, "PASTE-VERBATIM");
 }
 

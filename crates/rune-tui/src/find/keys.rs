@@ -7,7 +7,8 @@ use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
 use crate::find::{
-    ChipKind, Control, FindState, Scope, close, follow, project, project_replace, replace,
+    ChipKind, Control, FieldState, FindState, Scope, close, follow, project, project_replace,
+    replace,
 };
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
 use crate::layout_find::FindPanelGeometry;
@@ -20,8 +21,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) ->
         effects.cmds.push(pbpaste_cmd(PasteTarget::Find));
         return KeyOutcome::Consumed;
     }
-    match resolve_in(FIND_BINDINGS, key) {
-        Some(cmd) => apply(app, cmd, key, effects),
+    let panel_cmd = resolve_in(FIND_BINDINGS, key);
+    if field_focused(app) && defers_to_editor(panel_cmd) && try_field_key(app, key) {
+        return KeyOutcome::Consumed;
+    }
+    match panel_cmd {
+        Some(cmd) => apply(app, cmd, effects),
         None => messages::warn_if_new(
             app,
             format!(
@@ -33,17 +38,86 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) ->
     KeyOutcome::Consumed
 }
 
-fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) {
+// Home/End/Erase/Type all have a panel-command reading (page the results,
+// erase, type-to-search) that only applies once a field can no longer
+// claim the key for itself — a field takes first refusal on exactly these
+// four, and on anything the table has no row for at all.
+fn defers_to_editor(cmd: Option<FindCommand>) -> bool {
+    matches!(
+        cmd,
+        None | Some(FindCommand::Home | FindCommand::End | FindCommand::Erase | FindCommand::Type)
+    )
+}
+
+fn field_focused(app: &App) -> bool {
+    app.find()
+        .is_some_and(|state| matches!(state.focus, Control::Find | Control::Replace))
+}
+
+// Mirrors `title::keys::handle_key`'s own two-step resolve: a motion,
+// selection, delete, or undo command goes to `TextField::apply`; anything
+// EDITOR_BINDINGS has no row for, that is still a plain typed character,
+// goes to `TextField::insert`. Copy/Cut are rejected outright — unlike the
+// title, a find field has no clipboard path of its own (paste already
+// arrives through `paste` below) — so those two fall through unhandled
+// and land on the same "key not bound" hint any other unbound chord gets.
+fn try_field_key(app: &mut App, key: KeyInput) -> bool {
+    let Some(focus) = app.find().map(|state| state.focus) else {
+        return false;
+    };
+    if let Some(cmd) = keymap::resolve_in(keymap::editor_bindings::EDITOR_BINDINGS, key)
+        && !matches!(cmd, Command::Copy | Command::Cut)
+    {
+        commit_field_edit(app, focus, |field| {
+            let window = 0..field.editor.len();
+            let _ = field.editor.apply(cmd, window);
+        });
+        true
+    } else if let KeyCode::Char(ch) = key.code
+        && !key.mods.ctrl
+        && !key.mods.alt
+        && !key.mods.sup
+    {
+        commit_field_edit(app, focus, |field| {
+            let window = 0..field.editor.len();
+            let _ = field.editor.insert(&ch.to_string(), window);
+        });
+        true
+    } else {
+        false
+    }
+}
+
+// The one chokepoint every field mutation funnels through: it leaves
+// whatever history browse was in progress, then — for the Find field only
+// — reruns the same recompute/follow/debounce-restart path
+// `crate::find::requery` always ran after a keystroke, so matches never
+// drift from what the field displays.
+fn commit_field_edit(app: &mut App, target: Control, edit: impl FnOnce(&mut FieldState)) {
+    let Some(state) = app.find_mut() else {
+        return;
+    };
+    let field = match target {
+        Control::Find => Some(&mut state.find),
+        Control::Replace => state.replace.as_mut(),
+        Control::Results => None,
+    };
+    let Some(field) = field else {
+        return;
+    };
+    edit(field);
+    field.leave_history();
+    if target == Control::Find {
+        crate::find::requery(app);
+    }
+}
+
+fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
     let Some((focus, scope)) = app.find().map(|state| (state.focus, state.scope())) else {
         return;
     };
     match cmd {
-        FindCommand::Type => {
-            if let KeyCode::Char(c) = key.code {
-                type_char(app, c);
-            }
-        }
-        FindCommand::Erase => erase(app),
+        FindCommand::Type | FindCommand::Erase => control_hint(app),
         FindCommand::Close => close(app, true),
         FindCommand::Commit => match (focus, scope) {
             (Control::Find, Scope::File) => follow::advance(app, true),
@@ -154,6 +228,9 @@ pub(crate) fn click(
     }
 }
 
+// Targets the Replace field only when it's the one literally focused;
+// every other focus, Results included, lands the paste in Find — Results
+// has no text field of its own to receive it.
 pub(crate) fn paste(app: &mut App, text: &str) {
     if app.find().is_none_or(|state| !state.focused) {
         return;
@@ -162,23 +239,18 @@ pub(crate) fn paste(app: &mut App, text: &str) {
     if sanitized.is_empty() {
         return;
     }
-    let Some(state) = app.find_mut() else {
-        return;
-    };
-    let into_replace = state.focus == Control::Replace;
-    let field = if into_replace {
-        state.replace.as_mut()
+    let into_replace = app
+        .find()
+        .is_some_and(|state| state.focus == Control::Replace);
+    let target = if into_replace {
+        Control::Replace
     } else {
-        Some(&mut state.find)
+        Control::Find
     };
-    let Some(field) = field else {
-        return;
-    };
-    field.draft.push_str(&sanitized);
-    field.leave_history();
-    if !into_replace {
-        crate::find::requery(app);
-    }
+    commit_field_edit(app, target, |field| {
+        let window = 0..field.editor.len();
+        let _ = field.editor.insert(&sanitized, window);
+    });
 }
 
 fn focus_control(app: &mut App, control: Control) {
@@ -211,31 +283,6 @@ fn toggle_option(app: &mut App, pick: fn(&mut MatchOptions) -> &mut bool) {
     let flag = pick(&mut state.options);
     *flag = !*flag;
     crate::find::requery(app);
-}
-
-fn type_char(app: &mut App, c: char) {
-    edit_focused_field(app, |draft| queryline::type_char(draft, c));
-}
-
-fn erase(app: &mut App) {
-    edit_focused_field(app, queryline::erase_grapheme);
-}
-
-fn edit_focused_field(app: &mut App, edit: impl FnOnce(&mut String)) {
-    let Some(state) = app.find_mut() else {
-        return;
-    };
-    let focus = state.focus;
-    match state.focused_field_mut() {
-        Some(field) => {
-            edit(&mut field.draft);
-            field.leave_history();
-            if focus == Control::Find {
-                crate::find::requery(app);
-            }
-        }
-        None => control_hint(app),
-    }
 }
 
 fn list_move(app: &mut App, focus: Control, key: ListKey, effects: &mut Effects) {

@@ -140,7 +140,9 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
         return;
     }
     let matcher = match &state.pattern {
-        Ok(matcher) if state.find.draft.chars().count() >= MIN_QUERY_CHARS => matcher.clone(),
+        Ok(matcher) if state.find.editor.text().chars().count() >= MIN_QUERY_CHARS => {
+            matcher.clone()
+        }
         _ => {
             if let Some(project) = results_mut(app) {
                 project.clear();
@@ -292,7 +294,7 @@ pub(crate) fn step_hit(app: &mut App, forward: bool, effects: &mut Effects) {
 fn report_no_results(app: &mut App) {
     let query = app
         .find()
-        .map(|state| state.find.draft.clone())
+        .map(|state| state.find.editor.text().to_string())
         .unwrap_or_default();
     if query.chars().count() < MIN_QUERY_CHARS {
         messages::info(
@@ -311,7 +313,7 @@ pub(crate) fn open_hit(app: &mut App, effects: &mut Effects) {
     };
     let Some((query, options)) = app
         .find()
-        .map(|state| (state.find.draft.clone(), state.options))
+        .map(|state| (state.find.editor.text().to_string(), state.options))
     else {
         return;
     };
@@ -392,7 +394,7 @@ pub(crate) fn readout_text(app: &App, state: &FindState) -> Option<String> {
     if index.building {
         return Some(crate::projectsearch::spinner_char(index.spinner_frame).to_string());
     }
-    if state.find.draft.chars().count() < MIN_QUERY_CHARS {
+    if state.find.editor.text().chars().count() < MIN_QUERY_CHARS {
         return Some(format!("{MIN_QUERY_CHARS}+ chars"));
     }
     let files = project.results.len();
