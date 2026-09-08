@@ -1,12 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
-use crate::find::{Control, FindState, Scope};
-use crate::layout_find::{Chip, FindPanelGeometry, chip_label};
+use crate::find::{ChipKind, Control, FindState, Scope};
+use crate::layout_find::{Chip, FindPanelGeometry, chip_chord, chip_text};
 use crate::render::queryrow::{QueryRow, build_spans};
 use crate::theme::Theme;
 use crate::width::{display_width, truncate_to_width};
@@ -80,31 +80,28 @@ fn draw_rule(frame: &mut Frame, panel_frame: Rect, y: u16, border: Style) {
 }
 
 fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme: &Theme) {
-    let label = chip_label(state, chip);
-    let mut spans = match chip.control {
-        Control::Scope => scope_spans(state.scope(), theme),
-        Control::Case | Control::Word | Control::Regex => {
-            let on = state.option(chip.control).is_some_and(|(_, on)| on);
+    let mut spans = vec![
+        Span::styled(chip_chord(chip), theme.chrome.footer_key),
+        Span::raw(" "),
+    ];
+    spans.extend(match chip.kind {
+        ChipKind::Scope => scope_spans(state.scope(), theme),
+        ChipKind::Case | ChipKind::Word | ChipKind::Regex => {
+            let on = state.chip_on(chip.kind).unwrap_or(false);
             let style = if on {
                 theme.chrome.footer_key
             } else {
                 theme.chrome.footer_key_inactive
             };
-            vec![Span::styled(label, style)]
+            vec![Span::styled(chip_text(state, chip), style)]
         }
-        Control::Find
-        | Control::Replace
-        | Control::ReplaceOne
-        | Control::ReplaceAll
-        | Control::Results => {
-            vec![Span::styled(label, theme.chrome.footer_key)]
+        ChipKind::ReplaceOne | ChipKind::ReplaceAll => {
+            vec![Span::styled(
+                chip_text(state, chip),
+                theme.chrome.footer_key,
+            )]
         }
-    };
-    if state.focused && state.focus == chip.control {
-        for span in &mut spans {
-            span.style = span.style.add_modifier(Modifier::REVERSED);
-        }
-    }
+    });
     frame.render_widget(Paragraph::new(Line::from(spans)), rect);
 }
 
@@ -114,11 +111,9 @@ fn scope_spans(scope: Scope, theme: &Theme) -> Vec<Span<'static>> {
         Scope::Project => (theme.chrome.footer_key_inactive, theme.chrome.footer_key),
     };
     vec![
-        Span::styled("[", theme.chrome.footer_key_inactive),
         Span::styled("File", file),
         Span::styled("|", theme.chrome.footer_key_inactive),
         Span::styled("Project", project),
-        Span::styled("]", theme.chrome.footer_key_inactive),
     ]
 }
 

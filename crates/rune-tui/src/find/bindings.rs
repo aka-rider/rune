@@ -1,4 +1,5 @@
 use crate::binding::{Binding, KeyPattern};
+use crate::find::ChipKind;
 use crate::keymap::{KeyCode, Mods};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,7 +11,7 @@ pub enum FindCommand {
     Alt,
     NextControl,
     PrevControl,
-    Activate,
+    ToggleScope,
     ToggleCase,
     ToggleWord,
     ToggleRegex,
@@ -20,6 +21,17 @@ pub enum FindCommand {
     PageDown,
     Home,
     End,
+}
+
+pub(crate) fn chip_command(kind: ChipKind) -> FindCommand {
+    match kind {
+        ChipKind::Scope => FindCommand::ToggleScope,
+        ChipKind::Case => FindCommand::ToggleCase,
+        ChipKind::Word => FindCommand::ToggleWord,
+        ChipKind::Regex => FindCommand::ToggleRegex,
+        ChipKind::ReplaceOne => FindCommand::Commit,
+        ChipKind::ReplaceAll => FindCommand::Alt,
+    }
 }
 
 const SHIFT: Mods = Mods {
@@ -37,12 +49,6 @@ const ALT: Mods = Mods {
 };
 
 pub const FIND_BINDINGS: &[Binding<FindCommand>] = &[
-    Binding {
-        key: KeyPattern::new(KeyCode::Char(' '), Mods::NONE),
-        cmd: FindCommand::Activate,
-        help: "toggle",
-        secondary: false,
-    },
     Binding {
         key: KeyPattern::printable(Mods::NONE),
         cmd: FindCommand::Type,
@@ -89,6 +95,12 @@ pub const FIND_BINDINGS: &[Binding<FindCommand>] = &[
         key: KeyPattern::new(KeyCode::Tab, SHIFT),
         cmd: FindCommand::PrevControl,
         help: "previous control",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('p'), ALT),
+        cmd: FindCommand::ToggleScope,
+        help: "toggle project scope",
         secondary: false,
     },
     Binding {

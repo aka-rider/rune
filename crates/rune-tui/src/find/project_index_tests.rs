@@ -365,8 +365,11 @@ fn switching_the_scope_chip_to_project_builds_the_index_and_arms_the_debounce() 
     type_into(&mut app, "needle", &mut effects);
     assert!(app.project_index.is_none(), "File scope builds no index");
 
-    press_into(&mut app, tab(), &mut effects);
-    press_into(&mut app, space(), &mut effects);
+    press_into(
+        &mut app,
+        key(crate::keymap::KeyCode::Char('p'), ALT),
+        &mut effects,
+    );
 
     assert_eq!(find(&app).scope(), crate::find::Scope::Project);
     assert!(

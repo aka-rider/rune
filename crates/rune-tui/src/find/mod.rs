@@ -75,20 +75,18 @@ pub(crate) enum Scope {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Control {
     Find,
+    Replace,
+    Results,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChipKind {
     Scope,
     Case,
     Word,
     Regex,
-    Replace,
     ReplaceOne,
     ReplaceAll,
-    Results,
-}
-
-impl Control {
-    pub(crate) fn is_field(self) -> bool {
-        matches!(self, Control::Find | Control::Replace)
-    }
 }
 
 #[derive(Debug, Default)]
@@ -160,26 +158,14 @@ impl FindState {
         match self.focus {
             Control::Find => Some(&mut self.find),
             Control::Replace => self.replace.as_mut(),
-            Control::Scope
-            | Control::Case
-            | Control::Word
-            | Control::Regex
-            | Control::ReplaceOne
-            | Control::ReplaceAll
-            | Control::Results => None,
+            Control::Results => None,
         }
     }
 
     pub(crate) fn control_ring(&self) -> Vec<Control> {
-        let mut ring = vec![
-            Control::Find,
-            Control::Scope,
-            Control::Case,
-            Control::Word,
-            Control::Regex,
-        ];
+        let mut ring = vec![Control::Find];
         if self.replace.is_some() {
-            ring.extend([Control::Replace, Control::ReplaceOne, Control::ReplaceAll]);
+            ring.push(Control::Replace);
         }
         if self.project.is_some() {
             ring.push(Control::Results);
@@ -187,17 +173,12 @@ impl FindState {
         ring
     }
 
-    pub(crate) fn option(&self, control: Control) -> Option<(&'static str, bool)> {
-        match control {
-            Control::Case => Some(("Case", self.options.case_sensitive)),
-            Control::Word => Some(("Word", self.options.whole_word)),
-            Control::Regex => Some(("Regex", self.options.regex)),
-            Control::Find
-            | Control::Scope
-            | Control::Replace
-            | Control::ReplaceOne
-            | Control::ReplaceAll
-            | Control::Results => None,
+    pub(crate) fn chip_on(&self, kind: ChipKind) -> Option<bool> {
+        match kind {
+            ChipKind::Case => Some(self.options.case_sensitive),
+            ChipKind::Word => Some(self.options.whole_word),
+            ChipKind::Regex => Some(self.options.regex),
+            ChipKind::Scope | ChipKind::ReplaceOne | ChipKind::ReplaceAll => None,
         }
     }
 }

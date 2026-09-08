@@ -180,6 +180,20 @@ mod tests {
     }
 
     #[test]
+    fn the_find_section_lists_the_scope_toggle_and_drops_the_space_row() {
+        let md = help_markdown(true);
+        let section = section_of(&md, "Find");
+        assert!(
+            section.contains("toggle project scope") && section.contains("\u{2325}P"),
+            "expected a project scope toggle row with \u{2325}P in:\n{section}"
+        );
+        assert!(
+            !section.contains('\u{2423}'),
+            "the space row must be gone now that chips are never focused:\n{section}"
+        );
+    }
+
+    #[test]
     fn the_explorer_section_is_one_table_fed_by_both_binding_sets() {
         let md = help_markdown(true);
         assert_eq!(md.matches("## Explorer").count(), 1);

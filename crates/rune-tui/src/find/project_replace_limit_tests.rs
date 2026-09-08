@@ -163,7 +163,8 @@ fn the_all_chip_shows_the_file_count_in_project_scope() {
     let rows = project_grid(&mut fx.app);
 
     assert!(
-        rows.iter().any(|row| row.contains("[All 3]")),
+        rows.iter()
+            .any(|row| row.contains("\u{21e7}\u{23ce} All 3")),
         "the All chip names the blast radius: {rows:?}"
     );
 }

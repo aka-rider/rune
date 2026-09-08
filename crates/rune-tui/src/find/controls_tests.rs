@@ -3,51 +3,52 @@ use super::*;
 use crate::keymap::KeyCode;
 
 #[test]
-fn ctrl_f_from_a_chip_returns_focus_to_the_find_field() {
+fn ctrl_f_from_the_replace_field_returns_focus_to_the_find_field() {
     let mut app = app_with("hi");
     open_find(&mut app);
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::Scope);
+    open_replace(&mut app);
+    assert_eq!(find(&app).focus, Control::Replace);
     open_find(&mut app);
     assert_eq!(find(&app).focus, Control::Find);
     assert!(app.find().is_some());
 }
 
 #[test]
-fn tab_walks_the_ring_and_the_footer_names_the_focused_chip() {
+fn tab_walks_only_between_fields_and_wraps() {
     let mut app = app_with("hi");
     open_find(&mut app);
-    let ring = [
-        Control::Scope,
-        Control::Case,
-        Control::Word,
-        Control::Regex,
-        Control::Find,
-    ];
-    for expected in ring {
-        press(&mut app, tab());
-        assert_eq!(find(&app).focus, expected);
-        if expected == Control::Word {
-            let entries = crate::footer_hints::default_hint_entries(&app);
-            assert_eq!(entries[0].1, "Word: off", "entries: {entries:?}");
-            assert_eq!(entries[0].0, "\u{2423}");
-        }
-    }
+    assert_eq!(find(&app).control_ring(), vec![Control::Find]);
+    press(&mut app, tab());
+    assert_eq!(find(&app).focus, Control::Find, "no other field to reach");
+
+    open_replace(&mut app);
+    assert_eq!(find(&app).focus, Control::Replace);
+    press(&mut app, tab());
+    assert_eq!(find(&app).focus, Control::Find);
+    press(&mut app, tab());
+    assert_eq!(find(&app).focus, Control::Replace);
     press(&mut app, shift_tab());
-    assert_eq!(find(&app).focus, Control::Regex);
+    assert_eq!(find(&app).focus, Control::Find);
 }
 
 #[test]
-fn space_on_the_case_chip_turns_it_on_and_drops_the_other_case() {
+fn clicking_the_case_chip_turns_it_on_and_drops_the_other_case() {
     let mut app = app_with("Dog dog");
     open_find(&mut app);
     type_str(&mut app, "dog");
     assert_eq!(find(&app).matches.len(), 2);
 
-    press(&mut app, tab());
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::Case);
-    press(&mut app, space());
+    let geo = crate::layout::geometry(app.frame_area(), &app);
+    let (_, rect) = geo
+        .find_panel
+        .expect("panel open")
+        .chips
+        .iter()
+        .flatten()
+        .find(|(chip, _)| chip.kind == crate::find::ChipKind::Case)
+        .copied()
+        .expect("the Case chip has a rect");
+    click(&mut app, rect.x, rect.y);
 
     assert!(find(&app).options.case_sensitive);
     assert_eq!(find(&app).matches, vec![4..7]);
@@ -121,7 +122,7 @@ fn clicking_the_word_chip_toggles_whole_word() {
         .chips
         .iter()
         .flatten()
-        .find(|(chip, _)| chip.control == Control::Word)
+        .find(|(chip, _)| chip.kind == crate::find::ChipKind::Word)
         .copied()
         .expect("the Word chip has a rect");
     click(&mut app, rect.x, rect.y);
@@ -195,7 +196,7 @@ fn ctrl_r_expands_the_panel_to_five_rows_with_a_replace_rule() {
         rows[top + 2]
     );
     assert!(
-        rows[top + 3].contains("[Replace] [All]"),
+        rows[top + 3].contains("\u{23ce} Replace \u{21e7}\u{23ce} All"),
         "chips: {:?}",
         rows[top + 3]
     );
@@ -214,7 +215,7 @@ fn ctrl_r_on_a_closed_panel_opens_it_with_the_replace_field_focused() {
     let mut app = app_with("hello");
     open_replace(&mut app);
     assert_eq!(find(&app).focus, Control::Replace);
-    assert_eq!(find(&app).control_ring().len(), 8);
+    assert_eq!(find(&app).control_ring().len(), 2);
 }
 
 #[test]

@@ -219,18 +219,24 @@ fn replace_all_with_nothing_to_replace_says_so() {
 }
 
 #[test]
-fn space_on_the_replace_buttons_replaces_one_then_all() {
+fn clicking_the_replace_chip_replaces_one_then_the_all_chip_replaces_the_rest() {
     let mut app = app_with("dog dog dog");
     open_replace_for(&mut app, "dog", "cat");
 
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::ReplaceOne);
-    press(&mut app, space());
+    let panel = crate::layout::geometry(app.frame_area(), &app)
+        .find_panel
+        .expect("panel open");
+    let (chip, rect) = panel.chips[4].expect("the Replace chip is laid out");
+    assert_eq!(chip.kind, crate::find::ChipKind::ReplaceOne);
+    click(&mut app, rect.x, rect.y);
     assert_eq!(content(&app), "cat dog dog");
 
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::ReplaceAll);
-    press(&mut app, space());
+    let panel = crate::layout::geometry(app.frame_area(), &app)
+        .find_panel
+        .expect("panel open");
+    let (chip, rect) = panel.chips[5].expect("the All chip is laid out");
+    assert_eq!(chip.kind, crate::find::ChipKind::ReplaceAll);
+    click(&mut app, rect.x, rect.y);
     assert_eq!(content(&app), "cat cat cat");
 }
 
@@ -242,7 +248,7 @@ fn clicking_the_all_chip_replaces_every_match() {
         .find_panel
         .expect("panel open");
     let (chip, rect) = panel.chips[5].expect("the All chip is laid out");
-    assert_eq!(chip.control, Control::ReplaceAll);
+    assert_eq!(chip.kind, crate::find::ChipKind::ReplaceAll);
 
     click(&mut app, rect.x, rect.y);
 

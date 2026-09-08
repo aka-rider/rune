@@ -19,7 +19,7 @@ fn chip_fg(app: &mut App, needle: &str) -> Option<ratatui::style::Color> {
     let (y, row) = rows
         .iter()
         .enumerate()
-        .find(|(_, row)| row.contains("[File|Project]"))
+        .find(|(_, row)| row.contains("File|Project"))
         .expect("the scope chip is on screen");
     let x = occurrences(row, needle)
         .first()
@@ -178,9 +178,7 @@ fn the_scope_chip_toggled_to_file_keeps_the_query_and_selects_the_first_in_file_
         "Project scope does not follow in-file"
     );
 
-    press_into(&mut app, tab(), &mut effects);
-    assert_eq!(find(&app).focus, Control::Scope);
-    press_into(&mut app, space(), &mut effects);
+    press_into(&mut app, key(KeyCode::Char('p'), ALT), &mut effects);
 
     assert_eq!(find(&app).scope(), Scope::File);
     assert!(find(&app).project.is_none());
@@ -202,7 +200,7 @@ fn the_footer_inside_project_scope_lists_results_and_open_and_no_globals() {
     assert!(helps.iter().any(|h| h == "open"), "{helps:?}");
     assert!(
         entries.iter().any(|(label, help, _)| {
-            *label == crate::find::bindings::label_for(FindCommand::PrevControl)
+            *label == crate::find::bindings::label_for(FindCommand::NextControl)
                 && *help == "results"
         }),
         "{entries:?}"
@@ -328,7 +326,24 @@ fn ctrl_shift_r_expands_replace_in_project_scope() {
     assert_eq!(find(&app).scope(), Scope::Project);
     assert!(find(&app).replace.is_some());
     assert_eq!(find(&app).focus, Control::Replace);
-    assert_eq!(find(&app).control_ring().len(), 9);
+    assert_eq!(
+        find(&app).control_ring(),
+        vec![Control::Find, Control::Replace, Control::Results]
+    );
+}
+
+#[test]
+fn tab_visits_find_replace_and_results_in_order_in_project_scope() {
+    let mut app = seeded_app(&[]);
+    press(&mut app, key(KeyCode::Char('R'), CTRL));
+    assert_eq!(find(&app).focus, Control::Replace);
+
+    press(&mut app, tab());
+    assert_eq!(find(&app).focus, Control::Results);
+    press(&mut app, tab());
+    assert_eq!(find(&app).focus, Control::Find);
+    press(&mut app, tab());
+    assert_eq!(find(&app).focus, Control::Replace);
 }
 
 #[test]

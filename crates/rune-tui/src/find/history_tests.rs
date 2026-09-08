@@ -113,17 +113,20 @@ fn recalling_a_history_entry_follows_it_live() {
 }
 
 #[test]
-fn up_on_a_chip_reports_instead_of_browsing() {
-    let mut app = app_with("hello");
-    open_find(&mut app);
-    with_history(&mut app, &["one"]);
-    press(&mut app, tab());
+fn up_on_the_results_moves_the_selection_instead_of_browsing_history() {
+    let mut app = seeded_app(&[("/root/a.md", b"needle needle"), ("/root/b.md", b"needle")]);
+    let mut effects = crate::runtime::Effects::default();
+    search_project(&mut app, "needle", &mut effects);
+    press_into(&mut app, shift_tab(), &mut effects);
+    assert_eq!(find(&app).focus, Control::Results);
 
-    press(&mut app, up());
-
-    assert_eq!(find(&app).find.draft, "");
+    press_into(&mut app, down(), &mut effects);
+    assert_eq!(project(&app).list.cursor, 1);
+    press_into(&mut app, up(), &mut effects);
+    assert_eq!(project(&app).list.cursor, 0);
     assert_eq!(
-        crate::messages::newest_text(&app),
-        Some("press \u{2423} to toggle")
+        find(&app).find.draft,
+        "needle",
+        "the query field is untouched"
     );
 }

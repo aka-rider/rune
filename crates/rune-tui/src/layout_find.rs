@@ -2,7 +2,8 @@ use std::borrow::Cow;
 
 use ratatui::layout::Rect;
 
-use crate::find::{Control, FindState};
+use crate::find::bindings::{chip_command, label_for};
+use crate::find::{ChipKind, FindState};
 use crate::region::Region;
 use crate::width::display_width;
 
@@ -12,47 +13,51 @@ const WITH_REPLACE_ROWS: u16 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Chip {
-    pub control: Control,
+    pub kind: ChipKind,
     pub label: &'static str,
 }
 
 pub(crate) const FIND_ROW_CHIPS: [Chip; 4] = [
     Chip {
-        control: Control::Scope,
-        label: "[File|Project]",
+        kind: ChipKind::Scope,
+        label: "File|Project",
     },
     Chip {
-        control: Control::Case,
-        label: "[Aa]",
+        kind: ChipKind::Case,
+        label: "Aa",
     },
     Chip {
-        control: Control::Word,
-        label: "[Word]",
+        kind: ChipKind::Word,
+        label: "Word",
     },
     Chip {
-        control: Control::Regex,
-        label: "[.*]",
+        kind: ChipKind::Regex,
+        label: ".*",
     },
 ];
 
 pub(crate) const REPLACE_ROW_CHIPS: [Chip; 2] = [
     Chip {
-        control: Control::ReplaceOne,
-        label: "[Replace]",
+        kind: ChipKind::ReplaceOne,
+        label: "Replace",
     },
     Chip {
-        control: Control::ReplaceAll,
-        label: "[All]",
+        kind: ChipKind::ReplaceAll,
+        label: "All",
     },
 ];
 
-pub(crate) fn chip_label(state: &FindState, chip: Chip) -> Cow<'static, str> {
-    match (chip.control, &state.project) {
-        (Control::ReplaceAll, Some(project)) => {
-            Cow::Owned(format!("[All {}]", project.results.len()))
+pub(crate) fn chip_text(state: &FindState, chip: Chip) -> Cow<'static, str> {
+    match (chip.kind, &state.project) {
+        (ChipKind::ReplaceAll, Some(project)) => {
+            Cow::Owned(format!("All {}", project.results.len()))
         }
         _ => Cow::Borrowed(chip.label),
     }
+}
+
+pub(crate) fn chip_chord(chip: Chip) -> String {
+    label_for(chip_command(chip.kind))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -140,7 +145,7 @@ fn lay_chip_row<'a>(
 ) {
     let mut x = x0;
     for chip in row {
-        let width = cells(&chip_label(state, *chip));
+        let width = chip_width(state, *chip);
         if let Some(slot) = slots.next() {
             *slot = Some((*chip, Rect::new(x, y, width, 1)));
         }
@@ -148,13 +153,19 @@ fn lay_chip_row<'a>(
     }
 }
 
+fn chip_width(state: &FindState, chip: Chip) -> u16 {
+    cells(&chip_chord(chip))
+        .saturating_add(1)
+        .saturating_add(cells(&chip_text(state, chip)))
+}
+
 fn chip_row_width(row: &[Chip], state: &FindState) -> u16 {
-    let labels = row
+    let widths = row
         .iter()
-        .map(|chip| cells(&chip_label(state, *chip)))
+        .map(|chip| chip_width(state, *chip))
         .fold(0u16, u16::saturating_add);
     let gaps = u16::try_from(row.len().saturating_sub(1)).unwrap_or(u16::MAX);
-    labels.saturating_add(gaps)
+    widths.saturating_add(gaps)
 }
 
 fn chip_strip_width(replace_shown: bool, state: &FindState) -> u16 {

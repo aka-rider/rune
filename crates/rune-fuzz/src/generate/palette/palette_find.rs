@@ -61,6 +61,10 @@ pub(in crate::generate) static FIND_PANEL_KEYS: &[KeyInput] = &[
         mods: Mods::NONE,
     },
     KeyInput {
+        code: KeyCode::Char('p'),
+        mods: ALT,
+    },
+    KeyInput {
         code: KeyCode::Char('c'),
         mods: ALT,
     },

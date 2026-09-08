@@ -6,7 +6,9 @@ use crate::clipboard::pbpaste_cmd;
 use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
-use crate::find::{Control, FindState, Scope, close, follow, project, project_replace, replace};
+use crate::find::{
+    ChipKind, Control, FindState, Scope, close, follow, project, project_replace, replace,
+};
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
 use crate::layout_find::FindPanelGeometry;
 use crate::messages;
@@ -48,42 +50,27 @@ fn apply(app: &mut App, cmd: FindCommand, key: KeyInput, effects: &mut Effects) 
             (Control::Find, Scope::Project) | (Control::Results, _) => {
                 project::open_hit(app, effects);
             }
-            (Control::Replace | Control::ReplaceOne, _) => replace_one(app, scope, effects),
-            (Control::ReplaceAll, _) => replace_every(app, scope, effects),
-            (Control::Scope | Control::Case | Control::Word | Control::Regex, _) => {
-                activate(app, focus, effects);
-            }
+            (Control::Replace, _) => replace_one(app, scope, effects),
         },
         FindCommand::Alt => match (focus, scope) {
             (Control::Find, Scope::File) => follow::advance(app, false),
             (Control::Find, Scope::Project) => project::step_hit(app, false, effects),
             (Control::Results, _) => project::open_hit(app, effects),
-            (Control::Replace | Control::ReplaceOne | Control::ReplaceAll, _) => {
-                replace_every(app, scope, effects);
-            }
-            (Control::Scope | Control::Case | Control::Word | Control::Regex, _) => {
-                activate(app, focus, effects);
-            }
+            (Control::Replace, _) => replace_every(app, scope, effects),
         },
         FindCommand::NextControl => cycle(app, 1),
         FindCommand::PrevControl => cycle(app, -1),
-        FindCommand::Activate => {
-            if focus.is_field() {
-                type_char(app, ' ');
-            } else {
-                activate(app, focus, effects);
-            }
-        }
+        FindCommand::ToggleScope => project::toggle_scope(app, effects),
         FindCommand::ToggleCase => toggle_option(app, |o| &mut o.case_sensitive),
         FindCommand::ToggleWord => toggle_option(app, |o| &mut o.whole_word),
         FindCommand::ToggleRegex => toggle_option(app, |o| &mut o.regex),
         FindCommand::Up => match focus {
             Control::Results => project::nav_move(app, -1, effects),
-            _ => browse(app, focus, BrowseDir::Prev),
+            Control::Find | Control::Replace => history::step(app, BrowseDir::Prev),
         },
         FindCommand::Down => match focus {
             Control::Results => project::nav_move(app, 1, effects),
-            _ => browse(app, focus, BrowseDir::Next),
+            Control::Find | Control::Replace => history::step(app, BrowseDir::Next),
         },
         FindCommand::PageUp => list_move(app, focus, ListKey::PageUp, effects),
         FindCommand::PageDown => list_move(app, focus, ListKey::PageDown, effects),
@@ -111,19 +98,17 @@ impl ListKey {
     }
 }
 
-pub(crate) fn activate(app: &mut App, control: Control, effects: &mut Effects) {
+pub(crate) fn press_chip(app: &mut App, kind: ChipKind, effects: &mut Effects) {
     let Some(scope) = app.find().map(FindState::scope) else {
         return;
     };
-    match control {
-        Control::Find | Control::Replace => focus_control(app, control),
-        Control::Scope => project::toggle_scope(app, effects),
-        Control::Case => toggle_option(app, |o| &mut o.case_sensitive),
-        Control::Word => toggle_option(app, |o| &mut o.whole_word),
-        Control::Regex => toggle_option(app, |o| &mut o.regex),
-        Control::ReplaceOne => replace_one(app, scope, effects),
-        Control::ReplaceAll => replace_every(app, scope, effects),
-        Control::Results => project::open_hit(app, effects),
+    match kind {
+        ChipKind::Scope => project::toggle_scope(app, effects),
+        ChipKind::Case => toggle_option(app, |o| &mut o.case_sensitive),
+        ChipKind::Word => toggle_option(app, |o| &mut o.whole_word),
+        ChipKind::Regex => toggle_option(app, |o| &mut o.regex),
+        ChipKind::ReplaceOne => replace_one(app, scope, effects),
+        ChipKind::ReplaceAll => replace_every(app, scope, effects),
     }
 }
 
@@ -163,9 +148,9 @@ pub(crate) fn click(
         .iter()
         .flatten()
         .find(|(_, rect)| rect.contains(point))
-        .map(|(chip, _)| chip.control);
-    if let Some(control) = hit {
-        activate(app, control, effects);
+        .map(|(chip, _)| chip.kind);
+    if let Some(kind) = hit {
+        press_chip(app, kind, effects);
     }
 }
 
@@ -249,15 +234,7 @@ fn edit_focused_field(app: &mut App, edit: impl FnOnce(&mut String)) {
                 crate::find::requery(app);
             }
         }
-        None => control_hint(app, focus),
-    }
-}
-
-fn browse(app: &mut App, focus: Control, dir: BrowseDir) {
-    if focus.is_field() {
-        history::step(app, dir);
-    } else {
-        control_hint(app, focus);
+        None => control_hint(app),
     }
 }
 
@@ -275,15 +252,11 @@ fn list_move(app: &mut App, focus: Control, key: ListKey, effects: &mut Effects)
     }
 }
 
-fn control_hint(app: &mut App, focus: Control) {
-    let text = if focus == Control::Results {
-        format!(
-            "press {} to open the result",
-            label_for(FindCommand::Commit)
-        )
-    } else {
-        format!("press {} to toggle", label_for(FindCommand::Activate))
-    };
+fn control_hint(app: &mut App) {
+    let text = format!(
+        "press {} to open the result",
+        label_for(FindCommand::Commit)
+    );
     messages::info(app, text);
 }
 

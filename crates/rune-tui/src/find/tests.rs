@@ -35,7 +35,7 @@ fn ctrl_f_opens_a_three_row_bordered_panel_directly_above_the_footer() {
         rows[top + 2]
     );
     assert!(
-        rows[top + 1].contains("[File|Project] [Aa] [Word] [.*]"),
+        rows[top + 1].contains("\u{2325}P File|Project \u{2325}C Aa \u{2325}W Word \u{2325}R .*"),
         "chips on the find row: {:?}",
         rows[top + 1]
     );
@@ -292,14 +292,12 @@ fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
 }
 
 #[test]
-fn the_scope_chip_switches_the_open_panel_to_project_scope_and_keeps_the_query() {
+fn alt_p_switches_the_open_panel_to_project_scope_and_keeps_the_query() {
     let mut app = app_with("hello");
     app.set_root(std::path::PathBuf::from("/root"));
     open_find(&mut app);
     type_str(&mut app, "hel");
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::Scope);
-    press(&mut app, space());
+    press(&mut app, key(KeyCode::Char('p'), ALT));
 
     assert_eq!(find(&app).scope(), Scope::Project);
     assert!(find(&app).focused);
@@ -317,19 +315,6 @@ fn an_unbound_key_reports_instead_of_vanishing() {
         crate::messages::newest_text(&app).is_some_and(|text| text.contains("not bound")),
         "{:?}",
         crate::messages::newest_text(&app)
-    );
-}
-
-#[test]
-fn typing_on_a_chip_tells_the_user_how_to_toggle_it() {
-    let mut app = app_with("hello");
-    open_find(&mut app);
-    press(&mut app, tab());
-    press(&mut app, char_key('q'));
-    assert_eq!(find(&app).find.draft, "");
-    assert_eq!(
-        crate::messages::newest_text(&app),
-        Some("press \u{2423} to toggle")
     );
 }
 

@@ -39,7 +39,11 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         "focus previous control",
         "previous control",
     ),
-    row(FindCommand::Activate, "toggle the focused option", "toggle"),
+    row(
+        FindCommand::ToggleScope,
+        "toggle project scope",
+        "toggle project scope",
+    ),
     row(FindCommand::ToggleCase, "toggle match case", "match case"),
     row(FindCommand::ToggleWord, "toggle whole word", "whole word"),
     row(
