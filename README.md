@@ -47,6 +47,28 @@ nix profile install github:aka-rider/rune   # install it
 
 The flake builds from source at any tag, so it tracks releases with no extra publish step.
 
+### Linux packages
+
+Prebuilt packages are available on [GitHub Releases](https://github.com/aka-rider/rune/releases) for Ubuntu/Debian, Fedora/RHEL, and Arch Linux (both x86_64 and arm64/aarch64). Download the `.deb`, `.rpm`, or `.pkg.tar.zst` for your distro and install locally:
+
+```sh
+# Debian/Ubuntu
+sudo apt install ./rune_<version>-1_amd64.deb
+
+# Fedora/RHEL
+sudo dnf install ./rune-<version>-1.x86_64.rpm
+
+# Arch Linux
+sudo pacman -U rune-<version>-1-x86_64.pkg.tar.zst
+```
+
+Alternatively, download a package with `gh`:
+```sh
+gh release download --repo aka-rider/rune --pattern '*.deb'
+```
+
+Packages require glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+, Fedora, Arch). Updates are installed manually by downloading the latest release.
+
 ---
 
 ## Keybindings

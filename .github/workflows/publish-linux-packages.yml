@@ -1,0 +1,50 @@
+name: Publish Linux packages
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag to (re)package, e.g. v1.5.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || fromJson(inputs.plan).announcement_tag }}
+
+jobs:
+  package:
+    strategy:
+      matrix:
+        include:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      TRIPLE: ${{ matrix.triple }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download release tarball
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p "rune-cli-${TRIPLE}.tar.xz" -D dist-in
+      - name: Install nfpm
+        run: |
+          packaging/linux/install-nfpm.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build packages
+        run: packaging/linux/package.sh "dist-in/rune-cli-${TRIPLE}.tar.xz" "$TAG" pkgs
+      - name: Smoke test packages
+        run: packaging/linux/smoke-test.sh pkgs "${TAG#v}"
+      - name: Upload packages to the release
+        run: gh release upload "$TAG" pkgs/* --repo "$GITHUB_REPOSITORY" --clobber

@@ -1,0 +1,41 @@
+name: rune
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+maintainer: "Iurii Krasnoshchok <hello@iurii.net>"
+description: "TUI markdown editor that protects your words"
+homepage: https://github.com/aka-rider/rune
+license: MIT
+
+contents:
+  - src: rune
+    dst: /usr/bin/rune
+    file_info:
+      mode: 0755
+  - src: LICENSE.txt
+    dst: /usr/share/licenses/rune/LICENSE
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/rune/README.md
+    file_info:
+      mode: 0644
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libgcc-s1
+  rpm:
+    depends:
+      - glibc >= 2.35
+      - libgcc
+  archlinux:
+    depends:
+      - glibc>=2.35
+      - gcc-libs
+
+archlinux:
+  pkgbase: rune
+  packager: "Iurii Krasnoshchok <hello@iurii.net>"

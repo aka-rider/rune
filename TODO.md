@@ -1,5 +1,19 @@
 # TODO
 
+## Linux package repositories
+
+Native Linux packages (`.deb`, `.rpm`, `.pkg.tar.zst`) now build and publish via nfpm
+on each release. Currently packages are point downloads from GitHub Releases only —
+no automatic updates. Follow-up work for usable Linux distribution support:
+
+- **AUR** — `rune-bin` package for Arch users
+- **Fedora COPR** — enable `dnf upgrade rune`
+- **Hosted apt repo** — e.g. Cloudsmith, for `apt upgrade rune`
+- **cargo-dist shell installer** — `curl ... | sh` one-liner
+
+Prerelease versions skip package publishing (gated in workflow); future repos should
+inherit that behavior.
+
 ## CLIP-OSC52 fails on cut inside reading view (found by `make test-fuzz`)
 
 `make test-fuzz` (the `human_session` fuzzer) deterministically reproduces a `CLIP-OSC52`

@@ -16,7 +16,7 @@ tap = "aka-rider/homebrew-tap"
 # The formula name (default would be the package name, rune-cli)
 formula = "rune"
 # Publish jobs to run in CI
-publish-jobs = ["homebrew"]
+publish-jobs = ["homebrew", "./publish-linux-packages"]
 # Trigger releases from the Actions tab; creating the GitHub release makes the tag
 dispatch-releases = true
 
