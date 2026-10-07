@@ -1,4 +1,5 @@
 pub mod catalogue;
+pub mod continuation;
 pub mod element;
 pub mod emit;
 pub mod icons;

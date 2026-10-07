@@ -214,6 +214,12 @@ pub(crate) static ROWS: &[CommandSpec] = &[
     ),
     edit_row(Command::Indent, "indent", "indent", true),
     edit_row(Command::Outdent, "outdent", "outdent", true),
+    edit_row(
+        Command::NewlinePlain,
+        "newline without continuing list",
+        "newline without continuing list",
+        true,
+    ),
     row(Command::SelectAll, "select all", "select all", true),
     row(Command::Copy, "copy", "copy", true),
     edit_row(Command::Cut, "cut", "cut", true),

@@ -102,3 +102,10 @@ result list, and `FIND-REPLACE-NO-DISK` / `FIND-WALK-DRAINS` hold trivially. Fix
 small multi-file `Mem` project under a root in `Session::open` and run the index/query cmds inline
 the way `ReadFile` replies are already driven, so a real walk (tab limit, queued loads, evicted
 origin) is reachable from generated sessions.
+
+## Multi-caret Enter in an ordered list rescans the run once per caret
+
+`commands::edit_renumber::plan` calls `rune_md::continuation::renumber` for every caret that inserts
+an ordered item, and each call walks the sibling run to its end. N carets in one run of M items
+cost O(N x M) `parse_prefix` calls. Fix candidate: scan the run once, then give each caret the
+suffix after its own line, cutting at the first `Claims` overlap.

@@ -2,7 +2,7 @@ pub mod query;
 
 use std::ops::Range;
 
-use rune_md::element::code_region::CodeRegion;
+use rune_md::element::code_region::{self, CodeRegion};
 use rune_syntax::ScopeId;
 
 use crate::app::App;
@@ -112,9 +112,10 @@ struct RegionSource {
 // contributes nothing and is not an error — a region still needs to exist
 // because a consumer painting a background still cares about it.
 fn region_language(info: &str) -> Option<RegionLang> {
-    let token = info
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .find(|s| !s.is_empty())?;
+    let token = code_region::lang_token_of(info);
+    if token.is_empty() {
+        return None;
+    }
     if token.eq_ignore_ascii_case("markdown") || token.eq_ignore_ascii_case("md") {
         return Some(RegionLang::Markdown);
     }

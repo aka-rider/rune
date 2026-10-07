@@ -40,6 +40,7 @@ pub enum Command {
     DeleteLine,
     Indent,
     Outdent,
+    NewlinePlain,
     MoveLineUp,
     MoveLineDown,
     CloneLineUp,

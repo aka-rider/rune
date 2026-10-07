@@ -4,6 +4,8 @@ pub mod edit;
 pub mod edit_core;
 pub mod edit_lines;
 pub mod edit_lines_move;
+pub mod edit_newline;
+mod edit_renumber;
 pub(crate) mod editor_exec;
 pub mod language;
 pub mod mouse;

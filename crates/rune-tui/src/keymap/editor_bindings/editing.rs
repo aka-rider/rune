@@ -87,6 +87,13 @@ pub(crate) const OUTDENT_SHIFT_TAB: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const NEWLINE_PLAIN_SHIFT_ENTER: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Enter, SHIFT),
+    cmd: Command::NewlinePlain,
+    help: "newline without continuing list",
+    secondary: false,
+};
+
 pub(crate) const UNDO_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Char('z'), SUP),
     cmd: Command::Undo,

@@ -4,6 +4,7 @@ use rune_core::undo::{EditKind, Journal};
 
 use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
+use crate::commands::edit_newline::{self, SmartBackspace};
 use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::db_enqueue as db;
@@ -69,28 +70,7 @@ pub fn insert_char(app: &mut App, id: DocumentId, ch: char) {
     insert_text(app, id, ch.encode_utf8(&mut buf), EditKind::Insert);
 }
 
-pub fn newline(app: &mut App, id: DocumentId) {
-    per_cursor_selection_edits(
-        app,
-        id,
-        EditKind::Insert,
-        |_i, c, buf| {
-            let pos = if c.has_selection() {
-                c.selection_start()
-            } else {
-                c.position
-            };
-            let bp = buf.offset_to_line_col(pos.get());
-            let line = buf.line(bp.line);
-            let indent: String = line
-                .chars()
-                .take_while(|&ch| ch == ' ' || ch == '\t')
-                .collect();
-            format!("\n{indent}")
-        },
-        |_buf, c| Some((c.position.get(), c.position.get())),
-    );
-}
+pub use edit_newline::newline;
 
 pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
@@ -103,13 +83,16 @@ pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
 }
 
 pub fn delete_left(app: &mut App, id: DocumentId) {
+    let smart = SmartBackspace::new(app, id);
     per_cursor_selection_edits(
         app,
         id,
         EditKind::DeleteLeft,
         |_i, _c, _buf| String::new(),
         |buf, c| {
-            if c.position.get() == 0 {
+            if let Some(range) = smart.range(buf, c) {
+                Some(range)
+            } else if c.position.get() == 0 {
                 None
             } else {
                 Some((

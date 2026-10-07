@@ -1,6 +1,7 @@
 use crate::app::App;
 use crate::commands::{
-    clipboard, edit, edit_lines, edit_lines_move, multi, nav, nav_line, nav_scroll, reading_nav,
+    clipboard, edit, edit_lines, edit_lines_move, edit_newline, multi, nav, nav_line, nav_scroll,
+    reading_nav,
 };
 use crate::keymap::{self, Command, Extend, Motion, QuitKey};
 use crate::navigate;
@@ -73,6 +74,7 @@ pub(crate) fn run(
         Command::DeleteLine => edit_lines::delete_line(app, app.active),
         Command::Indent => edit_lines::indent(app, app.active),
         Command::Outdent => edit_lines::outdent(app, app.active),
+        Command::NewlinePlain => edit_newline::newline_plain(app, app.active),
         Command::MoveLineUp => edit_lines_move::move_line_up(app, app.active),
         Command::MoveLineDown => edit_lines_move::move_line_down(app, app.active),
         Command::CloneLineUp => edit_lines_move::clone_line_up(app, app.active),

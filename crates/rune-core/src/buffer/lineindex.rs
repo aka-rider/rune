@@ -118,6 +118,18 @@ impl Buffer {
         Some(content_end..end + 1)
     }
 
+    pub fn line_break_at(&self, offset: usize) -> &'static str {
+        let line = self.offset_to_line_col(offset).line;
+        (0..=line)
+            .rev()
+            .find_map(|n| match self.line_terminator_range(n) {
+                Some(term) if term.len() == 2 => Some("\r\n"),
+                Some(term) if term.len() == 1 => Some("\n"),
+                _ => None,
+            })
+            .unwrap_or("\n")
+    }
+
     fn strip_trailing_cr(&self, end: usize) -> usize {
         if end > 0 && self.content.as_bytes().get(end - 1) == Some(&b'\r') {
             end - 1
@@ -266,6 +278,26 @@ mod tests {
         assert_eq!(b.line_terminator_range(0), Some(1..3));
         assert_eq!(b.line_terminator_range(1), Some(4..5));
         assert_eq!(b.line_terminator_range(2), Some(6..6));
+    }
+
+    #[test]
+    fn line_break_at_follows_the_carets_line_then_the_nearest_terminated_line_above() {
+        let b = Buffer::new("a\r\nb\nc\r\nd");
+        assert_eq!(b.line_break_at(0), "\r\n");
+        assert_eq!(b.line_break_at(3), "\n");
+        assert_eq!(b.line_break_at(5), "\r\n");
+        assert_eq!(
+            b.line_break_at(8),
+            "\r\n",
+            "an unterminated last line borrows the line above"
+        );
+        assert_eq!(b.line_break_at(usize::MAX), "\r\n");
+    }
+
+    #[test]
+    fn line_break_at_defaults_to_lf_when_no_line_is_terminated() {
+        assert_eq!(Buffer::new("").line_break_at(0), "\n");
+        assert_eq!(Buffer::new("abc").line_break_at(2), "\n");
     }
 
     #[test]

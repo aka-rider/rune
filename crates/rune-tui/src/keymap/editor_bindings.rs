@@ -105,6 +105,7 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     editing::DELETE_WORD_RIGHT,
     editing::INDENT,
     editing::OUTDENT_SHIFT_TAB,
+    editing::NEWLINE_PLAIN_SHIFT_ENTER,
     motion::MATCH_BRACKET,
     selection::SELECT_MATCH_BRACKET,
     selection::SELECT_MATCH_BRACKET_PIPE,

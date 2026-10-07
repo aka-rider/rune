@@ -10,6 +10,18 @@ pub struct CodeRegion {
     pub rows: Range<usize>,
 }
 
+impl CodeRegion {
+    pub fn lang_token(&self) -> &str {
+        lang_token_of(&self.info)
+    }
+}
+
+pub fn lang_token_of(info: &str) -> &str {
+    info.split(|c: char| c.is_whitespace() || c == ',')
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+}
+
 pub(crate) fn collect(blocks: &[Block], buf: &Buffer, out: &mut Vec<CodeRegion>) {
     for block in blocks {
         match block {
@@ -66,4 +78,26 @@ fn rows_of(content: &[Range<usize>], buf: &Buffer) -> Option<Range<usize>> {
     let first = buf.offset_to_line_col(content.first()?.start).line;
     let last = buf.offset_to_line_col(content.last()?.start).line;
     Some(first..last.saturating_add(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn region(info: &str) -> CodeRegion {
+        CodeRegion {
+            info: info.to_string(),
+            content: Vec::new(),
+            rows: 0..0,
+        }
+    }
+
+    #[test]
+    fn lang_token_is_first_token_split_on_whitespace_and_comma() {
+        assert_eq!(region("python").lang_token(), "python");
+        assert_eq!(region("rust,ignore").lang_token(), "rust");
+        assert_eq!(region("  py  title=x").lang_token(), "py");
+        assert_eq!(region("").lang_token(), "");
+        assert_eq!(region("{.python}").lang_token(), "{.python}");
+    }
 }

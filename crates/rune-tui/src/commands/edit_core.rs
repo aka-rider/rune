@@ -17,10 +17,33 @@ use crate::navhistory;
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
-    mut infos: Vec<(Edit, CursorId)>,
+    infos: Vec<(Edit, CursorId)>,
     cursors_before: &CursorSet,
     kind: EditKind,
     cursors_after: impl FnOnce(&[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
+) -> bool {
+    apply_owned_and_followers(
+        app,
+        id,
+        infos,
+        Vec::new(),
+        cursors_before,
+        kind,
+        |applied, owners| {
+            let ids: Vec<CursorId> = owners.iter().flatten().copied().collect();
+            cursors_after(applied, &ids)
+        },
+    )
+}
+
+fn apply_owned_and_followers(
+    app: &mut App,
+    id: DocumentId,
+    mut owned: Vec<(Edit, CursorId)>,
+    followers: Vec<Edit>,
+    cursors_before: &CursorSet,
+    kind: EditKind,
+    cursors_after: impl FnOnce(&[AppliedEdit], &[Option<CursorId>]) -> Vec<Cursor>,
 ) -> bool {
     let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
@@ -29,11 +52,18 @@ pub(crate) fn apply_edit_batch_with_cursors(
         }
         return false;
     }
-    infos.retain(|(edit, _)| !(edit.start == edit.end && edit.insert.is_empty()));
-    if infos.is_empty() {
+    owned.retain(|(edit, _)| !is_noop(edit));
+    if owned.is_empty() {
         return false;
     }
-    let mut infos = coalesce_touching_edits(infos);
+    let owned = coalesce_touching_edits(owned);
+    let followers = unsubsumed_followers(followers, &owned);
+    let mut infos: Vec<(Edit, Option<CursorId>)> = owned
+        .into_iter()
+        .map(|(edit, cid)| (edit, Some(cid)))
+        .chain(followers.into_iter().map(|edit| (edit, None)))
+        .collect();
+    infos.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
     if let Some(start) = first_overlap_start(&infos) {
         messages::error(
             app,
@@ -44,11 +74,11 @@ pub(crate) fn apply_edit_batch_with_cursors(
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
 
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
-    let ids: Vec<CursorId> = infos.iter().map(|(_, cid)| *cid).collect();
+    let owners: Vec<Option<CursorId>> = infos.iter().map(|(_, owner)| *owner).collect();
 
     match doc.buffer.apply_edits(&SortedEdits::sort(&edits)) {
         Ok((new_buf, applied)) => {
-            let new_cursors = cursors_after(&applied, &ids);
+            let new_cursors = cursors_after(&applied, &owners);
             let Some(doc) = app.doc_mut(id) else {
                 return false;
             };
@@ -85,6 +115,35 @@ pub(crate) fn apply_edit_batch_with_cursors(
             false
         }
     }
+}
+
+fn is_noop(edit: &Edit) -> bool {
+    edit.start == edit.end && edit.insert.is_empty()
+}
+
+fn unsubsumed_followers(followers: Vec<Edit>, owned: &[(Edit, CursorId)]) -> Vec<Edit> {
+    let mut deletions: Vec<(usize, usize)> = owned
+        .iter()
+        .filter(|(edit, _)| edit.start < edit.end && edit.insert.is_empty())
+        .map(|(edit, _)| (edit.start, edit.end))
+        .collect();
+    deletions.sort_unstable();
+    followers
+        .into_iter()
+        .filter(|follower| !is_noop(follower) && !is_deleted_by(&deletions, follower))
+        .collect()
+}
+
+fn is_deleted_by(sorted_deletions: &[(usize, usize)], follower: &Edit) -> bool {
+    if !follower.insert.is_empty() {
+        return false;
+    }
+    let starting_at_or_before =
+        sorted_deletions.partition_point(|&(start, _)| start <= follower.start);
+    starting_at_or_before
+        .checked_sub(1)
+        .and_then(|nearest| sorted_deletions.get(nearest))
+        .is_some_and(|&(_, end)| follower.end <= end)
 }
 
 /// Two per-cursor edits can derive touching or overlapping byte ranges even
@@ -125,7 +184,7 @@ fn dedupe_identical_edits(mut infos: Vec<(Edit, CursorId)>) -> Vec<(Edit, Cursor
     deduped
 }
 
-fn first_overlap_start(infos: &[(Edit, CursorId)]) -> Option<usize> {
+fn first_overlap_start<T>(infos: &[(Edit, T)]) -> Option<usize> {
     infos.windows(2).find_map(|w| match w {
         [a, b] if a.0.end > b.0.start => Some(b.0.start),
         _ => None,
@@ -139,18 +198,39 @@ pub(crate) fn commit_edit_batch(
     cursors_before: &CursorSet,
     kind: EditKind,
 ) -> bool {
-    apply_edit_batch_with_cursors(app, id, infos, cursors_before, kind, |applied, ids| {
-        applied
-            .iter()
-            .zip(ids.iter())
-            .map(|(ae, &cid)| Cursor {
-                position: BufferOffset(ae.end),
-                anchor: BufferOffset(ae.end),
-                desired_col: VisualCol(0),
-                id: cid,
-            })
-            .collect()
-    })
+    commit_edits_with_followers(app, id, infos, Vec::new(), cursors_before, kind)
+}
+
+pub(crate) fn commit_edits_with_followers(
+    app: &mut App,
+    id: DocumentId,
+    owned: Vec<(Edit, CursorId)>,
+    followers: Vec<Edit>,
+    cursors_before: &CursorSet,
+    kind: EditKind,
+) -> bool {
+    apply_owned_and_followers(
+        app,
+        id,
+        owned,
+        followers,
+        cursors_before,
+        kind,
+        |applied, owners| {
+            applied
+                .iter()
+                .zip(owners)
+                .filter_map(|(ae, owner)| {
+                    owner.map(|cid| Cursor {
+                        position: BufferOffset(ae.end),
+                        anchor: BufferOffset(ae.end),
+                        desired_col: VisualCol(0),
+                        id: cid,
+                    })
+                })
+                .collect()
+        },
+    )
 }
 
 #[cfg(test)]

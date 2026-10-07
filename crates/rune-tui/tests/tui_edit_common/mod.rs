@@ -75,3 +75,68 @@ pub fn full_text(buf: &RtBuffer) -> String {
     }
     s
 }
+
+pub fn app_at_path(content: &str, path: &str, cursor_offset: usize) -> App {
+    let vfs = Arc::new(Mem::new());
+    let launch =
+        rune_tui::resolved::ResolvedPath::resolve(vfs.as_ref(), &std::path::PathBuf::from(path))
+            .expect("the launch path resolves");
+    let mut app = App::new(Buffer::new(content), Some(launch), vfs, None);
+    app.active_doc_mut().focused = true;
+    app.active_doc_mut().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
+    app.sync_view();
+    app
+}
+
+pub fn split_carets(marked: &str) -> (String, Vec<usize>) {
+    let mut text = String::new();
+    let mut carets = Vec::new();
+    for ch in marked.chars() {
+        if ch == '|' {
+            carets.push(text.len());
+        } else {
+            text.push(ch);
+        }
+    }
+    (text, carets)
+}
+
+pub fn with_carets(marked: &str) -> App {
+    let (text, carets) = split_carets(marked);
+    let mut app = app_for(&text, 0);
+    app.active_doc_mut().cursors = CursorSet::new_from_positions(&carets);
+    app.sync_view();
+    app
+}
+
+pub fn with_carets_at(path: &str, marked: &str) -> App {
+    let (text, carets) = split_carets(marked);
+    let mut app = app_at_path(&text, path, 0);
+    app.active_doc_mut().cursors = CursorSet::new_from_positions(&carets);
+    app.sync_view();
+    app
+}
+
+pub fn marked(app: &mut App) -> String {
+    let doc = app.active_doc_mut();
+    let mut text = doc.buffer.content().to_string();
+    let mut carets: Vec<usize> = doc.cursors.all().iter().map(|c| c.position.get()).collect();
+    carets.sort_unstable_by(|a, b| b.cmp(a));
+    for at in carets {
+        text.insert(at, '|');
+    }
+    text
+}
+
+pub fn enter(app: &mut App) {
+    press(app, KeyCode::Enter, Mods::NONE);
+}
+
+pub fn backspace(app: &mut App) {
+    press(app, KeyCode::Backspace, Mods::NONE);
+}
+
+pub fn undo(app: &mut App) {
+    press(app, KeyCode::Char('z'), SUP);
+}

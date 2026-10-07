@@ -92,6 +92,13 @@ fn enter_inserts_a_newline_preserving_indentation() {
 }
 
 #[test]
+fn shift_enter_inserts_a_plain_newline() {
+    let mut app = app_for("  - item", 8);
+    press(&mut app, KeyCode::Enter, SHIFT);
+    assert_eq!(app.active_doc_mut().buffer.content(), "  - item\n  ");
+}
+
+#[test]
 fn tab_indents_the_current_line_shift_tab_outdents_it() {
     let mut app = app_for("hello", 2);
     press(&mut app, KeyCode::Tab, Mods::NONE);
