@@ -102,10 +102,3 @@ result list, and `FIND-REPLACE-NO-DISK` / `FIND-WALK-DRAINS` hold trivially. Fix
 small multi-file `Mem` project under a root in `Session::open` and run the index/query cmds inline
 the way `ReadFile` replies are already driven, so a real walk (tab limit, queued loads, evicted
 origin) is reachable from generated sessions.
-
-## `find/keys_tests.rs` is over the 500-line limit
-
-The file was 535 lines before the Alt+b word-motion test and is 546 now. Split candidate: move the
-field-editing tests (`typing_recomputes_matches_live` through `arrow_keys_with_empty_history_leave_the_draft_untouched`)
-and the paste tests into a new `find/field_edit_tests.rs`, leaving navigation, wrap, and closed-panel
-stepping in `keys_tests.rs`.
