@@ -30,7 +30,7 @@ fn an_alt_carrying_char_event_refuses_and_warns_instead_of_inserting() {
     let mut app = app_for("", 0);
     let posts_before = rune_tui::messages::posts(&app);
 
-    press(&mut app, KeyCode::Char('b'), ALT);
+    press(&mut app, KeyCode::Char('x'), ALT);
 
     assert_eq!(
         app.active_doc_mut().buffer.content(),

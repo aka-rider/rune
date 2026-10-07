@@ -31,6 +31,20 @@ pub(crate) const WORD_RIGHT_ARROW: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const WORD_LEFT_ALT_B: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('b'), ALT),
+    cmd: Command::Motion(Motion::WordLeft, Extend::No),
+    help: "word left",
+    secondary: true,
+};
+
+pub(crate) const WORD_RIGHT_ALT_F: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('f'), ALT),
+    cmd: Command::Motion(Motion::WordRight, Extend::No),
+    help: "word right",
+    secondary: true,
+};
+
 pub(crate) const LINE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Up, NONE),
     cmd: Command::Motion(Motion::LineUp, Extend::No),

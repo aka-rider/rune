@@ -127,6 +127,10 @@ pub(crate) fn alt_left() -> KeyInput {
     key(KeyCode::Left, ALT)
 }
 
+pub(crate) fn alt_b() -> KeyInput {
+    key(KeyCode::Char('b'), ALT)
+}
+
 pub(crate) fn end() -> KeyInput {
     key(KeyCode::End, Mods::NONE)
 }

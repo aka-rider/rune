@@ -419,6 +419,17 @@ fn alt_left_moves_the_caret_to_the_word_start() {
 }
 
 #[test]
+fn alt_b_moves_the_caret_to_the_word_start() {
+    let mut app = app_with("hello");
+    open_find(&mut app);
+    type_str(&mut app, "foo bar");
+
+    press(&mut app, alt_b());
+
+    assert_eq!(find(&app).find.editor.cursor().position.get(), 4);
+}
+
+#[test]
 fn escape_closes_the_panel_and_saves_the_query() {
     let mut app = app_with("hello");
     open_find(&mut app);

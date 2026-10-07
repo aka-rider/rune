@@ -144,28 +144,35 @@ mod tests {
     }
 
     #[test]
-    fn alt_arrows_are_word_motion_and_alt_letters_stay_unbound() {
+    fn alt_arrows_and_readline_alt_b_f_are_word_motion() {
         let alt = Mods {
             alt: true,
             ..Mods::NONE
         };
+        let word_left = Some(Command::Motion(Motion::WordLeft, Extend::No));
+        let word_right = Some(Command::Motion(Motion::WordRight, Extend::No));
+        assert_eq!(resolve(key(KeyCode::Left, alt)), word_left);
+        assert_eq!(resolve(key(KeyCode::Char('b'), alt)), word_left);
+        assert_eq!(resolve(key(KeyCode::Right, alt)), word_right);
+        assert_eq!(resolve(key(KeyCode::Char('f'), alt)), word_right);
+        assert_eq!(resolve(key(KeyCode::Char('x'), alt)), None);
+    }
+
+    #[test]
+    fn readline_esc_b_from_termina_resolves_to_word_left() {
+        use termina::event::{
+            KeyCode as TK, KeyEvent, KeyEventKind, KeyEventState, Modifiers as TM,
+        };
+
+        let input = from_termina(KeyEvent {
+            code: TK::Char('b'),
+            modifiers: TM::ALT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
         assert_eq!(
-            resolve(key(KeyCode::Left, alt)),
+            input.and_then(resolve),
             Some(Command::Motion(Motion::WordLeft, Extend::No))
-        );
-        assert_eq!(
-            resolve(key(KeyCode::Right, alt)),
-            Some(Command::Motion(Motion::WordRight, Extend::No))
-        );
-        assert_eq!(
-            resolve(key(KeyCode::Char('b'), alt)),
-            None,
-            "macOS composes ⌥B into ∫ before any modifier reaches us"
-        );
-        assert_eq!(
-            resolve(key(KeyCode::Char('f'), alt)),
-            None,
-            "macOS composes ⌥F into ƒ before any modifier reaches us"
         );
     }
 

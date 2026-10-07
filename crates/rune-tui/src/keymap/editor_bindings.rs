@@ -76,6 +76,8 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     selection::SELECT_CHAR_RIGHT,
     motion::WORD_LEFT_ARROW,
     motion::WORD_RIGHT_ARROW,
+    motion::WORD_LEFT_ALT_B,
+    motion::WORD_RIGHT_ALT_F,
     selection::SELECT_WORD_LEFT_ARROW,
     selection::SELECT_WORD_RIGHT_ARROW,
     motion::LINE_UP,
