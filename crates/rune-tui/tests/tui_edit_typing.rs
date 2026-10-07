@@ -234,3 +234,25 @@ fn down_then_up_over_a_concealing_heading_lands_where_a_fresh_caret_would() {
         "a Down/Up round trip over a concealing heading must not change where typing lands"
     );
 }
+
+#[test]
+fn an_unbound_non_char_key_warns_instead_of_vanishing() {
+    let mut app = app_for("hi", 0);
+    let posts_before = rune_tui::messages::posts(&app);
+    let unbound = Mods {
+        shift: false,
+        alt: true,
+        ctrl: true,
+        sup: false,
+    };
+
+    press(&mut app, KeyCode::F2, unbound);
+
+    assert_eq!(app.active_doc_mut().buffer.content(), "hi");
+    assert!(rune_tui::messages::posts(&app) > posts_before);
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("not bound")),
+        "expected an unbound-key warning, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+}

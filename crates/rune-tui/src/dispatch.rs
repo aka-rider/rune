@@ -340,20 +340,19 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     }
 
     let Some(command) = keymap::resolve(key) else {
-        if let KeyCode::Char(ch) = key.code {
-            if is_insertable_key(key.mods, ch) {
-                edit::insert_char(app, app.active, ch);
-                return keymap::KeyOutcome::Consumed;
-            }
-            if key.mods.alt {
-                crate::messages::warn_if_new(
-                    app,
-                    "\u{2325} chord not bound here \u{2014} nothing typed",
-                );
-                return keymap::KeyOutcome::Consumed;
-            }
+        if let KeyCode::Char(ch) = key.code
+            && is_insertable_key(key.mods, ch)
+        {
+            edit::insert_char(app, app.active, ch);
+            return keymap::KeyOutcome::Consumed;
         }
-        return keymap::KeyOutcome::Ignored;
+        let hint = if key.mods.alt && matches!(key.code, KeyCode::Char(_)) {
+            "\u{2325} chord not bound here \u{2014} nothing typed"
+        } else {
+            "key not bound here"
+        };
+        crate::messages::warn_if_new(app, hint);
+        return keymap::KeyOutcome::Consumed;
     };
 
     editor_exec::run(app, command, QuitKey::from_key(key), effects)
