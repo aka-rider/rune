@@ -34,6 +34,18 @@ pub(in crate::generate) static SEEDS: &[(&str, &str)] = &[
         DOC_PATH,
         "# Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n",
     ),
+    // Tables whose rows are wider than most fuzz terminal widths, so
+    // vertical motion walks rows that wrap, or clip, in the rendered-table
+    // layout. One continues into prose after a blank line; the other ends
+    // the document on its last row, with no trailing newline.
+    (
+        DOC_PATH,
+        "# Wide\n\n| Name | Description | Notes |\n| :--- | :--- | ---: |\n| Alpha | a rather long description that overflows an ordinary terminal | 1 |\n| Beta | another quite long description cell with 日本語 and 🙂 inside | 22 |\n\nafter the table\n\nmore text\n",
+    ),
+    (
+        DOC_PATH,
+        "| Key | Value | Comment |\n|---|---|---|\n| first | the first value is deliberately long enough to wrap | short |\n| last | the last value is also long enough to wrap in a narrow pane | tail |",
+    ),
     // The only seed whose document opens with a frontmatter delimiter, so a
     // session can edit — and destroy — the YAML code region frontmatter
     // publishes. Every other markdown seed leaves that path unvisited.

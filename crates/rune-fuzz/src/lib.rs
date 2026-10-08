@@ -4,7 +4,7 @@
 //! every settled message: action model -> driver -> snapshot/step-context
 //! -> pure invariant checkers.
 //!
-//! # Invariant roster (39 total)
+//! # Invariant roster (41 total)
 //!
 //! Each entry: id, one-line meaning. See `invariant/mod.rs` for the
 //! checker-shape taxonomy (L0/L1/L2) and the per-domain file split. This
@@ -34,6 +34,9 @@
 //! - `NAV-BOUNDS` — every recorded nav place is an in-bounds, char-boundary
 //!   byte offset into its document, and `nav_current` stays within the
 //!   places list.
+//! - `NAV-PROGRESS` — a plain `LineDown`/`LineUp` dispatched to the editor
+//!   moves a lone caret, unless it already sits at the buffer end
+//!   (`LineDown`) or on the first line (`LineUp`).
 //! - `PANE-NO-BLEED` — a keystroke aimed at chrome (no modal up, focus off
 //!   `Pane::Editor`, active document unchanged) never mutates the document
 //!   behind it — the rule the `UNDO-TOTAL`/`REDO-TOTAL` harness fix

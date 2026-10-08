@@ -47,6 +47,8 @@ mod journal;
 mod merge;
 #[path = "invariants/merge_redivergence.rs"]
 mod merge_redivergence;
+#[path = "invariants/nav.rs"]
+mod nav;
 #[path = "invariants/palette.rs"]
 mod palette;
 #[path = "invariants/pane.rs"]

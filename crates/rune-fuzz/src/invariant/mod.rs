@@ -20,10 +20,10 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 46 invariants total, one domain per file:
+//! 47 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
 //!   `CUR-CELL-SYNC`
-//! - `nav` — `NAV-BOUNDS`
+//! - `nav` — `NAV-BOUNDS`, `NAV-PROGRESS`
 //! - `palette` — `PALETTE-FOCUS-STABLE`, `PALETTE-GUARD`
 //! - `find` — `FIND-PREVIEW-PURE`, `FIND-REPLACE-NO-DISK`, `FIND-WALK-DRAINS`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
@@ -75,7 +75,7 @@ pub use merge::{
     DivergentSaveTracker, RedivergenceTracker, merge_doc_active, merge_key_feedback,
     merge_save_blocked, merge_title_cleared, merge_undo_never_completes,
 };
-pub use nav::nav_bounds;
+pub use nav::{nav_bounds, nav_progress};
 pub use palette::{palette_focus_stable, palette_guard};
 pub use pane::{layout_fits, layout_tiles, overlay_title_exclusive, pane_no_bleed};
 pub use render::{
@@ -185,6 +185,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| merge_title_cleared(next))
         .or_else(|| merge_undo_never_completes(prev, next))
         .or_else(|| nav_bounds(next))
+        .or_else(|| nav_progress(prev, next, ctx))
         .or_else(|| palette_focus_stable(prev, next, ctx))
         .or_else(|| palette_guard(next))
         .or_else(|| find_preview_pure(prev, next, ctx))
