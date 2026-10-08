@@ -12,6 +12,17 @@ fn wrap_row_at(view: &ViewSnapshots, buf: &rune_core::buffer::Buffer, position: 
     view.wrap.syntax_to_wrap(sp).row
 }
 
+/// Whether `position` keeps source-column geometry in `view`: false when its
+/// line is a rendered table row, whose wrap segments are laid out in
+/// rendered bytes, so a source column is not a column in that line's layout.
+fn has_source_geometry(
+    view: &ViewSnapshots,
+    buf: &rune_core::buffer::Buffer,
+    position: usize,
+) -> bool {
+    !view.wrap.is_table_row(wrap_row_at(view, buf, position))
+}
+
 /// Visual-line up/down via the wrap conversions, preserving `c.desired_col`
 /// across the move so moving through a ragged-right wrapped paragraph keeps
 /// the caret in its visual column instead of snapping to each row's length.
@@ -75,6 +86,13 @@ pub(crate) fn page_step(doc: &Document) -> isize {
 /// and the delta are measured in the same layout the user actually lands
 /// in, never mixed across two layouts with a different number of revealed
 /// lines above the caret.
+///
+/// That re-measure holds only while the origin keeps its source columns in
+/// the settled view, which inline reveal preserves. A table row does not: a
+/// caret inside a table sees raw lines, but once it leaves, the table
+/// renders and its wrap rows are laid out in rendered bytes. For a cursor
+/// whose origin is a rendered table row in the settled view, the first
+/// pass's result stands.
 fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
     let view = doc.view();
     let original: Vec<Cursor> = doc.cursors.all().to_vec();
@@ -88,7 +106,14 @@ fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
     let settled = doc.view();
     let final_pass: Vec<Cursor> = original
         .iter()
-        .map(|&c| move_row(&settled, &doc.buffer, c, delta, extend))
+        .zip(&first_pass)
+        .map(|(&c, &moved)| {
+            if has_source_geometry(&settled, &doc.buffer, c.position.get()) {
+                move_row(&settled, &doc.buffer, c, delta, extend)
+            } else {
+                moved
+            }
+        })
         .collect();
     doc.cursors = CursorSet::new_from(&final_pass);
 }

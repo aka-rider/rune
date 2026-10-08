@@ -244,6 +244,12 @@ impl WrapSnapshot {
         self.segment_at(row).map_or(0, Self::segment_len)
     }
 
+    /// Whether `row` is a rendered table row. Such a row's `start_col` counts
+    /// RENDERED bytes, so its syntax columns are not the line's source columns.
+    pub fn is_table_row(&self, row: usize) -> bool {
+        self.segment_at(row).is_some_and(|seg| seg.table.is_some())
+    }
+
     pub fn visual_col(&self, content: &str, row: usize, byte_col: usize) -> usize {
         let Some(seg) = self.segment_at(row) else {
             return 0;

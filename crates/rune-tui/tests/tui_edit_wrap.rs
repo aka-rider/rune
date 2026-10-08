@@ -329,3 +329,131 @@ fn moving_onto_a_heading_line_reveals_its_marker_moving_off_conceals_it() {
         "heading concealed again once the cursor moves off"
     );
 }
+
+const WIDE_TABLE_WIDTH: u16 = 60;
+const WIDE_TABLE_HEAD: &str = "## Stage responsibilities\n\
+| Stage | Module(s) | Writes files | Writes DB / findings |\n\
+|---|---|---|---|\n";
+const WIDE_TABLE_LAST_ROW: &str = "| topics | `topics.py`, `topic_text.py`, `embedding.py` | none | topic_fit, topic, topic_keyword, topic_representative, message_topic. No findings |\n";
+const WIDE_TABLE_ROWS: &str = "| ingest (WP2) | `ingest.py`, `mime.py`, `containers.py`, `blobstore.py` | `message_dir/index.md`, `blobs/xx/<sha>` (raw), the `.md` member listing for archive containers | message, message_location, blob, message_blob, blob_edge. Findings: BROKEN_MIME, CONFLICTING_DUPLICATE, ENCRYPTED, LIMIT_EXCEEDED, NOT_INSPECTED (`ingest:unreadable`) |\n";
+const BELOW_THE_TABLE: &str = "\nbelow\n";
+
+struct WideTable {
+    content: String,
+    last_row_start: usize,
+    last_row_end: usize,
+}
+
+fn wide_table() -> WideTable {
+    let before_last_row = format!("{WIDE_TABLE_HEAD}{WIDE_TABLE_ROWS}");
+    let last_row_start = before_last_row.len();
+    let last_row_end = last_row_start + WIDE_TABLE_LAST_ROW.trim_end().len();
+    WideTable {
+        content: format!("{before_last_row}{WIDE_TABLE_LAST_ROW}{BELOW_THE_TABLE}"),
+        last_row_start,
+        last_row_end,
+    }
+}
+
+fn app_with_wide_table(caret: usize) -> App {
+    let mut app = app_for(&wide_table().content, caret);
+    app.active_doc_mut()
+        .viewport
+        .set_size(WIDE_TABLE_WIDTH, tui_edit_common::HEIGHT - 1);
+    app.sync_view();
+    app
+}
+
+fn line_of(app: &mut App, pos: usize) -> usize {
+    app.active_doc_mut().buffer.offset_to_line_col(pos).line
+}
+
+/// The table's last source line carries several wrap segments once the
+/// table is rendered (caret elsewhere), and its raw end-of-line column
+/// lies before the final segment's start column — the geometry in which
+/// measuring a raw caret against the rendered layout overshoots the line.
+fn assert_last_row_wraps_when_rendered(table: &WideTable) {
+    let mut app = app_with_wide_table(0);
+    let view = app.active_doc_mut().view();
+    let line = line_of(&mut app, table.last_row_start);
+    let first_row = view
+        .wrap
+        .syntax_to_wrap(rune_core::coords::SyntaxPoint { line, col: 0 })
+        .row;
+    let last_row = view
+        .wrap
+        .syntax_to_wrap(rune_core::coords::SyntaxPoint {
+            line,
+            col: usize::MAX,
+        })
+        .row;
+    assert!(
+        last_row > first_row + 1,
+        "fixture must render the last table row as 3+ wrap segments"
+    );
+    let raw_len = table.last_row_end - table.last_row_start;
+    let end_row = view
+        .wrap
+        .syntax_to_wrap(rune_core::coords::SyntaxPoint { line, col: raw_len })
+        .row;
+    assert!(
+        end_row < last_row,
+        "fixture must put the raw end-of-line column before the last rendered segment"
+    );
+}
+
+#[test]
+fn down_from_the_end_of_a_wide_tables_last_row_lands_below_the_table() {
+    let table = wide_table();
+    assert_last_row_wraps_when_rendered(&table);
+    let mut app = app_with_wide_table(table.last_row_end);
+    let table_line = line_of(&mut app, table.last_row_start);
+
+    press(&mut app, KeyCode::Down, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    assert!(
+        line_of(&mut app, after.get()) > table_line,
+        "Down from the end of the table's last row must leave the table, landed at {after:?}"
+    );
+}
+
+#[test]
+fn down_from_mid_column_of_a_wide_tables_last_row_lands_below_the_table() {
+    let table = wide_table();
+    assert_last_row_wraps_when_rendered(&table);
+    let mid_column_of_last_visual_row = table.last_row_end - 8;
+    let mut app = app_with_wide_table(mid_column_of_last_visual_row);
+    assert_eq!(
+        wrap_row_of(&mut app, mid_column_of_last_visual_row),
+        wrap_row_of(&mut app, table.last_row_end),
+        "caret must sit on the last visual row of the revealed raw line"
+    );
+    let table_line = line_of(&mut app, table.last_row_start);
+
+    press(&mut app, KeyCode::Down, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    assert!(
+        line_of(&mut app, after.get()) > table_line,
+        "Down from mid-column of the table's last row must leave the table, landed at {after:?}"
+    );
+}
+
+#[test]
+fn up_from_below_a_wide_table_lands_on_its_last_row() {
+    let table = wide_table();
+    let blank_line_below = table.last_row_end + 1;
+    let mut app = app_with_wide_table(blank_line_below);
+    let table_line = line_of(&mut app, table.last_row_start);
+    assert_eq!(line_of(&mut app, blank_line_below), table_line + 1);
+
+    press(&mut app, KeyCode::Up, Mods::NONE);
+
+    let after = app.active_doc_mut().cursors.primary().position;
+    assert_eq!(
+        line_of(&mut app, after.get()),
+        table_line,
+        "Up from the line below a table must land on the table's last row"
+    );
+}
