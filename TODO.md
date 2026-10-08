@@ -109,3 +109,85 @@ origin) is reachable from generated sessions.
 an ordered item, and each call walks the sibling run to its end. N carets in one run of M items
 cost O(N x M) `parse_prefix` calls. Fix candidate: scan the run once, then give each caret the
 suffix after its own line, cutting at the first `Claims` overlap.
+
+## `syntax_to_wrap` mixes column units on rendered table lines
+
+On a rendered (not revealed) table line the syntax-to-buffer map is the identity, so a syntax column
+is a raw source byte column. `wrap_table_line` in `crates/rune-syntax/src/wrap/table.rs` gives the
+extra visual rows of a Wrapped or Pivoted table line `start_col` values that sum rendered text bytes
+(box-drawing characters, padding). `syntax_to_wrap` in `crates/rune-syntax/src/wrap/query.rs` then
+compares the source column against those bounds, so a source column lands in an arbitrary visual row
+of the line, and `wrap_to_syntax` can return a column past the source line end. This is how Down
+became a no-op at the end of a wide table's last row. Vertical motion now avoids measuring a caret on
+a rendered table row, but any other caller of `syntax_to_wrap` on such a line inherits the mismatch.
+
+Candidate fix: segment 0 owns the whole source column range of the line (row 1 already claims all
+source bytes through `claim_whole`). Extra rows claim a zero-width source extent. Then `syntax_to_wrap`
+maps every source column to segment 0, and `wrap_to_syntax` from an extra row maps to a defined source
+column.
+
+## CUR-BOUNDS: a cursor outlives a paste that replaces the document (found by `make test-fuzz`)
+
+`human_session` fails `CUR-BOUNDS` with `cursor id=1 position=68 anchor=0 content.len()=11
+content="hello world"`: after the paste the buffer holds 11 bytes, but the primary cursor still has its
+position at byte 68. Proptest regression `cc
+29aeab10d520cc3e42c5f597e0e6e449b4dab888e52af4afc2479f42d29057ef`. Reproduces deterministically,
+also on a checkout with the wide-table Down fix (`RUNE_FUZZ_REPLAY=<script> cargo test -p rune-fuzz
+--test replay`). The script, verbatim (the seed is a mixed CJK and emoji line, a shift+Down
+selection, ctrl+P, three newlines typed, then cmd+V with the clipboard set to "hello world"):
+
+```
+content \u{4f60}\u{597d}\u{4e16}\u{754c} \u{1f642} mixed CJK and emoji content \u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30c6}\u{30b9}\u{30c8}\n
+key down s---
+key char:p --c-
+type \n\n\n
+type 
+key char:v ---u
+clip hello world
+type 
+```
+
+Suspected cause: a selection whose head sits at the end of the old content survives the paste that
+replaces the whole document in a new draft, so the cursor is never clamped to the new content. Not
+root-caused.
+
+## TABLE-ROW-WIDTH: a table inside a blockquote renders rows of unequal width (found by `make test-fuzz`)
+
+`human_session` fails `TABLE-ROW-WIDTH` with `table_group 0: row 2 has summed width 15, but row 0
+(same group) has width 13`. The document ends as `> |---|---|\n> |---|---|\n\n`, i.e. delimiter-only
+tables inside a blockquote, typed from an empty seed. Proptest regression `cc
+a34dc24fe8ca3633186aba9b660b7bc8728877acdc17b766e03dadeaa6cfd35a`. Reproduces deterministically,
+also on a checkout with the wide-table Down fix (`RUNE_FUZZ_REPLAY=<script> cargo test -p rune-fuzz
+--test replay`). The script, verbatim:
+
+```
+content 
+type > 
+type |---|---|
+key up -a-u
+type \n\n\n
+key char:c ---u
+key pageup ----
+key down sa--
+key right ----
+key char:  ----
+```
+
+Not root-caused.
+
+## SAVE-CLEAN-MATCHES-DISK fired once (found by `make test-fuzz`)
+
+One 1500-case `make test-fuzz` run reported `SAVE-CLEAN-MATCHES-DISK` with `disk=None
+content="h {feff}hello"`: the buffer held a U+FEFF byte-order mark mid-text and the invariant found
+no disk content to compare it against. The run's artifact was not kept and the failure has not
+reproduced since (the default 512-case run passes), so there is no script. Next step: rerun with a
+large `RC=` and a few `RS=` seeds until it recurs, then keep the artifact and root-cause it.
+
+## rune-fuzz invariant roster is incomplete
+
+The roster in the `crates/rune-fuzz/src/lib.rs` doc comment ("41 total") omits invariants that
+`src/invariant/` does check: `CUR-CELL-SYNC`, `FIND-PREVIEW-PURE`, `FIND-REPLACE-NO-DISK`,
+`FIND-WALK-DRAINS`, `MERGE-UNDO-NEVER-COMPLETES`, `OVERLAY-TITLE-EXCLUSIVE`, `PALETTE-FOCUS-STABLE`,
+`PALETTE-GUARD`, `SCROLL-IN-DOC`. The hand-kept list and count drift each time an invariant lands.
+Candidate fix: add the missing entries, and make the roster checkable — e.g. a test that every id
+string `check_all` can emit appears in the doc roster, so drift fails `make test`.
