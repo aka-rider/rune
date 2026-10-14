@@ -140,7 +140,7 @@ const UP: Shift = Shift {
 };
 
 const DOWN: Shift = Shift {
-    region: |block, movable| (block.end < movable).then_some(block.start..block.end + 1),
+    region: |block, line_count| (block.end < line_count).then_some(block.start..block.end + 1),
     rotate: |texts| texts.rotate_right(1),
     line_delta: 1,
 };
@@ -163,13 +163,13 @@ fn move_lines(app: &mut App, id: DocumentId, shift: &Shift) {
 }
 
 fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan> {
-    let movable = movable_lines(buf);
+    let line_count = buf.line_count();
     let mut plan = Plan {
         edits: Vec::new(),
         placed: Vec::new(),
     };
     for block in blocks {
-        let delta = match (shift.region)(&block.lines, movable) {
+        let delta = match (shift.region)(&block.lines, line_count) {
             Some(region) => {
                 let owner = block.cursors.first()?;
                 let edit = rotated_lines_edit(buf, &region, shift.rotate)?;
@@ -182,12 +182,6 @@ fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan>
             .extend(block.cursors.iter().map(|c| Placed::new(*c, buf, delta)));
     }
     Some(plan)
-}
-
-fn movable_lines(buf: &Buffer) -> usize {
-    let count = buf.line_count();
-    let ends_in_empty_line = count > 1 && buf.line_start(count - 1) == Some(buf.len());
-    if ends_in_empty_line { count - 1 } else { count }
 }
 
 fn rotated_lines_edit(

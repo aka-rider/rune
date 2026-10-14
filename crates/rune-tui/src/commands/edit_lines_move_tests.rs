@@ -263,12 +263,31 @@ fn a_block_at_the_top_stays_while_another_block_moves_up() {
 }
 
 #[test]
-fn a_block_that_includes_the_last_line_cannot_move_down() {
+fn the_empty_line_after_a_trailing_newline_is_an_ordinary_row_to_move_down_across() {
     let mut app = selected("a\nb\n", 0, 4);
     let id = app.active;
     move_line_down(&mut app, id);
-    assert_eq!(text(&app), "a\nb\n");
-    assert_eq!(selections(&app), [(0, 4)]);
+    assert_eq!(text(&app), "\na\nb");
+    assert_eq!(selections(&app), [(1, 4)]);
+}
+
+#[test]
+fn a_caret_on_the_last_real_line_swaps_it_with_the_trailing_empty_line() {
+    let mut app = app_with("a\nb\n", 0);
+    let id = app.active;
+    cursors(&mut app, id, &[(2, 2)]);
+    move_line_down(&mut app, id);
+    assert_eq!(text(&app), "a\n\nb");
+    assert_eq!(selections(&app), [(3, 3)]);
+}
+
+#[test]
+fn a_block_that_includes_the_last_row_cannot_move_down() {
+    let mut app = selected("a\nb", 0, 3);
+    let id = app.active;
+    move_line_down(&mut app, id);
+    assert_eq!(text(&app), "a\nb");
+    assert_eq!(selections(&app), [(0, 3)]);
     assert_eq!(journal_len(&app), 0);
 }
 
