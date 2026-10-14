@@ -145,6 +145,23 @@ mod tests {
     }
 
     #[test]
+    fn alt_shift_arrows_clone_lines() {
+        let alt_shift = Mods {
+            alt: true,
+            shift: true,
+            ..Mods::NONE
+        };
+        assert_eq!(
+            resolve(key(KeyCode::Up, alt_shift)),
+            Some(Command::CloneLineUp)
+        );
+        assert_eq!(
+            resolve(key(KeyCode::Down, alt_shift)),
+            Some(Command::CloneLineDown)
+        );
+    }
+
+    #[test]
     fn alt_arrows_and_readline_alt_b_f_are_word_motion() {
         let alt = Mods {
             alt: true,

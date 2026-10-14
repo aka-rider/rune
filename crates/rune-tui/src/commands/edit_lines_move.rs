@@ -1,391 +1,219 @@
+use std::ops::Range;
+
 use rune_core::buffer::{Buffer, Edit};
-use rune_core::coords::BufferOffset;
-use rune_core::cursor::Cursor;
+use rune_core::coords::{BufferOffset, BufferPoint};
+use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 
 use crate::app::App;
-use crate::commands::edit_core::apply_edit_batch_with_cursors;
-use crate::commands::edit_lines::per_line_edits;
+use crate::commands::edit_core::{IdenticalReplacement, apply_edit_batch_with_cursors_on};
+use crate::commands::line_blocks::{LineBlock, overlapping_line_blocks, touching_line_blocks};
 use crate::document::DocumentId;
 
-struct LineParts {
-    text: String,
-    terminator: String,
+struct Placed {
+    cursor: Cursor,
+    anchor: BufferPoint,
+    position: BufferPoint,
+    line_delta: isize,
 }
 
-fn line_parts(buf: &Buffer, n: usize) -> Option<LineParts> {
-    let start = buf.line_start(n)?;
-    let content_end = buf.line_content_end(n)?;
-    let term = buf.line_terminator_range(n)?;
-    Some(LineParts {
-        text: buf.slice(start, content_end)?.to_string(),
-        terminator: buf.slice(term.start, term.end)?.to_string(),
-    })
+impl Placed {
+    fn new(cursor: Cursor, buf: &Buffer, line_delta: isize) -> Placed {
+        Placed {
+            cursor,
+            anchor: buf.offset_to_line_col(cursor.anchor.get()),
+            position: buf.offset_to_line_col(cursor.position.get()),
+            line_delta,
+        }
+    }
+
+    fn land(&self, new_buf: &Buffer) -> Cursor {
+        let at = |p: BufferPoint| {
+            BufferOffset(new_buf.line_col_to_offset(BufferPoint {
+                line: p.line.saturating_add_signed(self.line_delta),
+                col: p.col,
+            }))
+        };
+        Cursor {
+            anchor: at(self.anchor),
+            position: at(self.position),
+            ..self.cursor
+        }
+    }
+}
+
+struct Plan {
+    edits: Vec<(Edit, CursorId)>,
+    placed: Vec<Placed>,
+}
+
+fn apply_plan(app: &mut App, id: DocumentId, plan: Plan) {
+    let Some(doc) = app.doc(id) else { return };
+    let cursors_before = doc.cursors.clone();
+    let Plan { edits, placed } = plan;
+    apply_edit_batch_with_cursors_on(
+        app,
+        id,
+        edits,
+        &cursors_before,
+        EditKind::Other,
+        IdenticalReplacement::Drop,
+        move |new_buf, _, _| placed.iter().map(|p| p.land(new_buf)).collect(),
+    );
+}
+
+#[derive(Clone, Copy)]
+enum SelectionStays {
+    OnUpperCopy,
+    OnLowerOriginal,
 }
 
 pub fn clone_line_up(app: &mut App, id: DocumentId) {
-    per_line_edits(app, id, false, |line, buf| {
-        if line == 0 {
-            return None;
-        }
-        let line_start = buf.line_start(line)?;
-        let parts = line_parts(buf, line)?;
-        let terminator = if parts.terminator.is_empty() {
-            "\n"
-        } else {
-            parts.terminator.as_str()
-        };
-        Some(Edit {
-            start: line_start,
-            end: line_start,
-            insert: format!("{}{terminator}", parts.text),
-        })
-    });
+    clone_lines(app, id, SelectionStays::OnUpperCopy);
 }
 
 pub fn clone_line_down(app: &mut App, id: DocumentId) {
-    per_line_edits(app, id, false, |line, buf| {
-        let content_end = buf.line_content_end(line)?;
-        let parts = line_parts(buf, line)?;
-        let terminator = if parts.terminator.is_empty() {
-            "\n"
-        } else {
-            parts.terminator.as_str()
-        };
-        Some(Edit {
-            start: content_end,
-            end: content_end,
-            insert: format!("{terminator}{}", parts.text),
-        })
-    });
+    clone_lines(app, id, SelectionStays::OnLowerOriginal);
 }
 
-/// Acts only on the first cursor, collapsing the whole cursor set down to
-/// it. The surviving cursor lands at the same column it held within its
-/// line, now inside the moved block — not at the edit's end, which is why
-/// this calls `apply_edit_batch_with_cursors` directly instead of the
-/// generic `commit_edit_batch`.
-pub fn move_line_up(app: &mut App, id: DocumentId) {
+fn clone_lines(app: &mut App, id: DocumentId, selection: SelectionStays) {
     let Some(doc) = app.doc(id) else { return };
-    let cursors_before = doc.cursors.clone();
-    let Some(c) = cursors_before.all().first() else {
+    let blocks = overlapping_line_blocks(doc.cursors.all(), &doc.buffer);
+    let Some(plan) = plan_clones(&doc.buffer, &blocks, selection) else {
         return;
     };
-    let bp = doc.buffer.offset_to_line_col(c.position.get());
-    if bp.line == 0 {
-        return;
+    apply_plan(app, id, plan);
+}
+
+fn plan_clones(buf: &Buffer, blocks: &[LineBlock], selection: SelectionStays) -> Option<Plan> {
+    let mut plan = Plan {
+        edits: Vec::new(),
+        placed: Vec::new(),
+    };
+    let mut inserted_before = 0;
+    for block in blocks {
+        let own = block.lines.len();
+        let lines = match selection {
+            SelectionStays::OnUpperCopy => inserted_before,
+            SelectionStays::OnLowerOriginal => inserted_before + own,
+        };
+        let delta = lines.cast_signed();
+        let owner = block.cursors.first()?;
+        plan.edits.push((clone_edit(buf, &block.lines)?, owner.id));
+        plan.placed
+            .extend(block.cursors.iter().map(|c| Placed::new(*c, buf, delta)));
+        inserted_before += own;
     }
-    let l = bp.line;
-    let Some(prev_start) = doc.buffer.line_start(l - 1) else {
-        return;
-    };
-    let Some(prev_parts) = line_parts(&doc.buffer, l - 1) else {
-        return;
-    };
-    let Some(line_start) = doc.buffer.line_start(l) else {
-        return;
-    };
-    let Some(cur_parts) = line_parts(&doc.buffer, l) else {
-        return;
-    };
-    let Some(edit_end) = doc.buffer.line_terminator_range(l).map(|r| r.end) else {
-        return;
-    };
+    Some(plan)
+}
 
-    let separator = prev_parts.terminator;
-    let trailing = cur_parts.terminator;
-
-    let cid = c.id;
-    let desired_col = c.desired_col;
-    let col = (c.position.get() - line_start).min(cur_parts.text.len());
-    let new_pos = BufferOffset(prev_start + col);
-    let edit = Edit {
-        start: prev_start,
-        end: edit_end,
-        insert: format!("{}{separator}{}{trailing}", cur_parts.text, prev_parts.text),
+fn clone_edit(buf: &Buffer, lines: &Range<usize>) -> Option<Edit> {
+    let last = lines.end.checked_sub(1)?;
+    let start = buf.line_start(lines.start)?;
+    let terminator = buf.line_terminator_range(last)?;
+    let own_terminator = buf.slice(terminator.start, terminator.end)?;
+    let terminator = if own_terminator.is_empty() {
+        buf.line_break_at(buf.line_start(last)?)
+    } else {
+        own_terminator
     };
+    Some(Edit {
+        start,
+        end: start,
+        insert: format!(
+            "{}{terminator}",
+            buf.slice(start, buf.line_content_end(last)?)?
+        ),
+    })
+}
 
-    let _ = apply_edit_batch_with_cursors(
-        app,
-        id,
-        vec![(edit, cid)],
-        &cursors_before,
-        EditKind::Other,
-        move |_, _| {
-            vec![Cursor {
-                position: new_pos,
-                anchor: new_pos,
-                desired_col,
-                id: cid,
-            }]
-        },
-    );
+struct Shift {
+    region: fn(&Range<usize>, usize) -> Option<Range<usize>>,
+    rotate: fn(&mut [&str]),
+    line_delta: isize,
+}
+
+const UP: Shift = Shift {
+    region: |block, _| block.start.checked_sub(1).map(|start| start..block.end),
+    rotate: |texts| texts.rotate_left(1),
+    line_delta: -1,
+};
+
+const DOWN: Shift = Shift {
+    region: |block, movable| (block.end < movable).then_some(block.start..block.end + 1),
+    rotate: |texts| texts.rotate_right(1),
+    line_delta: 1,
+};
+
+pub fn move_line_up(app: &mut App, id: DocumentId) {
+    move_lines(app, id, &UP);
 }
 
 pub fn move_line_down(app: &mut App, id: DocumentId) {
+    move_lines(app, id, &DOWN);
+}
+
+fn move_lines(app: &mut App, id: DocumentId, shift: &Shift) {
     let Some(doc) = app.doc(id) else { return };
-    let cursors_before = doc.cursors.clone();
-    let Some(c) = cursors_before.all().first() else {
+    let blocks = touching_line_blocks(doc.cursors.all(), &doc.buffer);
+    let Some(plan) = plan_moves(&doc.buffer, &blocks, shift) else {
         return;
     };
-    let bp = doc.buffer.offset_to_line_col(c.position.get());
-    let line_count = doc.buffer.line_count();
-    if line_count == 0 || bp.line >= line_count - 1 {
-        return;
+    apply_plan(app, id, plan);
+}
+
+fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan> {
+    let movable = movable_lines(buf);
+    let mut plan = Plan {
+        edits: Vec::new(),
+        placed: Vec::new(),
+    };
+    for block in blocks {
+        let delta = match (shift.region)(&block.lines, movable) {
+            Some(region) => {
+                let owner = block.cursors.first()?;
+                let edit = rotated_lines_edit(buf, &region, shift.rotate)?;
+                plan.edits.push((edit, owner.id));
+                shift.line_delta
+            }
+            None => 0,
+        };
+        plan.placed
+            .extend(block.cursors.iter().map(|c| Placed::new(*c, buf, delta)));
     }
-    let l = bp.line;
-    let Some(line_start) = doc.buffer.line_start(l) else {
-        return;
-    };
-    let Some(cur_parts) = line_parts(&doc.buffer, l) else {
-        return;
-    };
-    let Some(next_parts) = line_parts(&doc.buffer, l + 1) else {
-        return;
-    };
-    let Some(edit_end) = doc.buffer.line_terminator_range(l + 1).map(|r| r.end) else {
-        return;
-    };
+    Some(plan)
+}
 
-    let separator = cur_parts.terminator;
-    let trailing = next_parts.terminator;
+fn movable_lines(buf: &Buffer) -> usize {
+    let count = buf.line_count();
+    let ends_in_empty_line = count > 1 && buf.line_start(count - 1) == Some(buf.len());
+    if ends_in_empty_line { count - 1 } else { count }
+}
 
-    let cid = c.id;
-    let desired_col = c.desired_col;
-    let col = (c.position.get() - line_start).min(cur_parts.text.len());
-    let new_pos = BufferOffset(line_start + next_parts.text.len() + separator.len() + col);
-    let edit = Edit {
-        start: line_start,
-        end: edit_end,
-        insert: format!("{}{separator}{}{trailing}", next_parts.text, cur_parts.text),
-    };
-
-    let _ = apply_edit_batch_with_cursors(
-        app,
-        id,
-        vec![(edit, cid)],
-        &cursors_before,
-        EditKind::Other,
-        move |_, _| {
-            vec![Cursor {
-                position: new_pos,
-                anchor: new_pos,
-                desired_col,
-                id: cid,
-            }]
-        },
-    );
+fn rotated_lines_edit(
+    buf: &Buffer,
+    region: &Range<usize>,
+    rotate: fn(&mut [&str]),
+) -> Option<Edit> {
+    let mut texts = Vec::new();
+    let mut terminators = Vec::new();
+    for line in region.clone() {
+        texts.push(buf.slice(buf.line_start(line)?, buf.line_content_end(line)?)?);
+        let terminator = buf.line_terminator_range(line)?;
+        terminators.push(buf.slice(terminator.start, terminator.end)?);
+    }
+    rotate(&mut texts);
+    Some(Edit {
+        start: buf.line_start(region.start)?,
+        end: buf.line_terminator_range(region.end.checked_sub(1)?)?.end,
+        insert: texts
+            .iter()
+            .zip(&terminators)
+            .map(|(text, terminator)| format!("{text}{terminator}"))
+            .collect(),
+    })
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod tests {
-    use super::*;
-    use crate::commands::edit::undo;
-    use crate::commands::edit_lines::{delete_line, indent, outdent};
-    use rune_core::buffer::Buffer;
-    use rune_core::coords::VisualCol;
-    use rune_core::cursor::{CursorSet, CursorSpec};
-    use rune_vfs::Mem;
-    use std::sync::Arc;
-
-    fn app_with(content: &str, cursor_offset: usize) -> App {
-        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-        let id = app.active;
-        app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
-        app.doc_mut(id).unwrap().viewport.set_size(80, 23);
-        app
-    }
-
-    #[test]
-    fn clone_line_up_inserts_a_copy_above() {
-        let mut app = app_with("one\ntwo", "one\n".len() + 1);
-        let id = app.active;
-        clone_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\ntwo\ntwo");
-    }
-
-    #[test]
-    fn clone_line_up_at_the_first_line_is_a_no_op() {
-        let mut app = app_with("only", 1);
-        let id = app.active;
-        clone_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "only");
-        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
-    }
-
-    #[test]
-    fn clone_line_down_inserts_a_copy_below() {
-        let mut app = app_with("one\ntwo", 1);
-        let id = app.active;
-        clone_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\none\ntwo");
-    }
-
-    #[test]
-    fn clone_line_down_then_undo_restores_the_buffer() {
-        let mut app = app_with("one\ntwo", 1);
-        let id = app.active;
-        let original = app.doc(id).unwrap().buffer.content().to_string();
-        clone_line_down(&mut app, id);
-        undo(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), original);
-    }
-
-    #[test]
-    fn clone_line_down_with_two_cursors_on_the_same_line_clones_it_twice_and_keeps_both_cursors() {
-        let mut app = app_with("one\ntwo", 4);
-        let id = app.active;
-        let doc = app.doc_mut(id).unwrap();
-        doc.cursors = doc.cursors.clone().add(CursorSpec {
-            position: BufferOffset(7),
-            anchor: BufferOffset(7),
-            desired_col: VisualCol(0),
-        });
-        assert_eq!(
-            doc.cursors.len(),
-            2,
-            "fixture must hold two cursors on the same line"
-        );
-
-        clone_line_down(&mut app, id);
-
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\ntwo\ntwo\ntwo");
-        assert_eq!(
-            app.doc(id).unwrap().cursors.len(),
-            2,
-            "neither cursor's clone may be silently dropped"
-        );
-    }
-
-    #[test]
-    fn move_line_up_swaps_with_the_previous_line_preserving_column() {
-        let mut app = app_with("one\ntwo\nthree", "one\ntw".len());
-        let id = app.active;
-        move_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "two\none\nthree");
-        assert_eq!(
-            app.doc(id).unwrap().cursors.primary().position,
-            BufferOffset(2)
-        );
-    }
-
-    #[test]
-    fn move_line_up_at_the_first_line_is_a_no_op() {
-        let mut app = app_with("one\ntwo", 1);
-        let id = app.active;
-        move_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\ntwo");
-        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
-    }
-
-    #[test]
-    fn move_line_down_then_undo_restores_the_buffer_byte_for_byte() {
-        let mut app = app_with("one\ntwo\nthree", 1);
-        let id = app.active;
-        let original = app.doc(id).unwrap().buffer.content().to_string();
-        move_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "two\none\nthree");
-        undo(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), original);
-    }
-
-    #[test]
-    fn move_line_down_at_the_last_line_is_a_no_op() {
-        let mut app = app_with("one\ntwo", "one\n".len() + 1);
-        let id = app.active;
-        move_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\ntwo");
-        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
-    }
-
-    #[test]
-    fn read_only_blocks_line_commands() {
-        let mut app = app_with("one\ntwo\nthree", "one\n".len());
-        let id = app.active;
-        app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
-        let before = app.doc(id).unwrap().buffer.content().to_string();
-
-        indent(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "indent");
-        outdent(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "outdent");
-        delete_line(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "delete-line");
-        clone_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "clone-up");
-        clone_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "clone-down");
-        move_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "move-up");
-        move_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), before, "move-down");
-        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
-    }
-
-    #[test]
-    fn moving_the_last_line_of_a_crlf_file_keeps_its_terminator() {
-        let mut app = app_with("A\r\nB", "A\r\n".len());
-        let id = app.active;
-        move_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "B\r\nA");
-    }
-
-    #[test]
-    fn moving_a_line_below_the_crlf_files_last_unterminated_line_keeps_it_unterminated() {
-        let mut app = app_with("A\r\nB", 0);
-        let id = app.active;
-        move_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "B\r\nA");
-    }
-
-    #[test]
-    fn move_line_up_preserves_crlf_terminators_between_two_crlf_lines() {
-        let mut app = app_with("one\r\ntwo\r\nthree", "one\r\ntw".len());
-        let id = app.active;
-        move_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "two\r\none\r\nthree");
-    }
-
-    #[test]
-    fn clone_line_up_of_the_crlf_files_last_unterminated_line_terminates_the_copy() {
-        let mut app = app_with("A\r\nB", "A\r\n".len());
-        let id = app.active;
-        clone_line_up(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "A\r\nB\nB");
-    }
-
-    #[test]
-    fn clone_line_down_of_the_crlf_files_last_unterminated_line_terminates_the_original() {
-        let mut app = app_with("A\r\nB", "A\r\n".len());
-        let id = app.active;
-        clone_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "A\r\nB\nB");
-    }
-
-    #[test]
-    fn clone_line_down_preserves_a_crlf_terminator_verbatim() {
-        let mut app = app_with("A\r\nB\r\nC", 0);
-        let id = app.active;
-        clone_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "A\r\nA\r\nB\r\nC");
-    }
-
-    #[test]
-    fn a_lone_cr_file_has_a_single_line_so_move_up_and_down_are_both_no_ops() {
-        let mut app = app_with("A\rB", 1);
-        let id = app.active;
-        assert_eq!(app.doc(id).unwrap().buffer.line_count(), 1);
-        move_line_up(&mut app, id);
-        move_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "A\rB");
-    }
-
-    #[test]
-    fn clone_line_down_on_a_lone_cr_file_duplicates_the_cr_verbatim() {
-        let mut app = app_with("A\rB", 1);
-        let id = app.active;
-        clone_line_down(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "A\rB\nA\rB");
-    }
-}
+#[path = "edit_lines_move_tests.rs"]
+mod tests;
