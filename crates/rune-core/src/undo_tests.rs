@@ -91,11 +91,10 @@ fn reapply_refuses_a_batch_with_colliding_starts() {
 
 /// Pins the `UNDO-TOTAL` multi-cursor regression this fix closes,
 /// reduced to `Buffer`/`AppliedEdit` primitives: two cursors sharing
-/// ONE line (the `clone-line` shape — `rune-tui`'s
-/// `edit_lines::per_line_edits(dedupe=false)` lets both build an edit
-/// for the same line) each clone that line, so BOTH forward edits are
-/// pure inserts at the IDENTICAL pre-edit `start`. `Buffer::apply_edits`
-/// accepts that batch — the two `AppliedEdit`s land on DISTINCT
+/// ONE line (the `clone-line` shape, where the line-clone command lets
+/// both build an edit for the same line) each clone that line, so BOTH
+/// forward edits are pure inserts at the IDENTICAL pre-edit `start`.
+/// `Buffer::apply_edits` accepts that batch — the two `AppliedEdit`s land on DISTINCT
 /// post-edit starts (one clone's insert shifts the other's), so this
 /// is a perfectly legal, undoable step, never `DuplicateEditStart`.
 ///
@@ -113,10 +112,8 @@ fn reapply_refuses_a_batch_with_colliding_starts() {
 fn apply_inverse_undoes_a_two_cursor_same_line_clone() {
     let buf = Buffer::new("\nhello world");
     let line = "hello world";
-    // Both cursors are on line 1 (`per_line_edits(dedupe=false)`), so
-    // both clone edits share the SAME pre-edit `start`/`end` — the
-    // line's own start — exactly like `edit_lines::clone_line_up`'s
-    // real construction.
+    // Both cursors are on line 1, so both clone edits share the SAME
+    // pre-edit `start`/`end` — the line's own start.
     let clone_edit = || Edit {
         start: 1,
         end: 1,

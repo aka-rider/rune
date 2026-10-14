@@ -263,8 +263,8 @@ fn a_successful_edit_keeps_an_unrelated_log_entry() {
 /// guarded only `commands::clipboard::handle_paste_content`, leaving these
 /// paths able to mutate a "read-only" document). The line-oriented
 /// commands (indent/outdent/delete-line/clone/move-line) share the SAME
-/// chokepoint but live in `edit_lines` — see its own
-/// `read_only_blocks_line_commands` for that half of this regression.
+/// chokepoint; `read_only_blocks_line_commands` covers that half of this
+/// regression.
 #[test]
 fn read_only_blocks_typing_backspace_and_newline() {
     let mut app = app_with("hello", 5);
