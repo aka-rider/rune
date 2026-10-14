@@ -9,6 +9,7 @@ use crate::app::App;
 use crate::commands::edit_core::{apply_edit_batch_with_cursors, apply_edit_batch_with_cursors_on};
 use crate::commands::line_blocks::touching_line_blocks;
 use crate::document::DocumentId;
+use crate::messages;
 
 struct LineShift {
     start: usize,
@@ -62,7 +63,7 @@ fn per_selected_line_edits(
         .collect();
     shifts.sort_by_key(|s| s.start);
 
-    let _ = apply_edit_batch_with_cursors(
+    apply_edit_batch_with_cursors(
         app,
         id,
         infos,
@@ -138,35 +139,34 @@ struct Landing {
     col: usize,
 }
 
-pub fn delete_line(app: &mut App, id: DocumentId) {
-    let Some(doc) = app.doc(id) else { return };
-    let cursors_before = doc.cursors.clone();
-    let buf = &doc.buffer;
-    let line_count = buf.line_count();
+struct Deletion {
+    edits: Vec<(Edit, CursorId)>,
+    landings: Vec<Landing>,
+}
 
-    let mut infos: Vec<(Edit, CursorId)> = Vec::new();
-    let mut landings: Vec<Landing> = Vec::new();
+fn plan_deletion(cursors: &[Cursor], buf: &Buffer) -> Option<Deletion> {
+    let line_count = buf.line_count();
+    let mut plan = Deletion {
+        edits: Vec::new(),
+        landings: Vec::new(),
+    };
     let mut lines_removed = 0usize;
-    for block in touching_line_blocks(cursors_before.all(), buf) {
-        let Some(head) = block.cursors.first().copied() else {
-            continue;
-        };
+    for block in touching_line_blocks(cursors, buf) {
+        let head = block.cursors.first().copied()?;
         let reaches_last = block.lines.end >= line_count;
-        let Some(range) = deleted_bytes(buf, &block.lines, reaches_last) else {
-            continue;
-        };
+        let range = deleted_bytes(buf, &block.lines, reaches_last)?;
         let landing_line = if reaches_last {
             block.lines.start.saturating_sub(1)
         } else {
             block.lines.start
         };
-        landings.push(Landing {
+        plan.landings.push(Landing {
             head,
             line: landing_line.saturating_sub(lines_removed),
             col: buf.offset_to_line_col(head.position.get()).col,
         });
         lines_removed += block.lines.len();
-        infos.push((
+        plan.edits.push((
             Edit {
                 start: range.start,
                 end: range.end,
@@ -175,11 +175,21 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
             head.id,
         ));
     }
+    Some(plan)
+}
 
-    let _ = apply_edit_batch_with_cursors_on(
+pub fn delete_line(app: &mut App, id: DocumentId) {
+    let Some(doc) = app.doc(id) else { return };
+    let cursors_before = doc.cursors.clone();
+    let Some(Deletion { edits, landings }) = plan_deletion(cursors_before.all(), &doc.buffer)
+    else {
+        messages::error(app, "delete line failed: a line fell outside the buffer");
+        return;
+    };
+    apply_edit_batch_with_cursors_on(
         app,
         id,
-        infos,
+        edits,
         &cursors_before,
         EditKind::Other,
         move |new_buf, _, _| {

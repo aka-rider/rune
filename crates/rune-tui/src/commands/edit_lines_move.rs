@@ -9,6 +9,7 @@ use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors_on;
 use crate::commands::line_blocks::{LineBlock, overlapping_line_blocks, touching_line_blocks};
 use crate::document::DocumentId;
+use crate::messages;
 
 struct Placed {
     cursor: Cursor,
@@ -40,6 +41,24 @@ impl Placed {
             ..self.cursor
         }
     }
+}
+
+enum Refusal {
+    BufferLookup,
+}
+
+impl Refusal {
+    fn report(self, app: &mut App) {
+        match self {
+            Refusal::BufferLookup => {
+                messages::error(app, "line edit failed: a line fell outside the buffer")
+            }
+        }
+    }
+}
+
+fn found<T>(lookup: Option<T>) -> Result<T, Refusal> {
+    lookup.ok_or(Refusal::BufferLookup)
 }
 
 struct Plan {
@@ -85,13 +104,17 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
 fn clone_lines(app: &mut App, id: DocumentId, selection: SelectionStays) {
     let Some(doc) = app.doc(id) else { return };
     let blocks = overlapping_line_blocks(doc.cursors.all(), &doc.buffer);
-    let Some(plan) = plan_clones(&doc.buffer, &blocks, selection) else {
-        return;
-    };
-    apply_plan(app, id, plan);
+    match plan_clones(&doc.buffer, &blocks, selection) {
+        Ok(plan) => apply_plan(app, id, plan),
+        Err(refusal) => refusal.report(app),
+    }
 }
 
-fn plan_clones(buf: &Buffer, blocks: &[LineBlock], selection: SelectionStays) -> Option<Plan> {
+fn plan_clones(
+    buf: &Buffer,
+    blocks: &[LineBlock],
+    selection: SelectionStays,
+) -> Result<Plan, Refusal> {
     let mut plan = Plan {
         edits: Vec::new(),
         placed: Vec::new(),
@@ -104,32 +127,30 @@ fn plan_clones(buf: &Buffer, blocks: &[LineBlock], selection: SelectionStays) ->
             SelectionStays::OnLowerOriginal => inserted_before + own,
         };
         let delta = lines.cast_signed();
-        let owner = block.cursors.first()?;
+        let owner = found(block.cursors.first())?;
         plan.edits.push((clone_edit(buf, &block.lines)?, owner.id));
         plan.placed
             .extend(block.cursors.iter().map(|c| Placed::new(*c, buf, delta)));
         inserted_before += own;
     }
-    Some(plan)
+    Ok(plan)
 }
 
-fn clone_edit(buf: &Buffer, lines: &Range<usize>) -> Option<Edit> {
-    let last = lines.end.checked_sub(1)?;
-    let start = buf.line_start(lines.start)?;
-    let terminator = buf.line_terminator_range(last)?;
-    let own_terminator = buf.slice(terminator.start, terminator.end)?;
+fn clone_edit(buf: &Buffer, lines: &Range<usize>) -> Result<Edit, Refusal> {
+    let last = found(lines.end.checked_sub(1))?;
+    let start = found(buf.line_start(lines.start))?;
+    let terminator = found(buf.line_terminator_range(last))?;
+    let own_terminator = found(buf.slice(terminator.start, terminator.end))?;
     let terminator = if own_terminator.is_empty() {
-        buf.line_break_at(buf.line_start(last)?)
+        buf.line_break_at(found(buf.line_start(last))?)
     } else {
         own_terminator
     };
-    Some(Edit {
+    let content_end = found(buf.line_content_end(last))?;
+    Ok(Edit {
         start,
         end: start,
-        insert: format!(
-            "{}{terminator}",
-            buf.slice(start, buf.line_content_end(last)?)?
-        ),
+        insert: format!("{}{terminator}", found(buf.slice(start, content_end))?),
     })
 }
 
@@ -162,13 +183,13 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
 fn move_lines(app: &mut App, id: DocumentId, shift: &Shift) {
     let Some(doc) = app.doc(id) else { return };
     let blocks = touching_line_blocks(doc.cursors.all(), &doc.buffer);
-    let Some(plan) = plan_moves(&doc.buffer, &blocks, shift) else {
-        return;
-    };
-    apply_plan(app, id, plan);
+    match plan_moves(&doc.buffer, &blocks, shift) {
+        Ok(plan) => apply_plan(app, id, plan),
+        Err(refusal) => refusal.report(app),
+    }
 }
 
-fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan> {
+fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Result<Plan, Refusal> {
     let line_count = buf.line_count();
     let mut plan = Plan {
         edits: Vec::new(),
@@ -177,7 +198,7 @@ fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan>
     for block in blocks {
         let delta = match (shift.region)(&block.lines, line_count) {
             Some(region) => {
-                let owner = block.cursors.first()?;
+                let owner = found(block.cursors.first())?;
                 let edit = rotated_lines_edit(buf, &region, shift.rotate)?;
                 if buf.slice(edit.start, edit.end) != Some(edit.insert.as_str()) {
                     plan.edits.push((edit, owner.id));
@@ -189,25 +210,27 @@ fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan>
         plan.placed
             .extend(block.cursors.iter().map(|c| Placed::new(*c, buf, delta)));
     }
-    Some(plan)
+    Ok(plan)
 }
 
 fn rotated_lines_edit(
     buf: &Buffer,
     region: &Range<usize>,
     rotate: fn(&mut [&str]),
-) -> Option<Edit> {
+) -> Result<Edit, Refusal> {
     let mut texts = Vec::new();
     let mut terminators = Vec::new();
     for line in region.clone() {
-        texts.push(buf.slice(buf.line_start(line)?, buf.line_content_end(line)?)?);
-        let terminator = buf.line_terminator_range(line)?;
-        terminators.push(buf.slice(terminator.start, terminator.end)?);
+        let content_end = found(buf.line_content_end(line))?;
+        texts.push(found(buf.slice(found(buf.line_start(line))?, content_end))?);
+        let terminator = found(buf.line_terminator_range(line))?;
+        terminators.push(found(buf.slice(terminator.start, terminator.end))?);
     }
     rotate(&mut texts);
-    Some(Edit {
-        start: buf.line_start(region.start)?,
-        end: buf.line_terminator_range(region.end.checked_sub(1)?)?.end,
+    let last = found(region.end.checked_sub(1))?;
+    Ok(Edit {
+        start: found(buf.line_start(region.start))?,
+        end: found(buf.line_terminator_range(last))?.end,
         insert: texts
             .iter()
             .zip(&terminators)
