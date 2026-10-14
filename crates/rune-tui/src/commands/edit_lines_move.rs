@@ -2,11 +2,11 @@ use std::ops::Range;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::coords::{BufferOffset, BufferPoint};
-use rune_core::cursor::{Cursor, CursorId};
+use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_core::undo::EditKind;
 
 use crate::app::App;
-use crate::commands::edit_core::{IdenticalReplacement, apply_edit_batch_with_cursors_on};
+use crate::commands::edit_core::apply_edit_batch_with_cursors_on;
 use crate::commands::line_blocks::{LineBlock, overlapping_line_blocks, touching_line_blocks};
 use crate::document::DocumentId;
 
@@ -49,15 +49,21 @@ struct Plan {
 
 fn apply_plan(app: &mut App, id: DocumentId, plan: Plan) {
     let Some(doc) = app.doc(id) else { return };
-    let cursors_before = doc.cursors.clone();
     let Plan { edits, placed } = plan;
+    if edits.is_empty() {
+        let landed: Vec<Cursor> = placed.iter().map(|p| p.land(&doc.buffer)).collect();
+        if let Some(doc) = app.doc_mut(id) {
+            doc.cursors = CursorSet::new_from(&landed);
+        }
+        return;
+    }
+    let cursors_before = doc.cursors.clone();
     apply_edit_batch_with_cursors_on(
         app,
         id,
         edits,
         &cursors_before,
         EditKind::Other,
-        IdenticalReplacement::Drop,
         move |new_buf, _, _| placed.iter().map(|p| p.land(new_buf)).collect(),
     );
 }
@@ -173,7 +179,9 @@ fn plan_moves(buf: &Buffer, blocks: &[LineBlock], shift: &Shift) -> Option<Plan>
             Some(region) => {
                 let owner = block.cursors.first()?;
                 let edit = rotated_lines_edit(buf, &region, shift.rotate)?;
-                plan.edits.push((edit, owner.id));
+                if buf.slice(edit.start, edit.end) != Some(edit.insert.as_str()) {
+                    plan.edits.push((edit, owner.id));
+                }
                 shift.line_delta
             }
             None => 0,

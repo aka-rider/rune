@@ -301,11 +301,16 @@ fn moving_the_unterminated_last_line_up_swaps_it_in_with_its_selection() {
 }
 
 #[test]
-fn swapping_identical_lines_changes_nothing_and_journals_nothing() {
-    let mut app = app_with("a\na\nb", 0);
+fn swapping_identical_lines_follows_the_caret_without_journaling_or_dirtying() {
+    let mut app = app_with("a\na\nb", 2);
     let id = app.active;
-    move_line_down(&mut app, id);
+    move_line_up(&mut app, id);
     assert_eq!(text(&app), "a\na\nb");
+    assert_eq!(selections(&app), [(0, 0)]);
+    assert_eq!(journal_len(&app), 0);
+    assert!(!app.doc(id).unwrap().is_dirty());
+    move_line_down(&mut app, id);
+    assert_eq!(selections(&app), [(2, 2)]);
     assert_eq!(journal_len(&app), 0);
 }
 

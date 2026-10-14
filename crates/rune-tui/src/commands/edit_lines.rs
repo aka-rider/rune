@@ -6,9 +6,7 @@ use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 
 use crate::app::App;
-use crate::commands::edit_core::{
-    IdenticalReplacement, apply_edit_batch_with_cursors, apply_edit_batch_with_cursors_on,
-};
+use crate::commands::edit_core::{apply_edit_batch_with_cursors, apply_edit_batch_with_cursors_on};
 use crate::commands::line_blocks::touching_line_blocks;
 use crate::document::DocumentId;
 
@@ -184,7 +182,6 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
         infos,
         &cursors_before,
         EditKind::Other,
-        IdenticalReplacement::Drop,
         move |new_buf, _, _| {
             landings
                 .iter()

@@ -487,73 +487,6 @@ fn a_mutating_command_against_a_read_only_document_posts_the_reason_once_even_wh
     );
 }
 
-fn replace_with(
-    content: &str,
-    edits: &[(usize, usize, &str)],
-    identical: IdenticalReplacement,
-) -> App {
-    let mut app = app_with(content);
-    let id = app.active;
-    crate::commands::test_support::cursors(&mut app, id, &[(0, 0), (1, 1)]);
-    let cursors_before = app.doc(id).expect("doc").cursors.clone();
-    let infos = edits
-        .iter()
-        .zip([cid(1), cid(2)])
-        .map(|(&(start, end, insert), owner)| {
-            (
-                Edit {
-                    start,
-                    end,
-                    insert: insert.to_string(),
-                },
-                owner,
-            )
-        })
-        .collect();
-    apply_edit_batch_with_cursors_on(
-        &mut app,
-        id,
-        infos,
-        &cursors_before,
-        EditKind::Other,
-        identical,
-        |_, _, _| cursors_before.all().to_vec(),
-    );
-    app
-}
-
-#[test]
-fn a_dropped_identity_replacement_does_not_journal_or_dirty() {
-    let app = replace_with("ab", &[(0, 1, "a")], IdenticalReplacement::Drop);
-
-    let doc = app.doc(app.active).expect("doc");
-    assert_eq!(doc.journal.len(), 0);
-    assert!(!doc.is_dirty());
-}
-
-#[test]
-fn dropped_identity_replacements_leave_a_batch_with_real_edits_intact() {
-    let app = replace_with(
-        "ab",
-        &[(0, 1, "a"), (1, 2, "Z")],
-        IdenticalReplacement::Drop,
-    );
-
-    let doc = app.doc(app.active).expect("doc");
-    assert_eq!(doc.buffer.content(), "aZ");
-    assert_eq!(doc.journal.len(), 1);
-    assert_eq!(doc.journal.steps()[0].edits.len(), 1);
-}
-
-#[test]
-fn a_journaled_identity_replacement_still_pushes_a_step() {
-    let app = replace_with("ab", &[(0, 1, "a")], IdenticalReplacement::Journal);
-
-    let doc = app.doc(app.active).expect("doc");
-    assert_eq!(doc.buffer.content(), "ab");
-    assert_eq!(doc.journal.len(), 1);
-}
-
 #[test]
 fn the_cursor_hook_sees_the_buffer_as_it_reads_after_the_edits() {
     let mut app = app_with("ab\ncd");
@@ -585,7 +518,6 @@ fn the_cursor_hook_sees_the_buffer_as_it_reads_after_the_edits() {
         infos,
         &cursors_before,
         EditKind::Other,
-        IdenticalReplacement::Drop,
         |new_buf, _, ids| {
             assert_eq!(new_buf.content(), "Xab\nYcd");
             ids.iter()

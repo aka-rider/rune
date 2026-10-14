@@ -9,12 +9,6 @@ use crate::document::DocumentId;
 use crate::messages;
 use crate::navhistory;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IdenticalReplacement {
-    Journal,
-    Drop,
-}
-
 /// Sole buffer-mutating primitive: applies a batch, journals exactly one
 /// `Step`, and mirrors it to the async replica. Returns whether a batch
 /// actually applied rather than `()`, so a caller can tell a real edit
@@ -28,34 +22,27 @@ pub(crate) fn apply_edit_batch_with_cursors(
     kind: EditKind,
     cursors_after: impl FnOnce(&[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
 ) -> bool {
-    apply_edit_batch_with_cursors_on(
-        app,
-        id,
-        infos,
-        cursors_before,
-        kind,
-        IdenticalReplacement::Journal,
-        |_, applied, ids| cursors_after(applied, ids),
-    )
+    apply_edit_batch_with_cursors_on(app, id, infos, cursors_before, kind, |_, applied, ids| {
+        cursors_after(applied, ids)
+    })
 }
 
+/// [`apply_edit_batch_with_cursors`] whose cursor hook also sees the buffer
+/// as it reads after the edits, for callers that place cursors by line and
+/// column rather than by byte offset.
 pub(crate) fn apply_edit_batch_with_cursors_on(
     app: &mut App,
     id: DocumentId,
     infos: Vec<(Edit, CursorId)>,
     cursors_before: &CursorSet,
     kind: EditKind,
-    identical: IdenticalReplacement,
     cursors_after: impl FnOnce(&Buffer, &[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
 ) -> bool {
-    apply_batch(
+    apply_owned_and_followers(
         app,
         id,
-        Batch {
-            owned: infos,
-            followers: Vec::new(),
-            identical,
-        },
+        infos,
+        Vec::new(),
         cursors_before,
         kind,
         |new_buf, applied, owners| {
@@ -65,25 +52,15 @@ pub(crate) fn apply_edit_batch_with_cursors_on(
     )
 }
 
-struct Batch {
-    owned: Vec<(Edit, CursorId)>,
-    followers: Vec<Edit>,
-    identical: IdenticalReplacement,
-}
-
-fn apply_batch(
+fn apply_owned_and_followers(
     app: &mut App,
     id: DocumentId,
-    batch: Batch,
+    mut owned: Vec<(Edit, CursorId)>,
+    followers: Vec<Edit>,
     cursors_before: &CursorSet,
     kind: EditKind,
     cursors_after: impl FnOnce(&Buffer, &[AppliedEdit], &[Option<CursorId>]) -> Vec<Cursor>,
 ) -> bool {
-    let Batch {
-        mut owned,
-        followers,
-        identical,
-    } = batch;
     let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
         if let Some(message) = doc.read_only.refusal_message() {
@@ -91,7 +68,7 @@ fn apply_batch(
         }
         return false;
     }
-    owned.retain(|(edit, _)| !is_noop(edit, &doc.buffer, identical));
+    owned.retain(|(edit, _)| !is_noop(edit));
     if owned.is_empty() {
         return false;
     }
@@ -156,14 +133,8 @@ fn apply_batch(
     }
 }
 
-fn is_zero_width_noop(edit: &Edit) -> bool {
+fn is_noop(edit: &Edit) -> bool {
     edit.start == edit.end && edit.insert.is_empty()
-}
-
-fn is_noop(edit: &Edit, buf: &Buffer, identical: IdenticalReplacement) -> bool {
-    is_zero_width_noop(edit)
-        || (identical == IdenticalReplacement::Drop
-            && buf.slice(edit.start, edit.end) == Some(edit.insert.as_str()))
 }
 
 fn unsubsumed_followers(followers: Vec<Edit>, owned: &[(Edit, CursorId)]) -> Vec<Edit> {
@@ -175,7 +146,7 @@ fn unsubsumed_followers(followers: Vec<Edit>, owned: &[(Edit, CursorId)]) -> Vec
     deletions.sort_unstable();
     followers
         .into_iter()
-        .filter(|follower| !is_zero_width_noop(follower) && !is_deleted_by(&deletions, follower))
+        .filter(|follower| !is_noop(follower) && !is_deleted_by(&deletions, follower))
         .collect()
 }
 
@@ -254,14 +225,11 @@ pub(crate) fn commit_edits_with_followers(
     cursors_before: &CursorSet,
     kind: EditKind,
 ) -> bool {
-    apply_batch(
+    apply_owned_and_followers(
         app,
         id,
-        Batch {
-            owned,
-            followers,
-            identical: IdenticalReplacement::Journal,
-        },
+        owned,
+        followers,
         cursors_before,
         kind,
         |_, applied, owners| {
