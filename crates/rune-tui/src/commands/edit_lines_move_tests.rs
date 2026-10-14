@@ -402,3 +402,48 @@ fn read_only_blocks_line_commands() {
     assert_eq!(text(&app), before, "move-down");
     assert_eq!(journal_len(&app), 0);
 }
+
+#[test]
+fn moving_a_line_that_would_fuse_a_lone_cr_into_crlf_is_refused_with_a_warning() {
+    for (name, run) in [
+        ("down", move_line_down as fn(&mut App, DocumentId)),
+        ("up", move_line_up),
+    ] {
+        let at = if name == "down" { 0 } else { 2 };
+        let mut app = app_with("a\nb\r", at);
+        let id = app.active;
+        run(&mut app, id);
+        assert_eq!(text(&app), "a\nb\r", "{name}");
+        assert_eq!(journal_len(&app), 0, "{name}");
+        assert!(
+            crate::messages::newest_text(&app).is_some_and(|m| m.contains("lone carriage return")),
+            "{name}: the refusal tells the user"
+        );
+    }
+}
+
+#[test]
+fn cloning_an_unterminated_line_ending_in_a_lone_cr_is_refused_with_a_warning() {
+    for (name, run) in [
+        ("down", clone_line_down as fn(&mut App, DocumentId)),
+        ("up", clone_line_up),
+    ] {
+        let mut app = app_with("a\nb\r", 2);
+        let id = app.active;
+        run(&mut app, id);
+        assert_eq!(text(&app), "a\nb\r", "{name}");
+        assert_eq!(journal_len(&app), 0, "{name}");
+        assert!(
+            crate::messages::newest_text(&app).is_some_and(|m| m.contains("lone carriage return")),
+            "{name}: the refusal tells the user"
+        );
+    }
+}
+
+#[test]
+fn a_lone_cr_that_stays_before_a_crlf_terminator_moves_freely() {
+    let mut app = app_with("a\r\nb\r\r\nc", 0);
+    let id = app.active;
+    move_line_down(&mut app, id);
+    assert_eq!(text(&app), "b\r\r\na\r\nc");
+}

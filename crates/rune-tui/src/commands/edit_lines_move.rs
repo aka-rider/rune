@@ -45,6 +45,7 @@ impl Placed {
 
 enum Refusal {
     BufferLookup,
+    LoneCarriageReturn(&'static str),
 }
 
 impl Refusal {
@@ -53,6 +54,10 @@ impl Refusal {
             Refusal::BufferLookup => {
                 messages::error(app, "line edit failed: a line fell outside the buffer")
             }
+            Refusal::LoneCarriageReturn(verb) => messages::warn(
+                app,
+                format!("line ends with a lone carriage return; {verb} refused"),
+            ),
         }
     }
 }
@@ -141,16 +146,20 @@ fn clone_edit(buf: &Buffer, lines: &Range<usize>) -> Result<Edit, Refusal> {
     let start = found(buf.line_start(lines.start))?;
     let terminator = found(buf.line_terminator_range(last))?;
     let own_terminator = found(buf.slice(terminator.start, terminator.end))?;
+    let content_end = found(buf.line_content_end(last))?;
+    let content = found(buf.slice(start, content_end))?;
     let terminator = if own_terminator.is_empty() {
+        if content.ends_with('\r') {
+            return Err(Refusal::LoneCarriageReturn("clone"));
+        }
         buf.line_break_at(found(buf.line_start(last))?)
     } else {
         own_terminator
     };
-    let content_end = found(buf.line_content_end(last))?;
     Ok(Edit {
         start,
         end: start,
-        insert: format!("{}{terminator}", found(buf.slice(start, content_end))?),
+        insert: format!("{content}{terminator}"),
     })
 }
 
@@ -227,6 +236,13 @@ fn rotated_lines_edit(
         terminators.push(found(buf.slice(terminator.start, terminator.end))?);
     }
     rotate(&mut texts);
+    if texts
+        .iter()
+        .zip(&terminators)
+        .any(|(text, terminator)| text.ends_with('\r') && terminator.starts_with('\n'))
+    {
+        return Err(Refusal::LoneCarriageReturn("move"));
+    }
     let last = found(region.end.checked_sub(1))?;
     Ok(Edit {
         start: found(buf.line_start(region.start))?,
