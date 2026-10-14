@@ -1,4 +1,4 @@
-use rune_core::buffer::{AppliedEdit, Edit, SortedEdits};
+use rune_core::buffer::{AppliedEdit, Buffer, Edit, SortedEdits};
 use rune_core::coords::{BufferOffset, VisualCol};
 use rune_core::cursor::{Cursor, CursorId, CursorSet};
 use rune_core::undo::{EditKind, Step};
@@ -8,6 +8,12 @@ use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::messages;
 use crate::navhistory;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdenticalReplacement {
+    Journal,
+    Drop,
+}
 
 /// Sole buffer-mutating primitive: applies a batch, journals exactly one
 /// `Step`, and mirrors it to the async replica. Returns whether a batch
@@ -22,29 +28,62 @@ pub(crate) fn apply_edit_batch_with_cursors(
     kind: EditKind,
     cursors_after: impl FnOnce(&[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
 ) -> bool {
-    apply_owned_and_followers(
+    apply_edit_batch_with_cursors_on(
         app,
         id,
         infos,
-        Vec::new(),
         cursors_before,
         kind,
-        |applied, owners| {
+        IdenticalReplacement::Journal,
+        |_, applied, ids| cursors_after(applied, ids),
+    )
+}
+
+pub(crate) fn apply_edit_batch_with_cursors_on(
+    app: &mut App,
+    id: DocumentId,
+    infos: Vec<(Edit, CursorId)>,
+    cursors_before: &CursorSet,
+    kind: EditKind,
+    identical: IdenticalReplacement,
+    cursors_after: impl FnOnce(&Buffer, &[AppliedEdit], &[CursorId]) -> Vec<Cursor>,
+) -> bool {
+    apply_batch(
+        app,
+        id,
+        Batch {
+            owned: infos,
+            followers: Vec::new(),
+            identical,
+        },
+        cursors_before,
+        kind,
+        |new_buf, applied, owners| {
             let ids: Vec<CursorId> = owners.iter().flatten().copied().collect();
-            cursors_after(applied, &ids)
+            cursors_after(new_buf, applied, &ids)
         },
     )
 }
 
-fn apply_owned_and_followers(
+struct Batch {
+    owned: Vec<(Edit, CursorId)>,
+    followers: Vec<Edit>,
+    identical: IdenticalReplacement,
+}
+
+fn apply_batch(
     app: &mut App,
     id: DocumentId,
-    mut owned: Vec<(Edit, CursorId)>,
-    followers: Vec<Edit>,
+    batch: Batch,
     cursors_before: &CursorSet,
     kind: EditKind,
-    cursors_after: impl FnOnce(&[AppliedEdit], &[Option<CursorId>]) -> Vec<Cursor>,
+    cursors_after: impl FnOnce(&Buffer, &[AppliedEdit], &[Option<CursorId>]) -> Vec<Cursor>,
 ) -> bool {
+    let Batch {
+        mut owned,
+        followers,
+        identical,
+    } = batch;
     let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
         if let Some(message) = doc.read_only.refusal_message() {
@@ -52,7 +91,7 @@ fn apply_owned_and_followers(
         }
         return false;
     }
-    owned.retain(|(edit, _)| !is_noop(edit));
+    owned.retain(|(edit, _)| !is_noop(edit, &doc.buffer, identical));
     if owned.is_empty() {
         return false;
     }
@@ -78,7 +117,7 @@ fn apply_owned_and_followers(
 
     match doc.buffer.apply_edits(&SortedEdits::sort(&edits)) {
         Ok((new_buf, applied)) => {
-            let new_cursors = cursors_after(&applied, &owners);
+            let new_cursors = cursors_after(&new_buf, &applied, &owners);
             let Some(doc) = app.doc_mut(id) else {
                 return false;
             };
@@ -117,8 +156,14 @@ fn apply_owned_and_followers(
     }
 }
 
-fn is_noop(edit: &Edit) -> bool {
+fn is_zero_width_noop(edit: &Edit) -> bool {
     edit.start == edit.end && edit.insert.is_empty()
+}
+
+fn is_noop(edit: &Edit, buf: &Buffer, identical: IdenticalReplacement) -> bool {
+    is_zero_width_noop(edit)
+        || (identical == IdenticalReplacement::Drop
+            && buf.slice(edit.start, edit.end) == Some(edit.insert.as_str()))
 }
 
 fn unsubsumed_followers(followers: Vec<Edit>, owned: &[(Edit, CursorId)]) -> Vec<Edit> {
@@ -130,7 +175,7 @@ fn unsubsumed_followers(followers: Vec<Edit>, owned: &[(Edit, CursorId)]) -> Vec
     deletions.sort_unstable();
     followers
         .into_iter()
-        .filter(|follower| !is_noop(follower) && !is_deleted_by(&deletions, follower))
+        .filter(|follower| !is_zero_width_noop(follower) && !is_deleted_by(&deletions, follower))
         .collect()
 }
 
@@ -209,14 +254,17 @@ pub(crate) fn commit_edits_with_followers(
     cursors_before: &CursorSet,
     kind: EditKind,
 ) -> bool {
-    apply_owned_and_followers(
+    apply_batch(
         app,
         id,
-        owned,
-        followers,
+        Batch {
+            owned,
+            followers,
+            identical: IdenticalReplacement::Journal,
+        },
         cursors_before,
         kind,
-        |applied, owners| {
+        |_, applied, owners| {
             applied
                 .iter()
                 .zip(owners)

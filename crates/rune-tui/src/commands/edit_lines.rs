@@ -7,6 +7,7 @@ use rune_core::undo::EditKind;
 
 use crate::app::App;
 use crate::commands::edit_core::{apply_edit_batch_with_cursors, commit_edit_batch};
+use crate::commands::line_blocks::touching_line_blocks;
 use crate::document::DocumentId;
 
 pub(crate) fn per_line_edits(
@@ -37,15 +38,6 @@ pub(crate) fn per_line_edits(
     }
 
     let _ = commit_edit_batch(app, id, infos, &cursors_before, EditKind::Other);
-}
-
-fn selected_lines(c: &Cursor, buf: &Buffer) -> std::ops::RangeInclusive<usize> {
-    let first = buf.offset_to_line_col(c.selection_start().get()).line;
-    let mut last = buf.offset_to_line_col(c.selection_end().get()).line;
-    if last > first && buf.line_start(last) == Some(c.selection_end().get()) {
-        last -= 1;
-    }
-    first..=last
 }
 
 struct LineShift {
@@ -79,15 +71,13 @@ fn per_selected_line_edits(
     let before = cursors_before.all().to_vec();
 
     let mut infos: Vec<(Edit, CursorId)> = Vec::new();
-    let mut seen: HashSet<usize> = HashSet::new();
-    for c in &before {
-        let Some(doc) = app.doc(id) else { return };
-        for line in selected_lines(c, &doc.buffer) {
-            if !seen.insert(line) {
-                continue;
-            }
+    for block in touching_line_blocks(&before, &doc.buffer) {
+        let Some(owner) = block.cursors.first() else {
+            continue;
+        };
+        for line in block.lines {
             if let Some(edit) = build(line, &doc.buffer) {
-                infos.push((edit, c.id));
+                infos.push((edit, owner.id));
             }
         }
     }

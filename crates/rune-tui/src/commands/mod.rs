@@ -8,6 +8,7 @@ pub mod edit_newline;
 mod edit_renumber;
 pub(crate) mod editor_exec;
 pub mod language;
+pub(crate) mod line_blocks;
 pub mod mouse;
 pub(crate) mod mouse_hit;
 pub mod multi;
