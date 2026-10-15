@@ -201,3 +201,16 @@ the caller's `Buffer::line_col_to_offset` clamps to the line end (the `\n`), not
 `delete_line` works around it with its own clamp in `landing_offset`; the motion paths in
 `nav_scroll.rs` (`move_row`), `multi.rs` (`visual_col_on_line`) and `document/sync.rs`
 (`snap_cursor_to_row`) do not. Candidate fix: one clamp-to-content-end chokepoint those four callers share.
+
+## Word wrap off: a very long line costs O(line) per frame
+
+With wrap off, `build_rows` in `render/mod.rs` builds a `Cell` for every grapheme of every visible logical line
+and `hscroll::scroll_columns` then drops the leading ones. A single 1 MB line (200k words) costs about 86 ms per
+frame in a release build, with the caret at the end of it. Every pass between the two (`code_bg::fill_row`,
+`overlay::place_caret`, `paint_range`, the decor prefix) indexes a row by cumulative cell width from column 0, so
+the leading drop cannot move before cell building without making all of them window-relative. A trailing clip
+alone would not help the worst case: the caret at the end of the line keeps `scroll_col` near the line length.
+The edit path is O(line) as well: one key press on that line takes about 38 ms (`caret_cell` and `visual_col` walk
+the whole line in `document/sync.rs`, plus the per-edit syntax and wrap passes). Split candidate: pass a
+`Range<usize>` window of visual columns into `segment_cells` and carry a per-row column origin that the overlay
+passes subtract, and give `visual_col` a line-start index. Not guarded by `make perf-guard` until it is fixed.
