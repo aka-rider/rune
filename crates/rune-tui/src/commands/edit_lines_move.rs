@@ -30,7 +30,7 @@ impl Placed {
 
     fn land(&self, new_buf: &Buffer) -> Cursor {
         let at = |p: BufferPoint| {
-            BufferOffset(new_buf.line_col_to_offset(BufferPoint {
+            BufferOffset(new_buf.caret_offset(BufferPoint {
                 line: p.line.saturating_add_signed(self.line_delta),
                 col: p.col,
             }))

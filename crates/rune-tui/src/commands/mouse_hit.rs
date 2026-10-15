@@ -62,7 +62,7 @@ fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: WrapRow) -> 
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    doc.buffer.line_col_to_offset(buffer_point)
+    doc.buffer.caret_offset(buffer_point)
 }
 
 fn offset_at_ordinary(
@@ -110,7 +110,7 @@ fn offset_at_ordinary(
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    doc.buffer.line_col_to_offset(buffer_point)
+    doc.buffer.caret_offset(buffer_point)
 }
 
 fn desired_col_at(doc: &Document, view: &ViewSnapshots, offset: usize) -> usize {

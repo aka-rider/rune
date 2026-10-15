@@ -55,7 +55,7 @@ fn move_row(
 
     let sp2 = view.wrap.wrap_to_syntax(buf.content(), wp2);
     let bp2 = view.syntax.syntax_to_buffer(sp2);
-    let offset2 = BufferOffset(buf.line_col_to_offset(bp2));
+    let offset2 = BufferOffset(buf.caret_offset(bp2));
 
     Cursor {
         position: offset2,

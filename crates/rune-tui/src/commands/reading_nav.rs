@@ -20,7 +20,7 @@ fn pin_caret_to_first_visible_line(doc: &mut Document) {
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    let offset = doc.buffer.line_col_to_offset(buffer_point);
+    let offset = doc.buffer.caret_offset(buffer_point);
     doc.cursors = CursorSet::new(offset);
 }
 

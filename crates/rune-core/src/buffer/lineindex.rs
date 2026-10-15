@@ -78,27 +78,14 @@ impl Buffer {
         }
     }
 
-    pub fn line_col_to_offset(&self, bp: BufferPoint) -> usize {
-        let count = self.line_starts.len();
-        if bp.line >= count {
+    pub fn caret_offset(&self, bp: BufferPoint) -> usize {
+        let (Some(start), Some(content_end)) = (
+            self.line_starts.get(bp.line),
+            self.line_content_end(bp.line),
+        ) else {
             return self.content.len();
-        }
-        let line_start = self.line_starts.get(bp.line).unwrap_or(0);
-        let offset = line_start + bp.col;
-        let end = if bp.line == count - 1 {
-            self.content.len()
-        } else {
-            self.line_end(bp.line).unwrap_or(self.content.len())
         };
-        let offset = if offset > end { end } else { offset };
-        // `bp.col` is a BYTE column and callers routinely carry one across
-        // lines — a remembered desired column, a click, a multicursor add.
-        // Clamping to the line's end keeps it in RANGE but says nothing
-        // about char boundaries, so a column measured on an ASCII line lands
-        // mid-UTF-8 when replayed against a line holding wide characters.
-        // Snapping here rather than at each call site is what makes an
-        // out-of-boundary cursor unrepresentable instead of merely unlikely.
-        super::snap_char_boundary(&self.content, offset)
+        super::snap_char_boundary(&self.content, start.saturating_add(bp.col).min(content_end))
     }
 
     pub fn line_content_end(&self, n: usize) -> Option<usize> {
@@ -221,7 +208,7 @@ mod tests {
         let bp = b.offset_to_line_col(10);
         assert_eq!(bp, BufferPoint { line: 1, col: 3 });
 
-        let offset = b.line_col_to_offset(bp);
+        let offset = b.caret_offset(bp);
         assert_eq!(offset, 10);
     }
 
@@ -245,9 +232,9 @@ mod tests {
     /// un-clamped and later force-snapped all the way to the buffer's own
     /// end instead of the line's).
     #[test]
-    fn line_col_to_offset_clamps_an_overshot_column_to_the_lines_own_end_not_the_buffers() {
+    fn caret_offset_clamps_an_overshot_column_to_the_lines_own_end_not_the_buffers() {
         let b = Buffer::new("aa\nbb\ncc");
-        let offset = b.line_col_to_offset(BufferPoint { line: 1, col: 10 });
+        let offset = b.caret_offset(BufferPoint { line: 1, col: 10 });
         assert_eq!(offset, 5, "must clamp to line 1's end, not content.len()");
     }
 
@@ -263,6 +250,48 @@ mod tests {
         let b = Buffer::new("a\nb");
         assert_eq!(b.line_content_end(0), Some(1));
         assert_eq!(b.line_end(0), Some(1));
+    }
+
+    #[test]
+    fn caret_offset_clamps_an_overshot_column_before_the_cr_of_a_crlf_line() {
+        let b = Buffer::new("abcdef\r\nA\r\nC");
+        assert_eq!(b.caret_offset(BufferPoint { line: 1, col: 5 }), 9);
+    }
+
+    #[test]
+    fn caret_offset_on_an_empty_crlf_line_is_the_line_start() {
+        let b = Buffer::new("a\r\n\r\nc");
+        assert_eq!(b.caret_offset(BufferPoint { line: 1, col: 3 }), 3);
+    }
+
+    #[test]
+    fn caret_offset_clamps_before_the_cr_after_multibyte_text() {
+        let b = Buffer::new("x\r\nñé\r\nc");
+        assert_eq!(b.caret_offset(BufferPoint { line: 1, col: 99 }), 7);
+    }
+
+    #[test]
+    fn caret_offset_floors_a_mid_character_column_to_the_boundary() {
+        let b = Buffer::new("ñ\r\n");
+        assert_eq!(b.caret_offset(BufferPoint { line: 0, col: 1 }), 0);
+    }
+
+    #[test]
+    fn caret_offset_keeps_a_lone_cr_before_lf_free_end_as_content() {
+        let b = Buffer::new("a\nb\r");
+        assert_eq!(b.caret_offset(BufferPoint { line: 1, col: 9 }), 4);
+    }
+
+    #[test]
+    fn caret_offset_keeps_a_mid_line_lone_cr_as_content() {
+        let b = Buffer::new("a\rb\nc");
+        assert_eq!(b.caret_offset(BufferPoint { line: 0, col: 9 }), 3);
+    }
+
+    #[test]
+    fn caret_offset_past_the_last_line_is_the_buffer_end() {
+        let b = Buffer::new("a\r\nb\r\n");
+        assert_eq!(b.caret_offset(BufferPoint { line: 7, col: 0 }), 6);
     }
 
     #[test]

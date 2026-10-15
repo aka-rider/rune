@@ -118,7 +118,7 @@ impl Document {
             .wrap
             .wrap_to_syntax(self.buffer.content(), WrapPoint { row, col });
         let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-        let offset = self.buffer.line_col_to_offset(buffer_point);
+        let offset = self.buffer.caret_offset(buffer_point);
         let snapped = Cursor {
             position: BufferOffset(offset),
             anchor: BufferOffset(offset),

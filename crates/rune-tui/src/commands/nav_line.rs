@@ -9,7 +9,7 @@ use crate::keymap::Extend;
 
 pub fn line_start_offset(buf: &Buffer, offset: usize) -> usize {
     let bp = buf.offset_to_line_col(offset);
-    let line_start = buf.line_col_to_offset(BufferPoint {
+    let line_start = buf.caret_offset(BufferPoint {
         line: bp.line,
         col: 0,
     });

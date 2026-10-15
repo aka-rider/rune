@@ -39,7 +39,7 @@ fn add_cursor(doc: &mut Document, dir: isize) {
         extreme.desired_col
     };
     let new_bp = visual_col_on_line(&view, &doc.buffer, target_line, desired);
-    let new_offset = doc.buffer.line_col_to_offset(new_bp);
+    let new_offset = doc.buffer.caret_offset(new_bp);
 
     let new_cursor = CursorSpec {
         position: BufferOffset(new_offset),

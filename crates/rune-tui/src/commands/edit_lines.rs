@@ -212,7 +212,7 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
             landings
                 .iter()
                 .map(|l| {
-                    let at = BufferOffset(landing_offset(new_buf, l.point));
+                    let at = BufferOffset(new_buf.caret_offset(l.point));
                     Cursor {
                         position: at,
                         anchor: at,
@@ -231,17 +231,6 @@ fn deleted_bytes(buf: &Buffer, lines: &Range<usize>, reaches_last: bool) -> Opti
         (above, true) => Some(buf.line_content_end(above - 1)?..buf.len()),
         (first, false) => Some(buf.line_start(first)?..buf.line_start(lines.end)?),
     }
-}
-
-fn landing_offset(buf: &Buffer, point: BufferPoint) -> usize {
-    let content_len = buf
-        .line_start(point.line)
-        .zip(buf.line_content_end(point.line))
-        .map_or(point.col, |(start, end)| end.saturating_sub(start));
-    buf.line_col_to_offset(BufferPoint {
-        line: point.line,
-        col: point.col.min(content_len),
-    })
 }
 
 #[cfg(test)]
