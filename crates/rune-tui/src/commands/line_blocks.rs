@@ -36,7 +36,7 @@ fn line_blocks(
         .iter()
         .map(|c| (selected_lines(c, buf), *c))
         .collect();
-    spans.sort_by_key(|(lines, _)| (lines.start, lines.end));
+    spans.sort_by_key(|(lines, c)| (lines.start, c.selection_start()));
     let mut blocks: Vec<LineBlock> = Vec::new();
     for (lines, cursor) in spans {
         match blocks.last_mut() {

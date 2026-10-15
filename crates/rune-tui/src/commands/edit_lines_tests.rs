@@ -5,6 +5,7 @@
 use super::*;
 use crate::commands::edit::undo;
 use crate::commands::test_support::{cursors, selecting};
+use rune_core::coords::VisualCol;
 use rune_core::cursor::{CursorSet, CursorSpec};
 use rune_vfs::Mem;
 use std::sync::Arc;
@@ -290,13 +291,59 @@ fn the_caret_column_is_clamped_to_a_shorter_landing_line() {
 }
 
 #[test]
-fn the_caret_lands_on_a_char_boundary_of_a_multibyte_landing_line() {
-    let mut app = app_with("abcdef\n\u{e9}\u{e9}", 3);
+fn the_caret_lands_at_the_visual_column_not_the_byte_column() {
+    let mut app = app_with("abcd\n\u{e9}\u{e9}\u{e9}", 2);
     let id = app.active;
     delete_line(&mut app, id);
-    assert_eq!(content(&app), "\u{e9}\u{e9}");
-    let caret = carets(&app)[0];
-    assert!(content(&app).is_char_boundary(caret));
+    assert_eq!(content(&app), "\u{e9}\u{e9}\u{e9}");
+    assert_eq!(carets(&app), vec!["\u{e9}\u{e9}".len()]);
+}
+
+#[test]
+fn the_caret_never_lands_inside_a_wide_character() {
+    let mut app = app_with("abcd\n\u{4e2d}\u{4e2d}\u{4e2d}", 3);
+    let id = app.active;
+    delete_line(&mut app, id);
+    assert_eq!(carets(&app), vec!["\u{4e2d}".len()]);
+}
+
+#[test]
+fn a_wide_character_before_the_caret_counts_two_columns() {
+    let mut app = app_with("\u{4e2d}\u{4e2d}\nabcdef", "\u{4e2d}".len());
+    let id = app.active;
+    delete_line(&mut app, id);
+    assert_eq!(content(&app), "abcdef");
+    assert_eq!(carets(&app), vec![2]);
+}
+
+#[test]
+fn a_block_lands_at_the_column_of_its_topmost_caret() {
+    let mut app = app_with("aaaa\nbbbbbbbb\ncccccccc\ndddddddd", 0);
+    let id = app.active;
+    cursors(&mut app, id, &[(20, 20), (7, 7)]);
+    delete_line(&mut app, id);
+    assert_eq!(content(&app), "aaaa\ndddddddd");
+    assert_eq!(carets(&app), vec!["aaaa\n".len() + 2]);
+}
+
+#[test]
+fn two_carets_on_one_line_land_at_the_column_of_the_leftmost() {
+    let mut app = app_with("abcdef\nxyzxyz", 0);
+    let id = app.active;
+    cursors(&mut app, id, &[(4, 4), (1, 1)]);
+    delete_line(&mut app, id);
+    assert_eq!(content(&app), "xyzxyz");
+    assert_eq!(carets(&app), vec![1]);
+}
+
+#[test]
+fn a_clamped_landing_keeps_the_wanted_column_for_the_next_vertical_move() {
+    let mut app = app_with("abcdef\nxy", 4);
+    let id = app.active;
+    delete_line(&mut app, id);
+    let landed = app.doc(id).unwrap().cursors.primary();
+    assert_eq!(landed.position.get(), 2);
+    assert_eq!(landed.desired_col, VisualCol(4));
 }
 
 #[test]

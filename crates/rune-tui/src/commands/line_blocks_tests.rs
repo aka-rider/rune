@@ -88,8 +88,8 @@ fn two_carets_on_one_line_form_one_block_either_way() {
         assert_eq!(lines_of(&blocks), [(0, 1)]);
         assert_eq!(
             ids_of(&blocks[0]),
-            [1, 2],
-            "both carets belong to the block"
+            [2, 1],
+            "both carets belong to the block, topmost position first"
         );
     }
 }

@@ -4,11 +4,15 @@ use rune_core::buffer::{Buffer, Edit};
 use rune_core::coords::{BufferOffset, BufferPoint, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
+use rune_md::element::doc::ViewSnapshots;
+use rune_syntax::wrap::line_byte_col_from_visual;
 
 use crate::app::App;
 use crate::commands::edit_core::{apply_edit_batch_with_cursors, apply_edit_batch_with_cursors_on};
 use crate::commands::line_blocks::touching_line_blocks;
+use crate::commands::nav::update_horizontal;
 use crate::document::DocumentId;
+use crate::keymap::Extend;
 use crate::messages;
 
 struct LineShift {
@@ -136,7 +140,7 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
 struct Landing {
     head: Cursor,
     line: usize,
-    col: usize,
+    col: VisualCol,
 }
 
 struct Deletion {
@@ -144,7 +148,7 @@ struct Deletion {
     landings: Vec<Landing>,
 }
 
-fn plan_deletion(cursors: &[Cursor], buf: &Buffer) -> Option<Deletion> {
+fn plan_deletion(cursors: &[Cursor], buf: &Buffer, view: &ViewSnapshots) -> Option<Deletion> {
     let line_count = buf.line_count();
     let mut plan = Deletion {
         edits: Vec::new(),
@@ -163,7 +167,7 @@ fn plan_deletion(cursors: &[Cursor], buf: &Buffer) -> Option<Deletion> {
         plan.landings.push(Landing {
             head,
             line: landing_line.saturating_sub(lines_removed),
-            col: buf.offset_to_line_col(head.position.get()).col,
+            col: update_horizontal(view, buf, head, head.position.get(), Extend::No).desired_col,
         });
         lines_removed += block.lines.len();
         plan.edits.push((
@@ -179,9 +183,11 @@ fn plan_deletion(cursors: &[Cursor], buf: &Buffer) -> Option<Deletion> {
 }
 
 pub fn delete_line(app: &mut App, id: DocumentId) {
-    let Some(doc) = app.doc(id) else { return };
+    let Some(doc) = app.doc_mut(id) else { return };
+    let view = doc.view();
     let cursors_before = doc.cursors.clone();
-    let Some(Deletion { edits, landings }) = plan_deletion(cursors_before.all(), &doc.buffer)
+    let Some(Deletion { edits, landings }) =
+        plan_deletion(cursors_before.all(), &doc.buffer, &view)
     else {
         messages::error(app, "delete line failed: a line fell outside the buffer");
         return;
@@ -200,7 +206,8 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
                     Cursor {
                         position: at,
                         anchor: at,
-                        ..l.head
+                        desired_col: l.col,
+                        id: l.head.id,
                     }
                 })
                 .collect()
@@ -216,14 +223,15 @@ fn deleted_bytes(buf: &Buffer, lines: &Range<usize>, reaches_last: bool) -> Opti
     }
 }
 
-fn landing_offset(buf: &Buffer, line: usize, col: usize) -> usize {
-    let content_len = buf
+fn landing_offset(buf: &Buffer, line: usize, col: VisualCol) -> usize {
+    let byte_col = buf
         .line_start(line)
         .zip(buf.line_content_end(line))
-        .map_or(col, |(start, end)| end.saturating_sub(start));
+        .and_then(|(start, end)| buf.slice(start, end))
+        .map_or(0, |text| line_byte_col_from_visual(text, col.0));
     buf.line_col_to_offset(BufferPoint {
         line,
-        col: col.min(content_len),
+        col: byte_col,
     })
 }
 

@@ -122,10 +122,19 @@ pub(super) fn byte_col_from_visual(
     visual_col: usize,
 ) -> usize {
     let (text, bounds) = spans_text_and_bounds(content, spans);
+    cells_to_byte_col(&text, &bounds, visual_col)
+}
+
+pub fn line_byte_col_from_visual(line_text: &str, visual_col: usize) -> usize {
+    let bounds = [line_text.len()];
+    cells_to_byte_col(line_text, &bounds, visual_col)
+}
+
+fn cells_to_byte_col(text: &str, bounds: &[usize], visual_col: usize) -> usize {
     let mut visual = 0usize;
     let mut bytes = 0usize;
     while bytes < text.len() {
-        let Some(cluster) = next_grapheme(&text, &bounds, bytes) else {
+        let Some(cluster) = next_grapheme(text, bounds, bytes) else {
             break;
         };
         let rw = grapheme_width_with_tab(cluster, visual);
@@ -327,6 +336,29 @@ mod tests {
         assert_eq!(line_visual_col(s, after_first_tab), 4);
         assert_eq!(line_visual_col(s, after_second_tab), 8);
         assert_eq!(line_visual_col(s, end), 9);
+    }
+
+    #[test]
+    fn line_byte_col_from_visual_inverts_line_visual_col_at_every_boundary() {
+        let s = "a\u{4e2d}\u{e9}\tb";
+        for (byte, _) in s.char_indices().chain([(s.len(), ' ')]) {
+            assert_eq!(
+                line_byte_col_from_visual(s, line_visual_col(s, byte)),
+                byte,
+                "byte {byte}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_byte_col_from_visual_stays_left_of_a_wide_cluster_it_would_split() {
+        assert_eq!(line_byte_col_from_visual("a\u{4e2d}b", 2), "a".len());
+    }
+
+    #[test]
+    fn line_byte_col_from_visual_clamps_a_column_past_the_end() {
+        assert_eq!(line_byte_col_from_visual("\u{e9}\u{e9}", usize::MAX), 4);
+        assert_eq!(line_byte_col_from_visual("", 3), 0);
     }
 
     #[test]

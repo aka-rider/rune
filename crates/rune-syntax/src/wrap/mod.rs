@@ -26,7 +26,7 @@ mod table;
 mod width;
 
 pub use decor::{SegDecor, SegDecorPiece};
-pub use query::{WrapSnapshot, line_visual_col};
+pub use query::{WrapSnapshot, line_byte_col_from_visual, line_visual_col};
 
 pub use table::TableSegInfo;
 pub use width::{
