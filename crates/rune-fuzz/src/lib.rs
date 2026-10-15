@@ -23,6 +23,8 @@
 //!   outstanding). Also constructed directly by `driver.rs`.
 //! - `CUR-BOUNDS` — every cursor's `position`/`anchor` is a valid,
 //!   in-bounds, char-boundary byte offset.
+//! - `CUR-NOT-IN-CRLF` — no cursor `position`/`anchor` sits between the `\r`
+//!   and `\n` of a CRLF pair.
 //! - `CUR-ORDER` — cursors are ordered and non-overlapping.
 //! - `CUR-ID` — at least one cursor; every id is non-zero and unique.
 //! - `CUR-NO-CARET-HIDDEN` — when `caret_visible` is false, no rendered

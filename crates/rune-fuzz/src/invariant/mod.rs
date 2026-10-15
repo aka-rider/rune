@@ -21,7 +21,7 @@
 //! constructs it directly from a caught unwind.
 //!
 //! 48 invariants total, one domain per file:
-//! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
+//! - `cursor` — `CUR-BOUNDS`, `CUR-NOT-IN-CRLF`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
 //!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`, `NAV-PROGRESS`
 //! - `palette` — `PALETTE-FOCUS-STABLE`, `PALETTE-GUARD`
@@ -69,7 +69,9 @@ mod wrap;
 
 pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
-pub use cursor::{cur_bounds, cur_cell_sync, cur_id, cur_no_caret_hidden, cur_order};
+pub use cursor::{
+    cur_bounds, cur_cell_sync, cur_id, cur_no_caret_hidden, cur_not_in_crlf, cur_order,
+};
 pub use find::{find_esc_closes, find_preview_pure, find_replace_no_disk, find_walk_drains};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use merge::{
@@ -151,6 +153,7 @@ pub fn trunc(s: &str, n: usize) -> String {
 /// from a caught unwind, never through here.
 pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     cur_bounds(next)
+        .or_else(|| cur_not_in_crlf(next))
         .or_else(|| cur_order(next))
         .or_else(|| cur_id(next))
         .or_else(|| cur_no_caret_hidden(&next.painted))

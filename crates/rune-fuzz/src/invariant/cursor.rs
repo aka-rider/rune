@@ -1,4 +1,4 @@
-//! Cursor invariants (WP3): `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`,
+//! Cursor invariants (WP3): `CUR-BOUNDS`, `CUR-NOT-IN-CRLF`, `CUR-ORDER`, `CUR-ID`,
 //! `CUR-NO-CARET-HIDDEN`, `CUR-CELL-SYNC`.
 
 use ratatui::style::Modifier;
@@ -34,6 +34,36 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
         }
     }
     None
+}
+
+/// `CUR-NOT-IN-CRLF` (L0) — no cursor `position`/`anchor` sits strictly
+/// between the `\r` and the `\n` of a CRLF pair. The pair is one line
+/// terminator; a caret inside it renders on the next line's cell and an edit
+/// there splits the terminator into a lone CR and a lone LF.
+///
+/// Active-document-switch-safe: L0, checks one `Snapshot`'s cursors against
+/// its own `content`.
+pub fn cur_not_in_crlf(snap: &Snapshot) -> Option<Violation> {
+    let bytes = snap.content.as_bytes();
+    let inside_pair = |offset: usize| {
+        offset > 0 && bytes.get(offset - 1) == Some(&b'\r') && bytes.get(offset) == Some(&b'\n')
+    };
+    snap.cursors
+        .iter()
+        .find(|c| inside_pair(c.position.get()) || inside_pair(c.anchor.get()))
+        .map(|c| {
+            Violation::new(
+                "CUR-NOT-IN-CRLF",
+                format!(
+                    "cursor id={} position={} anchor={} sits between the CR and LF of a CRLF \
+                     pair in content={:?}",
+                    c.id,
+                    c.position,
+                    c.anchor,
+                    trunc(&snap.content, 80)
+                ),
+            )
+        })
 }
 
 /// `CUR-ORDER` (L0) — cursors are ordered and non-overlapping: each

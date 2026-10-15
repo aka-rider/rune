@@ -20,7 +20,7 @@ use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferOffset, DisplayRow, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
 use rune_fuzz::invariant::{
-    buf_line_index, cur_bounds, cur_id, cur_order, scroll_in_doc, version_monotone,
+    buf_line_index, cur_bounds, cur_id, cur_not_in_crlf, cur_order, scroll_in_doc, version_monotone,
 };
 use rune_fuzz::snapshot::Snapshot;
 use rune_tui::app::App;
@@ -371,4 +371,36 @@ fn scroll_in_doc_accepts_an_empty_document_at_row_zero() {
     snap.painted.total_rows = 1;
     snap.painted.scroll_row = DisplayRow(0);
     assert_eq!(scroll_in_doc(&snap.painted), None);
+}
+
+#[test]
+fn cur_not_in_crlf_detects_a_position_between_cr_and_lf() {
+    let mut snap = base_snapshot("ab\r\ncd");
+    snap.cursors = vec![collapsed_cursor(1, 3)];
+    let v = cur_not_in_crlf(&snap).expect("a caret between CR and LF must trip CUR-NOT-IN-CRLF");
+    assert_eq!(v.id, "CUR-NOT-IN-CRLF");
+}
+
+#[test]
+fn cur_not_in_crlf_detects_an_anchor_between_cr_and_lf() {
+    let mut snap = base_snapshot("ab\r\ncd");
+    snap.cursors = vec![selection_cursor(1, 3, 5)];
+    let v = cur_not_in_crlf(&snap).expect("an anchor between CR and LF must trip CUR-NOT-IN-CRLF");
+    assert_eq!(v.id, "CUR-NOT-IN-CRLF");
+}
+
+#[test]
+fn cur_not_in_crlf_accepts_carets_around_a_pair_and_beside_lone_cr_and_lf() {
+    for (content, offset) in [
+        ("ab\r\ncd", 2),
+        ("ab\r\ncd", 4),
+        ("ab\rcd", 3),
+        ("ab\ncd", 3),
+        ("ab\r", 3),
+        ("\n", 0),
+    ] {
+        let mut snap = base_snapshot(content);
+        snap.cursors = vec![collapsed_cursor(1, offset)];
+        assert_eq!(cur_not_in_crlf(&snap), None, "{content:?} at {offset}");
+    }
 }
