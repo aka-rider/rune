@@ -291,3 +291,65 @@ fn the_code_background_survives_a_scroll_past_the_u16_range() {
         "the short line's row must stay painted to the right edge"
     );
 }
+
+fn table_rule_and_long_line() -> (String, usize) {
+    let a = "a".repeat(45);
+    let b = "b".repeat(45);
+    let head = format!("| {a} | {b} |\n|---|---|\n| 1 | 2 |\n\n---\n\n");
+    let caret = head.len();
+    (format!("{head}{}\n", long_line(24)), caret)
+}
+
+fn rule_rows(buf: &RtBuffer) -> Vec<String> {
+    rows(buf)
+        .into_iter()
+        .skip(EDITOR_TOP)
+        .take(8)
+        .filter(|r| r.contains('\u{2500}') && r.trim_matches(['\u{2502}', '\u{2500}']).is_empty())
+        .collect()
+}
+
+#[test]
+fn a_horizontal_rule_keeps_spanning_the_viewport_while_the_text_scrolls() {
+    let (text, caret) = table_rule_and_long_line();
+    let mut app = app_for(&text, caret);
+    toggle_wrap(&mut app);
+    let before = rule_rows(&render_to_test_backend(&app));
+
+    press(&mut app, KeyCode::End, Mods::NONE);
+
+    assert!(app.active_doc().viewport.scroll_col.0 > 0);
+    assert_eq!(before.len(), 1, "the rule is on screen");
+    assert_eq!(rule_rows(&render_to_test_backend(&app)), before);
+}
+
+#[test]
+fn a_table_lays_out_at_its_natural_width_and_scrolls_with_the_text() {
+    let (text, caret) = table_rule_and_long_line();
+    let mut app = app_for(&text, caret);
+    toggle_wrap(&mut app);
+    let before = render_to_test_backend(&app);
+    assert_eq!(
+        rows_containing(&before, "\u{2510}"),
+        0,
+        "the table is wider than the viewport, so its right corner is off screen"
+    );
+
+    press(&mut app, KeyCode::End, Mods::NONE);
+
+    let after = rows(&render_to_test_backend(&app));
+    let top = after.iter().find(|r| r.contains('\u{2510}')).unwrap();
+    let bottom = after.iter().find(|r| r.contains('\u{2518}')).unwrap();
+    let corner_col = |row: &str, glyph: char| row.chars().position(|c| c == glyph);
+    assert_eq!(
+        corner_col(top, '\u{2510}'),
+        corner_col(bottom, '\u{2518}'),
+        "borders stay aligned with each other"
+    );
+    assert_eq!(
+        rows_containing(&render_to_test_backend(&app), &"b".repeat(45)),
+        1,
+        "the second column is whole, not wrapped"
+    );
+}
+

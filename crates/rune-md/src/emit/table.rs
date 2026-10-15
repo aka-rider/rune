@@ -14,6 +14,7 @@ use rune_syntax::ScopeId;
 use rune_syntax::SyntaxSpan;
 use rune_syntax::element::RevealState;
 use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
+use rune_syntax::wrap::WrapMode;
 
 /// Renders a table's Grid, Wrapped, or Pivoted layout. `Revealed` shows raw
 /// markdown, line by line, exactly like `Block::Verbatim` — `out.tables`
@@ -100,7 +101,10 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         layout::col_widths(rendered_rows.iter().filter_map(|c| c.as_deref()), n_cols);
 
     let avail = out.width as usize;
-    let table_layout = layout::choose(&natural_widths, &min_widths, avail);
+    let table_layout = match out.wrap_mode {
+        WrapMode::Off => layout::TableLayout::Grid,
+        WrapMode::Soft => layout::choose(&natural_widths, &min_widths, avail),
+    };
 
     // The ONE width vector this table is laid out at: Wrapped shrinks the
     // natural widths proportionally, Grid and Pivoted keep them. Every

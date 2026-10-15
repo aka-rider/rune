@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::icons::IconSet;
 use rune_syntax::element::LineLocal;
 use rune_syntax::syntax::TableRowInfo;
+use rune_syntax::wrap::WrapMode;
 use rune_syntax::{LineDecor, SyntaxSpan, merge_overlapping};
 
 pub(crate) type Accounted = Vec<Vec<(usize, usize)>>;
@@ -20,6 +21,7 @@ pub(crate) struct EmitOut<'a> {
     merged: Vec<BTreeMap<usize, usize>>,
     pub tables: &'a mut [Option<TableRowInfo>],
     pub width: u16,
+    pub wrap_mode: WrapMode,
     pub icons: &'a IconSet,
     pub decors: &'a mut [Option<LineDecor>],
 }
@@ -123,6 +125,7 @@ impl<'a> EmitOut<'a> {
             merged,
             tables,
             width,
+            wrap_mode: WrapMode::Soft,
             icons,
             decors,
         }

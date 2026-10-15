@@ -52,8 +52,9 @@ use crate::element::block::Block;
 use crate::icons::IconSet;
 use crate::parse::{line_at, line_end_at, line_start_at, line_starts};
 use rune_core::assert_invariant;
-use rune_syntax::element::{ByteRange, LineLocal, RevealState};
+use rune_syntax::element::{ByteRange, LineLocal, RevealState, WrapState};
 use rune_syntax::syntax::TableRowInfo;
+use rune_syntax::wrap::WrapMode;
 use rune_syntax::{LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
 
 pub(crate) use claim::{Accounted, EmitOut, Sinks};
@@ -274,7 +275,10 @@ pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, Sy
     emit_with(
         content,
         blocks,
-        width,
+        &WrapState {
+            width,
+            mode: WrapMode::Soft,
+        },
         &IconSet::unicode(),
         style::text_scope(),
     )
@@ -290,7 +294,7 @@ pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, Sy
 pub fn emit_with(
     content: &str,
     blocks: &[Block],
-    width: u16,
+    wrap: &WrapState,
     icons: &IconSet,
     base: ScopeId,
 ) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
@@ -308,10 +312,11 @@ pub fn emit_with(
             accounted: &mut accounted,
         },
         &mut tables,
-        width,
+        wrap.width,
         icons,
         &mut decors,
     );
+    out.wrap_mode = wrap.mode;
     for b in blocks {
         walk::emit_block(content, &starts, b, 0, &mut out);
     }

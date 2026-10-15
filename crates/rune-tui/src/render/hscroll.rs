@@ -17,10 +17,14 @@ pub(super) fn scroll_columns<'a>(
         return;
     }
     for (cells, display) in rows.iter_mut().zip(display_rows) {
-        if display.image.is_none() {
+        if !spans_the_viewport(display) {
             drop_leading_columns(cells, scroll_col.0);
         }
     }
+}
+
+fn spans_the_viewport(row: &SnapshotRow) -> bool {
+    row.image.is_some() || row.decor.as_ref().is_some_and(|decor| decor.is_rule)
 }
 
 fn drop_leading_columns(cells: &mut Vec<Cell>, columns: usize) {

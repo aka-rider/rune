@@ -6,6 +6,7 @@ use super::tests::synced;
 use super::{Accounted, EmitOut, Sinks};
 use crate::icons::IconSet;
 use rune_syntax::LineDecor;
+use rune_syntax::element::WrapState;
 use rune_syntax::SyntaxSpan;
 use rune_syntax::syntax::TableRowInfo;
 
@@ -14,7 +15,7 @@ fn lines_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<rune_syn
     let (lines, _snap) = emit_with(
         buf.content(),
         doc.blocks(),
-        80,
+        &WrapState::default(),
         &IconSet::unicode(),
         super::style::text_scope(),
     );

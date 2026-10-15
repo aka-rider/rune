@@ -396,7 +396,7 @@ impl DocMachine {
         let (lines, syntax) = crate::emit::emit_with(
             buf.content(),
             &self.blocks,
-            self.wrap.width,
+            &self.wrap,
             &self.icons,
             crate::emit::style::base_scope(self.kind),
         );

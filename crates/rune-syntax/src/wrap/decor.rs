@@ -47,6 +47,7 @@ pub struct SegDecor {
     /// terminal cells — precomputed so a render-time consumer never has to
     /// re-measure through `grapheme_width` itself.
     pub cells: usize,
+    pub is_rule: bool,
 }
 
 /// How many cells of the line's own width budget the greedy breaker should
@@ -111,6 +112,7 @@ pub fn attach(
     Some(SegDecor {
         pieces,
         cells: decor_cells,
+        is_rule: false,
     })
 }
 
@@ -142,6 +144,7 @@ fn clamp_to_width(decor: &LineDecor, position: SegmentPosition, width: usize) ->
     SegDecor {
         pieces,
         cells: total,
+        is_rule: true,
     }
 }
 

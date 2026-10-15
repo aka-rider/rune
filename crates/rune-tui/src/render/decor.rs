@@ -66,6 +66,7 @@ mod tests {
                 scope,
             }],
             cells: 2,
+            is_rule: false,
         };
         let row = row_with_decor(Some(decor));
         let cells = decor_row_cells(&theme, &row);
