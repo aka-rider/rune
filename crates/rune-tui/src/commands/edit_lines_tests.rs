@@ -359,3 +359,21 @@ fn deleting_lines_is_one_undo_step_restoring_text_and_selection() {
     let primary = app.doc(id).unwrap().cursors.primary();
     assert_eq!((primary.anchor.get(), primary.position.get()), (0, 3));
 }
+
+#[test]
+fn the_caret_lands_under_the_character_it_was_above_when_the_landing_line_is_concealed_below() {
+    let mut app = app_with("abcdef\n**bold** x", 3);
+    let id = app.active;
+    delete_line(&mut app, id);
+    assert_eq!(content(&app), "**bold** x");
+    assert_eq!(carets(&app), vec!["**bol".len()]);
+}
+
+#[test]
+fn the_caret_lands_under_the_character_it_was_below_when_the_landing_line_is_concealed_above() {
+    let mut app = app_with("**bold** x\nabcdef", "**bold** x\nabc".len());
+    let id = app.active;
+    delete_line(&mut app, id);
+    assert_eq!(content(&app), "**bold** x");
+    assert_eq!(carets(&app), vec!["**bol".len()]);
+}

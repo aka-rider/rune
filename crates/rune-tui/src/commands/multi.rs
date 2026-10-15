@@ -56,7 +56,7 @@ fn cell_col_at(view: &ViewSnapshots, buf: &Buffer, bp: BufferPoint) -> VisualCol
     VisualCol(view.wrap.visual_col(buf.content(), wp.row, wp.col))
 }
 
-fn visual_col_on_line(
+pub(crate) fn visual_col_on_line(
     view: &ViewSnapshots,
     buf: &Buffer,
     line: usize,

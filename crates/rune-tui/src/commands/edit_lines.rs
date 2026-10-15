@@ -5,11 +5,11 @@ use rune_core::coords::{BufferOffset, BufferPoint, VisualCol};
 use rune_core::cursor::{Cursor, CursorId};
 use rune_core::undo::EditKind;
 use rune_md::element::doc::ViewSnapshots;
-use rune_syntax::wrap::line_byte_col_from_visual;
 
 use crate::app::App;
 use crate::commands::edit_core::{apply_edit_batch_with_cursors, apply_edit_batch_with_cursors_on};
 use crate::commands::line_blocks::touching_line_blocks;
+use crate::commands::multi::visual_col_on_line;
 use crate::commands::nav::update_horizontal;
 use crate::document::DocumentId;
 use crate::keymap::Extend;
@@ -139,8 +139,8 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
 
 struct Landing {
     head: Cursor,
-    line: usize,
-    col: VisualCol,
+    point: BufferPoint,
+    desired_col: VisualCol,
 }
 
 struct Deletion {
@@ -159,15 +159,25 @@ fn plan_deletion(cursors: &[Cursor], buf: &Buffer, view: &ViewSnapshots) -> Opti
         let head = block.cursors.first().copied()?;
         let reaches_last = block.lines.end >= line_count;
         let range = deleted_bytes(buf, &block.lines, reaches_last)?;
-        let landing_line = if reaches_last {
-            block.lines.start.saturating_sub(1)
+        let (landing_line, landing_line_after) = if reaches_last {
+            let above = block.lines.start.saturating_sub(1);
+            (above, above.saturating_sub(lines_removed))
         } else {
-            block.lines.start
+            (
+                block.lines.end,
+                block.lines.start.saturating_sub(lines_removed),
+            )
         };
+        let desired_col =
+            update_horizontal(view, buf, head, head.position.get(), Extend::No).desired_col;
+        let target = visual_col_on_line(view, buf, landing_line, desired_col);
         plan.landings.push(Landing {
             head,
-            line: landing_line.saturating_sub(lines_removed),
-            col: update_horizontal(view, buf, head, head.position.get(), Extend::No).desired_col,
+            point: BufferPoint {
+                line: landing_line_after,
+                col: target.col,
+            },
+            desired_col,
         });
         lines_removed += block.lines.len();
         plan.edits.push((
@@ -202,11 +212,11 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
             landings
                 .iter()
                 .map(|l| {
-                    let at = BufferOffset(landing_offset(new_buf, l.line, l.col));
+                    let at = BufferOffset(landing_offset(new_buf, l.point));
                     Cursor {
                         position: at,
                         anchor: at,
-                        desired_col: l.col,
+                        desired_col: l.desired_col,
                         id: l.head.id,
                     }
                 })
@@ -223,15 +233,14 @@ fn deleted_bytes(buf: &Buffer, lines: &Range<usize>, reaches_last: bool) -> Opti
     }
 }
 
-fn landing_offset(buf: &Buffer, line: usize, col: VisualCol) -> usize {
-    let byte_col = buf
-        .line_start(line)
-        .zip(buf.line_content_end(line))
-        .and_then(|(start, end)| buf.slice(start, end))
-        .map_or(0, |text| line_byte_col_from_visual(text, col.0));
+fn landing_offset(buf: &Buffer, point: BufferPoint) -> usize {
+    let content_len = buf
+        .line_start(point.line)
+        .zip(buf.line_content_end(point.line))
+        .map_or(point.col, |(start, end)| end.saturating_sub(start));
     buf.line_col_to_offset(BufferPoint {
-        line,
-        col: byte_col,
+        line: point.line,
+        col: point.col.min(content_len),
     })
 }
 

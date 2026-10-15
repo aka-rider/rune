@@ -191,3 +191,13 @@ The roster in the `crates/rune-fuzz/src/lib.rs` doc comment ("41 total") omits i
 `PALETTE-GUARD`, `SCROLL-IN-DOC`. The hand-kept list and count drift each time an invariant lands.
 Candidate fix: add the missing entries, and make the roster checkable — e.g. a test that every id
 string `check_all` can emit appears in the doc roster, so drift fails `make test`.
+
+## Vertical motion can land between CR and LF on a CRLF line
+
+On `abcdef\r\nA\r\nC`, pressing End on line 0 and then Down puts the caret at byte 10, between the
+`\r` and `\n` of line 1, instead of at byte 9 (before the `\r`). `WrapSnapshot::byte_col_from_visual`
+walks the row's span text up to the end of the row without stopping at the line's content end, and
+the caller's `Buffer::line_col_to_offset` clamps to the line end (the `\n`), not the content end.
+`delete_line` works around it with its own clamp in `landing_offset`; the motion paths in
+`nav_scroll.rs` (`move_row`), `multi.rs` (`visual_col_on_line`) and `document/sync.rs`
+(`snap_cursor_to_row`) do not. Candidate fix: one clamp-to-content-end chokepoint those four callers share.
