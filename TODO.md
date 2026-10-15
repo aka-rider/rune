@@ -214,3 +214,31 @@ The edit path is O(line) as well: one key press on that line takes about 38 ms (
 the whole line in `document/sync.rs`, plus the per-edit syntax and wrap passes). Split candidate: pass a
 `Range<usize>` window of visual columns into `segment_cells` and carry a per-row column origin that the overlay
 passes subtract, and give `visual_col` a line-start index. Not guarded by `make perf-guard` until it is fixed.
+
+## Word wrap off: no horizontal wheel scroll
+
+With wrap off the view scrolls sideways only to follow the primary caret. A horizontal wheel or
+shift+wheel notch does nothing to `scroll_col`, so a user with the mouse cannot look at the far end of a
+long line without moving the caret there. Candidate fix: a scroll command that sets `scroll_col` directly
+and arms a column analogue of `ScrollMode::Independent`, so `reconcile_col` snaps the caret instead of the view.
+
+## Word wrap off: dragging a selection does not scroll past the right edge
+
+A mouse drag that selects text on an unwrapped line stops extending once the pointer leaves the pane's
+right edge; the view does not auto-scroll sideways, and `mouse_hit::offset_at_ordinary` clamps to the last
+visible cell. Needs a drag tick (a timer message, never a sleep) that advances `scroll_col` while the pointer
+is held outside the pane.
+
+## Word wrap is not remembered across restarts
+
+`Viewport::wrap_mode` lives on the in-memory `Document` and is never written to the recovery store, so every
+launch and every reopened tab starts wrapped. The choice is per document and per session only. Persisting it
+needs a column in a new `rune-vN.db` file or a nullable column on an existing table, per the schema rules in
+the constitution.
+
+## Word wrap off: horizontal scroll follows only the primary caret
+
+`Document::scroll_to_cursor` feeds only the primary cursor's column to `Viewport::reconcile_col`. A secondary
+cursor beyond the right edge of an unwrapped line is painted nowhere and nothing scrolls to reveal it, so a
+multi-cursor edit can change text the user cannot see. Candidate fix: reveal the cursor the last command
+moved or added, not only the primary one.
