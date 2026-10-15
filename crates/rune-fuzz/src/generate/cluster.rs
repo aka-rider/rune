@@ -13,8 +13,8 @@ pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
 pub(super) use super::cluster_input::{
     cluster_advance_clock, cluster_async_deliver, cluster_caret_history, cluster_clipboard,
     cluster_delete, cluster_highlight, cluster_highlight_tree, cluster_markdown_write,
-    cluster_monkey_burst, cluster_navigate, cluster_save, cluster_selection, cluster_type_prose,
-    cluster_undo_redo,
+    cluster_monkey_burst, cluster_navigate, cluster_save, cluster_selection, cluster_toggle_wrap,
+    cluster_type_prose, cluster_undo_redo,
 };
 
 pub(super) use super::cluster_special::{
@@ -30,6 +30,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         35 => cluster_type_prose().boxed(),
         22 => cluster_navigate().boxed(),
         10 => cluster_selection().boxed(),
+        3 => cluster_toggle_wrap().boxed(),
         8 => cluster_delete().boxed(),
         7 => cluster_undo_redo().boxed(),
         5 => cluster_caret_history().boxed(),

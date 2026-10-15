@@ -71,6 +71,7 @@ pub enum Command {
     // Viewport-only: scrolls the cursor's row to the bottom without
     // moving the cursor.
     CursorToBottom,
+    ToggleWordWrap,
     FollowLink,
     Reload,
 }

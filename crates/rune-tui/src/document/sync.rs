@@ -1,9 +1,38 @@
-use rune_core::coords::{BufferOffset, DisplayRow, WrapPoint, WrapRow};
+use rune_core::buffer::Buffer;
+use rune_core::coords::{BufferOffset, DisplayRow, VisualCol, WrapPoint, WrapRow};
 use rune_core::cursor::Cursor;
 use rune_md::element::doc::ViewSnapshots;
+use rune_syntax::wrap::WrapMode;
 
 use super::Document;
 use crate::viewport::ScrollMode;
+
+pub(crate) struct CaretCell {
+    pub wrap_point: WrapPoint,
+    pub display_row: DisplayRow,
+    pub col: VisualCol,
+}
+
+pub(crate) fn caret_cell(view: &ViewSnapshots, buf: &Buffer, offset: usize) -> CaretCell {
+    let buffer_point = buf.offset_to_line_col(offset);
+    let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
+    let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
+    let display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
+    let decor_width = view
+        .display
+        .rows()
+        .get(display_row.0)
+        .map_or(0, crate::render::decor::decor_cell_width) as usize;
+    let col = view
+        .wrap
+        .visual_col(buf.content(), wrap_point.row, wrap_point.col)
+        + decor_width;
+    CaretCell {
+        wrap_point,
+        display_row,
+        col: VisualCol(col),
+    }
+}
 
 impl Document {
     pub fn view(&mut self) -> ViewSnapshots {
@@ -11,6 +40,7 @@ impl Document {
         self.sync_catalogue();
         self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);
+        self.doc.set_wrap_mode(self.wrap_mode());
         if let Some(image) = self.image() {
             let (width, rows) = match &image.status {
                 crate::graphics::ImageStatus::Live { cells, .. } => (cells.cols, cells.rows),
@@ -27,6 +57,14 @@ impl Document {
         self.doc
             .sync_cursors(&self.buffer, &self.cursors, &reveal_offsets);
         self.doc.snapshot(&self.buffer)
+    }
+
+    pub fn wrap_mode(&self) -> WrapMode {
+        if self.is_read_only() {
+            WrapMode::Soft
+        } else {
+            self.viewport.wrap_mode
+        }
     }
 
     fn reveal_probe_offsets(&self) -> Vec<usize> {
@@ -54,11 +92,14 @@ impl Document {
         if self.is_read_only() {
             if self.viewport.mode != ScrollMode::EnsureVisible {
                 self.viewport.clamp_to_document(view.display.total_rows());
+                self.viewport.scroll_col = VisualCol(0);
                 return;
             }
             self.viewport.mode = ScrollMode::FollowCursor;
         }
-        let display_row = self.cursor_display_row(view);
+        let caret = caret_cell(view, &self.buffer, self.cursors.primary().position.get());
+        self.viewport.reconcile_col(self.wrap_mode(), caret.col);
+        let display_row = caret.display_row;
         if let Some(target_row) = self
             .viewport
             .reconcile(display_row, view.display.total_rows())
@@ -66,14 +107,6 @@ impl Document {
             let wrap_row = view.display.display_to_wrap(target_row);
             self.snap_cursor_to_row(view, wrap_row.0);
         }
-    }
-
-    fn cursor_display_row(&self, view: &ViewSnapshots) -> DisplayRow {
-        let primary = self.cursors.primary();
-        let buffer_point = self.buffer.offset_to_line_col(primary.position.get());
-        let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
-        let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-        view.display.wrap_to_display(WrapRow(wrap_point.row))
     }
 
     fn snap_cursor_to_row(&mut self, view: &ViewSnapshots, row: usize) {

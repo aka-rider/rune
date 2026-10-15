@@ -78,7 +78,7 @@ fn offset_at_ordinary(
         .rows()
         .get(display_row.0)
         .map_or(0, crate::render::decor::decor_cell_width) as usize;
-    let col = (col as usize).saturating_sub(decor_width) as u16;
+    let col = (col as usize + doc.viewport.scroll_col.0).saturating_sub(decor_width);
 
     let mut acc = 0usize;
     let mut first_content_offset: Option<u32> = None;
@@ -90,7 +90,7 @@ fn offset_at_ordinary(
             // column of its own — `acc + width == acc` — so the comparison
             // below falls through to whichever cell actually owns that
             // column, matching what a real terminal shows there.
-            if (col as usize) < acc + width {
+            if col < acc + width {
                 return if let Some(offset) = cell.buf_offset {
                     offset as usize
                 } else {

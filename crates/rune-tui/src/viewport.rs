@@ -1,7 +1,9 @@
-use rune_core::coords::DisplayRow;
+use rune_core::coords::{DisplayRow, VisualCol};
+use rune_syntax::wrap::WrapMode;
 
 // Helix's own scrolloff default.
 const DEFAULT_SCROLLOFF: u16 = 5;
+const SIDE_SCROLLOFF: usize = 4;
 
 // FollowCursor (the default): the cursor moved and the viewport chases it,
 // honouring `scrolloff`. Independent: a scroll command already moved
@@ -22,6 +24,8 @@ pub struct Viewport {
     pub width: u16,
     pub height: u16,
     pub scroll_row: DisplayRow,
+    pub scroll_col: VisualCol,
+    pub wrap_mode: WrapMode,
     pub scrolloff: u16,
     pub mode: ScrollMode,
 }
@@ -32,6 +36,8 @@ impl Default for Viewport {
             width: 80,
             height: 24,
             scroll_row: DisplayRow(0),
+            scroll_col: VisualCol(0),
+            wrap_mode: WrapMode::Soft,
             scrolloff: DEFAULT_SCROLLOFF,
             mode: ScrollMode::FollowCursor,
         }
@@ -42,6 +48,28 @@ impl Viewport {
     pub fn set_size(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
+    }
+
+    pub fn toggle_wrap(&mut self) -> WrapMode {
+        self.wrap_mode = self.wrap_mode.toggled();
+        self.scroll_col = VisualCol(0);
+        self.wrap_mode
+    }
+
+    pub fn reconcile_col(&mut self, mode: WrapMode, cursor_col: VisualCol) {
+        let width = self.width as usize;
+        if mode == WrapMode::Soft || width == 0 {
+            self.scroll_col = VisualCol(0);
+            return;
+        }
+        let off = SIDE_SCROLLOFF.min(width.saturating_sub(1) / 2);
+        let left = self.scroll_col.0 + off;
+        let right = self.scroll_col.0 + width - 1 - off;
+        if cursor_col.0 < left {
+            self.scroll_col = VisualCol(cursor_col.0.saturating_sub(off));
+        } else if cursor_col.0 > right {
+            self.scroll_col = VisualCol(cursor_col.0 + off + 1 - width);
+        }
     }
 
     // A read-only document has no cursor to reconcile against; this only
@@ -128,6 +156,8 @@ mod tests {
             width,
             height,
             scroll_row: DisplayRow(0),
+            scroll_col: VisualCol(0),
+            wrap_mode: WrapMode::Soft,
             scrolloff: 0,
             mode: ScrollMode::FollowCursor,
         }
@@ -271,5 +301,47 @@ mod tests {
             "clamped to the shorter document's last row"
         );
         assert_eq!(vp.mode, ScrollMode::FollowCursor);
+    }
+
+    #[test]
+    fn reconcile_col_scrolls_to_keep_the_caret_inside_the_side_margin() {
+        let mut vp = viewport(20, 5);
+        vp.reconcile_col(WrapMode::Off, VisualCol(10));
+        assert_eq!(vp.scroll_col, VisualCol(0));
+        vp.reconcile_col(WrapMode::Off, VisualCol(40));
+        assert_eq!(vp.scroll_col, VisualCol(40 + 4 + 1 - 20));
+        vp.reconcile_col(WrapMode::Off, VisualCol(3));
+        assert_eq!(vp.scroll_col, VisualCol(0));
+    }
+
+    #[test]
+    fn reconcile_col_converges_in_one_step_on_every_width() {
+        for width in [1u16, 2, 3, 8, 9, 80] {
+            let mut vp = viewport(width, 5);
+            for col in [0usize, 1, 7, 100, 3, 250].map(VisualCol) {
+                vp.reconcile_col(WrapMode::Off, col);
+                let settled = vp.scroll_col;
+                vp.reconcile_col(WrapMode::Off, col);
+                assert_eq!(vp.scroll_col, settled, "width {width} col {col:?}");
+                assert!(col.0 >= settled.0 && col.0 < settled.0 + usize::from(width.max(1)));
+            }
+        }
+    }
+
+    #[test]
+    fn soft_wrap_never_keeps_a_column_offset() {
+        let mut vp = viewport(20, 5);
+        vp.reconcile_col(WrapMode::Off, VisualCol(90));
+        vp.reconcile_col(WrapMode::Soft, VisualCol(90));
+        assert_eq!(vp.scroll_col, VisualCol(0));
+    }
+
+    #[test]
+    fn toggling_wrap_flips_the_mode_and_drops_the_offset() {
+        let mut vp = viewport(20, 5);
+        assert_eq!(vp.toggle_wrap(), WrapMode::Off);
+        vp.reconcile_col(WrapMode::Off, VisualCol(90));
+        assert_eq!(vp.toggle_wrap(), WrapMode::Soft);
+        assert_eq!(vp.scroll_col, VisualCol(0));
     }
 }

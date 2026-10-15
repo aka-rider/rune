@@ -21,3 +21,4 @@ pub mod splitter;
 pub(crate) mod strip_trailing;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod wrap;

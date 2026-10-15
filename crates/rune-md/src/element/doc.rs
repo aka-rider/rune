@@ -17,6 +17,7 @@ use rune_core::cursor::CursorSet;
 use rune_syntax::SyntaxSnapshot;
 use rune_syntax::element::{CursorProbe, InheritCtx, RevealGrant, RevealMode, WrapState};
 use rune_syntax::kind::DocumentKind;
+use rune_syntax::wrap::WrapMode;
 use rune_syntax::wrap::WrapSnapshot;
 
 /// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
@@ -252,6 +253,13 @@ impl DocMachine {
         }
     }
 
+    pub fn set_wrap_mode(&mut self, mode: WrapMode) {
+        if self.wrap.mode != mode {
+            self.wrap.mode = mode;
+            self.dirty = true;
+        }
+    }
+
     /// Icon-tier change (plan WP5); marks dirty but fires NO reveal
     /// transitions, mirroring `set_width`'s memoization shape exactly — a
     /// terminal-capability change is neither a content edit nor a
@@ -392,7 +400,8 @@ impl DocMachine {
             &self.icons,
             crate::emit::style::base_scope(self.kind),
         );
-        let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
+        let wrap = rune_syntax::wrap::WrapMap::with_mode(self.wrap.width, self.wrap.mode)
+            .sync(buf.content(), &lines);
         // An image document synthesizes its rows outright — there is no
         // buffer text to emit or wrap. Every other kind goes through the
         // ordinary pipeline, where `expand_images` reserves rows for the

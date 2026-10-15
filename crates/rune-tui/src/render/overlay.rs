@@ -4,11 +4,12 @@ use ratatui::style::{Modifier as RtModifier, Style};
 
 use rune_core::assert_invariant;
 use rune_core::buffer::Buffer;
-use rune_core::coords::{DisplayRow, WrapRow};
+use rune_core::coords::DisplayRow;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::ViewSnapshots;
 use rune_syntax::ScopeId;
 
+use crate::document::sync::{CaretCell, caret_cell};
 use crate::theme::Theme;
 
 use super::Cell;
@@ -120,10 +121,11 @@ pub(crate) fn apply_cursor_overlays(
             continue;
         }
 
-        let buffer_point = buf.offset_to_line_col(cursor.position.get());
-        let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
-        let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-        let display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
+        let CaretCell {
+            wrap_point,
+            display_row,
+            col,
+        } = caret_cell(view, buf, cursor.position.get());
         if display_row < scroll_row {
             continue;
         }
@@ -138,21 +140,13 @@ pub(crate) fn apply_cursor_overlays(
         if on_image_row {
             continue;
         }
-        let visual_col = view
-            .wrap
-            .visual_col(buf.content(), wrap_point.row, wrap_point.col)
-            + view
-                .display
-                .rows()
-                .get(display_row.0)
-                .map_or(0, super::decor::decor_cell_width) as usize;
         let boxed = view
             .wrap
             .segments()
             .get(wrap_point.row)
             .and_then(|seg| seg.table.as_ref())
             .is_some_and(|t| t.boxed);
-        place_caret(row, visual_col, cursor.position.get(), boxed);
+        place_caret(row, col.0, cursor.position.get(), boxed);
     }
 }
 

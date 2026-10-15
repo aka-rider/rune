@@ -8,6 +8,7 @@ mod diff;
 pub mod filesearch;
 pub mod find;
 pub(crate) mod fuzzyspan;
+mod hscroll;
 pub mod image;
 mod overlay;
 pub mod palette;
@@ -59,6 +60,9 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         })
         .collect();
 
+    let scrolled_width = u16::try_from(viewport.scroll_col.0)
+        .map_or(u16::MAX, |scroll| viewport.width.saturating_add(scroll));
+
     // The code region background is a rectangle painted before token
     // colour, driven off the display snapshot's own `code_regions` —
     // never `doc.highlight` — so no highlight reply racing a render can
@@ -67,7 +71,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         &mut rows,
         view,
         viewport.scroll_row,
-        viewport.width,
+        scrolled_width,
         app.theme.chrome.code_bg,
     );
 
@@ -145,6 +149,12 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
     if let Some(focus) = doc.reading_link_focus {
         apply_reading_link_focus(&mut rows, focus);
     }
+
+    hscroll::scroll_columns(
+        &mut rows,
+        crate::viewport::visible_rows(view.display.rows(), viewport),
+        viewport.scroll_col,
+    );
 
     rows
 }

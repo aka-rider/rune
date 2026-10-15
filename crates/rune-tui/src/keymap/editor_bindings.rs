@@ -133,6 +133,7 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     motion::CENTRE_CURSOR,
     motion::CURSOR_TO_TOP,
     motion::CURSOR_TO_BOTTOM,
+    motion::TOGGLE_WORD_WRAP,
     motion::FOLLOW_LINK_SUP,
     motion::FOLLOW_LINK_CTRL,
 ];

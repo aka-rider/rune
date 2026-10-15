@@ -1,3 +1,4 @@
+use crate::wrap::WrapMode;
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::CursorSet;
@@ -193,11 +194,15 @@ impl From<bool> for RevealMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WrapState {
     pub width: u16,
+    pub mode: WrapMode,
 }
 
 impl Default for WrapState {
     fn default() -> Self {
-        WrapState { width: 80 }
+        WrapState {
+            width: 80,
+            mode: WrapMode::Soft,
+        }
     }
 }
 
@@ -235,7 +240,7 @@ mod tests {
 
     #[test]
     fn child_forces_rendered_once_forced() {
-        let wrap = WrapState { width: 80 };
+        let wrap = WrapState::default();
         let cursors = CursorProbe::default();
         let ctx = InheritCtx {
             wrap: &wrap,
@@ -248,7 +253,7 @@ mod tests {
 
     #[test]
     fn child_forces_revealed_when_own_state_revealed() {
-        let wrap = WrapState { width: 80 };
+        let wrap = WrapState::default();
         let cursors = CursorProbe::default();
         let ctx = InheritCtx {
             wrap: &wrap,
@@ -261,7 +266,7 @@ mod tests {
 
     #[test]
     fn child_passes_through_grant_when_own_state_rendered() {
-        let wrap = WrapState { width: 80 };
+        let wrap = WrapState::default();
         let cursors = CursorProbe::default();
         let ctx = InheritCtx {
             wrap: &wrap,

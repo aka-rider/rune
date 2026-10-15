@@ -1,7 +1,7 @@
 mod graphics;
 mod replica;
 mod save_state;
-mod sync;
+pub(crate) mod sync;
 #[cfg(test)]
 mod tests;
 

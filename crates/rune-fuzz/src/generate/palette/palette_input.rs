@@ -195,6 +195,15 @@ pub(in crate::generate) const REDO_KEY_ALT: KeyInput = KeyInput {
         sup: true,
     },
 };
+pub(in crate::generate) const TOGGLE_WRAP_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('z'),
+    mods: Mods {
+        shift: false,
+        alt: true,
+        ctrl: false,
+        sup: false,
+    },
+};
 pub(in crate::generate) const NAV_BACK_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('['),
     mods: Mods {

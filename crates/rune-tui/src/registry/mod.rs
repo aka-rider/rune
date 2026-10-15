@@ -24,6 +24,7 @@ mod tests;
 
 pub(crate) use avail::{
     always, language, merge, read_only_edit, reload, save, tab_switch, toggle_read_only,
+    toggle_word_wrap,
 };
 pub(crate) use exec::{ExecOutcome, ResolvedArg, execute};
 

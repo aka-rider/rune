@@ -12,7 +12,7 @@ use super::arb::{
 use super::palette::{
     COPY_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, MARKDOWN_FRAGMENTS,
     NAV_BACK_KEY, NAV_FORWARD_KEY, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, REDO_KEY_ALT,
-    SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+    SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TOGGLE_WRAP_KEY, TYPE_PALETTE, UNDO_KEY,
 };
 
 pub(super) fn cluster_type_prose() -> impl Strategy<Value = Vec<Action>> {
@@ -26,6 +26,14 @@ pub(super) fn cluster_type_prose() -> impl Strategy<Value = Vec<Action>> {
 pub(super) fn cluster_navigate() -> impl Strategy<Value = Vec<Action>> {
     proptest::collection::vec(select(NAV_KEYS), 1..=6)
         .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
+}
+
+pub(super) fn cluster_toggle_wrap() -> impl Strategy<Value = Vec<Action>> {
+    proptest::collection::vec(select(NAV_KEYS), 1..=6).prop_map(|keys| {
+        let mut actions = vec![Action::Key(TOGGLE_WRAP_KEY)];
+        actions.extend(keys.into_iter().map(Action::Key));
+        actions
+    })
 }
 
 pub(super) fn cluster_selection() -> impl Strategy<Value = Vec<Action>> {

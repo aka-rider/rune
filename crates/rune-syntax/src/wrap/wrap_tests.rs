@@ -339,3 +339,22 @@ fn a_cluster_wider_than_the_last_budget_cell_still_makes_progress() {
         "the 2-cell cluster still makes progress into the 1-cell budget"
     );
 }
+
+#[test]
+fn wrap_off_keeps_every_line_whole_however_narrow_the_width() {
+    let content = "the quick brown fox jumps over the lazy dog\nshort\n";
+    let lines = plain_lines(content);
+
+    let off = WrapMap::with_mode(8, WrapMode::Off).sync(content, &lines);
+    let soft = WrapMap::with_mode(8, WrapMode::Soft).sync(content, &lines);
+
+    assert_eq!(off.total_rows(), 3);
+    assert_eq!(off.segment_len_at(0), 43);
+    assert!(soft.total_rows() > off.total_rows());
+}
+
+#[test]
+fn wrap_mode_toggles_back_and_forth() {
+    assert_eq!(WrapMode::Soft.toggled(), WrapMode::Off);
+    assert_eq!(WrapMode::Soft.toggled().toggled(), WrapMode::Soft);
+}

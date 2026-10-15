@@ -150,6 +150,13 @@ pub(crate) const CURSOR_TO_BOTTOM: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const TOGGLE_WORD_WRAP: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Char('z'), ALT),
+    cmd: Command::ToggleWordWrap,
+    help: "toggle word wrap",
+    secondary: false,
+};
+
 pub(crate) const FOLLOW_LINK_SUP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::Enter, SUP),
     cmd: Command::FollowLink,

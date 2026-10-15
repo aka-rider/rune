@@ -74,3 +74,14 @@ pub(crate) fn tab_switch(app: &App) -> Availability {
         Availability::Unavailable("no other tab to switch to".into())
     }
 }
+
+pub(crate) fn toggle_word_wrap(app: &App) -> Availability {
+    let doc = app.active_doc();
+    if doc.kind == DocumentKind::Image {
+        Availability::Unavailable("not available for an image".into())
+    } else if doc.is_read_only() {
+        Availability::Unavailable("a read-only view always wraps".into())
+    } else {
+        Availability::Available
+    }
+}

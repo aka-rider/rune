@@ -1,7 +1,9 @@
 use crate::app::App;
 use crate::keymap::{Command, Extend, Motion};
 
-use super::super::{ArgKind, Availability, CommandId, CommandSpec, always, read_only_edit, reload};
+use super::super::{
+    ArgKind, Availability, CommandId, CommandSpec, always, read_only_edit, reload, toggle_word_wrap,
+};
 
 pub(crate) fn adapt(cmd: Command) -> CommandId {
     CommandId::Editor(cmd)
@@ -271,6 +273,16 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         true,
     ),
     row(Command::FollowLink, "follow link", "follow link", true),
+    CommandSpec {
+        fuzzy_aliases: &["soft wrap", "word wrap", "wrap"],
+        ..availability_row(
+            Command::ToggleWordWrap,
+            "Toggle Word Wrap",
+            "toggle word wrap",
+            true,
+            toggle_word_wrap,
+        )
+    },
     availability_row(
         Command::Reload,
         "reload graphics",

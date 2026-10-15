@@ -57,13 +57,34 @@ pub struct WrapSegment {
     pub decor: Option<SegDecor>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WrapMode {
+    #[default]
+    Soft,
+    Off,
+}
+
+impl WrapMode {
+    pub fn toggled(self) -> WrapMode {
+        match self {
+            WrapMode::Soft => WrapMode::Off,
+            WrapMode::Off => WrapMode::Soft,
+        }
+    }
+}
+
 pub struct WrapMap {
     width: u16,
+    mode: WrapMode,
 }
 
 impl WrapMap {
     pub fn new(width: u16) -> WrapMap {
-        WrapMap { width }
+        WrapMap::with_mode(width, WrapMode::Soft)
+    }
+
+    pub fn with_mode(width: u16, mode: WrapMode) -> WrapMap {
+        WrapMap { width, mode }
     }
 
     pub fn sync(&self, content: &str, lines: &[SyntaxLine]) -> WrapSnapshot {
@@ -109,7 +130,7 @@ impl WrapMap {
             table::wrap_table_line(line_idx, line, info, segments);
             return;
         }
-        if line.spans.is_empty() || self.width == 0 {
+        if line.spans.is_empty() || self.width == 0 || self.mode == WrapMode::Off {
             self.push_whole_line(line_idx, line, segments);
             return;
         }
