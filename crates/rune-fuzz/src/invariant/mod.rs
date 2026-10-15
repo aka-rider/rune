@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 48 invariants total, one domain per file:
+//! Invariants by domain, one file each (the full roster is in the crate docs):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-NOT-IN-CRLF`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`,
 //!   `CUR-CELL-SYNC`
 //! - `nav` — `NAV-BOUNDS`, `NAV-PROGRESS`

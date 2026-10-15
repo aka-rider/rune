@@ -183,15 +183,6 @@ no disk content to compare it against. The run's artifact was not kept and the f
 reproduced since (the default 512-case run passes), so there is no script. Next step: rerun with a
 large `RC=` and a few `RS=` seeds until it recurs, then keep the artifact and root-cause it.
 
-## rune-fuzz invariant roster is incomplete
-
-The roster in the `crates/rune-fuzz/src/lib.rs` doc comment ("41 total") omits invariants that
-`src/invariant/` does check: `CUR-CELL-SYNC`, `FIND-PREVIEW-PURE`, `FIND-REPLACE-NO-DISK`,
-`FIND-WALK-DRAINS`, `MERGE-UNDO-NEVER-COMPLETES`, `OVERLAY-TITLE-EXCLUSIVE`, `PALETTE-FOCUS-STABLE`,
-`PALETTE-GUARD`, `SCROLL-IN-DOC`. The hand-kept list and count drift each time an invariant lands.
-Candidate fix: add the missing entries, and make the roster checkable — e.g. a test that every id
-string `check_all` can emit appears in the doc roster, so drift fails `make test`.
-
 ## Word wrap off: a very long line costs O(line) per frame
 
 With wrap off, `build_rows` in `render/mod.rs` builds a `Cell` for every grapheme of every visible logical line

@@ -153,7 +153,7 @@ mod tests {
         let content = "hello";
         let actions = vec![Action::Type("world".to_string())];
         let violation = Violation::new(
-            "TEST-PROBE",
+            "CUR-BOUNDS",
             "synthetic violation for report::write's own test".to_string(),
         );
         let result = driver::run(path, content, &actions);
@@ -166,7 +166,7 @@ mod tests {
             "write",
         );
         let expected_name = format!(
-            "test-probe-{:08x}",
+            "cur-bounds-{:08x}",
             fnv1a32(script::encode(path, content, &actions).as_bytes())
         );
         assert_eq!(

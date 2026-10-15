@@ -4,7 +4,7 @@
 //! every settled message: action model -> driver -> snapshot/step-context
 //! -> pure invariant checkers.
 //!
-//! # Invariant roster (41 total)
+//! # Invariant roster (53 total)
 //!
 //! Each entry: id, one-line meaning. See `invariant/mod.rs` for the
 //! checker-shape taxonomy (L0/L1/L2) and the per-domain file split. This
@@ -122,6 +122,28 @@
 //! - `SAVE-AGREES-WITH-DIVERGENCE` — a publish never commits once the
 //!   store's own prepare-time verdict said the disk holds changes the
 //!   buffer does not, unless the user explicitly forced it.
+//! - `CUR-CELL-SYNC` — whenever a cursor's `position` is a byte some cell
+//!   claims, one of the `REVERSED` cells at that `buf_offset` is the caret
+//!   painted for it (sampled per G19).
+//! - `SCROLL-IN-DOC` — `Painted.scroll_row` is strictly less than
+//!   `Painted.total_rows`: the viewport never scrolls past the last row.
+//! - `OVERLAY-TITLE-EXCLUSIVE` — the title never holds focus while an
+//!   overlay owns the keystroke.
+//! - `PALETTE-FOCUS-STABLE` — a key sent while the palette is open never
+//!   moves pane focus.
+//! - `PALETTE-GUARD` — no Guard is raised while the palette overlay is open.
+//! - `FIND-PREVIEW-PURE` — typing into the Replace field never edits a
+//!   document.
+//! - `FIND-REPLACE-NO-DISK` — replace-all in the find panel never changes
+//!   the file on disk.
+//! - `FIND-WALK-DRAINS` — a project replace walk with nothing queued does
+//!   not survive the step.
+//! - `MERGE-UNDO-NEVER-COMPLETES` — an undo that retires an `Active` merge
+//!   never re-classifies the document reconciled on the same step.
+//! - `DIFF-INSTALL-UTF8` — `diff_view::install` never refuses the
+//!   generator's own diff-left seed content as invalid UTF-8.
+//! - `SEED-PATH-SILENT-REBIND` — the seed document's file path changes only
+//!   on a `RenameDone` or a save/materialize ack.
 pub mod action;
 pub mod driver;
 pub use driver::Session;
