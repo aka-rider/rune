@@ -389,3 +389,30 @@ fn opening_a_diff_over_an_unwrapped_document_wraps_it_and_closing_restores_the_c
     app.sync_view();
     assert_eq!(rows_containing(&render_to_test_backend(&app), "w0"), 1);
 }
+
+#[test]
+fn narrowing_the_window_while_scrolled_sideways_keeps_the_caret_in_view() {
+    let text = format!("{}\n", long_line(60));
+    let mut app = app_for(&text, 0);
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
+    toggle_wrap(&mut app);
+    press(&mut app, KeyCode::End, Mods::NONE);
+    let scrolled = app.active_doc().viewport.scroll_col;
+    assert!(scrolled.0 > 0);
+
+    let narrow = 40;
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Resize(narrow, HEIGHT), &mut effects);
+    app.sync_view();
+
+    assert!(app.active_doc().viewport.scroll_col > scrolled);
+    let buf = rune_tui::testgrid::draw(&app, narrow, HEIGHT);
+    let carets = (0..narrow)
+        .flat_map(|x| (0..HEIGHT).map(move |y| (x, y)))
+        .filter(|&pos| {
+            buf.cell(pos)
+                .is_some_and(|c| c.modifier.contains(Modifier::REVERSED))
+        })
+        .count();
+    assert_eq!(carets, 1);
+}
