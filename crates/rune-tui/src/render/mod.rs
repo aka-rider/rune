@@ -60,9 +60,6 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         })
         .collect();
 
-    let scrolled_width = u16::try_from(viewport.scroll_col.0)
-        .map_or(u16::MAX, |scroll| viewport.width.saturating_add(scroll));
-
     // The code region background is a rectangle painted before token
     // colour, driven off the display snapshot's own `code_regions` —
     // never `doc.highlight` — so no highlight reply racing a render can
@@ -71,7 +68,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         &mut rows,
         view,
         viewport.scroll_row,
-        scrolled_width,
+        hscroll::right_edge(viewport),
         app.theme.chrome.code_bg,
     );
 

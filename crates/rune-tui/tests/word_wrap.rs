@@ -266,3 +266,28 @@ fn toggling_wrap_after_a_wheel_scroll_leaves_the_caret_where_it_was_and_in_view(
     assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
     assert_eq!(caret_cells(&render_to_test_backend(&app)).len(), 1);
 }
+
+#[test]
+fn the_code_background_survives_a_scroll_past_the_u16_range() {
+    let text = format!("```\nshort\n{}\n```\n", "x".repeat(70_000));
+    let mut app = app_for(&text, "```\nshort\n".len());
+    toggle_wrap(&mut app);
+    press(&mut app, KeyCode::End, Mods::NONE);
+    assert!(app.active_doc().viewport.scroll_col.0 > usize::from(u16::MAX));
+
+    let buf = render_to_test_backend(&app);
+
+    let code_bg = app.theme.chrome.code_bg;
+    let short_row = rows(&buf)
+        .iter()
+        .position(|row| row.contains("x"))
+        .expect("the long line is on screen")
+        - 1;
+    let painted = (1..WIDTH - 1)
+        .filter(|&x| buf.cell((x, short_row as u16)).unwrap().style().bg == Some(code_bg))
+        .count();
+    assert!(
+        painted >= 70,
+        "the short line's row must stay painted to the right edge"
+    );
+}

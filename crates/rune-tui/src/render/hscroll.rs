@@ -2,6 +2,11 @@ use rune_core::coords::VisualCol;
 use rune_md::snapshot::SnapshotRow;
 
 use super::Cell;
+use crate::viewport::Viewport;
+
+pub(super) fn right_edge(viewport: &Viewport) -> usize {
+    usize::from(viewport.width).saturating_add(viewport.scroll_col.0)
+}
 
 pub(super) fn scroll_columns<'a>(
     rows: &mut [Vec<Cell>],
@@ -58,6 +63,16 @@ mod tests {
 
     fn texts(cells: &[Cell]) -> String {
         cells.iter().map(|c| c.text.as_str()).collect()
+    }
+
+    #[test]
+    fn the_right_edge_does_not_saturate_for_a_scroll_past_the_u16_range() {
+        let viewport = Viewport {
+            width: 80,
+            scroll_col: VisualCol(70_000),
+            ..Viewport::default()
+        };
+        assert_eq!(right_edge(&viewport), 70_080);
     }
 
     #[test]

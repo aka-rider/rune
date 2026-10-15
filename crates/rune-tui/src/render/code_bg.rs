@@ -11,7 +11,7 @@ pub(super) fn paint_code_background(
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,
     scroll_row: DisplayRow,
-    width: u16,
+    width: usize,
     bg: Color,
 ) {
     let regions: &[CodeRegion] = &view.code_regions;
@@ -39,7 +39,7 @@ pub(super) fn paint_code_background(
         {
             continue;
         }
-        fill_row(cells, decor_cell_width(row) as usize, width as usize, bg);
+        fill_row(cells, decor_cell_width(row) as usize, width, bg);
     }
 }
 
