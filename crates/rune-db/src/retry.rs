@@ -134,6 +134,25 @@ pub fn with_retry<T>(
     }
 }
 
+/// Runs one statement outside a transaction, retrying per [`classify`]. The
+/// WAL switch on a fresh file raced by sibling openers answers
+/// `SQLITE_BUSY` immediately, so waiting on the busy handler is not enough.
+pub(crate) fn with_busy_retry<T>(
+    mut op: impl FnMut() -> Result<T, rusqlite::Error>,
+) -> Result<T, Error> {
+    let mut restart_attempts = 0u32;
+    let mut backoff_attempts = 0u32;
+    loop {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(e) => match step(&e, &mut restart_attempts, &mut backoff_attempts) {
+                Step::Retry => continue,
+                Step::Surface => return Err(Error::from(e)),
+            },
+        }
+    }
+}
+
 /// What [`with_retry`] does next after classifying a failed SQLite call —
 /// `Retry` also performs the jittered sleep for the `Backoff` case (a
 /// caller that gets `Retry` back need only `continue` the loop), so the

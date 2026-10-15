@@ -28,7 +28,7 @@ fn open_store(path: &Path, on_event: OnEvent) -> Store {
         Store::open(path, Arc::new(rune_vfs::Disk), on_event).expect("child: open store");
     assert!(
         warning.is_none(),
-        "child: must not degrade against a real writable temp path"
+        "child: must not degrade against a real writable temp path: {warning:?}"
     );
     assert!(!store.degraded());
     store

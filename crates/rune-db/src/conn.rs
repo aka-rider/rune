@@ -101,8 +101,9 @@ fn apply_pragmas(conn: &Connection) -> Result<(), Error> {
 }
 
 fn verify_wal_mode(conn: &Connection) -> Result<(), Error> {
-    let mode: String =
-        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+    let mode: String = crate::retry::with_busy_retry(|| {
+        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+    })?;
     if mode.eq_ignore_ascii_case("wal") {
         Ok(())
     } else {
@@ -298,6 +299,36 @@ mod tests {
         drop(second);
         drop(first);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn simultaneous_opens_of_one_fresh_file_all_succeed() {
+        const OPENERS: usize = 8;
+        const ROUNDS: usize = 25;
+        for round in 0..ROUNDS {
+            let dir = test_temp_dir(&format!("concurrent-open-{round}"));
+            let path = dir.join("rune-v1.db");
+            let gate = std::sync::Barrier::new(OPENERS);
+            let results: Vec<Result<Connection, Error>> = std::thread::scope(|scope| {
+                let openers: Vec<_> = (0..OPENERS)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            gate.wait();
+                            open_recovery_store(RecoveryTarget::File(&path))
+                        })
+                    })
+                    .collect();
+                openers
+                    .into_iter()
+                    .map(|opener| opener.join().expect("opener thread"))
+                    .collect()
+            });
+            for result in &results {
+                assert!(result.is_ok(), "round {round}: {:?}", result.as_ref().err());
+            }
+            drop(results);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[cfg(feature = "test-support")]
