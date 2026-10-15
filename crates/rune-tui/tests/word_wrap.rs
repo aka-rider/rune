@@ -230,3 +230,39 @@ fn leaving_the_reading_view_brings_back_the_unwrapped_line() {
 
     assert_eq!(rows_containing(&render_to_test_backend(&app), "w0"), 1);
 }
+
+fn wheel_down(app: &mut App, notches: usize) {
+    for _ in 0..notches {
+        let mut effects = Effects::default();
+        app::update(
+            app,
+            Msg::Mouse(MouseInput {
+                kind: MouseKind::ScrollDown,
+                column: 10,
+                row: 6,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            }),
+            &mut effects,
+        );
+    }
+}
+
+#[test]
+fn toggling_wrap_after_a_wheel_scroll_leaves_the_caret_where_it_was_and_in_view() {
+    let text = format!("{}\n", long_line(60)).repeat(40);
+    let mut app = app_for(&text, 0);
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
+    wheel_down(&mut app, 10);
+    assert_eq!(
+        app.active_doc().viewport.mode,
+        rune_tui::viewport::ScrollMode::Independent,
+        "the wheel must leave the viewport scrolled on its own"
+    );
+
+    toggle_wrap(&mut app);
+
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
+    assert_eq!(caret_cells(&render_to_test_backend(&app)).len(), 1);
+}
