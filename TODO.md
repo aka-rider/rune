@@ -224,9 +224,8 @@ and arms a column analogue of `ScrollMode::Independent`, so `reconcile_col` snap
 
 ## Word wrap off: dragging a selection does not scroll past the right edge
 
-A mouse drag that selects text on an unwrapped line stops extending once the pointer leaves the pane's
-right edge; the view does not auto-scroll sideways, and `mouse_hit::offset_at_ordinary` clamps to the last
-visible cell. Needs a drag tick (a timer message, never a sleep) that advances `scroll_col` while the pointer
+A mouse drag that selects text on an unwrapped line cannot reach text beyond the pane's right edge: the view
+does not auto-scroll sideways while the pointer is held outside the pane. Needs a drag tick (a timer message, never a sleep) that advances `scroll_col` while the pointer
 is held outside the pane.
 
 ## Word wrap is not remembered across restarts
