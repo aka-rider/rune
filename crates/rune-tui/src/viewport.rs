@@ -50,10 +50,14 @@ impl Viewport {
         self.height = height;
     }
 
-    pub fn toggle_wrap(&mut self) -> WrapMode {
-        self.wrap_mode = self.wrap_mode.toggled();
+    pub fn set_wrap(&mut self, wrap_mode: WrapMode) {
+        self.wrap_mode = wrap_mode;
         self.scroll_col = VisualCol(0);
         self.mode = ScrollMode::FollowCursor;
+    }
+
+    pub fn toggle_wrap(&mut self) -> WrapMode {
+        self.set_wrap(self.wrap_mode.toggled());
         self.wrap_mode
     }
 

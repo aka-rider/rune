@@ -5,6 +5,7 @@ use rune_core::assert_invariant;
 use rune_core::buffer::Buffer;
 use rune_core::coords::DisplayRow;
 use rune_merge::{AlignmentMap, RegionKind};
+use rune_syntax::wrap::WrapMode;
 
 use crate::app::App;
 use crate::document::{Document, DocumentId, ReadOnly};
@@ -27,6 +28,7 @@ pub struct DiffView {
     pub intraline_left: Vec<Range<usize>>,
     pub intraline_right: Vec<Range<usize>>,
     right_version: u64,
+    restore_wrap: WrapMode,
 }
 
 pub fn install(
@@ -45,6 +47,7 @@ pub(crate) fn install_text(app: &mut App, right: DocumentId, text: String, left_
     };
     let right_content = right_doc.buffer.content().to_string();
     let right_version = right_doc.buffer.version();
+    let restore_wrap = right_doc.viewport.wrap_mode;
     let mut left = Document::new(Buffer::new(&text));
     left.read_only = ReadOnly::Always;
     left.focused = false;
@@ -58,12 +61,19 @@ pub(crate) fn install_text(app: &mut App, right: DocumentId, text: String, left_
         intraline_left: Vec::new(),
         intraline_right: Vec::new(),
         right_version,
+        restore_wrap,
     });
+    if let Some(right_doc) = app.doc_mut(right) {
+        right_doc.viewport.set_wrap(WrapMode::Soft);
+    }
 }
 
-pub(crate) fn teardown(app: &mut App, right: DocumentId) {
-    if app.diff.as_ref().is_some_and(|d| d.right == right) {
-        app.diff = None;
+pub fn teardown(app: &mut App, right: DocumentId) {
+    let Some(diff) = app.diff.take_if(|d| d.right == right) else {
+        return;
+    };
+    if let Some(right_doc) = app.doc_mut(right) {
+        right_doc.viewport.set_wrap(diff.restore_wrap);
     }
 }
 

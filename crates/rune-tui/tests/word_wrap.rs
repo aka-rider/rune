@@ -353,3 +353,39 @@ fn a_table_lays_out_at_its_natural_width_and_scrolls_with_the_text() {
     );
 }
 
+
+#[test]
+fn a_diff_view_refuses_the_toggle_and_keeps_both_sides_wrapping() {
+    let text = format!("{}\n", long_line(30));
+    let mut app = app_for(&text, 0);
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
+    rune_tui::diff_view::install(&mut app, text.clone().into_bytes(), "a.md".into()).unwrap();
+    app.sync_view();
+    let wrapped = rows_containing(&render_to_test_backend(&app), "w0");
+
+    toggle_wrap(&mut app);
+
+    assert_eq!(
+        messages::newest_text(&app),
+        Some("a diff view always wraps")
+    );
+    assert_eq!(rows_containing(&render_to_test_backend(&app), "w0"), wrapped);
+}
+
+#[test]
+fn opening_a_diff_over_an_unwrapped_document_wraps_it_and_closing_restores_the_choice() {
+    let text = format!("{}\n", long_line(30));
+    let mut app = app_for(&text, 0);
+    app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
+    toggle_wrap(&mut app);
+    assert_eq!(rows_containing(&render_to_test_backend(&app), "w0"), 1);
+
+    rune_tui::diff_view::install(&mut app, text.clone().into_bytes(), "a.md".into()).unwrap();
+    app.sync_view();
+    assert!(rows_containing(&render_to_test_backend(&app), "w0") >= 2);
+
+    let id = app.active;
+    rune_tui::diff_view::teardown(&mut app, id);
+    app.sync_view();
+    assert_eq!(rows_containing(&render_to_test_backend(&app), "w0"), 1);
+}

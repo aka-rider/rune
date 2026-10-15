@@ -81,6 +81,8 @@ pub(crate) fn toggle_word_wrap(app: &App) -> Availability {
         Availability::Unavailable("not available for an image".into())
     } else if doc.is_read_only() {
         Availability::Unavailable("a read-only view always wraps".into())
+    } else if app.diff.as_ref().is_some_and(|d| d.right == app.active) {
+        Availability::Unavailable("a diff view always wraps".into())
     } else {
         Availability::Available
     }
