@@ -94,7 +94,8 @@ fn apply_owned_and_followers(
 
     match doc.buffer.apply_edits(&SortedEdits::sort(&edits)) {
         Ok((new_buf, applied)) => {
-            let new_cursors = cursors_after(&new_buf, &applied, &owners);
+            let new_cursors =
+                outside_crlf_pairs(&new_buf, cursors_after(&new_buf, &applied, &owners));
             let Some(doc) = app.doc_mut(id) else {
                 return false;
             };
@@ -131,6 +132,17 @@ fn apply_owned_and_followers(
             false
         }
     }
+}
+
+fn outside_crlf_pairs(buf: &Buffer, cursors: Vec<Cursor>) -> Vec<Cursor> {
+    cursors
+        .into_iter()
+        .map(|c| Cursor {
+            position: BufferOffset(buf.after_crlf_pair(c.position.get())),
+            anchor: BufferOffset(buf.after_crlf_pair(c.anchor.get())),
+            ..c
+        })
+        .collect()
 }
 
 fn is_noop(edit: &Edit) -> bool {

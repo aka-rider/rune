@@ -137,6 +137,13 @@ impl Buffer {
         None
     }
 
+    pub fn after_crlf_pair(&self, offset: usize) -> usize {
+        match self.crlf_pair_at(offset) {
+            Some(pair) if pair.start != offset => pair.end,
+            _ => offset,
+        }
+    }
+
     pub(super) fn update_line_starts(&self, edits: &[Edit]) -> LineStarts {
         let mut line_starts = self.line_starts.to_full();
         for e in edits {
@@ -292,6 +299,20 @@ mod tests {
     fn caret_offset_past_the_last_line_is_the_buffer_end() {
         let b = Buffer::new("a\r\nb\r\n");
         assert_eq!(b.caret_offset(BufferPoint { line: 7, col: 0 }), 6);
+    }
+
+    #[test]
+    fn after_crlf_pair_moves_an_offset_between_cr_and_lf_past_the_pair() {
+        let b = Buffer::new("a\r\nb");
+        assert_eq!(b.after_crlf_pair(2), 3);
+    }
+
+    #[test]
+    fn after_crlf_pair_leaves_offsets_around_a_pair_and_beside_lone_cr_or_lf_alone() {
+        let b = Buffer::new("a\r\nb\rc\nd\r");
+        for offset in [0, 1, 3, 4, 5, 6, 7, 8, 9] {
+            assert_eq!(b.after_crlf_pair(offset), offset, "offset {offset}");
+        }
     }
 
     #[test]

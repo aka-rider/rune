@@ -8,7 +8,7 @@ use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{Effects, Msg};
 
-use tui_edit_common::{ALT, HEIGHT, SHIFT, WIDTH, press, with_carets};
+use tui_edit_common::{ALT, HEIGHT, SHIFT, SUP, WIDTH, press, with_carets};
 
 const ALT_SUP: Mods = Mods {
     shift: false,
@@ -257,5 +257,79 @@ fn a_lone_cr_ending_the_document_is_ordinary_content_for_vertical_motion() {
         let mut app = after_end_key("|abcdef\nA\r", mode);
         press_plain(&mut app, KeyCode::Down);
         assert_eq!(caret(&mut app), "abcdef\nA\r".len(), "{mode:?}");
+    }
+}
+
+fn paste(app: &mut App, text: &str) {
+    let mut effects = Effects::default();
+    app::update(app, Msg::Paste(text.to_string()), &mut effects);
+    app.sync_view();
+}
+
+fn content(app: &mut App) -> String {
+    app.active_doc_mut().buffer.content().to_string()
+}
+
+#[test]
+fn pasting_a_cr_before_an_lf_leaves_the_caret_after_the_new_crlf_pair() {
+    for mode in MODES {
+        let mut app = with_wrap("a|\nb", mode);
+        paste(&mut app, "x\r");
+        assert_eq!(content(&mut app), "ax\r\nb", "{mode:?}");
+        assert_eq!(caret(&mut app), 4, "{mode:?}");
+    }
+}
+
+#[test]
+fn typing_after_pasting_a_cr_before_an_lf_never_splits_the_pair() {
+    for mode in MODES {
+        let mut app = with_wrap("a|\nb", mode);
+        paste(&mut app, "x\r");
+        press_plain(&mut app, KeyCode::Char('y'));
+        assert_eq!(content(&mut app), "ax\r\nyb", "{mode:?}");
+    }
+}
+
+#[test]
+fn deleting_text_between_a_cr_and_an_lf_leaves_the_caret_after_the_joined_pair() {
+    for mode in MODES {
+        let mut app = with_wrap("a\rx|\nb", mode);
+        press_plain(&mut app, KeyCode::Backspace);
+        assert_eq!(content(&mut app), "a\r\nb", "{mode:?}");
+        assert_eq!(caret(&mut app), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn deleting_a_selection_between_a_cr_and_an_lf_leaves_the_caret_after_the_joined_pair() {
+    for mode in MODES {
+        let mut app = with_wrap("a\r|xyz\nb", mode);
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Right, SHIFT);
+        }
+        press_plain(&mut app, KeyCode::Backspace);
+        assert_eq!(content(&mut app), "a\r\nb", "{mode:?}");
+        assert_eq!(carets(&mut app), vec![3], "{mode:?}");
+    }
+}
+
+#[test]
+fn undoing_a_paste_that_joined_a_crlf_pair_restores_the_caret_before_it() {
+    for mode in MODES {
+        let mut app = with_wrap("a|\nb", mode);
+        paste(&mut app, "x\r");
+        press(&mut app, KeyCode::Char('z'), SUP);
+        assert_eq!(content(&mut app), "a\nb", "{mode:?}");
+        assert_eq!(caret(&mut app), 1, "{mode:?}");
+    }
+}
+
+#[test]
+fn pasting_a_cr_before_a_lone_lf_at_the_end_of_the_document_ends_after_the_pair() {
+    for mode in MODES {
+        let mut app = with_wrap("a|\n", mode);
+        paste(&mut app, "\r");
+        assert_eq!(content(&mut app), "a\r\n", "{mode:?}");
+        assert_eq!(caret(&mut app), 3, "{mode:?}");
     }
 }
