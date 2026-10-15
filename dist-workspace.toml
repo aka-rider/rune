@@ -25,6 +25,10 @@ aarch64-apple-darwin = "macos-15"
 x86_64-unknown-linux-gnu = "ubuntu-22.04"
 aarch64-unknown-linux-gnu = "ubuntu-22.04-arm"
 
+# The Linux packages job downloads from and uploads to the GitHub release
+[dist.github-custom-job-permissions]
+"publish-linux-packages" = { contents = "write" }
+
 # Floor set to match the oldest builder image (ubuntu-22.04 ships glibc 2.35)
 [dist.min-glibc-version]
 "*" = "2.35"
