@@ -106,6 +106,8 @@ pub(in crate::generate) static PASTE_PALETTE: &[&str] = &[
     "𝕳𝖊𝖑𝖑𝖔 𝟙𝟚𝟛",
     "aA1! 你好 🙂 mix",
     "line1\r\nline2",
+    "x\r",
+    "\r",
     " \u{200b}\t\u{200b} ",
     "***bold*** _em_ `code`",
     "\n\n\n",

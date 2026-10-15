@@ -1,0 +1,5 @@
+content # Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n
+key down -a-u
+type 
+key char:c ---u
+paste x\r
