@@ -130,7 +130,13 @@ fn child_sigkilled_mid_storm_recovers_and_reaper_spares_its_unmaterialized_footp
 
     let mut reap_conn =
         rune_db::open_recovery_store_at_path_for_test(&path).expect("reap connection");
-    rune_db::reap_dead_sessions(&mut reap_conn, &rune_db::is_process_alive, None).expect("reap");
+    rune_db::reap_dead_sessions(
+        &mut reap_conn,
+        &rune_db::is_process_alive,
+        None,
+        std::time::SystemTime::now(),
+    )
+    .expect("reap");
 
     let killed_events_after_reap: i64 = reap_conn
         .query_row(

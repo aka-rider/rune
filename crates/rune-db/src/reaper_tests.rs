@@ -126,7 +126,7 @@ fn reaper_deletes_footprint_but_spares_sessions_row_with_an_observation() {
     let session_new = seed_session(&conn, 222);
     journal_one_edit(&mut conn, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
+    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None, SystemTime::now()).expect("reap");
 
     let old_events: i64 = conn
         .query_row(
@@ -156,7 +156,7 @@ fn reaper_reaps_a_fully_materialized_dead_session_once_superseded() {
     let session_new = seed_session(&conn, 222);
     journal_one_edit(&mut conn, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
+    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None, SystemTime::now()).expect("reap");
 
     let old_events: i64 = conn
         .query_row(
@@ -182,7 +182,7 @@ fn reaper_spares_an_unmaterialized_dead_session_even_when_superseded_by_a_later_
     let session_new = seed_session(&conn, 222);
     journal_one_edit(&mut conn, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
+    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None, SystemTime::now()).expect("reap");
 
     let old_events: i64 = conn
         .query_row(
@@ -212,7 +212,13 @@ fn reaper_spares_the_most_recent_dead_session() {
     let doc_id = seed_doc(&conn);
     journal_one_edit(&mut conn, session_id, doc_id);
 
-    reap_dead_sessions(&mut conn, &|_pid, _started_at| false, None).expect("reap");
+    reap_dead_sessions(
+        &mut conn,
+        &|_pid, _started_at| false,
+        None,
+        SystemTime::now(),
+    )
+    .expect("reap");
 
     let events: i64 = conn
         .query_row(
@@ -236,7 +242,13 @@ fn reaper_never_touches_a_live_session() {
     let session_new = seed_session(&conn, 222);
     journal_one_edit(&mut conn, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|_pid, _started_at| true, None).expect("reap");
+    reap_dead_sessions(
+        &mut conn,
+        &|_pid, _started_at| true,
+        None,
+        SystemTime::now(),
+    )
+    .expect("reap");
 
     let events: i64 = conn
         .query_row(
@@ -314,7 +326,13 @@ fn diverged_load_bridge_survives_reaping_the_dead_session_it_inherited_from() {
         "test setup: session b must have inherited a's bridged draft"
     );
 
-    reap_dead_sessions(&mut conn, &|_pid, _started_at| false, None).expect("reap");
+    reap_dead_sessions(
+        &mut conn,
+        &|_pid, _started_at| false,
+        None,
+        SystemTime::now(),
+    )
+    .expect("reap");
 
     let recovered = crate::snapshot::recover_document(&conn, session_b, doc_id)
         .expect("recover_document must still succeed after the reap")
@@ -336,7 +354,7 @@ fn reaper_spares_the_sessions_row_of_a_dead_session_holding_only_a_merges_row() 
     journal_one_edit(&mut conn, session_new, doc_id);
     seed_merges_row(&conn, session_old, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None).expect("reap");
+    reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None, SystemTime::now()).expect("reap");
 
     let old_events: i64 = conn
         .query_row(
@@ -390,7 +408,13 @@ fn legacy_empty_started_at_before_boot_is_reaped_even_when_reported_alive() {
     let session_new = seed_session(&conn, own_pid + 1);
     journal_one_edit(&mut conn, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|_pid, _started_at| true, Some(boot)).expect("reap");
+    reap_dead_sessions(
+        &mut conn,
+        &|_pid, _started_at| true,
+        Some(boot),
+        SystemTime::now(),
+    )
+    .expect("reap");
 
     let old_events: i64 = conn
         .query_row(
@@ -424,7 +448,13 @@ fn legacy_empty_started_at_after_boot_is_spared() {
     let session_new = seed_session(&conn, own_pid + 1);
     journal_one_edit(&mut conn, session_new, doc_id);
 
-    reap_dead_sessions(&mut conn, &|_pid, _started_at| true, Some(boot)).expect("reap");
+    reap_dead_sessions(
+        &mut conn,
+        &|_pid, _started_at| true,
+        Some(boot),
+        SystemTime::now(),
+    )
+    .expect("reap");
 
     let old_events: i64 = conn
         .query_row(
@@ -442,3 +472,7 @@ fn legacy_empty_started_at_after_boot_is_spared() {
 #[cfg(test)]
 #[path = "reaper_boot_tests.rs"]
 mod boot_tests;
+
+#[cfg(test)]
+#[path = "reaper_retention_tests.rs"]
+mod retention_tests;

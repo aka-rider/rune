@@ -52,6 +52,47 @@ struct Replayed {
     at_position: String,
 }
 
+struct Probe {
+    position: Seq,
+    base_seq: Seq,
+    dropped: usize,
+    done_count: usize,
+    replayed: Option<Replayed>,
+}
+
+fn probe(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    shown: &str,
+) -> Result<Probe, Error> {
+    let position = journal::current_seq(tx, session_id, doc_id)?;
+    let (base_seq, base_content) = oldest_snapshot(tx, session_id, doc_id)?;
+    let rows = journal::edits_in_range(tx, session_id, doc_id, base_seq, Seq(i64::MAX))?;
+    let done_count = rows.partition_point(|row| row.seq <= position);
+    let dropped = rows.len().saturating_sub(MAX_STEPS).min(done_count);
+    let replayed = match replay(base_content, rows, dropped, done_count) {
+        Ok(replayed) if replayed.at_position == shown => Some(replayed),
+        Ok(_) | Err(HistoryLoss::Unreplayable) => None,
+    };
+    Ok(Probe {
+        position,
+        base_seq,
+        dropped,
+        done_count,
+        replayed,
+    })
+}
+
+pub(crate) fn replays(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    shown: &str,
+) -> Result<bool, Error> {
+    Ok(probe(tx, session_id, doc_id, shown)?.replayed.is_some())
+}
+
 pub(crate) fn read_lineage(
     tx: &Transaction<'_>,
     session_id: SessionId,
@@ -59,17 +100,14 @@ pub(crate) fn read_lineage(
     shown: &str,
     now: SystemTime,
 ) -> Result<(Lineage, Option<HistoryLoss>), Error> {
-    let position = journal::current_seq(tx, session_id, doc_id)?;
-    let (base_seq, base_content) = oldest_snapshot(tx, session_id, doc_id)?;
-    let rows = journal::edits_in_range(tx, session_id, doc_id, base_seq, Seq(i64::MAX))?;
-    let done_count = rows.partition_point(|row| row.seq <= position);
-    let dropped = rows.len().saturating_sub(MAX_STEPS).min(done_count);
-
-    let verified = match replay(base_content, rows, dropped, done_count) {
-        Ok(replayed) if replayed.at_position == shown => Some(replayed),
-        Ok(_) | Err(HistoryLoss::Unreplayable) => None,
-    };
-    let Some(replayed) = verified else {
+    let Probe {
+        position,
+        base_seq,
+        dropped,
+        done_count,
+        replayed,
+    } = probe(tx, session_id, doc_id, shown)?;
+    let Some(replayed) = replayed else {
         reset_to(tx, session_id, doc_id, position, shown, now)?;
         let lineage = Lineage {
             base_seq: position,

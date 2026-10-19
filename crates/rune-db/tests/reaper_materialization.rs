@@ -97,7 +97,7 @@ fn mark_session_dead(db_path: &std::path::Path, session_id: rune_db::SessionId) 
 }
 
 #[test]
-fn a_crashed_windows_unsaved_edits_survive_being_superseded_by_a_second_window() {
+fn a_crashed_windows_unsaved_edits_are_adopted_by_a_second_window_and_survive_the_reap() {
     let dir = temp_db_dir("two-window-crash");
     let db_path = dir.join("rune-v1.db");
     let doc_path = dir.join("notes.md");
@@ -112,6 +112,7 @@ fn a_crashed_windows_unsaved_edits_survive_being_superseded_by_a_second_window()
     mark_session_dead(&db_path, session_a);
 
     let (store_b, rx_b) = open_store(&db_path);
+    let session_b = store_b.session_id();
     let doc_id_b = load(&store_b, &rx_b, &doc_path);
     assert_eq!(
         doc_id_b, doc_id,
@@ -122,33 +123,41 @@ fn a_crashed_windows_unsaved_edits_survive_being_superseded_by_a_second_window()
 
     let mut reap_conn =
         rune_db::open_recovery_store_at_path_for_test(&db_path).expect("open recovery store");
-    rune_db::reap_dead_sessions(&mut reap_conn, &|pid, _| pid != SYNTHETIC_DEAD_PID, None)
-        .expect("reap");
+    rune_db::reap_dead_sessions(
+        &mut reap_conn,
+        &|pid, _| pid != SYNTHETIC_DEAD_PID,
+        None,
+        std::time::SystemTime::now(),
+    )
+    .expect("reap");
 
-    let a_events: i64 = reap_conn
-        .query_row(
-            "SELECT COUNT(*) FROM events WHERE session_id=?1",
-            [session_a.0],
-            |r| r.get(0),
-        )
-        .expect("count a's events");
+    let events_of = |session: rune_db::SessionId| -> i64 {
+        reap_conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id=?1",
+                [session.0],
+                |r| r.get(0),
+            )
+            .expect("count events")
+    };
     assert_eq!(
-        a_events, 1,
-        "the crashed window's unsaved edit must never be reaped just because a later \
-         window has since edited the same document"
+        (events_of(session_a), events_of(session_b)),
+        (0, 2),
+        "the crashed window's unsaved edit must now be part of the second window's own \
+         history, not left behind for the reaper"
     );
 
     let recovered = {
         let tx = reap_conn.transaction().expect("tx");
-        let content = rune_db::recover_document(&tx, session_a, doc_id)
+        let content = rune_db::recover_document(&tx, session_b, doc_id)
             .expect("recover_document")
             .content;
         tx.commit().expect("commit");
         content
     };
     assert_eq!(
-        recovered, "A's unsaved edit hello\n",
-        "the crashed window's own draft must still reconstruct after the reap"
+        recovered, "B's later edit A's unsaved edit hello\n",
+        "the crashed window's draft must still reconstruct after the reap"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

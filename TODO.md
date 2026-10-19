@@ -249,3 +249,17 @@ moved or added, not only the primary one.
 session parked deep in undo (more than 1000 undone steps) therefore keeps a redo tail above the
 cap. Fix when it matters: also delete the far end of the tail (`events` with `seq` above the
 1000th kept step) in the same load-time transaction.
+
+## Persistent undo: untitled drafts do not carry their history across a restart
+
+`succession::adopt_dead_lineage` hands a dead session's events, snapshots and observations to the next
+session that opens the same disk-backed document. An untitled draft is reconstructed by `scratch.rs`
+instead, which rebuilds its content but not its undo steps, so a draft recovered after a restart starts
+with an empty undo stack. Fix: make scratch reconstruction re-own the dead session's rows the same way.
+
+## Persistent undo: a dead session without a saved baseline is not adopted
+
+`adopt_dead_lineage` declines a dead session that has no `saved_obs` for the document, because the
+adopted lineage would then have no baseline for `sync` to compare against. Every load records one, so
+this only happens for a damaged store; the draft is still inherited through `find_inheritable_draft`,
+as one bridge step instead of step by step.

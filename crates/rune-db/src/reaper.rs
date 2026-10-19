@@ -1,17 +1,21 @@
 use rusqlite::{Connection, Transaction, params};
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::Error;
 use crate::ids::{DocId, SessionId};
+use crate::inherit::most_recent_session_for_doc;
 use crate::observation;
 use crate::retry;
 use crate::session::parse_rfc3339_nanos;
+
+pub(crate) const HISTORY_TTL: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
 pub fn reap_dead_sessions(
     conn: &mut Connection,
     is_alive: &dyn Fn(i64, &str) -> bool,
     boot: Option<SystemTime>,
+    now: SystemTime,
 ) -> Result<(), Error> {
     let candidates: Vec<(SessionId, i64, String, String)> = {
         let mut stmt = conn.prepare("SELECT id, pid, proc_started_at, opened_at FROM sessions")?;
@@ -28,7 +32,7 @@ pub fn reap_dead_sessions(
         if !reapable {
             continue;
         }
-        retry::with_retry(conn, |tx| reap_session_footprint(tx, id))?;
+        retry::with_retry(conn, |tx| reap_session_footprint(tx, id, now))?;
     }
     Ok(())
 }
@@ -40,20 +44,20 @@ fn predates_boot(opened_at: &str, boot: Option<std::time::SystemTime>) -> bool {
     }
 }
 
-fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bool, Error> {
-    let doc_ids: Vec<DocId> = {
-        let mut stmt = tx.prepare(
-            "SELECT DISTINCT doc_id FROM ( \
-                SELECT doc_id FROM events    WHERE session_id=?1 \
-                UNION \
-                SELECT doc_id FROM snapshots WHERE session_id=?1 \
-             )",
-        )?;
-        let rows = stmt.query_map(params![session_id], |r| r.get(0))?;
-        rows.collect::<Result<Vec<_>, _>>()?
-    };
+fn footprint_docs(tx: &Transaction<'_>, session_id: SessionId) -> Result<Vec<DocId>, Error> {
+    let mut stmt = tx.prepare(
+        "SELECT DISTINCT doc_id FROM ( \
+            SELECT doc_id FROM events    WHERE session_id=?1 \
+            UNION \
+            SELECT doc_id FROM snapshots WHERE session_id=?1 \
+         )",
+    )?;
+    let rows = stmt.query_map(params![session_id], |r| r.get(0))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)
+}
 
-    for doc_id in doc_ids {
+fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bool, Error> {
+    for doc_id in footprint_docs(tx, session_id)? {
         if doc_footprint_is_unmaterialized(tx, session_id, doc_id)? {
             return Ok(false);
         }
@@ -84,21 +88,56 @@ fn doc_footprint_is_unmaterialized(
     .map_err(Error::from)
 }
 
-fn reap_session_footprint(tx: &Transaction<'_>, session_id: SessionId) -> Result<(), Error> {
-    tx.execute(
-        "DELETE FROM session_documents WHERE session_id=?1",
-        params![session_id],
+fn history_is_retained(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    now: SystemTime,
+) -> Result<bool, Error> {
+    if most_recent_session_for_doc(tx, doc_id)? != Some(session_id) {
+        return Ok(false);
+    }
+    let newest_edit: Option<String> = tx.query_row(
+        "SELECT MAX(at) FROM events WHERE session_id=?1 AND doc_id=?2",
+        params![session_id, doc_id],
+        |r| r.get(0),
     )?;
+    Ok(newest_edit.is_some_and(|at| !is_expired(&at, now)))
+}
+
+fn is_expired(at: &str, now: SystemTime) -> bool {
+    parse_rfc3339_nanos(at).is_some_and(|edited| {
+        now.duration_since(edited)
+            .is_ok_and(|age| age > HISTORY_TTL)
+    })
+}
+
+fn reap_session_footprint(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    now: SystemTime,
+) -> Result<(), Error> {
+    for doc_id in footprint_docs(tx, session_id)? {
+        if history_is_retained(tx, session_id, doc_id, now)? {
+            continue;
+        }
+        tx.execute(
+            "DELETE FROM events WHERE session_id=?1 AND doc_id=?2",
+            params![session_id, doc_id],
+        )?;
+        tx.execute(
+            "DELETE FROM snapshots WHERE session_id=?1 AND doc_id=?2",
+            params![session_id, doc_id],
+        )?;
+    }
     tx.execute(
-        "DELETE FROM events WHERE session_id=?1",
-        params![session_id],
-    )?;
-    tx.execute(
-        "DELETE FROM snapshots WHERE session_id=?1",
+        "DELETE FROM session_documents WHERE session_id=?1 \
+         AND NOT EXISTS(SELECT 1 FROM events WHERE session_id=?1 AND doc_id=session_documents.doc_id)",
         params![session_id],
     )?;
     tx.execute(
         "DELETE FROM sessions WHERE id=?1 \
+         AND NOT EXISTS(SELECT 1 FROM events WHERE session_id=?1) \
          AND NOT EXISTS(SELECT 1 FROM observations WHERE session_id=?1) \
          AND NOT EXISTS(SELECT 1 FROM merges WHERE session_id=?1)",
         params![session_id],

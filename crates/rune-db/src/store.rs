@@ -112,6 +112,7 @@ impl Store {
             &mut conn,
             liveness_check.as_ref(),
             session::boot_time(),
+            now,
         ) {
             crate::diag::background_note(&format!("dead-session reaper failed at open: {e}"));
         }
@@ -146,6 +147,7 @@ impl Store {
             &mut writer_conn,
             liveness_check.as_ref(),
             session::boot_time(),
+            now,
         ) {
             crate::diag::background_note(&format!("dead-session reaper failed at open: {e}"));
         }

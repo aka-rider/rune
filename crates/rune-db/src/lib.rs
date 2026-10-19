@@ -76,6 +76,7 @@ mod session;
 mod snapshot;
 mod store;
 mod store_ops;
+mod succession;
 mod sync;
 #[cfg(test)]
 mod test_support;

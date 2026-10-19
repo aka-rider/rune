@@ -69,7 +69,13 @@ fn empty_started_at_alone_without_predating_boot_is_not_reboot_death() {
     // reached. A loosened `||` would instead treat the bare-empty
     // `started_at` alone as reboot-dead, skip the `is_alive` short-circuit,
     // and reap this fully-materialized footprint regardless.
-    reap_dead_sessions(&mut conn, &|_pid, _started_at| true, Some(boot)).expect("reap");
+    reap_dead_sessions(
+        &mut conn,
+        &|_pid, _started_at| true,
+        Some(boot),
+        SystemTime::now(),
+    )
+    .expect("reap");
 
     let old_events: i64 = conn
         .query_row(

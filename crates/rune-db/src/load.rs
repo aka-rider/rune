@@ -141,11 +141,6 @@ pub fn load_from_read(
     // this sighting is already durably recorded.
     let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &data))?;
 
-    // The journal position AT LOAD TIME.
-    let load_seq = retry::with_retry(conn, |tx| {
-        crate::journal::current_seq(tx, session_id, doc_id)
-    })?;
-
     // Folds the suspicious-shrink gate against `doc_id`'s own confirmed
     // history into the bracket's own verdict — the SAME rule
     // `probe::probe`'s fresh reads apply, now shared via
@@ -155,8 +150,18 @@ pub fn load_from_read(
     })?;
 
     // BEFORE recording anything below — must reflect GENUINE prior history,
-    // not history this very call is about to create.
-    let has_hist = retry::with_retry(conn, |tx| has_history(tx, session_id, doc_id))?;
+    // not history this very call is about to create. A dead session's
+    // replayable lineage is adopted first, so everything after sees it as
+    // this session's own history.
+    let had_history = retry::with_retry(conn, |tx| has_history(tx, session_id, doc_id))?;
+    let adopted = !had_history
+        && crate::succession::adopt_dead_lineage(conn, liveness_check, session_id, doc_id)?;
+    let has_hist = had_history || adopted;
+
+    // The journal position AT LOAD TIME.
+    let load_seq = retry::with_retry(conn, |tx| {
+        crate::journal::current_seq(tx, session_id, doc_id)
+    })?;
 
     // Content re-enters the String-typed edit buffer HERE: this is
     // session-editable content, which must be valid UTF-8 (rune-core's
@@ -166,10 +171,10 @@ pub fn load_from_read(
         .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
 
     let recovered = if !has_hist {
-        // Cross-session crash recovery (v10, B2/R2) — MUST run before this
-        // session writes anything of its own for doc_id, else it would
-        // immediately find itself as "the most recent session". First-ever
-        // load: the sighting IS the adoption — the recovery anchor MUST
+        // Cross-session crash recovery (v10, B2/R2) for a dead session whose
+        // lineage adoption declined — MUST run before this session writes
+        // anything of its own for doc_id, else it would immediately find
+        // itself as "the most recent session". First-ever load: the sighting IS the adoption — the recovery anchor MUST
         // commit before the adoption (which asserts "the journal
         // reconstruction at load_seq equals this blob"). The anchor and the
         // adoption use disk content/hash for `Inherited::Disk`/`Bridged`;
