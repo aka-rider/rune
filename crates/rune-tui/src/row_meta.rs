@@ -86,7 +86,8 @@ mod tests {
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
         let mut app = App::new(Buffer::new(content), None, vfs, None);
         app.active_doc_mut().focused = true;
-        app.active_doc_mut().cursors = CursorSet::new_from_positions(&[content.len()]);
+        app.active_doc_mut()
+            .set_cursors(CursorSet::new_from_positions(&[content.len()]));
         app.frame = Some(crate::app::FrameSize::new(80, 24));
         app.relayout();
         app.sync_view();

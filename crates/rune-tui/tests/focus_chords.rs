@@ -27,7 +27,8 @@ fn app_for(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     // Caret at the END of the seeded content — every test types onto the
     // tail, mirroring how a user would arrive there.
-    app.active_doc_mut().cursors = CursorSet::new(content.len());
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new(content.len()));
     app.active_doc_mut().viewport.set_size(80, 23);
     app.sync_view();
     app
@@ -54,7 +55,7 @@ fn app_with_file() -> App {
         vfs,
         None,
     );
-    app.active_doc_mut().cursors = CursorSet::new(5);
+    app.active_doc_mut().set_cursors(CursorSet::new(5));
     app.active_doc_mut().viewport.set_size(80, 23);
     app.frame = Some(rune_tui::app::FrameSize::new(100, 30));
     app.sync_view();
@@ -221,11 +222,13 @@ fn typing_prose_with_former_leader_letters_inserts_literal_text_only() {
 fn cmd_x_is_still_cut_never_a_focus_chord() {
     let mut app = app_for("hello world");
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
-        anchor: BufferOffset(0),
-        position: BufferOffset(5),
-        ..c
-    });
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(0).map(|c| Cursor {
+            anchor: BufferOffset(0),
+            position: BufferOffset(5),
+            ..c
+        }));
 
     press(&mut app, KeyCode::Char('x'), SUP);
 
@@ -240,12 +243,14 @@ fn cmd_x_is_still_cut_never_a_focus_chord() {
 fn escape_with_multiple_cursors_collapses_and_stays_in_the_editor() {
     let mut app = app_for("hello world");
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new_from_positions(&[0, 6]);
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new_from_positions(&[0, 6]));
 
     press(&mut app, KeyCode::Escape, NONE);
 
     assert_eq!(app.focus(), Pane::Editor);
-    assert!(!app.active_doc().cursors.is_multi());
+    assert!(!app.active_doc().cursors().is_multi());
     assert!(!app.splits.left.is_shown());
 }
 
@@ -255,16 +260,18 @@ fn escape_with_multiple_cursors_collapses_and_stays_in_the_editor() {
 fn escape_with_a_selection_collapses_and_stays_in_the_editor() {
     let mut app = app_for("hello world");
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
-        anchor: BufferOffset(0),
-        position: BufferOffset(5),
-        ..c
-    });
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(0).map(|c| Cursor {
+            anchor: BufferOffset(0),
+            position: BufferOffset(5),
+            ..c
+        }));
 
     press(&mut app, KeyCode::Escape, NONE);
 
     assert_eq!(app.focus(), Pane::Editor);
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert!(!app.active_doc().cursors().primary().has_selection());
     assert!(!app.splits.left.is_shown());
 }
 

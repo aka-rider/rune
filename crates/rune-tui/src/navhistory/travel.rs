@@ -27,7 +27,7 @@ fn live_place(app: &App) -> Option<Place> {
     Some(Place {
         doc: app.active,
         path: doc.resolved_path().cloned(),
-        offset: doc.cursors.primary().position.get(),
+        offset: doc.cursors().primary().position.get(),
         kind: PlaceKind::Visited,
     })
 }
@@ -125,7 +125,7 @@ fn land(app: &mut App, id: DocumentId, offset: usize, effects: &mut Effects) {
         return;
     };
     let clamped = rune_core::buffer::clamp_to_char_boundary(doc.buffer.content(), offset);
-    doc.cursors = CursorSet::new(clamped);
+    doc.set_cursors(CursorSet::new(clamped));
     if cross_doc {
         report_cross_doc_landing(app, id, clamped);
     }

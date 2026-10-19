@@ -72,12 +72,12 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
             .find("hello world")
             .expect("test setup: log document must contain the posted text");
         let end = start + "hello world".len();
-        messages::doc_mut(session.app_mut()).cursors = CursorSet::new_from(&[Cursor {
+        messages::doc_mut(session.app_mut()).set_cursors(CursorSet::new_from(&[Cursor {
             position: BufferOffset(end),
             anchor: BufferOffset(start),
             desired_col: VisualCol(0),
             id: CursorId::FIRST,
-        }]);
+        }]));
 
         let mut effects = Effects::default();
         app::update(
@@ -265,7 +265,7 @@ fn a_click_in_the_pane_does_not_move_the_editor_caret() {
     let mut session = app_for("hello world\n");
     messages::warn(session.app_mut(), "hello world");
     session.app_mut().sync_view();
-    let before = session.app().active_doc().cursors.primary().position;
+    let before = session.app().active_doc().cursors().primary().position;
 
     let rect = pane_rect(&session);
     mouse(
@@ -276,7 +276,7 @@ fn a_click_in_the_pane_does_not_move_the_editor_caret() {
     );
 
     assert_eq!(
-        session.app().active_doc().cursors.primary().position,
+        session.app().active_doc().cursors().primary().position,
         before,
         "a click inside the pane must never move the active editor document's caret"
     );

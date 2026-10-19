@@ -21,7 +21,7 @@ fn pin_caret_to_first_visible_line(doc: &mut Document) {
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
     let offset = doc.buffer.caret_offset(buffer_point);
-    doc.cursors = CursorSet::new(offset);
+    doc.set_cursors(CursorSet::new(offset));
 }
 
 pub fn intercept(app: &mut App, command: Command) -> bool {
@@ -109,7 +109,7 @@ fn link_sites(catalogue: &[Ref]) -> impl Iterator<Item = ByteRange> + '_ {
 fn focus_link(app: &mut App, step: LinkStep) {
     let doc = app.active_doc();
     let bound = doc.reading_link_focus.map(|site| site.start);
-    let caret = doc.cursors.primary().position.get();
+    let caret = doc.cursors().primary().position.get();
     let sites: Vec<ByteRange> = link_sites(&doc.catalogue).collect();
 
     let target = match step {
@@ -140,6 +140,6 @@ fn focus_link(app: &mut App, step: LinkStep) {
 
     let doc = app.active_doc_mut();
     doc.reading_link_focus = Some(site);
-    doc.cursors = CursorSet::new(site.start);
+    doc.set_cursors(CursorSet::new(site.start));
     doc.viewport.mode = ScrollMode::EnsureVisible;
 }

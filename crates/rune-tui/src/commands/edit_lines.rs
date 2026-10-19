@@ -42,7 +42,7 @@ fn per_selected_line_edits(
     build: impl Fn(usize, &Buffer) -> Option<Edit>,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    let cursors_before = doc.cursors.clone();
+    let cursors_before = doc.cursors().clone();
     let before = cursors_before.all().to_vec();
 
     let mut infos: Vec<(Edit, CursorId)> = Vec::new();
@@ -195,7 +195,7 @@ fn plan_deletion(cursors: &[Cursor], buf: &Buffer, view: &ViewSnapshots) -> Opti
 pub fn delete_line(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc_mut(id) else { return };
     let view = doc.view();
-    let cursors_before = doc.cursors.clone();
+    let cursors_before = doc.cursors().clone();
     let Some(Deletion { edits, landings }) =
         plan_deletion(cursors_before.all(), &doc.buffer, &view)
     else {

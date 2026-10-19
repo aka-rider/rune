@@ -14,7 +14,7 @@ enum CaseOp {
 
 fn has_actionable_range(app: &App, id: DocumentId) -> bool {
     let Some(doc) = app.doc(id) else { return false };
-    doc.cursors.all().iter().any(|c| {
+    doc.cursors().all().iter().any(|c| {
         if c.has_selection() {
             let (start, end) = c.selection_range();
             start != end
@@ -83,7 +83,9 @@ mod tests {
     fn app_with(content: &str, cursor_offset: usize) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         let id = app.active;
-        app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+        app.doc_mut(id)
+            .unwrap()
+            .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
         app.doc_mut(id).unwrap().viewport.set_size(80, 23);
         app
     }
@@ -118,7 +120,7 @@ mod tests {
             anchor: BufferOffset(5),
             desired_col: VisualCol(0),
         });
-        app.doc_mut(id).unwrap().cursors = two;
+        app.doc_mut(id).unwrap().set_cursors(two);
 
         uppercase(&mut app, id);
 
@@ -134,7 +136,7 @@ mod tests {
             anchor: BufferOffset(3),
             desired_col: VisualCol(0),
         });
-        app.doc_mut(id).unwrap().cursors = two;
+        app.doc_mut(id).unwrap().set_cursors(two);
 
         uppercase(&mut app, id);
 

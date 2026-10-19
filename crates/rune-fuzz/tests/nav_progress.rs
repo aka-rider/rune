@@ -26,7 +26,13 @@ const WIDE_TABLE: &str = "# Wide\n\n\
     after the table\n";
 
 fn caret(session: &Session) -> usize {
-    session.app().active_doc().cursors.primary().position.get()
+    session
+        .app()
+        .active_doc()
+        .cursors()
+        .primary()
+        .position
+        .get()
 }
 
 const TABLE_AT_END_OF_FILE: &str = "| Name | Description | Notes |\n\

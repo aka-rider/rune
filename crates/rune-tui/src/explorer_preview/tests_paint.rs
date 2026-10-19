@@ -112,7 +112,7 @@ fn arrowing_onto_a_file_paints_it_while_the_active_document_stays_put() {
 fn scrolling_over_a_painted_preview_scrolls_the_preview_and_not_the_hidden_document() {
     let (mut app, open) = app_showing_preview(&long_body("preview"), &long_body("open"));
     let hidden_scroll_before = app.doc(open).unwrap().viewport.scroll_row;
-    let hidden_caret_before = app.doc(open).unwrap().cursors.primary().position;
+    let hidden_caret_before = app.doc(open).unwrap().cursors().primary().position;
     let preview_scroll_before = app.shown_doc().viewport.scroll_row;
 
     mouse(&mut app, MouseKind::ScrollDown, 1, 1);
@@ -128,7 +128,7 @@ fn scrolling_over_a_painted_preview_scrolls_the_preview_and_not_the_hidden_docum
         "the hidden document's viewport must not move"
     );
     assert_eq!(
-        app.doc(open).unwrap().cursors.primary().position,
+        app.doc(open).unwrap().cursors().primary().position,
         hidden_caret_before
     );
 }
@@ -137,7 +137,7 @@ fn scrolling_over_a_painted_preview_scrolls_the_preview_and_not_the_hidden_docum
 fn clicking_a_painted_preview_opens_it_instead_of_moving_the_hidden_caret() {
     let (mut app, open) = app_showing_preview(PREVIEW_BODY, OPEN_BODY);
     let previewed = app.explorer.preview.as_ref().unwrap().id;
-    let hidden_caret_before = app.doc(open).unwrap().cursors.primary().position;
+    let hidden_caret_before = app.doc(open).unwrap().cursors().primary().position;
     let hidden_scroll_before = app.doc(open).unwrap().viewport.scroll_row;
 
     mouse(&mut app, MouseKind::Down(MouseButton::Left), 4, 0);
@@ -147,7 +147,7 @@ fn clicking_a_painted_preview_opens_it_instead_of_moving_the_hidden_caret() {
         "clicking what is on screen opens it rather than acting on a hidden document"
     );
     assert_eq!(
-        app.doc(open).unwrap().cursors.primary().position,
+        app.doc(open).unwrap().cursors().primary().position,
         hidden_caret_before,
         "the previously active document's caret must be untouched"
     );
@@ -156,7 +156,7 @@ fn clicking_a_painted_preview_opens_it_instead_of_moving_the_hidden_caret() {
         hidden_scroll_before
     );
     assert_eq!(
-        app.active_doc().cursors.primary().position.get(),
+        app.active_doc().cursors().primary().position.get(),
         4,
         "the click lands on the document it was aimed at"
     );

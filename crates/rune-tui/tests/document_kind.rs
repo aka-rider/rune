@@ -74,7 +74,9 @@ fn md_extension_stays_markdown_and_still_conceals() {
     // conceals its `# ` marker (plan Context, reveal-policy table).
     let cursor_offset = content.find("fn main").expect("fixture contains 'fn main'");
     let id = app.active;
-    app.doc_mut(id).expect("active document").cursors = CursorSet::new(cursor_offset);
+    app.doc_mut(id)
+        .expect("active document")
+        .set_cursors(CursorSet::new(cursor_offset));
     app.sync_view();
 
     let text = grid_text(&app);

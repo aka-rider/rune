@@ -344,7 +344,8 @@ mod tests {
     fn app_with_one_earlier_place() -> App {
         let mut app = app_for(&"line\n".repeat(40), Some("/a/b/note.md"));
         let id = app.active;
-        app.active_doc_mut().cursors = rune_core::cursor::CursorSet::new(150);
+        app.active_doc_mut()
+            .set_cursors(rune_core::cursor::CursorSet::new(150));
         crate::navhistory::observe_jump(&mut app, id, 0);
         app
     }

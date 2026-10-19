@@ -60,7 +60,7 @@ pub fn plain_app(content: &str, width: u16, height: u16) -> App {
 }
 
 pub fn place_cursor(app: &mut App, offset: usize) {
-    app.active_doc_mut().cursors = CursorSet::new(offset);
+    app.active_doc_mut().set_cursors(CursorSet::new(offset));
 }
 
 pub fn modded(code: KeyCode, mods: Mods) -> KeyInput {

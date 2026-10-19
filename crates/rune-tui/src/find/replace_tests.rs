@@ -62,7 +62,7 @@ fn enter_in_replace_replaces_only_the_current_match_and_selects_the_next() {
     assert_eq!(find(&app).matches, vec![9..12, 17..20]);
     assert_eq!(find(&app).current, Some(0));
     assert_eq!(selection_start(&app), 9);
-    assert!(app.active_doc().cursors.primary().has_selection());
+    assert!(app.active_doc().cursors().primary().has_selection());
     assert!(find(&app).focused);
     assert_eq!(find(&app).focus, Control::Replace);
 }
@@ -145,7 +145,7 @@ fn the_last_replacement_reports_no_more_matches_and_settles_the_origin_there() {
 
     press(&mut app, esc_key());
     assert_eq!(
-        app.active_doc().cursors.primary().position.get(),
+        app.active_doc().cursors().primary().position.get(),
         4,
         "escape lands after the replacement, not on the pre-replace cursor"
     );

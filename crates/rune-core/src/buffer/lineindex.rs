@@ -1,7 +1,8 @@
 use std::ops::Range;
 
 use super::{Buffer, Edit};
-use crate::coords::BufferPoint;
+use crate::coords::{BufferOffset, BufferPoint};
+use crate::cursor::Cursor;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct LineStarts {
@@ -137,10 +138,40 @@ impl Buffer {
         None
     }
 
-    pub fn after_crlf_pair(&self, offset: usize) -> usize {
-        match self.crlf_pair_at(offset) {
+    pub fn outside_crlf_pair(&self, cursor: Cursor) -> Cursor {
+        let forward = |offset: usize| match self.crlf_pair_at(offset) {
             Some(pair) if pair.start != offset => pair.end,
             _ => offset,
+        };
+        let backward = |offset: usize| match self.crlf_pair_at(offset) {
+            Some(pair) if pair.start != offset => pair.start,
+            _ => offset,
+        };
+        if !cursor.has_selection() {
+            let at = BufferOffset(forward(cursor.position.get()));
+            return Cursor {
+                position: at,
+                anchor: at,
+                ..cursor
+            };
+        }
+        let (start, end) = cursor.selection_range();
+        let (start, end) = (
+            BufferOffset(backward(start.get())),
+            BufferOffset(forward(end.get())),
+        );
+        if cursor.reversed() {
+            Cursor {
+                position: start,
+                anchor: end,
+                ..cursor
+            }
+        } else {
+            Cursor {
+                position: end,
+                anchor: start,
+                ..cursor
+            }
         }
     }
 
@@ -205,6 +236,8 @@ fn line_index_of(subsequent_starts: &[usize], offset: usize) -> usize {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::coords::VisualCol;
+    use crate::cursor::CursorId;
 
     #[test]
     fn line_index() {
@@ -301,18 +334,60 @@ mod tests {
         assert_eq!(b.caret_offset(BufferPoint { line: 7, col: 0 }), 6);
     }
 
-    #[test]
-    fn after_crlf_pair_moves_an_offset_between_cr_and_lf_past_the_pair() {
-        let b = Buffer::new("a\r\nb");
-        assert_eq!(b.after_crlf_pair(2), 3);
+    fn span(position: usize, anchor: usize) -> Cursor {
+        Cursor {
+            position: BufferOffset(position),
+            anchor: BufferOffset(anchor),
+            desired_col: VisualCol(0),
+            id: CursorId::FIRST,
+        }
+    }
+
+    fn snapped(b: &Buffer, position: usize, anchor: usize) -> (usize, usize) {
+        let c = b.outside_crlf_pair(span(position, anchor));
+        (c.position.get(), c.anchor.get())
     }
 
     #[test]
-    fn after_crlf_pair_leaves_offsets_around_a_pair_and_beside_lone_cr_or_lf_alone() {
+    fn outside_crlf_pair_moves_a_collapsed_caret_between_cr_and_lf_past_the_pair() {
+        let b = Buffer::new("a\r\nb");
+        assert_eq!(snapped(&b, 2, 2), (3, 3));
+    }
+
+    #[test]
+    fn outside_crlf_pair_leaves_collapsed_carets_around_a_pair_and_beside_lone_cr_or_lf_alone() {
         let b = Buffer::new("a\r\nb\rc\nd\r");
         for offset in [0, 1, 3, 4, 5, 6, 7, 8, 9] {
-            assert_eq!(b.after_crlf_pair(offset), offset, "offset {offset}");
+            assert_eq!(
+                snapped(&b, offset, offset),
+                (offset, offset),
+                "offset {offset}"
+            );
         }
+    }
+
+    #[test]
+    fn outside_crlf_pair_moves_a_selection_start_inside_a_pair_back_before_it() {
+        let b = Buffer::new("a\r\nbc");
+        assert_eq!(snapped(&b, 4, 2), (4, 1));
+        assert_eq!(snapped(&b, 2, 4), (1, 4));
+    }
+
+    #[test]
+    fn outside_crlf_pair_moves_a_selection_end_inside_a_pair_forward_past_it() {
+        let b = Buffer::new("ab\r\nc");
+        assert_eq!(snapped(&b, 3, 0), (4, 0));
+        assert_eq!(snapped(&b, 0, 3), (0, 4));
+    }
+
+    #[test]
+    fn outside_crlf_pair_keeps_the_identity_and_desired_column_of_the_cursor() {
+        let b = Buffer::new("a\r\nb");
+        let c = b.outside_crlf_pair(Cursor {
+            desired_col: VisualCol(7),
+            ..span(2, 2)
+        });
+        assert_eq!((c.desired_col, c.id), (VisualCol(7), CursorId::FIRST));
     }
 
     #[test]

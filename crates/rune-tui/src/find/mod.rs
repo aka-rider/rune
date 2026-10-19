@@ -182,7 +182,7 @@ fn expand_replace_field(app: &mut App, effects: &mut Effects) {
 }
 
 fn selection_seed(doc: &Document) -> Option<String> {
-    let (start, end) = doc.cursors.primary().selection_range();
+    let (start, end) = doc.cursors().primary().selection_range();
     let text = doc.buffer.slice(start.get(), end.get())?;
     (!text.is_empty() && !text.contains('\n')).then(|| text.to_string())
 }
@@ -252,7 +252,7 @@ pub(crate) fn restore_origin(app: &mut App, origin: &Origin) {
     if doc.buffer.version() != origin.buffer_version {
         return;
     }
-    doc.cursors = origin.cursors.clone();
+    doc.set_cursors(origin.cursors.clone());
     doc.viewport.scroll_row = origin.scroll_row;
     doc.viewport.mode = ScrollMode::EnsureVisible;
 }

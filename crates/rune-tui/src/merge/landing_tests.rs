@@ -319,7 +319,7 @@ fn install_whole_range_places_the_cursor_at_the_requested_offset() {
 
     assert!(install_whole_range(&mut app, doc, "new content", 4));
 
-    let cursors = app.doc(doc).unwrap().cursors.all();
+    let cursors = app.doc(doc).unwrap().cursors().all();
     assert_eq!(cursors.len(), 1);
     assert_eq!(cursors[0].position, BufferOffset(4));
     assert_eq!(cursors[0].anchor, BufferOffset(4));

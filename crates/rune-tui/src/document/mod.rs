@@ -37,7 +37,7 @@ pub struct DocumentId(pub(crate) NonZeroU64);
 
 pub struct Document {
     pub buffer: Buffer,
-    pub cursors: CursorSet,
+    cursors: CursorSet,
     pub doc: DocMachine,
     pub viewport: Viewport,
     pub focused: bool,
@@ -246,6 +246,15 @@ impl Document {
         self.saved_content = content;
     }
 
+    pub fn cursors(&self) -> &CursorSet {
+        &self.cursors
+    }
+
+    pub fn set_cursors(&mut self, cursors: CursorSet) {
+        let buffer = &self.buffer;
+        self.cursors = cursors.map(|c| buffer.outside_crlf_pair(c));
+    }
+
     pub fn pending_save_version(&self) -> Option<u64> {
         self.save.pending_version()
     }
@@ -325,13 +334,14 @@ impl Document {
                 ..c
             }
         };
-        self.cursors = if journaled_cursors.is_empty() {
+        let seated = if journaled_cursors.is_empty() {
             self.cursors.map(seat)
         } else {
             let seated: Vec<Cursor> = journaled_cursors.iter().copied().map(seat).collect();
             CursorSet::new_from(&seated)
         };
         self.buffer = new_buffer;
+        self.set_cursors(seated);
         Ok(Step {
             edits: applied,
             cursors_before,

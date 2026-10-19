@@ -22,7 +22,9 @@ use rune_vfs::Mem;
 fn app_with(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.doc_mut(id).unwrap().viewport.set_size(80, 23);
     app
 }
@@ -34,7 +36,7 @@ fn insert_char_moves_caret_past_the_inserted_char() {
     insert_char(&mut app, id, 'b');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(2)
     );
     assert_eq!(app.doc(id).unwrap().journal.len(), 1);
@@ -44,15 +46,17 @@ fn insert_char_moves_caret_past_the_inserted_char() {
 fn insert_char_replaces_a_selection() {
     let mut app = app_with("hello world", 0);
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
-        anchor: BufferOffset(0),
-        position: BufferOffset(5),
-        ..c
-    });
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(0).map(|c| Cursor {
+            anchor: BufferOffset(0),
+            position: BufferOffset(5),
+            ..c
+        }));
     insert_char(&mut app, id, 'X');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "X world");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(1)
     );
 }
@@ -81,7 +85,7 @@ fn delete_right_removes_one_rune_forward() {
     delete_right(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "bc");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(0)
     );
 }
@@ -93,7 +97,7 @@ fn delete_word_left_removes_the_whole_preceding_word() {
     delete_word_left(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello ");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(6)
     );
 }
@@ -153,7 +157,7 @@ fn newline_preserves_current_line_indentation() {
     newline(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "  indented\n  ");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(13)
     );
 }
@@ -168,14 +172,14 @@ fn undo_then_redo_round_trips_content_and_cursors() {
     undo(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(5)
     );
 
     redo(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
     assert_eq!(
-        app.doc(id).unwrap().cursors.primary().position,
+        app.doc(id).unwrap().cursors().primary().position,
         BufferOffset(6)
     );
 }

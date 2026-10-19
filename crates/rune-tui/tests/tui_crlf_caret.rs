@@ -8,7 +8,7 @@ use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{Effects, Msg};
 
-use tui_edit_common::{ALT, HEIGHT, SHIFT, SUP, WIDTH, press, with_carets};
+use tui_edit_common::{ALT, HEIGHT, SHIFT, SUP, SUP_SHIFT, WIDTH, press, with_carets};
 
 const ALT_SUP: Mods = Mods {
     shift: false,
@@ -26,11 +26,15 @@ const MODES: [WrapMode; 2] = [WrapMode::Soft, WrapMode::Off];
 
 fn carets(app: &mut App) -> Vec<usize> {
     let doc = app.active_doc_mut();
-    doc.cursors.all().iter().map(|c| c.position.get()).collect()
+    doc.cursors()
+        .all()
+        .iter()
+        .map(|c| c.position.get())
+        .collect()
 }
 
 fn caret(app: &mut App) -> usize {
-    app.active_doc_mut().cursors.primary().position.get()
+    app.active_doc_mut().cursors().primary().position.get()
 }
 
 fn press_plain(app: &mut App, code: KeyCode) {
@@ -331,5 +335,38 @@ fn pasting_a_cr_before_a_lone_lf_at_the_end_of_the_document_ends_after_the_pair(
         paste(&mut app, "\r");
         assert_eq!(content(&mut app), "a\r\n", "{mode:?}");
         assert_eq!(caret(&mut app), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn redoing_a_paste_that_joined_a_crlf_pair_leaves_the_caret_after_it() {
+    for mode in MODES {
+        let mut app = with_wrap("a|\nb", mode);
+        paste(&mut app, "x\r");
+        press(&mut app, KeyCode::Char('z'), SUP);
+        press(&mut app, KeyCode::Char('z'), SUP_SHIFT);
+        assert_eq!(content(&mut app), "ax\r\nb", "{mode:?}");
+        assert_eq!(carets(&mut app), vec![4], "{mode:?}");
+    }
+}
+
+#[test]
+fn pasting_an_lf_after_a_document_ending_in_cr_ends_after_the_new_pair() {
+    for mode in MODES {
+        let mut app = with_wrap("a\r|", mode);
+        paste(&mut app, "\n");
+        assert_eq!(content(&mut app), "a\r\n", "{mode:?}");
+        assert_eq!(carets(&mut app), vec![3], "{mode:?}");
+    }
+}
+
+#[test]
+fn add_cursor_below_onto_a_lone_cr_line_lands_before_its_crlf_terminator() {
+    for mode in MODES {
+        let mut app = after_end_key("|abcdef\r\nA\rB\r\nC", mode);
+        press(&mut app, KeyCode::Down, ALT_SUP);
+        assert_eq!(carets(&mut app), vec![6, 11], "{mode:?}");
+        press(&mut app, KeyCode::Down, ALT_SUP);
+        assert_eq!(carets(&mut app), vec![6, 11, 14], "{mode:?}");
     }
 }

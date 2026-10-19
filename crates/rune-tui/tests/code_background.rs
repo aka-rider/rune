@@ -227,7 +227,11 @@ fn a_revealed_fences_delimiter_rows_are_covered() {
         .find("fn main")
         .expect("fixture contains the code line");
     let active = session.app().active;
-    session.app_mut().doc_mut(active).expect("doc").cursors = CursorSet::new(inside);
+    session
+        .app_mut()
+        .doc_mut(active)
+        .expect("doc")
+        .set_cursors(CursorSet::new(inside));
     session.app_mut().sync_view();
     let app = session.app();
     let buf = draw(app);

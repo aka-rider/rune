@@ -113,7 +113,7 @@ fn select_next_or_report(app: &mut App) {
 fn apply(app: &mut App, edits: Vec<Edit>) -> usize {
     let count = edits.len();
     let active = app.active;
-    let cursors_before = app.active_doc().cursors.clone();
+    let cursors_before = app.active_doc().cursors().clone();
     let id = cursors_before.primary().id;
     let infos = edits.into_iter().map(|edit| (edit, id)).collect();
     let applied = apply_edit_batch_with_cursors(

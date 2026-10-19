@@ -136,7 +136,8 @@ fn help_tab_table_stays_boxed_when_the_cursor_lands_inside_it() {
         .find(separator)
         .map(|i| i + separator.len())
         .expect("the Global table has a separator row");
-    app.active_doc_mut().cursors = CursorSet::new(data_row_start + 2);
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new(data_row_start + 2));
     app.sync_view();
 
     let buf = render_to_test_backend(&app);

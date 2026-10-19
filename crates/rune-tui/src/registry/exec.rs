@@ -154,8 +154,8 @@ mod tests {
             app_b.active_doc().viewport.scroll_row
         );
         assert_eq!(
-            app_a.active_doc().cursors.primary().position,
-            app_b.active_doc().cursors.primary().position
+            app_a.active_doc().cursors().primary().position,
+            app_b.active_doc().cursors().primary().position
         );
     }
 

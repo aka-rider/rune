@@ -16,7 +16,7 @@ fn esc_from_the_editor_closes_a_kept_panel_before_the_old_ladder_runs() {
     type_str(&mut app, "world");
     click_into_editor(&mut app);
     press(&mut app, shift_right());
-    let selected = app.active_doc().cursors.clone();
+    let selected = app.active_doc().cursors().clone();
     assert!(
         !find(&app).focused,
         "test setup: the click unfocused the panel"
@@ -25,12 +25,16 @@ fn esc_from_the_editor_closes_a_kept_panel_before_the_old_ladder_runs() {
     press(&mut app, esc_key());
 
     assert!(app.find().is_none(), "Esc closes the panel it left behind");
-    assert_eq!(app.active_doc().cursors, selected, "the cursor stays put");
+    assert_eq!(
+        *app.active_doc().cursors(),
+        selected,
+        "the cursor stays put"
+    );
     assert_ne!(app.focus(), Pane::Explorer);
 
     press(&mut app, esc_key());
     assert!(
-        !app.active_doc().cursors.primary().has_selection(),
+        !app.active_doc().cursors().primary().has_selection(),
         "the second Esc collapses the selection"
     );
     assert_ne!(app.focus(), Pane::Explorer);
@@ -54,7 +58,7 @@ fn esc_in_a_focused_panel_restores_the_origin_cursor() {
 
     assert!(app.find().is_none());
     assert_eq!(selection_start(&app), 0);
-    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
+    assert_eq!(app.active_doc().cursors().primary().position.get(), 0);
 }
 
 #[test]
@@ -100,5 +104,5 @@ fn esc_does_not_restore_an_origin_cursor_into_a_buffer_edited_since() {
     press(&mut app, esc_key());
 
     assert!(app.find().is_none());
-    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
+    assert_eq!(app.active_doc().cursors().primary().position.get(), 0);
 }

@@ -137,7 +137,10 @@ fn click_in_the_left_pane_moves_the_right_pane_caret_to_the_aligned_line() {
 
     let right_content = app.active_doc().buffer.content().to_string();
     let expected = right_content.find("\nc").expect("c present in fileB") + 1;
-    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
+    assert_eq!(
+        app.active_doc().cursors().primary().position.get(),
+        expected
+    );
 }
 
 #[test]

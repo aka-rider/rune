@@ -156,7 +156,7 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.clock = Arc::new(ManualClock::new());
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor);
+    app.doc_mut(id).unwrap().set_cursors(CursorSet::new(cursor));
     app.doc_mut(id).unwrap().viewport.set_size(40, 10);
     app.frame = Some(rune_tui::app::FrameSize::new(40, 11)); // + footer row
     app.sync_view();
@@ -179,7 +179,7 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
     );
 
     assert_eq!(
-        app.active_doc().cursors.primary().position.get(),
+        app.active_doc().cursors().primary().position.get(),
         content.find("Heading").expect("fixture has a heading"),
         "a click on the heading's own icon cell must land on the heading text's first byte"
     );
@@ -250,7 +250,7 @@ tail paragraph\n";
 
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor);
+    app.doc_mut(id).unwrap().set_cursors(CursorSet::new(cursor));
     app.doc_mut(id).unwrap().viewport.set_size(20, 20);
     app.sync_view();
 

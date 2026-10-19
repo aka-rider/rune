@@ -406,17 +406,17 @@ fn a_click_on_the_column_border_never_moves_the_editor_caret() {
     show_left_column(&mut app);
     let editor = geometry(&app).editor;
     click(&mut app, editor.x + 4, editor.y);
-    let caret = app.active_doc().cursors.primary().position;
+    let caret = app.active_doc().cursors().primary().position;
 
     let block = geometry(&app)
         .left_block
         .expect("test setup: the left column is painted");
     click(&mut app, block.x, block.y + 2);
-    assert_eq!(app.active_doc().cursors.primary().position, caret);
+    assert_eq!(app.active_doc().cursors().primary().position, caret);
 
     let divider = geometry(&app)
         .tabs_divider
         .expect("test setup: the Open divider is painted");
     click(&mut app, divider.x + 1, divider.y);
-    assert_eq!(app.active_doc().cursors.primary().position, caret);
+    assert_eq!(app.active_doc().cursors().primary().position, caret);
 }

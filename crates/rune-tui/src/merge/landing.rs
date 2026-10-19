@@ -291,7 +291,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
     let Some(document) = app.doc(doc) else {
         return false;
     };
-    let cursors_before = document.cursors.clone();
+    let cursors_before = document.cursors().clone();
     let old_len = document.buffer.content().len();
     let edit = Edit {
         start: 0,

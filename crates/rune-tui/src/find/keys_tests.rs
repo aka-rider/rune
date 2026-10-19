@@ -49,11 +49,11 @@ fn enter_with_zero_matches_keeps_the_origin_and_says_so() {
     open_find(&mut app);
     type_str(&mut app, "zzz");
     assert!(find(&app).matches.is_empty());
-    let cursor_before = app.active_doc().cursors.primary().position;
+    let cursor_before = app.active_doc().cursors().primary().position;
 
     press(&mut app, enter());
     assert_eq!(find(&app).current, None);
-    assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    assert_eq!(app.active_doc().cursors().primary().position, cursor_before);
     assert_eq!(
         crate::messages::newest_text(&app),
         Some("no matches for \"zzz\""),
@@ -101,7 +101,8 @@ fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
     );
 
     let table_offset = "text\n\n| a".len();
-    app.active_doc_mut().cursors = CursorSet::new(table_offset);
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new(table_offset));
     app.sync_view();
     assert_eq!(
         app.active_doc().buffer.version(),
@@ -191,7 +192,7 @@ fn enter_after_a_coalesced_doc_switch_recomputes_instead_of_jumping_into_the_old
     assert_eq!(state.doc, other);
     assert!(state.matches.is_empty());
     assert_eq!(
-        app.active_doc().cursors.primary().position.get(),
+        app.active_doc().cursors().primary().position.get(),
         0,
         "no jump into the wrong document's byte ranges"
     );

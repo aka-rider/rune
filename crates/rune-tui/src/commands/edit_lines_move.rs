@@ -77,11 +77,11 @@ fn apply_plan(app: &mut App, id: DocumentId, plan: Plan) {
     if edits.is_empty() {
         let landed: Vec<Cursor> = placed.iter().map(|p| p.land(&doc.buffer)).collect();
         if let Some(doc) = app.doc_mut(id) {
-            doc.cursors = CursorSet::new_from(&landed);
+            doc.set_cursors(CursorSet::new_from(&landed));
         }
         return;
     }
-    let cursors_before = doc.cursors.clone();
+    let cursors_before = doc.cursors().clone();
     apply_edit_batch_with_cursors_on(
         app,
         id,
@@ -108,7 +108,7 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
 
 fn clone_lines(app: &mut App, id: DocumentId, selection: SelectionStays) {
     let Some(doc) = app.doc(id) else { return };
-    let blocks = overlapping_line_blocks(doc.cursors.all(), &doc.buffer);
+    let blocks = overlapping_line_blocks(doc.cursors().all(), &doc.buffer);
     match plan_clones(&doc.buffer, &blocks, selection) {
         Ok(plan) => apply_plan(app, id, plan),
         Err(refusal) => refusal.report(app),
@@ -191,7 +191,7 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
 
 fn move_lines(app: &mut App, id: DocumentId, shift: &Shift) {
     let Some(doc) = app.doc(id) else { return };
-    let blocks = touching_line_blocks(doc.cursors.all(), &doc.buffer);
+    let blocks = touching_line_blocks(doc.cursors().all(), &doc.buffer);
     match plan_moves(&doc.buffer, &blocks, shift) {
         Ok(plan) => apply_plan(app, id, plan),
         Err(refusal) => refusal.report(app),

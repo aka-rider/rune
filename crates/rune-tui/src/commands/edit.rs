@@ -20,7 +20,7 @@ pub(crate) fn per_cursor_selection_edits(
     bare: impl Fn(&Buffer, &Cursor) -> Option<(usize, usize)>,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    let cursors_before = doc.cursors.clone();
+    let cursors_before = doc.cursors().clone();
     let all = cursors_before.all();
     if all.is_empty() {
         return;
@@ -243,7 +243,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
                 let target = token.target();
                 let Some(doc) = app.doc_mut(id) else { break };
                 doc.buffer = new_buf;
-                doc.cursors = CursorSet::new_from(&cursors_before);
+                doc.set_cursors(CursorSet::new_from(&cursors_before));
                 doc.journal.commit(token);
                 reached = Some(target);
                 for ae in &edits {
@@ -306,7 +306,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
                 let target = token.target();
                 let Some(doc) = app.doc_mut(id) else { break };
                 doc.buffer = new_buf;
-                doc.cursors = CursorSet::new_from(&cursors_after);
+                doc.set_cursors(CursorSet::new_from(&cursors_after));
                 doc.journal.commit(token);
                 reached = Some(target);
                 for ae in edits.iter().rev() {

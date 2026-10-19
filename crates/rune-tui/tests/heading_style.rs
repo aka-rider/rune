@@ -37,7 +37,9 @@ fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
         app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     }
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.doc_mut(id)
         .unwrap()
         .viewport

@@ -296,7 +296,7 @@ fn footer_reports_cell_column_on_a_multiline_multibyte_buffer() {
     // '\u{6c49}'(2 cells, CJK) precede it, so the display column is 4
     // cells, 1-indexed as 5.
     let offset = "first\nab\u{6c49}".len();
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(offset);
+    app.doc_mut(id).unwrap().set_cursors(CursorSet::new(offset));
     app.sync_view();
 
     let buf = draw(&app);

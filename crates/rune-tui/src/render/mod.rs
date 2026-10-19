@@ -137,7 +137,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         },
         &mut rows,
         view,
-        &doc.cursors,
+        doc.cursors(),
         &doc.buffer,
         viewport.scroll_row,
         &app.theme,

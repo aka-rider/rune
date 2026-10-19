@@ -266,11 +266,11 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         // ⌘+click is unavailable here: the SGR mouse protocol encodes only
         // shift/alt/ctrl, never Super.
         let doc = app.active_doc_mut();
-        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
+        doc.set_cursors(CursorSet::new_from_specs(&[CursorSpec {
             position: BufferOffset(offset),
             anchor: BufferOffset(offset),
             desired_col: VisualCol(desired_col),
-        }]);
+        }]));
         app.pointer.drag = None;
         navigate::follow(app, effects);
         return;
@@ -281,11 +281,11 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
 
     if input.alt {
         let doc = app.active_doc_mut();
-        doc.cursors = doc.cursors.add(CursorSpec {
+        doc.set_cursors(doc.cursors().add(CursorSpec {
             position: BufferOffset(offset),
             anchor: BufferOffset(offset),
             desired_col: VisualCol(desired_col),
-        });
+        }));
         app.pointer.drag = None;
         return;
     }
@@ -294,15 +294,15 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
         // Extends the primary cursor's existing anchor to the click point,
         // collapsing any other cursor to it.
         let doc = app.active_doc_mut();
-        let anchor = doc.cursors.primary().anchor;
-        let id = doc.cursors.primary().id;
+        let anchor = doc.cursors().primary().anchor;
+        let id = doc.cursors().primary().id;
         let extended = Cursor {
             position: BufferOffset(offset),
             anchor,
             desired_col: VisualCol(desired_col),
             id,
         };
-        doc.cursors = CursorSet::new_from(&[extended]);
+        doc.set_cursors(CursorSet::new_from(&[extended]));
         app.pointer.drag = Some(Drag::Text {
             anchor: anchor.get(),
             pane: Pane::Editor,
@@ -337,7 +337,7 @@ fn handle_diff_left_click(
         return;
     };
     let offset = line_offset(&doc.buffer, target_line);
-    doc.cursors = CursorSet::new(offset);
+    doc.set_cursors(CursorSet::new(offset));
     nav_scroll::scroll_to_byte_offset(doc, offset);
 }
 
@@ -350,14 +350,14 @@ fn diff_left_click_target(app: &App, row: u16, col: u16) -> Option<(DocumentId, 
 }
 
 pub(crate) fn select_range(doc: &mut Document, start: usize, end: usize) {
-    let id = doc.cursors.primary().id;
+    let id = doc.cursors().primary().id;
     let selected = Cursor {
         position: BufferOffset(end),
         anchor: BufferOffset(start),
         desired_col: VisualCol(0),
         id,
     };
-    doc.cursors = CursorSet::new_from(&[selected]);
+    doc.set_cursors(CursorSet::new_from(&[selected]));
 }
 
 pub(crate) fn place_click_cursor(
@@ -368,11 +368,11 @@ pub(crate) fn place_click_cursor(
 ) -> bool {
     match count {
         1 => {
-            doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
+            doc.set_cursors(CursorSet::new_from_specs(&[CursorSpec {
                 position: BufferOffset(offset),
                 anchor: BufferOffset(offset),
                 desired_col: VisualCol(desired_col),
-            }]);
+            }]));
             true
         }
         2 => {
@@ -394,14 +394,14 @@ pub(crate) fn extend_drag_cursor(
     offset: usize,
     desired_col: usize,
 ) {
-    let id = doc.cursors.primary().id;
+    let id = doc.cursors().primary().id;
     let extended = Cursor {
         position: BufferOffset(offset),
         anchor: BufferOffset(anchor),
         desired_col: VisualCol(desired_col),
         id,
     };
-    doc.cursors = CursorSet::new_from(&[extended]);
+    doc.set_cursors(CursorSet::new_from(&[extended]));
 }
 
 fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {

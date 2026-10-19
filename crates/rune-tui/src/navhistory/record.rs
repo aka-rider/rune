@@ -65,7 +65,7 @@ pub fn record_departure(app: &mut App, from: DocumentId) {
     }
     let Some(offset) = app
         .doc(from)
-        .map(|doc| doc.cursors.primary().position.get())
+        .map(|doc| doc.cursors().primary().position.get())
     else {
         return;
     };
@@ -86,7 +86,7 @@ pub fn observe_jump(app: &mut App, active_before: DocumentId, caret_before: usiz
     if app.active != active_before || !eligible(app, active_before) {
         return;
     }
-    let after_offset = app.active_doc().cursors.primary().position.get();
+    let after_offset = app.active_doc().cursors().primary().position.get();
     if caret_before == after_offset {
         return;
     }

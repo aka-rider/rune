@@ -328,7 +328,7 @@ pub fn should_arm_auto_collapse(app: &App) -> bool {
     app.messages.open
         && app.messages.armed.is_none()
         && focus::target(app) != FocusTarget::Messages
-        && !app.messages.doc.cursors.primary().has_selection()
+        && !app.messages.doc.cursors().primary().has_selection()
         && !matches!(newest(app), Some(m) if m.severity == Severity::Error)
 }
 
@@ -415,10 +415,10 @@ fn mouse_drag(app: &mut App, input: MouseInput) {
 }
 
 fn copy_selection(app: &mut App, effects: &mut Effects) {
-    if !app.messages.doc.cursors.primary().has_selection() {
+    if !app.messages.doc.cursors().primary().has_selection() {
         return;
     }
-    let text = extract_copy_text(&app.messages.doc.buffer, &app.messages.doc.cursors);
+    let text = extract_copy_text(&app.messages.doc.buffer, app.messages.doc.cursors());
     write_to_clipboard_or_report(app, &text, effects);
 }
 
@@ -475,7 +475,7 @@ mod tests {
             "a click that never focused the pane must not latch a drag"
         );
         assert!(
-            !app.messages.doc.cursors.primary().has_selection(),
+            !app.messages.doc.cursors().primary().has_selection(),
             "a click that never focused the pane must not place a selection"
         );
     }

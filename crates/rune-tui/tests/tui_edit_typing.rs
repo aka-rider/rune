@@ -15,7 +15,7 @@ fn typing_inserts_characters_in_order_and_moves_the_caret() {
         press(&mut app, KeyCode::Char(ch), Mods::NONE);
     }
     assert_eq!(app.active_doc_mut().buffer.content(), "hi!");
-    assert_eq!(app.active_doc_mut().cursors.primary().position.get(), 3);
+    assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 3);
 }
 
 #[test]
@@ -59,11 +59,11 @@ fn typing_over_a_selection_replaces_it() {
     for _ in 0..5 {
         press(&mut app, KeyCode::Right, SHIFT);
     }
-    assert!(app.active_doc_mut().cursors.primary().has_selection());
+    assert!(app.active_doc_mut().cursors().primary().has_selection());
 
     press(&mut app, KeyCode::Char('X'), Mods::NONE);
     assert_eq!(app.active_doc_mut().buffer.content(), "X world");
-    let c = app.active_doc_mut().cursors.primary();
+    let c = app.active_doc_mut().cursors().primary();
     assert_eq!(c.position.get(), 1);
     assert!(!c.has_selection());
 }
@@ -73,7 +73,7 @@ fn backspace_key_removes_the_char_to_the_left() {
     let mut app = app_for("abc", 1);
     press(&mut app, KeyCode::Backspace, Mods::NONE);
     assert_eq!(app.active_doc_mut().buffer.content(), "bc");
-    assert_eq!(app.active_doc_mut().cursors.primary().position.get(), 0);
+    assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 0);
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn delete_key_removes_the_char_to_the_right() {
     let mut app = app_for("abc", 0);
     press(&mut app, KeyCode::Delete, Mods::NONE);
     assert_eq!(app.active_doc_mut().buffer.content(), "bc");
-    assert_eq!(app.active_doc_mut().cursors.primary().position.get(), 0);
+    assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 0);
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn tab_indents_every_line_of_a_shift_selected_block_and_keeps_the_selection() {
         app.active_doc_mut().buffer.content(),
         "\tone\n\ttwo\n\tthree"
     );
-    assert!(app.active_doc_mut().cursors.primary().has_selection());
+    assert!(app.active_doc_mut().cursors().primary().has_selection());
 
     press(&mut app, KeyCode::Tab, SHIFT);
     assert_eq!(app.active_doc_mut().buffer.content(), "one\ntwo\nthree");
@@ -181,19 +181,19 @@ fn undo_redo_never_split_a_cjk_or_emoji_char() {
 fn undo_redo_restore_the_recorded_cursor_position() {
     let mut app = app_for("hello", 2);
     press(&mut app, KeyCode::Char('X'), Mods::NONE);
-    assert_eq!(app.active_doc_mut().cursors.primary().position.get(), 3);
+    assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 3);
 
     press(&mut app, KeyCode::Char('z'), SUP);
     assert_eq!(app.active_doc_mut().buffer.content(), "hello");
     assert_eq!(
-        app.active_doc_mut().cursors.primary().position.get(),
+        app.active_doc_mut().cursors().primary().position.get(),
         2,
         "undo must restore the pre-edit cursor position"
     );
 
     press(&mut app, KeyCode::Char('z'), SUP_SHIFT);
     assert_eq!(
-        app.active_doc_mut().cursors.primary().position.get(),
+        app.active_doc_mut().cursors().primary().position.get(),
         3,
         "redo must restore the post-edit cursor position"
     );
@@ -212,7 +212,7 @@ fn moving_down_onto_a_heading_lands_before_its_marker() {
     let mut app = app_for(content, 0);
     press(&mut app, KeyCode::Down, Mods::NONE);
     assert_eq!(
-        app.active_doc_mut().cursors.primary().position.get(),
+        app.active_doc_mut().cursors().primary().position.get(),
         "plain\n".len()
     );
 }
@@ -229,7 +229,12 @@ fn down_then_up_over_a_concealing_heading_lands_where_a_fresh_caret_would() {
     press(&mut roundtrip, KeyCode::Down, Mods::NONE);
     press(&mut roundtrip, KeyCode::Up, Mods::NONE);
     assert_eq!(
-        roundtrip.active_doc_mut().cursors.primary().position.get(),
+        roundtrip
+            .active_doc_mut()
+            .cursors()
+            .primary()
+            .position
+            .get(),
         0,
         "the round trip must resettle the caret back to byte 0, not inside the revealed text"
     );

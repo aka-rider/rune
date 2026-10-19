@@ -12,7 +12,9 @@ use std::sync::Arc;
 fn app_with(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.doc_mut(id).unwrap().viewport.set_size(80, 23);
     app
 }
@@ -31,7 +33,7 @@ fn text(app: &App) -> String {
 fn selections(app: &App) -> Vec<(usize, usize)> {
     app.doc(app.active)
         .unwrap()
-        .cursors
+        .cursors()
         .all()
         .iter()
         .map(|c| (c.anchor.get(), c.position.get()))

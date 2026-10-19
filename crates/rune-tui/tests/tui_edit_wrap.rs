@@ -25,12 +25,12 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
     for _ in 0..5 {
         press(&mut app, KeyCode::Right, Mods::NONE);
     }
-    let after_right = app.active_doc_mut().cursors.primary();
+    let after_right = app.active_doc_mut().cursors().primary();
     assert_eq!(after_right.position, BufferOffset(5));
     assert_eq!(after_right.desired_col, VisualCol(5));
 
     press(&mut app, KeyCode::Down, Mods::NONE);
-    let after_down = app.active_doc_mut().cursors.primary();
+    let after_down = app.active_doc_mut().cursors().primary();
     assert_eq!(
         after_down.desired_col,
         VisualCol(5),
@@ -78,7 +78,7 @@ fn down_from_inside_an_inline_code_span_advances_one_wrap_row() {
 
     press(&mut app, KeyCode::Down, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row,
@@ -100,11 +100,11 @@ fn down_from_the_opening_backtick_of_an_inline_code_span_advances_one_wrap_row()
         origin_row, 1,
         "test fixture must place the span on the second wrap row"
     );
-    let origin_col = app.active_doc_mut().cursors.primary().position;
+    let origin_col = app.active_doc_mut().cursors().primary().position;
 
     press(&mut app, KeyCode::Down, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row,
@@ -133,7 +133,7 @@ fn line_up_from_below_an_inline_code_span_returns_to_the_origin_row() {
     press(&mut app, KeyCode::Down, Mods::NONE);
     press(&mut app, KeyCode::Up, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row, origin_row,
@@ -151,7 +151,7 @@ fn page_down_over_an_inline_code_span_advances_by_the_page_step() {
     let origin_row = wrap_row_of(&mut app, between_the_backticks);
     press(&mut app, KeyCode::PageDown, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     let landed_row = wrap_row_of(&mut app, after.get());
     assert_eq!(
         landed_row,
@@ -172,15 +172,18 @@ fn down_advances_both_cursors_when_one_sits_inside_an_inline_code_span() {
         .set_size(INLINE_CODE_WIDTH, tui_edit_common::HEIGHT - 1);
 
     let row_without_a_code_span = 1;
-    app.active_doc_mut().cursors =
-        CursorSet::new_from_positions(&[row_without_a_code_span, between_the_backticks]);
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new_from_positions(&[
+            row_without_a_code_span,
+            between_the_backticks,
+        ]));
 
     let row_without_a_code_span_origin_row = wrap_row_of(&mut app, row_without_a_code_span);
     let between_the_backticks_origin_row = wrap_row_of(&mut app, between_the_backticks);
 
     press(&mut app, KeyCode::Down, Mods::NONE);
 
-    let all = app.active_doc_mut().cursors.all().to_vec();
+    let all = app.active_doc_mut().cursors().all().to_vec();
     assert_eq!(all.len(), 2, "both cursors must survive the move");
     let mut rows: Vec<usize> = all
         .iter()
@@ -210,7 +213,7 @@ fn shift_up_after_add_cursor_below_leaves_the_head_at_the_top() {
 
     press(&mut app, KeyCode::Down, alt_sup);
     assert_eq!(
-        app.active_doc_mut().cursors.all().len(),
+        app.active_doc_mut().cursors().all().len(),
         2,
         "AddCursorBelow must produce a second cursor"
     );
@@ -223,7 +226,7 @@ fn shift_up_after_add_cursor_below_leaves_the_head_at_the_top() {
     };
     press(&mut app, KeyCode::Up, shift);
 
-    let merged = app.active_doc_mut().cursors.primary();
+    let merged = app.active_doc_mut().cursors().primary();
     assert!(
         merged.has_selection(),
         "shift+Up must leave a selection behind"
@@ -240,7 +243,7 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
     let content = "0123456789\n";
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.active_doc_mut().focused = true;
-    app.active_doc_mut().cursors = CursorSet::new(0);
+    app.active_doc_mut().set_cursors(CursorSet::new(0));
     app.active_doc_mut()
         .viewport
         .set_size(80, tui_edit_common::HEIGHT - 1);
@@ -261,7 +264,7 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
         &mut effects2,
     );
 
-    let after = app.active_doc_mut().cursors.primary();
+    let after = app.active_doc_mut().cursors().primary();
     assert_eq!(
         after.position,
         BufferOffset(5),
@@ -411,7 +414,7 @@ fn down_from_the_end_of_a_wide_tables_last_row_lands_below_the_table() {
 
     press(&mut app, KeyCode::Down, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     assert!(
         line_of(&mut app, after.get()) > table_line,
         "Down from the end of the table's last row must leave the table, landed at {after:?}"
@@ -433,7 +436,7 @@ fn down_from_mid_column_of_a_wide_tables_last_row_lands_below_the_table() {
 
     press(&mut app, KeyCode::Down, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     assert!(
         line_of(&mut app, after.get()) > table_line,
         "Down from mid-column of the table's last row must leave the table, landed at {after:?}"
@@ -450,7 +453,7 @@ fn up_from_below_a_wide_table_lands_on_its_last_row() {
 
     press(&mut app, KeyCode::Up, Mods::NONE);
 
-    let after = app.active_doc_mut().cursors.primary().position;
+    let after = app.active_doc_mut().cursors().primary().position;
     assert_eq!(
         line_of(&mut app, after.get()),
         table_line,

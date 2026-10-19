@@ -64,7 +64,10 @@ fn scrolling_in_reading_view_moves_the_caret_with_the_view() {
         .buffer
         .line_start(5)
         .expect("line 5 exists in a 50-line fixture");
-    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
+    assert_eq!(
+        app.active_doc().cursors().primary().position.get(),
+        expected
+    );
 }
 
 #[test]
@@ -124,7 +127,7 @@ fn following_a_link_after_scrolling_targets_a_link_on_screen() {
     let section_a = content
         .find("## Section-A")
         .expect("fixture has a Section-A heading");
-    let landed = app.active_doc().cursors.primary().position.get();
+    let landed = app.active_doc().cursors().primary().position.get();
     assert_eq!(
         landed, section_b,
         "the on-screen link (link two) must be the one followed"
@@ -144,13 +147,13 @@ fn leaving_reading_view_does_not_move_the_caret() {
     for _ in 0..5 {
         send(&mut app, plain(KeyCode::Down));
     }
-    let caret_while_reading = app.active_doc().cursors.primary().position;
+    let caret_while_reading = app.active_doc().cursors().primary().position;
 
     send(&mut app, ctrl('P'));
 
     assert_eq!(app.active_doc().read_only, ReadOnly::No);
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors().primary().position,
         caret_while_reading,
         "leaving reading view must not move the caret"
     );

@@ -157,7 +157,7 @@ pub(crate) fn resume_from_store(
     };
     if let Some(d) = app.doc_mut(doc) {
         let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer.content(), target);
-        d.cursors = rune_core::cursor::CursorSet::new(clamped);
+        d.set_cursors(rune_core::cursor::CursorSet::new(clamped));
     }
     messages::info(app, format!("merge resumed — {unresolved} conflict(s)"));
 }

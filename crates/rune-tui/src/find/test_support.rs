@@ -140,7 +140,7 @@ pub(crate) fn find(app: &App) -> &FindState {
 }
 
 pub(crate) fn selection_start(app: &App) -> usize {
-    app.active_doc().cursors.primary().selection_start().get()
+    app.active_doc().cursors().primary().selection_start().get()
 }
 
 pub(crate) fn click(app: &mut App, column: u16, row: u16) {

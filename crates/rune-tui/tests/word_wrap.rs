@@ -152,7 +152,7 @@ fn vertical_moves_keep_the_visual_column_across_unwrapped_lines() {
 
     press(&mut app, KeyCode::Down, Mods::NONE);
 
-    let cursor = app.active_doc().cursors.primary();
+    let cursor = app.active_doc().cursors().primary();
     assert_eq!(cursor.position.get(), text.len() / 2 + 150);
     assert_eq!(cursor.desired_col, VisualCol(150));
     assert_eq!(caret_cells(&render_to_test_backend(&app)).len(), 1);
@@ -183,7 +183,7 @@ fn a_click_on_a_scrolled_line_lands_on_the_character_under_the_pointer() {
     );
 
     assert_eq!(
-        app.active_doc().cursors.primary().position.get(),
+        app.active_doc().cursors().primary().position.get(),
         text.len() - 1 - 4
     );
 }
@@ -263,7 +263,7 @@ fn toggling_wrap_after_a_wheel_scroll_leaves_the_caret_where_it_was_and_in_view(
 
     toggle_wrap(&mut app);
 
-    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
+    assert_eq!(app.active_doc().cursors().primary().position.get(), 0);
     assert_eq!(caret_cells(&render_to_test_backend(&app)).len(), 1);
 }
 

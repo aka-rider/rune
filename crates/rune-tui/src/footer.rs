@@ -129,7 +129,7 @@ pub fn position_text(app: &App) -> Option<String> {
         return None;
     }
     let doc = app.active_doc();
-    let offset = doc.cursors.primary().position.get();
+    let offset = doc.cursors().primary().position.get();
     let bp = doc.buffer.offset_to_line_col(offset);
     let line_text = match (doc.buffer.line_start(bp.line), doc.buffer.line_end(bp.line)) {
         (Some(start), Some(end)) => doc.buffer.slice(start, end).unwrap_or(""),

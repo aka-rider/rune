@@ -49,11 +49,11 @@ fn row_of(content: &str) -> Vec<Cell> {
 
 fn doc_selecting(content: &str, start: usize, end: usize) -> Document {
     let mut doc = Document::new(Buffer::new(content));
-    doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
+    doc.set_cursors(CursorSet::new_from_specs(&[CursorSpec {
         position: BufferOffset(end),
         anchor: BufferOffset(start),
         desired_col: VisualCol(0),
-    }]);
+    }]));
     doc
 }
 

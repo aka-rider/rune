@@ -17,7 +17,7 @@ pub(crate) fn strip_trailing_whitespace(app: &mut App, id: DocumentId) {
     if deletions.is_empty() {
         return;
     }
-    let cursors_before = doc.cursors.clone();
+    let cursors_before = doc.cursors().clone();
     let carried = cursors_before.all().to_vec();
     let infos = deletions
         .iter()

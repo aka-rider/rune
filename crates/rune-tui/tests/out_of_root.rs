@@ -60,7 +60,9 @@ fn app_with_content(mem: Arc<Mem>, content: &str) -> (App, DocumentId) {
     app.graphics.kitty = true;
     app.set_root(Path::new("/vault").to_path_buf());
     let end = content.len();
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(end);
+    app.doc_mut(id)
+        .expect("doc")
+        .set_cursors(CursorSet::new(end));
     app.sync_view();
     (app, id)
 }
@@ -146,7 +148,9 @@ fn a_relative_link_in_an_out_of_root_document_opens_its_target() {
     let before = app.documents.len();
 
     let offset = content.find("note.md").expect("fixture has link");
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(offset);
+    app.doc_mut(id)
+        .expect("doc")
+        .set_cursors(CursorSet::new(offset));
 
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(sup_enter()), &mut effects);

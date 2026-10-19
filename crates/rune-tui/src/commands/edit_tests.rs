@@ -8,7 +8,9 @@ use std::sync::Arc;
 fn app_with(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.doc_mut(id).unwrap().viewport.set_size(80, 23);
     app
 }
@@ -76,7 +78,7 @@ fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
         2,
         "fixture must really hold two adjacent cursors"
     );
-    app.doc_mut(id).unwrap().cursors = two;
+    app.doc_mut(id).unwrap().set_cursors(two);
 
     delete_right(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "cd");

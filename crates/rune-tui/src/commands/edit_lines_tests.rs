@@ -13,7 +13,9 @@ use std::sync::Arc;
 fn app_with(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.doc_mut(id).unwrap().viewport.set_size(80, 23);
     app
 }
@@ -50,7 +52,7 @@ fn the_selection_still_covers_the_same_lines_after_indent() {
     let id = app.active;
     selecting(&mut app, id, 0, 3);
     indent(&mut app, id);
-    let primary = app.doc(id).unwrap().cursors.primary();
+    let primary = app.doc(id).unwrap().cursors().primary();
     assert_eq!((primary.anchor.get(), primary.position.get()), (0, 5));
 }
 
@@ -60,7 +62,7 @@ fn indent_keeps_the_caret_column_when_there_is_no_selection() {
     let id = app.active;
     indent(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position.get(), 3);
+    assert_eq!(app.doc(id).unwrap().cursors().primary().position.get(), 3);
 }
 
 #[test]
@@ -78,7 +80,7 @@ fn outdent_puts_a_caret_inside_removed_indentation_at_the_line_start() {
     let id = app.active;
     outdent(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
-    assert_eq!(app.doc(id).unwrap().cursors.primary().position.get(), 0);
+    assert_eq!(app.doc(id).unwrap().cursors().primary().position.get(), 0);
 }
 
 #[test]
@@ -89,7 +91,7 @@ fn outdent_over_a_selection_with_no_indentation_is_a_no_op() {
     outdent(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb");
     assert_eq!(app.doc(id).unwrap().journal.len(), 0);
-    let primary = app.doc(id).unwrap().cursors.primary();
+    let primary = app.doc(id).unwrap().cursors().primary();
     assert_eq!((primary.anchor.get(), primary.position.get()), (0, 3));
 }
 
@@ -110,11 +112,11 @@ fn two_cursors_on_one_line_still_indent_it_once() {
     let mut app = app_with("ab", 0);
     let id = app.active;
     let doc = app.doc_mut(id).unwrap();
-    doc.cursors = doc.cursors.clone().add(CursorSpec {
+    doc.set_cursors(doc.cursors().clone().add(CursorSpec {
         position: BufferOffset(2),
         anchor: BufferOffset(2),
         desired_col: VisualCol(0),
-    });
+    }));
     indent(&mut app, id);
     assert_eq!(app.doc(id).unwrap().buffer.content(), "\tab");
 }
@@ -151,7 +153,7 @@ fn content(app: &App) -> String {
 fn carets(app: &App) -> Vec<usize> {
     app.doc(app.active)
         .unwrap()
-        .cursors
+        .cursors()
         .all()
         .iter()
         .map(|c| c.position.get())
@@ -341,7 +343,7 @@ fn a_clamped_landing_keeps_the_wanted_column_for_the_next_vertical_move() {
     let mut app = app_with("abcdef\nxy", 4);
     let id = app.active;
     delete_line(&mut app, id);
-    let landed = app.doc(id).unwrap().cursors.primary();
+    let landed = app.doc(id).unwrap().cursors().primary();
     assert_eq!(landed.position.get(), 2);
     assert_eq!(landed.desired_col, VisualCol(4));
 }
@@ -356,7 +358,7 @@ fn deleting_lines_is_one_undo_step_restoring_text_and_selection() {
     assert_eq!(app.doc(id).unwrap().journal.len(), 1);
     undo(&mut app, id);
     assert_eq!(content(&app), "a\nb\nc");
-    let primary = app.doc(id).unwrap().cursors.primary();
+    let primary = app.doc(id).unwrap().cursors().primary();
     assert_eq!((primary.anchor.get(), primary.position.get()), (0, 3));
 }
 

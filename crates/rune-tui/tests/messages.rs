@@ -195,7 +195,10 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
         .join("\n");
     let mut session = app_for(&content);
     let end = session.app().active_doc().buffer.len();
-    session.app_mut().active_doc_mut().cursors = CursorSet::new(end);
+    session
+        .app_mut()
+        .active_doc_mut()
+        .set_cursors(CursorSet::new(end));
     session.app_mut().sync_view();
 
     let mut effects = Effects::default();
@@ -207,7 +210,7 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
     let view = doc.view.as_ref().expect("synced view");
     let buffer_point = doc
         .buffer
-        .offset_to_line_col(doc.cursors.primary().position.get());
+        .offset_to_line_col(doc.cursors().primary().position.get());
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));
@@ -442,12 +445,12 @@ fn a_focused_pane_arms_nothing() {
 fn a_pane_with_a_selection_arms_nothing() {
     let mut session = app_for("hello");
     messages::info(session.app_mut(), "saved");
-    messages::doc_mut(session.app_mut()).cursors = CursorSet::new_from(&[Cursor {
+    messages::doc_mut(session.app_mut()).set_cursors(CursorSet::new_from(&[Cursor {
         position: BufferOffset(0),
         anchor: BufferOffset(3),
         desired_col: VisualCol(0),
         id: CursorId::FIRST,
-    }]);
+    }]));
 
     let mut effects = Effects::default();
     app::update(session.app_mut(), key(KeyCode::Right), &mut effects);

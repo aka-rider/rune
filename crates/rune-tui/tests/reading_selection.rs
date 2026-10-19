@@ -186,7 +186,7 @@ fn an_unfocused_read_only_document_paints_no_selection() {
     drag_select(&mut app, (3, 0), (10, 0));
     app.sync_view();
     assert!(
-        app.active_doc().cursors.primary().has_selection(),
+        app.active_doc().cursors().primary().has_selection(),
         "the drag must have produced a real selection to make this test meaningful"
     );
 

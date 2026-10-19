@@ -404,7 +404,7 @@ fn merge_active_arrow_chords_never_silently_scroll_or_swallow_input() {
         .content()
         .to_string();
     let scroll_before = session.app().doc(doc_id).unwrap().viewport.scroll_row;
-    let cursors_before = session.app().doc(doc_id).unwrap().cursors.len();
+    let cursors_before = session.app().doc(doc_id).unwrap().cursors().len();
 
     let alt_sup = Mods {
         shift: false,
@@ -431,7 +431,7 @@ fn merge_active_arrow_chords_never_silently_scroll_or_swallow_input() {
         "\u{2325}\u{2318}\u{2191} must not silently scroll the viewport"
     );
     assert!(
-        after_alt_up.cursors.len() > cursors_before,
+        after_alt_up.cursors().len() > cursors_before,
         "\u{2325}\u{2318}\u{2191} must fall through to a real, visible AddCursorAbove, not a swallowed no-op"
     );
 

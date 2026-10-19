@@ -234,12 +234,12 @@ pub(crate) fn move_cursors(
 ) {
     let view = doc.view();
     let new_cursors: Vec<Cursor> = doc
-        .cursors
+        .cursors()
         .all()
         .iter()
         .map(|&c| step(&view, &doc.buffer, c, extend))
         .collect();
-    doc.cursors = CursorSet::new_from(&new_cursors);
+    doc.set_cursors(CursorSet::new_from(&new_cursors));
 }
 
 pub fn char_left(doc: &mut Document, extend: Extend) {
@@ -281,11 +281,11 @@ pub fn match_bracket(doc: &mut Document, extend: Extend) {
 }
 
 pub fn select_all(doc: &mut Document) {
-    let mut c = doc.cursors.primary();
+    let mut c = doc.cursors().primary();
     c.position = BufferOffset(doc.buffer.len());
     c.anchor = BufferOffset(0);
     c.desired_col = VisualCol(0);
-    doc.cursors = CursorSet::new_from(&[c]);
+    doc.set_cursors(CursorSet::new_from(&[c]));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,14 +295,14 @@ pub enum EscapeOutcome {
 }
 
 pub fn escape(doc: &mut Document) -> EscapeOutcome {
-    if doc.cursors.is_multi() {
-        let primary = doc.cursors.primary();
-        doc.cursors = doc.cursors.collapse_to(primary);
+    if doc.cursors().is_multi() {
+        let primary = doc.cursors().primary();
+        doc.set_cursors(doc.cursors().collapse_to(primary));
         return EscapeOutcome::Collapsed;
     }
-    let primary = doc.cursors.primary();
+    let primary = doc.cursors().primary();
     if primary.has_selection() {
-        doc.cursors = CursorSet::new_from(&[primary.collapse_to_position()]);
+        doc.set_cursors(CursorSet::new_from(&[primary.collapse_to_position()]));
         return EscapeOutcome::Collapsed;
     }
     EscapeOutcome::Unconsumed
@@ -368,12 +368,12 @@ mod tests {
 
     fn doc_with(content: &str, anchor: usize, position: usize) -> Document {
         let mut doc = Document::new(Buffer::new(content));
-        doc.cursors = CursorSet::new_from(&[Cursor {
+        doc.set_cursors(CursorSet::new_from(&[Cursor {
             position: BufferOffset(position),
             anchor: BufferOffset(anchor),
             desired_col: VisualCol(0),
             id: CursorId::FIRST,
-        }]);
+        }]));
         doc.viewport.set_size(80, 23);
         doc
     }
@@ -382,27 +382,27 @@ mod tests {
     fn left_on_a_reversed_selection_collapses_to_its_low_edge() {
         let mut doc = doc_with("hello world", 5, 2);
         char_left(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, BufferOffset(2));
+        assert_eq!(doc.cursors().primary().position, BufferOffset(2));
     }
 
     #[test]
     fn left_on_a_forward_selection_collapses_to_its_low_edge() {
         let mut doc = doc_with("hello world", 2, 5);
         char_left(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, BufferOffset(2));
+        assert_eq!(doc.cursors().primary().position, BufferOffset(2));
     }
 
     #[test]
     fn right_on_a_reversed_selection_collapses_to_its_high_edge() {
         let mut doc = doc_with("hello world", 5, 0);
         char_right(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, BufferOffset(5));
+        assert_eq!(doc.cursors().primary().position, BufferOffset(5));
     }
 
     #[test]
     fn right_on_a_forward_selection_collapses_to_its_high_edge() {
         let mut doc = doc_with("hello world", 0, 5);
         char_right(&mut doc, Extend::No);
-        assert_eq!(doc.cursors.primary().position, BufferOffset(5));
+        assert_eq!(doc.cursors().primary().position, BufferOffset(5));
     }
 }

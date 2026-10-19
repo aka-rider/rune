@@ -244,7 +244,7 @@ fn a_click_the_tab_cap_refuses_to_promote_still_moves_the_caret_and_reports_the_
         "the editor pane owns the screen once it owns the focus"
     );
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors().primary().position,
         rune_core::coords::BufferOffset(3),
         "the click still lands the caret in the document it can reach"
     );

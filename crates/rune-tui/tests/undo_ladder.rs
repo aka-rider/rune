@@ -19,7 +19,9 @@ fn app_with_clock(content: &str) -> (App, Arc<ManualClock>) {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.clock = clock.clone();
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(content.len());
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(content.len()));
     app.doc_mut(id).unwrap().viewport.set_size(80, 23);
     (app, clock)
 }

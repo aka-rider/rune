@@ -221,7 +221,7 @@ fn take_theirs(app: &mut App) {
     };
     let right_start = line_offset(&right_doc.buffer, right_lines.start);
     let right_end = line_offset(&right_doc.buffer, right_lines.end);
-    let cursors_before = right_doc.cursors.clone();
+    let cursors_before = right_doc.cursors().clone();
     let edit = Edit {
         start: right_start,
         end: right_end,

@@ -91,7 +91,7 @@ fn hydrate_leaves_a_cursor_at_offset_zero_in_place() {
 fn hydrate_clamps_a_cursor_beyond_the_recovered_content() {
     let disk = "0123456789ABCDEF";
     let mut doc = Document::new(Buffer::new(disk));
-    doc.cursors = CursorSet::new(doc.buffer.len());
+    doc.set_cursors(CursorSet::new(doc.buffer.len()));
 
     doc.hydrate(disk, "01234567", &[]);
 
@@ -105,7 +105,7 @@ fn hydrate_clamps_a_cursor_beyond_the_recovered_content() {
 #[test]
 fn hydrate_lands_a_clamped_cursor_on_a_char_boundary() {
     let mut doc = Document::new(Buffer::new("aaaaaa"));
-    doc.cursors = CursorSet::new(3);
+    doc.set_cursors(CursorSet::new(3));
 
     doc.hydrate("aaaaaa", "\u{e9}\u{e9}\u{e9}\u{e9}", &[]);
 
@@ -134,7 +134,7 @@ fn test_cursor(position: usize, anchor: usize) -> Cursor {
 #[test]
 fn hydrate_installs_the_journaled_caret_over_the_existing_one() {
     let mut doc = Document::new(Buffer::new("on disk"));
-    doc.cursors = CursorSet::new(2);
+    doc.set_cursors(CursorSet::new(2));
 
     doc.hydrate("on disk", "recovered draft", &[test_cursor(9, 9)]);
 
@@ -165,7 +165,7 @@ fn hydrate_installs_every_journaled_caret() {
 #[test]
 fn hydrate_without_a_journaled_caret_keeps_the_existing_one() {
     let mut doc = Document::new(Buffer::new("on disk"));
-    doc.cursors = CursorSet::new(4);
+    doc.set_cursors(CursorSet::new(4));
 
     doc.hydrate("on disk", "recovered draft", &[]);
 
@@ -213,7 +213,7 @@ fn hydrate_snaps_a_journaled_caret_off_a_char_boundary() {
 #[test]
 fn hydrate_keeps_a_cursor_offset_within_the_recovered_content() {
     let mut doc = Document::new(Buffer::new("on disk"));
-    doc.cursors = CursorSet::new(3);
+    doc.set_cursors(CursorSet::new(3));
 
     doc.hydrate("on disk", "recovered draft", &[]);
 
@@ -230,7 +230,7 @@ fn undoing_a_hydration_restores_the_pre_hydration_cursors_and_content() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(4);
+    app.doc_mut(id).unwrap().set_cursors(CursorSet::new(4));
 
     let outcome = app
         .doc_mut(id)
@@ -351,4 +351,38 @@ fn a_document_that_has_been_edited_no_longer_accepts_history() {
     doc.hydrate("on disk", "recovered draft", &[]);
 
     assert!(!doc.accepts_history());
+}
+
+#[test]
+fn set_cursors_merges_cursors_that_snap_onto_one_offset() {
+    let mut doc = Document::new(Buffer::new("a\r\nb"));
+
+    doc.set_cursors(CursorSet::new_from_positions(&[2, 3]));
+
+    let positions: Vec<usize> = doc
+        .cursors()
+        .all()
+        .iter()
+        .map(|c| c.position.get())
+        .collect();
+    assert_eq!(positions, vec![3]);
+}
+
+#[test]
+fn set_cursors_keeps_a_selection_that_starts_inside_a_crlf_pair_around_the_pair() {
+    let mut doc = Document::new(Buffer::new("a\r\nbc"));
+
+    doc.set_cursors(CursorSet::new_from(&[test_cursor(4, 2)]));
+
+    let cursor = doc.cursors().primary();
+    assert_eq!((cursor.anchor.get(), cursor.position.get()), (1, 4));
+}
+
+#[test]
+fn hydrate_seats_a_journaled_caret_inside_a_crlf_pair_after_the_pair() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+
+    doc.hydrate("on disk", "a\r\nb", &[test_cursor(2, 2)]);
+
+    assert_eq!(doc.cursors().primary().position, BufferOffset(3));
 }

@@ -12,7 +12,7 @@ use crate::viewport::ScrollMode;
 use crate::workspace;
 
 pub fn follow(app: &mut App, effects: &mut Effects) {
-    let offset = app.active_doc().cursors.primary().position.get();
+    let offset = app.active_doc().cursors().primary().position.get();
     let Some(target) = link_target_at(&app.active_doc().catalogue, offset) else {
         return;
     };
@@ -71,7 +71,7 @@ fn follow_same_doc(app: &mut App, anchor: &Anchor) {
         return;
     };
     let doc = app.active_doc_mut();
-    doc.cursors = CursorSet::new(offset);
+    doc.set_cursors(CursorSet::new(offset));
     doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 
@@ -103,7 +103,7 @@ pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
     let Some(doc) = app.doc_mut(id) else {
         return;
     };
-    doc.cursors = CursorSet::new(offset);
+    doc.set_cursors(CursorSet::new(offset));
     doc.viewport.mode = ScrollMode::EnsureVisible;
 }
 

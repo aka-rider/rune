@@ -36,7 +36,10 @@ fn session_with_selection(content: &str, anchor: usize, position: usize) -> Sess
         anchor: BufferOffset(anchor),
         desired_col: VisualCol(0),
     };
-    session.app_mut().active_doc_mut().cursors = CursorSet::new_from_specs(&[spec]);
+    session
+        .app_mut()
+        .active_doc_mut()
+        .set_cursors(CursorSet::new_from_specs(&[spec]));
     session.app_mut().sync_view();
     session
 }

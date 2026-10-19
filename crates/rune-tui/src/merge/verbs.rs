@@ -56,7 +56,7 @@ fn position_status(session: &MergeSession, idx: usize) -> String {
 fn caret_to(app: &mut App, doc: DocumentId, byte: usize) {
     if let Some(d) = app.doc_mut(doc) {
         let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer.content(), byte);
-        d.cursors = CursorSet::new(clamped);
+        d.set_cursors(CursorSet::new(clamped));
     }
 }
 
@@ -122,7 +122,7 @@ fn replace_block(app: &mut App, doc: DocumentId, idx: usize, insert: String) -> 
     let Some(document) = app.doc(doc) else {
         return false;
     };
-    let cursors_before = document.cursors.clone();
+    let cursors_before = document.cursors().clone();
     let start = range.start;
     let edit = Edit {
         start: range.start,

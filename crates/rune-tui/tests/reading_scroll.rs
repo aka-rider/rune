@@ -175,7 +175,7 @@ fn shift_arrows_scroll_and_select_nothing_in_a_read_only_document() {
 
     assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(1));
     assert!(
-        !app.active_doc().cursors.primary().has_selection(),
+        !app.active_doc().cursors().primary().has_selection(),
         "keyboard selection does not exist in a read-only document"
     );
 }
@@ -220,14 +220,24 @@ fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
     );
     session.app_mut().sync_view();
     assert!(
-        session.app().active_doc().cursors.primary().has_selection(),
+        session
+            .app()
+            .active_doc()
+            .cursors()
+            .primary()
+            .has_selection(),
         "the drag must have produced a selection before scrolling"
     );
 
     send(session.app_mut(), plain(KeyCode::Down));
 
     assert!(
-        !session.app().active_doc().cursors.primary().has_selection(),
+        !session
+            .app()
+            .active_doc()
+            .cursors()
+            .primary()
+            .has_selection(),
         "a keyboard scroll now moves a real caret, so it must collapse a selection \
          exactly like an ordinary unshifted Down press does in an editable document"
     );
@@ -248,12 +258,12 @@ fn leaving_the_reading_view_does_not_move_the_caret() {
         "must actually have scrolled"
     );
     assert_eq!(app.active_doc().viewport.mode, ScrollMode::FollowCursor);
-    let caret_before_leaving = app.active_doc().cursors.primary().position;
+    let caret_before_leaving = app.active_doc().cursors().primary().position;
 
     send(&mut app, ctrl('P'));
     assert_eq!(app.active_doc().read_only, ReadOnly::No);
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors().primary().position,
         caret_before_leaving,
         "leaving reading view must not move the caret"
     );
@@ -287,7 +297,7 @@ fn match_bracket_in_reading_view_refuses_instead_of_moving_an_invisible_caret() 
     assert_eq!(app.active_doc().read_only, ReadOnly::Reading);
 
     let scroll_before = app.active_doc().viewport.scroll_row;
-    let caret_before = app.active_doc().cursors.primary().position;
+    let caret_before = app.active_doc().cursors().primary().position;
     assert_eq!(
         content.as_bytes()[caret_before.get()],
         b'(',
@@ -307,7 +317,7 @@ fn match_bracket_in_reading_view_refuses_instead_of_moving_an_invisible_caret() 
     app.sync_view();
 
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors().primary().position,
         caret_before,
         "⌘\\ must not move a caret the reader cannot see"
     );

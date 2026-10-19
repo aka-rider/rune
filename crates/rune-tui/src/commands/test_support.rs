@@ -8,12 +8,14 @@ use crate::app::App;
 use crate::document::DocumentId;
 
 pub(crate) fn selecting(app: &mut App, id: DocumentId, anchor: usize, position: usize) {
-    let primary = app.doc(id).unwrap().cursors.primary();
-    app.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[Cursor {
-        anchor: BufferOffset(anchor),
-        position: BufferOffset(position),
-        ..primary
-    }]);
+    let primary = app.doc(id).unwrap().cursors().primary();
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new_from(&[Cursor {
+            anchor: BufferOffset(anchor),
+            position: BufferOffset(position),
+            ..primary
+        }]));
 }
 
 pub(crate) fn cursors(app: &mut App, id: DocumentId, sel: &[(usize, usize)]) {
@@ -25,5 +27,7 @@ pub(crate) fn cursors(app: &mut App, id: DocumentId, sel: &[(usize, usize)]) {
             desired_col: VisualCol(0),
         })
         .collect();
-    app.doc_mut(id).unwrap().cursors = CursorSet::new_from_specs(&specs);
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new_from_specs(&specs));
 }

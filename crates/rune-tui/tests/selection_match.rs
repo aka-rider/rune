@@ -60,7 +60,7 @@ fn select_bytes(app: &mut App, start: usize, len: usize) {
     for _ in 0..len {
         key(app, KeyCode::Right, SHIFT);
     }
-    let cursor = app.active_doc().cursors.primary();
+    let cursor = app.active_doc().cursors().primary();
     let (from, to) = cursor.selection_range();
     assert_eq!(
         (from.get(), to.get()),
@@ -171,7 +171,7 @@ fn a_collapsed_cursor_hints_nothing() {
     for _ in 0..6 {
         key(&mut app, KeyCode::Right, Mods::NONE);
     }
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert!(!app.active_doc().cursors().primary().has_selection());
 
     let buf = render_to_test_backend(&app);
     assert!(
@@ -209,7 +209,7 @@ fn an_in_file_search_keeps_its_own_match_background() {
         "the selection seeds the query"
     );
     assert!(
-        app.active_doc().cursors.primary().has_selection(),
+        app.active_doc().cursors().primary().has_selection(),
         "the selection must outlive opening the find panel"
     );
 

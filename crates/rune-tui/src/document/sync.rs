@@ -125,7 +125,7 @@ impl Document {
             desired_col: primary.desired_col,
             id: primary.id,
         };
-        self.cursors = self.cursors.collapse_to(snapped);
+        self.set_cursors(self.cursors.collapse_to(snapped));
     }
 
     pub fn sync_without_caret(&mut self) -> ViewSnapshots {

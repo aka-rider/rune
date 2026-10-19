@@ -110,11 +110,11 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
         .expect("newline");
     {
         let doc = app.doc_mut(id).expect("doc");
-        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
+        doc.set_cursors(CursorSet::new_from_specs(&[CursorSpec {
             position: BufferOffset(end_of_line),
             anchor: BufferOffset(end_of_line),
             desired_col: VisualCol(0),
-        }]);
+        }]));
     }
     app.sync_view();
 
@@ -193,11 +193,11 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
     let image_line_start = content.find("![caption]").expect("image line");
     {
         let doc = app.doc_mut(id).expect("doc");
-        doc.cursors = CursorSet::new_from_specs(&[CursorSpec {
+        doc.set_cursors(CursorSet::new_from_specs(&[CursorSpec {
             position: BufferOffset(image_line_start + 2),
             anchor: BufferOffset(image_line_start + 2),
             desired_col: VisualCol(0),
-        }]);
+        }]));
     }
     let mut effects = Effects::default();
     update(&mut app, Msg::Resize(61, 20), &mut effects);
@@ -223,7 +223,7 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
         });
         let (new_buffer, _applied) = doc.buffer.apply_edits(&edits).expect("edit applies");
         doc.buffer = new_buffer;
-        doc.cursors = CursorSet::new(0);
+        doc.set_cursors(CursorSet::new(0));
     }
     // Reparse BEFORE the next `update` call: `sync_embeds` reads
     // `doc.doc.blocks()`, which only a `view()`/`sync_view()` call

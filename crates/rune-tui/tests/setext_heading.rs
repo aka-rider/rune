@@ -49,7 +49,9 @@ fn app_for(content: &str, cursor_offset: usize) -> App {
         "fixture relies on App::new's own unicode default, not env-driven selection"
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.doc_mut(id)
         .unwrap()
         .viewport

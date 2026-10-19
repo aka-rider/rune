@@ -76,7 +76,9 @@ fn app_with_content(content: &str, seed_paths: &[&str]) -> (App, DocumentId) {
     app.graphics.kitty = true;
     app.set_root(Path::new("/vault").to_path_buf());
     let end = content.len();
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(end);
+    app.doc_mut(id)
+        .expect("doc")
+        .set_cursors(CursorSet::new(end));
     app.sync_view();
     (app, id)
 }

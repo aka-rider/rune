@@ -18,7 +18,8 @@ pub const HEIGHT: u16 = 24;
 pub fn app_for(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.active_doc_mut().focused = true;
-    app.active_doc_mut().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     app
@@ -83,7 +84,8 @@ pub fn app_at_path(content: &str, path: &str, cursor_offset: usize) -> App {
             .expect("the launch path resolves");
     let mut app = App::new(Buffer::new(content), Some(launch), vfs, None);
     app.active_doc_mut().focused = true;
-    app.active_doc_mut().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     app
@@ -105,7 +107,8 @@ pub fn split_carets(marked: &str) -> (String, Vec<usize>) {
 pub fn with_carets(marked: &str) -> App {
     let (text, carets) = split_carets(marked);
     let mut app = app_for(&text, 0);
-    app.active_doc_mut().cursors = CursorSet::new_from_positions(&carets);
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new_from_positions(&carets));
     app.sync_view();
     app
 }
@@ -113,7 +116,8 @@ pub fn with_carets(marked: &str) -> App {
 pub fn with_carets_at(path: &str, marked: &str) -> App {
     let (text, carets) = split_carets(marked);
     let mut app = app_at_path(&text, path, 0);
-    app.active_doc_mut().cursors = CursorSet::new_from_positions(&carets);
+    app.active_doc_mut()
+        .set_cursors(CursorSet::new_from_positions(&carets));
     app.sync_view();
     app
 }
@@ -121,7 +125,12 @@ pub fn with_carets_at(path: &str, marked: &str) -> App {
 pub fn marked(app: &mut App) -> String {
     let doc = app.active_doc_mut();
     let mut text = doc.buffer.content().to_string();
-    let mut carets: Vec<usize> = doc.cursors.all().iter().map(|c| c.position.get()).collect();
+    let mut carets: Vec<usize> = doc
+        .cursors()
+        .all()
+        .iter()
+        .map(|c| c.position.get())
+        .collect();
     carets.sort_unstable_by(|a, b| b.cmp(a));
     for at in carets {
         text.insert(at, '|');

@@ -59,8 +59,11 @@ fn click_modified(app: &mut App, kind: MouseKind, col: u16, row: u16, modifiers:
 fn plain_click_positions_the_caret() {
     let mut app = app_with("hello world\n", 40, 10);
     click(&mut app, MouseKind::Down(MouseButton::Left), 6, 0);
-    assert_eq!(app.active_doc().cursors.primary().position, BufferOffset(6));
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert_eq!(
+        app.active_doc().cursors().primary().position,
+        BufferOffset(6)
+    );
+    assert!(!app.active_doc().cursors().primary().has_selection());
 }
 
 #[test]
@@ -68,7 +71,7 @@ fn double_click_selects_the_word() {
     let mut app = app_with("hello world\n", 40, 10);
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 0);
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 0);
-    let c = app.active_doc().cursors.primary();
+    let c = app.active_doc().cursors().primary();
     assert_eq!(c.selection_range(), (BufferOffset(0), BufferOffset(5))); // "hello"
 }
 
@@ -83,7 +86,7 @@ fn triple_click_on_a_wrapped_line_selects_the_whole_logical_line() {
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 1);
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 1);
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 1);
-    let c = app.active_doc().cursors.primary();
+    let c = app.active_doc().cursors().primary();
     let expected_end = "aaaaaaaaaa bbbbbbbbbb cccccccccc\n".len();
     assert_eq!(
         c.selection_range(),
@@ -95,10 +98,10 @@ fn triple_click_on_a_wrapped_line_selects_the_whole_logical_line() {
 fn wheel_scrolls_three_rows_without_moving_the_cursor() {
     let content: String = (0..50).map(|i| format!("line {i}\n")).collect();
     let mut app = app_with(&content, 40, 10);
-    let cursor_before = app.active_doc().cursors.primary().position;
+    let cursor_before = app.active_doc().cursors().primary().position;
     click(&mut app, MouseKind::ScrollDown, 0, 0);
     assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(3));
-    assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    assert_eq!(app.active_doc().cursors().primary().position, cursor_before);
 }
 
 #[test]
@@ -107,7 +110,7 @@ fn drag_after_a_plain_click_extends_the_selection() {
     let mut app = app_with(&content, 40, 10);
     click(&mut app, MouseKind::Down(MouseButton::Left), 0, 0);
     click(&mut app, MouseKind::Drag(MouseButton::Left), 4, 2);
-    let c = app.active_doc().cursors.primary();
+    let c = app.active_doc().cursors().primary();
     assert!(c.has_selection());
     assert_eq!(c.selection_start(), BufferOffset(0));
 }
@@ -126,7 +129,7 @@ fn alt_click_adds_a_cursor_without_disturbing_the_first() {
             ..Modifiers::default()
         },
     );
-    assert!(app.active_doc().cursors.is_multi());
+    assert!(app.active_doc().cursors().is_multi());
 }
 
 #[test]
@@ -143,17 +146,17 @@ fn shift_click_extends_the_selection() {
             ..Modifiers::default()
         },
     );
-    let c = app.active_doc().cursors.primary();
+    let c = app.active_doc().cursors().primary();
     assert_eq!(c.selection_range(), (BufferOffset(0), BufferOffset(5)));
 }
 
 #[test]
 fn click_outside_the_editor_rect_is_ignored() {
     let mut app = app_with("hello\n", 40, 10);
-    let cursor_before = app.active_doc().cursors.primary().position;
+    let cursor_before = app.active_doc().cursors().primary().position;
     // Row far below the editor's visible area.
     click(&mut app, MouseKind::Down(MouseButton::Left), 0, 200);
-    assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    assert_eq!(app.active_doc().cursors().primary().position, cursor_before);
 }
 
 /// A click on a synthesised table border row must be a
@@ -176,18 +179,20 @@ fn click_on_a_synthetic_table_border_row_does_not_move_the_cursor() {
     app.frame = Some(crate::app::FrameSize::new(40, 21)); // + footer row
     let cursor_offset = content.find("tail").expect("fixture has a tail paragraph");
     let id = app.active;
-    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset);
+    app.doc_mut(id)
+        .unwrap()
+        .set_cursors(CursorSet::new(cursor_offset));
     app.sync_view();
-    let cursor_before = app.active_doc().cursors.primary().position;
+    let cursor_before = app.active_doc().cursors().primary().position;
 
     click(&mut app, MouseKind::Down(MouseButton::Left), 2, 0);
 
     assert_eq!(
-        app.active_doc().cursors.primary().position,
+        app.active_doc().cursors().primary().position,
         cursor_before,
         "a click on the synthesised top border must not move the caret"
     );
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert!(!app.active_doc().cursors().primary().has_selection());
 }
 
 /// `Geometry::pane_at` deliberately classifies every `diff_left` column as
@@ -211,7 +216,7 @@ fn drag_that_wanders_into_the_diff_left_pane_is_a_no_op() {
     app.sync_view();
 
     click(&mut app, MouseKind::Down(MouseButton::Left), 5, 0);
-    let cursor_before = app.active_doc().cursors.primary();
+    let cursor_before = app.active_doc().cursors().primary();
 
     let area = app.frame_area();
     let geo = crate::layout::geometry(area, &app);
@@ -238,7 +243,7 @@ fn drag_that_wanders_into_the_diff_left_pane_is_a_no_op() {
         &mut effects,
     );
 
-    let cursor_after = app.active_doc().cursors.primary();
+    let cursor_after = app.active_doc().cursors().primary();
     assert_eq!(
         cursor_after, cursor_before,
         "a drag into diff_left must not move or resize the selection"
@@ -250,19 +255,19 @@ fn drag_that_wanders_into_the_diff_left_pane_is_a_no_op() {
 fn place_click_cursor_and_extend_drag_cursor_are_document_agnostic() {
     let mut doc = crate::document::Document::new(Buffer::new("hello world\n"));
     assert!(place_click_cursor(&mut doc, 6, 6, 1));
-    assert_eq!(doc.cursors.primary().position, BufferOffset(6));
+    assert_eq!(doc.cursors().primary().position, BufferOffset(6));
     assert!(!place_click_cursor(&mut doc, 6, 6, 2));
     assert_eq!(
-        doc.cursors.primary().selection_range(),
+        doc.cursors().primary().selection_range(),
         (BufferOffset(6), BufferOffset(11))
     );
     assert!(!place_click_cursor(&mut doc, 6, 6, 3));
     assert_eq!(
-        doc.cursors.primary().selection_range(),
+        doc.cursors().primary().selection_range(),
         (BufferOffset(0), BufferOffset(12))
     );
     extend_drag_cursor(&mut doc, 0, 5, 5);
-    let c = doc.cursors.primary();
+    let c = doc.cursors().primary();
     assert_eq!((c.anchor, c.position), (BufferOffset(0), BufferOffset(5)));
 }
 

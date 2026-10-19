@@ -309,3 +309,18 @@ fn the_footer_inside_the_panel_lists_only_panel_keys() {
     let text = crate::footer::footer_text(&app);
     assert!(text.contains("\u{23ce} next match"), "{text:?}");
 }
+
+#[test]
+fn a_match_ending_in_a_cr_selects_the_whole_crlf_pair() {
+    let mut app = app_with("a\r\nb");
+    open_find(&mut app);
+    press(&mut app, key(KeyCode::Char('r'), ALT));
+    type_str(&mut app, "a.");
+
+    assert_eq!(find(&app).matches, vec![0..2]);
+    let cursor = app.active_doc().cursors().primary();
+    assert_eq!(
+        (cursor.selection_start().get(), cursor.selection_end().get()),
+        (0, 3)
+    );
+}

@@ -441,7 +441,7 @@ fn a_lost_button_up_does_not_latch_the_pointer_forever() {
 fn a_drag_that_leaves_the_frame_entirely_neither_panics_nor_moves_the_caret() {
     let mut app = app_for(100, 30);
     let splitter = geo(&app).left_splitter.expect("column is shown");
-    let cursor_before = app.active_doc().cursors.primary().position;
+    let cursor_before = app.active_doc().cursors().primary().position;
 
     send(
         &mut app,
@@ -462,5 +462,5 @@ fn a_drag_that_leaves_the_frame_entirely_neither_panics_nor_moves_the_caret() {
         u16::MAX,
     );
 
-    assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    assert_eq!(app.active_doc().cursors().primary().position, cursor_before);
 }

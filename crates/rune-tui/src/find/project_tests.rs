@@ -182,7 +182,8 @@ fn alt_f_turns_the_this_file_chip_on_keeps_the_query_and_selects_the_first_in_fi
         "one needle two needle",
         rune_core::undo::EditKind::Other,
     );
-    app.active_doc_mut().cursors = rune_core::cursor::CursorSet::new(0);
+    app.active_doc_mut()
+        .set_cursors(rune_core::cursor::CursorSet::new(0));
     let mut effects = Effects::default();
     search_project(&mut app, "needle", &mut effects);
     assert_eq!(

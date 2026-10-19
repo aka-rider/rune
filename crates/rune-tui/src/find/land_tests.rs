@@ -62,7 +62,7 @@ fn read_requested(effects: &Effects) -> bool {
 
 fn place_origin(app: &mut App, offset: usize, scroll: usize) {
     let doc = app.active_doc_mut();
-    doc.cursors = CursorSet::new(offset);
+    doc.set_cursors(CursorSet::new(offset));
     doc.viewport.scroll_row = DisplayRow(scroll);
     doc.viewport.mode = ScrollMode::Independent;
     app.sync_view();
@@ -108,7 +108,7 @@ fn a_hit_in_the_active_document_wins_over_a_file_with_more_hits() {
 
     assert_eq!(app.active, a);
     assert_eq!(selection_start(&app), 2, "the hit is selected in place");
-    assert!(app.active_doc().cursors.primary().has_selection());
+    assert!(app.active_doc().cursors().primary().has_selection());
     assert!(app.explorer.preview.is_none());
     assert!(!read_requested(&effects), "no preview was requested");
     let hits = &project(&app).results;
@@ -153,7 +153,7 @@ fn an_active_document_hit_before_the_cursor_yields_to_the_first_file() {
     assert_eq!(app.active, a);
     assert_eq!(previewed(&app), Some(PathBuf::from("/root/big.md")));
     assert_eq!(selection_start(&app), 6, "the origin cursor was restored");
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert!(!app.active_doc().cursors().primary().has_selection());
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn escape_discards_the_preview_and_restores_the_origin_document_cursor_and_scrol
     let mut effects = Effects::default();
     let origin = open_real(&mut app, "/root/origin.md", &mut effects);
     place_origin(&mut app, 100, 30);
-    let cursors = app.active_doc().cursors.clone();
+    let cursors = app.active_doc().cursors().clone();
     let scroll = app.active_doc().viewport.scroll_row;
     assert!(scroll.0 > 0, "test setup: the origin is scrolled");
     let mut effects = workspace_find(&mut app);
@@ -221,7 +221,7 @@ fn escape_discards_the_preview_and_restores_the_origin_document_cursor_and_scrol
     assert!(app.explorer.preview.is_none());
     assert!(app.explorer.preview_awaiting.is_none());
     assert_eq!(app.active, origin);
-    assert_eq!(app.active_doc().cursors, cursors);
+    assert_eq!(*app.active_doc().cursors(), cursors);
     assert_eq!(app.active_doc().viewport.scroll_row, scroll);
 }
 
@@ -235,7 +235,7 @@ fn escape_from_a_hit_shown_in_another_open_tab_returns_to_the_origin_cursor_and_
     open_real(&mut app, "/root/deep.md", &mut effects);
     let origin = open_real(&mut app, "/root/origin.md", &mut effects);
     place_origin(&mut app, 100, 30);
-    let cursors = app.active_doc().cursors.clone();
+    let cursors = app.active_doc().cursors().clone();
     let scroll = app.active_doc().viewport.scroll_row;
     let mut effects = workspace_find(&mut app);
     query_and_reply(&mut app, "needle", &mut effects);
@@ -245,7 +245,7 @@ fn escape_from_a_hit_shown_in_another_open_tab_returns_to_the_origin_cursor_and_
     app.sync_view();
 
     assert_eq!(app.active, origin);
-    assert_eq!(app.active_doc().cursors, cursors);
+    assert_eq!(*app.active_doc().cursors(), cursors);
     assert_eq!(app.active_doc().viewport.scroll_row, scroll);
 }
 
@@ -441,6 +441,6 @@ fn a_one_char_query_with_no_hit_in_the_active_document_leaves_the_origin_alone()
     fire_debounce(&mut app, &mut effects);
 
     assert_eq!(selection_start(&app), 2);
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert!(!app.active_doc().cursors().primary().has_selection());
     assert!(app.explorer.preview.is_none());
 }

@@ -235,13 +235,13 @@ fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
     let mut app = app_with("ab");
     let id = app.active;
     let doc = app.doc_mut(id).expect("fixture doc must exist");
-    doc.cursors = CursorSet::new(1).add(CursorSpec {
+    doc.set_cursors(CursorSet::new(1).add(CursorSpec {
         position: BufferOffset(2),
         anchor: BufferOffset(2),
         desired_col: VisualCol(0),
-    });
+    }));
     assert_eq!(
-        doc.cursors.len(),
+        doc.cursors().len(),
         2,
         "fixture must hold two cursors, one rune apart, for merge() to legitimately leave separate"
     );
@@ -311,7 +311,7 @@ fn zero_width_edit_batch_on_an_empty_last_line_does_not_journal_or_dirty() {
     let mut app = app_with("a\n");
     let id = app.active;
     let doc = app.doc_mut(id).expect("doc");
-    doc.cursors = CursorSet::new(2);
+    doc.set_cursors(CursorSet::new(2));
     let version_before = app.doc(id).expect("doc").buffer.version();
     let journal_len_before = app.doc(id).expect("doc").journal.len();
     assert!(!app.doc(id).expect("doc").is_dirty());
@@ -345,7 +345,7 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
     let mut app = app_with("ab");
     let id = app.active;
     let version_before = app.doc(id).expect("doc").buffer.version();
-    let cursors_before = app.doc(id).expect("doc").cursors.clone();
+    let cursors_before = app.doc(id).expect("doc").cursors().clone();
 
     let infos = vec![
         (
@@ -384,7 +384,7 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
 fn genuinely_conflicting_overlapping_edits_refuse_with_a_visible_message() {
     let mut app = app_with("hello world");
     let id = app.active;
-    let cursors_before = app.doc(id).expect("doc").cursors.clone();
+    let cursors_before = app.doc(id).expect("doc").cursors().clone();
     let version_before = app.doc(id).expect("doc").buffer.version();
 
     let infos = vec![
@@ -429,18 +429,18 @@ fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
     let mut app = app_with("ab");
     let id = app.active;
     let doc = app.doc_mut(id).expect("doc");
-    doc.cursors = CursorSet::new(1).add(CursorSpec {
+    doc.set_cursors(CursorSet::new(1).add(CursorSpec {
         position: BufferOffset(2),
         anchor: BufferOffset(2),
         desired_col: VisualCol(0),
-    });
-    assert_eq!(doc.cursors.len(), 2, "fixture must hold two cursors");
+    }));
+    assert_eq!(doc.cursors().len(), 2, "fixture must hold two cursors");
 
     edit::delete_left(&mut app, id);
 
     let doc = app.doc(id).expect("doc");
     assert_eq!(doc.buffer.content(), "");
-    let cursors = doc.cursors.all();
+    let cursors = doc.cursors().all();
     assert_eq!(
         cursors.len(),
         1,
@@ -492,7 +492,7 @@ fn the_cursor_hook_sees_the_buffer_as_it_reads_after_the_edits() {
     let mut app = app_with("ab\ncd");
     let id = app.active;
     crate::commands::test_support::cursors(&mut app, id, &[(0, 0), (3, 3)]);
-    let cursors_before = app.doc(id).expect("doc").cursors.clone();
+    let cursors_before = app.doc(id).expect("doc").cursors().clone();
     let infos = vec![
         (
             Edit {
@@ -533,5 +533,5 @@ fn the_cursor_hook_sees_the_buffer_as_it_reads_after_the_edits() {
 
     assert!(applied);
     let doc = app.doc(id).expect("doc");
-    assert_eq!(doc.cursors.primary().position, BufferOffset(7));
+    assert_eq!(doc.cursors().primary().position, BufferOffset(7));
 }

@@ -14,7 +14,7 @@ pub(super) fn apply_selection_matches(rows: &mut [Vec<Cell>], doc: &Document, th
     if !doc.shows_selection() {
         return;
     }
-    let primary = doc.cursors.primary();
+    let primary = doc.cursors().primary();
     if !primary.has_selection() {
         return;
     }
@@ -34,7 +34,7 @@ pub(super) fn apply_selection_matches(rows: &mut [Vec<Cell>], doc: &Document, th
 
     let needle_is_word = word_range_at(&doc.buffer, start) == (start, end);
     let selections: Vec<(usize, usize)> = doc
-        .cursors
+        .cursors()
         .all()
         .iter()
         .filter(|cursor| cursor.has_selection())

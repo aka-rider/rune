@@ -178,7 +178,7 @@ fn a_journaled_caret_outside_the_recovered_content_is_clamped() {
     );
 
     assert!(matches!(outcome, rune_tui::document::Hydration::Adopted));
-    let cursor = app.doc(id).expect("active doc").cursors.primary();
+    let cursor = app.doc(id).expect("active doc").cursors().primary();
     assert_eq!(cursor.position, BufferOffset(10));
     assert_eq!(cursor.anchor, BufferOffset(2));
 }

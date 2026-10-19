@@ -61,11 +61,11 @@ fn add_cursor_above_is_not_swallowed_during_an_active_merge() {
     assert!(session.key(bare(KeyCode::Down)).is_none());
     assert!(session.key(bare(KeyCode::Down)).is_none());
 
-    let cursors_before = session.app().doc(doc_id).unwrap().cursors.len();
+    let cursors_before = session.app().doc(doc_id).unwrap().cursors().len();
 
     assert!(session.key(chord(KeyCode::Up, ALT_SUP)).is_none());
 
-    let cursors_after = session.app().doc(doc_id).unwrap().cursors.len();
+    let cursors_after = session.app().doc(doc_id).unwrap().cursors().len();
     assert!(
         cursors_after > cursors_before,
         "AddCursorAbove during an active merge must add a cursor, not be swallowed silently: before={cursors_before} after={cursors_after}"

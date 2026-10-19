@@ -122,7 +122,7 @@ fn a_hit_in_the_active_document_selects_its_first_match_on_arrival() {
     assert_eq!(selection_start(&app), first_match);
     assert_eq!(find(&app).current, Some(0));
     assert!(
-        app.active_doc().cursors.primary().has_selection(),
+        app.active_doc().cursors().primary().has_selection(),
         "the first match is selected like a This-file follow"
     );
 }
@@ -134,7 +134,7 @@ fn a_hit_in_an_open_but_inactive_document_switches_to_it_and_centers_without_mov
     let hit_doc =
         crate::workspace::open_path_checked(&mut app, Path::new("/root/deep.md"), &mut effects)
             .expect("open the file for real");
-    let cursor_before = app.doc(hit_doc).unwrap().cursors.primary().position.get();
+    let cursor_before = app.doc(hit_doc).unwrap().cursors().primary().position.get();
     let origin = app.open_document(Buffer::new("origin"));
     crate::workspace::switch_to(&mut app, origin);
 
@@ -151,7 +151,7 @@ fn a_hit_in_an_open_but_inactive_document_switches_to_it_and_centers_without_mov
         expected_row.saturating_sub(h / 2)
     );
     assert_eq!(
-        app.doc(hit_doc).unwrap().cursors.primary().position.get(),
+        app.doc(hit_doc).unwrap().cursors().primary().position.get(),
         cursor_before,
         "centering another tab must never move its cursor"
     );

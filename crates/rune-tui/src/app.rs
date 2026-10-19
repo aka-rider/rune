@@ -341,7 +341,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let frame_width_before = app.frame_width();
     let focus_before = app.focus();
     let nav_index_before = app.nav_history.index();
-    let nav_caret_before = app.active_doc().cursors.primary().position.get();
+    let nav_caret_before = app.active_doc().cursors().primary().position.get();
     dispatch::update_inner(app, msg, effects);
     let journal_pos_after = app.doc(active_before).map(|doc| doc.journal.pos());
     if journal_pos_after.is_some_and(|pos| pos != journal_pos_before) {

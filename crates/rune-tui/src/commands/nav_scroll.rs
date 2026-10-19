@@ -95,13 +95,13 @@ pub(crate) fn page_step(doc: &Document) -> isize {
 /// pass's result stands.
 fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
     let view = doc.view();
-    let original: Vec<Cursor> = doc.cursors.all().to_vec();
+    let original: Vec<Cursor> = doc.cursors().all().to_vec();
 
     let first_pass: Vec<Cursor> = original
         .iter()
         .map(|&c| move_row(&view, &doc.buffer, c, delta, extend))
         .collect();
-    doc.cursors = CursorSet::new_from(&first_pass);
+    doc.set_cursors(CursorSet::new_from(&first_pass));
 
     let settled = doc.view();
     let final_pass: Vec<Cursor> = original
@@ -115,7 +115,7 @@ fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
             }
         })
         .collect();
-    doc.cursors = CursorSet::new_from(&final_pass);
+    doc.set_cursors(CursorSet::new_from(&final_pass));
 }
 
 pub fn line_up(doc: &mut Document, extend: Extend) {
@@ -137,7 +137,7 @@ pub fn page_down(doc: &mut Document, extend: Extend) {
 }
 
 fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
-    let primary = doc.cursors.primary();
+    let primary = doc.cursors().primary();
     let bp = doc.buffer.offset_to_line_col(primary.position.get());
     let sp = view.syntax.buffer_to_syntax(bp);
     WrapRow(view.wrap.syntax_to_wrap(sp).row)
@@ -258,18 +258,18 @@ mod tests {
         let mut doc = Document::new(Buffer::new(content));
         doc.viewport.set_size(80, height);
         doc.viewport.scrolloff = 0;
-        doc.cursors = CursorSet::new(0);
+        doc.set_cursors(CursorSet::new(0));
         doc
     }
 
     #[test]
     fn scroll_line_down_moves_viewport_not_cursor() {
         let mut doc = doc_with_lines(100, 10);
-        let cursor_before = doc.cursors.primary().position;
+        let cursor_before = doc.cursors().primary().position;
         scroll_line_down(&mut doc);
         assert_eq!(doc.viewport.scroll_row, DisplayRow(1));
         assert_eq!(doc.viewport.mode, ScrollMode::Independent);
-        assert_eq!(doc.cursors.primary().position, cursor_before);
+        assert_eq!(doc.cursors().primary().position, cursor_before);
     }
 
     #[test]
@@ -293,7 +293,7 @@ mod tests {
             .buffer
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
-        doc.cursors = CursorSet::new(offset);
+        doc.set_cursors(CursorSet::new(offset));
         centre_cursor(&mut doc);
         assert_eq!(doc.viewport.scroll_row, DisplayRow(40));
     }
@@ -305,7 +305,7 @@ mod tests {
             .buffer
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
-        doc.cursors = CursorSet::new(offset);
+        doc.set_cursors(CursorSet::new(offset));
         cursor_to_top(&mut doc);
         assert_eq!(doc.viewport.scroll_row, DisplayRow(50));
     }
@@ -317,7 +317,7 @@ mod tests {
             .buffer
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
-        doc.cursors = CursorSet::new(offset);
+        doc.set_cursors(CursorSet::new(offset));
         cursor_to_bottom(&mut doc);
         assert_eq!(doc.viewport.scroll_row, DisplayRow(50 - 19));
     }

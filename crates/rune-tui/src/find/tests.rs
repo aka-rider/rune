@@ -107,7 +107,7 @@ fn a_typo_restores_the_origin_cursor_and_reads_no_matches() {
 
     type_str(&mut app, "x");
     assert_eq!(selection_start(&app), 0);
-    assert!(!app.active_doc().cursors.primary().has_selection());
+    assert!(!app.active_doc().cursors().primary().has_selection());
     assert!(readout_row(&mut app).contains("no matches"));
     assert!(app.find().is_some(), "the panel stays open on a miss");
 }

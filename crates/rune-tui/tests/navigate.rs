@@ -59,7 +59,7 @@ fn app_with(mem: &Arc<Mem>, path: &str, content: &str) -> App {
 }
 
 fn place_cursor(app: &mut App, offset: usize) {
-    app.active_doc_mut().cursors = CursorSet::new(offset);
+    app.active_doc_mut().set_cursors(CursorSet::new(offset));
 }
 
 fn sup_enter() -> KeyInput {
@@ -227,7 +227,7 @@ fn ctrl_click_follows_a_link_while_a_plain_double_click_still_selects_a_word() {
     app.active = original;
     click(&mut app, 1, 0, false);
     click(&mut app, 1, 0, false);
-    let c = app.active_doc().cursors.primary();
+    let c = app.active_doc().cursors().primary();
     assert_eq!(
         c.selection_range(),
         (BufferOffset(0), BufferOffset(5)),
@@ -250,7 +250,10 @@ fn wikilink_with_anchor_lands_the_caret_on_the_headings_byte_offset() {
     press_and_open(&mut app, sup_enter());
 
     assert_eq!(app.active_doc().path(), Some(Path::new("/root/note.md")));
-    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
+    assert_eq!(
+        app.active_doc().cursors().primary().position.get(),
+        expected
+    );
 }
 
 #[test]
@@ -269,7 +272,10 @@ fn hash_link_jumps_within_the_same_document() {
         before,
         "must stay in the same document"
     );
-    assert_eq!(app.active_doc().cursors.primary().position.get(), expected);
+    assert_eq!(
+        app.active_doc().cursors().primary().position.get(),
+        expected
+    );
 }
 
 #[test]

@@ -57,13 +57,13 @@ fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
 
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let text = extract_copy_text(&doc.buffer, &doc.cursors);
+    let text = extract_copy_text(&doc.buffer, doc.cursors());
     write_to_clipboard_or_report(app, &text, effects);
 }
 
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let text = extract_copy_text(&doc.buffer, &doc.cursors);
+    let text = extract_copy_text(&doc.buffer, doc.cursors());
     write_to_clipboard_or_report(app, &text, effects);
     edit::delete_selection_or_line(app, id);
 }
@@ -76,7 +76,7 @@ pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     if text.is_empty() {
         return;
     }
-    if app.doc(id).is_none_or(|doc| doc.cursors.is_empty()) {
+    if app.doc(id).is_none_or(|doc| doc.cursors().is_empty()) {
         return;
     }
     edit::insert_text(app, id, text, rune_core::undo::EditKind::Paste);
@@ -119,7 +119,9 @@ mod tests {
     fn app_with(content: &str, cursor_offset: usize) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         let id = app.active;
-        app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+        app.doc_mut(id)
+            .unwrap()
+            .set_cursors(CursorSet::new(cursor_offset.min(content.len())));
         app.doc_mut(id).unwrap().viewport.set_size(80, 23);
         app
     }
@@ -287,7 +289,7 @@ mod tests {
 
         assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
         assert_eq!(
-            app.doc(id).unwrap().cursors.primary().position,
+            app.doc(id).unwrap().cursors().primary().position,
             rune_core::coords::BufferOffset(2)
         );
         assert_eq!(app.doc(id).unwrap().journal.len(), 1);
@@ -322,8 +324,13 @@ mod tests {
             "Msg::Paste and Msg::ClipboardRead must produce identical results"
         );
         assert_eq!(
-            paste_app.doc(paste_id).unwrap().cursors.primary().position,
-            read_app.doc(read_id).unwrap().cursors.primary().position
+            paste_app
+                .doc(paste_id)
+                .unwrap()
+                .cursors()
+                .primary()
+                .position,
+            read_app.doc(read_id).unwrap().cursors().primary().position
         );
         assert_eq!(
             paste_app.doc(paste_id).unwrap().journal.len(),

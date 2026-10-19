@@ -56,7 +56,9 @@ pub fn app_with_embed(content: &str) -> (App, DocumentId) {
     // genuinely Rendered, spawnable embed; a test that specifically wants
     // the caret ON the image moves it there itself, afterwards.
     let end = content.len();
-    app.doc_mut(id).expect("doc").cursors = CursorSet::new(end);
+    app.doc_mut(id)
+        .expect("doc")
+        .set_cursors(CursorSet::new(end));
     app.sync_view();
     (app, id)
 }

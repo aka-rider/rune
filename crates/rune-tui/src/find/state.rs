@@ -95,7 +95,7 @@ impl Origin {
         let doc = app.active_doc();
         Origin {
             doc: app.active,
-            cursors: doc.cursors.clone(),
+            cursors: doc.cursors().clone(),
             scroll_row: doc.viewport.scroll_row,
             buffer_version: doc.buffer.version(),
         }

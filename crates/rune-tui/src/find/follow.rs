@@ -77,7 +77,7 @@ pub(crate) fn advance(app: &mut App, forward: bool) {
     let options = state.options;
     let match_count = state.matches.len();
     let concealed = current_concealed(app);
-    let cursor = app.active_doc().cursors.primary().selection_start().get();
+    let cursor = app.active_doc().cursors().primary().selection_start().get();
     let found = step_index(&state.matches, cursor, forward, |m| {
         is_concealed(&concealed, m)
     })
@@ -100,7 +100,7 @@ pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
         .map(|matcher| matcher.hits(app.active_doc().buffer.content()))
         .unwrap_or_default();
     let concealed = current_concealed(app);
-    let cursor = app.active_doc().cursors.primary().selection_start().get();
+    let cursor = app.active_doc().cursors().primary().selection_start().get();
     let found = step_index(&matches, cursor, forward, |m| is_concealed(&concealed, m))
         .and_then(|idx| matches.get(idx).cloned());
     match found {
