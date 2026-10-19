@@ -82,82 +82,67 @@ pub fn with_retry<T>(
     conn: &mut Connection,
     mut op: impl FnMut(&Transaction) -> Result<T, Error>,
 ) -> Result<T, Error> {
-    let mut restart_attempts = 0u32;
-    let mut backoff_attempts = 0u32;
-
-    loop {
-        let tx = match conn.transaction_with_behavior(TransactionBehavior::Immediate) {
-            Ok(tx) => tx,
-            Err(e) => match step(&e, &mut restart_attempts, &mut backoff_attempts) {
-                Step::Retry => continue,
-                Step::Surface => return Err(Error::from(e)),
-            },
-        };
-        match op(&tx) {
-            Ok(value) => match tx.commit() {
-                Ok(()) => return Ok(value),
-                Err(e) => match step(&e, &mut restart_attempts, &mut backoff_attempts) {
-                    Step::Retry => continue,
-                    Step::Surface => return Err(Error::from(e)),
-                },
-            },
-            Err(err) => {
-                // `Transaction::drop` would roll back anyway if not
-                // committed; the explicit call just does it eagerly. A
-                // failure here leaves nothing uncommitted that wasn't
-                // already going to be discarded — `err` below is what
-                // actually gets surfaced.
-                let _ = tx.rollback();
-                let sqlite_err = match &err {
-                    Error::Sqlite(e) => Some(e),
-                    Error::Io(_)
-                    | Error::WriterQueueFull
-                    | Error::WriterGone
-                    | Error::ReaderGone
-                    | Error::SessionEstablish(_)
-                    | Error::WalModeUnavailable(_)
-                    | Error::CorruptPayload(_)
-                    | Error::BlobHashMismatch { .. }
-                    | Error::ReplayFailed(_)
-                    | Error::NotFound(_)
-                    | Error::Invalid(_) => None,
-                };
-                let Some(sqlite_err) = sqlite_err else {
-                    return Err(err);
-                };
-                match step(sqlite_err, &mut restart_attempts, &mut backoff_attempts) {
-                    Step::Retry => continue,
-                    Step::Surface => return Err(err),
-                }
-            }
-        }
-    }
+    run_attempts(
+        || {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let value = op(&tx)?;
+            tx.commit()?;
+            Ok(value)
+        },
+        || {},
+    )
 }
 
-/// Runs one statement outside a transaction, retrying per [`classify`]. The
-/// WAL switch on a fresh file raced by sibling openers answers
-/// `SQLITE_BUSY` immediately, so waiting on the busy handler is not enough.
 pub(crate) fn with_busy_retry<T>(
     mut op: impl FnMut() -> Result<T, rusqlite::Error>,
 ) -> Result<T, Error> {
+    run_attempts(
+        || Ok(op()?),
+        || crate::diag::background_note("recovery store is busy, retrying"),
+    )
+}
+
+fn run_attempts<T>(
+    mut attempt: impl FnMut() -> Result<T, Error>,
+    mut on_retry: impl FnMut(),
+) -> Result<T, Error> {
     let mut restart_attempts = 0u32;
     let mut backoff_attempts = 0u32;
+
     loop {
-        match op() {
+        let err = match attempt() {
             Ok(value) => return Ok(value),
-            Err(e) => match step(&e, &mut restart_attempts, &mut backoff_attempts) {
-                Step::Retry => continue,
-                Step::Surface => return Err(Error::from(e)),
-            },
+            Err(err) => err,
+        };
+        let Some(sqlite_err) = sqlite_source(&err) else {
+            return Err(err);
+        };
+        match step(sqlite_err, &mut restart_attempts, &mut backoff_attempts) {
+            Step::Retry => on_retry(),
+            Step::Surface => return Err(err),
         }
     }
 }
 
-/// What [`with_retry`] does next after classifying a failed SQLite call —
-/// `Retry` also performs the jittered sleep for the `Backoff` case (a
-/// caller that gets `Retry` back need only `continue` the loop), so the
-/// three call sites in [`with_retry`] (acquire/op/commit) share one
-/// decision instead of duplicating the counter/cap bookkeeping three times.
+fn sqlite_source(err: &Error) -> Option<&rusqlite::Error> {
+    match err {
+        Error::Sqlite(e) => Some(e),
+        Error::Io(_)
+        | Error::WriterQueueFull
+        | Error::WriterGone
+        | Error::ReaderGone
+        | Error::SessionEstablish(_)
+        | Error::WalModeUnavailable(_)
+        | Error::CorruptPayload(_)
+        | Error::BlobHashMismatch { .. }
+        | Error::ReplayFailed(_)
+        | Error::NotFound(_)
+        | Error::Invalid(_) => None,
+    }
+}
+
+/// What [`run_attempts`] does next after classifying a failed SQLite call;
+/// `Retry` has already performed the jittered sleep for the `Backoff` case.
 enum Step {
     Retry,
     Surface,
@@ -328,6 +313,41 @@ mod tests {
         ));
         assert_eq!(restart, 0);
         assert_eq!(backoff, 0);
+    }
+
+    #[test]
+    fn with_busy_retry_returns_the_value_once_a_transient_busy_clears() {
+        let mut failures_left = 2;
+        let result = with_busy_retry(|| {
+            if failures_left == 0 {
+                return Ok(7);
+            }
+            failures_left -= 1;
+            Err(busy(5))
+        });
+        assert_eq!(result.expect("transient busy must clear"), 7);
+    }
+
+    #[test]
+    fn with_busy_retry_surfaces_the_busy_error_after_the_backoff_cap() {
+        let mut calls = 0u32;
+        let result: Result<(), Error> = with_busy_retry(|| {
+            calls += 1;
+            Err(busy(5))
+        });
+        assert!(matches!(result, Err(Error::Sqlite(_))), "got {result:?}");
+        assert_eq!(calls, MAX_BACKOFF_ATTEMPTS + 1);
+    }
+
+    #[test]
+    fn with_busy_retry_does_not_retry_a_non_busy_error() {
+        let mut calls = 0u32;
+        let result: Result<(), Error> = with_busy_retry(|| {
+            calls += 1;
+            Err(busy(19))
+        });
+        assert!(matches!(result, Err(Error::Sqlite(_))), "got {result:?}");
+        assert_eq!(calls, 1);
     }
 
     /// Acquisition failures now enter the SAME retry loop as an `op`
