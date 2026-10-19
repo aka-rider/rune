@@ -34,7 +34,9 @@ fn load(
         | rune_db::ReaderReply::Blob(_)
         | rune_db::ReaderReply::RecentSearches(_)
         | rune_db::ReaderReply::RecentCommands(_)
-        | rune_db::ReaderReply::RecentReplacements(_) => {
+        | rune_db::ReaderReply::RecentReplacements(_)
+        | rune_db::ReaderReply::RecentDocSearches(_)
+        | rune_db::ReaderReply::UiSetting(_) => {
             return Err(CmdError::Refused("unexpected reader reply".to_string()));
         }
     };

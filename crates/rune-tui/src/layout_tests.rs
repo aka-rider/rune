@@ -44,7 +44,7 @@ fn expanding_replace_grows_the_panel_to_five_rows() {
     let panel = geo.find_panel.expect("panel open");
     assert_eq!(panel.outer.height, 5);
     assert!(panel.replace_field.is_some());
-    assert_eq!(panel.chips.iter().flatten().count(), 6);
+    assert_eq!(panel.chips.iter().flatten().count(), 7);
 }
 
 #[test]

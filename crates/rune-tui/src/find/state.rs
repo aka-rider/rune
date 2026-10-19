@@ -50,6 +50,7 @@ pub(crate) enum ChipKind {
     Case,
     Word,
     Regex,
+    HistoryScope,
     ReplaceOne,
     ReplaceAll,
 }
@@ -189,7 +190,7 @@ impl FindState {
             ChipKind::Word => Some(self.options.whole_word),
             ChipKind::Regex => Some(self.options.regex),
             ChipKind::ThisFile => Some(self.filter_kind() == FilterKind::ThisFile),
-            ChipKind::ReplaceOne | ChipKind::ReplaceAll => None,
+            ChipKind::HistoryScope | ChipKind::ReplaceOne | ChipKind::ReplaceAll => None,
         }
     }
 }

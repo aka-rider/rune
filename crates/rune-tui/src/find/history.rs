@@ -52,6 +52,21 @@ pub(crate) fn persist_query(app: &mut App, query: &str, options: MatchOptions) {
     if let Some(Err(e)) = result {
         messages::error(app, format!("search history not saved: {e}"));
     }
+    persist_for_origin_doc(app, query);
+}
+
+fn persist_for_origin_doc(app: &mut App, query: &str) {
+    let Some(doc_id) = crate::find::scope::origin_doc_id(app) else {
+        return;
+    };
+    let result =
+        app.doc_search_history
+            .touch(app.db.as_ref(), &(doc_id, query.to_string()), |db| {
+                db.store.touch_doc_search_query(doc_id, query)
+            });
+    if let Some(Err(e)) = result {
+        messages::error(app, format!("document search history not saved: {e}"));
+    }
 }
 
 pub(crate) fn persist_replacement(app: &mut App, text: &str) {
@@ -143,5 +158,8 @@ pub(crate) fn step(app: &mut App, dir: BrowseDir) {
         .is_some_and(|field| step_field(field, dir));
     if changed && focus == Control::Find {
         crate::find::requery(app);
+    }
+    if !changed && focus == Control::Find && crate::find::scope::unstored(app) {
+        messages::info(app, crate::find::scope::UNSTORED_NOTICE);
     }
 }

@@ -1,29 +1,36 @@
+use std::borrow::Borrow;
 use std::collections::HashSet;
 
 use crate::db::Db;
 
-#[derive(Default)]
-pub struct HistoryPersistence {
-    pub(crate) last_persisted: Option<String>,
+pub struct HistoryPersistence<K = String> {
+    pub(crate) last_persisted: Option<K>,
     pub(crate) ops: HashSet<u64>,
 }
 
-impl HistoryPersistence {
-    pub fn new() -> HistoryPersistence {
-        HistoryPersistence::default()
+impl<K> HistoryPersistence<K> {
+    pub fn new() -> HistoryPersistence<K> {
+        HistoryPersistence {
+            last_persisted: None,
+            ops: HashSet::new(),
+        }
     }
 
     /// `None` means nothing was enqueued (debounced, no store, or
     /// degraded); `Some` carries `write`'s own result — the caller surfaces
     /// a failure itself, since only it knows the right noun ("search
     /// history" vs "command history").
-    pub fn touch(
+    pub fn touch<Q>(
         &mut self,
         db: Option<&Db>,
-        value: &str,
+        value: &Q,
         write: impl FnOnce(&Db) -> Result<u64, rune_db::Error>,
-    ) -> Option<Result<u64, rune_db::Error>> {
-        if self.last_persisted.as_deref() == Some(value) {
+    ) -> Option<Result<u64, rune_db::Error>>
+    where
+        K: Borrow<Q>,
+        Q: PartialEq + ToOwned<Owned = K> + ?Sized,
+    {
+        if self.last_persisted.as_ref().map(Borrow::borrow) == Some(value) {
             return None;
         }
         let db = db?;
@@ -33,7 +40,7 @@ impl HistoryPersistence {
         match write(db) {
             Ok(op_id) => {
                 self.ops.insert(op_id);
-                self.last_persisted = Some(value.to_string());
+                self.last_persisted = Some(value.to_owned());
                 Some(Ok(op_id))
             }
             Err(e) => Some(Err(e)),
@@ -62,7 +69,7 @@ mod tests {
 
     #[test]
     fn no_store_never_calls_write() {
-        let mut hp = HistoryPersistence::new();
+        let mut hp: HistoryPersistence = HistoryPersistence::new();
         let called = std::cell::Cell::new(false);
         assert!(
             hp.touch(None, "hi", |_| {
@@ -76,7 +83,7 @@ mod tests {
 
     #[test]
     fn an_untracked_op_id_is_not_acked_or_failed() {
-        let mut hp = HistoryPersistence::new();
+        let mut hp: HistoryPersistence = HistoryPersistence::new();
         assert!(!hp.fail(1));
         assert!(!hp.ack(1));
     }

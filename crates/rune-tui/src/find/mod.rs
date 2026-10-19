@@ -17,6 +17,7 @@ pub(crate) mod matcher;
 pub(crate) mod project;
 pub(crate) mod project_replace;
 pub(crate) mod replace;
+pub(crate) mod scope;
 pub(crate) mod state;
 
 pub(crate) use state::{ChipKind, Control, FieldState, Filter, FilterKind, FindState, Origin};
@@ -76,6 +77,9 @@ mod project_tests;
 mod replace_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod scope_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 pub(crate) mod test_support;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -119,12 +123,7 @@ pub(crate) fn open(app: &mut App, kind: FilterKind, expand_replace: bool, effect
         },
         clearance,
     );
-    if let Some(db) = app.db.as_ref() {
-        effects.cmds.push(crate::runtime::load_search_history_cmd(
-            db.store.reader_query(),
-            history_generation,
-        ));
-    }
+    scope::request_history(app, history_generation, effects);
     project::apply_filter(app, kind, effects);
     if expand_replace {
         expand_replace_field(app, effects);

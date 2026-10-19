@@ -103,6 +103,11 @@ pub struct App {
         crate::generation::GenCounter<crate::generation::ProjectIndex>,
     pub(crate) last_find: Option<(String, crate::find::matcher::MatchOptions)>,
     pub(crate) search_history: crate::history_persistence::HistoryPersistence,
+    pub(crate) doc_search_history:
+        crate::history_persistence::HistoryPersistence<(rune_db::DocId, String)>,
+    pub(crate) scope_persistence:
+        crate::history_persistence::HistoryPersistence<crate::find::scope::HistoryScope>,
+    pub(crate) history_scope_choice: Option<crate::find::scope::HistoryScope>,
     pub(crate) next_search_history_gen:
         crate::generation::GenCounter<crate::generation::SearchHistory>,
     pub(crate) replace_history: crate::history_persistence::HistoryPersistence,
@@ -177,6 +182,9 @@ impl App {
             next_project_index_gen: crate::generation::GenCounter::default(),
             last_find: None,
             search_history: crate::history_persistence::HistoryPersistence::new(),
+            doc_search_history: crate::history_persistence::HistoryPersistence::new(),
+            scope_persistence: crate::history_persistence::HistoryPersistence::new(),
+            history_scope_choice: None,
             next_search_history_gen: crate::generation::GenCounter::default(),
             replace_history: crate::history_persistence::HistoryPersistence::new(),
             next_replace_history_gen: crate::generation::GenCounter::default(),
@@ -250,6 +258,10 @@ impl App {
             .as_mut()
             .filter(|preview| preview.id == id)
             .map(|preview| &mut preview.doc)
+    }
+
+    pub(crate) fn history_scope(&self) -> crate::find::scope::HistoryScope {
+        self.history_scope_choice.unwrap_or_default()
     }
 
     pub fn doc(&self, id: DocumentId) -> Option<&Document> {

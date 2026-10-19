@@ -15,6 +15,7 @@ pub enum FindCommand {
     ToggleCase,
     ToggleWord,
     ToggleRegex,
+    ToggleHistoryScope,
     Up,
     Down,
     PageUp,
@@ -29,6 +30,7 @@ pub(crate) fn chip_command(kind: ChipKind) -> FindCommand {
         ChipKind::Case => FindCommand::ToggleCase,
         ChipKind::Word => FindCommand::ToggleWord,
         ChipKind::Regex => FindCommand::ToggleRegex,
+        ChipKind::HistoryScope => FindCommand::ToggleHistoryScope,
         ChipKind::ReplaceOne => FindCommand::Commit,
         ChipKind::ReplaceAll => FindCommand::Alt,
     }
@@ -119,6 +121,12 @@ pub const FIND_BINDINGS: &[Binding<FindCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('r'), ALT),
         cmd: FindCommand::ToggleRegex,
         help: "regex",
+        secondary: false,
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('h'), ALT),
+        cmd: FindCommand::ToggleHistoryScope,
+        help: "history scope",
         secondary: false,
     },
     Binding {

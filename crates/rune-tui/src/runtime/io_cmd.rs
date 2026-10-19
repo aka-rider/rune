@@ -46,12 +46,18 @@ pub fn read_file_cmd(
 pub fn load_search_history_cmd(
     reader: rune_db::ReaderQuery,
     generation: crate::generation::SearchHistoryGen,
+    doc: Option<rune_db::DocId>,
 ) -> Cmd {
+    let request = match doc {
+        Some(doc_id) => rune_db::ReaderRequestKind::RecentDocSearches { doc_id, limit: 200 },
+        None => rune_db::ReaderRequestKind::RecentSearches { limit: 200 },
+    };
     Cmd::search_history(move || {
         let result = reader
-            .query(rune_db::ReaderRequestKind::RecentSearches { limit: 200 })
+            .query(request)
             .map(|reply| match reply {
-                rune_db::ReaderReply::RecentSearches(entries) => entries,
+                rune_db::ReaderReply::RecentSearches(entries)
+                | rune_db::ReaderReply::RecentDocSearches(entries) => entries,
                 _ => Vec::new(),
             })
             .map_err(CmdError::from);
@@ -78,5 +84,20 @@ pub fn load_replace_history_cmd(
             generation: generation.raw(),
             result: RecentsResult::Replace(result),
         })
+    })
+}
+
+pub fn load_history_scope_cmd(reader: rune_db::ReaderQuery) -> Cmd {
+    Cmd::search_history(move || {
+        let result = reader
+            .query(rune_db::ReaderRequestKind::UiSetting {
+                key: crate::find::scope::SETTING_KEY.to_string(),
+            })
+            .map_err(CmdError::from)
+            .and_then(|reply| match reply {
+                rune_db::ReaderReply::UiSetting(value) => Ok(value),
+                _ => Err(CmdError::Refused("unexpected reader reply".to_string())),
+            });
+        Some(Msg::HistoryScopeLoaded(result))
     })
 }

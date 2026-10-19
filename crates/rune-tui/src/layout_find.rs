@@ -7,6 +7,8 @@ use crate::find::{ChipKind, FindState};
 use crate::region::Region;
 use crate::width::display_width;
 
+pub(crate) const HISTORY_SCOPE_LABEL: &str = "Doc|All";
+
 pub const FIND_PANEL_MIN_BOX_W: u16 = 12;
 const FIND_ONLY_ROWS: u16 = 3;
 const WITH_REPLACE_ROWS: u16 = 5;
@@ -19,7 +21,7 @@ pub(crate) struct Chip {
     pub label: &'static str,
 }
 
-pub(crate) const FIND_ROW_CHIPS: [Chip; 4] = [
+pub(crate) const FIND_ROW_CHIPS: [Chip; 5] = [
     Chip {
         kind: ChipKind::ThisFile,
         label: "This file",
@@ -35,6 +37,10 @@ pub(crate) const FIND_ROW_CHIPS: [Chip; 4] = [
     Chip {
         kind: ChipKind::Regex,
         label: ".*",
+    },
+    Chip {
+        kind: ChipKind::HistoryScope,
+        label: HISTORY_SCOPE_LABEL,
     },
 ];
 
@@ -70,7 +76,7 @@ pub struct FindPanelGeometry {
     pub(crate) replace_field: Option<Rect>,
     pub(crate) include_field: Option<Rect>,
     pub(crate) exclude_field: Option<Rect>,
-    pub(crate) chips: [Option<(Chip, Rect)>; 6],
+    pub(crate) chips: [Option<(Chip, Rect)>; 7],
 }
 
 pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPanelGeometry>) {
@@ -130,7 +136,7 @@ pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPan
         (None, None)
     };
 
-    let mut chips: [Option<(Chip, Rect)>; 6] = [None; 6];
+    let mut chips: [Option<(Chip, Rect)>; 7] = [None; 7];
     if chips_fit {
         let x0 = frame.right().saturating_add(1);
         let mut slots = chips.iter_mut();

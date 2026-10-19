@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
 use crate::field::TextField;
+use crate::find::scope::HistoryScope;
 use crate::find::{ChipKind, Control, FindState};
 use crate::layout_find::{Chip, FindPanelGeometry, chip_chord, chip_text};
 use crate::render::queryrow::{QueryRow, build_spans};
@@ -92,7 +93,7 @@ pub fn draw(app: &App, panel: &FindPanelGeometry, frame: &mut Frame) {
     }
 
     for (chip, rect) in panel.chips.iter().flatten() {
-        draw_chip(frame, state, *chip, *rect, theme);
+        draw_chip(frame, app, state, *chip, *rect);
     }
 }
 
@@ -125,7 +126,8 @@ fn draw_rule(frame: &mut Frame, panel_frame: Rect, y: u16, border: Style) {
     );
 }
 
-fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme: &Theme) {
+fn draw_chip(frame: &mut Frame, app: &App, state: &FindState, chip: Chip, rect: Rect) {
+    let theme = &app.theme;
     let mut spans = vec![
         Span::styled(chip_chord(chip), theme.chrome.footer_key),
         Span::raw(" "),
@@ -140,6 +142,7 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
             };
             vec![Span::styled(chip_text(state, chip), style)]
         }
+        ChipKind::HistoryScope => history_scope_spans(chip, app.history_scope(), theme),
         ChipKind::ReplaceOne | ChipKind::ReplaceAll => {
             vec![Span::styled(
                 chip_text(state, chip),
@@ -148,6 +151,22 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
         }
     });
     frame.render_widget(Paragraph::new(Line::from(spans)), rect);
+}
+
+fn history_scope_spans(chip: Chip, scope: HistoryScope, theme: &Theme) -> Vec<Span<'static>> {
+    let (doc, all) = chip.label.split_once('|').unwrap_or((chip.label, ""));
+    let style = |active: bool| {
+        if active {
+            theme.chrome.footer_key
+        } else {
+            theme.chrome.footer_key_inactive
+        }
+    };
+    vec![
+        Span::styled(doc, style(scope == HistoryScope::Doc)),
+        Span::styled("|", theme.chrome.footer_key_inactive),
+        Span::styled(all, style(scope == HistoryScope::All)),
+    ]
 }
 
 fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style)> {
@@ -170,6 +189,9 @@ fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style
         (Some(current), count) => format!("{}/{count}", current.saturating_add(1)),
         (None, count) if count > 0 => count.to_string(),
         (None, _) if !state.find.editor.text().trim().is_empty() => "no matches".to_string(),
+        (None, _) if crate::find::scope::unstored(app) => {
+            crate::find::scope::UNSTORED_NOTICE.to_string()
+        }
         (None, _) => return None,
     };
     Some((text, theme.chrome.title_text))

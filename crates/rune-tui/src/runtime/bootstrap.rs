@@ -69,6 +69,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
         crate::graphics::schedule_image_decode(app, app.active, &mut effects);
         crate::explorer::ensure_loaded(app, &mut effects);
+        crate::find::scope::load_cmd(app, &mut effects);
         super::discharge(&mut effects, &mut sink, &tx, &mut save_handles)?;
     }
 

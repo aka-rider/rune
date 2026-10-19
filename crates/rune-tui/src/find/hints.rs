@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use crate::app::App;
 use crate::find::bindings::{FindCommand, label_for};
+use crate::find::scope::HistoryScope;
 use crate::find::{Control, FilterKind, FindState};
 use crate::footer_hints::HintEntry;
 use crate::keymap::GlobalCommand;
@@ -23,12 +24,14 @@ pub(crate) fn entries(app: &App) -> Vec<HintEntry> {
                 out.extend(global_row(GlobalCommand::ToggleReplace));
             }
             out.push(row(FindCommand::Up));
+            out.push(scope_row(app));
         }
         (Control::Find, FilterKind::Workspace) => {
             out.push(row_as(FindCommand::Commit, "open"));
             out.push(row_as(FindCommand::NextControl, next_control(state)));
             out.push(global_row_as(GlobalCommand::SearchNext, "next file"));
             out.push(row(FindCommand::Up));
+            out.push(scope_row(app));
             if !replace_expanded {
                 out.extend(global_row(GlobalCommand::ToggleProjectReplace));
             }
@@ -68,6 +71,14 @@ fn next_control(state: &FindState) -> &'static str {
         Some(Control::Results) => "results",
         Some(Control::Find) | None => "find field",
     }
+}
+
+fn scope_row(app: &App) -> HintEntry {
+    let help = match app.history_scope() {
+        HistoryScope::Doc => "history: this doc",
+        HistoryScope::All => "history: all docs",
+    };
+    row_as(FindCommand::ToggleHistoryScope, help)
 }
 
 fn row(cmd: FindCommand) -> HintEntry {

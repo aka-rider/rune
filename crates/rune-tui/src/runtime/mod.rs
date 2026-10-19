@@ -180,6 +180,7 @@ pub enum Msg {
         generation: u64,
         result: RecentsResult,
     },
+    HistoryScopeLoaded(Result<Option<String>, CmdError>),
     FileSearchScanned {
         generation: crate::generation::FileSearchGen,
         result: Result<crate::filesearch::walk::ScanResult, String>,
@@ -226,7 +227,10 @@ pub use run_loop::{MAX_TURN_BATCH, drain_batch, run};
 use run_loop::{apply, spawn_cmd, spawn_input_reader};
 
 mod io_cmd;
-pub use io_cmd::{load_dir_cmd, load_replace_history_cmd, load_search_history_cmd, read_file_cmd};
+pub use io_cmd::{
+    load_dir_cmd, load_history_scope_cmd, load_replace_history_cmd, load_search_history_cmd,
+    read_file_cmd,
+};
 
 mod preview_cmd;
 pub use preview_cmd::{MAX_PREVIEW_BYTES, read_preview_cmd};

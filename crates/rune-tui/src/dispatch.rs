@@ -139,6 +139,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             result,
         } => crate::graphics::handle_embed_encoded(app, doc, generation, result, effects),
         Msg::Posted { severity, text } => crate::messages::post(app, severity, text),
+        Msg::HistoryScopeLoaded(result) => crate::find::scope::handle_loaded(app, result, effects),
         Msg::RecentsLoaded { generation, result } => match result {
             crate::runtime::RecentsResult::Search(result) => {
                 crate::find::history::handle_history_loaded(

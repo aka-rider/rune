@@ -51,6 +51,11 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         "toggle regular expression",
         "regex",
     ),
+    row(
+        FindCommand::ToggleHistoryScope,
+        "switch find history between this document and all documents",
+        "history scope",
+    ),
     row(FindCommand::Up, "recall older history", "history"),
     row(FindCommand::Down, "recall newer history", "newer"),
     row(

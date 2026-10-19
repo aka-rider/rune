@@ -8,7 +8,7 @@ use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
 use crate::find::{
     ChipKind, Control, FieldState, FilterKind, FindState, escape, follow, project, project_replace,
-    replace,
+    replace, scope,
 };
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
 use crate::layout_find::FindPanelGeometry;
@@ -139,6 +139,7 @@ fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
         FindCommand::ToggleCase => toggle_option(app, |o| &mut o.case_sensitive),
         FindCommand::ToggleWord => toggle_option(app, |o| &mut o.whole_word),
         FindCommand::ToggleRegex => toggle_option(app, |o| &mut o.regex),
+        FindCommand::ToggleHistoryScope => scope::toggle(app, effects),
         FindCommand::Up => match focus {
             Control::Results => project::nav_move(app, -1, effects),
             Control::Find | Control::Replace => history::step(app, BrowseDir::Prev),
@@ -184,6 +185,7 @@ pub(crate) fn press_chip(app: &mut App, kind: ChipKind, effects: &mut Effects) {
         ChipKind::Case => toggle_option(app, |o| &mut o.case_sensitive),
         ChipKind::Word => toggle_option(app, |o| &mut o.whole_word),
         ChipKind::Regex => toggle_option(app, |o| &mut o.regex),
+        ChipKind::HistoryScope => scope::toggle(app, effects),
         ChipKind::ReplaceOne => replace_one(app, filter, effects),
         ChipKind::ReplaceAll => replace_every(app, filter, effects),
     }

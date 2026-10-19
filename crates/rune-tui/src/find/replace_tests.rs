@@ -226,7 +226,7 @@ fn clicking_the_replace_chip_replaces_one_then_the_all_chip_replaces_the_rest() 
     let panel = crate::layout::geometry(app.frame_area(), &app)
         .find_panel
         .expect("panel open");
-    let (chip, rect) = panel.chips[4].expect("the Replace chip is laid out");
+    let (chip, rect) = panel.chips[5].expect("the Replace chip is laid out");
     assert_eq!(chip.kind, crate::find::ChipKind::ReplaceOne);
     click(&mut app, rect.x, rect.y);
     assert_eq!(content(&app), "cat dog dog");
@@ -234,7 +234,7 @@ fn clicking_the_replace_chip_replaces_one_then_the_all_chip_replaces_the_rest() 
     let panel = crate::layout::geometry(app.frame_area(), &app)
         .find_panel
         .expect("panel open");
-    let (chip, rect) = panel.chips[5].expect("the All chip is laid out");
+    let (chip, rect) = panel.chips[6].expect("the All chip is laid out");
     assert_eq!(chip.kind, crate::find::ChipKind::ReplaceAll);
     click(&mut app, rect.x, rect.y);
     assert_eq!(content(&app), "cat cat cat");
@@ -247,7 +247,7 @@ fn clicking_the_all_chip_replaces_every_match() {
     let panel = crate::layout::geometry(app.frame_area(), &app)
         .find_panel
         .expect("panel open");
-    let (chip, rect) = panel.chips[5].expect("the All chip is laid out");
+    let (chip, rect) = panel.chips[6].expect("the All chip is laid out");
     assert_eq!(chip.kind, crate::find::ChipKind::ReplaceAll);
 
     click(&mut app, rect.x, rect.y);
@@ -343,7 +343,10 @@ fn expanding_replace_requests_the_replace_history_exactly_once() {
     app.db = Some(in_memory_db());
 
     let effects = press(&mut app, key(KeyCode::Char('f'), CTRL));
-    assert_eq!(effects.cmds.len(), 1, "the find history load");
+    assert!(
+        effects.cmds.is_empty(),
+        "an unstored document has no find history to load"
+    );
 
     let effects = press(&mut app, key(KeyCode::Char('r'), CTRL));
     assert_eq!(effects.cmds.len(), 1);

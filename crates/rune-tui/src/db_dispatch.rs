@@ -116,6 +116,8 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         } => {
             app.db_ops.remove(&op_id);
             app.search_history.ack(op_id);
+            app.doc_search_history.ack(op_id);
+            app.scope_persistence.ack(op_id);
             app.replace_history.ack(op_id);
             app.command_history.ack(op_id);
         }
@@ -141,6 +143,14 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             let pending = app.db_ops.remove(&op_id);
             if app.search_history.fail(op_id) {
                 crate::messages::error(app, format!("search history not saved: {error}"));
+                return;
+            }
+            if app.doc_search_history.fail(op_id) {
+                crate::messages::error(app, format!("document search history not saved: {error}"));
+                return;
+            }
+            if app.scope_persistence.fail(op_id) {
+                crate::messages::error(app, format!("search history scope not saved: {error}"));
                 return;
             }
             if app.replace_history.fail(op_id) {

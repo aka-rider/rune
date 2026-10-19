@@ -144,7 +144,10 @@ pub(crate) fn selection_start(app: &App) -> usize {
 }
 
 pub(crate) fn click(app: &mut App, column: u16, row: u16) {
-    let mut effects = Effects::default();
+    click_into(app, column, row, &mut Effects::default());
+}
+
+pub(crate) fn click_into(app: &mut App, column: u16, row: u16, effects: &mut Effects) {
     crate::app::update(
         app,
         Msg::Mouse(MouseInput {
@@ -155,7 +158,7 @@ pub(crate) fn click(app: &mut App, column: u16, row: u16) {
             alt: false,
             ctrl: false,
         }),
-        &mut effects,
+        effects,
     );
 }
 
