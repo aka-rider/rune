@@ -13,8 +13,11 @@ MUTANTS_ARGS ?=
 # nextest profile (see .config/nextest.toml), not a cargo profile. CI passes
 # PROFILE=ci. Applies to the `test` target only.
 PROFILE ?= default
+# Wall-clock budget of `make ci-fuzz`: repeated `test-fuzz` rounds until spent.
+FUZZ_MINUTES ?= 5
 
 .PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars mutants \
+        ci-setup ci-fuzz ci-basic ci-nightly \
         cross-compile-from-linux-to-macos yo-build-and-fetch
 
 SDK_CACHE := $(HOME)/.cache/rune/MacOSX14.5.sdk
@@ -71,6 +74,22 @@ test-fuzz:
 # non-ignored smoke test runs on every `make test`.
 test-grammars:
 	$(CARGO) nextest run -p rune-ts --test grammar_props --run-ignored only
+
+# CI entry points. The Forgejo and GitHub workflows only call these.
+ci-setup:
+	scripts/ci/setup.sh
+
+ci-fuzz:
+	scripts/ci/fuzz-budget.sh $(FUZZ_MINUTES)
+
+# Pushed-branch gate (~15 min): everything `make fmt lint test` checks, plus a short fuzz.
+ci-basic: PROFILE = ci
+ci-basic: fmt lint test ci-fuzz
+
+# Nightly gate (~3 h): the basic checks, the grammar soak, a long fuzz.
+ci-nightly: PROFILE = ci
+ci-nightly: FUZZ_MINUTES = 150
+ci-nightly: fmt lint test test-grammars ci-fuzz
 
 # Mutation testing (cargo-mutants, config in .cargo/mutants.toml).
 # PKG=<crate> scopes the run to one package.
