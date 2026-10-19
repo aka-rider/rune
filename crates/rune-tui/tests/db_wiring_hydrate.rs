@@ -36,16 +36,6 @@ const HOME: KeyInput = KeyInput {
     mods: Mods::NONE,
 };
 
-const UNDO: KeyInput = KeyInput {
-    code: KeyCode::Char('z'),
-    mods: Mods {
-        shift: false,
-        alt: false,
-        ctrl: false,
-        sup: true,
-    },
-};
-
 const SELECT_ALL: KeyInput = KeyInput {
     code: KeyCode::Char('a'),
     mods: Mods {
@@ -61,12 +51,11 @@ const BACKSPACE: KeyInput = KeyInput {
     mods: Mods::NONE,
 };
 
-/// Edits journaled by one session -> a NEW `Store`
-/// opened on the SAME db path (a simulated restart) hydrates the recovered
-/// content through the real `Load`-ack path, and undo reaches the pre-crash
-/// anchor.
+/// Edits journaled by one session -> a NEW `Store` opened on the SAME db path
+/// (a simulated restart) hydrates the recovered content through the real
+/// `Load`-ack path and leaves the file untouched.
 #[test]
-fn restart_hydrates_content_and_undo_reaches_the_anchor() {
+fn restart_hydrates_unsaved_content_and_leaves_the_file_untouched() {
     let dir = temp_db_dir("restart");
     let db_path = dir.join("rune-v1.db");
     let mem = Arc::new(Mem::new());
@@ -102,8 +91,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
 
     // Session B (simulated restart): a brand-new `Store` on the SAME path,
     // with session A reported dead, hydrating through the ordinary
-    // open/ack path — `db_ack::handle_load_ack` installs the stored lineage
-    // (one bridge step from disk) and the undo mapping, not test scaffolding.
+    // open/ack path.
     let (store_b, bridge_b) = restarted_store_at(&db_path, Arc::clone(&vfs));
     let mut session_b = Session::open_with_db(
         "/doc.md",
@@ -120,14 +108,6 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
         mem.read(Path::new("/doc.md")).expect("file still readable"),
         b"hello",
         "the on-disk file itself was never touched — session A never saved"
-    );
-
-    assert!(session_b.key(UNDO).is_none());
-    assert!(session_b.deliver_db().is_none());
-    assert_eq!(
-        session_b.snapshot().content,
-        "hello",
-        "post-restart undo must reach the pre-crash anchor (the disk content)"
     );
 }
 

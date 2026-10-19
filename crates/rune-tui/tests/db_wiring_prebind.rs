@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_fuzz::Session;
+use rune_fuzz::action::Action;
 use rune_tui::db::Db;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::workspace;
@@ -123,14 +124,10 @@ fn prebind_edits_replay_at_bind() {
     );
 }
 
-/// An adopting hydration (a dead session's own unsaved draft, recovered and
-/// bridged onto disk content by the store itself) pushes a synthetic bridge
-/// `Step` directly onto the local journal — permanently offsetting it by
-/// one position relative to the writer thread's own local-position count,
-/// which never sees that bridge as an `AppendEdit`. `DocDb::undo_offset`
-/// exists to correct exactly this offset; undo/redo must resolve cleanly
-/// all the way back through the bridge to the pre-crash disk anchor, with
-/// no error and no store degrade.
+/// An adopting hydration (a dead session's own unsaved draft, recovered by
+/// the store itself) restores that session's lineage; undo/redo must resolve
+/// cleanly through the restored steps and a post-adoption edit, back to the
+/// pre-crash disk anchor, with no error and no store degrade.
 #[test]
 fn undo_after_adoption_resolves() {
     let dir = temp_db_dir("prebind-adoption");
@@ -177,26 +174,31 @@ fn undo_after_adoption_resolves() {
     );
     assert!(session_b.app().active_doc().is_store_bound());
 
-    // One more edit after adoption, then undo back through it (removing
-    // the typed edit), and once more (through the offset-corrected
-    // bridge, back to the pre-crash disk anchor), then redo twice back to
-    // where undo started — no error, no degrade, at every step.
+    // One more edit after adoption, then undo every step back to the
+    // pre-crash disk anchor and redo them all — no error, no degrade.
     assert!(session_b.key(END).is_none());
     assert!(session_b.type_("!").is_none());
     assert_eq!(session_b.snapshot().content, "hello world!");
     assert!(session_b.deliver_db_all().is_none());
 
-    for expected in ["hello world", "hello"] {
-        assert!(session_b.key(UNDO).is_none());
-        assert!(session_b.deliver_db().is_none());
+    let undone = [
+        "hello world",
+        "hello worl",
+        "hello wor",
+        "hello wo",
+        "hello w",
+        "hello ",
+        "hello",
+    ];
+    for expected in undone {
+        press_after_ladder_reset(&mut session_b, UNDO);
         assert_eq!(session_b.snapshot().content, expected);
         assert!(!session_b.app().db.as_ref().unwrap().degraded);
     }
 
-    for expected in ["hello world", "hello world!"] {
-        assert!(session_b.key(REDO).is_none());
-        assert!(session_b.deliver_db().is_none());
-        assert_eq!(session_b.snapshot().content, expected);
+    for expected in undone.iter().rev().skip(1).chain(["hello world!"].iter()) {
+        press_after_ladder_reset(&mut session_b, REDO);
+        assert_eq!(session_b.snapshot().content, *expected);
         assert!(!session_b.app().db.as_ref().unwrap().degraded);
     }
 
@@ -280,4 +282,11 @@ fn detached_document_buffers_nothing() {
         "Detached must never enqueue an AppendEdit, and never buffer one to replay later"
     );
     assert!(!session.app().active_doc().is_store_bound());
+}
+
+fn press_after_ladder_reset(session: &mut Session, key: KeyInput) {
+    let millis = u64::try_from(rune_tui::undogroup::LADDER_RESET.as_millis()).expect("fits");
+    assert!(session.act(Action::AdvanceClock(millis)).is_none());
+    assert!(session.key(key).is_none());
+    assert!(session.deliver_db().is_none());
 }
