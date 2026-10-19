@@ -102,6 +102,7 @@ Before adding any style or color, read the existing styles. One meaning per colo
 - Time is an injected field — no wall-clock sleeps order events anywhere.
 - Every invariant claim ships as a test that can fail; a gate that cannot fail proves nothing.
 - A fuzz catch lands as a pinned repro in the same commit as its fix.
+- Builds, tests, and fuzzing run on the forge, not on a workstation: push the feature branch to the `forge` remote and monitor the run with the forgejo console utility (`fj` or `tea`, whichever is installed). Basic builds, lints, and checks (`make build`, `make fmt`, `make lint`) stay local. The forge runs the full macOS and Linux matrix: about 15 minutes per push (`make ci-basic`), and about 3 hours nightly (`make ci-nightly`) only when `main` changed since the last passing nightly. GitHub runs releases only; its minutes are never spent on exhaustive testing.
 
 ## 13. The Ledger
 

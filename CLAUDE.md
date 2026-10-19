@@ -2,7 +2,7 @@
 
 `rune` is a ratatui TUI markdown editor in Rust. Prime directive: **protect the user's words** — data safety beats performance, elegance, and features.
 
-**Platform**: macOS (Apple Silicon with ANE). Potentially Linux but out of scope for now. No Windows is supported or planned.
+**Platform**: macOS (Apple Silicon with ANE) is primary; Linux is supported and ships in releases. No Windows is supported or planned.
 
 **Read `CONSTITUTION.md` before contributing anything.** Every rule in it is binding.
 
@@ -40,6 +40,19 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 ## Build & Test
 
 `make build` · `make test` · `make lint` · `make fmt` · `make bench` · `make perf-guard` · `make test-fuzz` (session fuzzer; `RC=` cases, `RS=` pinned seed) · `make test-grammars` (32 tree-sitter grammars)
+
+**Forge CI**: remote `forge` (Forgejo, self-hosted, free) runs the full macOS + Linux matrix, tests, and fuzzing; GitHub (`origin`) is for releases only. Push the feature branch to `forge` and watch the run with the forgejo console utility; the Constitution's testing article is binding on this. Everything the workflows run is a Makefile target (`make ci-setup`, `make ci-basic` ~15 min per push, `make ci-nightly` ~3 h, only when `main` changed). Workflow YAML stays thin: `.forgejo/workflows/` is the real CI, `.github/workflows/test.yml` is a manual-only mirror.
+
+## Hygiene
+
+Nightly checked: 2026-10-19
+
+The date is when the facts below were last verified against reality. When it is older than a week, recheck every item, fix what drifted, and bump the date in the same commit.
+
+- Forgejo runner labels in `.forgejo/workflows/` (`ubuntu-latest`, `macos-arm64`) match the labels actually registered on the forge.
+- The `forge` remote URL, and that `nightly-ok` still marks the last passing nightly.
+- The forgejo console utility is installed and its commands still match what is written here.
+- The Platform line above matches what the release matrix ships.
 
 ## House Rules
 

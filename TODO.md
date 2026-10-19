@@ -268,3 +268,40 @@ receiver without replying), those acks never arrive and the step hangs with no C
 today is `db_wiring_degraded`, which now confirms the writer dead before typing, so no op can be
 accepted after the kill. Any new test or fuzz fault that kills the writer must do the same, or the
 writer must reply `Err` to every op still queued when it exits, as `fatal` already does after a panic.
+
+## Forge CI: runners, labels, and limits are unverified
+
+`.forgejo/workflows/` was written against the Forgejo docs, not a live runner. To check on the first pushes
+and fix in the workflows (then bump "Nightly checked" in `CLAUDE.md`):
+
+- Runner labels `ubuntu-latest` (a Docker runner with a C compiler, `make`, `curl`) and `macos-arm64`
+  (a `:host` runner on an Apple Silicon machine with a C toolchain) must be registered on the forge.
+- The runner's `runner.timeout` and the server's `[actions] ENDLESS_TASK_TIMEOUT` both default to 3h. The
+  nightly job needs 200 minutes (150 of fuzzing), so both must be raised to at least 4h.
+- No dependency cache: `scripts/ci/setup.sh` and the cargo build start cold on Docker runners. Persistent
+  host runners keep `target/` between runs. Add a cache only after Forgejo's cache server is confirmed on.
+- The `rune-vfs` exchange tests need a filesystem with `RENAME_EXCHANGE`; an overlayfs container may fail them.
+- `make perf-guard` is not in `ci-basic` or `ci-nightly`: its wall-clock budgets will flake on shared runners.
+- `make mutants` has no CI job (`.cargo/mutants.toml` mentions a PR-scoped `--in-diff` job).
+- `.github/workflows/test.yml` is manual-only now; delete it when the forge has been the gate for a while.
+
+## Forge CI: monitoring from the console
+
+The forgejo console utility is not installed yet. Once it is, record in `CLAUDE.md` the exact commands to
+list runs, follow a run's log, and re-run a job (`tea actions runs list|logs -f` or `fj actions ...`; both
+are unverified against this Forgejo version), and check that they work with this instance.
+
+## Forge CI: endgame, feature to forge to trunk on GitHub to release
+
+Today a human merges to `main` on the forge and `cut-release.yml` runs on GitHub. Still to build:
+
+- **Trunk to GitHub**: a Forgejo push mirror (repo Settings, Mirror settings, GitHub PAT with `public_repo`
+  and `workflow`) or a workflow on the forge that pushes `main` to `origin` after `ci-basic` passes on
+  `main`. A mirror force-pushes and would also push the `nightly-ok` tag to GitHub.
+- **Auto-merge**: merge a feature branch into `main` on the forge when its checks succeed (the API's
+  `merge_when_checks_succeed`), with branch protection requiring the `CI / basic` checks.
+- **Auto-cut release**: after a passing nightly on `main`, run `cargo release` on the forge and dispatch
+  `release.yml` on GitHub with a token (`gh workflow run release.yml --field tag=v<version>`). The release
+  workflows are cargo-dist generated for GitHub and stay there; only the trigger moves.
+- `nightly.sh mark` pushes a tag with the workflow token, which needs write access to the repository.
+  If Forgejo's default token cannot push tags, give the workflow a repository secret with a deploy key.
