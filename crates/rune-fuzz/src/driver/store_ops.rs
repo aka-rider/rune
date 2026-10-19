@@ -15,11 +15,21 @@ use super::discharge::drain_one_db_op;
 use super::session::{Outcome, State};
 use super::step_exec::step_and_check;
 
-pub fn wait_for_db_op(bridge: &DbBridge, op_id: u64) -> rune_db::DbEvent {
-    bridge.wait_for_bootstrap_event(|evt| match evt {
+fn acks_op(evt: &rune_db::DbEvent, op_id: u64) -> bool {
+    match evt {
         rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == op_id,
         rune_db::DbEvent::Fatal { .. } => true,
-    })
+    }
+}
+
+pub fn wait_for_db_op(bridge: &DbBridge, op_id: u64) -> rune_db::DbEvent {
+    bridge.wait_for_bootstrap_event(|evt| acks_op(evt, op_id))
+}
+
+pub(super) fn await_db_ops_settled(app: &App, bridge: &DbBridge) {
+    for &op_id in app.db_ops.keys() {
+        bridge.wait_until_bootstrap_event_arrived(|evt| acks_op(evt, op_id));
+    }
 }
 
 pub(super) fn open_store(vfs: &Arc<dyn Vfs + Send + Sync>) -> (Arc<DbBridge>, Option<Db>) {

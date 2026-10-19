@@ -53,16 +53,26 @@ impl DbBridge {
     }
 
     pub fn wait_for_bootstrap_event(&self, mut pred: impl FnMut(&DbEvent) -> bool) -> DbEvent {
+        self.wait_bootstrap(|buf| {
+            let pos = buf.iter().position(&mut pred)?;
+            buf.remove(pos)
+        })
+    }
+
+    pub fn wait_until_bootstrap_event_arrived(&self, mut pred: impl FnMut(&DbEvent) -> bool) {
+        self.wait_bootstrap(|buf| buf.iter().any(&mut pred).then_some(()));
+    }
+
+    fn wait_bootstrap<R>(&self, mut take: impl FnMut(&mut VecDeque<DbEvent>) -> Option<R>) -> R {
         let mut sink = self
             .sink
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Sink::Bootstrap(buf) = &mut *sink
-                && let Some(pos) = buf.iter().position(&mut pred)
-                && let Some(evt) = buf.remove(pos)
+                && let Some(found) = take(buf)
             {
-                return evt;
+                return found;
             }
             sink = self
                 .arrived

@@ -1,0 +1,49 @@
+content \u{4e8c}\u{8fdb}\u{5236}\u{5185}\u{5bb9} \u{1f642} # not a heading\n\tliteral tab\n\u{4f60}\u{597d}\n
+path /fuzz/opaque.bin
+key left -a--
+key up ----
+key left ----
+type \u{645}\u{631}\u{62d}\u{628}\u{627} \u{628}\u{627}\u{644}\u{639}\u{627}\u{644}\u{645} \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+key char:v ---u
+clip \"quoted\" \'text\'
+type \u{1d4d2}\u{1d4fe}\u{1d4fb}\u{1d4fc}\u{1d4f2}\u{1d4ff}\u{1d4ee}  \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family
+key char:F --c-
+type 1o
+key tab s---
+key enter s---
+key enter ----
+key tab s---
+key enter ----
+key char:R --c-
+type (h
+key enter s---
+key escape ----
+key end ----
+key end ----
+key right ----
+key end ----
+key home ----
+key left -a--
+key left ----
+type  \u{200b}\u{200b} 
+type aA1! \u{4f60}\u{597d} \u{1f642} mix ***bold*** _em_ `code`
+key up --c-
+key pageup s---
+key f2 sa-u
+type |---|---|
+key left ----
+key left -a--
+key left -a--
+key left ----
+type ***bold*** _em_ `code` \u{2764}\u{fe0f} heart FE0F
+key char:s ---u
+deliver
+mouse down:right 34 3 ---
+mouse up:right 34 3 ---
+mouse down:right 34 3 ---
+mouse up:right 34 3 ---
+mouse down:right 34 3 ---
+mouse up:right 34 3 ---
+key char:z ---u
+key char:Z ---u
+key char:z s--u

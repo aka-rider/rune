@@ -169,6 +169,8 @@ pub(super) fn step_and_check(
         }
     };
 
+    super::store_ops::await_db_ops_settled(&state.app, &state.bridge);
+
     let save_parked_before = state.pending_save.is_some();
     let raw_bytes = effects.raw_bytes();
     for cmd in effects.cmds {
