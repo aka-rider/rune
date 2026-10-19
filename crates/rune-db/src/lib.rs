@@ -40,6 +40,7 @@ mod confirmation;
 mod conn;
 mod diag;
 mod doc_kind;
+mod doc_search_history;
 mod document;
 mod error;
 mod gc;
@@ -81,6 +82,7 @@ mod sync;
 #[cfg(test)]
 mod test_support;
 mod token_state;
+mod ui_settings;
 mod versioning;
 mod writer;
 mod writer_exec;

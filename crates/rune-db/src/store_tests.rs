@@ -261,3 +261,65 @@ fn shutdown_drains_and_joins_the_reader_thread() {
         "expected the reader thread to already be gone, got {result:?}"
     );
 }
+
+fn event_channel() -> (OnEvent, std::sync::mpsc::Receiver<crate::writer::DbEvent>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    (on_event, rx)
+}
+
+#[test]
+fn ui_setting_and_per_document_search_history_survive_a_reopen() {
+    use crate::reader::{ReaderReply, ReaderRequestKind};
+    use crate::writer::{DbEvent, OpOutcome};
+
+    let dir = temp_dir("doc-search-reopen");
+    let path = dir.join("rune-v1.db");
+
+    let (on_event, events) = event_channel();
+    let (store, _) = Store::open(&path, test_vfs(), on_event).expect("open");
+    store.create_scratch().expect("create scratch");
+    let doc_id = match events.recv().expect("scratch completion") {
+        DbEvent::Ok {
+            result: OpOutcome::ScratchDocId(id),
+            ..
+        } => id,
+        other => panic!("expected a scratch doc id, got {other:?}"),
+    };
+    store
+        .touch_doc_search_query(doc_id, "needle")
+        .expect("touch");
+    store
+        .set_ui_setting("search_history_scope", "all")
+        .expect("set");
+    for _ in 0..2 {
+        assert!(matches!(
+            events.recv().expect("completion"),
+            DbEvent::Ok { .. }
+        ));
+    }
+    store.shutdown();
+
+    let (on_event, _events) = event_channel();
+    let (store, _) = Store::open(&path, test_vfs(), on_event).expect("reopen");
+    assert_eq!(
+        store
+            .reader()
+            .query(ReaderRequestKind::UiSetting {
+                key: "search_history_scope".to_string()
+            })
+            .expect("read setting"),
+        ReaderReply::UiSetting(Some("all".to_string()))
+    );
+    assert_eq!(
+        store
+            .reader()
+            .query(ReaderRequestKind::RecentDocSearches { doc_id, limit: 10 })
+            .expect("read history"),
+        ReaderReply::RecentDocSearches(vec!["needle".to_string()])
+    );
+    store.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

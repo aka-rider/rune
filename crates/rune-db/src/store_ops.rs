@@ -91,6 +91,22 @@ impl Store {
         })
     }
 
+    pub fn touch_doc_search_query(&self, doc_id: DocId, query: &str) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::TouchDocSearchQuery {
+            doc_id,
+            query: query.to_string(),
+            now,
+        })
+    }
+
+    pub fn set_ui_setting(&self, key: &str, value: &str) -> Result<u64, Error> {
+        self.enqueue(OpKind::SetUiSetting {
+            key: key.to_string(),
+            value: value.to_string(),
+        })
+    }
+
     pub fn touch_replace_text(&self, text: &str) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::TouchReplaceText {

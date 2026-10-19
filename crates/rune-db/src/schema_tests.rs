@@ -466,3 +466,28 @@ fn apply_on_a_file_missing_replace_history_creates_it_without_disturbing_other_r
     assert_eq!(count("SELECT COUNT(*) FROM search_history"), 1);
     assert_eq!(count("SELECT COUNT(*) FROM replace_history"), 0);
 }
+
+#[test]
+fn apply_on_a_file_missing_the_per_document_history_and_settings_tables_creates_them() {
+    let before = format!(
+        "{SCHEMA_BEFORE_COMMAND_HISTORY_TABLE}\
+         CREATE TABLE IF NOT EXISTS command_history (name TEXT PRIMARY KEY, last_used_at TEXT NOT NULL);\
+         CREATE TABLE IF NOT EXISTS replace_history (text TEXT PRIMARY KEY, last_used_at TEXT NOT NULL);"
+    );
+    let mut conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch(&before)
+        .expect("apply the shape missing the new tables");
+    conn.execute(
+        "INSERT INTO search_history(query, last_used_at) VALUES ('hello', 't')",
+        [],
+    )
+    .expect("seed search_history");
+
+    apply(&mut conn).expect("apply creates the missing tables");
+    apply(&mut conn).expect("a second apply is a no-op");
+
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count rows") };
+    assert_eq!(count("SELECT COUNT(*) FROM search_history"), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM doc_search_history"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM ui_settings"), 0);
+}

@@ -5,6 +5,7 @@ use std::thread;
 use rusqlite::Connection;
 
 use crate::Error;
+use crate::ids::DocId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderRequestKind {
@@ -14,6 +15,8 @@ pub enum ReaderRequestKind {
     RecentDocuments { limit: u32 },
     RecentCommands { limit: u32 },
     RecentReplacements { limit: u32 },
+    RecentDocSearches { doc_id: DocId, limit: u32 },
+    UiSetting { key: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +27,8 @@ pub enum ReaderReply {
     RecentDocuments(Vec<String>),
     RecentCommands(Vec<String>),
     RecentReplacements(Vec<String>),
+    RecentDocSearches(Vec<String>),
+    UiSetting(Option<String>),
 }
 
 struct Request {
@@ -124,6 +129,13 @@ fn execute(conn: &Connection, kind: ReaderRequestKind) -> Result<ReaderReply, Er
         }
         ReaderRequestKind::RecentReplacements { limit } => {
             crate::replace_history::recent(conn, limit).map(ReaderReply::RecentReplacements)
+        }
+        ReaderRequestKind::RecentDocSearches { doc_id, limit } => {
+            crate::doc_search_history::recent(conn, doc_id, limit)
+                .map(ReaderReply::RecentDocSearches)
+        }
+        ReaderRequestKind::UiSetting { key } => {
+            crate::ui_settings::get(conn, &key).map(ReaderReply::UiSetting)
         }
     }
 }

@@ -212,3 +212,18 @@ fn stalled_writer_returns_full_without_blocking_or_panicking() {
     drop(block_tx);
     handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
 }
+
+/// The `#[cfg(test)]`-only arms, moved out of the production match body
+/// above: `TestBlock` rendezvous-blocks the writer thread for the bounded-
+/// queue-overflow test; `PanicForTest` deliberately unwinds, proving the
+/// writer loop's panic guard survives a REAL panic from op execution.
+pub(super) fn execute_test_op(kind: OpKind) -> Result<OpOutcome, Error> {
+    match kind {
+        OpKind::TestBlock(rx) => {
+            let _ = rx.recv();
+            Ok(OpOutcome::None)
+        }
+        OpKind::PanicForTest => panic!("intentional test panic (writer panic-guard test)"),
+        _ => Ok(OpOutcome::None),
+    }
+}

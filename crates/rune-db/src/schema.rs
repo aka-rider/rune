@@ -108,6 +108,18 @@ CREATE TABLE IF NOT EXISTS replace_history (
 	text         TEXT PRIMARY KEY,
 	last_used_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS doc_search_history (
+	doc_id       INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+	query        TEXT    NOT NULL,
+	last_used_at TEXT    NOT NULL,
+	PRIMARY KEY(doc_id, query)
+);
+
+CREATE TABLE IF NOT EXISTS ui_settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 "#;
 
 pub fn apply(conn: &mut Connection) -> Result<(), Error> {

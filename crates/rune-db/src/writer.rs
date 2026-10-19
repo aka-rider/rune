@@ -196,7 +196,7 @@ fn execute_op(
         #[cfg(test)]
         OpKind::Noop => exec::noop(conn),
         #[cfg(test)]
-        OpKind::TestBlock(_) | OpKind::PanicForTest => execute_test_op(kind),
+        OpKind::TestBlock(_) | OpKind::PanicForTest => tests::execute_test_op(kind),
         // Intercepted in `writer_loop` before this function is ever called
         // — see the variant's doc comment.
         #[cfg(feature = "test-support")]
@@ -399,27 +399,14 @@ fn execute_op(
         OpKind::TouchSearchQuery { query, now } => exec::touch_search_query(conn, &query, now),
         OpKind::TouchCommandName { name, now } => exec::touch_command_name(conn, &name, now),
         OpKind::TouchReplaceText { text, now } => exec::touch_replace_text(conn, &text, now),
+        OpKind::TouchDocSearchQuery { doc_id, query, now } => {
+            exec::touch_doc_search_query(conn, doc_id, &query, now)
+        }
+        OpKind::SetUiSetting { key, value } => exec::set_ui_setting(conn, &key, &value),
         OpKind::Shutdown {
             session_id,
             liveness_check,
         } => exec::shutdown(conn, session_id, &liveness_check),
-    }
-}
-
-/// The `#[cfg(test)]`-only arms, moved out of the production match body
-/// above: `TestBlock` rendezvous-blocks the writer thread for the bounded-
-/// queue-overflow test; `PanicForTest` deliberately unwinds, proving the
-/// writer loop's panic guard survives a REAL panic from op execution.
-#[cfg(test)]
-#[allow(clippy::panic)]
-fn execute_test_op(kind: OpKind) -> Result<OpOutcome, Error> {
-    match kind {
-        OpKind::TestBlock(rx) => {
-            let _ = rx.recv();
-            Ok(OpOutcome::None)
-        }
-        OpKind::PanicForTest => panic!("intentional test panic (writer panic-guard test)"),
-        _ => Ok(OpOutcome::None),
     }
 }
 

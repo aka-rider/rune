@@ -450,6 +450,27 @@ pub(crate) fn touch_replace_text(
     Ok(OpOutcome::None)
 }
 
+pub(crate) fn touch_doc_search_query(
+    conn: &mut Connection,
+    doc_id: DocId,
+    query: &str,
+    now: SystemTime,
+) -> Result<OpOutcome, Error> {
+    retry::with_retry(conn, |tx| {
+        crate::doc_search_history::touch(tx, doc_id, query, now)
+    })?;
+    Ok(OpOutcome::None)
+}
+
+pub(crate) fn set_ui_setting(
+    conn: &mut Connection,
+    key: &str,
+    value: &str,
+) -> Result<OpOutcome, Error> {
+    retry::with_retry(conn, |tx| crate::ui_settings::set(tx, key, value))?;
+    Ok(OpOutcome::None)
+}
+
 pub(crate) fn shutdown(
     conn: &mut Connection,
     session_id: SessionId,

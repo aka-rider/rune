@@ -311,6 +311,15 @@ pub(crate) enum OpKind {
         text: String,
         now: SystemTime,
     },
+    TouchDocSearchQuery {
+        doc_id: DocId,
+        query: String,
+        now: SystemTime,
+    },
+    SetUiSetting {
+        key: String,
+        value: String,
+    },
     /// The writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER
