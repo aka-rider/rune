@@ -1,5 +1,3 @@
-//! The invariant roster in the `src/lib.rs` doc comment is hand-kept; this
-//! test fails the build when it drifts from the ids the crate can emit.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::BTreeSet;

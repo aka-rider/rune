@@ -36,13 +36,6 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CUR-NOT-IN-CRLF` (L0) — no cursor `position`/`anchor` sits strictly
-/// between the `\r` and the `\n` of a CRLF pair. The pair is one line
-/// terminator; a caret inside it renders on the next line's cell and an edit
-/// there splits the terminator into a lone CR and a lone LF.
-///
-/// Active-document-switch-safe: L0, checks one `Snapshot`'s cursors against
-/// its own `content`.
 pub fn cur_not_in_crlf(snap: &Snapshot) -> Option<Violation> {
     let bytes = snap.content.as_bytes();
     let inside_pair = |offset: usize| {
