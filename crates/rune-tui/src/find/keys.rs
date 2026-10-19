@@ -209,9 +209,7 @@ pub(crate) fn click(
     point: Position,
     effects: &mut Effects,
 ) {
-    if let Some(state) = app.find_mut() {
-        state.focused = true;
-    }
+    crate::find::take_focus(app, effects);
     if panel.find_field.contains(point) {
         focus_control(app, Control::Find);
         return;
@@ -261,7 +259,6 @@ pub(crate) fn paste(app: &mut App, text: &str) {
 
 fn focus_control(app: &mut App, control: Control) {
     if let Some(state) = app.find_mut() {
-        state.focused = true;
         state.focus = control;
     }
 }

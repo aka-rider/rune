@@ -124,6 +124,7 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
         || prev.merge_doc != next.merge_doc
         || prev.merge_unresolved != next.merge_unresolved;
     let status_changed = prev.status != next.status;
+    let find_panel_toggled = prev.find_open != next.find_open;
     // `status` alone is blind to two consecutive posts of IDENTICAL text
     // (the same merge-key hint fired by two different unbound keys in a
     // row): `entries.last()` looks unchanged even though a new row landed
@@ -136,6 +137,7 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
         || scroll_changed
         || merge_state_changed
         || status_changed
+        || find_panel_toggled
         || message_posted
     {
         return None;

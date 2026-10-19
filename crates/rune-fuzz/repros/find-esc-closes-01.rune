@@ -1,0 +1,23 @@
+content 
+install-diff-left 18
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:y s--u
+key char:m --c-
+key escape ----
+key char:h ----
+highlight-tree live 0 0
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:y s--u
+key char:m --c-
+key char:f --c-
+type a
+mouse down:left 60 12 ---
+mouse up:left 60 12 ---
+key escape ----
+key tab ----

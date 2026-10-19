@@ -144,12 +144,14 @@ fn refocus(app: &mut App, kind: FilterKind, expand_replace: bool, effects: &mut 
         expand_replace_field(app, effects);
         return;
     }
-    let Some(state) = app.find_mut() else {
+    let Some(state) = app.find() else {
         return;
     };
     if switched || !state.focused || state.focus != Control::Find {
-        state.focused = true;
-        state.focus = Control::Find;
+        take_focus(app, effects);
+        if let Some(state) = app.find_mut() {
+            state.focus = Control::Find;
+        }
         return;
     }
     close(app, false);
@@ -162,10 +164,10 @@ pub(crate) fn requery(app: &mut App) {
 }
 
 fn expand_replace_field(app: &mut App, effects: &mut Effects) {
+    take_focus(app, effects);
     let Some(state) = app.find_mut() else {
         return;
     };
-    state.focused = true;
     state.focus = Control::Replace;
     if state.replace.is_some() {
         return;
@@ -212,6 +214,16 @@ pub(crate) fn escape(app: &mut App) -> bool {
     };
     close(app, focused);
     true
+}
+
+pub(crate) fn take_focus(app: &mut App, effects: &mut Effects) {
+    if app.find().is_none() {
+        return;
+    }
+    app.blur_title(effects);
+    if let Some(state) = app.find_mut() {
+        state.focused = true;
+    }
 }
 
 pub(crate) fn accept_location(app: &mut App) {

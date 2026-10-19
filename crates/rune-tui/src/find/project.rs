@@ -354,8 +354,8 @@ fn click_row(app: &mut App, visible_row: usize, effects: &mut Effects) {
         return;
     }
     project.list.cursor = absolute;
+    crate::find::take_focus(app, effects);
     if let Some(state) = app.find_mut() {
-        state.focused = true;
         state.focus = Control::Results;
     }
     open_hit(app, effects);

@@ -331,6 +331,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 }
 
 fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
+    if key.code == KeyCode::Escape && key.mods == Mods::NONE && crate::find::escape(app) {
+        return keymap::KeyOutcome::Consumed;
+    }
+
     if crate::diff_view::keys::intercept(app, key) {
         return keymap::KeyOutcome::Consumed;
     }
