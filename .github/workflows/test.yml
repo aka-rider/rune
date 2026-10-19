@@ -1,9 +1,6 @@
 name: Test
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -15,19 +12,5 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      # No toolchain input: rust-toolchain.toml at the repo root pins it.
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Format
-        run: make fmt
-
-      - name: Lint
-        run: make lint
-
-      - uses: taiki-e/install-action@nextest
-
-      - name: Test
-        run: make test PROFILE=ci
+      - run: make ci-setup
+      - run: make ci-basic

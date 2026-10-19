@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+jobs:
+  basic:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-arm64]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: make ci-setup
+      - run: make ci-basic

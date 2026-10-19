@@ -1,0 +1,49 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run even when main is unchanged since the last passing nightly
+        type: boolean
+        default: false
+
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.gate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=$(scripts/ci/nightly.sh changed)" >> "$GITHUB_OUTPUT"
+          fi
+
+  full:
+    needs: changed
+    if: needs.changed.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-arm64]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+      - run: make ci-setup
+      - run: make ci-nightly
+
+  mark:
+    needs: full
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci/nightly.sh mark
