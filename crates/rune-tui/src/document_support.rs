@@ -39,8 +39,7 @@ pub fn is_image_path(path: &Path) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Hydration {
     NoChange,
-    /// Journals one synthetic bridge `Step` before replacing the buffer, so
-    /// `⌘Z` can still reach the pre-recovery content.
+    /// The buffer now shows recovered content that differs from disk.
     Adopted,
     Refused(&'static str),
 }

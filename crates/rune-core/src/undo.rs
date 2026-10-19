@@ -1,5 +1,5 @@
-//! In-memory undo journal, SQLite-shaped for Phase 2 (the durable store adds
-//! persistence behind the same peek-then-commit shape, not a new one).
+//! In-memory undo journal. The durable store persists every step and hands
+//! the replayable lineage back on load, which `Journal::from_parts` installs.
 
 use crate::buffer::{AppliedEdit, Buffer, BufferError, Edit, SortedEdits, duplicate_applied_start};
 use crate::cursor::Cursor;
@@ -62,9 +62,9 @@ pub fn coalesce_touching_deletes<T>(
 /// `ae.start + ae.insert.len()` would overflow `usize`. Unreachable from
 /// any edit `apply_edits` itself produced (every real `start`/`len` is
 /// bounded by a live document's byte length), but `edits` is `pub fn`
-/// -reachable data — Phase 2 will feed it back from SQLite — and
+/// -reachable data — a lineage read back from SQLite — and
 /// adversarial input must never panic the process, however unreachable
-/// that path is today.
+/// that path is for a well-formed journal.
 ///
 /// Runs `coalesce_touching_deletes` on the raw inverse batch before
 /// sorting/returning it: a forward step recording two touching PURE

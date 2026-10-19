@@ -29,6 +29,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 
 - **materialize** — the write turning a buffer into the destination `.md`; ⌘S, evict, quit, rename all funnel through it (not "save", "flush" — autosave targets the recovery store).
 - **journal / snapshot** — durable per-document edit stream / content-addressed full-content version (not "undo stack", "backup").
+- **lineage** — the replayable undo history a load reads back from the journal (not "undo stack").
 - **observation / probe** — a recorded disk fact (hash, size, mtime, inode) / the async re-read that classifies sync state (not "stat cache", "poll").
 - **draft** — untitled doc, recovery-backed, no file until named; a blank draft is dropped at launch, and a closed draft is forgotten in the store.
 - **pane** — a focusable region of the workspace (Editor, Explorer, Tabs); focus routing keys off it.

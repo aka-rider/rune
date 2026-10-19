@@ -295,3 +295,60 @@ fn document_ids_are_distinct_and_ordered() {
     assert_ne!(a, b);
     assert!(a < b);
 }
+
+fn one_step_journal() -> Journal {
+    Journal::from_parts(
+        vec![Step {
+            edits: Vec::new(),
+            cursors_before: Vec::new(),
+            cursors_after: Vec::new(),
+            kind: EditKind::Other,
+        }],
+        Vec::new(),
+    )
+}
+
+#[test]
+fn restore_lineage_installs_the_journal_without_adding_a_bridge_step() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+
+    let outcome = doc.restore_lineage("on disk", "recovered draft", &[], one_step_journal());
+
+    assert_eq!(outcome, Hydration::Adopted);
+    assert_eq!(doc.buffer.content(), "recovered draft");
+    assert_eq!(doc.journal.len(), 1);
+}
+
+#[test]
+fn restore_lineage_keeps_a_buffer_that_already_matches_disk() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    let version = doc.buffer.version();
+
+    let outcome = doc.restore_lineage("on disk", "on disk", &[], one_step_journal());
+
+    assert_eq!(outcome, Hydration::NoChange);
+    assert_eq!(doc.buffer.version(), version);
+    assert_eq!(doc.journal.len(), 1);
+}
+
+#[test]
+fn restore_lineage_refuses_a_truncated_draft_and_installs_no_history() {
+    let disk = "0123456789ABCDEF0123456789ABCDEF";
+    let mut doc = Document::new(Buffer::new(disk));
+
+    let outcome = doc.restore_lineage(disk, "", &[], one_step_journal());
+
+    assert!(matches!(outcome, Hydration::Refused(_)));
+    assert_eq!(doc.buffer.content(), disk);
+    assert!(doc.journal.is_empty());
+}
+
+#[test]
+fn a_document_that_has_been_edited_no_longer_accepts_history() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    assert!(doc.accepts_history());
+
+    doc.hydrate("on disk", "recovered draft", &[]);
+
+    assert!(!doc.accepts_history());
+}

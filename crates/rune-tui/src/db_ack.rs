@@ -49,20 +49,14 @@ pub fn handle_load_ack(
     if app.merge.doc() == Some(id) {
         crate::merge::auto_exit(app);
     }
-    let hydration = {
-        let Some(doc) = app.doc_mut(id) else { return };
-        if issued_version == Some(doc.buffer.version()) {
-            Some(doc.hydrate(
-                &load_result.disk_content,
-                &load_result.recovered.content,
-                &load_result.recovered.cursors,
-            ))
-        } else {
-            None
-        }
+    let Some(restored) = history::restore(app, id, &load_result, issued_version) else {
+        return;
     };
-    let adopted = matches!(&hydration, Some(crate::document::Hydration::Adopted));
-    match hydration {
+    let adopted = matches!(
+        &restored.hydration,
+        Some(crate::document::Hydration::Adopted)
+    );
+    match restored.hydration {
         Some(crate::document::Hydration::Refused(reason)) => {
             messages::error(app, format!("crash recovery: {reason}"));
             detach_file_binding(app, id);
@@ -82,8 +76,9 @@ pub fn handle_load_ack(
         }
         Some(crate::document::Hydration::NoChange) | None => {}
     }
+    history::report_history(app, &load_result, restored.mode);
     app.install_or_join_file_binding(load_result.doc_id.0, Some(expect_obs));
-    let pending = install_doc_db(app, id, &load_result, BindMode::Restarted);
+    let pending = install_doc_db(app, id, &load_result, restored.mode);
     crate::db_enqueue::replay_pending(app, id, pending);
     let Some(doc) = app.doc_mut(id) else { return };
     doc.last_sync = Some(load_result.sync.kind);
@@ -175,18 +170,31 @@ fn install_doc_db(
     load_result: &LoadResult,
     mode: BindMode,
 ) -> Vec<ReplicaStep> {
-    let doc_db = DocDb::new(
+    let mut doc_db = DocDb::new(
         load_result.doc_id.0,
         PublishMode::OverwriteExisting,
         load_result.history.position_seq(),
     );
+    if matches!(mode, BindMode::Seeded { .. }) {
+        doc_db.token_origin = rune_db::TokenOrigin::from_lineage(&load_result.history);
+    }
     bind_document_row(app, id, doc_db, &load_result.recovered.content, mode)
 }
 
 #[derive(Clone, Copy)]
 enum BindMode {
     Restarted,
+    Seeded { pos: usize },
     Preserved,
+}
+
+impl BindMode {
+    fn seeded_len(self) -> i64 {
+        match self {
+            BindMode::Seeded { pos } => crate::db_enqueue::journal_i64(pos),
+            BindMode::Restarted | BindMode::Preserved => 0,
+        }
+    }
 }
 
 struct PriorBinding {
@@ -214,6 +222,11 @@ struct PriorBinding {
 /// instead, discarding the fresh token: the local journal gained nothing
 /// across such a load, so switching tokens would abandon a numbering the
 /// writer still holds and can resolve exactly.
+///
+/// `Seeded` is a `Restarted` whose local journal was installed from the
+/// durable lineage: the fresh token already numbers every historical
+/// position, so local position `p` maps to `p - pos` and every position
+/// down to `0` resolves exactly.
 ///
 /// `Restarted` on the SAME row keeps the fresh token and sets
 /// `diverged`/`synced_content` from a direct comparison against
@@ -274,10 +287,10 @@ fn bind_document_row(
                     doc_db.diverged = prior.diverged;
                     doc_db.synced_content = prior.synced_content;
                 }
-                BindMode::Restarted => {
+                BindMode::Restarted | BindMode::Seeded { .. } => {
                     doc_db.diverged = doc.buffer.content() != row_content;
                     doc_db.synced_content = row_content.to_string();
-                    doc_db.undo_offset = pos;
+                    doc_db.undo_offset = pos - mode.seeded_len();
                     doc_db.undo_floor = 0;
                 }
             }
@@ -316,7 +329,7 @@ fn bind_document_row(
             }
             doc_db.synced_content = row_content.to_string();
             let replayed = crate::db_enqueue::journal_i64(pending.len());
-            doc_db.undo_offset = pos - replayed - bridged;
+            doc_db.undo_offset = pos - replayed - bridged - mode.seeded_len();
             doc.replica = Replica::Bound(doc_db);
             if let Some(prior) = prior {
                 app.prune_file_binding(prior.db_id);
@@ -417,6 +430,9 @@ pub fn bind_loaded_doc(app: &mut App, id: DocumentId, doc_db: DocDb, row_content
     let pending = bind_document_row(app, id, doc_db, row_content, BindMode::Restarted);
     crate::db_enqueue::replay_pending(app, id, pending);
 }
+
+#[path = "db_ack_history.rs"]
+mod history;
 
 #[cfg(test)]
 #[path = "db_ack_tests.rs"]

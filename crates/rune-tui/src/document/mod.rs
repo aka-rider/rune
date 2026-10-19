@@ -259,8 +259,46 @@ impl Document {
         if recovered == disk_content {
             return Hydration::NoChange;
         }
+        match self.swap_in_recovered(disk_content, recovered, journaled_cursors) {
+            Ok(step) => {
+                self.journal.push(step);
+                Hydration::Adopted
+            }
+            Err(reason) => Hydration::Refused(reason),
+        }
+    }
+
+    pub fn accepts_history(&self) -> bool {
+        !self.replica.is_bound() && self.journal.is_empty()
+    }
+
+    pub fn restore_lineage(
+        &mut self,
+        disk_content: &str,
+        content: &str,
+        journaled_cursors: &[Cursor],
+        journal: Journal,
+    ) -> Hydration {
+        let hydration = if content == disk_content {
+            Hydration::NoChange
+        } else {
+            match self.swap_in_recovered(disk_content, content, journaled_cursors) {
+                Ok(_) => Hydration::Adopted,
+                Err(reason) => return Hydration::Refused(reason),
+            }
+        };
+        self.journal = journal;
+        hydration
+    }
+
+    fn swap_in_recovered(
+        &mut self,
+        disk_content: &str,
+        recovered: &str,
+        journaled_cursors: &[Cursor],
+    ) -> Result<Step, &'static str> {
         if is_suspicious_shrink(disk_content, recovered) {
-            return Hydration::Refused(
+            return Err(
                 "recovered draft looked truncated relative to the file on disk — kept the on-disk version",
             );
         }
@@ -270,7 +308,7 @@ impl Document {
             insert: recovered.to_string(),
         });
         let Ok((new_buffer, applied)) = self.buffer.apply_edits(&edit) else {
-            return Hydration::Refused("recovered draft failed to apply to the buffer");
+            return Err("recovered draft failed to apply to the buffer");
         };
         let cursors_before = self.cursors.all().to_vec();
         let seat = |c: Cursor| {
@@ -294,14 +332,12 @@ impl Document {
             CursorSet::new_from(&seated)
         };
         self.buffer = new_buffer;
-        let cursors_after = self.cursors.all().to_vec();
-        self.journal.push(Step {
+        Ok(Step {
             edits: applied,
             cursors_before,
-            cursors_after,
+            cursors_after: self.cursors.all().to_vec(),
             kind: EditKind::Other,
-        });
-        Hydration::Adopted
+        })
     }
 
     pub fn file_name(&self) -> &str {
