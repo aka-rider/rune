@@ -10,6 +10,8 @@ use crate::width::display_width;
 pub const FIND_PANEL_MIN_BOX_W: u16 = 12;
 const FIND_ONLY_ROWS: u16 = 3;
 const WITH_REPLACE_ROWS: u16 = 5;
+const GLOBS_ROW: u16 = 1;
+const GLOB_GAP: u16 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Chip {
@@ -66,18 +68,25 @@ pub struct FindPanelGeometry {
     pub(crate) frame: Rect,
     pub(crate) find_field: Rect,
     pub(crate) replace_field: Option<Rect>,
+    pub(crate) include_field: Option<Rect>,
+    pub(crate) exclude_field: Option<Rect>,
     pub(crate) chips: [Option<(Chip, Rect)>; 6],
 }
 
 pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPanelGeometry>) {
     let room = main_area.height.saturating_sub(1);
-    let height = if state.replace.is_some() && room >= WITH_REPLACE_ROWS {
-        WITH_REPLACE_ROWS
-    } else if room >= FIND_ONLY_ROWS {
-        FIND_ONLY_ROWS
-    } else {
+    let globs_wanted = state.globs().is_some();
+    let replace_wanted = state.replace.is_some();
+    let Some((replace_shown, globs_shown)) = [
+        (replace_wanted, globs_wanted),
+        (false, globs_wanted),
+        (false, false),
+    ]
+    .into_iter()
+    .find(|&(replace, globs)| room >= panel_rows(replace, globs)) else {
         return (main_area, None);
     };
+    let height = panel_rows(replace_shown, globs_shown);
     let outer = Region::carve_bottom(main_area, height).rect();
     let rest = Rect::new(
         main_area.x,
@@ -85,7 +94,6 @@ pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPan
         main_area.width,
         main_area.height.saturating_sub(height),
     );
-    let replace_shown = height == WITH_REPLACE_ROWS;
 
     let strip_w = chip_strip_width(replace_shown, state);
     let chips_fit = outer.width >= strip_w.saturating_add(FIND_PANEL_MIN_BOX_W);
@@ -114,6 +122,14 @@ pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPan
         )
     });
 
+    let (include_field, exclude_field) = if globs_shown {
+        let (include, exclude) =
+            split_globs_row(frame, outer.y.saturating_add(height).saturating_sub(2));
+        (Some(include), Some(exclude))
+    } else {
+        (None, None)
+    };
+
     let mut chips: [Option<(Chip, Rect)>; 6] = [None; 6];
     if chips_fit {
         let x0 = frame.right().saturating_add(1);
@@ -131,8 +147,31 @@ pub(crate) fn carve(main_area: Rect, state: &FindState) -> (Rect, Option<FindPan
             frame,
             find_field,
             replace_field,
+            include_field,
+            exclude_field,
             chips,
         }),
+    )
+}
+
+fn panel_rows(replace: bool, globs: bool) -> u16 {
+    let base = if replace {
+        WITH_REPLACE_ROWS
+    } else {
+        FIND_ONLY_ROWS
+    };
+    base.saturating_add(if globs { GLOBS_ROW } else { 0 })
+}
+
+fn split_globs_row(frame: Rect, y: u16) -> (Rect, Rect) {
+    let inner = frame.width.saturating_sub(2);
+    let include_w = inner.saturating_sub(GLOB_GAP) / 2;
+    let exclude_w = inner.saturating_sub(GLOB_GAP).saturating_sub(include_w);
+    let x = frame.x.saturating_add(1);
+    let exclude_x = x.saturating_add(include_w).saturating_add(GLOB_GAP);
+    (
+        Rect::new(x, y, include_w, 1),
+        Rect::new(exclude_x, y, exclude_w, 1),
     )
 }
 

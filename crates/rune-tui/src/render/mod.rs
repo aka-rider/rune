@@ -384,7 +384,7 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     let title = if filesearch_active {
         " Open File ".to_string()
     } else if projectsearch_active {
-        " Search Project ".to_string()
+        " Search ".to_string()
     } else if geo.explorer_inner.height == 0 {
         " Open ".to_string()
     } else if let Some(query) = app.explorer_find() {

@@ -98,7 +98,7 @@ fn the_results_list_is_hidden_for_zero_and_one_matching_file_and_shown_for_two()
         );
         let rows = project_grid(&mut app);
         assert_eq!(
-            rows.iter().any(|row| row.contains("Search Project")),
+            rows.iter().any(|row| row.contains(" Search ")),
             listed,
             "{corpus:?}"
         );
@@ -112,9 +112,12 @@ fn the_ring_has_no_results_stop_while_the_query_is_too_short_to_search() {
     press_into(&mut app, ctrl('F'), &mut effects);
     type_into(&mut app, "n", &mut effects);
 
-    assert_eq!(find(&app).control_ring(), vec![Control::Find]);
-    press_into(&mut app, tab(), &mut effects);
-    assert_eq!(find(&app).focus, Control::Find);
+    assert_eq!(
+        find(&app).control_ring(),
+        vec![Control::Find, Control::Include, Control::Exclude]
+    );
+    press_into(&mut app, shift_tab(), &mut effects);
+    assert_eq!(find(&app).focus, Control::Exclude);
 }
 
 #[test]

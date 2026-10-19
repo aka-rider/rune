@@ -335,7 +335,10 @@ fn alt_f_switches_the_open_panel_to_the_workspace_filter_and_keeps_the_query() {
     assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
     assert!(find(&app).focused);
     assert_eq!(find(&app).find.editor.text(), "hel");
-    assert_eq!(find(&app).control_ring(), vec![Control::Find]);
+    assert_eq!(
+        find(&app).control_ring(),
+        vec![Control::Find, Control::Include, Control::Exclude]
+    );
 }
 
 #[test]

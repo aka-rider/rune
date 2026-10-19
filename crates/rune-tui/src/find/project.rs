@@ -83,7 +83,10 @@ pub(crate) fn apply_filter(app: &mut App, kind: FilterKind, effects: &mut Effect
         FilterKind::Workspace => {
             let generation = app.next_projectsearch_gen.mint();
             if let Some(state) = app.find_mut() {
-                state.filter = Filter::Workspace(ProjectResults::new(generation));
+                state.filter = Filter::Workspace {
+                    results: ProjectResults::new(generation),
+                    globs: Box::default(),
+                };
             }
             crate::projectsearch::ensure_index(app, effects);
         }
@@ -91,13 +94,14 @@ pub(crate) fn apply_filter(app: &mut App, kind: FilterKind, effects: &mut Effect
             let Some(state) = app.find_mut() else {
                 return;
             };
-            let Filter::Workspace(project) = std::mem::replace(&mut state.filter, Filter::ThisFile)
+            let Filter::Workspace { results, .. } =
+                std::mem::replace(&mut state.filter, Filter::ThisFile)
             else {
                 return;
             };
             state.settle_focus();
             crate::explorer_preview::discard(app);
-            project_replace::abandon(app, project.walk);
+            project_replace::abandon(app, results.walk);
         }
     }
 }
@@ -142,22 +146,21 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
     let Some(state) = app.find() else {
         return;
     };
-    if state.project().is_none() {
+    let Some(globs) = state.globs() else {
         return;
-    }
+    };
     let matcher = match &state.pattern {
         Ok(matcher) if state.find.editor.text().chars().count() >= MIN_QUERY_CHARS => {
             matcher.clone()
         }
         _ => {
-            if let Some(state) = app.find_mut() {
-                if let Some(project) = state.project_mut() {
-                    project.clear();
-                }
-                state.settle_focus();
-            }
+            abandon_query(app);
             return;
         }
+    };
+    let Ok(path_filter) = globs.path_filter() else {
+        abandon_query(app);
+        return;
     };
     let Some((entries, root)) = app
         .project_index
@@ -166,7 +169,14 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
     else {
         return;
     };
-    let overrides = gather_overrides(app, &root);
+    let entries: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| path_filter.admits(&root, &entry.path))
+        .collect();
+    let overrides: Vec<_> = gather_overrides(app, &root)
+        .into_iter()
+        .filter(|(path, _)| path_filter.admits(&root, path))
+        .collect();
     let generation = app.next_projectsearch_gen.mint();
     let Some(project) = results_mut(app) else {
         return;
@@ -175,6 +185,17 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
     effects.cmds.push(crate::runtime::project_query_cmd(
         entries, overrides, matcher, generation,
     ));
+}
+
+fn abandon_query(app: &mut App) {
+    let generation = app.next_projectsearch_gen.mint();
+    if let Some(state) = app.find_mut() {
+        if let Some(project) = state.project_mut() {
+            project.query_generation = generation;
+            project.clear();
+        }
+        state.settle_focus();
+    }
 }
 
 fn gather_overrides(app: &App, root: &Path) -> Vec<(PathBuf, String)> {

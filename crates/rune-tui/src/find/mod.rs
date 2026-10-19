@@ -14,6 +14,7 @@ use crate::viewport::ScrollMode;
 
 pub(crate) mod bindings;
 pub(crate) mod follow;
+pub(crate) mod globs;
 pub(crate) mod hints;
 pub(crate) mod history;
 pub(crate) mod keys;
@@ -37,6 +38,9 @@ mod filter_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod follow_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod glob_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod history_tests;
@@ -84,14 +88,17 @@ pub(crate) enum FilterKind {
 
 pub(crate) enum Filter {
     ThisFile,
-    Workspace(project::ProjectResults),
+    Workspace {
+        results: project::ProjectResults,
+        globs: Box<globs::GlobFields>,
+    },
 }
 
 impl Filter {
     pub(crate) fn kind(&self) -> FilterKind {
         match self {
             Filter::ThisFile => FilterKind::ThisFile,
-            Filter::Workspace(_) => FilterKind::Workspace,
+            Filter::Workspace { .. } => FilterKind::Workspace,
         }
     }
 }
@@ -100,7 +107,15 @@ impl Filter {
 pub(crate) enum Control {
     Find,
     Replace,
+    Include,
+    Exclude,
     Results,
+}
+
+impl Control {
+    pub(crate) fn is_field(self) -> bool {
+        self != Control::Results
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,14 +199,21 @@ impl FindState {
 
     pub(crate) fn project(&self) -> Option<&project::ProjectResults> {
         match &self.filter {
-            Filter::Workspace(project) => Some(project),
+            Filter::Workspace { results, .. } => Some(results),
             Filter::ThisFile => None,
         }
     }
 
     pub(crate) fn project_mut(&mut self) -> Option<&mut project::ProjectResults> {
         match &mut self.filter {
-            Filter::Workspace(project) => Some(project),
+            Filter::Workspace { results, .. } => Some(results),
+            Filter::ThisFile => None,
+        }
+    }
+
+    pub(crate) fn globs(&self) -> Option<&globs::GlobFields> {
+        match &self.filter {
+            Filter::Workspace { globs, .. } => Some(globs),
             Filter::ThisFile => None,
         }
     }
@@ -202,23 +224,33 @@ impl FindState {
     }
 
     pub(crate) fn settle_focus(&mut self) {
-        if self.focus == Control::Results && !self.results_listed() {
+        if !self.control_ring().contains(&self.focus) {
             self.focus = Control::Find;
         }
     }
 
-    pub(crate) fn focused_field_mut(&mut self) -> Option<&mut FieldState> {
-        match self.focus {
-            Control::Find => Some(&mut self.find),
-            Control::Replace => self.replace.as_mut(),
-            Control::Results => None,
+    pub(crate) fn field_mut(&mut self, control: Control) -> Option<&mut FieldState> {
+        match (control, &mut self.filter) {
+            (Control::Find, _) => Some(&mut self.find),
+            (Control::Replace, _) => self.replace.as_mut(),
+            (Control::Include, Filter::Workspace { globs, .. }) => Some(&mut globs.include),
+            (Control::Exclude, Filter::Workspace { globs, .. }) => Some(&mut globs.exclude),
+            (Control::Include | Control::Exclude, Filter::ThisFile) | (Control::Results, _) => None,
         }
+    }
+
+    pub(crate) fn focused_field_mut(&mut self) -> Option<&mut FieldState> {
+        self.field_mut(self.focus)
     }
 
     pub(crate) fn control_ring(&self) -> Vec<Control> {
         let mut ring = vec![Control::Find];
         if self.replace.is_some() {
             ring.push(Control::Replace);
+        }
+        if self.globs().is_some() {
+            ring.push(Control::Include);
+            ring.push(Control::Exclude);
         }
         if self.results_listed() {
             ring.push(Control::Results);
@@ -349,9 +381,9 @@ pub(crate) fn close(app: &mut App, restore: bool) {
     if !find_text.trim().is_empty() {
         app.last_find = Some((find_text, state.options));
     }
-    if let Filter::Workspace(project) = state.filter {
+    if let Filter::Workspace { results, .. } = state.filter {
         crate::explorer_preview::discard(app);
-        project_replace::abandon(app, project.walk);
+        project_replace::abandon(app, results.walk);
     }
     if restore {
         if app.active != state.origin.doc {

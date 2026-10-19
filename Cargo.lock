@@ -2368,6 +2368,7 @@ dependencies = [
  "base64",
  "catppuccin",
  "compact_str",
+ "globset",
  "ignore",
  "nucleo-matcher",
  "ratatui",

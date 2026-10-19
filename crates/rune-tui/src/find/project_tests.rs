@@ -47,7 +47,7 @@ fn ctrl_shift_f_opens_the_workspace_filter_with_the_this_file_chip_off() {
     );
     let rows = project_grid(&mut app);
     assert!(
-        rows.iter().any(|row| row.contains("Search Project")),
+        rows.iter().any(|row| row.contains(" Search ")),
         "two matching files force the left column open with the results title"
     );
 }
@@ -222,7 +222,7 @@ fn the_workspace_footer_lists_results_and_open_and_no_globals() {
     assert!(
         entries.iter().any(|(label, help, _)| {
             *label == crate::find::bindings::label_for(FindCommand::NextControl)
-                && *help == "results"
+                && *help == "include"
         }),
         "{entries:?}"
     );
@@ -368,22 +368,32 @@ fn ctrl_shift_r_expands_replace_in_the_workspace_filter() {
     assert_eq!(find(&app).focus, Control::Replace);
     assert_eq!(
         find(&app).control_ring(),
-        vec![Control::Find, Control::Replace]
+        vec![
+            Control::Find,
+            Control::Replace,
+            Control::Include,
+            Control::Exclude
+        ]
     );
 }
 
 #[test]
-fn tab_visits_find_replace_and_results_in_order_when_two_files_match() {
+fn tab_visits_find_replace_globs_and_results_in_order_when_two_files_match() {
     let mut app = seeded_app(&[("/root/a.md", b"needle"), ("/root/b.md", b"needle")]);
     let mut effects = Effects::default();
     search_project(&mut app, "needle", &mut effects);
     press_into(&mut app, key(KeyCode::Char('R'), CTRL), &mut effects);
     assert_eq!(find(&app).focus, Control::Replace);
 
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::Results);
-    press(&mut app, tab());
-    assert_eq!(find(&app).focus, Control::Find);
+    for expected in [
+        Control::Include,
+        Control::Exclude,
+        Control::Results,
+        Control::Find,
+    ] {
+        press(&mut app, tab());
+        assert_eq!(find(&app).focus, expected);
+    }
     press(&mut app, tab());
     assert_eq!(find(&app).focus, Control::Replace);
 }

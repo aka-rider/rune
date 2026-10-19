@@ -66,6 +66,31 @@ pub fn draw(app: &App, panel: &FindPanelGeometry, frame: &mut Frame) {
         );
     }
 
+    if let (Some(globs), Some(include), Some(exclude)) =
+        (state.globs(), panel.include_field, panel.exclude_field)
+    {
+        let fields = [
+            ("include ", Control::Include, include, &globs.include),
+            ("exclude ", Control::Exclude, exclude, &globs.exclude),
+        ];
+        for (prompt, control, rect, field) in fields {
+            let (cursor, selection) = caret_state(&field.editor);
+            draw_field(
+                frame,
+                rect,
+                QueryRow {
+                    prompt,
+                    text: field.editor.text(),
+                    readout: None,
+                    focused: state.focused && state.focus == control,
+                    cursor,
+                    selection,
+                },
+                theme,
+            );
+        }
+    }
+
     for (chip, rect) in panel.chips.iter().flatten() {
         draw_chip(frame, state, *chip, *rect, theme);
     }
@@ -126,8 +151,15 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
 }
 
 fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style)> {
-    if let Err(error) = &state.pattern {
-        let flat: Vec<&str> = error.0.split_whitespace().collect();
+    let error = match &state.pattern {
+        Err(error) => Some(error.0.clone()),
+        Ok(_) => state
+            .globs()
+            .and_then(|globs| globs.path_filter().err())
+            .map(|error| error.0),
+    };
+    if let Some(error) = error {
+        let flat: Vec<&str> = error.split_whitespace().collect();
         return Some((flat.join(" "), theme.chrome.error));
     }
     if state.project().is_some() {

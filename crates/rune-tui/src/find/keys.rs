@@ -50,8 +50,7 @@ fn defers_to_editor(cmd: Option<FindCommand>) -> bool {
 }
 
 fn field_focused(app: &App) -> bool {
-    app.find()
-        .is_some_and(|state| matches!(state.focus, Control::Find | Control::Replace))
+    app.find().is_some_and(|state| state.focus.is_field())
 }
 
 // Mirrors `title::keys::handle_key`'s own two-step resolve: a motion,
@@ -89,26 +88,24 @@ fn try_field_key(app: &mut App, key: KeyInput) -> bool {
 }
 
 // The one chokepoint every field mutation funnels through: it leaves
-// whatever history browse was in progress, then — for the Find field only
-// — reruns the same recompute/follow/debounce-restart path
+// whatever history browse was in progress, then — for the Find field —
+// reruns the same recompute/follow/debounce-restart path
 // `crate::find::requery` always ran after a keystroke, so matches never
-// drift from what the field displays.
+// drift from what the field displays; an Include or Exclude edit only
+// changes which files are queried, so it restarts the debounce alone.
 fn commit_field_edit(app: &mut App, target: Control, edit: impl FnOnce(&mut FieldState)) {
     let Some(state) = app.find_mut() else {
         return;
     };
-    let field = match target {
-        Control::Find => Some(&mut state.find),
-        Control::Replace => state.replace.as_mut(),
-        Control::Results => None,
-    };
-    let Some(field) = field else {
+    let Some(field) = state.field_mut(target) else {
         return;
     };
     edit(field);
     field.leave_history();
-    if target == Control::Find {
-        crate::find::requery(app);
+    match target {
+        Control::Find => crate::find::requery(app),
+        Control::Include | Control::Exclude => project::restart_debounce(app),
+        Control::Replace | Control::Results => {}
     }
 }
 
@@ -122,6 +119,7 @@ fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
             escape(app);
         }
         FindCommand::Commit => match (focus, filter) {
+            (Control::Include | Control::Exclude, _) => project::open_hit(app, effects),
             (Control::Find, FilterKind::ThisFile) => follow::advance(app, true),
             (Control::Find, FilterKind::Workspace) | (Control::Results, _) => {
                 project::open_hit(app, effects);
@@ -129,6 +127,7 @@ fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
             (Control::Replace, _) => replace_one(app, filter, effects),
         },
         FindCommand::Alt => match (focus, filter) {
+            (Control::Include | Control::Exclude, _) => project::step_hit(app, false, effects),
             (Control::Find, FilterKind::ThisFile) => follow::advance(app, false),
             (Control::Find, FilterKind::Workspace) => project::step_hit(app, false, effects),
             (Control::Results, _) => project::open_hit(app, effects),
@@ -143,10 +142,12 @@ fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
         FindCommand::Up => match focus {
             Control::Results => project::nav_move(app, -1, effects),
             Control::Find | Control::Replace => history::step(app, BrowseDir::Prev),
+            Control::Include | Control::Exclude => glob_history_hint(app),
         },
         FindCommand::Down => match focus {
             Control::Results => project::nav_move(app, 1, effects),
             Control::Find | Control::Replace => history::step(app, BrowseDir::Next),
+            Control::Include | Control::Exclude => glob_history_hint(app),
         },
         FindCommand::PageUp => list_move(app, focus, ListKey::PageUp, effects),
         FindCommand::PageDown => list_move(app, focus, ListKey::PageDown, effects),
@@ -219,6 +220,14 @@ pub(crate) fn click(
         focus_control(app, Control::Replace);
         return;
     }
+    if panel.include_field.is_some_and(|rect| rect.contains(point)) {
+        focus_control(app, Control::Include);
+        return;
+    }
+    if panel.exclude_field.is_some_and(|rect| rect.contains(point)) {
+        focus_control(app, Control::Exclude);
+        return;
+    }
     let hit = panel
         .chips
         .iter()
@@ -230,9 +239,8 @@ pub(crate) fn click(
     }
 }
 
-// Targets the Replace field only when it's the one literally focused;
-// every other focus, Results included, lands the paste in Find — Results
-// has no text field of its own to receive it.
+// Targets the focused text field; Results has no text field of its own to
+// receive a paste, so it lands in Find.
 pub(crate) fn paste(app: &mut App, text: &str) {
     if app.find().is_none_or(|state| !state.focused) {
         return;
@@ -241,13 +249,9 @@ pub(crate) fn paste(app: &mut App, text: &str) {
     if sanitized.is_empty() {
         return;
     }
-    let into_replace = app
-        .find()
-        .is_some_and(|state| state.focus == Control::Replace);
-    let target = if into_replace {
-        Control::Replace
-    } else {
-        Control::Find
+    let target = match app.find().map(|state| state.focus) {
+        Some(focus) if focus.is_field() => focus,
+        Some(_) | None => Control::Find,
     };
     commit_field_edit(app, target, |field| {
         let window = 0..field.editor.len();
@@ -307,6 +311,13 @@ fn control_hint(app: &mut App) {
         label_for(FindCommand::Commit)
     );
     messages::info(app, text);
+}
+
+fn glob_history_hint(app: &mut App) {
+    messages::info(
+        app,
+        "path globs keep no history \u{2014} separate several patterns with commas",
+    );
 }
 
 fn list_key_hint(app: &mut App, cmd: FindCommand) {

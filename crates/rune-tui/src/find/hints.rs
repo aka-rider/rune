@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::app::App;
 use crate::find::bindings::{FindCommand, label_for};
-use crate::find::{Control, FilterKind};
+use crate::find::{Control, FilterKind, FindState};
 use crate::footer_hints::HintEntry;
 use crate::keymap::GlobalCommand;
 use crate::registry::{self, CommandId};
@@ -26,11 +26,7 @@ pub(crate) fn entries(app: &App) -> Vec<HintEntry> {
         }
         (Control::Find, FilterKind::Workspace) => {
             out.push(row_as(FindCommand::Commit, "open"));
-            if replace_expanded {
-                out.push(row_as(FindCommand::NextControl, "replace field"));
-            } else if state.results_listed() {
-                out.push(row_as(FindCommand::NextControl, "results"));
-            }
+            out.push(row_as(FindCommand::NextControl, next_control(state)));
             out.push(global_row_as(GlobalCommand::SearchNext, "next file"));
             out.push(row(FindCommand::Up));
             if !replace_expanded {
@@ -41,23 +37,37 @@ pub(crate) fn entries(app: &App) -> Vec<HintEntry> {
             out.push(row_as(FindCommand::Commit, "replace"));
             out.push(row_as(FindCommand::Alt, "replace all"));
             out.push(global_row_as(GlobalCommand::SearchNext, "skip"));
-            let next = if state.results_listed() {
-                "results"
-            } else {
-                "find field"
-            };
-            out.push(row_as(FindCommand::NextControl, next));
+            out.push(row_as(FindCommand::NextControl, next_control(state)));
             out.push(row(FindCommand::Up));
+        }
+        (Control::Include | Control::Exclude, _) => {
+            out.push(row_as(FindCommand::Commit, "open"));
+            out.push(row_as(FindCommand::NextControl, next_control(state)));
         }
         (Control::Results, _) => {
             out.push(row_as(FindCommand::Commit, "open"));
             out.push(row_as(FindCommand::Down, "next"));
             out.push(row_as(FindCommand::Up, "previous"));
             out.push(row_as(FindCommand::PageDown, "page"));
-            out.push(row_as(FindCommand::NextControl, "find field"));
+            out.push(row_as(FindCommand::NextControl, next_control(state)));
         }
     }
     out
+}
+
+fn next_control(state: &FindState) -> &'static str {
+    let ring = state.control_ring();
+    let at = ring
+        .iter()
+        .position(|&control| control == state.focus)
+        .unwrap_or(0);
+    match ring.get((at + 1) % ring.len()) {
+        Some(Control::Replace) => "replace field",
+        Some(Control::Include) => "include",
+        Some(Control::Exclude) => "exclude",
+        Some(Control::Results) => "results",
+        Some(Control::Find) | None => "find field",
+    }
 }
 
 fn row(cmd: FindCommand) -> HintEntry {
