@@ -236,6 +236,12 @@ impl Journal {
         }
     }
 
+    pub fn from_parts(mut done: Vec<Step>, undone: Vec<Step>) -> Journal {
+        let pos = done.len();
+        done.extend(undone);
+        Journal { steps: done, pos }
+    }
+
     /// Record a new step, discarding any redo tail past the current
     /// position.
     pub fn push(&mut self, step: Step) {

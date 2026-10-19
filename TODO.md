@@ -241,3 +241,11 @@ the constitution.
 cursor beyond the right edge of an unwrapped line is painted nowhere and nothing scrolls to reveal it, so a
 multi-cursor edit can change text the user cannot see. Candidate fix: reveal the cursor the last command
 moved or added, not only the primary one.
+
+## Persistent undo: redo tail is not capped
+
+`rune-db`'s `history::read_lineage` caps a stored history at 1000 steps by pruning the oldest
+`done` steps, never past the undo position (a prune beyond it would orphan the position). A
+session parked deep in undo (more than 1000 undone steps) therefore keeps a redo tail above the
+cap. Fix when it matters: also delete the far end of the tail (`events` with `seq` above the
+1000th kept step) in the same load-time transaction.

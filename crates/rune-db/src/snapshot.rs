@@ -55,6 +55,26 @@ pub struct Recovered {
     pub cursors: Vec<Cursor>,
 }
 
+/// The text a snapshot's blob holds. The blob is always session-authored
+/// buffer content (written by `create_snapshot` from a `&str`) re-entering
+/// the String-typed edit buffer here — a decode failure means a genuinely
+/// corrupt snapshot, which must surface as an error, never be silently
+/// coerced (blob.rs module doc).
+pub(crate) fn snapshot_content(
+    conn: &Connection,
+    doc_id: DocId,
+    hash: String,
+) -> Result<String, Error> {
+    let bytes = get_blob(conn, &hash)?;
+    String::from_utf8(bytes).map_err(|e| {
+        Error::CorruptPayload(crate::error::CorruptPayloadReason::NonUtf8Blob {
+            hash,
+            doc_id,
+            source: e,
+        })
+    })
+}
+
 /// Reconstructs `doc_id`'s content AS SEEN BY `session_id`:
 ///
 /// 1. Read `session_id`'s own current undo position from
@@ -65,7 +85,8 @@ pub struct Recovered {
 ///    periodic snapshot, `sync.rs`, `inherit.rs`, `load_anchor.rs`) can each
 ///    create a snapshot anchored at the SAME seq with no edit landing in
 ///    between, so `id DESC` picks the freshest row at that seq, never an
-///    arbitrary tie; `anchor_content = ""` if none.
+///    arbitrary tie; `anchor_content = ""` only when the session has no
+///    snapshot at all — snapshots that all lie past `target` are an error.
 /// 3. Gather `session_id`'s own edit batches with `seq` in
 ///    `(anchor_seq, target]`.
 /// 4. Forward-replay those batches onto `anchor_content`, one row at a
@@ -108,23 +129,20 @@ pub fn recover_document(
         .optional()?;
 
     let (anchor_seq, anchor_content) = match anchor {
-        Some((seq, hash)) => {
-            let bytes = get_blob(conn, &hash)?;
-            // The anchor blob is always session-authored buffer content
-            // (written by `create_snapshot` from a `&str`) re-entering the
-            // String-typed edit buffer here — a decode failure means a
-            // genuinely corrupt snapshot, which must surface as an error,
-            // never be silently coerced (blob.rs module doc).
-            let content = String::from_utf8(bytes).map_err(|e| {
-                Error::CorruptPayload(crate::error::CorruptPayloadReason::NonUtf8Blob {
-                    hash,
-                    doc_id,
-                    source: e,
-                })
-            })?;
-            (seq, content)
+        Some((seq, hash)) => (seq, snapshot_content(conn, doc_id, hash)?),
+        None => {
+            let has_snapshots: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM snapshots WHERE doc_id=?1 AND session_id=?2)",
+                params![doc_id, session_id],
+                |r| r.get(0),
+            )?;
+            if has_snapshots {
+                return Err(Error::Invalid(format!(
+                    "recover doc {doc_id} session {session_id}: snapshots exist but none anchors seq {target}"
+                )));
+            }
+            (Seq(0), String::new())
         }
-        None => (Seq(0), String::new()),
     };
 
     let rows = edits_in_range(conn, session_id, doc_id, anchor_seq, target)?;

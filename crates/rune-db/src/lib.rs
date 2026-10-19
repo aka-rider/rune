@@ -43,6 +43,7 @@ mod doc_kind;
 mod document;
 mod error;
 mod gc;
+mod history;
 mod ids;
 mod inherit;
 mod journal;
@@ -78,6 +79,7 @@ mod store_ops;
 mod sync;
 #[cfg(test)]
 mod test_support;
+mod token_state;
 mod versioning;
 mod writer;
 mod writer_exec;
@@ -93,6 +95,7 @@ pub use conn::{
     open_recovery_store_at_path_for_test, open_recovery_store_in_memory_for_test,
 };
 pub use error::Error;
+pub use history::{HistoryLoss, Lineage, LineageStep};
 pub use ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
 #[cfg(feature = "test-support")]
 pub use journal::{append_edit, current_seq, move_undo_pos, redo_peek, undo_peek};
@@ -115,5 +118,6 @@ pub use snapshot::Recovered;
 pub use snapshot::recover_document;
 pub use store::{ClockFn, DEGRADED_WARNING, Store};
 pub use sync::{SyncKind, SyncState, Version};
+pub use token_state::TokenOrigin;
 pub use versioning::{SCHEMA_VERSION, db_file_name};
 pub use writer::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};

@@ -76,7 +76,7 @@ pub(crate) fn append_storm() {
             .append_edit(
                 doc_id,
                 token,
-                rune_db::Seq(0),
+                &rune_db::TokenOrigin::at(rune_db::Seq(0)),
                 EditBatch {
                     edits: &[edit],
                     cursors_before: &[],
@@ -127,7 +127,7 @@ pub(crate) fn append_storm_checkpoint() {
             .append_edit(
                 doc_id,
                 token,
-                rune_db::Seq(0),
+                &rune_db::TokenOrigin::at(rune_db::Seq(0)),
                 EditBatch {
                     edits: &[edit],
                     cursors_before: &[],

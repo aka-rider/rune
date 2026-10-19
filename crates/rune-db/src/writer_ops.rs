@@ -11,7 +11,7 @@ use rune_core::cursor::Cursor;
 use rune_core::undo::EditKind;
 use rune_vfs::Stat;
 
-use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
+use crate::ids::{BindingToken, BlobHash, DocId, ObsId, SessionId};
 use crate::load::LoadResult;
 use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep, MaterializeTarget};
 use crate::merge_prep::MergePrepResult;
@@ -20,6 +20,7 @@ use crate::rename::RenameOutcome;
 use crate::snapshot::Recovered;
 use crate::store::LivenessCheckFn;
 use crate::sync::SyncState;
+use crate::token_state::TokenOrigin;
 
 /// Bounded writer-queue depth. At per-keystroke-batch
 /// granularity this is many seconds of furious typing; overflow implies a
@@ -79,8 +80,8 @@ pub(crate) enum OpKind {
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// journal seq of the inserted (or coalesced) event. `token` is the
     /// enqueuing binding's own [`BindingToken`] — the writer thread's
-    /// `DocUndoState` map key (`crate::writer::DocUndoState`'s own doc
-    /// comment); `token_base_seq` seeds a not-yet-seen token's local
+    /// `DocUndoState` map key (`crate::token_state::DocUndoState`'s own doc
+    /// comment); `token_origin` seeds a not-yet-seen token's local
     /// position `0` the first time any op names it, whichever op that is.
     AppendEdit {
         session_id: SessionId,
@@ -91,7 +92,7 @@ pub(crate) enum OpKind {
         cursors_after: Vec<Cursor>,
         kind: EditKind,
         token: BindingToken,
-        token_base_seq: Seq,
+        token_origin: TokenOrigin,
     },
     /// `local_pos` is the enqueuing binding's own LOCAL undo-journal
     /// position (`rune_core::undo::Journal::pos()` after the move,
@@ -104,14 +105,14 @@ pub(crate) enum OpKind {
     /// `AppendEdit` enqueued ahead of it under the same `token` has already
     /// committed, so the mapping is always exact, never a guess at an
     /// unacknowledged in-flight op the way resolving it app-side (before
-    /// this rework) had to. `token_base_seq` mirrors `AppendEdit`'s own —
+    /// this rework) had to. `token_origin` mirrors `AppendEdit`'s own —
     /// this op can be `token`'s very first sighting too (e.g. an undo
     /// pressed before any edit lands under a freshly re-anchored token).
     MoveUndoPos {
         session_id: SessionId,
         doc_id: DocId,
         token: BindingToken,
-        token_base_seq: Seq,
+        token_origin: TokenOrigin,
         local_pos: i64,
     },
     /// On success, the completion's `DbEvent::Ok.result` carries the new

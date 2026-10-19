@@ -51,6 +51,7 @@ pub struct Step {
 pub(crate) struct EditRow {
     pub seq: Seq,
     pub edits: Vec<AppliedEdit>,
+    pub cursors_before: Vec<Cursor>,
     pub cursors_after: Vec<Cursor>,
     pub kind: EditKind,
 }
@@ -167,6 +168,13 @@ pub fn current_seq(
     Ok(Seq(seq))
 }
 
+fn optional_cursors(json: Option<String>) -> Result<Vec<Cursor>, Error> {
+    match json {
+        Some(json) => cursors_from_json(&json),
+        None => Ok(Vec::new()),
+    }
+}
+
 /// `doc_id`'s own edit rows with seq in `(from_seq, to_seq]`, each tagged
 /// with its seq, ordered ascending. Session-scoped: only ever this
 /// session's own edits. Read-only, so it takes `&Connection` rather than
@@ -181,7 +189,7 @@ pub(crate) fn edits_in_range(
     to_seq: Seq,
 ) -> Result<Vec<EditRow>, Error> {
     let mut stmt = conn.prepare(
-        "SELECT seq, edits, cursors_after, kind FROM events \
+        "SELECT seq, edits, cursors_before, cursors_after, kind FROM events \
          WHERE doc_id=?1 AND session_id=?2 AND seq > ?3 AND seq <= ?4 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(params![doc_id, session_id, from_seq, to_seq], |r| {
@@ -190,20 +198,18 @@ pub(crate) fn edits_in_range(
             r.get::<_, String>(1)?,
             r.get::<_, Option<String>>(2)?,
             r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
         ))
     })?;
 
     rows.map(|row| {
-        let (seq, edits_json, cursors_json, kind_text) = row?;
+        let (seq, edits_json, before_json, after_json, kind_text) = row?;
         let edits = edits_from_json(&edits_json)?;
-        let cursors = match cursors_json {
-            Some(json) => cursors_from_json(&json)?,
-            None => Vec::new(),
-        };
         Ok(EditRow {
             seq,
             edits,
-            cursors_after: cursors,
+            cursors_before: optional_cursors(before_json)?,
+            cursors_after: optional_cursors(after_json)?,
             kind: edit_kind_from_text(kind_text.as_deref()),
         })
     })

@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::undo::EditKind;
-use rune_db::{BindingToken, DbEvent, DocId, EditBatch, OnEvent, OpOutcome, Seq, Store};
+use rune_db::{
+    BindingToken, DbEvent, DocId, EditBatch, OnEvent, OpOutcome, Seq, Store, TokenOrigin,
+};
 use rune_vfs::Disk;
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -98,7 +100,7 @@ fn type_at_end(
         .append_edit(
             doc_id,
             token,
-            Seq(0),
+            &TokenOrigin::at(Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -150,7 +152,7 @@ fn the_same_token_keeps_deep_undo_positions_resolvable_across_a_reload() {
     // Local position 1 — "alpha" only, two entries deeper than the reload.
     // A restarted numbering (a fresh token) has no entry there at all.
     let undo = store
-        .move_undo_pos(doc_id, token, Seq(0), 1)
+        .move_undo_pos(doc_id, token, &TokenOrigin::at(Seq(0)), 1)
         .expect("enqueue move_undo_pos");
     assert!(
         matches!(ok(&rx, undo), OpOutcome::None),
@@ -191,7 +193,7 @@ fn a_fresh_token_refuses_a_position_only_the_old_token_ever_ran() {
     // A restart mints a brand-new token for the SAME row.
     let fresh_token = BindingToken::next();
     let undo = store
-        .move_undo_pos(doc_b, fresh_token, Seq(0), 1)
+        .move_undo_pos(doc_b, fresh_token, &TokenOrigin::at(Seq(0)), 1)
         .expect("enqueue move_undo_pos");
     let refused =
         recv(&rx, undo).expect_err("a restarted numbering must refuse a position it never ran");
@@ -237,7 +239,7 @@ fn an_undo_never_resolves_into_another_documents_lineage() {
     assert!(matches!(ok(&rx, reload), OpOutcome::Load(_)));
 
     let undo = store
-        .move_undo_pos(doc_a, token_a, Seq(0), 1)
+        .move_undo_pos(doc_a, token_a, &TokenOrigin::at(Seq(0)), 1)
         .expect("enqueue move_undo_pos");
     assert!(matches!(ok(&rx, undo), OpOutcome::None));
     buf_a.truncate("A:1".len());

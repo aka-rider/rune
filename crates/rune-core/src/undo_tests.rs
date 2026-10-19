@@ -312,3 +312,46 @@ fn journal_is_empty_reflects_whether_any_step_was_pushed() {
     journal.push(Step::default());
     assert!(!journal.is_empty());
 }
+
+fn step_of_kind(kind: EditKind) -> Step {
+    Step {
+        kind,
+        ..Step::default()
+    }
+}
+
+#[test]
+fn from_parts_positions_the_journal_after_the_done_steps() {
+    let done = vec![step_of_kind(EditKind::Insert), step_of_kind(EditKind::Cut)];
+    let undone = vec![step_of_kind(EditKind::Paste)];
+    let mut journal = Journal::from_parts(done.clone(), undone.clone());
+
+    assert_eq!(journal.pos(), 2);
+    assert_eq!(journal.len(), 3);
+    let (redo_step, _) = journal.redo_peek().expect("the undone step is redoable");
+    assert_eq!(redo_step, &undone[0]);
+    let (undo_step, commit) = journal.undo_peek().expect("a done step is undoable");
+    assert_eq!(undo_step, &done[1]);
+    journal.commit(commit);
+    assert_eq!(journal.pos(), 1);
+}
+
+#[test]
+fn from_parts_with_only_undone_steps_has_nothing_to_undo() {
+    let journal = Journal::from_parts(Vec::new(), vec![step_of_kind(EditKind::Insert)]);
+
+    assert!(journal.undo_peek().is_none());
+    assert!(journal.redo_peek().is_some());
+}
+
+#[test]
+fn from_parts_then_push_discards_the_undone_tail() {
+    let mut journal = Journal::from_parts(
+        vec![step_of_kind(EditKind::Insert)],
+        vec![step_of_kind(EditKind::Cut)],
+    );
+    journal.push(step_of_kind(EditKind::Paste));
+
+    assert_eq!(journal.len(), 2);
+    assert!(journal.redo_peek().is_none());
+}

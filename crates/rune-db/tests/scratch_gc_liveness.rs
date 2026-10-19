@@ -101,7 +101,7 @@ fn a_second_bare_launch_never_disables_recovery_for_the_first_sessions_fresh_dra
         .append_edit(
             doc_a,
             rune_db::BindingToken::next(),
-            rune_db::Seq(0),
+            &rune_db::TokenOrigin::at(rune_db::Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],

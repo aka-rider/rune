@@ -54,15 +54,11 @@ fn first_load_anchors_a_snapshot_and_adopts() {
     assert!(saved_obs_exists, "first load must adopt");
 }
 
-/// End-to-end through the full [`load`] entry point (finding 8): a
-/// fresh session inheriting a dead session's draft must report the
-/// bridge edit's own durable seq in `LoadResult::bridge_seq`, exactly
-/// matching this session's own `current_seq` immediately after —
-/// a caller seeding `last_known_seq` from a hardcoded `0` instead would
-/// silently regress behind a `move_undo_pos`/`materialize` issued
-/// before this session's first ordinary `AppendEdit` ack lands.
+/// End-to-end through the full [`load`] entry point: a fresh session
+/// inheriting a dead session's draft must report the bridge edit as its one
+/// undoable step, positioned exactly at this session's own `current_seq`.
 #[test]
-fn load_through_inheritance_reports_the_bridge_edits_own_durable_seq() {
+fn load_through_inheritance_reports_the_bridge_as_one_undoable_step() {
     let mut conn = open();
     let vfs = Mem::new();
     let path = Path::new("/doc.md");
@@ -119,25 +115,29 @@ fn load_through_inheritance_reports_the_bridge_edits_own_durable_seq() {
     .expect("session b load");
 
     assert_eq!(result.recovered.content, "UNSAVED shared content");
-    let bridge_seq = result
-        .bridge_seq
-        .expect("a bridge edit must have been journaled for session b");
+    assert_eq!(
+        result.history.done.len(),
+        1,
+        "the inherited draft is one undoable bridge step"
+    );
+    assert_eq!(result.history_loss, None);
 
     let head = retry::with_retry(&mut conn, |tx| {
         crate::journal::current_seq(tx, session_b, doc_id)
     })
     .expect("current_seq");
     assert_eq!(
-        head, bridge_seq,
-        "bridge_seq must equal this session's own durable journal head"
+        head,
+        result.history.position_seq(),
+        "the history position must equal this session's own durable journal head"
     );
 }
 
 /// The mirror-image control: no cross-session inheritance happened (a
-/// document's very first-ever load, no prior session at all), so
-/// `bridge_seq` must be `None` — never a stale or fabricated seq.
+/// document's very first-ever load, no prior session at all), so the
+/// history must be empty — never a stale or fabricated step.
 #[test]
-fn load_without_inheritance_reports_no_bridge_seq() {
+fn load_without_inheritance_has_an_empty_history() {
     let mut conn = open();
     let vfs = Mem::new();
     let path = Path::new("/doc.md");
@@ -153,7 +153,8 @@ fn load_without_inheritance_reports_no_bridge_seq() {
         SystemTime::now(),
     )
     .expect("load");
-    assert_eq!(result.bridge_seq, None);
+    assert_eq!(result.history, Lineage::default());
+    assert_eq!(result.history_loss, None);
 }
 
 /// End-to-end DATA-LOSS regression through the full public [`load`]
@@ -231,14 +232,12 @@ fn diverged_load_bridges_the_dead_sessions_own_baseline_not_disk() {
     );
     assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
 
-    let bridge_seq = result
-        .bridge_seq
-        .expect("a bridge edit must have been journaled for session b");
+    assert_eq!(result.history.done.len(), 1);
     let head = retry::with_retry(&mut conn, |tx| {
         crate::journal::current_seq(tx, session_b, doc_id)
     })
     .expect("current_seq");
-    assert_eq!(head, bridge_seq);
+    assert_eq!(head, result.history.position_seq());
 
     let saved_obs = retry::with_retry(&mut conn, |tx| {
         observation::saved_obs_for(tx, session_b, doc_id)

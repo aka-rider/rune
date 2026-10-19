@@ -137,7 +137,7 @@ pub(crate) fn bootstrap_db(
     let doc_db = DocDb::new(
         load_result.doc_id.0,
         PublishMode::OverwriteExisting,
-        load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
+        load_result.history.position_seq(),
     );
 
     let banner = if degraded_at_open {

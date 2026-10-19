@@ -54,7 +54,11 @@ fn refused_hydration_detaches() {
         },
         nlink: 1,
         saved_obs: rune_db::ObsId::new(99),
-        bridge_seq: Some(rune_db::Seq(1)),
+        history: rune_db::Lineage {
+            base_seq: rune_db::Seq(1),
+            ..rune_db::Lineage::default()
+        },
+        history_loss: None,
         resumable_merge: None,
     };
 

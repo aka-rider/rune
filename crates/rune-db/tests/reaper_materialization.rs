@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::undo::EditKind;
-use rune_db::{BindingToken, DbEvent, DocId, EditBatch, OnEvent, OpOutcome, Seq, Store};
+use rune_db::{
+    BindingToken, DbEvent, DocId, EditBatch, OnEvent, OpOutcome, Seq, Store, TokenOrigin,
+};
 use rune_vfs::Disk;
 
 fn temp_db_dir(label: &str) -> PathBuf {
@@ -68,7 +70,7 @@ fn append(store: &Store, rx: &mpsc::Receiver<DbEvent>, doc_id: DocId, insert: &s
         .append_edit(
             doc_id,
             BindingToken::next(),
-            Seq(0),
+            &TokenOrigin::at(Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],

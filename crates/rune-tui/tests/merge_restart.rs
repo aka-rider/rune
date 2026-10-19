@@ -208,7 +208,7 @@ fn journaled_edit_past_the_install_abandons_the_merge_on_restart() {
         .append_edit(
             rune_db::DocId(db_id),
             rune_db::BindingToken::next(),
-            rune_db::Seq(0),
+            &rune_db::TokenOrigin::at(rune_db::Seq(0)),
             EditBatch {
                 edits: &[AppliedEdit {
                     start: 0,

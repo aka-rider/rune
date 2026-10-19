@@ -17,11 +17,11 @@ use rune_core::undo::EditKind;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
-use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq, SessionId};
+use crate::ids::{BindingToken, BlobHash, DocId, ObsId, SessionId};
 use crate::materialize::{MaterializeOutcome, MaterializeTarget};
 use crate::retry;
 use crate::store::LivenessCheckFn;
-use crate::writer::{DocUndoState, ensure_token_state};
+use crate::token_state::{DocUndoState, TokenOrigin, ensure_token_state};
 use crate::writer_ops::{LoadSource, OpOutcome};
 
 // ---------------------------------------------------------------------
@@ -44,7 +44,7 @@ pub(crate) struct AppendEditArgs {
     pub(crate) cursors_after: Vec<Cursor>,
     pub(crate) kind: EditKind,
     pub(crate) token: BindingToken,
-    pub(crate) token_base_seq: Seq,
+    pub(crate) token_origin: TokenOrigin,
 }
 
 pub(crate) fn append_edit(
@@ -75,7 +75,7 @@ pub(crate) fn append_edit(
     // strictly greater than the previous entry — a violation would
     // mean the journal grew a coalescing path again without
     // updating this mapping.
-    let state = ensure_token_state(undo_state, args.token, args.token_base_seq);
+    let state = ensure_token_state(undo_state, args.token, &args.token_origin);
     state.push_seq(args.doc_id, seq);
     Ok(OpOutcome::Seq(seq))
 }
@@ -86,10 +86,10 @@ pub(crate) fn move_undo_pos(
     session_id: SessionId,
     doc_id: DocId,
     token: BindingToken,
-    token_base_seq: Seq,
+    token_origin: TokenOrigin,
     local_pos: i64,
 ) -> Result<OpOutcome, Error> {
-    let target_seq = ensure_token_state(undo_state, token, token_base_seq)
+    let target_seq = ensure_token_state(undo_state, token, &token_origin)
         .resolve(local_pos)
         .ok_or_else(|| {
             Error::NotFound(format!(

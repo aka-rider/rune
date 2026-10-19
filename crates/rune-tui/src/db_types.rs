@@ -1,4 +1,4 @@
-use rune_db::{BindingToken, ObsId, Seq};
+use rune_db::{BindingToken, ObsId, Seq, TokenOrigin};
 
 use crate::db::PublishMode;
 
@@ -13,10 +13,10 @@ pub struct DocDb {
     /// but not structurally prevented) each get an independent numbering
     /// instead of racing to fill one shared sequence.
     pub(crate) token: BindingToken,
-    /// The durable seq `token`'s local position `0` resolves to — frozen at
-    /// whatever `last_known_seq` was when `token` was minted, carried on
+    /// Where `token`'s local undo numbering starts in the durable journal —
+    /// frozen when `token` was minted, carried on
     /// every op that might be `token`'s first sighting at the writer.
-    pub(crate) token_base_seq: Seq,
+    pub(crate) token_origin: TokenOrigin,
     /// `local_pos - undo_offset` is the position sent to the writer as
     /// `token`'s own local position; `undo_floor` is the smallest resolved
     /// position `token` can answer exactly (a deep undo below it re-anchors
@@ -47,7 +47,7 @@ impl DocDb {
             last_known_seq,
             snapshot_generation: 0,
             token: BindingToken::next(),
-            token_base_seq: last_known_seq,
+            token_origin: TokenOrigin::at(last_known_seq),
             undo_offset: 0,
             undo_floor: 0,
             diverged: false,

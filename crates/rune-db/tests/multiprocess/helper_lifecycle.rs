@@ -43,7 +43,7 @@ pub(crate) fn gc_editor() {
             .append_edit(
                 doc_id,
                 token,
-                rune_db::Seq(0),
+                &rune_db::TokenOrigin::at(rune_db::Seq(0)),
                 EditBatch {
                     edits: &[insert_a],
                     cursors_before: &[],
@@ -60,7 +60,7 @@ pub(crate) fn gc_editor() {
         expect_ok(&rx, id);
 
         let id = store
-            .move_undo_pos(doc_id, token, rune_db::Seq(0), 0)
+            .move_undo_pos(doc_id, token, &rune_db::TokenOrigin::at(rune_db::Seq(0)), 0)
             .expect("enqueue move_undo_pos");
         expect_ok(&rx, id);
 
@@ -77,7 +77,7 @@ pub(crate) fn gc_editor() {
             .append_edit(
                 doc_id,
                 token,
-                rune_db::Seq(0),
+                &rune_db::TokenOrigin::at(rune_db::Seq(0)),
                 EditBatch {
                     edits: &[insert_b],
                     cursors_before: &[],
@@ -129,7 +129,7 @@ pub(crate) fn edit_and_die() {
         .append_edit(
             doc_id,
             rune_db::BindingToken::next(),
-            rune_db::Seq(0),
+            &rune_db::TokenOrigin::at(rune_db::Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -215,7 +215,7 @@ pub(crate) fn save_and_die() {
         .append_edit(
             doc_id,
             rune_db::BindingToken::next(),
-            rune_db::Seq(0),
+            &rune_db::TokenOrigin::at(rune_db::Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],

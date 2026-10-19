@@ -40,14 +40,6 @@ use crate::observation::{self, StatFacts};
 use crate::retry;
 use crate::snapshot::Recovered;
 
-/// What the `!has_history` branch of `load` needs back: the content the
-/// caller's buffer should adopt, and the durable journal seq of the bridge
-/// edit that produced it (`None` when nothing was bridged).
-pub(crate) struct AnchorOutcome {
-    pub(crate) recovered: Recovered,
-    pub(crate) bridge_seq: Option<Seq>,
-}
-
 /// The load-time facts every anchor/bridge step below needs, bundled so
 /// `anchor_first_load`/`anchor_diverged` stay under clippy's
 /// too-many-arguments lint without an `#[allow]` (repo rule: none outside
@@ -152,7 +144,7 @@ fn anchor_diverged(
     ctx: &LoadContext<'_>,
     draft: &Recovered,
     baseline: &observation::Observation,
-) -> Result<Option<AnchorOutcome>, Error> {
+) -> Result<Option<Recovered>, Error> {
     retry::with_retry(conn, |tx| {
         let h0_bytes = match crate::blob::get_blob(tx, baseline.blob_hash.as_str()) {
             Ok(bytes) => bytes,
@@ -189,7 +181,7 @@ fn anchor_diverged(
             None,
         )?;
 
-        let bridge_seq = bridge_edit_tx(tx, ctx, &h0_content, &draft.content, &draft.cursors)?;
+        bridge_edit_tx(tx, ctx, &h0_content, &draft.content, &draft.cursors)?;
 
         // Recorded LAST, uncorrelated (`seq: None`) — `newest_observation`
         // must report H1, never the H0 adoption just recorded above. Stat
@@ -209,10 +201,7 @@ fn anchor_diverged(
             &crate::session::format_rfc3339_nanos(ctx.now),
         )?;
 
-        Ok(Some(AnchorOutcome {
-            recovered: draft.clone(),
-            bridge_seq: Some(bridge_seq),
-        }))
+        Ok(Some(draft.clone()))
     })
 }
 
@@ -230,7 +219,7 @@ pub(crate) fn reanchor_clean_reload_tx(
     ctx: &LoadContext<'_>,
     from: &str,
     to: &str,
-) -> Result<AnchorOutcome, Error> {
+) -> Result<Recovered, Error> {
     retry::with_retry(conn, |tx| {
         let bridge_seq = bridge_edit_tx(tx, ctx, from, to, &[])?;
         adopt::record_adoption_tx(
@@ -247,12 +236,9 @@ pub(crate) fn reanchor_clean_reload_tx(
             &crate::session::format_rfc3339_nanos(ctx.now),
             None,
         )?;
-        Ok(AnchorOutcome {
-            recovered: Recovered {
-                content: to.to_string(),
-                cursors: Vec::new(),
-            },
-            bridge_seq: Some(bridge_seq),
+        Ok(Recovered {
+            content: to.to_string(),
+            cursors: Vec::new(),
         })
     })
 }
@@ -266,11 +252,11 @@ pub(crate) fn anchor_first_load(
     ctx: &LoadContext<'_>,
     content: &str,
     inherited: &Inherited,
-) -> Result<AnchorOutcome, Error> {
+) -> Result<Recovered, Error> {
     if let Inherited::Diverged { draft, baseline } = inherited
-        && let Some(outcome) = anchor_diverged(conn, ctx, draft, baseline)?
+        && let Some(recovered) = anchor_diverged(conn, ctx, draft, baseline)?
     {
-        return Ok(outcome);
+        return Ok(recovered);
     }
 
     // Disk, Bridged, or a Diverged baseline whose blob turned out to be
@@ -282,18 +268,12 @@ pub(crate) fn anchor_first_load(
         anchor_on_disk_tx(tx, ctx, content, ctx.disk_hash)?;
         match inherited {
             Inherited::Bridged { draft } | Inherited::Diverged { draft, .. } => {
-                let bridge_seq = bridge_edit_tx(tx, ctx, content, &draft.content, &draft.cursors)?;
-                Ok(AnchorOutcome {
-                    recovered: draft.clone(),
-                    bridge_seq: Some(bridge_seq),
-                })
+                bridge_edit_tx(tx, ctx, content, &draft.content, &draft.cursors)?;
+                Ok(draft.clone())
             }
-            Inherited::Disk => Ok(AnchorOutcome {
-                recovered: Recovered {
-                    content: content.to_string(),
-                    cursors: Vec::new(),
-                },
-                bridge_seq: None,
+            Inherited::Disk => Ok(Recovered {
+                content: content.to_string(),
+                cursors: Vec::new(),
             }),
         }
     })
@@ -381,7 +361,7 @@ mod tests {
             confirmed: Confirmation::Unclassified,
         };
 
-        let outcome = anchor_first_load(
+        let recovered = anchor_first_load(
             &mut conn,
             &ctx,
             disk_content,
@@ -396,18 +376,25 @@ mod tests {
         .expect("anchor_first_load must succeed via the disk-anchored fallback");
 
         assert_eq!(
-            outcome.recovered.content, draft,
+            recovered.content, draft,
             "the draft must survive even without H0"
         );
-        let bridge_seq = outcome
-            .bridge_seq
-            .expect("a bridge edit must have been journaled");
+        let (history, history_loss) = retry::with_retry(&mut conn, |tx| {
+            crate::history::read_lineage(tx, session_b, doc_id, draft, SystemTime::now())
+        })
+        .expect("read_lineage");
+        assert_eq!(history_loss, None);
+        assert_eq!(
+            history.done.len(),
+            1,
+            "the draft bridge is one undoable step"
+        );
 
         let head = retry::with_retry(&mut conn, |tx| {
             crate::journal::current_seq(tx, session_b, doc_id)
         })
         .expect("current_seq");
-        assert_eq!(head, bridge_seq);
+        assert_eq!(head, history.position_seq());
 
         let saved_obs = retry::with_retry(&mut conn, |tx| {
             observation::saved_obs_for(tx, session_b, doc_id)

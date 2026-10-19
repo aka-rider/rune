@@ -178,7 +178,7 @@ fn install_doc_db(
     let doc_db = DocDb::new(
         load_result.doc_id.0,
         PublishMode::OverwriteExisting,
-        load_result.bridge_seq.unwrap_or(rune_db::Seq(0)),
+        load_result.history.position_seq(),
     );
     bind_document_row(app, id, doc_db, &load_result.recovered.content, mode)
 }
@@ -194,7 +194,7 @@ struct PriorBinding {
     last_known_seq: rune_db::Seq,
     pending_rebase: Option<ReplicaStep>,
     token: rune_db::BindingToken,
-    token_base_seq: rune_db::Seq,
+    token_origin: rune_db::TokenOrigin,
     undo_offset: i64,
     undo_floor: i64,
     diverged: bool,
@@ -254,7 +254,7 @@ fn bind_document_row(
         last_known_seq: db.last_known_seq,
         pending_rebase: db.pending_rebase.take(),
         token: db.token,
-        token_base_seq: db.token_base_seq,
+        token_origin: db.token_origin.clone(),
         undo_offset: db.undo_offset,
         undo_floor: db.undo_floor,
         diverged: db.diverged,
@@ -268,7 +268,7 @@ fn bind_document_row(
             match mode {
                 BindMode::Preserved => {
                     doc_db.token = prior.token;
-                    doc_db.token_base_seq = prior.token_base_seq;
+                    doc_db.token_origin = prior.token_origin;
                     doc_db.undo_offset = prior.undo_offset;
                     doc_db.undo_floor = prior.undo_floor;
                     doc_db.diverged = prior.diverged;

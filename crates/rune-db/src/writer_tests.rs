@@ -15,6 +15,9 @@ use std::time::SystemTime;
 use rune_core::buffer::AppliedEdit;
 use rune_core::undo::EditKind;
 
+use crate::ids::{DocId, Seq};
+use crate::token_state::TokenOrigin;
+
 fn open_ready_connection() -> Connection {
     crate::conn::open_recovery_store(crate::conn::RecoveryTarget::Memory(
         &crate::conn::memory_uri(),
@@ -109,7 +112,7 @@ fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
                 cursors_after: vec![],
                 kind: EditKind::Other,
                 token: crate::ids::BindingToken::next(),
-                token_base_seq: Seq(0),
+                token_origin: TokenOrigin::at(Seq(0)),
             },
         })
         .expect("enqueue AppendEdit");

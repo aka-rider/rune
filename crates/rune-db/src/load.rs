@@ -22,7 +22,8 @@ use crate::adopt;
 use crate::bracket;
 use crate::confirmation::Confirmation;
 use crate::document::{self, DocRef};
-use crate::ids::{DocId, ObsId, Seq, SessionId};
+use crate::history::{HistoryLoss, Lineage, read_lineage};
+use crate::ids::{DocId, ObsId, SessionId};
 use crate::inherit::find_inheritable_draft;
 use crate::load_anchor::{LoadContext, anchor_first_load, reanchor_clean_reload_tx};
 use crate::obs_origin::ObsOrigin;
@@ -55,19 +56,8 @@ pub struct LoadResult {
     /// than assumed, matching this crate's "Options for absent facts" rule
     /// rather than a caller-visible panic risk).
     pub saved_obs: Option<ObsId>,
-    /// The durable journal seq THIS session's own cross-session-inheritance
-    /// bridge edit (`find_inheritable_draft`'s synthetic replace-all,
-    /// journaled under `session_id`) committed to, when `load` performed
-    /// one — `None` when it didn't (no inheritance, or `has_history` was
-    /// already true). This is this session's own durable journal HEAD
-    /// immediately after `load` returns: a fresh session has journaled
-    /// nothing else of its own before or during `load`, so a caller seeding
-    /// its local "last acked durable seq" tracking (`AppDb::last_known_seq`)
-    /// MUST start from this, not an assumed `0` — an `undo`/`redo`
-    /// committing `move_undo_pos` before its first ordinary `AppendEdit` ack
-    /// lands would otherwise silently regress this session's own
-    /// `current_seq` past a bridge edit that already advanced it.
-    pub bridge_seq: Option<Seq>,
+    pub history: Lineage,
+    pub history_loss: Option<HistoryLoss>,
     /// A dead session's still-`active` merge whose recorded working form
     /// byte-matches this load's own journal reconstruction — the caller may
     /// re-enter it; the row stays `active` until a hydrating ack actually
@@ -175,7 +165,6 @@ pub fn load_from_read(
     let content = String::from_utf8(data)
         .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
 
-    let mut bridge_seq = None;
     let recovered = if !has_hist {
         // Cross-session crash recovery (v10, B2/R2) — MUST run before this
         // session writes anything of its own for doc_id, else it would
@@ -197,9 +186,7 @@ pub fn load_from_read(
             live_stat: &stat,
             now,
         };
-        let outcome = anchor_first_load(conn, &ctx, &content, &inherited)?;
-        bridge_seq = outcome.bridge_seq;
-        outcome.recovered
+        anchor_first_load(conn, &ctx, &content, &inherited)?
     } else {
         let recovered = retry::with_retry(conn, |tx| {
             crate::snapshot::recover_document(tx, session_id, doc_id)
@@ -250,9 +237,7 @@ pub fn load_from_read(
                     live_stat: &stat,
                     now,
                 };
-                let outcome = reanchor_clean_reload_tx(conn, &ctx, &recovered.content, &content)?;
-                bridge_seq = outcome.bridge_seq;
-                outcome.recovered
+                reanchor_clean_reload_tx(conn, &ctx, &recovered.content, &content)?
             } else {
                 // A bare, uncorrelated sighting — saved_obs stays exactly
                 // where it was, and the unsaved edits stay in the buffer.
@@ -277,6 +262,10 @@ pub fn load_from_read(
         }
     };
 
+    let (history, history_loss) = retry::with_retry(conn, |tx| {
+        read_lineage(tx, session_id, doc_id, &recovered.content, now)
+    })?;
+
     let recovered_hash = observation::hash_bytes(recovered.content.as_bytes());
     let resumable_merge = retry::with_retry(conn, |tx| {
         crate::merge_state::resume_candidate(tx, liveness_check, doc_id, &recovered_hash)
@@ -297,7 +286,8 @@ pub fn load_from_read(
         sync: sync_state,
         nlink: stat.nlink.unwrap_or(0),
         saved_obs,
-        bridge_seq,
+        history,
+        history_loss,
         resumable_merge,
     })
 }

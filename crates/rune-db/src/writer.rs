@@ -36,88 +36,17 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
-use rune_core::assert_invariant;
 use rune_vfs::Vfs;
 
 use crate::Error;
+use crate::ids::BindingToken;
 #[cfg(test)]
 use crate::ids::SessionId;
-use crate::ids::{BindingToken, DocId, Seq};
+use crate::token_state::DocUndoState;
 use crate::writer_exec as exec;
 use crate::writer_lifecycle::{IDLE_TIMEOUT, fatal, run_idle_maintenance};
 pub(crate) use crate::writer_ops::OpKind;
 pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
-
-/// This writer thread's own record of one [`BindingToken`]'s LOCAL
-/// undo-position numbering, scoped to THIS process's session (never shared
-/// or persisted). A token is minted fresh by the app on every bind/rebind
-/// (`rune-tui`'s `DocDb::new`), so this map starts every token over from an
-/// empty entry, exactly matching a fresh binding's own `rune_core::undo::
-/// Journal` starting at local position 0 — and two tokens sharing one
-/// [`DocId`] (unreachable via any real open path, but not structurally
-/// prevented) each get their own independent entry rather than racing to
-/// fill one shared sequence. `base_seq` is the durable seq local position
-/// `0` resolves to (the app's own `token_base_seq`, carried on every op that
-/// might be this token's first); `local_seq[i]` is the durable seq the
-/// `(i + 1)`-th `AppendEdit` THIS writer thread has run for this token
-/// landed at, in the order they ran. Rebuilding this table from ops this
-/// thread has ALREADY executed — rather than trusting a value carried in
-/// from the app, which can only know an op's outcome once its ack has
-/// round-tripped — is what makes `OpKind::MoveUndoPos`'s resolution exact
-/// instead of a guess at an in-flight ack.
-#[derive(Default)]
-pub(crate) struct DocUndoState {
-    pub(crate) base_seq: Seq,
-    pub(crate) local_seq: Vec<Seq>,
-    pub(crate) pos: usize,
-}
-
-impl DocUndoState {
-    /// The durable seq LOCAL undo position `local_pos` resolves to, or
-    /// `None` if this state has no entry for it — `local_pos` is deeper than
-    /// any `AppendEdit` this thread has actually run for this token, an
-    /// invariant violation the writer's single FIFO queue should make
-    /// unreachable (see `OpKind::MoveUndoPos`'s doc comment) — never
-    /// silently approximated.
-    pub(crate) fn resolve(&mut self, local_pos: i64) -> Option<Seq> {
-        if local_pos == 0 {
-            self.pos = 0;
-            return Some(self.base_seq);
-        }
-        let idx = usize::try_from(local_pos - 1).ok()?;
-        let seq = *self.local_seq.get(idx)?;
-        self.pos = idx + 1;
-        Some(seq)
-    }
-
-    pub(crate) fn push_seq(&mut self, doc_id: DocId, seq: Seq) {
-        self.local_seq.truncate(self.pos);
-        assert_invariant!(self.local_seq.last().is_none_or(|&last| seq > last), || {
-            format!(
-                "append_edit doc {doc_id}: seq {seq} did not advance past local_seq.last() {:?}",
-                self.local_seq.last()
-            )
-        });
-        self.local_seq.push(seq);
-        self.pos = self.local_seq.len();
-    }
-}
-
-/// Looks up `token`'s [`DocUndoState`], seeding it with `base_seq` on first
-/// sight — the lazy counterpart to the old design's `Load`/`CreateScratch`-
-/// time seeding: a token's numbering starts the instant its first op
-/// reaches the front of the writer's queue, whichever op that is.
-pub(crate) fn ensure_token_state(
-    undo_state: &mut HashMap<BindingToken, DocUndoState>,
-    token: BindingToken,
-    base_seq: Seq,
-) -> &mut DocUndoState {
-    undo_state.entry(token).or_insert_with(|| DocUndoState {
-        base_seq,
-        local_seq: Vec::new(),
-        pos: 0,
-    })
-}
 
 /// One write operation queued to the writer thread.
 pub(crate) struct WriteOp {
@@ -283,7 +212,7 @@ fn execute_op(
             cursors_after,
             kind,
             token,
-            token_base_seq,
+            token_origin,
         } => exec::append_edit(
             conn,
             undo_state,
@@ -296,14 +225,14 @@ fn execute_op(
                 cursors_after,
                 kind,
                 token,
-                token_base_seq,
+                token_origin,
             },
         ),
         OpKind::MoveUndoPos {
             session_id,
             doc_id,
             token,
-            token_base_seq,
+            token_origin,
             local_pos,
         } => exec::move_undo_pos(
             conn,
@@ -311,7 +240,7 @@ fn execute_op(
             session_id,
             doc_id,
             token,
-            token_base_seq,
+            token_origin,
             local_pos,
         ),
         OpKind::CreateSnapshot {

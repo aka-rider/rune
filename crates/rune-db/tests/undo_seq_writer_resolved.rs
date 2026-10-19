@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::undo::EditKind;
-use rune_db::{BindingToken, DbEvent, EditBatch, OnEvent, OpOutcome, Seq, Store};
+use rune_db::{BindingToken, DbEvent, EditBatch, OnEvent, OpOutcome, Seq, Store, TokenOrigin};
 use rune_vfs::Disk;
 
 fn temp_db_dir(label: &str) -> PathBuf {
@@ -88,7 +88,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
         .append_edit(
             doc_id,
             token,
-            Seq(0),
+            &TokenOrigin::at(Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -107,7 +107,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
         .append_edit(
             doc_id,
             token,
-            Seq(0),
+            &TokenOrigin::at(Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -121,7 +121,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
         .append_edit(
             doc_id,
             token,
-            Seq(0),
+            &TokenOrigin::at(Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -136,7 +136,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
     // both (strict FIFO single connection), so it resolves this exactly,
     // with no dependency on this caller having drained anything yet.
     let op4 = store
-        .move_undo_pos(doc_id, token, Seq(0), 2)
+        .move_undo_pos(doc_id, token, &TokenOrigin::at(Seq(0)), 2)
         .expect("enqueue move_undo_pos");
     buf.truncate(buf.len() - "gamma".len());
 
@@ -149,7 +149,7 @@ fn undo_then_append_with_in_flight_style_interleaving_matches_the_buffer() {
         .append_edit(
             doc_id,
             token,
-            Seq(0),
+            &TokenOrigin::at(Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -222,7 +222,7 @@ fn edit_after_undo_then_redo_keeps_the_document_recoverable() {
             .append_edit(
                 doc_id,
                 token,
-                Seq(0),
+                &TokenOrigin::at(Seq(0)),
                 EditBatch {
                     edits: &[edit],
                     cursors_before: &[],
@@ -234,7 +234,7 @@ fn edit_after_undo_then_redo_keeps_the_document_recoverable() {
     };
     let undo_to = |store: &Store, local_pos: i64| {
         store
-            .move_undo_pos(doc_id, token, Seq(0), local_pos)
+            .move_undo_pos(doc_id, token, &TokenOrigin::at(Seq(0)), local_pos)
             .expect("enqueue move_undo_pos")
     };
 

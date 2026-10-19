@@ -453,3 +453,19 @@ fn recovery_reconstructs_the_same_edit_kind_sequence_the_live_session_pushed() {
     assert_eq!(recovered_kinds, pushed);
     tx.commit().expect("commit");
 }
+
+#[test]
+fn recover_refuses_a_target_below_every_snapshot_instead_of_replaying_from_empty() {
+    let mut conn = open();
+    let session_id = insert_test_session(&conn);
+    let tx = conn.transaction().expect("tx");
+    let doc_id = insert_test_document(&tx);
+    create_snapshot(&tx, session_id, SystemTime::now(), doc_id, "anchor", Seq(5))
+        .expect("snapshot");
+    move_undo_pos(&tx, session_id, doc_id, Seq(2)).expect("move");
+
+    let err = recover_document(&tx, session_id, doc_id).expect_err("no anchor at or before seq 2");
+
+    assert!(matches!(err, Error::Invalid(_)), "got {err:?}");
+    tx.commit().expect("commit");
+}

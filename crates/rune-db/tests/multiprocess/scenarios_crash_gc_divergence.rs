@@ -113,7 +113,7 @@ fn child_sigkilled_mid_storm_recovers_and_reaper_spares_its_unmaterialized_footp
         .append_edit(
             doc_id,
             rune_db::BindingToken::next(),
-            rune_db::Seq(0),
+            &rune_db::TokenOrigin::at(rune_db::Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],
@@ -356,7 +356,7 @@ fn a_second_processs_real_save_is_a_real_divergence_for_merge_prep() {
         .append_edit(
             doc_id,
             rune_db::BindingToken::next(),
-            rune_db::Seq(0),
+            &rune_db::TokenOrigin::at(rune_db::Seq(0)),
             EditBatch {
                 edits: &[edit],
                 cursors_before: &[],

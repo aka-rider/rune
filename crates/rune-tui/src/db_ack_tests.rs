@@ -192,7 +192,8 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
         },
         nlink: 1,
         saved_obs: rune_db::ObsId::new(1),
-        bridge_seq: None,
+        history: rune_db::Lineage::default(),
+        history_loss: None,
         resumable_merge: None,
     };
 
@@ -248,7 +249,11 @@ fn binding_only_load_does_not_rehydrate() {
         },
         nlink: 1,
         saved_obs: rune_db::ObsId::new(42),
-        bridge_seq: Some(rune_db::Seq(9)),
+        history: rune_db::Lineage {
+            base_seq: rune_db::Seq(9),
+            ..rune_db::Lineage::default()
+        },
+        history_loss: None,
         resumable_merge: None,
     };
 

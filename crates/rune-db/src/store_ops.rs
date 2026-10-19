@@ -8,10 +8,11 @@ use std::path::Path;
 use rune_vfs::Stat;
 
 use crate::Error;
-use crate::ids::{BindingToken, BlobHash, DocId, ObsId, Seq};
+use crate::ids::{BindingToken, BlobHash, DocId, ObsId};
 use crate::journal_append::EditBatch;
 use crate::materialize::MaterializeTarget;
 use crate::store::Store;
+use crate::token_state::TokenOrigin;
 use crate::writer::OpKind;
 
 impl Store {
@@ -23,14 +24,14 @@ impl Store {
     /// `on_event` callback this `Store` was constructed with; this method
     /// only returns the op id used to correlate that completion. See
     /// `journal::append_edit` for the transaction itself. `token`/
-    /// `token_base_seq` are the caller's own `BindingToken` and the durable
-    /// seq that token's local position `0` resolves to — see
+    /// `token_origin` are the caller's own `BindingToken` and where its
+    /// local undo numbering starts in the durable journal — see
     /// `OpKind::AppendEdit`'s own doc comment.
     pub fn append_edit(
         &self,
         doc_id: DocId,
         token: BindingToken,
-        token_base_seq: Seq,
+        token_origin: &TokenOrigin,
         batch: EditBatch<'_>,
     ) -> Result<u64, Error> {
         let now = self.now();
@@ -43,7 +44,7 @@ impl Store {
             cursors_after: batch.cursors_after.to_vec(),
             kind: batch.kind,
             token,
-            token_base_seq,
+            token_origin: token_origin.clone(),
         })
     }
 
@@ -52,20 +53,20 @@ impl Store {
     /// after the corresponding buffer edit has already succeeded. The
     /// writer thread resolves `local_pos` to the exact durable seq itself
     /// at execution time (`OpKind::MoveUndoPos`'s own doc comment) — this
-    /// method never resolves it. `token`/`token_base_seq` mirror
+    /// method never resolves it. `token`/`token_origin` mirror
     /// `append_edit`'s own.
     pub fn move_undo_pos(
         &self,
         doc_id: DocId,
         token: BindingToken,
-        token_base_seq: Seq,
+        token_origin: &TokenOrigin,
         local_pos: i64,
     ) -> Result<u64, Error> {
         self.enqueue(OpKind::MoveUndoPos {
             session_id: self.session_id,
             doc_id,
             token,
-            token_base_seq,
+            token_origin: token_origin.clone(),
             local_pos,
         })
     }

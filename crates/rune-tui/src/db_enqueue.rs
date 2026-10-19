@@ -87,12 +87,12 @@ fn send_append(
     let Some(doc) = app.doc(id) else { return };
     let Some(doc_db) = doc.doc_db() else { return };
     let token = doc_db.token;
-    let token_base_seq = doc_db.token_base_seq;
+    let token_origin = doc_db.token_origin.clone();
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.append_edit(
         rune_db::DocId(db_id),
         token,
-        token_base_seq,
+        &token_origin,
         EditBatch {
             edits: &resolved_edits,
             cursors_before,
@@ -239,7 +239,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_conten
     let Some(doc_db) = doc.doc_db() else { return };
     let db_id = doc_db.db_id;
     let token = doc_db.token;
-    let token_base_seq = doc_db.token_base_seq;
+    let token_origin = doc_db.token_origin.clone();
     let resolved_pos = journal_i64(local_pos) - doc_db.undo_offset;
     if resolved_pos < doc_db.undo_floor {
         rebase_move(app, id, pre_content);
@@ -248,7 +248,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_conten
     let Some(db) = app.db.as_ref() else { return };
     let result = db
         .store
-        .move_undo_pos(rune_db::DocId(db_id), token, token_base_seq, resolved_pos);
+        .move_undo_pos(rune_db::DocId(db_id), token, &token_origin, resolved_pos);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::move_undo_pos(id));
@@ -273,7 +273,7 @@ fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
         return;
     };
     doc_db.token = rune_db::BindingToken::next();
-    doc_db.token_base_seq = doc_db.last_known_seq;
+    doc_db.token_origin = rune_db::TokenOrigin::at(doc_db.last_known_seq);
     doc_db.diverged = false;
     doc_db.synced_content = pre_content.to_string();
     if bridged {
