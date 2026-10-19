@@ -8,6 +8,7 @@ mod dead_session_recovery;
 mod image_first;
 mod launch_basics;
 mod panic_and_diff;
+mod restart_undo;
 
 struct CountingReadVfs {
     inner: Mem,

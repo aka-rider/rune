@@ -1,18 +1,20 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rune_db::{DbEvent, OpOutcome, Store};
+use rune_db::{DbEvent, LoadResult, OpOutcome, Store};
 use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
 use rune_vfs::Vfs;
 
 #[derive(Default)]
 pub(crate) struct DbBootstrap {
     pub(crate) db: Option<Db>,
+    /// The first positional's store load, bound to its tab through
+    /// `rune_tui::db_ack::adopt_load` like any in-app open.
+    pub(crate) loaded: Option<Box<LoadResult>>,
+    /// A named-but-not-yet-created first positional: its scratch row and the
+    /// text a dead session left in it.
     pub(crate) doc_db: Option<DocDb>,
-    pub(crate) expect_obs: Option<rune_db::ObsId>,
     pub(crate) recovered_content: Option<rune_db::Recovered>,
-    pub(crate) sync_kind: Option<rune_db::SyncKind>,
-    pub(crate) nlink: Option<i64>,
     pub(crate) banner: Option<String>,
 }
 
@@ -126,19 +128,12 @@ pub(crate) fn bootstrap_db(
         Err(e) => return degrade(store, format!("load failed: {e}")),
     };
 
-    let Some(expect_obs) = load_result.saved_obs else {
+    if load_result.saved_obs.is_none() {
         return degrade(
             store,
             "internal error: load did not adopt a saved_obs baseline",
         );
-    };
-
-    let db = Db::new(store, bridge, degraded_at_open);
-    let doc_db = DocDb::new(
-        load_result.doc_id.0,
-        PublishMode::OverwriteExisting,
-        load_result.history.position_seq(),
-    );
+    }
 
     let banner = if degraded_at_open {
         Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
@@ -146,16 +141,11 @@ pub(crate) fn bootstrap_db(
         None
     };
 
-    let sync_kind = load_result.sync.kind;
-
     DbBootstrap {
-        db: Some(db),
-        doc_db: Some(doc_db),
-        expect_obs: Some(expect_obs),
-        recovered_content: Some(load_result.recovered),
-        sync_kind: Some(sync_kind),
-        nlink: Some(load_result.nlink),
+        db: Some(Db::new(store, bridge, degraded_at_open)),
+        loaded: Some(Box::new(load_result)),
         banner,
+        ..DbBootstrap::default()
     }
 }
 
@@ -325,11 +315,9 @@ pub(crate) fn bootstrap_new_file(
     DbBootstrap {
         db: Some(db),
         doc_db: Some(doc_db),
-        expect_obs: None,
         recovered_content,
-        sync_kind: None,
-        nlink: None,
         banner,
+        ..DbBootstrap::default()
     }
 }
 

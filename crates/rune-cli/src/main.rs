@@ -283,17 +283,26 @@ fn apply_db_bootstrap(
         rune_tui::messages::error(app, banner);
     }
     app.db_banner = db_bootstrap.banner;
-    if let Some(sync_kind) = db_bootstrap.sync_kind {
-        app.active_doc_mut().last_sync = Some(sync_kind);
+    if let Some(load) = db_bootstrap.loaded {
+        let issued_version = app.doc(first_doc_id).map(|doc| doc.buffer.version());
+        rune_tui::db_ack::adopt_load(app, first_doc_id, *load, issued_version);
     }
-    if let Some(nlink) = db_bootstrap.nlink {
-        app.active_doc_mut().nlink = Some(nlink);
-        rune_tui::db_ack::warn_hard_links(app, nlink);
+    if let Some(doc_db) = db_bootstrap.doc_db {
+        bind_named_draft(app, first_doc_id, doc_db, db_bootstrap.recovered_content);
     }
-    // Hydrated BEFORE binding — the bind chokepoint compares the buffer
-    // against what the row reconstructs to, so the adoption must already
-    // be in the buffer when the mapping and any re-base are derived.
-    if let Some(recovered) = &db_bootstrap.recovered_content {
+}
+
+/// Hydrated BEFORE binding — the bind chokepoint compares the buffer against
+/// what the row reconstructs to, so the adoption must already be in the
+/// buffer when the mapping and any re-base are derived.
+fn bind_named_draft(
+    app: &mut AppGuard,
+    id: rune_tui::document::DocumentId,
+    doc_db: rune_tui::db::DocDb,
+    recovered: Option<rune_db::Recovered>,
+) {
+    let mut row_content = String::new();
+    if let Some(recovered) = recovered {
         let disk_content = app.active_doc_mut().buffer.content().to_string();
         if let rune_tui::document::Hydration::Refused(reason) =
             app.active_doc_mut()
@@ -301,17 +310,10 @@ fn apply_db_bootstrap(
         {
             rune_tui::messages::error(app, format!("crash recovery: {reason}"));
         }
+        row_content = recovered.content;
     }
-    if let Some(doc_db) = db_bootstrap.doc_db {
-        let db_id = doc_db.db_id;
-        let row_content = match &db_bootstrap.recovered_content {
-            Some(recovered) => recovered.content.clone(),
-            None if doc_db.publish_mode.is_create_only() => String::new(),
-            None => app.active_doc_mut().buffer.content().to_string(),
-        };
-        app.install_or_join_file_binding(db_id, db_bootstrap.expect_obs);
-        rune_tui::db_ack::bind_loaded_doc(app, first_doc_id, doc_db, &row_content);
-    }
+    app.install_or_join_file_binding(doc_db.db_id, None);
+    rune_tui::db_ack::bind_named_draft_row(app, id, doc_db, &row_content);
 }
 
 /// Extracts a human-readable message from a `catch_unwind` payload. `panic!`

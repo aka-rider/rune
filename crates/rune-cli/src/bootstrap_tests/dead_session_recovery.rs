@@ -224,14 +224,14 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     );
 }
 
-fn mark_every_session_dead(db_path: &Path) {
+pub(super) fn mark_every_session_dead(db_path: &Path) {
     let raw =
         rune_db::open_raw_connection_at_path_for_test(db_path).expect("open db file directly");
     raw.execute("UPDATE sessions SET pid = -1", [])
         .expect("mark every recorded session dead");
 }
 
-fn db_path_under(home: &Path) -> PathBuf {
+pub(super) fn db_path_under(home: &Path) -> PathBuf {
     home.join("Library")
         .join("Application Support")
         .join("rune")
