@@ -190,7 +190,7 @@ fn switching_scope_with_acks_outstanding_warns_and_leaves_the_documents_unedited
 
     press_into(&mut fx.app, key(KeyCode::Char('f'), CTRL), &mut fx.effects);
 
-    assert!(fx.app.find().expect("open").project.is_none());
+    assert!(fx.app.find().expect("open").project().is_none());
     assert_eq!(fx.newest(), "3 files were opened but not replaced");
     assert_eq!(fx.app.find_walk_queued(), None);
     for (path, content) in FILES {
@@ -282,6 +282,6 @@ fn the_panel_stays_open_and_focused_after_replace_all() {
 
     let state = fx.app.find().expect("the panel is still open");
     assert!(state.focused);
-    assert!(state.project.is_some());
+    assert!(state.project().is_some());
     assert_eq!(state.focus, crate::find::Control::Replace);
 }

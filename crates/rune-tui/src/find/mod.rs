@@ -33,6 +33,9 @@ mod esc_tests;
 mod field_edit_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod filter_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod follow_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -74,9 +77,23 @@ pub(crate) mod test_support;
 mod tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Scope {
-    File,
-    Project,
+pub(crate) enum FilterKind {
+    ThisFile,
+    Workspace,
+}
+
+pub(crate) enum Filter {
+    ThisFile,
+    Workspace(project::ProjectResults),
+}
+
+impl Filter {
+    pub(crate) fn kind(&self) -> FilterKind {
+        match self {
+            Filter::ThisFile => FilterKind::ThisFile,
+            Filter::Workspace(_) => FilterKind::Workspace,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,7 +105,7 @@ pub(crate) enum Control {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChipKind {
-    Scope,
+    ThisFile,
     Case,
     Word,
     Regex,
@@ -128,6 +145,7 @@ pub(crate) struct Origin {
     pub doc: DocumentId,
     pub cursors: CursorSet,
     pub scroll_row: DisplayRow,
+    pub buffer_version: u64,
 }
 
 impl Origin {
@@ -137,6 +155,7 @@ impl Origin {
             doc: app.active,
             cursors: doc.cursors.clone(),
             scroll_row: doc.viewport.scroll_row,
+            buffer_version: doc.buffer.version(),
         }
     }
 }
@@ -153,17 +172,38 @@ pub(crate) struct FindState {
     pub buffer_version: u64,
     pub matches: Vec<Range<usize>>,
     pub current: Option<usize>,
-    pub project: Option<project::ProjectResults>,
+    pub filter: Filter,
     pub history_generation: crate::generation::SearchHistoryGen,
     pub replace_history_generation: crate::generation::ReplaceHistoryGen,
 }
 
 impl FindState {
-    pub(crate) fn scope(&self) -> Scope {
-        if self.project.is_some() {
-            Scope::Project
-        } else {
-            Scope::File
+    pub(crate) fn filter_kind(&self) -> FilterKind {
+        self.filter.kind()
+    }
+
+    pub(crate) fn project(&self) -> Option<&project::ProjectResults> {
+        match &self.filter {
+            Filter::Workspace(project) => Some(project),
+            Filter::ThisFile => None,
+        }
+    }
+
+    pub(crate) fn project_mut(&mut self) -> Option<&mut project::ProjectResults> {
+        match &mut self.filter {
+            Filter::Workspace(project) => Some(project),
+            Filter::ThisFile => None,
+        }
+    }
+
+    pub(crate) fn results_listed(&self) -> bool {
+        self.project()
+            .is_some_and(|project| project.results.len() > 1)
+    }
+
+    pub(crate) fn settle_focus(&mut self) {
+        if self.focus == Control::Results && !self.results_listed() {
+            self.focus = Control::Find;
         }
     }
 
@@ -180,7 +220,7 @@ impl FindState {
         if self.replace.is_some() {
             ring.push(Control::Replace);
         }
-        if self.project.is_some() {
+        if self.results_listed() {
             ring.push(Control::Results);
         }
         ring
@@ -191,14 +231,15 @@ impl FindState {
             ChipKind::Case => Some(self.options.case_sensitive),
             ChipKind::Word => Some(self.options.whole_word),
             ChipKind::Regex => Some(self.options.regex),
-            ChipKind::Scope | ChipKind::ReplaceOne | ChipKind::ReplaceAll => None,
+            ChipKind::ThisFile => Some(self.filter_kind() == FilterKind::ThisFile),
+            ChipKind::ReplaceOne | ChipKind::ReplaceAll => None,
         }
     }
 }
 
-pub(crate) fn open(app: &mut App, scope: Scope, expand_replace: bool, effects: &mut Effects) {
+pub(crate) fn open(app: &mut App, kind: FilterKind, expand_replace: bool, effects: &mut Effects) {
     if app.find().is_some() {
-        refocus(app, scope, expand_replace, effects);
+        refocus(app, kind, expand_replace, effects);
         return;
     }
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
@@ -227,7 +268,7 @@ pub(crate) fn open(app: &mut App, scope: Scope, expand_replace: bool, effects: &
             buffer_version: app.active_doc().buffer.version(),
             matches: Vec::new(),
             current: None,
-            project: None,
+            filter: Filter::ThisFile,
             history_generation,
             replace_history_generation,
         },
@@ -239,22 +280,20 @@ pub(crate) fn open(app: &mut App, scope: Scope, expand_replace: bool, effects: &
             history_generation,
         ));
     }
-    if scope == Scope::Project {
-        project::attach(app, effects);
-    }
+    project::apply_filter(app, kind, effects);
     if expand_replace {
         expand_replace_field(app, effects);
     }
     requery(app);
 }
 
-fn refocus(app: &mut App, scope: Scope, expand_replace: bool, effects: &mut Effects) {
-    let Some(current) = app.find().map(FindState::scope) else {
+fn refocus(app: &mut App, kind: FilterKind, expand_replace: bool, effects: &mut Effects) {
+    let Some(current) = app.find().map(FindState::filter_kind) else {
         return;
     };
-    let switched = current != scope;
+    let switched = current != kind;
     if switched {
-        project::set_scope(app, scope, effects);
+        project::set_filter(app, kind, effects);
     }
     if expand_replace {
         expand_replace_field(app, effects);
@@ -310,7 +349,7 @@ pub(crate) fn close(app: &mut App, restore: bool) {
     if !find_text.trim().is_empty() {
         app.last_find = Some((find_text, state.options));
     }
-    if let Some(project) = state.project {
+    if let Filter::Workspace(project) = state.filter {
         crate::explorer_preview::discard(app);
         project_replace::abandon(app, project.walk);
     }
@@ -354,6 +393,9 @@ pub(crate) fn restore_origin(app: &mut App, origin: &Origin) {
     let Some(doc) = app.doc_mut(origin.doc) else {
         return;
     };
+    if doc.buffer.version() != origin.buffer_version {
+        return;
+    }
     doc.cursors = origin.cursors.clone();
     doc.viewport.scroll_row = origin.scroll_row;
     doc.viewport.mode = ScrollMode::EnsureVisible;

@@ -108,7 +108,7 @@ impl App {
     // The finder and project search both paint over the left column and
     // force it visible; layout and the splitter treat them identically.
     pub(crate) fn left_column_overlay(&self) -> bool {
-        self.filesearch().is_some() || crate::find::project::active(self)
+        self.filesearch().is_some() || crate::find::project::listed(self)
     }
 
     pub(crate) fn overlay_owns_focus(&self) -> bool {
@@ -177,7 +177,7 @@ impl App {
     }
 
     pub fn find_walk_queued(&self) -> Option<usize> {
-        let walk = self.find()?.project.as_ref()?.walk.as_ref()?;
+        let walk = self.find()?.project()?.walk.as_ref()?;
         Some(walk.queued.len())
     }
 

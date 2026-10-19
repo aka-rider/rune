@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::commands::mouse::{WHEEL_ROWS, select_range};
 use crate::document::DocumentId;
 use crate::find::project_replace::{self, Walk};
-use crate::find::{Control, FindState, Origin, Scope, history};
+use crate::find::{Control, Filter, FilterKind, FindState, Origin, history};
 use crate::listnav::List;
 use crate::messages;
 use crate::pointer::{MouseButton, MouseInput, MouseKind};
@@ -57,59 +57,65 @@ impl ProjectResults {
 }
 
 pub(crate) fn active(app: &App) -> bool {
-    app.find().is_some_and(|state| state.project.is_some())
+    app.find().is_some_and(|state| state.project().is_some())
+}
+
+pub(crate) fn listed(app: &App) -> bool {
+    app.find().is_some_and(FindState::results_listed)
 }
 
 fn results(app: &App) -> Option<&ProjectResults> {
-    app.find().and_then(|state| state.project.as_ref())
+    app.find().and_then(FindState::project)
 }
 
 fn results_mut(app: &mut App) -> Option<&mut ProjectResults> {
-    app.find_mut().and_then(|state| state.project.as_mut())
+    app.find_mut().and_then(FindState::project_mut)
 }
 
-pub(crate) fn attach(app: &mut App, effects: &mut Effects) {
-    if app.find().is_none_or(|state| state.project.is_some()) {
-        return;
-    }
-    let generation = app.next_projectsearch_gen.mint();
-    if let Some(state) = app.find_mut() {
-        state.project = Some(ProjectResults::new(generation));
-    }
-    crate::projectsearch::ensure_index(app, effects);
-}
-
-pub(crate) fn detach(app: &mut App) {
-    let Some(state) = app.find_mut() else {
+pub(crate) fn apply_filter(app: &mut App, kind: FilterKind, effects: &mut Effects) {
+    let Some(current) = app.find().map(FindState::filter_kind) else {
         return;
     };
-    let Some(project) = state.project.take() else {
+    if current == kind {
         return;
-    };
-    if state.focus == Control::Results {
-        state.focus = Control::Find;
     }
-    crate::explorer_preview::discard(app);
-    project_replace::abandon(app, project.walk);
+    match kind {
+        FilterKind::Workspace => {
+            let generation = app.next_projectsearch_gen.mint();
+            if let Some(state) = app.find_mut() {
+                state.filter = Filter::Workspace(ProjectResults::new(generation));
+            }
+            crate::projectsearch::ensure_index(app, effects);
+        }
+        FilterKind::ThisFile => {
+            let Some(state) = app.find_mut() else {
+                return;
+            };
+            let Filter::Workspace(project) = std::mem::replace(&mut state.filter, Filter::ThisFile)
+            else {
+                return;
+            };
+            state.settle_focus();
+            crate::explorer_preview::discard(app);
+            project_replace::abandon(app, project.walk);
+        }
+    }
 }
 
-pub(crate) fn set_scope(app: &mut App, scope: Scope, effects: &mut Effects) {
-    match scope {
-        Scope::Project => attach(app, effects),
-        Scope::File => detach(app),
-    }
+pub(crate) fn set_filter(app: &mut App, kind: FilterKind, effects: &mut Effects) {
+    apply_filter(app, kind, effects);
     crate::find::requery(app);
 }
 
-pub(crate) fn toggle_scope(app: &mut App, effects: &mut Effects) {
-    let Some(scope) = app.find().map(FindState::scope) else {
+pub(crate) fn toggle_this_file(app: &mut App, effects: &mut Effects) {
+    let Some(kind) = app.find().map(FindState::filter_kind) else {
         return;
     };
-    let next = match scope {
-        Scope::File => Scope::Project,
-        Scope::Project => Scope::File,
+    let next = match kind {
+        FilterKind::ThisFile => FilterKind::Workspace,
+        FilterKind::Workspace => FilterKind::ThisFile,
     };
-    set_scope(app, next, effects);
+    set_filter(app, next, effects);
 }
 
 pub(crate) fn restart_debounce(app: &App) {
@@ -136,7 +142,7 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
     let Some(state) = app.find() else {
         return;
     };
-    if state.project.is_none() {
+    if state.project().is_none() {
         return;
     }
     let matcher = match &state.pattern {
@@ -144,8 +150,11 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
             matcher.clone()
         }
         _ => {
-            if let Some(project) = results_mut(app) {
-                project.clear();
+            if let Some(state) = app.find_mut() {
+                if let Some(project) = state.project_mut() {
+                    project.clear();
+                }
+                state.settle_focus();
             }
             return;
         }
@@ -201,6 +210,9 @@ pub(crate) fn handle_queried(
     project.results = results;
     project.truncated = truncated;
     project.list = List { cursor: 0, top: 0 };
+    if let Some(state) = app.find_mut() {
+        state.settle_focus();
+    }
     focus_selected_hit(app, effects);
 }
 
@@ -394,7 +406,7 @@ fn click_row(app: &mut App, visible_row: usize, effects: &mut Effects) {
 }
 
 pub(crate) fn readout_text(app: &App, state: &FindState) -> Option<String> {
-    let project = state.project.as_ref()?;
+    let project = state.project()?;
     let index = app.project_index.as_ref()?;
     if index.building {
         return Some(crate::projectsearch::spinner_char(index.spinner_frame).to_string());

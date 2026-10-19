@@ -7,7 +7,7 @@ use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
 use crate::find::{
-    ChipKind, Control, FieldState, FindState, Scope, escape, follow, project, project_replace,
+    ChipKind, Control, FieldState, FilterKind, FindState, escape, follow, project, project_replace,
     replace,
 };
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
@@ -113,7 +113,7 @@ fn commit_field_edit(app: &mut App, target: Control, edit: impl FnOnce(&mut Fiel
 }
 
 fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
-    let Some((focus, scope)) = app.find().map(|state| (state.focus, state.scope())) else {
+    let Some((focus, filter)) = app.find().map(|state| (state.focus, state.filter_kind())) else {
         return;
     };
     match cmd {
@@ -121,22 +121,22 @@ fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
         FindCommand::Close => {
             escape(app);
         }
-        FindCommand::Commit => match (focus, scope) {
-            (Control::Find, Scope::File) => follow::advance(app, true),
-            (Control::Find, Scope::Project) | (Control::Results, _) => {
+        FindCommand::Commit => match (focus, filter) {
+            (Control::Find, FilterKind::ThisFile) => follow::advance(app, true),
+            (Control::Find, FilterKind::Workspace) | (Control::Results, _) => {
                 project::open_hit(app, effects);
             }
-            (Control::Replace, _) => replace_one(app, scope, effects),
+            (Control::Replace, _) => replace_one(app, filter, effects),
         },
-        FindCommand::Alt => match (focus, scope) {
-            (Control::Find, Scope::File) => follow::advance(app, false),
-            (Control::Find, Scope::Project) => project::step_hit(app, false, effects),
+        FindCommand::Alt => match (focus, filter) {
+            (Control::Find, FilterKind::ThisFile) => follow::advance(app, false),
+            (Control::Find, FilterKind::Workspace) => project::step_hit(app, false, effects),
             (Control::Results, _) => project::open_hit(app, effects),
-            (Control::Replace, _) => replace_every(app, scope, effects),
+            (Control::Replace, _) => replace_every(app, filter, effects),
         },
         FindCommand::NextControl => cycle(app, 1),
         FindCommand::PrevControl => cycle(app, -1),
-        FindCommand::ToggleScope => project::toggle_scope(app, effects),
+        FindCommand::ToggleThisFile => project::toggle_this_file(app, effects),
         FindCommand::ToggleCase => toggle_option(app, |o| &mut o.case_sensitive),
         FindCommand::ToggleWord => toggle_option(app, |o| &mut o.whole_word),
         FindCommand::ToggleRegex => toggle_option(app, |o| &mut o.regex),
@@ -175,30 +175,30 @@ impl ListKey {
 }
 
 pub(crate) fn press_chip(app: &mut App, kind: ChipKind, effects: &mut Effects) {
-    let Some(scope) = app.find().map(FindState::scope) else {
+    let Some(filter) = app.find().map(FindState::filter_kind) else {
         return;
     };
     match kind {
-        ChipKind::Scope => project::toggle_scope(app, effects),
+        ChipKind::ThisFile => project::toggle_this_file(app, effects),
         ChipKind::Case => toggle_option(app, |o| &mut o.case_sensitive),
         ChipKind::Word => toggle_option(app, |o| &mut o.whole_word),
         ChipKind::Regex => toggle_option(app, |o| &mut o.regex),
-        ChipKind::ReplaceOne => replace_one(app, scope, effects),
-        ChipKind::ReplaceAll => replace_every(app, scope, effects),
+        ChipKind::ReplaceOne => replace_one(app, filter, effects),
+        ChipKind::ReplaceAll => replace_every(app, filter, effects),
     }
 }
 
-fn replace_one(app: &mut App, scope: Scope, effects: &mut Effects) {
-    match scope {
-        Scope::File => replace::replace_current(app),
-        Scope::Project => project_replace::replace_selected(app, effects),
+fn replace_one(app: &mut App, filter: FilterKind, effects: &mut Effects) {
+    match filter {
+        FilterKind::ThisFile => replace::replace_current(app),
+        FilterKind::Workspace => project_replace::replace_selected(app, effects),
     }
 }
 
-fn replace_every(app: &mut App, scope: Scope, effects: &mut Effects) {
-    match scope {
-        Scope::File => replace::replace_all(app),
-        Scope::Project => project_replace::replace_all_project(app, effects),
+fn replace_every(app: &mut App, filter: FilterKind, effects: &mut Effects) {
+    match filter {
+        FilterKind::ThisFile => replace::replace_all(app),
+        FilterKind::Workspace => project_replace::replace_all_project(app, effects),
     }
 }
 
@@ -310,14 +310,18 @@ fn control_hint(app: &mut App) {
 }
 
 fn list_key_hint(app: &mut App, cmd: FindCommand) {
-    let text = if project::active(app) {
+    let text = if project::listed(app) {
         format!(
             "{} moves the results \u{2014} {} reaches them",
             label_for(cmd),
             label_for(FindCommand::PrevControl)
         )
     } else {
-        format!("{} moves the results in Project scope", label_for(cmd))
+        format!(
+            "{} moves the results list, shown when 2+ files match the workspace search ({} toggles This file)",
+            label_for(cmd),
+            label_for(FindCommand::ToggleThisFile)
+        )
     };
     messages::info(app, text);
 }

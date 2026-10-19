@@ -35,7 +35,7 @@ fn ctrl_f_opens_a_three_row_bordered_panel_directly_above_the_footer() {
         rows[top + 2]
     );
     assert!(
-        rows[top + 1].contains("\u{2325}P File|Project \u{2325}C Aa \u{2325}W Word \u{2325}R .*"),
+        rows[top + 1].contains("\u{2325}F This file \u{2325}C Aa \u{2325}W Word \u{2325}R .*"),
         "chips on the find row: {:?}",
         rows[top + 1]
     );
@@ -325,17 +325,17 @@ fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
 }
 
 #[test]
-fn alt_p_switches_the_open_panel_to_project_scope_and_keeps_the_query() {
+fn alt_f_switches_the_open_panel_to_the_workspace_filter_and_keeps_the_query() {
     let mut app = app_with("hello");
     app.set_root(std::path::PathBuf::from("/root"));
     open_find(&mut app);
     type_str(&mut app, "hel");
-    press(&mut app, key(KeyCode::Char('p'), ALT));
+    press(&mut app, key(KeyCode::Char('f'), ALT));
 
-    assert_eq!(find(&app).scope(), Scope::Project);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
     assert!(find(&app).focused);
     assert_eq!(find(&app).find.editor.text(), "hel");
-    assert_eq!(find(&app).control_ring().last(), Some(&Control::Results));
+    assert_eq!(find(&app).control_ring(), vec![Control::Find]);
 }
 
 #[test]

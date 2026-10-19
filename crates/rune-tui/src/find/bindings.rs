@@ -11,7 +11,7 @@ pub enum FindCommand {
     Alt,
     NextControl,
     PrevControl,
-    ToggleScope,
+    ToggleThisFile,
     ToggleCase,
     ToggleWord,
     ToggleRegex,
@@ -25,7 +25,7 @@ pub enum FindCommand {
 
 pub(crate) fn chip_command(kind: ChipKind) -> FindCommand {
     match kind {
-        ChipKind::Scope => FindCommand::ToggleScope,
+        ChipKind::ThisFile => FindCommand::ToggleThisFile,
         ChipKind::Case => FindCommand::ToggleCase,
         ChipKind::Word => FindCommand::ToggleWord,
         ChipKind::Regex => FindCommand::ToggleRegex,
@@ -98,9 +98,9 @@ pub const FIND_BINDINGS: &[Binding<FindCommand>] = &[
         secondary: false,
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('p'), ALT),
-        cmd: FindCommand::ToggleScope,
-        help: "toggle project scope",
+        key: KeyPattern::new(KeyCode::Char('f'), ALT),
+        cmd: FindCommand::ToggleThisFile,
+        help: "this file",
         secondary: false,
     },
     Binding {

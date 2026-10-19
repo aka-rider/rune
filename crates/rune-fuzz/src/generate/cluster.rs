@@ -23,6 +23,8 @@ pub(super) use super::cluster_special::{
 };
 
 pub(super) use super::cluster_cmdpal::cluster_cmdpal;
+#[cfg(test)]
+pub(super) use super::cluster_find::click_into_editor;
 pub(super) use super::cluster_find::cluster_find;
 
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {

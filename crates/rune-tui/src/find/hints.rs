@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::app::App;
 use crate::find::bindings::{FindCommand, label_for};
-use crate::find::{Control, Scope};
+use crate::find::{Control, FilterKind};
 use crate::footer_hints::HintEntry;
 use crate::keymap::GlobalCommand;
 use crate::registry::{self, CommandId};
@@ -13,8 +13,8 @@ pub(crate) fn entries(app: &App) -> Vec<HintEntry> {
     };
     let mut out = vec![row(FindCommand::Close)];
     let replace_expanded = state.replace.is_some();
-    match (state.focus, state.scope()) {
-        (Control::Find, Scope::File) => {
+    match (state.focus, state.filter_kind()) {
+        (Control::Find, FilterKind::ThisFile) => {
             out.push(row(FindCommand::Commit));
             out.push(row(FindCommand::Alt));
             if replace_expanded {
@@ -24,25 +24,24 @@ pub(crate) fn entries(app: &App) -> Vec<HintEntry> {
             }
             out.push(row(FindCommand::Up));
         }
-        (Control::Find, Scope::Project) => {
+        (Control::Find, FilterKind::Workspace) => {
             out.push(row_as(FindCommand::Commit, "open"));
-            let next = if replace_expanded {
-                "replace field"
-            } else {
-                "results"
-            };
-            out.push(row_as(FindCommand::NextControl, next));
+            if replace_expanded {
+                out.push(row_as(FindCommand::NextControl, "replace field"));
+            } else if state.results_listed() {
+                out.push(row_as(FindCommand::NextControl, "results"));
+            }
             out.push(global_row_as(GlobalCommand::SearchNext, "next file"));
             out.push(row(FindCommand::Up));
             if !replace_expanded {
                 out.extend(global_row(GlobalCommand::ToggleProjectReplace));
             }
         }
-        (Control::Replace, scope) => {
+        (Control::Replace, _) => {
             out.push(row_as(FindCommand::Commit, "replace"));
             out.push(row_as(FindCommand::Alt, "replace all"));
             out.push(global_row_as(GlobalCommand::SearchNext, "skip"));
-            let next = if scope == Scope::Project {
+            let next = if state.results_listed() {
                 "results"
             } else {
                 "find field"

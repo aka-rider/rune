@@ -180,12 +180,12 @@ mod tests {
     }
 
     #[test]
-    fn the_find_section_lists_the_scope_toggle_and_drops_the_space_row() {
+    fn the_find_section_lists_the_this_file_toggle_and_drops_the_space_row() {
         let md = help_markdown(true);
         let section = section_of(&md, "Find");
         assert!(
-            section.contains("toggle project scope") && section.contains("\u{2325}P"),
-            "expected a project scope toggle row with \u{2325}P in:\n{section}"
+            section.contains("toggle searching only this file") && section.contains("\u{2325}F"),
+            "expected a this-file toggle row with \u{2325}F in:\n{section}"
         );
         assert!(
             !section.contains('\u{2423}'),

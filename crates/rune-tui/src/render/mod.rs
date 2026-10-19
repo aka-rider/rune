@@ -112,7 +112,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
 
     if let Some(hit) = app
         .find()
-        .and_then(|state| state.project.as_ref())
+        .and_then(crate::find::FindState::project)
         .and_then(|project| project.selected())
         && painted_doc.is_some()
         && crate::workspace::shown_document_for(app, &hit.path) == painted_doc
@@ -376,7 +376,7 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     };
 
     let filesearch_active = app.filesearch().is_some();
-    let projectsearch_active = crate::find::project::active(app);
+    let projectsearch_active = crate::find::project::listed(app);
     let results_focused = app
         .find()
         .is_some_and(|state| state.focused && state.focus == crate::find::Control::Results);

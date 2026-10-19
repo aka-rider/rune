@@ -61,7 +61,7 @@ pub(in crate::generate) static FIND_PANEL_KEYS: &[KeyInput] = &[
         mods: Mods::NONE,
     },
     KeyInput {
-        code: KeyCode::Char('p'),
+        code: KeyCode::Char('f'),
         mods: ALT,
     },
     KeyInput {
@@ -130,3 +130,5 @@ pub(in crate::generate) const PROJECT_REPLACE_KEY_CTRL: KeyInput = KeyInput {
     code: KeyCode::Char('R'),
     mods: CTRL,
 };
+
+pub(in crate::generate) const EDITOR_CLICK_CELL: (u16, u16) = (60, 12);

@@ -19,8 +19,8 @@ pub(crate) struct Chip {
 
 pub(crate) const FIND_ROW_CHIPS: [Chip; 4] = [
     Chip {
-        kind: ChipKind::Scope,
-        label: "File|Project",
+        kind: ChipKind::ThisFile,
+        label: "This file",
     },
     Chip {
         kind: ChipKind::Case,
@@ -48,7 +48,7 @@ pub(crate) const REPLACE_ROW_CHIPS: [Chip; 2] = [
 ];
 
 pub(crate) fn chip_text(state: &FindState, chip: Chip) -> Cow<'static, str> {
-    match (chip.kind, &state.project) {
+    match (chip.kind, state.project()) {
         (ChipKind::ReplaceAll, Some(project)) => {
             Cow::Owned(format!("All {}", project.results.len()))
         }

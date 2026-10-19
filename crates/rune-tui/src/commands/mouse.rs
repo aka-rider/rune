@@ -166,7 +166,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         Some(Pane::Explorer) if app.filesearch().is_some() => {
             filesearch::mouse(app, input, effects)
         }
-        Some(Pane::Explorer) if crate::find::project::active(app) => {
+        Some(Pane::Explorer) if crate::find::project::listed(app) => {
             crate::find::project::mouse(app, geo.explorer_inner, input, effects)
         }
         Some(Pane::Explorer) => explorer_mouse::mouse(app, input, effects),

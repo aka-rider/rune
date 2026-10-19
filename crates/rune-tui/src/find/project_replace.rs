@@ -11,7 +11,7 @@ use crate::document::{DocumentId, Replica};
 use crate::find::matcher::Matcher;
 use crate::find::project::ProjectResults;
 use crate::find::replace::collapsed_after_the_last_edit;
-use crate::find::{history, project};
+use crate::find::{FindState, history, project};
 use crate::messages;
 use crate::opentabs::limit::{MAX_TABS, ensure_room};
 use crate::runtime::Effects;
@@ -73,17 +73,17 @@ pub(crate) enum FileOutcome {
 }
 
 fn walk(app: &App) -> Option<&Walk> {
-    app.find()?.project.as_ref()?.walk.as_deref()
+    app.find()?.project()?.walk.as_deref()
 }
 
 fn walk_mut(app: &mut App) -> Option<&mut Walk> {
-    app.find_mut()?.project.as_mut()?.walk.as_deref_mut()
+    app.find_mut()?.project_mut()?.walk.as_deref_mut()
 }
 
 pub(crate) fn replace_all_project(app: &mut App, effects: &mut Effects) {
     let Some(paths) = app
         .find()
-        .and_then(|state| state.project.as_ref())
+        .and_then(FindState::project)
         .map(|project| project.results.iter().map(|hit| hit.path.clone()).collect())
     else {
         return;
@@ -94,7 +94,7 @@ pub(crate) fn replace_all_project(app: &mut App, effects: &mut Effects) {
 pub(crate) fn replace_selected(app: &mut App, effects: &mut Effects) {
     let selected = app
         .find()
-        .and_then(|state| state.project.as_ref())
+        .and_then(FindState::project)
         .and_then(ProjectResults::selected)
         .map(|hit| hit.path.clone());
     start_walk(app, selected.into_iter().collect(), effects);
@@ -121,7 +121,7 @@ fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
         messages::info(app, "no match to replace");
         return;
     };
-    if let Some(project) = app.find_mut().and_then(|state| state.project.as_mut()) {
+    if let Some(project) = app.find_mut().and_then(FindState::project_mut) {
         project.walk = Some(Box::new(Walk::new(pattern, replacement, paths.len())));
     }
     for path in paths {
@@ -268,7 +268,7 @@ fn keep_unchanged(app: &mut App, id: DocumentId, kept: fn(&mut Walk) -> &mut Vec
 
 fn finish(app: &mut App, effects: &mut Effects) {
     let Some((walk, query, options, origin)) = app.find_mut().and_then(|state| {
-        let walk = state.project.as_mut()?.walk.take()?;
+        let walk = state.project_mut()?.walk.take()?;
         Some((
             walk,
             state.find.editor.text().to_string(),

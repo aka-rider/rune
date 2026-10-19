@@ -1,0 +1,23 @@
+content 
+type 
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:y s--u
+key char:m --c-
+type 
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+key char:f --c-
+type a
+key char:r --c-
+type a
+mouse down:left 60 12 ---
+mouse up:left 60 12 ---
+key escape ----
+key char:z ---u
+key char:z ---u
+key char:F --c-
+type a
+key char:f -a--
+key escape ----

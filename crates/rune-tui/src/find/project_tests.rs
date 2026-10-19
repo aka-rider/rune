@@ -19,8 +19,8 @@ fn chip_fg(app: &mut App, needle: &str) -> Option<ratatui::style::Color> {
     let (y, row) = rows
         .iter()
         .enumerate()
-        .find(|(_, row)| row.contains("File|Project"))
-        .expect("the scope chip is on screen");
+        .find(|(_, row)| row.contains("This file"))
+        .expect("the This-file chip is on screen");
     let x = occurrences(row, needle)
         .first()
         .copied()
@@ -31,24 +31,37 @@ fn chip_fg(app: &mut App, needle: &str) -> Option<ratatui::style::Color> {
 }
 
 #[test]
-fn ctrl_shift_f_opens_the_panel_in_project_scope_with_the_chip_reading_project() {
-    let mut app = seeded_app(&[("/root/a.md", b"needle")]);
+fn ctrl_shift_f_opens_the_workspace_filter_with_the_this_file_chip_off() {
+    let mut app = seeded_app(&[("/root/a.md", b"needle"), ("/root/b.md", b"needle")]);
     assert!(!app.splits.left.is_shown(), "test setup: column hidden");
+    let mut effects = Effects::default();
 
-    open_project_find(&mut app);
+    search_project(&mut app, "needle", &mut effects);
 
-    assert_eq!(find(&app).scope(), Scope::Project);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
     assert!(find(&app).focused);
     assert_eq!(find(&app).focus, Control::Find);
-    assert_eq!(chip_fg(&mut app, "Project"), app.theme.chrome.footer_key.fg);
     assert_eq!(
-        chip_fg(&mut app, "File"),
+        chip_fg(&mut app, "This file"),
         app.theme.chrome.footer_key_inactive.fg
     );
     let rows = project_grid(&mut app);
     assert!(
         rows.iter().any(|row| row.contains("Search Project")),
-        "the left column is forced open with the results title"
+        "two matching files force the left column open with the results title"
+    );
+}
+
+#[test]
+fn ctrl_f_opens_the_this_file_filter_with_the_chip_on() {
+    let mut app = seeded_app(&[("/root/a.md", b"needle")]);
+
+    press(&mut app, key(KeyCode::Char('f'), CTRL));
+
+    assert_eq!(find(&app).filter_kind(), FilterKind::ThisFile);
+    assert_eq!(
+        chip_fg(&mut app, "This file"),
+        app.theme.chrome.footer_key.fg
     );
 }
 
@@ -59,7 +72,7 @@ fn sup_shift_f_again_closes_the_panel_and_returns_to_the_origin() {
     crate::workspace::switch_to(&mut app, second);
 
     press(&mut app, key(KeyCode::Char('F'), SUP));
-    assert_eq!(find(&app).scope(), Scope::Project);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
 
     press(&mut app, key(KeyCode::Char('F'), SUP));
 
@@ -101,7 +114,7 @@ fn opening_over_the_file_finder_tears_it_down_first() {
     open_project_find(&mut app);
 
     assert!(app.filesearch().is_none());
-    assert_eq!(find(&app).scope(), Scope::Project);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
     assert_eq!(
         app.active, second,
         "the finder's return_to must be restored before the panel records its origin"
@@ -160,7 +173,7 @@ fn the_readout_says_no_matches_for_a_missing_word() {
 }
 
 #[test]
-fn the_scope_chip_toggled_to_file_keeps_the_query_and_selects_the_first_in_file_match() {
+fn alt_f_turns_the_this_file_chip_on_keeps_the_query_and_selects_the_first_in_file_match() {
     let mut app = seeded_app(&[("/root/a.md", b"needle")]);
     let active = app.active;
     crate::commands::edit::insert_text(
@@ -175,23 +188,31 @@ fn the_scope_chip_toggled_to_file_keeps_the_query_and_selects_the_first_in_file_
     assert_eq!(
         find(&app).current,
         None,
-        "Project scope does not follow in-file"
+        "the workspace filter does not follow in-file"
     );
 
-    press_into(&mut app, key(KeyCode::Char('p'), ALT), &mut effects);
+    press_into(&mut app, key(KeyCode::Char('f'), ALT), &mut effects);
 
-    assert_eq!(find(&app).scope(), Scope::File);
-    assert!(find(&app).project.is_none());
+    assert_eq!(find(&app).filter_kind(), FilterKind::ThisFile);
+    assert!(find(&app).project().is_none());
     assert_eq!(find(&app).find.editor.text(), "needle");
     assert_eq!(find(&app).current, Some(0));
     assert_eq!(selection_start(&app), 4);
-    assert_eq!(chip_fg(&mut app, "File"), app.theme.chrome.footer_key.fg);
+    assert_eq!(
+        chip_fg(&mut app, "This file"),
+        app.theme.chrome.footer_key.fg
+    );
+
+    press_into(&mut app, key(KeyCode::Char('f'), ALT), &mut effects);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
+    assert_eq!(find(&app).find.editor.text(), "needle");
 }
 
 #[test]
-fn the_footer_inside_project_scope_lists_results_and_open_and_no_globals() {
-    let mut app = seeded_app(&[]);
-    open_project_find(&mut app);
+fn the_workspace_footer_lists_results_and_open_and_no_globals() {
+    let mut app = seeded_app(&[("/root/a.md", b"needle"), ("/root/b.md", b"needle")]);
+    let mut effects = Effects::default();
+    search_project(&mut app, "needle", &mut effects);
 
     let entries = crate::footer_hints::default_hint_entries(&app);
     let helps = footer_helps(&app);
@@ -241,7 +262,7 @@ fn the_tab_ring_reaches_the_results_and_arrows_move_the_selection() {
 
 #[test]
 fn typing_on_the_results_tells_the_user_how_to_open() {
-    let mut app = seeded_app(&[("/root/a.md", b"needle")]);
+    let mut app = seeded_app(&[("/root/a.md", b"needle"), ("/root/b.md", b"needle")]);
     let mut effects = Effects::default();
     search_project(&mut app, "needle", &mut effects);
     press_into(&mut app, shift_tab(), &mut effects);
@@ -257,18 +278,19 @@ fn typing_on_the_results_tells_the_user_how_to_open() {
 
 #[test]
 fn list_keys_in_the_find_field_give_feedback_instead_of_vanishing() {
-    let mut app = seeded_app(&[]);
+    let mut app = seeded_app(&[("/root/a.md", b"needle"), ("/root/b.md", b"needle")]);
     press(&mut app, key(KeyCode::Char('f'), CTRL));
     press(&mut app, key(KeyCode::PageDown, Mods::NONE));
     assert!(
-        crate::messages::newest_text(&app).is_some_and(|text| text.contains("Project scope")),
+        crate::messages::newest_text(&app).is_some_and(|text| text.contains("2+ files")),
         "{:?}",
         crate::messages::newest_text(&app)
     );
 
     press(&mut app, esc_key());
-    open_project_find(&mut app);
-    press(&mut app, key(KeyCode::PageUp, Mods::NONE));
+    let mut effects = Effects::default();
+    search_project(&mut app, "needle", &mut effects);
+    press_into(&mut app, key(KeyCode::PageUp, Mods::NONE), &mut effects);
     assert!(
         crate::messages::newest_text(&app).is_some_and(|text| text.contains("reaches them")),
         "{:?}",
@@ -278,7 +300,7 @@ fn list_keys_in_the_find_field_give_feedback_instead_of_vanishing() {
 
 // Home/End are list-paging keys ONLY once the panel command table has no
 // field claim left on them — with a field focused they move the caret
-// instead, in every scope, Project included; only Results itself still
+// instead, in every filter, Workspace included; only Results itself still
 // reads them as list-paging (`the_tab_ring_reaches_the_results_and_arrows_
 // move_the_selection` covers that half).
 #[test]
@@ -323,37 +345,39 @@ fn ctrl_f_on_a_project_panel_switches_it_to_file_scope_and_back() {
     open_project_find(&mut app);
 
     press(&mut app, key(KeyCode::Char('f'), CTRL));
-    assert_eq!(find(&app).scope(), Scope::File);
+    assert_eq!(find(&app).filter_kind(), FilterKind::ThisFile);
     assert!(find(&app).focused);
 
     open_project_find(&mut app);
-    assert_eq!(find(&app).scope(), Scope::Project);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
 
     open_project_find(&mut app);
     assert!(
         app.find().is_none(),
-        "the chord that matches the current scope closes a focused panel"
+        "the chord that matches the current filter closes a focused panel"
     );
 }
 
 #[test]
-fn ctrl_shift_r_expands_replace_in_project_scope() {
+fn ctrl_shift_r_expands_replace_in_the_workspace_filter() {
     let mut app = seeded_app(&[]);
     press(&mut app, key(KeyCode::Char('R'), CTRL));
 
-    assert_eq!(find(&app).scope(), Scope::Project);
+    assert_eq!(find(&app).filter_kind(), FilterKind::Workspace);
     assert!(find(&app).replace.is_some());
     assert_eq!(find(&app).focus, Control::Replace);
     assert_eq!(
         find(&app).control_ring(),
-        vec![Control::Find, Control::Replace, Control::Results]
+        vec![Control::Find, Control::Replace]
     );
 }
 
 #[test]
-fn tab_visits_find_replace_and_results_in_order_in_project_scope() {
-    let mut app = seeded_app(&[]);
-    press(&mut app, key(KeyCode::Char('R'), CTRL));
+fn tab_visits_find_replace_and_results_in_order_when_two_files_match() {
+    let mut app = seeded_app(&[("/root/a.md", b"needle"), ("/root/b.md", b"needle")]);
+    let mut effects = Effects::default();
+    search_project(&mut app, "needle", &mut effects);
+    press_into(&mut app, key(KeyCode::Char('R'), CTRL), &mut effects);
     assert_eq!(find(&app).focus, Control::Replace);
 
     press(&mut app, tab());

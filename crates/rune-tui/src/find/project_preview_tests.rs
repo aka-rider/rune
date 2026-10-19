@@ -128,7 +128,7 @@ fn a_hit_in_the_active_document_selects_its_first_match_on_arrival() {
     assert_eq!(find(&app).current, Some(0));
     assert!(
         app.active_doc().cursors.primary().has_selection(),
-        "the first match is selected like a File-scope follow"
+        "the first match is selected like a This-file follow"
     );
 }
 

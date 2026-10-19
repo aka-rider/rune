@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::find::Scope;
+use crate::find::FilterKind;
 use crate::keymap::GlobalCommand;
 use crate::messages;
 use crate::pane_bar_policy::{self, BarPolicy};
@@ -60,16 +60,16 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::TogglePin => run_if_available(app, cmd, effects, |app, _| {
             crate::opentabs::limit::toggle_pin(app, app.active);
         }),
-        GlobalCommand::ToggleSearch => crate::find::open(app, Scope::File, false, effects),
+        GlobalCommand::ToggleSearch => crate::find::open(app, FilterKind::ThisFile, false, effects),
         GlobalCommand::SearchNext => search_step(app, true, effects),
         GlobalCommand::SearchPrev => search_step(app, false, effects),
         GlobalCommand::ToggleFileSearch => pane_global::toggle_file_search(app, effects),
         GlobalCommand::ToggleProjectSearch => {
-            crate::find::open(app, Scope::Project, false, effects);
+            crate::find::open(app, FilterKind::Workspace, false, effects);
         }
-        GlobalCommand::ToggleReplace => crate::find::open(app, Scope::File, true, effects),
+        GlobalCommand::ToggleReplace => crate::find::open(app, FilterKind::ThisFile, true, effects),
         GlobalCommand::ToggleProjectReplace => {
-            crate::find::open(app, Scope::Project, true, effects);
+            crate::find::open(app, FilterKind::Workspace, true, effects);
         }
         GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
@@ -212,7 +212,7 @@ mod tests {
             GlobalCommand::Merge,
         ] {
             let mut app = app();
-            crate::find::open(&mut app, Scope::File, false, &mut fx());
+            crate::find::open(&mut app, FilterKind::ThisFile, false, &mut fx());
             assert!(app.find().is_some(), "test setup: panel is open");
 
             let mut effects = Effects::default();

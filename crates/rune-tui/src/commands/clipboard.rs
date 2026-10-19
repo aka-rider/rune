@@ -339,7 +339,7 @@ mod tests {
         let mut app = app_with("ac", 1);
         crate::find::open(
             &mut app,
-            crate::find::Scope::File,
+            crate::find::FilterKind::ThisFile,
             false,
             &mut crate::runtime::Effects::default(),
         );

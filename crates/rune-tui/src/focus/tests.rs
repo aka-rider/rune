@@ -21,7 +21,7 @@ fn target_checks_the_find_panel_before_falling_back_to_the_pane() {
 
     crate::find::open(
         &mut app,
-        crate::find::Scope::File,
+        crate::find::FilterKind::ThisFile,
         false,
         &mut crate::runtime::Effects::default(),
     );

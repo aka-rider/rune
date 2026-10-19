@@ -208,3 +208,22 @@ fn find_esc_closes_yields_to_a_modal_that_owns_the_key() {
     let ctx = key_ctx(KeyCode::Escape, Mods::NONE);
     assert_eq!(find_esc_closes(&prev, &panel_snapshot(true), &ctx), None);
 }
+
+#[test]
+fn find_esc_closes_yields_to_a_pane_whose_own_escape_returns_focus_first() {
+    let ctx = key_ctx(KeyCode::Escape, Mods::NONE);
+    for target in [
+        FocusTarget::Messages,
+        FocusTarget::Title,
+        FocusTarget::Explorer,
+        FocusTarget::Tabs,
+    ] {
+        let mut prev = panel_snapshot(true);
+        prev.focus_target = target;
+        assert_eq!(
+            find_esc_closes(&prev, &panel_snapshot(true), &ctx),
+            None,
+            "{target:?}"
+        );
+    }
+}

@@ -40,9 +40,9 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         "previous control",
     ),
     row(
-        FindCommand::ToggleScope,
-        "toggle project scope",
-        "toggle project scope",
+        FindCommand::ToggleThisFile,
+        "toggle searching only this file",
+        "this file",
     ),
     row(FindCommand::ToggleCase, "toggle match case", "match case"),
     row(FindCommand::ToggleWord, "toggle whole word", "whole word"),

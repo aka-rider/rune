@@ -268,9 +268,8 @@ pub(crate) fn search_project(app: &mut App, query: &str, effects: &mut Effects) 
 
 pub(crate) fn project(app: &App) -> &crate::find::project::ProjectResults {
     find(app)
-        .project
-        .as_ref()
-        .expect("the panel is in Project scope")
+        .project()
+        .expect("the panel is in Workspace filter")
 }
 
 pub(crate) fn result_displays(app: &App) -> Vec<String> {

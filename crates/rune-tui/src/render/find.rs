@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
 use crate::field::TextField;
-use crate::find::{ChipKind, Control, FindState, Scope};
+use crate::find::{ChipKind, Control, FindState};
 use crate::layout_find::{Chip, FindPanelGeometry, chip_chord, chip_text};
 use crate::render::queryrow::{QueryRow, build_spans};
 use crate::theme::Theme;
@@ -106,8 +106,7 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
         Span::raw(" "),
     ];
     spans.extend(match chip.kind {
-        ChipKind::Scope => scope_spans(state.scope(), theme),
-        ChipKind::Case | ChipKind::Word | ChipKind::Regex => {
+        ChipKind::ThisFile | ChipKind::Case | ChipKind::Word | ChipKind::Regex => {
             let on = state.chip_on(chip.kind).unwrap_or(false);
             let style = if on {
                 theme.chrome.footer_key
@@ -126,24 +125,12 @@ fn draw_chip(frame: &mut Frame, state: &FindState, chip: Chip, rect: Rect, theme
     frame.render_widget(Paragraph::new(Line::from(spans)), rect);
 }
 
-fn scope_spans(scope: Scope, theme: &Theme) -> Vec<Span<'static>> {
-    let (file, project) = match scope {
-        Scope::File => (theme.chrome.footer_key, theme.chrome.footer_key_inactive),
-        Scope::Project => (theme.chrome.footer_key_inactive, theme.chrome.footer_key),
-    };
-    vec![
-        Span::styled("File", file),
-        Span::styled("|", theme.chrome.footer_key_inactive),
-        Span::styled("Project", project),
-    ]
-}
-
 fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style)> {
     if let Err(error) = &state.pattern {
         let flat: Vec<&str> = error.0.split_whitespace().collect();
         return Some((flat.join(" "), theme.chrome.error));
     }
-    if state.project.is_some() {
+    if state.project().is_some() {
         return crate::find::project::readout_text(app, state)
             .map(|text| (text, theme.chrome.title_text));
     }

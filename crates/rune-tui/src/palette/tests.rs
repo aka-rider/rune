@@ -47,7 +47,7 @@ fn escape_closes_the_palette_and_leaves_prior_state_untouched() {
     let before_focus = app.focus();
     crate::find::open(
         &mut app,
-        crate::find::Scope::File,
+        crate::find::FilterKind::ThisFile,
         false,
         &mut crate::runtime::Effects::default(),
     );

@@ -34,7 +34,7 @@ pub(crate) fn follow(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
-    if state.project.is_some() {
+    if state.project().is_some() {
         return;
     }
     let from = state.origin.cursors.primary().selection_start().get();
@@ -56,11 +56,7 @@ fn restore_to_origin(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
-    let origin = Origin {
-        doc: state.origin.doc,
-        cursors: state.origin.cursors.clone(),
-        scroll_row: state.origin.scroll_row,
-    };
+    let origin = state.origin.clone();
     crate::find::restore_origin(app, &origin);
 }
 
@@ -116,12 +112,7 @@ fn select_match(app: &mut App, range: Range<usize>) {
 }
 
 fn commit_origin(app: &mut App, idx: usize) {
-    let doc = app.active_doc();
-    let origin = Origin {
-        doc: app.active,
-        cursors: doc.cursors.clone(),
-        scroll_row: doc.viewport.scroll_row,
-    };
+    let origin = Origin::capture(app);
     if let Some(state) = app.find_mut() {
         state.origin = origin;
         state.current = Some(idx);

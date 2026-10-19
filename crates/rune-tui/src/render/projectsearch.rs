@@ -15,7 +15,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let Some(state) = app.find() else {
         return;
     };
-    let Some(project) = state.project.as_ref() else {
+    let Some(project) = state.project() else {
         return;
     };
     if area.height == 0 {
@@ -166,8 +166,8 @@ mod tests {
         let mut app = app_with("hello");
         app.set_root(PathBuf::from("/root"));
         open_project_find(&mut app);
-        if let Some(project) = app.find_mut().and_then(|s| s.project.as_mut()) {
-            project.results = vec![hit("a.md", 1)];
+        if let Some(project) = app.find_mut().and_then(|s| s.project_mut()) {
+            project.results = vec![hit("a.md", 1), hit("b.md", 1)];
         }
         let geo = crate::layout::geometry(app.frame_area(), &app);
         app.sync_view();

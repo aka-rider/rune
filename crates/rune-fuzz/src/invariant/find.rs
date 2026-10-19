@@ -64,7 +64,8 @@ pub fn find_esc_closes(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Optio
     if input.code != KeyCode::Escape || input.mods != Mods::NONE {
         return None;
     }
-    if !prev.find_open || prev.modal_open || !next.find_open {
+    let owns_escape = matches!(prev.focus_target, FocusTarget::Find | FocusTarget::Editor);
+    if !prev.find_open || prev.modal_open || !owns_escape || !next.find_open {
         return None;
     }
     Some(Violation::new(

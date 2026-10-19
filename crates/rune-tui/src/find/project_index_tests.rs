@@ -354,7 +354,7 @@ fn reopening_under_a_different_root_discards_and_cold_builds() {
 }
 
 #[test]
-fn switching_the_scope_chip_to_project_builds_the_index_and_arms_the_debounce() {
+fn turning_the_this_file_chip_off_builds_the_index_and_arms_the_debounce() {
     let mut app = seeded_app(&[("/root/a.md", b"needle")]);
     let mut effects = Effects::default();
     press_into(
@@ -363,18 +363,21 @@ fn switching_the_scope_chip_to_project_builds_the_index_and_arms_the_debounce() 
         &mut effects,
     );
     type_into(&mut app, "needle", &mut effects);
-    assert!(app.project_index.is_none(), "File scope builds no index");
+    assert!(
+        app.project_index.is_none(),
+        "This-file filter builds no index"
+    );
 
     press_into(
         &mut app,
-        key(crate::keymap::KeyCode::Char('p'), ALT),
+        key(crate::keymap::KeyCode::Char('f'), ALT),
         &mut effects,
     );
 
-    assert_eq!(find(&app).scope(), crate::find::Scope::Project);
+    assert_eq!(find(&app).filter_kind(), crate::find::FilterKind::Workspace);
     assert!(
         app.project_index.is_some(),
-        "entering Project scope starts the index build"
+        "entering the workspace filter starts the index build"
     );
     assert!(
         app.timers

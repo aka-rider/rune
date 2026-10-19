@@ -97,7 +97,7 @@ a read-only document), or it should say why it refused.
 
 `driver/step_exec.rs` drops every `CmdKind::ProjectIndex` and `CmdKind::ProjectQuery` the update
 loop spawns, and the session fixture seeds one file with no project root. So `cluster_find`'s
-Project-scope steps (open the top hit, `⇧⏎` replace-all across files) always run against an empty
+Workspace-filter steps (open the top hit, `⇧⏎` replace-all across files) always run against an empty
 result list, and `FIND-REPLACE-NO-DISK` / `FIND-WALK-DRAINS` hold trivially. Fix candidates: seed a
 small multi-file `Mem` project under a root in `Session::open` and run the index/query cmds inline
 the way `ReadFile` replies are already driven, so a real walk (tab limit, queued loads, evicted

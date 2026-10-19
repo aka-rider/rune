@@ -2,12 +2,14 @@ use proptest::prelude::*;
 use proptest::sample::select;
 
 use rune_tui::keymap::KeyInput;
+use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 
 use crate::action::Action;
 
 use super::palette::{
-    ESCAPE_KEY, FIND_CHARS, FIND_KEY_CTRL, FIND_PANEL_KEYS, PROJECT_FIND_KEY_CTRL,
-    PROJECT_REPLACE_KEY_CTRL, REPLACE_ALL_KEY, REPLACE_KEY_CTRL, RESULTS_KEYS,
+    EDITOR_CLICK_CELL, ESCAPE_KEY, FIND_CHARS, FIND_KEY_CTRL, FIND_PANEL_KEYS,
+    PROJECT_FIND_KEY_CTRL, PROJECT_REPLACE_KEY_CTRL, REPLACE_ALL_KEY, REPLACE_KEY_CTRL,
+    RESULTS_KEYS,
 };
 
 fn panel_open() -> impl Strategy<Value = KeyInput> {
@@ -28,6 +30,23 @@ fn panel_keys(max: usize) -> impl Strategy<Value = Vec<Action>> {
         .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
 }
 
+pub(super) fn click_into_editor() -> [Action; 2] {
+    [
+        MouseKind::Down(MouseButton::Left),
+        MouseKind::Up(MouseButton::Left),
+    ]
+    .map(|kind| {
+        Action::Mouse(MouseInput {
+            kind,
+            column: EDITOR_CLICK_CELL.0,
+            row: EDITOR_CLICK_CELL.1,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        })
+    })
+}
+
 fn results_visit() -> impl Strategy<Value = Vec<Action>> {
     proptest::bool::ANY.prop_map(|visit| {
         if visit {
@@ -45,8 +64,9 @@ pub(super) fn cluster_find() -> impl Strategy<Value = Vec<Action>> {
         panel_keys(6),
         results_visit(),
         proptest::option::of((typed(), panel_keys(3))),
+        proptest::bool::weighted(0.4),
     )
-        .prop_map(|(open, query, keys, results, replace)| {
+        .prop_map(|(open, query, keys, results, replace, click)| {
             let mut actions = vec![Action::Key(open), Action::Type(query)];
             actions.extend(keys);
             if open == PROJECT_FIND_KEY_CTRL {
@@ -62,6 +82,9 @@ pub(super) fn cluster_find() -> impl Strategy<Value = Vec<Action>> {
                     actions.push(Action::Type(replacement));
                 }
                 actions.extend(keys);
+            }
+            if click {
+                actions.extend(click_into_editor());
             }
             actions.push(Action::Key(ESCAPE_KEY));
             actions

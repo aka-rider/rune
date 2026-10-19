@@ -82,3 +82,23 @@ fn esc_after_a_tab_switch_closes_the_panel_and_stays_on_the_new_tab() {
     assert_eq!(app.active, second, "Esc must not pull the user back");
     assert_ne!(app.active, first);
 }
+
+#[test]
+fn esc_does_not_restore_an_origin_cursor_into_a_buffer_edited_since() {
+    let mut app = app_with("hello world");
+    open_find(&mut app);
+    type_str(&mut app, "world");
+    click_into_editor(&mut app);
+    press(&mut app, end());
+    for _ in 0.."hello world".len() {
+        press(&mut app, backspace());
+    }
+    assert_eq!(app.active_doc().buffer.content(), "", "test setup");
+    open_find(&mut app);
+    assert!(find(&app).focused, "test setup: the panel has focus again");
+
+    press(&mut app, esc_key());
+
+    assert!(app.find().is_none());
+    assert_eq!(app.active_doc().cursors.primary().position.get(), 0);
+}

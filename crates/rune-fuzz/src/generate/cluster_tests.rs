@@ -169,3 +169,21 @@ fn cluster_find_sessions_settle_and_reach_the_replace_field() {
         "48 samples never typed into the Replace field; the cluster no longer covers replace"
     );
 }
+
+#[test]
+fn clicking_into_the_editor_leaves_the_find_panel_open_and_unfocused() {
+    let mut session = driver::Session::open(driver::DOC_PATH, "dog cat dog");
+    session.act(Action::Key(super::super::palette::FIND_KEY_CTRL));
+    session.act(Action::Type("dog".to_string()));
+    for click in click_into_editor() {
+        assert!(session.act(click).is_none());
+    }
+
+    let snapshot = session.snapshot();
+    assert!(snapshot.find_open, "the click does not close the panel");
+    assert_eq!(snapshot.focus_target, rune_tui::focus::FocusTarget::Editor);
+
+    let violation = session.act(Action::Key(super::super::palette::ESCAPE_KEY));
+    assert!(violation.is_none(), "{violation:?}");
+    assert!(!session.snapshot().find_open);
+}

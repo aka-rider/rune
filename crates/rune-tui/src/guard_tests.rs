@@ -355,7 +355,7 @@ fn an_unfocused_find_panel_survives_a_guard_raise() {
     let doc = app.active;
     crate::find::open(
         &mut app,
-        crate::find::Scope::File,
+        crate::find::FilterKind::ThisFile,
         false,
         &mut crate::runtime::Effects::default(),
     );
@@ -410,7 +410,7 @@ fn a_focused_find_panel_closes_on_a_guard_raise() {
     let doc = app.active;
     crate::find::open(
         &mut app,
-        crate::find::Scope::File,
+        crate::find::FilterKind::ThisFile,
         false,
         &mut crate::runtime::Effects::default(),
     );
