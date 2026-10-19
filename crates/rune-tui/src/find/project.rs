@@ -1,21 +1,18 @@
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ratatui::layout::Rect;
 
 use crate::app::App;
-use crate::commands::mouse::{WHEEL_ROWS, select_range};
-use crate::document::DocumentId;
+use crate::commands::mouse::WHEEL_ROWS;
 use crate::find::project_replace::{self, Walk};
-use crate::find::{Control, Filter, FilterKind, FindState, Origin, history};
+use crate::find::{Control, Filter, FilterKind, FindState, Origin, history, land};
 use crate::listnav::List;
 use crate::messages;
 use crate::pointer::{MouseButton, MouseInput, MouseKind};
 use crate::projectsearch::index;
 use crate::projectsearch::query::FileHit;
 use crate::runtime::{Effects, Msg, TimerKey, TimerMsgKey};
-use crate::viewport::ScrollMode;
 
 pub(crate) const MIN_QUERY_CHARS: usize = 2;
 const DEBOUNCE_INTERVAL: Duration = Duration::from_millis(120);
@@ -26,6 +23,7 @@ pub(crate) struct ProjectResults {
     pub list: List,
     pub query_generation: crate::generation::ProjectSearchGen,
     pub pending_center: Option<(PathBuf, usize)>,
+    pub landed_in_origin: bool,
     pub walk: Option<Box<Walk>>,
 }
 
@@ -37,6 +35,7 @@ impl ProjectResults {
             list: List { cursor: 0, top: 0 },
             query_generation,
             pending_center: None,
+            landed_in_origin: false,
             walk: None,
         }
     }
@@ -64,10 +63,6 @@ pub(crate) fn listed(app: &App) -> bool {
     app.find().is_some_and(FindState::results_listed)
 }
 
-fn results(app: &App) -> Option<&ProjectResults> {
-    app.find().and_then(FindState::project)
-}
-
 fn results_mut(app: &mut App) -> Option<&mut ProjectResults> {
     app.find_mut().and_then(FindState::project_mut)
 }
@@ -83,10 +78,7 @@ pub(crate) fn apply_filter(app: &mut App, kind: FilterKind, effects: &mut Effect
         FilterKind::Workspace => {
             let generation = app.next_projectsearch_gen.mint();
             if let Some(state) = app.find_mut() {
-                state.filter = Filter::Workspace {
-                    results: ProjectResults::new(generation),
-                    globs: Box::default(),
-                };
+                state.filter = Filter::Workspace(ProjectResults::new(generation));
             }
             crate::projectsearch::ensure_index(app, effects);
         }
@@ -94,13 +86,12 @@ pub(crate) fn apply_filter(app: &mut App, kind: FilterKind, effects: &mut Effect
             let Some(state) = app.find_mut() else {
                 return;
             };
-            let Filter::Workspace { results, .. } =
-                std::mem::replace(&mut state.filter, Filter::ThisFile)
+            let Filter::Workspace(results) = std::mem::replace(&mut state.filter, Filter::ThisFile)
             else {
                 return;
             };
             state.settle_focus();
-            crate::explorer_preview::discard(app);
+            land::show_origin(app);
             project_replace::abandon(app, results.walk);
         }
     }
@@ -196,6 +187,7 @@ fn abandon_query(app: &mut App) {
         }
         state.settle_focus();
     }
+    land::settle_without_results(app);
 }
 
 fn gather_overrides(app: &App, root: &Path) -> Vec<(PathBuf, String)> {
@@ -234,50 +226,7 @@ pub(crate) fn handle_queried(
     if let Some(state) = app.find_mut() {
         state.settle_focus();
     }
-    focus_selected_hit(app, effects);
-}
-
-fn selected_hit(app: &App) -> Option<(PathBuf, Range<usize>)> {
-    let hit = results(app)?.selected()?;
-    let range = hit
-        .ranges
-        .first()
-        .cloned()
-        .unwrap_or(hit.first_match..hit.first_match);
-    Some((hit.path.clone(), range))
-}
-
-fn focus_selected_hit(app: &mut App, effects: &mut Effects) {
-    let Some((path, range)) = selected_hit(app) else {
-        return;
-    };
-    if crate::workspace::existing_document_for_spelling(app, &path) == Some(app.active) {
-        land_at(app, app.active, range);
-        return;
-    }
-    crate::find::navigating_as_panel(app, |app| {
-        crate::explorer_preview::request_preview(app, &path, effects);
-    });
-    if let Some(project) = results_mut(app) {
-        project.pending_center = Some((path, range.start));
-    }
-    apply_pending_center(app);
-}
-
-pub(crate) fn apply_pending_center(app: &mut App) {
-    let Some((path, offset)) = results(app).and_then(|project| project.pending_center.clone())
-    else {
-        return;
-    };
-    let Some(target) = crate::workspace::shown_document_for(app, &path) else {
-        return;
-    };
-    if let Some(doc) = app.live_doc_mut(target) {
-        crate::commands::nav_scroll::centre_on_byte_offset(doc, offset);
-    }
-    if let Some(project) = results_mut(app) {
-        project.pending_center = None;
-    }
+    land::on_reply(app, effects);
 }
 
 pub(crate) fn list_height(app: &App) -> usize {
@@ -292,7 +241,7 @@ pub(crate) fn nav_move(app: &mut App, delta: isize, effects: &mut Effects) {
     };
     let len = project.results.len();
     project.list.move_and_follow(delta, len, height);
-    focus_selected_hit(app, effects);
+    land::focus_selected_hit(app, effects);
 }
 
 pub(crate) fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
@@ -303,7 +252,7 @@ pub(crate) fn nav_edge(app: &mut App, top: bool, effects: &mut Effects) {
     let len = project.results.len();
     project.list.jump_to_edge(len, top);
     project.list.settle(len, height);
-    focus_selected_hit(app, effects);
+    land::focus_selected_hit(app, effects);
 }
 
 pub(crate) fn step_hit(app: &mut App, forward: bool, effects: &mut Effects) {
@@ -342,10 +291,11 @@ fn report_no_results(app: &mut App) {
 }
 
 pub(crate) fn open_hit(app: &mut App, effects: &mut Effects) {
-    let Some((path, range)) = selected_hit(app) else {
+    let Some((path, first)) = land::selected_hit(app) else {
         report_no_results(app);
         return;
     };
+    let range = land::shown_match(app, &path).unwrap_or(first);
     let Some((query, options)) = app
         .find()
         .map(|state| (state.find.editor.text().to_string(), state.options))
@@ -369,27 +319,12 @@ pub(crate) fn open_hit(app: &mut App, effects: &mut Effects) {
     let Some(id) = opened else {
         return;
     };
-    land_at(app, id, range);
+    land::land_at(app, id, range);
     let origin = Origin::capture(app);
     if let Some(state) = app.find_mut() {
         state.origin = origin;
     }
     history::persist_query(app, &query, options);
-}
-
-fn land_at(app: &mut App, id: DocumentId, range: Range<usize>) {
-    let Some(doc) = app.doc_mut(id) else {
-        return;
-    };
-    let len = doc.buffer.content().len();
-    let start = range.start.min(len);
-    let end = range.end.min(len);
-    select_range(doc, start, end);
-    doc.viewport.mode = ScrollMode::EnsureVisible;
-    crate::find::sync(app);
-    if let Some(state) = app.find_mut() {
-        state.current = state.matches.iter().position(|m| m.start == start);
-    }
 }
 
 pub(crate) fn mouse(app: &mut App, rect: Rect, input: MouseInput, effects: &mut Effects) {

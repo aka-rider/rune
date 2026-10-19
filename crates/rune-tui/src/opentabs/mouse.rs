@@ -2,6 +2,7 @@ use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::commands::mouse::WHEEL_ROWS;
+use crate::explorer_preview::Promotion;
 use crate::pane::Pane;
 use crate::pointer::{MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
@@ -26,12 +27,20 @@ fn scroll(app: &mut App, delta: isize) {
     app.tabs.nav.scroll_by(delta, len, super::entry_rows(rect));
 }
 
+fn promote_preview(app: &mut App, effects: &mut Effects) {
+    if let Promotion::Promoted(_) = crate::explorer_preview::promote(app, effects) {
+        app.set_focus_pane(Pane::Editor, effects);
+    }
+}
+
 fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let rect = pane_rect(app);
-    let index = input
-        .row
-        .checked_sub(rect.y)
-        .and_then(|row| super::entry_at(app, rect, row));
+    let row = input.row.checked_sub(rect.y);
+    if row.is_some_and(|row| super::preview_row(app, rect) == Some(usize::from(row))) {
+        promote_preview(app, effects);
+        return;
+    }
+    let index = row.and_then(|row| super::entry_at(app, rect, row));
 
     let Some(index) = index else {
         app.pointer.end_click_run();

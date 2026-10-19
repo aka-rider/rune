@@ -113,7 +113,7 @@ pub(crate) fn handle_file_opened(
 ) {
     if crate::explorer_preview::maybe_consume_reply(app, path, preview_generation, &result, effects)
     {
-        crate::find::project::apply_pending_center(app);
+        crate::find::land::apply_pending_center(app);
         return;
     }
 

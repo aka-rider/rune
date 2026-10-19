@@ -36,11 +36,6 @@ fn first_match(app: &App) -> usize {
     project(app).results.first().expect("a hit").first_match
 }
 
-fn deliver_preview(app: &mut App, effects: &mut Effects) {
-    let reply = run_one_cmd(effects, CmdKind::ReadFile).expect("preview cmd dispatched");
-    crate::app::update(app, reply, effects);
-}
-
 fn in_memory_db() -> crate::db::Db {
     crate::db::Db::new(
         rune_db::Store::open_in_memory(

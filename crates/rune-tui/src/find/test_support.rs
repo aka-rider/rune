@@ -293,3 +293,9 @@ pub(crate) fn project_readout_row(app: &mut App) -> String {
         .expect("the panel's top border row is on screen");
     rows.get(top + 1).cloned().unwrap_or_default()
 }
+
+pub(crate) fn deliver_preview(app: &mut App, effects: &mut Effects) {
+    let reply =
+        run_one_cmd(effects, crate::runtime::CmdKind::ReadFile).expect("preview cmd dispatched");
+    crate::app::update(app, reply, effects);
+}

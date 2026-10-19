@@ -4,8 +4,9 @@ use rune_syntax::wrap::WrapSnapshot;
 
 use crate::app::App;
 use crate::commands::mouse::select_range;
+use crate::document::Document;
 use crate::find::matcher::Matcher;
-use crate::find::{Origin, history};
+use crate::find::{FilterKind, FindState, Origin, history, land};
 use crate::messages;
 use crate::viewport::ScrollMode;
 
@@ -31,12 +32,19 @@ pub(crate) fn recompute(app: &mut App) {
 }
 
 pub(crate) fn follow(app: &mut App) {
+    let Some(kind) = app.find().map(FindState::filter_kind) else {
+        return;
+    };
+    match kind {
+        FilterKind::ThisFile => follow_this_file(app),
+        FilterKind::Workspace => land::follow_workspace(app),
+    }
+}
+
+fn follow_this_file(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
-    if state.project().is_some() {
-        return;
-    }
     let from = state.origin.cursors.primary().selection_start().get();
     let concealed = current_concealed(app);
     let found = at_or_after(&state.matches, from, |m| is_concealed(&concealed, m))
@@ -52,7 +60,7 @@ pub(crate) fn follow(app: &mut App) {
     }
 }
 
-fn restore_to_origin(app: &mut App) {
+pub(crate) fn restore_to_origin(app: &mut App) {
     let Some(state) = app.find() else {
         return;
     };
@@ -105,7 +113,7 @@ pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
     true
 }
 
-fn select_match(app: &mut App, range: Range<usize>) {
+pub(crate) fn select_match(app: &mut App, range: Range<usize>) {
     let doc = app.active_doc_mut();
     select_range(doc, range.start, range.end);
     doc.viewport.mode = ScrollMode::EnsureVisible;
@@ -130,8 +138,11 @@ fn report_no_target(app: &mut App, query: &str, match_count: usize) {
 }
 
 pub(crate) fn current_concealed(app: &App) -> Vec<Range<usize>> {
-    app.active_doc()
-        .view
+    concealed_in(app.active_doc())
+}
+
+pub(crate) fn concealed_in(doc: &Document) -> Vec<Range<usize>> {
+    doc.view
         .as_ref()
         .map(|view| concealed_ranges(&view.wrap))
         .unwrap_or_default()

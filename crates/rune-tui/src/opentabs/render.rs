@@ -1,10 +1,11 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::opentabs::preview_row;
 use crate::pane::Pane;
 use crate::width::{display_width, truncate_to_width};
 
@@ -35,6 +36,19 @@ pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
 fn clip_tab_name(name: &str, prefix_width: usize, area_width: u16) -> String {
     let budget = (area_width as usize).saturating_sub(prefix_width);
     truncate_to_width(name, budget)
+}
+
+const NAME_COLUMN: usize = 8;
+
+fn preview_line(app: &App, area_width: u16) -> Line<'static> {
+    let name = clip_tab_name(app.shown_doc().file_name(), NAME_COLUMN, area_width);
+    Line::from(vec![
+        Span::raw(" ".repeat(NAME_COLUMN)),
+        Span::styled(
+            name,
+            app.theme.chrome.tab_normal.add_modifier(Modifier::ITALIC),
+        ),
+    ])
 }
 
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
@@ -96,6 +110,10 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             Span::raw(" "),
             Span::styled(name, name_style),
         ]));
+    }
+
+    if preview_row(app, area).is_some() {
+        lines.push(preview_line(app, area.width));
     }
 
     frame.render_widget(Paragraph::new(lines).style(Style::default()), area);

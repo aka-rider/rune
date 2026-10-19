@@ -270,3 +270,11 @@ Two hard links of a file resolve to one inode, hence one recovery-store document
 keeps a single `current_seq` per (session, row). The second tab is no longer seeded with the first
 tab's stored lineage (it says so), but both tabs still move the same `current_seq` when they undo or
 redo. Fix: key the writer's undo position by binding token instead of by row.
+
+## The Tabs pane shows the preview row only when it has a spare row
+
+The italic preview row is appended after the tab rows in `opentabs/render.rs`, so a tabs section
+filled to its height by tab rows (or hidden while the results list takes over the left column for
+2+ matching files) does not list it; the title bar and the editor still show the previewed file.
+Reserving a row for the preview would mean the tab window (`painted_tabs`, `entry_rows`) and the
+scroll/ensure-visible maths all subtract it.

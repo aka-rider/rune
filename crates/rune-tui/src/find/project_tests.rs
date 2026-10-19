@@ -187,8 +187,8 @@ fn alt_f_turns_the_this_file_chip_on_keeps_the_query_and_selects_the_first_in_fi
     search_project(&mut app, "needle", &mut effects);
     assert_eq!(
         find(&app).current,
-        None,
-        "the workspace filter does not follow in-file"
+        Some(0),
+        "the workspace filter follows a hit in the active file like This file does"
     );
 
     press_into(&mut app, key(KeyCode::Char('f'), ALT), &mut effects);

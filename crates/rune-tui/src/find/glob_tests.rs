@@ -300,3 +300,28 @@ fn the_footer_names_the_next_field_from_a_glob_field() {
     press_into(&mut app, tab(), &mut effects);
     assert!(helps(&app).contains(&"find field".to_string()));
 }
+
+#[test]
+fn include_and_exclude_text_survives_toggling_this_file_on_and_off() {
+    let (mut app, mut effects) = workspace_with_query(&TREE);
+    fill_globs(&mut app, "*.md", "docs/**", &mut effects);
+
+    press_into(&mut app, alt_f(), &mut effects);
+    assert_eq!(find(&app).filter_kind(), FilterKind::ThisFile);
+    assert!(find(&app).globs().is_none(), "the fields are hidden");
+    assert!(!find(&app).control_ring().contains(&Control::Include));
+    assert!(!find(&app).control_ring().contains(&Control::Exclude));
+    press_into(&mut app, alt_f(), &mut effects);
+
+    let globs = find(&app).globs().expect("workspace filter");
+    assert_eq!(globs.include.editor.text(), "*.md");
+    assert_eq!(globs.exclude.editor.text(), "docs/**");
+    pump_index(&mut app, &mut effects);
+    fire_debounce(&mut app, &mut effects);
+    while let Some(reply) = run_one_cmd(&mut effects, CmdKind::ProjectQuery) {
+        crate::app::update(&mut app, reply, &mut effects);
+    }
+    let mut displays = result_displays(&app);
+    displays.sort();
+    assert_eq!(displays, vec!["a.md", "a/e.md", "b/a/f.md"]);
+}

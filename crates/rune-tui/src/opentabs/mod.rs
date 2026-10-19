@@ -127,6 +127,11 @@ pub(crate) fn painted_tabs(app: &App, rect: Rect) -> Vec<(usize, DocumentId, &Do
         .collect()
 }
 
+pub(crate) fn preview_row(app: &App, rect: Rect) -> Option<usize> {
+    let painted = painted_tabs(app, rect).len();
+    (app.showing_preview() && painted < entry_rows(rect)).then_some(painted)
+}
+
 pub(crate) fn entry_at(app: &App, rect: Rect, row: u16) -> Option<usize> {
     painted_tabs(app, rect)
         .get(row as usize)
