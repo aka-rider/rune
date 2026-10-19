@@ -167,7 +167,7 @@ impl Fixture {
             nlink: 1,
             saved_obs: rune_db::ObsId::new(db_id),
             history: rune_db::Lineage::default(),
-            history_loss: None,
+            history_losses: Vec::new(),
             resumable_merge: None,
         };
         crate::app::update(

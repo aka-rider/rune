@@ -355,3 +355,48 @@ fn from_parts_then_push_discards_the_undone_tail() {
     assert_eq!(journal.len(), 2);
     assert!(journal.redo_peek().is_none());
 }
+
+fn delete_of(start: usize, deleted: &str) -> Vec<AppliedEdit> {
+    vec![AppliedEdit {
+        start,
+        end: start,
+        deleted: deleted.to_string(),
+        insert: String::new(),
+    }]
+}
+
+#[test]
+fn reapply_verified_refuses_an_edit_whose_deleted_text_is_not_in_the_buffer() {
+    let buf = Buffer::new("hello");
+
+    assert_eq!(
+        reapply_verified(&buf, &delete_of(0, "X")),
+        Err(BufferError::DeletedTextMismatch { start: 0 })
+    );
+}
+
+#[test]
+fn reapply_verified_agrees_with_reapply_when_the_deleted_text_matches() {
+    let buf = Buffer::new("hello");
+    let edits = delete_of(1, "e");
+
+    assert_eq!(
+        reapply_verified(&buf, &edits)
+            .expect("matching delete")
+            .content(),
+        "hllo"
+    );
+    assert_eq!(reapply(&buf, &edits), reapply_verified(&buf, &edits));
+}
+
+#[test]
+fn reapply_trusts_the_recorded_deleted_text() {
+    let buf = Buffer::new("hello");
+
+    assert_eq!(
+        reapply(&buf, &delete_of(0, "X"))
+            .expect("trusted replay")
+            .content(),
+        "ello"
+    );
+}

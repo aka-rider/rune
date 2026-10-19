@@ -19,32 +19,64 @@ pub fn handle_load_ack(
     if reunite_external_rename(app, id, &load_result, purpose, effects) {
         return;
     }
-    let Some(expect_obs) = load_result.saved_obs else {
+    match purpose {
+        LoadPurpose::Rebaseline { expect_row } => {
+            rebaseline_load(app, id, &load_result, expect_row)
+        }
+        LoadPurpose::Recover => adopt_load(app, id, load_result, issued_version),
+    }
+}
+
+fn baseline_of(app: &mut App, id: DocumentId, load_result: &LoadResult) -> Option<rune_db::ObsId> {
+    let baseline = load_result.saved_obs;
+    if baseline.is_none() {
         detach_unrecoverable(app, id, "load returned no baseline observation");
+    }
+    baseline
+}
+
+fn rebaseline_load(
+    app: &mut App,
+    id: DocumentId,
+    load_result: &LoadResult,
+    expect_row: Option<i64>,
+) {
+    let Some(expect_obs) = baseline_of(app, id, load_result) else {
         return;
     };
-
-    if let LoadPurpose::Rebaseline { expect_row } = purpose {
-        let loaded_row = load_result.doc_id.0;
-        let writer_kept_numbering = expect_row == Some(loaded_row);
-        let still_bound_there = app.doc_db_id(id) == Some(loaded_row);
-        if writer_kept_numbering && !still_bound_there {
-            messages::warn(
-                app,
-                "undo history for this tab may no longer be recoverable step by step \u{2014} save to settle it",
-            );
-            return;
-        }
-        app.rebaseline_file_binding(loaded_row, expect_obs);
-        let mode = if writer_kept_numbering {
-            BindMode::Preserved
-        } else {
-            BindMode::Restarted
-        };
-        let pending = install_doc_db(app, id, &load_result, mode);
-        crate::db_enqueue::replay_pending(app, id, pending);
+    let loaded_row = load_result.doc_id.0;
+    let writer_kept_numbering = expect_row == Some(loaded_row);
+    let still_bound_there = app.doc_db_id(id) == Some(loaded_row);
+    if writer_kept_numbering && !still_bound_there {
+        messages::warn(
+            app,
+            "undo history for this tab may no longer be recoverable step by step \u{2014} save to settle it",
+        );
         return;
     }
+    app.rebaseline_file_binding(loaded_row, expect_obs);
+    let mode = if writer_kept_numbering {
+        BindMode::Preserved
+    } else {
+        BindMode::Restarted
+    };
+    let pending = install_doc_db(app, id, load_result, mode);
+    crate::db_enqueue::replay_pending(app, id, pending);
+}
+
+/// Binds a freshly loaded document row to tab `id`: restores the stored
+/// lineage and unsaved text into the tab, reports what could not be
+/// restored, and installs the binding. Every first bind of a file-backed
+/// tab, the in-app open and the launch-time open alike, goes through here.
+pub fn adopt_load(
+    app: &mut App,
+    id: DocumentId,
+    load_result: LoadResult,
+    issued_version: Option<u64>,
+) {
+    let Some(expect_obs) = baseline_of(app, id, &load_result) else {
+        return;
+    };
 
     if app.merge.doc() == Some(id) {
         crate::merge::auto_exit(app);
@@ -76,7 +108,7 @@ pub fn handle_load_ack(
         }
         Some(crate::document::Hydration::NoChange) | None => {}
     }
-    history::report_history(app, &load_result, restored.mode);
+    history::report_history(app, &load_result, restored.declined);
     app.install_or_join_file_binding(load_result.doc_id.0, Some(expect_obs));
     let pending = install_doc_db(app, id, &load_result, restored.mode);
     crate::db_enqueue::replay_pending(app, id, pending);
@@ -426,10 +458,14 @@ pub fn adopt_scratch_doc(
     bind_scratch_doc(app, id, row_id);
 }
 
-pub fn bind_loaded_doc(app: &mut App, id: DocumentId, doc_db: DocDb, row_content: &str) {
+pub fn bind_named_draft_row(app: &mut App, id: DocumentId, doc_db: DocDb, row_content: &str) {
     let pending = bind_document_row(app, id, doc_db, row_content, BindMode::Restarted);
     crate::db_enqueue::replay_pending(app, id, pending);
 }
+
+#[cfg(test)]
+#[path = "db_ack_history_tests.rs"]
+mod history_tests;
 
 #[path = "db_ack_history.rs"]
 mod history;

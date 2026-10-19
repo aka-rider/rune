@@ -192,6 +192,18 @@ impl fmt::Display for Error {
     }
 }
 
+impl Error {
+    pub(crate) fn is_stored_data_damage(&self) -> bool {
+        matches!(
+            self,
+            Error::CorruptPayload(_)
+                | Error::BlobHashMismatch { .. }
+                | Error::NotFound(_)
+                | Error::ReplayFailed(_)
+        )
+    }
+}
+
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {

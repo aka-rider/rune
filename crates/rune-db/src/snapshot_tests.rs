@@ -455,17 +455,36 @@ fn recovery_reconstructs_the_same_edit_kind_sequence_the_live_session_pushed() {
 }
 
 #[test]
-fn recover_refuses_a_target_below_every_snapshot_instead_of_replaying_from_empty() {
+fn an_undo_position_below_every_snapshot_recovers_the_newest_content_not_an_empty_one() {
     let mut conn = open();
     let session_id = insert_test_session(&conn);
     let tx = conn.transaction().expect("tx");
     let doc_id = insert_test_document(&tx);
-    create_snapshot(&tx, session_id, SystemTime::now(), doc_id, "anchor", Seq(5))
-        .expect("snapshot");
-    move_undo_pos(&tx, session_id, doc_id, Seq(2)).expect("move");
+    for text in ["a", "b", "c"] {
+        append_edit(
+            &tx,
+            session_id,
+            SystemTime::now(),
+            doc_id,
+            EditBatch {
+                edits: &[AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: text.to_string(),
+                }],
+                cursors_before: &[],
+                cursors_after: &[],
+                kind: EditKind::Other,
+            },
+        )
+        .expect("append");
+    }
+    create_snapshot(&tx, session_id, SystemTime::now(), doc_id, "ba", Seq(2)).expect("snapshot");
+    move_undo_pos(&tx, session_id, doc_id, Seq(1)).expect("move");
 
-    let err = recover_document(&tx, session_id, doc_id).expect_err("no anchor at or before seq 2");
+    let got = recover_document(&tx, session_id, doc_id).expect("recover");
 
-    assert!(matches!(err, Error::Invalid(_)), "got {err:?}");
+    assert_eq!(got.content, "cba");
     tx.commit().expect("commit");
 }

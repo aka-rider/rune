@@ -57,7 +57,7 @@ pub struct LoadResult {
     /// rather than a caller-visible panic risk).
     pub saved_obs: Option<ObsId>,
     pub history: Lineage,
-    pub history_loss: Option<HistoryLoss>,
+    pub history_losses: Vec<HistoryLoss>,
     /// A dead session's still-`active` merge whose recorded working form
     /// byte-matches this load's own journal reconstruction — the caller may
     /// re-enter it; the row stays `active` until a hydrating ack actually
@@ -155,8 +155,12 @@ pub fn load_from_read(
     // this session's own history.
     let had_history = retry::with_retry(conn, |tx| has_history(tx, session_id, doc_id))?;
     let adopted = !had_history
-        && crate::succession::adopt_dead_lineage(conn, liveness_check, session_id, doc_id)?;
+        && crate::succession::adopt_dead_lineage(conn, liveness_check, session_id, doc_id, now)?;
     let has_hist = had_history || adopted;
+    let position_repaired = has_hist
+        && retry::with_retry(conn, |tx| {
+            crate::snapshot::repair_stranded_position(tx, session_id, doc_id)
+        })?;
 
     // The journal position AT LOAD TIME.
     let load_seq = retry::with_retry(conn, |tx| {
@@ -170,7 +174,7 @@ pub fn load_from_read(
     let content = String::from_utf8(data)
         .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
 
-    let recovered = if !has_hist {
+    let (recovered, redo_tail_dropped) = if !has_hist {
         // Cross-session crash recovery (v10, B2/R2) for a dead session whose
         // lineage adoption declined — MUST run before this session writes
         // anything of its own for doc_id, else it would immediately find
@@ -191,7 +195,7 @@ pub fn load_from_read(
             live_stat: &stat,
             now,
         };
-        anchor_first_load(conn, &ctx, &content, &inherited)?
+        (anchor_first_load(conn, &ctx, &content, &inherited)?, false)
     } else {
         let recovered = retry::with_retry(conn, |tx| {
             crate::snapshot::recover_document(tx, session_id, doc_id)
@@ -220,7 +224,7 @@ pub fn load_from_read(
                     None,
                 )?;
             }
-            recovered
+            (recovered, false)
         } else {
             // Reload, hashes differ: this session's own last-adopted baseline
             // decides whether disk moved out from under an untouched buffer
@@ -242,7 +246,9 @@ pub fn load_from_read(
                     live_stat: &stat,
                     now,
                 };
-                reanchor_clean_reload_tx(conn, &ctx, &recovered.content, &content)?
+                let reanchored =
+                    reanchor_clean_reload_tx(conn, &ctx, &recovered.content, &content)?;
+                (reanchored.recovered, reanchored.redo_dropped)
             } else {
                 // A bare, uncorrelated sighting — saved_obs stays exactly
                 // where it was, and the unsaved edits stay in the buffer.
@@ -262,14 +268,22 @@ pub fn load_from_read(
                         &at,
                     )
                 })?;
-                recovered
+                (recovered, false)
             }
         }
     };
 
-    let (history, history_loss) = retry::with_retry(conn, |tx| {
-        read_lineage(tx, session_id, doc_id, &recovered.content, now)
+    let (history, lineage_loss) = retry::with_retry(conn, |tx| {
+        read_lineage(tx, session_id, doc_id, &recovered.content)
     })?;
+    let history_losses: Vec<HistoryLoss> = [
+        lineage_loss,
+        position_repaired.then_some(HistoryLoss::PositionRepaired),
+        redo_tail_dropped.then_some(HistoryLoss::RedoTailDropped),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     let recovered_hash = observation::hash_bytes(recovered.content.as_bytes());
     let resumable_merge = retry::with_retry(conn, |tx| {
@@ -292,7 +306,7 @@ pub fn load_from_read(
         nlink: stat.nlink.unwrap_or(0),
         saved_obs,
         history,
-        history_loss,
+        history_losses,
         resumable_merge,
     })
 }

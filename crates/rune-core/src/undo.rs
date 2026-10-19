@@ -149,6 +149,29 @@ fn apply_one_validated(buf: &Buffer, edit: Edit) -> Result<Buffer, BufferError> 
 /// written by a build that didn't enforce it — by refusing to replay them
 /// rather than silently picking an order.
 pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
+    replay(buf, edits, DeletedText::Trusted)
+}
+
+/// [`reapply`] that additionally refuses an edit whose recorded `deleted`
+/// text is not what the buffer holds at that range — the proof that a
+/// persisted step really belongs to the buffer it is replayed onto, which
+/// seeding an undo journal from the recovery store requires and plain
+/// crash recovery deliberately does not.
+pub fn reapply_verified(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
+    replay(buf, edits, DeletedText::Verified)
+}
+
+#[derive(Clone, Copy)]
+enum DeletedText {
+    Trusted,
+    Verified,
+}
+
+fn replay(
+    buf: &Buffer,
+    edits: &[AppliedEdit],
+    deleted: DeletedText,
+) -> Result<Buffer, BufferError> {
     if edits.is_empty() {
         return Ok(buf.clone());
     }
@@ -177,6 +200,11 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
                 end,
                 len: work.len(),
             });
+        }
+        if matches!(deleted, DeletedText::Verified)
+            && work.content().get(start..end) != Some(e.deleted.as_str())
+        {
+            return Err(BufferError::DeletedTextMismatch { start });
         }
         let edit = Edit {
             start,

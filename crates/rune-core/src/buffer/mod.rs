@@ -53,6 +53,9 @@ pub enum BufferError {
     DuplicateEditStart {
         start: usize,
     },
+    DeletedTextMismatch {
+        start: usize,
+    },
 }
 
 impl fmt::Display for BufferError {
@@ -70,6 +73,12 @@ impl fmt::Display for BufferError {
             }
             BufferError::DuplicateEditStart { start } => {
                 write!(f, "two edits collide on post-edit start {start}")
+            }
+            BufferError::DeletedTextMismatch { start } => {
+                write!(
+                    f,
+                    "recorded deleted text differs from the buffer at {start}"
+                )
             }
         }
     }

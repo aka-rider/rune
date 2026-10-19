@@ -5,6 +5,8 @@
 //! not here.
 #![allow(dead_code)]
 
+pub mod harness;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

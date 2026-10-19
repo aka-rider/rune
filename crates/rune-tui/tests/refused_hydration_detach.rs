@@ -58,7 +58,7 @@ fn refused_hydration_detaches() {
             base_seq: rune_db::Seq(1),
             ..rune_db::Lineage::default()
         },
-        history_loss: None,
+        history_losses: Vec::new(),
         resumable_merge: None,
     };
 

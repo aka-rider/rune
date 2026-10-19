@@ -205,6 +205,11 @@ fn anchor_diverged(
     })
 }
 
+pub(crate) struct Reanchored {
+    pub(crate) recovered: Recovered,
+    pub(crate) redo_dropped: bool,
+}
+
 /// The same-session counterpart to [`anchor_first_load`]'s cross-session
 /// bridge: `load`'s `has_history` branch calls this when this session's own
 /// journal reconstruction (`from`) already agrees with its last-adopted
@@ -219,8 +224,9 @@ pub(crate) fn reanchor_clean_reload_tx(
     ctx: &LoadContext<'_>,
     from: &str,
     to: &str,
-) -> Result<Recovered, Error> {
+) -> Result<Reanchored, Error> {
     retry::with_retry(conn, |tx| {
+        let redo_dropped = crate::journal::has_redo_tail(tx, ctx.session_id, ctx.doc_id)?;
         let bridge_seq = bridge_edit_tx(tx, ctx, from, to, &[])?;
         adopt::record_adoption_tx(
             tx,
@@ -236,9 +242,12 @@ pub(crate) fn reanchor_clean_reload_tx(
             &crate::session::format_rfc3339_nanos(ctx.now),
             None,
         )?;
-        Ok(Recovered {
-            content: to.to_string(),
-            cursors: Vec::new(),
+        Ok(Reanchored {
+            recovered: Recovered {
+                content: to.to_string(),
+                cursors: Vec::new(),
+            },
+            redo_dropped,
         })
     })
 }
@@ -380,7 +389,7 @@ mod tests {
             "the draft must survive even without H0"
         );
         let (history, history_loss) = retry::with_retry(&mut conn, |tx| {
-            crate::history::read_lineage(tx, session_b, doc_id, draft, SystemTime::now())
+            crate::history::read_lineage(tx, session_b, doc_id, draft)
         })
         .expect("read_lineage");
         assert_eq!(history_loss, None);

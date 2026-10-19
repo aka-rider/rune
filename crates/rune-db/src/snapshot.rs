@@ -75,21 +75,147 @@ pub(crate) fn snapshot_content(
     })
 }
 
+pub(crate) struct Anchor {
+    pub(crate) seq: Seq,
+    pub(crate) content: String,
+}
+
+fn anchor_row(
+    conn: &Connection,
+    doc_id: DocId,
+    query: &str,
+    params: &[&dyn rusqlite::ToSql],
+) -> Result<Option<Anchor>, Error> {
+    let row: Option<(Seq, String)> = conn
+        .query_row(query, params, |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    row.map(|(seq, hash)| {
+        Ok(Anchor {
+            seq,
+            content: snapshot_content(conn, doc_id, hash)?,
+        })
+    })
+    .transpose()
+}
+
+/// The newest snapshot of `session_id` with `seq <= target`, tie-broken
+/// `seq DESC, id DESC` — separate call sites (`writer.rs`'s periodic
+/// snapshot, `sync.rs`, `inherit.rs`, `load_anchor.rs`) can each create a
+/// snapshot anchored at the SAME seq with no edit landing in between, so
+/// `id DESC` picks the freshest row at that seq, never an arbitrary tie.
+pub(crate) fn newest_anchor_at(
+    conn: &Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+    target: Seq,
+) -> Result<Option<Anchor>, Error> {
+    anchor_row(
+        conn,
+        doc_id,
+        "SELECT seq, blob_hash FROM snapshots \
+         WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3 \
+         ORDER BY seq DESC, id DESC LIMIT 1",
+        params![doc_id, session_id, target],
+    )
+}
+
+pub(crate) fn oldest_anchor(
+    conn: &Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<Option<Anchor>, Error> {
+    anchor_row(
+        conn,
+        doc_id,
+        "SELECT seq, blob_hash FROM snapshots WHERE doc_id=?1 AND session_id=?2 \
+         ORDER BY seq ASC, id ASC LIMIT 1",
+        params![doc_id, session_id],
+    )
+}
+
+struct ReplayStart {
+    target: Seq,
+    anchor: Anchor,
+    stranded: bool,
+}
+
+/// Where `session_id`'s replay of `doc_id` starts. A session with no
+/// snapshot at all starts from the empty document. An undo position lying
+/// below every snapshot cannot be replayed to — nothing anchors it — and
+/// replaying from "" instead would reconstruct a wrong, truncated text, so
+/// the replay goes to the head: the most text the journal can vouch for.
+/// `stranded` reports that fallback so the owner of the position can
+/// repair it before the next append truncates everything past it.
+fn replay_start(
+    conn: &Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<ReplayStart, Error> {
+    let current_seq: Option<Seq> = conn
+        .query_row(
+            "SELECT current_seq FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+            params![session_id, doc_id],
+            |r| r.get::<_, Option<Seq>>(0),
+        )
+        .optional()?
+        .flatten();
+    let target = current_seq.unwrap_or(Seq(i64::MAX));
+    if let Some(anchor) = newest_anchor_at(conn, session_id, doc_id, target)? {
+        return Ok(ReplayStart {
+            target,
+            anchor,
+            stranded: false,
+        });
+    }
+    let head = Seq(i64::MAX);
+    Ok(match newest_anchor_at(conn, session_id, doc_id, head)? {
+        Some(anchor) => ReplayStart {
+            target: head,
+            anchor,
+            stranded: true,
+        },
+        None => ReplayStart {
+            target,
+            anchor: Anchor {
+                seq: Seq(0),
+                content: String::new(),
+            },
+            stranded: false,
+        },
+    })
+}
+
+/// Moves a stranded undo position (see [`replay_start`]) to the journal
+/// head, so what [`recover_document`] reconstructs is also what the next
+/// append extends. Deletes nothing. Returns whether a repair was needed.
+pub(crate) fn repair_stranded_position(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<bool, Error> {
+    if !replay_start(tx, session_id, doc_id)?.stranded {
+        return Ok(false);
+    }
+    let head: Seq = tx.query_row(
+        "SELECT MAX(seq) FROM ( \
+            SELECT seq FROM events WHERE doc_id=?1 AND session_id=?2 \
+            UNION ALL \
+            SELECT seq FROM snapshots WHERE doc_id=?1 AND session_id=?2)",
+        params![doc_id, session_id],
+        |r| r.get(0),
+    )?;
+    crate::journal::move_undo_pos(tx, session_id, doc_id, head)?;
+    Ok(true)
+}
+
 /// Reconstructs `doc_id`'s content AS SEEN BY `session_id`:
 ///
 /// 1. Read `session_id`'s own current undo position from
 ///    `session_documents` (no row, or NULL, means "at head" → use
-///    `i64::MAX`).
-/// 2. Find the newest snapshot tagged `session_id` with `seq <= target`,
-///    tie-broken `seq DESC, id DESC` — separate call sites (`writer.rs`'s
-///    periodic snapshot, `sync.rs`, `inherit.rs`, `load_anchor.rs`) can each
-///    create a snapshot anchored at the SAME seq with no edit landing in
-///    between, so `id DESC` picks the freshest row at that seq, never an
-///    arbitrary tie; `anchor_content = ""` only when the session has no
-///    snapshot at all — snapshots that all lie past `target` are an error.
-/// 3. Gather `session_id`'s own edit batches with `seq` in
+///    `i64::MAX`), and the anchor [`replay_start`] picks for it.
+/// 2. Gather `session_id`'s own edit batches with `seq` in
 ///    `(anchor_seq, target]`.
-/// 4. Forward-replay those batches onto `anchor_content`, one row at a
+/// 3. Forward-replay those batches onto the anchor content, one row at a
 ///    time, using `rune_core::undo::reapply`'s edit-application semantics
 ///    (ascending by `start` within a row, against a running buffer) —
 ///    replay surfaces an out-of-range edit as corruption instead of
@@ -108,46 +234,10 @@ pub fn recover_document(
     session_id: SessionId,
     doc_id: DocId,
 ) -> Result<Recovered, Error> {
-    let current_seq: Option<Seq> = conn
-        .query_row(
-            "SELECT current_seq FROM session_documents WHERE session_id=?1 AND doc_id=?2",
-            params![session_id, doc_id],
-            |r| r.get::<_, Option<Seq>>(0),
-        )
-        .optional()?
-        .flatten();
-    let target = current_seq.unwrap_or(Seq(i64::MAX));
+    let ReplayStart { target, anchor, .. } = replay_start(conn, session_id, doc_id)?;
+    let rows = edits_in_range(conn, session_id, doc_id, anchor.seq, target)?;
 
-    let anchor: Option<(Seq, String)> = conn
-        .query_row(
-            "SELECT seq, blob_hash FROM snapshots \
-             WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3 \
-             ORDER BY seq DESC, id DESC LIMIT 1",
-            params![doc_id, session_id, target],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-
-    let (anchor_seq, anchor_content) = match anchor {
-        Some((seq, hash)) => (seq, snapshot_content(conn, doc_id, hash)?),
-        None => {
-            let has_snapshots: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM snapshots WHERE doc_id=?1 AND session_id=?2)",
-                params![doc_id, session_id],
-                |r| r.get(0),
-            )?;
-            if has_snapshots {
-                return Err(Error::Invalid(format!(
-                    "recover doc {doc_id} session {session_id}: snapshots exist but none anchors seq {target}"
-                )));
-            }
-            (Seq(0), String::new())
-        }
-    };
-
-    let rows = edits_in_range(conn, session_id, doc_id, anchor_seq, target)?;
-
-    let mut buf = Buffer::new(anchor_content);
+    let mut buf = Buffer::new(anchor.content);
     let mut cursors = Vec::new();
     for row in rows {
         let seq = row.seq;

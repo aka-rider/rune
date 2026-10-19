@@ -257,3 +257,37 @@ fn an_undo_never_resolves_into_another_documents_lineage() {
         "the sibling document's journal must be untouched by the undo"
     );
 }
+
+/// A reload while a token is bound must never rewrite the journal the token
+/// numbers its positions against: with more steps than the history cap, a
+/// reload that trimmed the oldest rows would leave the token's deep undo
+/// pointing at deleted seqs, and the next append would then truncate away
+/// the recovery floor.
+#[test]
+fn a_reload_of_a_bound_document_with_a_long_history_keeps_deep_undo_recoverable() {
+    let dir = temp_dir("long-history");
+    let db_path = dir.join("rune-v1.db");
+    let doc_path = seed_file(&dir, "a.md", "");
+    let (store, rx) = open_store(&db_path);
+    let session_id = store.session_id();
+
+    let doc_id = bind(&store, &rx, &doc_path);
+    let token = BindingToken::next();
+    let mut buf = String::new();
+    for _ in 0..1005 {
+        type_at_end(&store, &rx, doc_id, token, &mut buf, "x");
+    }
+
+    let reload = store.load(&doc_path).expect("enqueue reload");
+    assert!(matches!(ok(&rx, reload), OpOutcome::Load(_)));
+
+    let undo = store
+        .move_undo_pos(doc_id, token, &TokenOrigin::at(Seq(0)), 1)
+        .expect("enqueue move_undo_pos");
+    assert!(matches!(ok(&rx, undo), OpOutcome::None));
+    buf.truncate(1);
+    type_at_end(&store, &rx, doc_id, token, &mut buf, "Z");
+    store.shutdown();
+
+    assert_eq!(recovered_at(&db_path, session_id, doc_id), buf);
+}

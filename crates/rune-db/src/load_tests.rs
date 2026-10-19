@@ -120,7 +120,7 @@ fn load_through_inheritance_reports_the_bridge_as_one_undoable_step() {
         1,
         "the inherited draft is one undoable bridge step"
     );
-    assert_eq!(result.history_loss, None);
+    assert_eq!(result.history_losses, Vec::new());
 
     let head = retry::with_retry(&mut conn, |tx| {
         crate::journal::current_seq(tx, session_b, doc_id)
@@ -154,7 +154,7 @@ fn load_without_inheritance_has_an_empty_history() {
     )
     .expect("load");
     assert_eq!(result.history, Lineage::default());
-    assert_eq!(result.history_loss, None);
+    assert_eq!(result.history_losses, Vec::new());
 }
 
 /// End-to-end DATA-LOSS regression through the full public [`load`]

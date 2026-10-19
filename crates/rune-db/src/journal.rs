@@ -168,6 +168,22 @@ pub fn current_seq(
     Ok(Seq(seq))
 }
 
+/// Whether `session_id` holds events for `doc_id` past its undo position —
+/// a redo tail the next `append_edit` would truncate.
+pub(crate) fn has_redo_tail(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+) -> Result<bool, Error> {
+    let position = current_seq(tx, session_id, doc_id)?;
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM events WHERE doc_id=?1 AND session_id=?2 AND seq > ?3)",
+        params![doc_id, session_id, position],
+        |r| r.get(0),
+    )
+    .map_err(Error::from)
+}
+
 fn optional_cursors(json: Option<String>) -> Result<Vec<Cursor>, Error> {
     match json {
         Some(json) => cursors_from_json(&json),

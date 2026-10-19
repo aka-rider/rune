@@ -263,3 +263,10 @@ with an empty undo stack. Fix: make scratch reconstruction re-own the dead sessi
 adopted lineage would then have no baseline for `sync` to compare against. Every load records one, so
 this only happens for a damaged store; the draft is still inherited through `find_inheritable_draft`,
 as one bridge step instead of step by step.
+
+## Persistent undo: two tabs on hard links of one file share one undo position
+
+Two hard links of a file resolve to one inode, hence one recovery-store document row, and the writer
+keeps a single `current_seq` per (session, row). The second tab is no longer seeded with the first
+tab's stored lineage (it says so), but both tabs still move the same `current_seq` when they undo or
+redo. Fix: key the writer's undo position by binding token instead of by row.

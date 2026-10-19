@@ -2,17 +2,17 @@ use std::time::SystemTime;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use rune_core::buffer::{AppliedEdit, clamp_to_char_boundary};
+use rune_core::buffer::{Buffer, clamp_to_char_boundary};
 use rune_core::coords::BufferOffset;
 use rune_core::cursor::Cursor;
-use rune_core::undo::Step;
+use rune_core::undo::{Step, reapply_verified};
 
 use crate::Error;
 use crate::ids::{DocId, Seq, SessionId};
 use crate::journal::{self, EditRow};
-use crate::snapshot;
+use crate::snapshot::{self, Anchor};
 
-const MAX_STEPS: usize = 1000;
+const MAX_STEPS: i64 = 1000;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LineageStep {
@@ -30,6 +30,9 @@ pub struct Lineage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryLoss {
     Unreplayable,
+    Unreadable,
+    PositionRepaired,
+    RedoTailDropped,
 }
 
 impl Lineage {
@@ -37,60 +40,39 @@ impl Lineage {
         self.done.last().map_or(self.base_seq, |s| s.seq)
     }
 
-    pub fn head_seq(&self) -> Seq {
-        self.undone.last().map_or(self.position_seq(), |s| s.seq)
-    }
-
     pub fn seqs(&self) -> impl Iterator<Item = Seq> + '_ {
         self.done.iter().chain(&self.undone).map(|s| s.seq)
     }
 }
 
-struct Replayed {
-    steps: Vec<LineageStep>,
-    floor: Option<String>,
-    at_position: String,
+struct Floor {
+    seq: Seq,
+    content: String,
 }
 
-struct Probe {
-    position: Seq,
-    base_seq: Seq,
-    dropped: usize,
-    done_count: usize,
-    replayed: Option<Replayed>,
+pub(crate) struct Replay {
+    pub(crate) lineage: Lineage,
+    pub(crate) loss: Option<HistoryLoss>,
+    floor: Option<Floor>,
 }
 
-fn probe(
-    tx: &Transaction<'_>,
-    session_id: SessionId,
-    doc_id: DocId,
-    shown: &str,
-) -> Result<Probe, Error> {
-    let position = journal::current_seq(tx, session_id, doc_id)?;
-    let (base_seq, base_content) = oldest_snapshot(tx, session_id, doc_id)?;
-    let rows = journal::edits_in_range(tx, session_id, doc_id, base_seq, Seq(i64::MAX))?;
-    let done_count = rows.partition_point(|row| row.seq <= position);
-    let dropped = rows.len().saturating_sub(MAX_STEPS).min(done_count);
-    let replayed = match replay(base_content, rows, dropped, done_count) {
-        Ok(replayed) if replayed.at_position == shown => Some(replayed),
-        Ok(_) | Err(HistoryLoss::Unreplayable) => None,
-    };
-    Ok(Probe {
-        position,
-        base_seq,
-        dropped,
-        done_count,
-        replayed,
-    })
+impl Replay {
+    fn lost(position: Seq, loss: HistoryLoss) -> Replay {
+        Replay {
+            lineage: Lineage {
+                base_seq: position,
+                ..Lineage::default()
+            },
+            loss: Some(loss),
+            floor: None,
+        }
+    }
 }
 
-pub(crate) fn replays(
-    tx: &Transaction<'_>,
-    session_id: SessionId,
-    doc_id: DocId,
-    shown: &str,
-) -> Result<bool, Error> {
-    Ok(probe(tx, session_id, doc_id, shown)?.replayed.is_some())
+struct Window {
+    anchor: Anchor,
+    floor_seq: Option<Seq>,
+    rows: Vec<EditRow>,
 }
 
 pub(crate) fn read_lineage(
@@ -98,78 +80,135 @@ pub(crate) fn read_lineage(
     session_id: SessionId,
     doc_id: DocId,
     shown: &str,
-    now: SystemTime,
 ) -> Result<(Lineage, Option<HistoryLoss>), Error> {
-    let Probe {
-        position,
-        base_seq,
-        dropped,
-        done_count,
-        replayed,
-    } = probe(tx, session_id, doc_id, shown)?;
-    let Some(replayed) = replayed else {
-        reset_to(tx, session_id, doc_id, position, shown, now)?;
-        let lineage = Lineage {
-            base_seq: position,
-            ..Lineage::default()
-        };
-        return Ok((lineage, Some(HistoryLoss::Unreplayable)));
-    };
-
-    let mut older = replayed.steps;
-    let mut done = older.split_off(dropped);
-    let undone = done.split_off(done_count - dropped);
-    let base_seq = older.last().map_or(base_seq, |s| s.seq);
-    if let Some(floor) = replayed.floor {
-        prune_before(tx, session_id, doc_id, base_seq, &floor, now)?;
-    }
-    Ok((
-        Lineage {
-            base_seq,
-            done,
-            undone,
-        },
-        None,
-    ))
+    let Replay { lineage, loss, .. } = replay(tx, session_id, doc_id, shown)?;
+    Ok((lineage, loss))
 }
 
-fn oldest_snapshot(
+/// Reads the durable history of `session_id`'s `doc_id` as a replayable
+/// lineage, proving that the content at the undo position is `shown`. A
+/// pure read: it never deletes or rewrites a row, because a live binding
+/// elsewhere may already number its undo positions against those rows. A
+/// history that cannot be read or does not replay is reported as a loss
+/// and replaced by an empty lineage at the current position; it is never
+/// pruned.
+pub(crate) fn replay(
     tx: &Transaction<'_>,
     session_id: SessionId,
     doc_id: DocId,
-) -> Result<(Seq, String), Error> {
-    let oldest: Option<(Seq, String)> = tx
-        .query_row(
-            "SELECT seq, blob_hash FROM snapshots WHERE doc_id=?1 AND session_id=?2 \
-             ORDER BY seq ASC, id ASC LIMIT 1",
-            params![doc_id, session_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    match oldest {
-        Some((seq, hash)) => Ok((seq, snapshot::snapshot_content(tx, doc_id, hash)?)),
-        None => Ok((Seq(0), String::new())),
-    }
+    shown: &str,
+) -> Result<Replay, Error> {
+    let position = journal::current_seq(tx, session_id, doc_id)?;
+    let window = match read_window(tx, session_id, doc_id, position) {
+        Ok(Some(window)) => window,
+        Ok(None) => return Ok(Replay::lost(position, HistoryLoss::Unreadable)),
+        Err(e) if e.is_stored_data_damage() => {
+            return Ok(Replay::lost(position, HistoryLoss::Unreadable));
+        }
+        Err(e) => return Err(e),
+    };
+    Ok(fold(window, position, shown)
+        .unwrap_or_else(|| Replay::lost(position, HistoryLoss::Unreplayable)))
 }
 
-fn replay(
-    base: String,
-    rows: Vec<EditRow>,
-    dropped: usize,
-    done_count: usize,
-) -> Result<Replayed, HistoryLoss> {
-    let mut content = base;
-    let mut steps = Vec::with_capacity(rows.len());
-    let mut floor = None;
-    let mut at_position = if done_count == 0 {
-        content.clone()
-    } else {
-        String::new()
+/// Deletes the steps `replay` kept out of the lineage because of the cap,
+/// leaving a snapshot of the content at the new floor. Only a session that
+/// no binding has numbered positions against yet may call this: the rows it
+/// deletes are rows a live token could still map an undo onto.
+pub(crate) fn trim_to_cap(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    replay: &Replay,
+    now: SystemTime,
+) -> Result<(), Error> {
+    let Some(floor) = &replay.floor else {
+        return Ok(());
     };
-    for (i, row) in rows.into_iter().enumerate() {
-        let cursors_before = clamp_cursors(&content, row.cursors_before);
-        apply_row(&mut content, &row.edits)?;
-        let cursors_after = clamp_cursors(&content, row.cursors_after);
+    tx.execute(
+        "DELETE FROM events WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3",
+        params![doc_id, session_id, floor.seq],
+    )?;
+    tx.execute(
+        "DELETE FROM snapshots WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3",
+        params![doc_id, session_id, floor.seq],
+    )?;
+    snapshot::create_snapshot(tx, session_id, now, doc_id, &floor.content, floor.seq)?;
+    Ok(())
+}
+
+/// The seq of the newest row the cap trims, if any. Never reaches past the
+/// undo position: a step at or after it is the user's redo tail or current
+/// state, not old history.
+fn capped_floor(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    position: Seq,
+) -> Result<Option<Seq>, Error> {
+    let oldest_kept_candidate: Option<Seq> = tx
+        .query_row(
+            "SELECT seq FROM events WHERE doc_id=?1 AND session_id=?2 \
+             AND seq > COALESCE((SELECT MIN(seq) FROM snapshots WHERE doc_id=?1 AND session_id=?2), 0) \
+             ORDER BY seq DESC LIMIT 1 OFFSET ?3",
+            params![doc_id, session_id, MAX_STEPS],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(oldest_kept_candidate.map(|seq| seq.min(position)))
+}
+
+fn read_window(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    position: Seq,
+) -> Result<Option<Window>, Error> {
+    let floor_seq = capped_floor(tx, session_id, doc_id, position)?;
+    let anchor = match floor_seq {
+        Some(floor) => snapshot::newest_anchor_at(tx, session_id, doc_id, floor)?,
+        None => snapshot::oldest_anchor(tx, session_id, doc_id)?.or(Some(Anchor {
+            seq: Seq(0),
+            content: String::new(),
+        })),
+    };
+    let Some(anchor) = anchor else {
+        return Ok(None);
+    };
+    let rows = journal::edits_in_range(tx, session_id, doc_id, anchor.seq, Seq(i64::MAX))?;
+    Ok(Some(Window {
+        anchor,
+        floor_seq,
+        rows,
+    }))
+}
+
+fn fold(window: Window, position: Seq, shown: &str) -> Option<Replay> {
+    let Window {
+        anchor,
+        floor_seq,
+        rows,
+    } = window;
+    let dropped = floor_seq.map_or(0, |floor| rows.partition_point(|row| row.seq <= floor));
+    let mut kept = rows;
+    let older = kept.drain(..dropped);
+    let mut buf = Buffer::new(anchor.content);
+    for row in older {
+        buf = reapply_verified(&buf, &row.edits).ok()?;
+    }
+    let base_seq = floor_seq.unwrap_or(anchor.seq);
+    let floor = floor_seq.map(|seq| Floor {
+        seq,
+        content: buf.content().to_string(),
+    });
+
+    let done_count = kept.partition_point(|row| row.seq <= position);
+    let mut at_position = (done_count == 0).then(|| buf.content().to_string());
+    let mut steps = Vec::with_capacity(kept.len());
+    for (i, row) in kept.into_iter().enumerate() {
+        let cursors_before = clamp_cursors(buf.content(), row.cursors_before);
+        buf = reapply_verified(&buf, &row.edits).ok()?;
+        let cursors_after = clamp_cursors(buf.content(), row.cursors_after);
         steps.push(LineageStep {
             seq: row.seq,
             step: Step {
@@ -179,40 +218,23 @@ fn replay(
                 kind: row.kind,
             },
         });
-        if i + 1 == dropped {
-            floor = Some(content.clone());
-        }
         if i + 1 == done_count {
-            at_position = content.clone();
+            at_position = Some(buf.content().to_string());
         }
     }
-    Ok(Replayed {
-        steps,
+    if at_position.as_deref() != Some(shown) {
+        return None;
+    }
+    let undone = steps.split_off(done_count);
+    Some(Replay {
+        lineage: Lineage {
+            base_seq,
+            done: steps,
+            undone,
+        },
+        loss: None,
         floor,
-        at_position,
     })
-}
-
-fn apply_row(content: &mut String, edits: &[AppliedEdit]) -> Result<(), HistoryLoss> {
-    let mut ordered: Vec<&AppliedEdit> = edits.iter().collect();
-    ordered.sort_by_key(|edit| edit.start);
-    if ordered
-        .windows(2)
-        .any(|pair| matches!(pair, [a, b] if a.start == b.start))
-    {
-        return Err(HistoryLoss::Unreplayable);
-    }
-    for edit in ordered {
-        let end = edit
-            .start
-            .checked_add(edit.deleted.len())
-            .ok_or(HistoryLoss::Unreplayable)?;
-        if content.get(edit.start..end) != Some(edit.deleted.as_str()) {
-            return Err(HistoryLoss::Unreplayable);
-        }
-        content.replace_range(edit.start..end, &edit.insert);
-    }
-    Ok(())
 }
 
 fn clamp_cursors(content: &str, cursors: Vec<Cursor>) -> Vec<Cursor> {
@@ -225,42 +247,6 @@ fn clamp_cursors(content: &str, cursors: Vec<Cursor>) -> Vec<Cursor> {
             ..cursor
         })
         .collect()
-}
-
-fn prune_before(
-    tx: &Transaction<'_>,
-    session_id: SessionId,
-    doc_id: DocId,
-    floor: Seq,
-    content: &str,
-    now: SystemTime,
-) -> Result<(), Error> {
-    tx.execute(
-        "DELETE FROM events WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3",
-        params![doc_id, session_id, floor],
-    )?;
-    tx.execute(
-        "DELETE FROM snapshots WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3",
-        params![doc_id, session_id, floor],
-    )?;
-    snapshot::create_snapshot(tx, session_id, now, doc_id, content, floor)?;
-    Ok(())
-}
-
-fn reset_to(
-    tx: &Transaction<'_>,
-    session_id: SessionId,
-    doc_id: DocId,
-    position: Seq,
-    content: &str,
-    now: SystemTime,
-) -> Result<(), Error> {
-    tx.execute(
-        "DELETE FROM events WHERE doc_id=?1 AND session_id=?2 AND seq > ?3",
-        params![doc_id, session_id, position],
-    )?;
-    prune_before(tx, session_id, doc_id, position, content, now)?;
-    journal::move_undo_pos(tx, session_id, doc_id, position)
 }
 
 #[cfg(test)]

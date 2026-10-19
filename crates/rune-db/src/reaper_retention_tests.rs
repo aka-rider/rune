@@ -163,3 +163,78 @@ fn a_sessions_row_goes_with_its_last_expired_history() {
     assert_eq!(count_events(&conn, dead, doc), 0);
     assert!(!sessions_row_exists(&conn, dead));
 }
+
+#[test]
+fn a_session_parked_by_undo_below_its_saved_seq_keeps_the_unsaved_text() {
+    let mut conn = open();
+    let dead = seed_session(&conn, 111);
+    let doc = seed_doc(&conn);
+    edit_at(&mut conn, dead, doc, t0());
+    edit_at(&mut conn, dead, doc, t0());
+    materialize_footprint(&mut conn, dead, doc);
+    let saved = retry::with_retry(&mut conn, |tx| crate::journal::current_seq(tx, dead, doc))
+        .expect("current_seq");
+    retry::with_retry(&mut conn, |tx| {
+        crate::journal::move_undo_pos(tx, dead, doc, crate::ids::Seq(saved.0 - 1))
+    })
+    .expect("undo below the saved seq");
+    let later = seed_session(&conn, 222);
+    edit_at(&mut conn, later, doc, t0());
+
+    reap_dead_111(&mut conn, t0());
+
+    assert_eq!(
+        count_events(&conn, dead, doc),
+        2,
+        "the buffer the user left behind differs from the file, so it is unsaved work"
+    );
+}
+
+#[test]
+fn an_unparsable_edit_time_keeps_the_history_and_surfaces_an_error() {
+    let mut conn = open();
+    let dead = seed_session(&conn, 111);
+    let doc = seed_doc(&conn);
+    edit_at(&mut conn, dead, doc, t0());
+    materialize_footprint(&mut conn, dead, doc);
+    conn.execute("UPDATE events SET at='garbage'", [])
+        .expect("corrupt the edit time");
+
+    let reaped = reap_dead_sessions(&mut conn, &|pid, _| pid != 111, None, t0());
+
+    assert!(
+        reaped.is_err(),
+        "a retention verdict that cannot be made must be reported"
+    );
+    assert_eq!(count_events(&conn, dead, doc), 1, "and must never delete");
+}
+
+#[test]
+fn an_unparsable_edit_time_does_not_stop_other_sessions_from_being_reaped() {
+    let mut conn = open();
+    let broken = seed_session(&conn, 111);
+    let broken_doc = seed_doc(&conn);
+    edit_at(&mut conn, broken, broken_doc, t0());
+    materialize_footprint(&mut conn, broken, broken_doc);
+    conn.execute("UPDATE events SET at='garbage'", [])
+        .expect("corrupt the edit time");
+    let expired = seed_session(&conn, 112);
+    conn.execute(
+        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/other', 'x', 'x')",
+        [],
+    )
+    .expect("second doc");
+    let expired_doc = DocId(conn.last_insert_rowid());
+    edit_at(&mut conn, expired, expired_doc, t0());
+    materialize_footprint(&mut conn, expired, expired_doc);
+
+    let reaped = reap_dead_sessions(
+        &mut conn,
+        &|pid, _| pid != 111 && pid != 112,
+        None,
+        t0() + HISTORY_TTL + Duration::from_secs(1),
+    );
+
+    assert!(reaped.is_err());
+    assert_eq!(count_events(&conn, expired, expired_doc), 0);
+}

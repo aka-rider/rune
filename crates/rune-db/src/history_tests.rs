@@ -84,8 +84,7 @@ impl Fixture {
 
     fn read(&mut self, shown: &str) -> (Lineage, Option<HistoryLoss>) {
         let tx = self.conn.transaction().expect("tx");
-        let read = read_lineage(&tx, self.session, self.doc, shown, SystemTime::now())
-            .expect("read_lineage");
+        let read = read_lineage(&tx, self.session, self.doc, shown).expect("read_lineage");
         tx.commit().expect("commit");
         read
     }
@@ -122,7 +121,6 @@ fn a_document_without_edits_has_an_empty_history_at_its_snapshot() {
     assert_eq!(lineage, Lineage::default());
     assert_eq!(loss, None);
     assert_eq!(lineage.position_seq(), Seq(0));
-    assert_eq!(lineage.head_seq(), Seq(0));
 }
 
 #[test]
@@ -152,7 +150,6 @@ fn a_history_of_only_undone_steps_has_nothing_done_and_everything_to_redo() {
     assert!(lineage.done.is_empty());
     assert_eq!(lineage.undone.len(), 3);
     assert_eq!(lineage.position_seq(), Seq(0));
-    assert_eq!(lineage.head_seq(), seqs[2]);
     assert_eq!(lineage.seqs().collect::<Vec<_>>(), seqs);
 }
 
@@ -174,7 +171,6 @@ fn the_undo_position_splits_the_history_into_done_and_undone_steps() {
         seqs[2..]
     );
     assert_eq!(lineage.position_seq(), seqs[1]);
-    assert_eq!(lineage.head_seq(), seqs[2]);
     assert_eq!(lineage.done[0].step.kind, EditKind::Insert);
     assert_eq!(lineage.done[0].step.edits, vec![insert(2, "a")]);
 }
@@ -197,30 +193,22 @@ fn a_step_that_deletes_text_the_buffer_does_not_hold_makes_the_history_unreplaya
     let (lineage, loss) = f.read("ello!");
 
     assert_eq!(loss, Some(HistoryLoss::Unreplayable));
-    assert!(lineage.done.is_empty() && lineage.undone.is_empty());
-    assert_eq!(f.event_count(), 0, "the unreplayable history is pruned");
     assert_eq!(
-        f.current_seq(),
-        head,
-        "the undo position survives the prune"
+        lineage,
+        Lineage {
+            base_seq: head,
+            ..Lineage::default()
+        },
+        "an unreplayable history is an empty one at the current position"
     );
+    assert_eq!(f.event_count(), 2, "reading never deletes a journal row");
+    assert_eq!(f.current_seq(), head);
     assert_eq!(
         recover_document(&f.conn, f.session, f.doc)
             .expect("recover")
             .content,
         "ello!",
-        "the shown content stays recoverable after the prune"
-    );
-    assert_eq!(
-        f.read("ello!"),
-        (
-            Lineage {
-                base_seq: lineage.base_seq,
-                ..Lineage::default()
-            },
-            None
-        ),
-        "the prune is permanent: the next read reports no loss"
+        "the shown content stays recoverable"
     );
 }
 
@@ -235,7 +223,7 @@ fn a_history_that_replays_to_other_content_than_shown_is_unreplayable() {
 }
 
 #[test]
-fn pruning_an_unreplayable_history_keeps_the_undo_position_recoverable() {
+fn an_unreplayable_history_keeps_its_redo_tail_on_disk() {
     let mut f = fixture("ab");
     let seqs = f.type_text(2, "cd");
     f.undo_to(seqs[0]);
@@ -245,11 +233,8 @@ fn pruning_an_unreplayable_history_keeps_the_undo_position_recoverable() {
     assert_eq!(loss, Some(HistoryLoss::Unreplayable));
     assert_eq!(lineage.base_seq, seqs[0]);
     assert_eq!(f.current_seq(), seqs[0]);
-    assert_eq!(
-        f.event_count(),
-        0,
-        "the redo tail is dropped with the history"
-    );
+    assert_eq!(f.event_count(), 2, "the redo tail is the user's words");
+    assert_eq!(f.recovered_at(seqs[1]), "abcd");
 }
 
 #[test]
@@ -266,7 +251,7 @@ fn cursors_inside_a_character_or_past_the_end_are_clamped_to_the_buffer() {
 }
 
 #[test]
-fn a_history_past_the_cap_loses_its_oldest_steps_and_recovers_at_every_kept_position() {
+fn a_history_past_the_cap_shows_its_newest_steps_and_deletes_nothing() {
     let text: String = ('a'..='z').cycle().take(1005).collect();
     let mut f = fixture("");
     let seqs = f.type_text(0, &text);
@@ -276,7 +261,8 @@ fn a_history_past_the_cap_loses_its_oldest_steps_and_recovers_at_every_kept_posi
     assert_eq!(loss, None);
     assert_eq!(lineage.done.len(), 1000);
     assert_eq!(lineage.base_seq, seqs[4]);
-    assert_eq!(f.event_count(), 1000);
+    assert_eq!(f.event_count(), 1005, "reading is a pure read");
+    assert_eq!(f.read(&text), (lineage.clone(), None));
     assert_eq!(f.recovered_at(lineage.base_seq), text[..5]);
     for (kept, step) in lineage.done.iter().enumerate() {
         assert_eq!(f.recovered_at(step.seq), text[..5 + kept + 1]);
@@ -296,4 +282,91 @@ fn the_cap_never_drops_a_step_at_or_after_the_undo_position() {
     assert_eq!(lineage.base_seq, seqs[2]);
     assert!(lineage.done.is_empty());
     assert_eq!(lineage.undone.len(), 1002);
+}
+
+#[test]
+fn a_capped_history_replays_from_the_snapshot_nearest_its_floor() {
+    let text: String = ('a'..='z').cycle().take(1005).collect();
+    let mut f = fixture("");
+    let seqs = f.type_text(0, &text);
+    let tx = f.conn.transaction().expect("tx");
+    create_snapshot(
+        &tx,
+        f.session,
+        SystemTime::now(),
+        f.doc,
+        &text[..5],
+        seqs[4],
+    )
+    .expect("snap");
+    tx.commit().expect("commit");
+    f.conn
+        .execute(
+            "UPDATE events SET edits='{' WHERE seq < ?1",
+            params![seqs[4]],
+        )
+        .expect("corrupt rows below the floor snapshot");
+
+    let (lineage, loss) = f.read(&text);
+
+    assert_eq!(loss, None, "rows below the floor are never decoded");
+    assert_eq!(lineage.done.len(), 1000);
+}
+
+#[test]
+fn a_snapshot_blob_that_is_gone_loses_the_history_but_not_the_content() {
+    let mut f = fixture("hi");
+    let seqs = f.type_text(2, "abc");
+    let tx = f.conn.transaction().expect("tx");
+    create_snapshot(&tx, f.session, SystemTime::now(), f.doc, "hiab", seqs[1]).expect("snapshot");
+    tx.commit().expect("commit");
+    f.conn
+        .execute_batch("PRAGMA foreign_keys=OFF")
+        .expect("pragma");
+    f.conn
+        .execute(
+            "DELETE FROM blobs WHERE hash=?1",
+            params![crate::observation::hash_bytes(b"hi")],
+        )
+        .expect("lose the oldest snapshot's blob");
+
+    let (lineage, loss) = f.read("hiabc");
+
+    assert_eq!(loss, Some(HistoryLoss::Unreadable));
+    assert_eq!(
+        lineage,
+        Lineage {
+            base_seq: seqs[2],
+            ..Lineage::default()
+        }
+    );
+    assert_eq!(
+        recover_document(&f.conn, f.session, f.doc)
+            .expect("recover from the newer snapshot")
+            .content,
+        "hiabc"
+    );
+}
+
+#[test]
+fn a_corrupt_event_row_below_the_newest_snapshot_loses_the_history_but_not_the_content() {
+    let mut f = fixture("hi");
+    let seqs = f.type_text(2, "abc");
+    let tx = f.conn.transaction().expect("tx");
+    create_snapshot(&tx, f.session, SystemTime::now(), f.doc, "hiab", seqs[1]).expect("snapshot");
+    tx.commit().expect("commit");
+    f.conn
+        .execute("UPDATE events SET edits='{' WHERE seq=?1", params![seqs[0]])
+        .expect("corrupt an old row");
+
+    let (lineage, loss) = f.read("hiabc");
+
+    assert_eq!(loss, Some(HistoryLoss::Unreadable));
+    assert!(lineage.done.is_empty() && lineage.undone.is_empty());
+    assert_eq!(
+        recover_document(&f.conn, f.session, f.doc)
+            .expect("recover")
+            .content,
+        "hiabc"
+    );
 }

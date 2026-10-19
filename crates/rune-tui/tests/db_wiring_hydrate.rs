@@ -295,7 +295,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
         nlink: 1,
         saved_obs: None,
         history: rune_db::Lineage::default(),
-        history_loss: None,
+        history_losses: Vec::new(),
         resumable_merge: None,
     };
 

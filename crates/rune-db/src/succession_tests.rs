@@ -281,3 +281,122 @@ fn an_unreplayable_dead_lineage_falls_back_to_inheriting_the_draft() {
     assert_eq!(result.history.done.len(), 1, "as one bridge step");
     assert_eq!((w.events_of(a), w.events_of(b)), (1, 1));
 }
+
+impl World {
+    fn snapshot(&mut self, session: SessionId, doc: DocId, content: &str, seq: Seq) {
+        retry::with_retry(&mut self.conn, |tx| {
+            crate::snapshot::create_snapshot(tx, session, SystemTime::now(), doc, content, seq)
+                .map(drop)
+        })
+        .expect("create_snapshot");
+    }
+}
+
+#[test]
+fn a_dead_lineage_with_unreadable_old_rows_falls_back_to_inheriting_the_draft() {
+    let mut w = World::new("one");
+    let a = w.session();
+    let doc = w.load(a, &alive).doc_id;
+    let first = w.type_at_start(a, doc, "x");
+    let second = w.type_at_start(a, doc, "y");
+    w.snapshot(a, doc, "yxone", second);
+    w.conn
+        .execute("UPDATE events SET edits='{' WHERE seq=?1", params![first])
+        .expect("corrupt a row below the newest snapshot");
+
+    let b = w.session();
+    let result = w.load(b, &always_dead);
+
+    assert_eq!(result.recovered.content, "yxone");
+    assert_eq!(result.history.done.len(), 1, "as one bridge step");
+}
+
+#[test]
+fn adopting_a_dead_lineage_trims_it_to_the_cap_and_stays_recoverable_at_every_position() {
+    let mut w = World::new("");
+    let a = w.session();
+    let doc = w.load(a, &alive).doc_id;
+    let typed: String = ('a'..='z').cycle().take(1005).collect();
+    for ch in typed.chars() {
+        w.type_at_start(a, doc, &ch.to_string());
+    }
+    let reversed = |s: &str| s.chars().rev().collect::<String>();
+
+    let b = w.session();
+    let result = w.load(b, &always_dead);
+
+    assert_eq!(result.recovered.content, reversed(&typed));
+    assert_eq!(result.history.done.len(), 1000);
+    assert_eq!(w.events_of(b), 1000, "the oldest five steps are trimmed");
+    w.undo_to(b, doc, result.history.base_seq);
+    let at_floor = crate::snapshot::recover_document(&w.conn, b, doc).expect("recover");
+    assert_eq!(at_floor.content, reversed(&typed[..5]));
+    for step in &result.history.done {
+        w.undo_to(b, doc, step.seq);
+        crate::snapshot::recover_document(&w.conn, b, doc).expect("every kept position recovers");
+    }
+}
+
+#[test]
+fn an_undo_position_stranded_below_every_snapshot_is_repaired_to_the_newest_text_on_load() {
+    let mut w = World::new("one");
+    let a = w.session();
+    let doc = w.load(a, &alive).doc_id;
+    let first = w.type_at_start(a, doc, "x");
+    let second = w.type_at_start(a, doc, "y");
+    w.snapshot(a, doc, "yxone", second);
+    w.conn
+        .execute("DELETE FROM snapshots WHERE seq < ?1", params![second])
+        .expect("lose the older anchors");
+    w.undo_to(a, doc, first);
+
+    let result = w.load(a, &alive);
+
+    assert_eq!(result.recovered.content, "yxone");
+    assert_eq!(
+        result.history_losses,
+        vec![crate::history::HistoryLoss::PositionRepaired]
+    );
+    assert_eq!(w.position(a, doc), second);
+    assert_eq!(w.events_of(a), 2, "repairing the position deletes nothing");
+    assert_eq!(
+        w.load(a, &alive).history_losses,
+        Vec::new(),
+        "the repair is permanent"
+    );
+}
+
+#[test]
+fn an_outside_change_that_cuts_off_a_redo_tail_says_so() {
+    let mut w = World::new("one");
+    let a = w.session();
+    let doc = w.load(a, &alive).doc_id;
+    let saved = w.type_at_start(a, doc, "x");
+    w.save(a, doc, "xone");
+    w.type_at_start(a, doc, "y");
+    w.undo_to(a, doc, saved);
+    w.external_rewrite("rewritten elsewhere");
+
+    let result = w.load(a, &alive);
+
+    assert_eq!(result.recovered.content, "rewritten elsewhere");
+    assert_eq!(
+        result.history_losses,
+        vec![crate::history::HistoryLoss::RedoTailDropped]
+    );
+}
+
+#[test]
+fn an_outside_change_with_nothing_to_redo_loses_nothing() {
+    let mut w = World::new("one");
+    let a = w.session();
+    let doc = w.load(a, &alive).doc_id;
+    w.type_at_start(a, doc, "x");
+    w.save(a, doc, "xone");
+    w.external_rewrite("rewritten elsewhere");
+
+    let result = w.load(a, &alive);
+
+    assert_eq!(result.recovered.content, "rewritten elsewhere");
+    assert_eq!(result.history_losses, Vec::new());
+}
