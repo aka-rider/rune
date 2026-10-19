@@ -103,6 +103,7 @@ pub struct Snapshot {
     pub replace_cursor: Option<Cursor>,
     pub replace_field_focused: bool,
     pub find_walk_queued: Option<usize>,
+    pub find_open: bool,
     pub palette_query: Option<String>,
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`) and reading view (`ReadOnly::Reading`) are both live
@@ -351,6 +352,7 @@ impl Snapshot {
             replace_cursor: app.replace_cursor(),
             replace_field_focused: app.replace_field_focused(),
             find_walk_queued: app.find_walk_queued(),
+            find_open: app.find_open(),
             palette_query: app.palette().map(|state| state.field.text().to_string()),
             read_only: doc.read_only,
             painted,

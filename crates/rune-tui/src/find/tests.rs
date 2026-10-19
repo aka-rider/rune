@@ -125,7 +125,7 @@ fn escape_restores_the_origin_cursor_and_scroll_row() {
         "the match scrolled into view"
     );
 
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     app.sync_view();
     assert!(app.find().is_none());
     assert_eq!(selection_start(&app), 0);
@@ -140,7 +140,7 @@ fn enter_commits_so_a_later_escape_returns_to_that_match() {
     press(&mut app, enter());
     assert_eq!(selection_start(&app), 3);
 
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     assert_eq!(
         selection_start(&app),
         3,
@@ -153,7 +153,7 @@ fn ctrl_f_closes_a_focused_panel_and_focuses_a_kept_one() {
     let mut app = app_with("hi hi");
     open_find(&mut app);
     type_str(&mut app, "hi");
-    crate::find::unfocus(&mut app);
+    crate::find::accept_location(&mut app);
     assert!(!find(&app).focused);
 
     open_find(&mut app);
@@ -181,7 +181,7 @@ fn a_single_line_selection_seeds_the_field_and_a_multi_line_one_does_not() {
         Some(0),
         "the seeded selection stays current"
     );
-    press(&mut app, escape());
+    press(&mut app, esc_key());
 
     selecting(&mut app, id, 0, 7);
     open_find(&mut app);
@@ -291,7 +291,7 @@ fn a_stale_generation_history_reply_is_discarded() {
     let mut app = app_with("hello");
     open_find(&mut app);
     let stale = find(&app).history_generation;
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     open_find(&mut app);
     let live = find(&app).history_generation;
     assert_ne!(stale, live, "each open mints a fresh generation");

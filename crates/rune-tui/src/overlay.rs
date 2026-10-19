@@ -172,6 +172,10 @@ impl App {
             .is_some_and(|state| state.focused && state.focus == crate::find::Control::Replace)
     }
 
+    pub fn find_open(&self) -> bool {
+        self.find().is_some()
+    }
+
     pub fn find_walk_queued(&self) -> Option<usize> {
         let walk = self.find()?.project.as_ref()?.walk.as_ref()?;
         Some(walk.queued.len())

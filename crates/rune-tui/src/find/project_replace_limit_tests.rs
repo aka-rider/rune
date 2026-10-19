@@ -127,7 +127,7 @@ fn enter_in_the_replace_field_replaces_only_the_selected_file() {
 fn a_read_only_hit_file_is_skipped_and_counted() {
     let mut fx = fixture(StoreKind::Absent);
     fx.prepare("dog", "cat");
-    let a = workspace::open_path(&mut fx.app, Path::new(A)).expect("opens");
+    let a = fx.open_beside_the_panel(A);
     fx.app.doc_mut(a).expect("doc").read_only = ReadOnly::Always;
 
     fx.replace_all();

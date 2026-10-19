@@ -219,7 +219,7 @@ fn reopening_after_an_edit_reindexes_the_new_content() {
     let mut app = seeded_app(&[("/root/notes.md", b"old words")]);
     let mut effects = open_project_find(&mut app);
     pump_index(&mut app, &mut effects);
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     app.vfs
         .save_atomic(Path::new("/root/notes.md"), b"Fresh words")
         .expect("edit the file on disk");
@@ -255,7 +255,7 @@ fn a_deleted_file_disappears_from_results_after_the_rescan() {
         2,
         "test setup: both files match before the deletion"
     );
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     app.vfs
         .remove(Path::new("/root/b.md"))
         .expect("delete the file");
@@ -272,7 +272,7 @@ fn a_truncated_rescan_drops_no_entries() {
     let mut app = seeded_app(&[("/root/a.md", b"alpha"), ("/root/b.md", b"beta")]);
     let mut effects = open_project_find(&mut app);
     pump_index(&mut app, &mut effects);
-    press(&mut app, escape());
+    press(&mut app, esc_key());
 
     let mut effects = open_project_find(&mut app);
     let generation = build_generation(&app);
@@ -308,7 +308,7 @@ fn an_unchanged_file_reads_back_as_unchanged() {
     let mut app = seeded_app(&[("/root/notes.md", b"stable")]);
     let mut effects = open_project_find(&mut app);
     pump_index(&mut app, &mut effects);
-    press(&mut app, escape());
+    press(&mut app, esc_key());
 
     let mut effects = open_project_find(&mut app);
     let scanned = run_one_cmd(&mut effects, CmdKind::ProjectIndex).expect("rescan dispatched");
@@ -342,7 +342,7 @@ fn reopening_under_a_different_root_discards_and_cold_builds() {
     let mut app = seeded_app(&[("/root/a.md", b"alpha"), ("/other/b.md", b"beta")]);
     let mut effects = open_project_find(&mut app);
     pump_index(&mut app, &mut effects);
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     app.root = Some(PathBuf::from("/other"));
 
     let mut effects = open_project_find(&mut app);

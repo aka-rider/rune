@@ -103,7 +103,7 @@ fn escape_closes_the_panel_and_saves_the_query() {
     let mut app = app_with("hello");
     open_find(&mut app);
     type_str(&mut app, "h");
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     assert!(app.find().is_none(), "Escape closes the panel");
     assert_eq!(
         app.last_find.as_ref().map(|(query, _)| query.as_str()),
@@ -206,7 +206,7 @@ fn paste_lands_in_the_replace_field_when_it_holds_the_ring() {
 fn paste_with_a_kept_panel_goes_to_the_document() {
     let mut app = app_with("hello");
     open_find(&mut app);
-    crate::find::unfocus(&mut app);
+    crate::find::accept_location(&mut app);
 
     paste(&mut app, "term");
 

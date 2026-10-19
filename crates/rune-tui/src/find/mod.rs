@@ -27,6 +27,9 @@ pub(crate) mod replace;
 mod controls_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod esc_tests;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod field_edit_tests;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -120,6 +123,7 @@ impl FieldState {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Origin {
     pub doc: DocumentId,
     pub cursors: CursorSet,
@@ -318,10 +322,32 @@ pub(crate) fn close(app: &mut App, restore: bool) {
     }
 }
 
-pub(crate) fn unfocus(app: &mut App) {
+pub(crate) fn escape(app: &mut App) -> bool {
+    let Some(focused) = app.find().map(|state| state.focused) else {
+        return false;
+    };
+    close(app, focused);
+    true
+}
+
+pub(crate) fn accept_location(app: &mut App) {
+    let origin = Origin::capture(app);
     if let Some(state) = app.find_mut() {
         state.focused = false;
+        state.origin = origin;
     }
+}
+
+pub(crate) fn navigating_as_panel<R>(app: &mut App, navigate: impl FnOnce(&mut App) -> R) -> R {
+    let kept = app
+        .find()
+        .map(|state| (state.focused, state.origin.clone()));
+    let result = navigate(app);
+    if let (Some((focused, origin)), Some(state)) = (kept, app.find_mut()) {
+        state.focused = focused;
+        state.origin = origin;
+    }
+    result
 }
 
 pub(crate) fn restore_origin(app: &mut App, origin: &Origin) {

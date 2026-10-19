@@ -1,12 +1,10 @@
-use std::path::Path;
-
 use rune_db::{DbEvent, SyncKind};
 
 use crate::document::DocumentId;
 use crate::find::project_replace_fixture::{
     A, B, C, FILES, StoreKind, assert_all_replaced, assert_disk_untouched, fixture,
 };
-use crate::find::test_support::{ALT, CTRL, SUP, escape, key, press_into};
+use crate::find::test_support::{ALT, CTRL, SUP, esc_key, key, press_into};
 use crate::keymap::KeyCode;
 use crate::runtime::Msg;
 use crate::workspace;
@@ -111,7 +109,7 @@ fn a_diverged_recovered_draft_is_left_unchanged_and_named_in_the_summary() {
 fn a_document_opened_just_before_pressing_all_is_queued_until_its_ack() {
     let mut fx = fixture(StoreKind::Silent);
     fx.prepare("dog", "cat");
-    workspace::open_path(&mut fx.app, Path::new(A)).expect("opens");
+    fx.open_beside_the_panel(A);
     assert!(fx.is_binding(A), "test setup: the load is still in flight");
 
     fx.replace_all();
@@ -147,7 +145,7 @@ fn one_undo_restores_a_replaced_document() {
     let mut fx = fixture(StoreKind::Absent);
     fx.prepare("dog", "cat");
     fx.replace_all();
-    press_into(&mut fx.app, escape(), &mut fx.effects);
+    press_into(&mut fx.app, esc_key(), &mut fx.effects);
     let c = fx.doc_for(C).expect("open");
     workspace::switch_to(&mut fx.app, c);
 
@@ -162,7 +160,7 @@ fn closing_the_panel_with_acks_outstanding_warns_and_leaves_the_documents_unedit
     fx.prepare("dog", "cat");
     fx.replace_all();
 
-    press_into(&mut fx.app, escape(), &mut fx.effects);
+    press_into(&mut fx.app, esc_key(), &mut fx.effects);
 
     assert!(fx.app.find().is_none());
     assert_eq!(fx.newest(), "3 files were opened but not replaced");

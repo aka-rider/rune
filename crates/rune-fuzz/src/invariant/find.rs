@@ -1,5 +1,5 @@
 use rune_tui::focus::FocusTarget;
-use rune_tui::keymap::{KeyCode, KeyInput};
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 
 use super::Violation;
 use crate::snapshot::Snapshot;
@@ -54,6 +54,25 @@ pub fn find_walk_drains(next: &Snapshot) -> Option<Violation> {
         "FIND-WALK-DRAINS",
         "a project replace walk with nothing queued survived the step instead of finishing"
             .to_string(),
+    ))
+}
+
+pub fn find_esc_closes(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
+    let MsgTag::Key { input, .. } = &ctx.msg else {
+        return None;
+    };
+    if input.code != KeyCode::Escape || input.mods != Mods::NONE {
+        return None;
+    }
+    if !prev.find_open || prev.modal_open || !next.find_open {
+        return None;
+    }
+    Some(Violation::new(
+        "FIND-ESC-CLOSES",
+        format!(
+            "Esc left the find panel open (focus target {:?})",
+            prev.focus_target
+        ),
     ))
 }
 

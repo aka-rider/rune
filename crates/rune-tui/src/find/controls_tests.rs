@@ -170,7 +170,7 @@ fn clicking_into_the_editor_unfocuses_the_panel_and_dims_its_border() {
 fn clicking_inside_the_find_field_of_a_kept_panel_refocuses_it() {
     let mut app = app_with("hello");
     open_find(&mut app);
-    crate::find::unfocus(&mut app);
+    crate::find::accept_location(&mut app);
     let panel = crate::layout::geometry(app.frame_area(), &app)
         .find_panel
         .expect("panel open");

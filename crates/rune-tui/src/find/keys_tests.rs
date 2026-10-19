@@ -220,7 +220,7 @@ fn closed_panel_next_steps_and_wraps_using_the_last_query() {
     let mut app = app_with("hi hi hi");
     open_find(&mut app);
     type_str(&mut app, "hi");
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     assert!(app.find().is_none(), "the panel is closed for this test");
     assert_eq!(
         app.last_find,
@@ -248,7 +248,7 @@ fn closed_panel_prev_wraps_from_the_first_match_to_the_last() {
     let mut app = app_with("hi hi hi");
     open_find(&mut app);
     type_str(&mut app, "hi");
-    press(&mut app, escape());
+    press(&mut app, esc_key());
 
     global(&mut app, GlobalCommand::SearchPrev);
     assert_eq!(
@@ -265,7 +265,7 @@ fn closed_panel_navigation_keeps_the_match_options() {
     type_str(&mut app, "dog");
     press(&mut app, key(crate::keymap::KeyCode::Char('c'), ALT));
     assert!(find(&app).options.case_sensitive);
-    press(&mut app, escape());
+    press(&mut app, esc_key());
 
     global(&mut app, GlobalCommand::SearchNext);
     assert_eq!(selection_start(&app), 4);
@@ -284,10 +284,10 @@ fn last_query_survives_closing_and_reopening_the_panel() {
     let mut app = app_with("hi hi");
     open_find(&mut app);
     type_str(&mut app, "hi");
-    press(&mut app, escape());
+    press(&mut app, esc_key());
 
     open_find(&mut app);
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     assert_eq!(
         app.last_find.as_ref().map(|(query, _)| query.as_str()),
         Some("hi")

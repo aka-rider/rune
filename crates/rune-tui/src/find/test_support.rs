@@ -87,7 +87,7 @@ pub(crate) fn shift_enter() -> KeyInput {
     key(KeyCode::Enter, SHIFT)
 }
 
-pub(crate) fn escape() -> KeyInput {
+pub(crate) fn esc_key() -> KeyInput {
     key(KeyCode::Escape, Mods::NONE)
 }
 

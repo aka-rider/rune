@@ -118,7 +118,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
             return;
         }
         if matches!(input.kind, MouseKind::Down(MouseButton::Left)) {
-            crate::find::unfocus(app);
+            crate::find::accept_location(app);
         }
     }
 

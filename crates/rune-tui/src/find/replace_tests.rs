@@ -83,7 +83,7 @@ fn shift_enter_replaces_every_match_and_one_undo_restores_the_original_bytes() {
     assert!(find(&app).matches.is_empty());
     assert!(find(&app).focused, "the panel stays focused");
 
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     press(&mut app, key(KeyCode::Char('z'), SUP));
     assert_eq!(content(&app), original);
 }
@@ -143,7 +143,7 @@ fn the_last_replacement_reports_no_more_matches_and_settles_the_origin_there() {
     assert!(find(&app).matches.is_empty());
     assert!(find(&app).focused);
 
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     assert_eq!(
         app.active_doc().cursors.primary().position.get(),
         4,
@@ -299,7 +299,7 @@ fn a_replace_history_reply_lands_only_on_its_own_panel_generation() {
     let mut app = app_with("dog");
     open_replace(&mut app);
     let stale = find(&app).replace_history_generation;
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     open_replace(&mut app);
     let live = find(&app).replace_history_generation;
     assert_ne!(stale, live);

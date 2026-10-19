@@ -7,7 +7,7 @@ use crate::find::bindings::{FIND_BINDINGS, FindCommand, label_for};
 use crate::find::history::{self, BrowseDir};
 use crate::find::matcher::MatchOptions;
 use crate::find::{
-    ChipKind, Control, FieldState, FindState, Scope, close, follow, project, project_replace,
+    ChipKind, Control, FieldState, FindState, Scope, escape, follow, project, project_replace,
     replace,
 };
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome};
@@ -118,7 +118,9 @@ fn apply(app: &mut App, cmd: FindCommand, effects: &mut Effects) {
     };
     match cmd {
         FindCommand::Type | FindCommand::Erase => control_hint(app),
-        FindCommand::Close => close(app, true),
+        FindCommand::Close => {
+            escape(app);
+        }
         FindCommand::Commit => match (focus, scope) {
             (Control::Find, Scope::File) => follow::advance(app, true),
             (Control::Find, Scope::Project) | (Control::Results, _) => {

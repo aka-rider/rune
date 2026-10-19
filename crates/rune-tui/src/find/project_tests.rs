@@ -78,7 +78,7 @@ fn escape_closes_the_panel_and_discards_a_pending_preview() {
     search_project(&mut app, "needle", &mut effects);
     assert!(app.explorer.preview_awaiting.is_some());
 
-    press_into(&mut app, escape(), &mut effects);
+    press_into(&mut app, esc_key(), &mut effects);
 
     assert!(app.find().is_none());
     assert!(app.explorer.preview_awaiting.is_none());
@@ -266,7 +266,7 @@ fn list_keys_in_the_find_field_give_feedback_instead_of_vanishing() {
         crate::messages::newest_text(&app)
     );
 
-    press(&mut app, escape());
+    press(&mut app, esc_key());
     open_project_find(&mut app);
     press(&mut app, key(KeyCode::PageUp, Mods::NONE));
     assert!(

@@ -151,7 +151,10 @@ pub(crate) fn replace_in_file(app: &mut App, path: &Path, effects: &mut Effects)
             if !ensure_room(app, effects) {
                 return FileOutcome::TabLimit;
             }
-            match workspace::open_path_checked(app, path, effects) {
+            let opened = crate::find::navigating_as_panel(app, |app| {
+                workspace::open_path_checked(app, path, effects)
+            });
+            match opened {
                 Some(id) => id,
                 None => return FileOutcome::ReadFailed,
             }

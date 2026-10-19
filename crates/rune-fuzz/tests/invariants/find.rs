@@ -1,4 +1,6 @@
-use rune_fuzz::invariant::{find_preview_pure, find_replace_no_disk, find_walk_drains};
+use rune_fuzz::invariant::{
+    find_esc_closes, find_preview_pure, find_replace_no_disk, find_walk_drains,
+};
 use rune_fuzz::snapshot::Snapshot;
 use rune_fuzz::step::{MsgTag, StepCtx};
 use rune_tui::focus::FocusTarget;
@@ -166,4 +168,43 @@ fn find_walk_drains_accepts_a_waiting_walk_and_no_walk() {
     assert_eq!(find_walk_drains(&next), None);
     next.find_walk_queued = Some(2);
     assert_eq!(find_walk_drains(&next), None);
+}
+
+fn panel_snapshot(open: bool) -> Snapshot {
+    let mut snap = base_snapshot("dog");
+    snap.find_open = open;
+    snap
+}
+
+#[test]
+fn find_esc_closes_detects_a_panel_that_survived_a_plain_escape() {
+    let ctx = key_ctx(KeyCode::Escape, Mods::NONE);
+    let v = find_esc_closes(&panel_snapshot(true), &panel_snapshot(true), &ctx)
+        .expect("Esc must close the panel whatever had focus");
+    assert_eq!(v.id, "FIND-ESC-CLOSES");
+}
+
+#[test]
+fn find_esc_closes_accepts_a_closed_panel_a_modified_escape_and_other_keys() {
+    let open = panel_snapshot(true);
+    let closed = panel_snapshot(false);
+    let esc = key_ctx(KeyCode::Escape, Mods::NONE);
+    assert_eq!(find_esc_closes(&open, &closed, &esc), None);
+    assert_eq!(find_esc_closes(&closed, &closed, &esc), None);
+    assert_eq!(
+        find_esc_closes(&open, &open, &key_ctx(KeyCode::Escape, SHIFT)),
+        None
+    );
+    assert_eq!(
+        find_esc_closes(&open, &open, &key_ctx(KeyCode::Char('x'), Mods::NONE)),
+        None
+    );
+}
+
+#[test]
+fn find_esc_closes_yields_to_a_modal_that_owns_the_key() {
+    let mut prev = panel_snapshot(true);
+    prev.modal_open = true;
+    let ctx = key_ctx(KeyCode::Escape, Mods::NONE);
+    assert_eq!(find_esc_closes(&prev, &panel_snapshot(true), &ctx), None);
 }

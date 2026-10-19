@@ -161,7 +161,7 @@ fn a_hit_in_an_open_but_inactive_document_switches_to_it_and_centers_without_mov
         "centering another tab must never move its cursor"
     );
 
-    press_into(&mut app, escape(), &mut effects);
+    press_into(&mut app, esc_key(), &mut effects);
     assert!(app.find().is_none());
     assert_eq!(
         app.active, origin,

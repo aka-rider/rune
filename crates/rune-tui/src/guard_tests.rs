@@ -359,7 +359,7 @@ fn an_unfocused_find_panel_survives_a_guard_raise() {
         false,
         &mut crate::runtime::Effects::default(),
     );
-    crate::find::unfocus(&mut app);
+    crate::find::accept_location(&mut app);
 
     assert_eq!(
         set_guard(

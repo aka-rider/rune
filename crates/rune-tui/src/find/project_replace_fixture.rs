@@ -110,6 +110,13 @@ impl Fixture {
             .expect("utf-8 on disk")
     }
 
+    pub(crate) fn open_beside_the_panel(&mut self, path: &str) -> DocumentId {
+        crate::find::navigating_as_panel(&mut self.app, |app| {
+            workspace::open_path(app, Path::new(path))
+        })
+        .expect("opens")
+    }
+
     pub(crate) fn doc_for(&self, path: &str) -> Option<DocumentId> {
         workspace::existing_document_for_spelling(&self.app, Path::new(path))
     }

@@ -240,6 +240,7 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
         crate::merge::auto_exit(app);
     }
     app.active = id;
+    crate::find::accept_location(app);
     app.documents.touch(id);
     let name = crate::title::name_for(app.active_doc());
     app.title.seed(&name);

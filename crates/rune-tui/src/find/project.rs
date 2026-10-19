@@ -222,7 +222,9 @@ fn focus_selected_hit(app: &mut App, effects: &mut Effects) {
         land_at(app, app.active, range);
         return;
     }
-    crate::explorer_preview::request_preview(app, &path, effects);
+    crate::find::navigating_as_panel(app, |app| {
+        crate::explorer_preview::request_preview(app, &path, effects);
+    });
     if let Some(project) = results_mut(app) {
         project.pending_center = Some((path, range.start));
     }
@@ -317,19 +319,22 @@ pub(crate) fn open_hit(app: &mut App, effects: &mut Effects) {
     else {
         return;
     };
-    let id = if crate::explorer_preview::shown_path(app) == Some(path.as_path()) {
-        match crate::explorer_preview::promote(app, effects) {
-            crate::explorer_preview::Promotion::Promoted(id) => id,
-            crate::explorer_preview::Promotion::NothingToPromote
-            | crate::explorer_preview::Promotion::Refused => return,
+    let opened = crate::find::navigating_as_panel(app, |app| {
+        if crate::explorer_preview::shown_path(app) == Some(path.as_path()) {
+            match crate::explorer_preview::promote(app, effects) {
+                crate::explorer_preview::Promotion::Promoted(id) => Some(id),
+                crate::explorer_preview::Promotion::NothingToPromote
+                | crate::explorer_preview::Promotion::Refused => None,
+            }
+        } else {
+            let departed = crate::navhistory::departure_origin(app);
+            let id = crate::workspace::open_path_checked(app, &path, effects)?;
+            crate::navhistory::record_departure_if_moved(app, departed);
+            Some(id)
         }
-    } else {
-        let departed = crate::navhistory::departure_origin(app);
-        let Some(id) = crate::workspace::open_path_checked(app, &path, effects) else {
-            return;
-        };
-        crate::navhistory::record_departure_if_moved(app, departed);
-        id
+    });
+    let Some(id) = opened else {
+        return;
     };
     land_at(app, id, range);
     let origin = Origin::capture(app);

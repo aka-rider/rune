@@ -15,6 +15,9 @@ pub(crate) fn hardcoded_fast_path(app: &mut App, key: KeyInput, effects: &mut Ef
         return true;
     }
     if key.code == KeyCode::Escape && key.mods == Mods::NONE {
+        if crate::find::escape(app) {
+            return true;
+        }
         // `nav::escape` collapses a multi-cursor down to one, or failing
         // that a single selection down to a caret; `Unconsumed` means
         // neither applied, which hands focus to the Explorer instead.
