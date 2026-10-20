@@ -82,6 +82,16 @@ with the find panel focused consumes the key and changes nothing. Either the tog
 to the active document regardless of which overlay holds the keyboard (the panel already works on
 a read-only document), or it should say why it refused.
 
+## Audit the other overlays' focus paths for the title-focus-exclusivity bug class
+
+`find::take_focus` fixed a bug (OVERLAY-TITLE-EXCLUSIVE, repro `overlay-title-exclusive-03`) where a
+way of focusing Find left the title field holding focus too, so two widgets took the same keystrokes.
+It now refuses unless `clear_title_for_overlay` succeeds, that is, unless the title can be blurred.
+The other overlays call `clear_title_for_overlay` when they open (`filesearch::open`, `palette::open`),
+but nobody audited their other focus paths (a click, a pane switch, a re-focus chord, a refused
+rename) for the same class. Fix: for each overlay, list every place its focus is set, route them
+through one chokepoint like `take_focus`, and check that the fuzz invariant covers that overlay.
+
 ## The fuzzer never sees project search results
 
 `driver/step_exec.rs` drops every `CmdKind::ProjectIndex` and `CmdKind::ProjectQuery` the update
