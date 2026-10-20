@@ -61,7 +61,7 @@ fn scrolling_in_reading_view_moves_the_caret_with_the_view() {
     assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(5));
     let expected = app
         .active_doc()
-        .buffer
+        .buffer()
         .line_start(5)
         .expect("line 5 exists in a 50-line fixture");
     assert_eq!(

@@ -128,12 +128,17 @@ fn a_tab_whose_file_another_tab_is_renamed_onto_keeps_its_unsaved_words() {
     let a = app.active;
     let b = app.open_document_bound(Buffer::new("y body"), y.clone());
     crate::commands::edit::insert_char(&mut app, a, 'Z');
-    let typed = app.doc(a).expect("a is open").buffer.content().to_string();
+    let typed = app
+        .doc(a)
+        .expect("a is open")
+        .buffer()
+        .content()
+        .to_string();
 
     app.rebind_document_path(b, x.clone());
 
     let loser = app.doc(a).expect("the tab that lost its file stays open");
-    assert_eq!(loser.buffer.content(), typed, "the unsaved words survive");
+    assert_eq!(loser.buffer().content(), typed, "the unsaved words survive");
     assert!(loser.is_dirty(), "the unsaved edit still reads as unsaved");
     assert_eq!(loser.file_name(), "x.md", "the tab keeps the name it had");
     assert_eq!(

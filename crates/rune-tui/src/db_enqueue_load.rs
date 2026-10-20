@@ -55,7 +55,7 @@ fn load_document_inner(
         return false;
     }
     let Some(doc) = app.doc(id) else { return false };
-    let issued_version = doc.buffer.version();
+    let issued_version = doc.buffer().version();
     let bound_row = doc.doc_db().map(|d| d.db_id);
     let purpose = match intent {
         LoadIntent::Recover => LoadPurpose::Recover,
@@ -78,7 +78,7 @@ fn load_document_inner(
                 && matches!(doc.replica, Replica::Detached)
             {
                 doc.replica = Replica::Binding {
-                    base: doc.buffer.content().to_string(),
+                    base: doc.buffer().content().to_string(),
                     pending: Vec::new(),
                 };
             }
@@ -153,7 +153,7 @@ pub fn create_scratch(app: &mut App, id: DocumentId) {
                 && matches!(doc.replica, Replica::Detached)
             {
                 doc.replica = Replica::Binding {
-                    base: doc.buffer.content().to_string(),
+                    base: doc.buffer().content().to_string(),
                     pending: Vec::new(),
                 };
             }
@@ -221,7 +221,7 @@ mod tests {
         ));
         let (version, content) = {
             let doc = app.doc(id).expect("doc open");
-            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+            (doc.buffer().version(), Arc::from(doc.buffer().content()))
         };
         app.doc_mut(id)
             .expect("doc open")
@@ -257,7 +257,7 @@ mod tests {
         app.install_or_join_file_binding(1, None);
         let (version, content) = {
             let doc = app.doc(id).expect("doc open");
-            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+            (doc.buffer().version(), Arc::from(doc.buffer().content()))
         };
         app.doc_mut(id)
             .expect("doc open")

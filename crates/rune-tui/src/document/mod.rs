@@ -36,7 +36,7 @@ use crate::viewport::Viewport;
 pub struct DocumentId(pub(crate) NonZeroU64);
 
 pub struct Document {
-    pub buffer: Buffer,
+    buffer: Buffer,
     cursors: CursorSet,
     pub doc: DocMachine,
     pub viewport: Viewport,
@@ -255,6 +255,15 @@ impl Document {
         self.cursors = cursors.map(|c| buffer.outside_crlf_pair(c));
     }
 
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub fn install(&mut self, buffer: Buffer, cursors: CursorSet) {
+        self.buffer = buffer;
+        self.set_cursors(cursors);
+    }
+
     pub fn pending_save_version(&self) -> Option<u64> {
         self.save.pending_version()
     }
@@ -340,8 +349,7 @@ impl Document {
             let seated: Vec<Cursor> = journaled_cursors.iter().copied().map(seat).collect();
             CursorSet::new_from(&seated)
         };
-        self.buffer = new_buffer;
-        self.set_cursors(seated);
+        self.install(new_buffer, seated);
         Ok(Step {
             edits: applied,
             cursors_before,

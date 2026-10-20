@@ -92,14 +92,13 @@ fn apply_owned_and_followers(
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
     let owners: Vec<Option<CursorId>> = infos.iter().map(|(_, owner)| *owner).collect();
 
-    match doc.buffer.apply_edits(&SortedEdits::sort(&edits)) {
+    match doc.buffer().apply_edits(&SortedEdits::sort(&edits)) {
         Ok((new_buf, applied)) => {
             let new_cursors = cursors_after(&new_buf, &applied, &owners);
             let Some(doc) = app.doc_mut(id) else {
                 return false;
             };
-            doc.buffer = new_buf;
-            doc.set_cursors(CursorSet::new_from(&new_cursors));
+            doc.install(new_buf, CursorSet::new_from(&new_cursors));
             let cursors_after = doc.cursors().all().to_vec();
             let caret = doc.cursors().primary().position.get();
             doc.journal.push(Step {

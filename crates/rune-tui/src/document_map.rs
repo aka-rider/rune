@@ -258,7 +258,7 @@ mod tests {
             None,
             "a document whose file was taken over must stop answering to it"
         );
-        assert_eq!(loser.buffer.content(), "a", "the loser keeps its words");
+        assert_eq!(loser.buffer().content(), "a", "the loser keeps its words");
         assert_eq!(loser.file_name(), "a.md", "the tab keeps the old file name");
         assert_eq!(app.documents.document_for(&a_path), Some(b));
         assert_eq!(app.documents.document_for(&b_path), None);
@@ -300,7 +300,7 @@ mod tests {
         app.documents.remove(&b).expect("b removed");
 
         let fallback = app.documents.get_or_anchor(&b);
-        assert_eq!(fallback.buffer.content(), "a");
+        assert_eq!(fallback.buffer().content(), "a");
         let _ = a;
     }
 }

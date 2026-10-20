@@ -243,7 +243,7 @@ fn launch_one_positional_reads_and_resolves_the_path_exactly_once() {
     )
     .expect("bootstrap should succeed");
 
-    assert_eq!(app.active_doc().buffer.content(), "hello");
+    assert_eq!(app.active_doc().buffer().content(), "hello");
     assert_eq!(
         counting.reads.load(Ordering::SeqCst),
         1,
@@ -308,7 +308,7 @@ fn launch_missing_positional_resolves_the_path_exactly_once() {
     )
     .expect("bootstrap should succeed");
 
-    assert_eq!(app.active_doc().buffer.content(), "");
+    assert_eq!(app.active_doc().buffer().content(), "");
     assert_eq!(
         counting.resolves.load(Ordering::SeqCst),
         1,

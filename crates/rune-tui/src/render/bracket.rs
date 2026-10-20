@@ -9,7 +9,7 @@ pub(super) fn apply_bracket_match(rows: &mut [Vec<Cell>], doc: &Document, theme:
     if !doc.has_insertion_point() {
         return;
     }
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     for cursor in doc.cursors().all() {
         let Some((open, close)) = pair_at_caret(content, cursor.position.get()) else {
             continue;

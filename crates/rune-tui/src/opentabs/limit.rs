@@ -180,7 +180,7 @@ mod tests {
         let next_lra = ids[2];
         let (version, content) = {
             let doc = app.doc(saving).unwrap();
-            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+            (doc.buffer().version(), Arc::from(doc.buffer().content()))
         };
         app.doc_mut(saving).unwrap().begin_save(version, content);
 

@@ -40,7 +40,7 @@ fn arm_direct_save(
 ) -> rune_tui::document::SaveTicket {
     let (version, content) = {
         let doc = app.doc(id).unwrap();
-        (doc.buffer.version(), Arc::from(doc.buffer.content()))
+        (doc.buffer().version(), Arc::from(doc.buffer().content()))
     };
     app.doc_mut(id).unwrap().begin_save(version, content)
 }
@@ -52,7 +52,7 @@ fn arm_direct_save(
 fn save_done_ok_with_durable_false_succeeds_and_warns() {
     let mut app = test_app();
     let id = app.active;
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
     let ticket = arm_direct_save(&mut app, id);
 
     let mut effects = Effects::default();
@@ -86,7 +86,7 @@ fn save_done_ok_with_durable_false_succeeds_and_warns() {
 fn save_done_with_a_stray_temp_warns_and_names_it() {
     let mut app = test_app();
     let id = app.active;
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
     let ticket = arm_direct_save(&mut app, id);
     let temp = PathBuf::from("/.doc.md.rune-tmp-1-1");
 
@@ -129,7 +129,7 @@ fn save_done_with_a_stray_temp_warns_and_names_it() {
 fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log() {
     let mut app = test_app();
     let id = app.active;
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
     let ticket = arm_direct_save(&mut app, id);
 
     let mut effects = Effects::default();
@@ -186,7 +186,7 @@ fn save_done_ok_keeps_an_unrelated_log_entry() {
     rune_tui::messages::warn(&mut app, "edit failed: some other message");
     assert!(rune_tui::messages::newest_text(&app).is_some());
 
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
     let ticket = arm_direct_save(&mut app, id);
     let mut effects2 = Effects::default();
     update(
@@ -217,14 +217,16 @@ fn save_done_ok_keeps_an_unrelated_log_entry() {
 fn save_done_err_surfaces_status_and_keeps_dirty() {
     let mut app = test_app();
     let id = app.active;
-    app.doc_mut(id).unwrap().buffer = app
+    let edited = app
         .doc(id)
         .unwrap()
-        .buffer
+        .buffer()
         .insert(0, "x")
         .expect("in-bounds insert should apply");
+    let doc = app.doc_mut(id).unwrap();
+    doc.install(edited, doc.cursors().clone());
     let before_saved = app.doc(id).unwrap().saved_version;
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
     let ticket = arm_direct_save(&mut app, id);
     let mut effects = Effects::default();
     update(
@@ -361,12 +363,14 @@ fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
             .expect("the launch path resolves");
     let mut app = App::new(Buffer::new("hello"), Some(launch), vfs, None);
     let id = app.active;
-    app.doc_mut(id).unwrap().buffer = app
+    let edited = app
         .doc(id)
         .unwrap()
-        .buffer
+        .buffer()
         .insert(0, "x")
-        .expect("in-bounds insert should apply"); // makes it dirty
+        .expect("in-bounds insert should apply");
+    let doc = app.doc_mut(id).unwrap();
+    doc.install(edited, doc.cursors().clone()); // makes it dirty
 
     let effects = press_save(&mut app);
     assert_eq!(effects.cmds.len(), 1);
@@ -400,7 +404,7 @@ fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
     assert_eq!(effects.cmds.len(), 1);
 
     edit::insert_char(&mut app, id, '!');
-    let after_edit_version = app.doc(id).unwrap().buffer.version();
+    let after_edit_version = app.doc(id).unwrap().buffer().version();
 
     settle_cmds(&mut app, effects); // delivers SaveDone for the OLD version
 

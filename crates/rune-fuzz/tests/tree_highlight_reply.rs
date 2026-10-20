@@ -53,11 +53,11 @@ fn parse_fixture() -> rune_ts::ParsedTree {
 #[test]
 fn tree_reply_with_default_linemap_is_invisible() {
     let mut app = new_app(FIXTURE);
-    let live_version = app.active_doc().buffer.version();
+    let live_version = app.active_doc().buffer().version();
     deliver_tree_reply(&mut app, LineMap::default(), parse_fixture(), live_version);
 
     let doc = app.active_doc();
-    let spans = visible_spans(doc, 0..doc.buffer.content().len());
+    let spans = visible_spans(doc, 0..doc.buffer().content().len());
     assert!(
         spans.is_empty(),
         "a Tree reply delivered with a default LineMap must stay invisible, got {spans:?}"
@@ -67,12 +67,12 @@ fn tree_reply_with_default_linemap_is_invisible() {
 #[test]
 fn tree_reply_with_real_linemap_surfaces_spans() {
     let mut app = new_app(FIXTURE);
-    let live_version = app.active_doc().buffer.version();
+    let live_version = app.active_doc().buffer().version();
     let map = LineMap::new(FIXTURE, tree_fixture_line_ranges(FIXTURE, 0));
     deliver_tree_reply(&mut app, map, parse_fixture(), live_version);
 
     let doc = app.active_doc();
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     let spans = visible_spans(doc, 0..content.len());
     assert!(
         !spans.is_empty(),
@@ -108,10 +108,10 @@ fn stale_tree_reply_is_dropped() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(key), &mut effects);
 
-    let content = app.active_doc().buffer.content().to_string();
+    let content = app.active_doc().buffer().content().to_string();
     let before = visible_spans(app.active_doc(), 0..content.len());
 
-    let live_version = app.active_doc().buffer.version();
+    let live_version = app.active_doc().buffer().version();
     assert!(
         live_version >= 1,
         "the edit above must have bumped the version"

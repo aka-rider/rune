@@ -59,7 +59,7 @@ fn load_with_one_step(db_id: i64, disk: &str, recovered: &str) -> rune_db::LoadR
 }
 
 fn load_ack(app: &mut App, id: DocumentId, load_result: rune_db::LoadResult) {
-    let issued_version = app.doc(id).expect("doc exists").buffer.version();
+    let issued_version = app.doc(id).expect("doc exists").buffer().version();
     handle_load_ack(
         app,
         id,

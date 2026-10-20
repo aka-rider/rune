@@ -147,7 +147,7 @@ fn a_paste_lands_in_the_find_field_not_the_editor() {
         "grep",
         "only the first pasted line survives sanitization"
     );
-    assert_eq!(app.active_doc().buffer.content(), "hello");
+    assert_eq!(app.active_doc().buffer().content(), "hello");
 }
 
 #[test]

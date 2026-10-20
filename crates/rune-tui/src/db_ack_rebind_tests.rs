@@ -185,7 +185,7 @@ fn opening_the_new_name_of_an_externally_renamed_open_file_reunites_its_tab() {
         Some(a)
     );
     assert_eq!(
-        app.doc(a).expect("doc exists").buffer.content(),
+        app.doc(a).expect("doc exists").buffer().content(),
         "the user's words"
     );
     assert_eq!(
@@ -195,7 +195,7 @@ fn opening_the_new_name_of_an_externally_renamed_open_file_reunites_its_tab() {
 
     pump_next_load_ack(&mut app);
     assert_eq!(
-        app.doc(a).expect("doc exists").buffer.content(),
+        app.doc(a).expect("doc exists").buffer().content(),
         "the user's words",
         "the re-baseline load must never touch the buffer"
     );
@@ -207,7 +207,8 @@ fn a_dirty_tab_at_the_old_name_keeps_both_tabs_and_warns() {
     let (mut app, a, vfs) = app_bound_at_old_md("the user's words");
     {
         let doc = app.doc_mut(a).expect("doc exists");
-        doc.buffer = doc.buffer.insert(0, "!! ").expect("edit applies");
+        let edited = doc.buffer().insert(0, "!! ").expect("edit applies");
+        doc.install(edited, doc.cursors().clone());
     }
     assert!(
         app.doc(a).expect("doc exists").is_dirty(),
@@ -225,7 +226,7 @@ fn a_dirty_tab_at_the_old_name_keeps_both_tabs_and_warns() {
         "nothing holding a fresh view is closed"
     );
     assert_eq!(
-        app.doc(a).expect("doc exists").buffer.content(),
+        app.doc(a).expect("doc exists").buffer().content(),
         "!! the user's words",
         "the dirty buffer is untouched"
     );

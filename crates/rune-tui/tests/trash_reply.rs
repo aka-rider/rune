@@ -50,7 +50,7 @@ fn dirty_at_reply_keeps_the_tab_open_with_a_warning() {
         session
             .app()
             .doc(id)
-            .map(|d| d.buffer.content().to_string()),
+            .map(|d| d.buffer().content().to_string()),
         Some("!a content".to_string())
     );
     let text = messages::log_text(session.app());

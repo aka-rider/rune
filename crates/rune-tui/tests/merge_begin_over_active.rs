@@ -177,9 +177,9 @@ fn begin_over_an_active_resolved_merge_tears_down_the_old_session_first() {
         .as_ref()
         .expect("the fresh resolver installs its own pane");
     assert!(
-        diff.left.buffer.content().contains("disk twice"),
+        diff.left.buffer().content().contains("disk twice"),
         "the fresh resolver must show the LATEST disk bytes, not a stale first attempt: {:?}",
-        diff.left.buffer.content()
+        diff.left.buffer().content()
     );
     assert_eq!(
         session.app().doc(doc_id).unwrap().display_name.as_deref(),

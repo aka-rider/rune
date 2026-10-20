@@ -146,7 +146,10 @@ pub fn assert_refused(session: &mut Session, mem: &Arc<Mem>, before_content: &st
         super::active_path(session.app()).as_deref(),
         Some(Path::new(DOC_PATH))
     );
-    assert_eq!(session.app().active_doc().buffer.content(), before_content);
+    assert_eq!(
+        session.app().active_doc().buffer().content(),
+        before_content
+    );
 
     assert!(session.deliver().is_none());
     assert!(session.deliver_db_all().is_none());

@@ -30,7 +30,7 @@ fn settled_span_texts(content: &str, path: &str) -> Vec<String> {
     let mut session = app_for(content, path);
     session.app_mut().sync_view();
     settle_highlight(&mut session);
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     all_spans(session.app())
         .into_iter()
         .filter_map(|(range, _)| updated.get(range).map(str::to_string))
@@ -117,7 +117,7 @@ fn nested_fence_spans_never_select_the_blockquote_prefix_bytes() {
     session.app_mut().sync_view();
     settle_highlight(&mut session);
 
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     let spans = all_spans(session.app());
     assert!(
         !spans.is_empty(),

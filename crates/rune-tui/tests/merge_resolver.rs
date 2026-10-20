@@ -36,7 +36,7 @@ fn enter_two_conflict_merge() -> (Session, DocumentId) {
     }
     assert!(session.key(bare(KeyCode::End)).is_none());
     assert!(session.key(ch('Z')).is_none());
-    assert_eq!(session.app().doc(doc_id).unwrap().buffer.content(), OURS);
+    assert_eq!(session.app().doc(doc_id).unwrap().buffer().content(), OURS);
     assert!(session.deliver_db_all().is_none());
 
     external_write(session.app().vfs.as_ref(), THEIRS);
@@ -80,11 +80,14 @@ fn merge_entry_shows_ours_in_place_and_theirs_in_the_left_pane() {
     let (session, doc_id) = enter_two_conflict_merge();
 
     let doc = session.app().doc(doc_id).unwrap();
-    assert_eq!(doc.buffer.content(), OURS);
-    assert!(!doc.buffer.content().contains("<<<<<<<"));
+    assert_eq!(doc.buffer().content(), OURS);
+    assert!(!doc.buffer().content().contains("<<<<<<<"));
     let diff = session.app().diff.as_ref().expect("pane view installed");
     assert_eq!(diff.right, doc_id);
-    assert_eq!(diff.left.buffer.content(), String::from_utf8_lossy(THEIRS));
+    assert_eq!(
+        diff.left.buffer().content(),
+        String::from_utf8_lossy(THEIRS)
+    );
 }
 
 #[test]
@@ -146,7 +149,7 @@ fn keep_ours_is_flag_only_and_take_theirs_is_one_journal_step() {
         pos_before,
         "keep-yours on an unedited conflict is a flag, not an edit"
     );
-    assert_eq!(doc.buffer.content(), OURS);
+    assert_eq!(doc.buffer().content(), OURS);
 
     let pos_before = session.app().doc(doc_id).unwrap().journal.pos();
     assert!(session.key(take_theirs()).is_none());
@@ -157,7 +160,7 @@ fn keep_ours_is_flag_only_and_take_theirs_is_one_journal_step() {
         "take-theirs is one journal step"
     );
     assert_eq!(
-        doc.buffer.content(),
+        doc.buffer().content(),
         "Xone\ntwo\nthree\nfour\nfive disk\n",
         "keep-yours kept line 1, take-theirs adopted line 5"
     );
@@ -218,7 +221,7 @@ fn fold_mode_at_the_default_width_keeps_the_save_gate_and_take_theirs_working() 
         rune_tui::messages::newest_text(session.app())
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "one disk\ntwo\nthree\nfour\nfiveZ\n"
     );
 }
@@ -231,7 +234,7 @@ fn save_is_refused_while_unresolved_and_allowed_after() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert!(session.key(sup('s')).is_none());
@@ -243,7 +246,7 @@ fn save_is_refused_while_unresolved_and_allowed_after() {
         rune_tui::messages::newest_text(session.app())
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         before,
         "a refused save must not touch the buffer"
     );
@@ -271,7 +274,7 @@ fn typing_inside_a_conflict_edits_the_buffer_and_marks_it_hand_edited() {
 
     let doc = session.app().doc(doc_id).unwrap();
     assert_eq!(
-        doc.buffer.content(),
+        doc.buffer().content(),
         "Xqone\ntwo\nthree\nfour\nfiveZ\n",
         "printable keys fall through to ordinary editing in merge mode"
     );
@@ -305,7 +308,7 @@ fn escape_exits_in_place_keeping_the_buffer() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert!(session.key(bare(KeyCode::Escape)).is_none());
@@ -316,7 +319,11 @@ fn escape_exits_in_place_keeping_the_buffer() {
         "exit tears the pane view down"
     );
     let doc = session.app().doc(doc_id).unwrap();
-    assert_eq!(doc.buffer.content(), before, "exit in place edits nothing");
+    assert_eq!(
+        doc.buffer().content(),
+        before,
+        "exit in place edits nothing"
+    );
     assert!(!doc.file_name().ends_with(": editor <-> disk"));
     assert!(
         rune_tui::messages::newest_text(session.app())
@@ -400,7 +407,7 @@ fn merge_active_arrow_chords_never_silently_scroll_or_swallow_input() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     let scroll_before = session.app().doc(doc_id).unwrap().viewport.scroll_row;
@@ -422,7 +429,7 @@ fn merge_active_arrow_chords_never_silently_scroll_or_swallow_input() {
     assert!(session.key(chord(KeyCode::Up, alt_sup)).is_none());
     let after_alt_up = session.app().doc(doc_id).unwrap();
     assert_eq!(
-        after_alt_up.buffer.content(),
+        after_alt_up.buffer().content(),
         content_before,
         "\u{2325}\u{2318}\u{2191} must not edit the buffer"
     );
@@ -438,7 +445,7 @@ fn merge_active_arrow_chords_never_silently_scroll_or_swallow_input() {
     assert!(session.key(chord(KeyCode::Up, bare_sup)).is_none());
     let after_bare = session.app().doc(doc_id).unwrap();
     assert_eq!(
-        after_bare.buffer.content(),
+        after_bare.buffer().content(),
         content_before,
         "bare \u{2318}\u{2191} must not edit the buffer"
     );

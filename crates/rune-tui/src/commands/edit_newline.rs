@@ -281,7 +281,7 @@ pub fn newline(app: &mut App, id: DocumentId) {
     let kind = doc.kind;
     let regions = regions_of(doc);
     let cursors_before = doc.cursors().clone();
-    let buf = &doc.buffer;
+    let buf = &doc.buffer();
 
     let mut owned: Vec<(Edit, CursorId)> = Vec::new();
     let mut exits: Vec<Edit> = Vec::new();
@@ -325,7 +325,7 @@ impl SmartBackspace {
         let kind = doc.kind;
         let wanted = doc.cursors().all().iter().any(|c| {
             !c.has_selection()
-                && Line::at(&doc.buffer, c.position.get()).is_some_and(|l| l.may_be_bare_marker())
+                && Line::at(doc.buffer(), c.position.get()).is_some_and(|l| l.may_be_bare_marker())
         });
         SmartBackspace {
             kind,

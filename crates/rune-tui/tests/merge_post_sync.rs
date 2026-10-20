@@ -232,7 +232,7 @@ fn save_after_completion_commits_without_cas_refusal() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
 
@@ -301,7 +301,7 @@ fn escape_out_with_unresolved_blocks_restores_affordances_and_ctrl_m_retries() {
     assert!(session.key(bare(KeyCode::Escape)).is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "Xone\ntwo\nthree\nfour\nfiveZ\n",
         "Esc-out keeps the working form's bytes in place"
     );

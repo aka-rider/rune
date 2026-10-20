@@ -142,7 +142,7 @@ fn shift_down_extends_the_selection_up_to_but_not_into_the_crlf_pair() {
 
 fn line_and_col(app: &mut App) -> (usize, usize) {
     let offset = caret(app);
-    let point = app.active_doc_mut().buffer.offset_to_line_col(offset);
+    let point = app.active_doc_mut().buffer().offset_to_line_col(offset);
     (point.line, point.col)
 }
 
@@ -271,7 +271,7 @@ fn paste(app: &mut App, text: &str) {
 }
 
 fn content(app: &mut App) -> String {
-    app.active_doc_mut().buffer.content().to_string()
+    app.active_doc_mut().buffer().content().to_string()
 }
 
 #[test]

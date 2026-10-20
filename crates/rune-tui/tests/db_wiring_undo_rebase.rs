@@ -159,11 +159,11 @@ fn undo_after_a_same_row_rebaseline_never_resurrects_undone_text() {
 
     send(&mut app, plain(KeyCode::End));
     type_text(&mut app, "cd");
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "aba contentcd");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "aba contentcd");
 
     rune_tui::commands::edit::undo(&mut app, id);
     rune_tui::commands::edit::undo(&mut app, id);
-    let undone_to = app.doc(id).unwrap().buffer.content().to_string();
+    let undone_to = app.doc(id).unwrap().buffer().content().to_string();
     assert_ne!(
         undone_to, "aba contentcd",
         "the undo presses must revert something"
@@ -180,7 +180,7 @@ fn undo_after_a_same_row_rebaseline_never_resurrects_undone_text() {
         rune_tui::messages::newest_text(&app)
     );
 
-    let buffer = app.doc(id).unwrap().buffer.content().to_string();
+    let buffer = app.doc(id).unwrap().buffer().content().to_string();
     app.db.take().expect("store wired").shutdown();
     assert_eq!(
         restart_recovered(&mem, &db_path),
@@ -196,7 +196,7 @@ fn record_rung(app: &App, id: rune_tui::document::DocumentId, ladder: &mut Vec<S
     let doc = app.doc(id).unwrap();
     let pos = doc.journal.pos();
     ladder.truncate(pos);
-    ladder.push(doc.buffer.content().to_string());
+    ladder.push(doc.buffer().content().to_string());
 }
 
 /// A same-row re-baseline `Load` leaves the writer's local-position
@@ -252,13 +252,13 @@ fn deep_undo_after_a_same_row_rebaseline_resolves_without_re_basing() {
         );
         let doc = app.doc(id).unwrap();
         assert_eq!(
-            doc.buffer.content(),
+            doc.buffer().content(),
             ladder[doc.journal.pos()],
             "the undo run must walk back through the states the user saw"
         );
         drain_db_ops(&mut app, &bridge);
     }
-    assert_eq!(app.doc(id).unwrap().buffer.content(), ladder[0]);
+    assert_eq!(app.doc(id).unwrap().buffer().content(), ladder[0]);
     assert!(
         !app.db.as_ref().unwrap().degraded,
         "the undo run must not degrade the store"
@@ -314,14 +314,14 @@ fn launch_adopted_draft_keeps_edits_and_undo_recoverable() {
     app.sync_view();
 
     rune_tui::db_ack::adopt_scratch_doc(&mut app, id, row_id, "recovered draft", &[]);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "recovered draft");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "recovered draft");
 
     send(&mut app, plain(KeyCode::End));
     type_text(&mut app, "!");
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "recovered draft!");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "recovered draft!");
 
     rune_tui::commands::edit::undo(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "recovered draft");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "recovered draft");
     drain_db_ops(&mut app, &bridge);
     assert!(!app.db.as_ref().unwrap().degraded);
 
@@ -394,9 +394,9 @@ fn undo_inside_the_binding_window_recovers_the_buffer_not_the_replayed_tail() {
     type_text(&mut app, "ab");
     send(&mut app, plain(KeyCode::Home));
     type_text(&mut app, "Z");
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "Zabseed");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "Zabseed");
     rune_tui::commands::edit::undo(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "abseed");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "abseed");
 
     let load_evt = wait_for_load(&bridge);
     send(&mut app, Msg::Db(load_evt));

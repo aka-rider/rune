@@ -91,7 +91,7 @@ fn pathless_draft_guard_save_focuses_the_title_and_abandons_the_quit_intent() {
 fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
     let mut app = test_app();
     let id = named_dirty_doc(&mut app, "/a.md");
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
 
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));
@@ -138,7 +138,7 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
 fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
     let mut app = test_app();
     let id = named_dirty_doc(&mut app, "/a.md");
-    let version = app.doc(id).unwrap().buffer.version();
+    let version = app.doc(id).unwrap().buffer().version();
 
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));

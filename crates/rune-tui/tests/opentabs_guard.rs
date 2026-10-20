@@ -42,7 +42,7 @@ fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
         .app()
         .doc(second)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     let mut effects = Effects::default();
@@ -53,7 +53,7 @@ fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
     );
 
     assert_eq!(
-        session.app().doc(second).unwrap().buffer.content(),
+        session.app().doc(second).unwrap().buffer().content(),
         before,
         "a key consumed by the Guard must never reach commands::edit"
     );
@@ -149,7 +149,7 @@ fn save_then_close_waits_for_the_save_done_ack() {
     assert_eq!(effects.cmds.len(), 1);
     assert_eq!(effects.cmds[0].kind(), CmdKind::Save);
 
-    let version = session.app().doc(second).unwrap().buffer.version();
+    let version = session.app().doc(second).unwrap().buffer().version();
     let cmd = effects.cmds.remove(0);
     let msg = cmd.run().expect("the Save Cmd replies with a Msg");
     // Sanity: the driver really did produce `SaveDone` for `second`.
@@ -189,7 +189,7 @@ fn a_failed_save_ack_leaves_the_document_open() {
     );
     assert_eq!(session.app().pending_close_on_save, Some(second));
 
-    let version = session.app().doc(second).unwrap().buffer.version();
+    let version = session.app().doc(second).unwrap().buffer().version();
     let ticket = session.app().doc(second).unwrap().save_ticket().unwrap();
     let mut effects2 = Effects::default();
     app::update(
@@ -225,7 +225,7 @@ fn escape_cancels_the_guard() {
         .app()
         .doc(second)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
 
@@ -242,7 +242,7 @@ fn escape_cancels_the_guard() {
     assert!(session.app().guard.is_none());
     assert!(session.app().documents.contains_key(&second));
     assert_eq!(
-        session.app().doc(second).unwrap().buffer.content(),
+        session.app().doc(second).unwrap().buffer().content(),
         content_before
     );
     assert!(

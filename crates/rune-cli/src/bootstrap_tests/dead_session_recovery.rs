@@ -218,7 +218,7 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
     .expect("second bootstrap should succeed");
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         "unsaved draft from a dead session",
         "the dead session's own draft must come back on the next launch"
     );
@@ -290,7 +290,7 @@ fn named_positional_dead_session_draft_is_recovered_on_relaunch_of_the_same_path
     .expect("relaunch of the same path should succeed");
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         "typed before the crash",
         "the dead session's own named draft must come back on a relaunch of the same path"
     );
@@ -351,7 +351,7 @@ fn named_positional_draft_is_not_adopted_by_a_different_positional() {
     .expect("relaunch of a different path should succeed");
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         "",
         "a differently-named positional must never adopt another path's draft"
     );
@@ -400,7 +400,7 @@ fn named_positional_draft_of_a_live_session_is_not_stolen() {
     .expect("a concurrent launch of the same path should still succeed");
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         "",
         "a live session's own named draft must never be handed to a concurrent launch"
     );

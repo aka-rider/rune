@@ -20,19 +20,19 @@ pub(super) fn apply_selection_matches(rows: &mut [Vec<Cell>], doc: &Document, th
     }
     let (start, end) = primary.selection_range();
     let (start, end) = (start.get(), end.get());
-    let Some(needle) = doc.buffer.slice(start, end).and_then(usable_needle) else {
+    let Some(needle) = doc.buffer().slice(start, end).and_then(usable_needle) else {
         return;
     };
     let Some(window) = super::overlay::visible_byte_range(rows) else {
         return;
     };
 
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     let reach = needle.len().saturating_sub(1);
     let lo = clamp_to_char_boundary(content, window.start.saturating_sub(reach));
     let hi = content.ceil_char_boundary(window.end.saturating_add(reach));
 
-    let needle_is_word = word_range_at(&doc.buffer, start) == (start, end);
+    let needle_is_word = word_range_at(doc.buffer(), start) == (start, end);
     let selections: Vec<(usize, usize)> = doc
         .cursors()
         .all()
@@ -48,7 +48,7 @@ pub(super) fn apply_selection_matches(rows: &mut [Vec<Cell>], doc: &Document, th
         if selections.contains(&(hit.start, hit.end)) {
             continue;
         }
-        if needle_is_word && word_range_at(&doc.buffer, hit.start) != (hit.start, hit.end) {
+        if needle_is_word && word_range_at(doc.buffer(), hit.start) != (hit.start, hit.end) {
             continue;
         }
         paint_range(rows, hit, theme.chrome.selection_match_bg);

@@ -170,7 +170,7 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
         Some(in_memory_db()),
     );
     let id = app.active;
-    let issued_version = app.doc(id).expect("doc exists").buffer.version();
+    let issued_version = app.doc(id).expect("doc exists").buffer().version();
 
     let load_result = rune_db::LoadResult {
         doc_id: rune_db::DocId(1),
@@ -227,7 +227,7 @@ fn binding_only_load_does_not_rehydrate() {
     app.doc_mut(id).expect("doc exists").replica =
         Replica::Bound(DocDb::new(3, PublishMode::CreateOnly, rune_db::Seq(0)));
     app.install_or_join_file_binding(3, None);
-    let issued_version = app.doc(id).expect("doc exists").buffer.version();
+    let issued_version = app.doc(id).expect("doc exists").buffer().version();
 
     let load_result = rune_db::LoadResult {
         doc_id: rune_db::DocId(7),
@@ -269,7 +269,7 @@ fn binding_only_load_does_not_rehydrate() {
     );
 
     assert_eq!(
-        app.doc(id).expect("doc exists").buffer.content(),
+        app.doc(id).expect("doc exists").buffer().content(),
         "live edits",
         "binding_only must never adopt recovered content into the buffer"
     );
@@ -334,7 +334,7 @@ fn load_ack_for(nlink: u64) -> (App, DocumentId) {
         Some(Db::new(store, bridge, false)),
     );
     let id = app.active;
-    let issued_version = app.doc(id).expect("doc exists").buffer.version();
+    let issued_version = app.doc(id).expect("doc exists").buffer().version();
     handle_load_ack(
         &mut app,
         id,
@@ -418,7 +418,10 @@ fn a_failed_load_detaches_the_replica_so_later_edits_are_not_buffered_forever() 
         &mut effects,
     );
 
-    assert_eq!(app.doc(id).expect("doc exists").buffer.content(), "xhello");
+    assert_eq!(
+        app.doc(id).expect("doc exists").buffer().content(),
+        "xhello"
+    );
     assert!(
         matches!(app.doc(id).expect("doc exists").replica, Replica::Detached),
         "an edit after the failed load must not be buffered for the store"

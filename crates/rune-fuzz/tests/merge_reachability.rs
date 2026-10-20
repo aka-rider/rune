@@ -161,7 +161,7 @@ fn session_with_a_store_reaches_an_active_resolver_on_divergence() {
             mods: Mods::NONE,
         },
     );
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
+    assert_eq!(app.doc(doc_id).unwrap().buffer().content(), "!hello");
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     // Theirs moves too: divergence is only caught on the away-and-back

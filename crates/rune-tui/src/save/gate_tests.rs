@@ -71,8 +71,8 @@ fn materialize_is_refused_with_feedback_when_the_document_is_no_longer_open() {
 fn bind_new_is_refused_with_feedback_while_a_save_is_in_flight() {
     let mut app = draft_app();
     let doc = app.active;
-    let content: Arc<str> = Arc::from(app.doc(doc).unwrap().buffer.content());
-    let version = app.doc(doc).unwrap().buffer.version();
+    let content: Arc<str> = Arc::from(app.doc(doc).unwrap().buffer().content());
+    let version = app.doc(doc).unwrap().buffer().version();
     let _ticket = app.doc_mut(doc).unwrap().begin_save(version, content);
     let posts_before = messages::posts(&app);
 

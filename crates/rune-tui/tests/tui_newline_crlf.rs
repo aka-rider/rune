@@ -8,7 +8,7 @@ use rune_tui::keymap::KeyCode;
 use tui_edit_common::{SHIFT, enter, press, with_carets, with_carets_at};
 
 fn content(app: &mut App) -> String {
-    app.active_doc_mut().buffer.content().to_string()
+    app.active_doc_mut().buffer().content().to_string()
 }
 
 #[test]

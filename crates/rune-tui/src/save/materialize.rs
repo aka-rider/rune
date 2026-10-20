@@ -29,7 +29,7 @@ pub(super) fn materialize_now(
     else {
         return;
     };
-    let content: Arc<str> = Arc::from(doc.buffer.content());
+    let content: Arc<str> = Arc::from(doc.buffer().content());
     let Some(binding) = app.doc_file_binding(id) else {
         materialize_ack::on_store_failure(
             app,
@@ -111,11 +111,11 @@ pub(crate) fn bind_new_now(
 ) {
     crate::commands::strip_trailing::leave_reading_then_strip(app, id);
     let Some(doc) = app.doc(id) else { return };
-    let version = doc.buffer.version();
+    let version = doc.buffer().version();
     let Some(db_id) = doc.doc_db().map(|d| d.db_id) else {
         return;
     };
-    let content: Arc<str> = Arc::from(doc.buffer.content());
+    let content: Arc<str> = Arc::from(doc.buffer().content());
     crate::db_enqueue::flush_pending_rebase(app, id);
     let Some(db) = app.db.as_ref() else { return };
     let seq = app

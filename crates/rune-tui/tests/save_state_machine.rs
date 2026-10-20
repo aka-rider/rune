@@ -45,7 +45,7 @@ fn second_save_refused_while_publishing() {
     let (mut app, bridge) = app_with_store(&mem);
     let id = app.active;
     type_text(&mut app, "!");
-    let first_content = app.doc(id).unwrap().buffer.content().to_string();
+    let first_content = app.doc(id).unwrap().buffer().content().to_string();
 
     let cmd = drive_to_publishing(&mut app, &bridge);
     assert_eq!(app.doc(id).unwrap().save_phase(), SavePhase::Publishing);
@@ -118,7 +118,7 @@ fn stale_vfs_done_never_promotes() {
     let record_evt = rename_common::wait_for_materialize_record(&bridge);
     send(&mut app, Msg::Db(record_evt));
     assert_eq!(app.doc(id).unwrap().save_phase(), SavePhase::Idle);
-    let saved_content_before = app.doc(id).unwrap().buffer.content().to_string();
+    let saved_content_before = app.doc(id).unwrap().buffer().content().to_string();
     let ops_before = app.db_ops.len();
     let db_id = app.doc(id).unwrap().doc_db().unwrap().db_id;
 
@@ -140,7 +140,7 @@ fn stale_vfs_done_never_promotes() {
     );
 
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        app.doc(id).unwrap().buffer().content(),
         saved_content_before,
         "a stale ticket must never promote anything"
     );
@@ -255,7 +255,7 @@ fn store_failure_mid_publish_does_not_abandon() {
     let (mut app, bridge) = app_with_store(&mem);
     let id = app.active;
     type_text(&mut app, "!");
-    let content = app.doc(id).unwrap().buffer.content().to_string();
+    let content = app.doc(id).unwrap().buffer().content().to_string();
 
     let cmd = drive_to_publishing(&mut app, &bridge);
 

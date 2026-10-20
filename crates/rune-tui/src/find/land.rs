@@ -27,7 +27,7 @@ pub(crate) fn follow_workspace(app: &mut App) {
         scanned = state
             .pattern
             .as_ref()
-            .map(|matcher| matcher.hits(origin_doc.buffer.content()))
+            .map(|matcher| matcher.hits(origin_doc.buffer().content()))
             .unwrap_or_default();
         &scanned
     };
@@ -184,7 +184,7 @@ pub(crate) fn land_at(app: &mut App, id: DocumentId, range: Range<usize>) {
     let Some(doc) = app.doc_mut(id) else {
         return;
     };
-    let len = doc.buffer.content().len();
+    let len = doc.buffer().content().len();
     let start = range.start.min(len);
     let end = range.end.min(len);
     select_range(doc, start, end);

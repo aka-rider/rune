@@ -284,7 +284,7 @@ fn apply_db_bootstrap(
     }
     app.db_banner = db_bootstrap.banner;
     if let Some(load) = db_bootstrap.loaded {
-        let issued_version = app.doc(first_doc_id).map(|doc| doc.buffer.version());
+        let issued_version = app.doc(first_doc_id).map(|doc| doc.buffer().version());
         rune_tui::db_ack::adopt_load(app, first_doc_id, *load, issued_version);
     }
     if let Some(doc_db) = db_bootstrap.doc_db {
@@ -303,7 +303,7 @@ fn bind_named_draft(
 ) {
     let mut row_content = String::new();
     if let Some(recovered) = recovered {
-        let disk_content = app.active_doc_mut().buffer.content().to_string();
+        let disk_content = app.active_doc_mut().buffer().content().to_string();
         if let rune_tui::document::Hydration::Refused(reason) =
             app.active_doc_mut()
                 .hydrate(&disk_content, &recovered.content, &recovered.cursors)

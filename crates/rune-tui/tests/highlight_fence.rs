@@ -44,7 +44,7 @@ const LEFT: KeyInput = KeyInput {
 /// a `CursorSet::new` poke. Bidirectional: `settle_highlight` leaves the
 /// caret at the document's end, past many callers' own target offset.
 fn place_caret(session: &mut Session, offset: usize) {
-    let len = session.app().active_doc().buffer.content().len();
+    let len = session.app().active_doc().buffer().content().len();
     let target = offset.min(len);
     let mut guard = 0usize;
     loop {
@@ -78,7 +78,7 @@ fn settled_span_texts(content: &str, path: &str, code_at: usize) -> Vec<String> 
     // parsers see byte-identical source — the comparison is about the
     // pipeline, not about what an edit outside a fence does to it.
     settle_after_insert(&mut session, code_at, "\n");
-    let doc_content = session.app().active_doc().buffer.content().to_string();
+    let doc_content = session.app().active_doc().buffer().content().to_string();
     all_spans(session.app())
         .into_iter()
         .filter_map(|(range, _)| doc_content.get(range).map(str::to_string))
@@ -161,7 +161,7 @@ fn every_fence_in_a_many_fence_document_highlights() {
                 .start()
         })
         .collect();
-    let end_of_document = doc.buffer.content().len();
+    let end_of_document = doc.buffer().content().len();
     let spans = all_spans(session.app());
     for (i, start) in starts.iter().enumerate() {
         let limit = starts.get(i + 1).copied().unwrap_or(end_of_document);
@@ -237,7 +237,7 @@ fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
 
     assert_eq!(
         session.app().active_doc().highlight.version,
-        session.app().active_doc().buffer.version(),
+        session.app().active_doc().buffer().version(),
         "the regions' maps must still have been refreshed to the new version"
     );
     assert_eq!(
@@ -252,7 +252,7 @@ fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
 
     // The colours must have MOVED with the text, not stayed at pre-edit
     // offsets: reusing a tree is only correct if the map was refreshed.
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     let texts: Vec<&str> = all_spans(session.app())
         .into_iter()
         .filter_map(|(range, _)| updated.get(range))
@@ -312,7 +312,7 @@ fn markdown_rust_fence_produces_spans_inside_the_fence_only() {
     session.app_mut().sync_view();
     settle_highlight(&mut session);
 
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     let fence_start = updated.find("fn main").expect("fixture has a fence body");
     let fence_end = updated
         .find("```\n\nOutro")
@@ -396,7 +396,7 @@ fn an_edit_before_a_fence_does_not_shift_its_spans() {
         }
     }
 
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     let fence_start = updated.find("fn main").expect("fence body");
     let fence_end = updated[fence_start..]
         .find("```")

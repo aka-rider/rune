@@ -102,7 +102,7 @@ pub(crate) fn rederive_after_jump(app: &mut App, id: DocumentId, deltas: &[Delta
         return;
     };
     let journal_pos = document.journal.pos();
-    let content = document.buffer.content().to_string();
+    let content = document.buffer().content().to_string();
     let MergeState::Active { session, .. } = &mut app.merge else {
         return;
     };

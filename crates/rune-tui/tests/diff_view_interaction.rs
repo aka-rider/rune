@@ -27,7 +27,7 @@ fn take_theirs_makes_the_region_same_and_undoes_in_one_step() {
     app::update(&mut app, Msg::Key(sup_shift('y')), &mut effects);
     app.sync_view();
 
-    assert_eq!(app.active_doc().buffer.content(), "same\nNEW\nsame2");
+    assert_eq!(app.active_doc().buffer().content(), "same\nNEW\nsame2");
     let regions = app
         .diff
         .as_ref()
@@ -45,7 +45,7 @@ fn take_theirs_makes_the_region_same_and_undoes_in_one_step() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl('z')), &mut effects);
     app.sync_view();
-    assert_eq!(app.active_doc().buffer.content(), "same\nOLD\nsame2");
+    assert_eq!(app.active_doc().buffer().content(), "same\nOLD\nsame2");
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn take_theirs_with_no_hunks_posts_a_status_instead_of_silently_doing_nothing() 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(sup_shift('y')), &mut effects);
 
-    assert_eq!(app.active_doc().buffer.content(), "same");
+    assert_eq!(app.active_doc().buffer().content(), "same");
     assert_eq!(
         rune_tui::messages::newest_text(&app),
         Some("no hunk to take")
@@ -67,7 +67,7 @@ fn take_ours_always_reports_feedback_without_touching_the_buffer() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(sup_shift('u')), &mut effects);
 
-    assert_eq!(app.active_doc().buffer.content(), "same\nOLD\nsame2");
+    assert_eq!(app.active_doc().buffer().content(), "same\nOLD\nsame2");
     assert_eq!(rune_tui::messages::newest_text(&app), Some("already yours"));
 }
 
@@ -100,7 +100,7 @@ fn diff_chords_are_ordinary_unbound_keys_when_no_diff_view_is_active() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(sup_shift('j')), &mut effects);
 
-    assert_eq!(app.active_doc().buffer.content(), "hello");
+    assert_eq!(app.active_doc().buffer().content(), "hello");
     assert!(app.diff.is_none());
 }
 
@@ -110,7 +110,7 @@ fn a_bare_j_falls_through_to_ordinary_insertion_not_next_hunk() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(key('j')), &mut effects);
     app.sync_view();
-    assert_eq!(app.active_doc().buffer.content(), "jhi");
+    assert_eq!(app.active_doc().buffer().content(), "jhi");
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn click_in_the_left_pane_moves_the_right_pane_caret_to_the_aligned_line() {
         &mut effects,
     );
 
-    let right_content = app.active_doc().buffer.content().to_string();
+    let right_content = app.active_doc().buffer().content().to_string();
     let expected = right_content.find("\nc").expect("c present in fileB") + 1;
     assert_eq!(
         app.active_doc().cursors().primary().position.get(),

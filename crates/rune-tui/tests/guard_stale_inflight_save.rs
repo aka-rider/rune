@@ -68,7 +68,13 @@ fn quit_save_fan_out_never_quits_over_a_stale_save_ack() {
     );
 
     assert!(session.type_("Y").is_none());
-    let dirty_content = session.app().doc(id).unwrap().buffer.content().to_string();
+    let dirty_content = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .buffer()
+        .content()
+        .to_string();
     assert_eq!(dirty_content, "XYhello");
 
     assert!(session.key(QUIT).is_none());
@@ -105,7 +111,7 @@ fn quit_save_fan_out_never_quits_over_a_stale_save_ack() {
         "the document must still be open"
     );
     assert_eq!(
-        session.app().doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer().content(),
         dirty_content,
         "the V2 edit, never persisted, must survive intact"
     );
@@ -134,7 +140,13 @@ fn dirty_close_never_closes_over_a_stale_save_ack() {
     );
 
     assert!(session.type_("Y").is_none());
-    let dirty_content = session.app().doc(id).unwrap().buffer.content().to_string();
+    let dirty_content = session
+        .app()
+        .doc(id)
+        .unwrap()
+        .buffer()
+        .content()
+        .to_string();
     assert_eq!(dirty_content, "XYhello");
 
     assert!(session.key(CLOSE).is_none());
@@ -164,7 +176,7 @@ fn dirty_close_never_closes_over_a_stale_save_ack() {
         "the document must still be open — the stale V1 ack must never close it"
     );
     assert_eq!(
-        session.app().doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer().content(),
         dirty_content,
         "the V2 edit, never persisted, must survive intact"
     );

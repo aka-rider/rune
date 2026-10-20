@@ -92,7 +92,7 @@ fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
     let mut app = app_with("text\n\n| a | b |\n|---|---|\n| a | c |\n");
     open_find(&mut app);
     press(&mut app, char_key('-'));
-    let version_before = app.active_doc().buffer.version();
+    let version_before = app.active_doc().buffer().version();
     press(&mut app, enter());
     assert_eq!(
         find(&app).current,
@@ -105,7 +105,7 @@ fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
         .set_cursors(CursorSet::new(table_offset));
     app.sync_view();
     assert_eq!(
-        app.active_doc().buffer.version(),
+        app.active_doc().buffer().version(),
         version_before,
         "revealing must never look like a buffer edit"
     );

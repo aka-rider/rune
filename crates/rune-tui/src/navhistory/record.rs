@@ -15,7 +15,7 @@ fn place_for(app: &App, doc: DocumentId, offset: usize, kind: PlaceKind) -> Opti
     Some(Place {
         doc,
         path: document.resolved_path().cloned(),
-        offset: rune_core::buffer::clamp_to_char_boundary(document.buffer.content(), offset),
+        offset: rune_core::buffer::clamp_to_char_boundary(document.buffer().content(), offset),
         kind,
     })
 }
@@ -34,7 +34,7 @@ fn same_doc_and_line(app: &App, a: &Place, b: &Place) -> bool {
     let Some(doc) = app.doc(a.doc) else {
         return false;
     };
-    doc.buffer.offset_to_line_col(a.offset).line == doc.buffer.offset_to_line_col(b.offset).line
+    doc.buffer().offset_to_line_col(a.offset).line == doc.buffer().offset_to_line_col(b.offset).line
 }
 
 fn push_with_line_dedup(app: &mut App, place: Place) {
@@ -90,7 +90,7 @@ pub fn observe_jump(app: &mut App, active_before: DocumentId, caret_before: usiz
     if caret_before == after_offset {
         return;
     }
-    let buffer = &app.active_doc().buffer;
+    let buffer = &app.active_doc().buffer();
     let before_line = buffer.offset_to_line_col(caret_before).line;
     let after_line = buffer.offset_to_line_col(after_offset).line;
     if before_line.abs_diff(after_line) < NAV_JUMP_LINES {

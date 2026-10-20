@@ -80,7 +80,7 @@ fn press_redo(app: &mut App) {
 }
 
 fn content(app: &App) -> String {
-    app.active_doc().buffer.content().to_string()
+    app.active_doc().buffer().content().to_string()
 }
 
 #[test]

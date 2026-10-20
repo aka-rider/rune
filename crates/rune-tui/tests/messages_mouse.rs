@@ -67,7 +67,7 @@ fn the_panes_copy_key_matches_every_editor_copy_binding() {
             Pane::Messages,
             "test setup: pane must be focused"
         );
-        let content = messages::doc(session.app()).buffer.content().to_string();
+        let content = messages::doc(session.app()).buffer().content().to_string();
         let start = content
             .find("hello world")
             .expect("test setup: log document must contain the posted text");

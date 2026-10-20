@@ -69,7 +69,7 @@ fn palette_editor_command_never_fires_with_title_focus() {
     session.key(plain_key(KeyCode::Enter));
 
     assert_eq!(
-        session.app().active_doc().buffer.content(),
+        session.app().active_doc().buffer().content(),
         DOC_CONTENT,
         "a palette command must never reach a document the title is renaming"
     );

@@ -32,7 +32,7 @@ fn refused_hydration_detaches() {
     // Dirties the buffer BEFORE the refusal, so the later save actually has
     // something to publish rather than short-circuiting on "not dirty".
     type_text(&mut app, "!");
-    let issued_version = app.doc(id).unwrap().buffer.version();
+    let issued_version = app.doc(id).unwrap().buffer().version();
 
     let load_result = rune_db::LoadResult {
         doc_id: rune_db::DocId(db_id),
@@ -84,7 +84,7 @@ fn refused_hydration_detaches() {
         "the refusal must be surfaced to the user"
     );
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        app.doc(id).unwrap().buffer().content(),
         "!a content",
         "hydrate never mutates the buffer before refusing"
     );

@@ -26,7 +26,7 @@ pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
     let production_rows = build_rows_or_empty(app);
     let rebuilt_rows = {
         let doc = app.shown_doc();
-        let forced = doc.doc.force_rebuild(&doc.buffer);
+        let forced = doc.doc.force_rebuild(doc.buffer());
         render::build_rows(app, render::RowSource::Shown, &forced)
     };
     if let Some(v) = invariant::sync_idempotent_rebuild(&production_rows, &rebuilt_rows) {
@@ -42,7 +42,7 @@ pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
 
 pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
     let view = app.active_doc().view.as_ref()?;
-    let content = app.active_doc().buffer.content();
+    let content = app.active_doc().buffer().content();
     let line_lens = invariant::wrap_line_lens(&view.wrap, line_count);
     invariant::wrap_rt(content, &view.wrap, &line_lens)
 }

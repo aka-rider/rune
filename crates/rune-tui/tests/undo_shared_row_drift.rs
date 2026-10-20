@@ -164,12 +164,12 @@ fn undo_in_one_tab_never_resolves_past_its_own_first_edit_when_a_sibling_tab_sha
     type_text(&mut app, "\u{3c9}");
     drain_db_ops(&mut app, &bridge);
 
-    assert_eq!(app.doc(id_a).unwrap().buffer.content(), "\u{3b1}\u{3c9}");
+    assert_eq!(app.doc(id_a).unwrap().buffer().content(), "\u{3b1}\u{3c9}");
     assert_eq!(app.doc(id_a).unwrap().journal.pos(), 2);
 
     rune_tui::commands::edit::undo(&mut app, id_a);
     assert_eq!(
-        app.doc(id_a).unwrap().buffer.content(),
+        app.doc(id_a).unwrap().buffer().content(),
         "\u{3b1}",
         "tab A's own local buffer must show only its first edit after one undo"
     );
@@ -228,14 +228,14 @@ fn an_edit_right_after_a_clean_external_reload_lands_at_the_wrong_offset_in_reco
     send(&mut app, Msg::Db(load_evt));
 
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        app.doc(id).unwrap().buffer().content(),
         "hello",
         "test setup: a clean-hydration NoChange leaves the buffer exactly as it was"
     );
 
     send(&mut app, plain(KeyCode::End));
     type_text(&mut app, "!");
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "hello!");
     drain_db_ops(&mut app, &bridge);
     assert!(
         !app.db.as_ref().unwrap().degraded,

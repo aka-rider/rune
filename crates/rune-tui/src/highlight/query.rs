@@ -17,7 +17,7 @@ use crate::document::Document;
 // (which has no `&mut Document`) share it, and means a stored span can be
 // stale without ever being unsafe to paint.
 pub fn visible_spans(doc: &Document, visible: Range<usize>) -> Vec<(Range<usize>, ScopeId)> {
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     let len = content.len();
     let mut collected: Vec<(Range<usize>, ScopeId)> = Vec::new();
 

@@ -247,7 +247,7 @@ fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
     );
 
     edit::delete_left(&mut app, id);
-    assert_eq!(app.doc(id).expect("doc").buffer.content(), "");
+    assert_eq!(app.doc(id).expect("doc").buffer().content(), "");
     let step = app
         .doc(id)
         .expect("doc")
@@ -262,9 +262,9 @@ fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
     );
 
     edit::undo(&mut app, id);
-    assert_eq!(app.doc(id).expect("doc").buffer.content(), "ab");
+    assert_eq!(app.doc(id).expect("doc").buffer().content(), "ab");
     edit::redo(&mut app, id);
-    assert_eq!(app.doc(id).expect("doc").buffer.content(), "");
+    assert_eq!(app.doc(id).expect("doc").buffer().content(), "");
 }
 
 /// The bug this WP fixes: `delete_selection_or_line` (cut's own
@@ -278,7 +278,7 @@ fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
 fn zero_width_edit_batch_on_an_empty_buffer_does_not_journal_or_dirty() {
     let mut app = app_with("");
     let id = app.active;
-    let version_before = app.doc(id).expect("doc").buffer.version();
+    let version_before = app.doc(id).expect("doc").buffer().version();
     let journal_len_before = app.doc(id).expect("doc").journal.len();
     assert!(!app.doc(id).expect("doc").is_dirty());
 
@@ -286,7 +286,7 @@ fn zero_width_edit_batch_on_an_empty_buffer_does_not_journal_or_dirty() {
 
     let doc = app.doc(id).expect("doc");
     assert_eq!(
-        doc.buffer.version(),
+        doc.buffer().version(),
         version_before,
         "a zero-width no-op must not bump the buffer version"
     );
@@ -312,16 +312,20 @@ fn zero_width_edit_batch_on_an_empty_last_line_does_not_journal_or_dirty() {
     let id = app.active;
     let doc = app.doc_mut(id).expect("doc");
     doc.set_cursors(CursorSet::new(2));
-    let version_before = app.doc(id).expect("doc").buffer.version();
+    let version_before = app.doc(id).expect("doc").buffer().version();
     let journal_len_before = app.doc(id).expect("doc").journal.len();
     assert!(!app.doc(id).expect("doc").is_dirty());
 
     edit::delete_selection_or_line(&mut app, id);
 
     let doc = app.doc(id).expect("doc");
-    assert_eq!(doc.buffer.content(), "a\n", "the buffer must be untouched");
     assert_eq!(
-        doc.buffer.version(),
+        doc.buffer().content(),
+        "a\n",
+        "the buffer must be untouched"
+    );
+    assert_eq!(
+        doc.buffer().version(),
         version_before,
         "a zero-width no-op must not bump the buffer version"
     );
@@ -344,7 +348,7 @@ fn zero_width_edit_batch_on_an_empty_last_line_does_not_journal_or_dirty() {
 fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
     let mut app = app_with("ab");
     let id = app.active;
-    let version_before = app.doc(id).expect("doc").buffer.version();
+    let version_before = app.doc(id).expect("doc").buffer().version();
     let cursors_before = app.doc(id).expect("doc").cursors().clone();
 
     let infos = vec![
@@ -368,9 +372,13 @@ fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
     commit_edit_batch(&mut app, id, infos, &cursors_before, EditKind::Other);
 
     let doc = app.doc(id).expect("doc");
-    assert_eq!(doc.buffer.content(), "b", "the real edit must still apply");
     assert_eq!(
-        doc.buffer.version(),
+        doc.buffer().content(),
+        "b",
+        "the real edit must still apply"
+    );
+    assert_eq!(
+        doc.buffer().version(),
         version_before + 1,
         "the surviving batch must bump the version exactly once"
     );
@@ -385,7 +393,7 @@ fn genuinely_conflicting_overlapping_edits_refuse_with_a_visible_message() {
     let mut app = app_with("hello world");
     let id = app.active;
     let cursors_before = app.doc(id).expect("doc").cursors().clone();
-    let version_before = app.doc(id).expect("doc").buffer.version();
+    let version_before = app.doc(id).expect("doc").buffer().version();
 
     let infos = vec![
         (
@@ -410,11 +418,11 @@ fn genuinely_conflicting_overlapping_edits_refuse_with_a_visible_message() {
     assert!(!applied, "a genuine overlap must refuse, not apply");
     let doc = app.doc(id).expect("doc");
     assert_eq!(
-        doc.buffer.content(),
+        doc.buffer().content(),
         "hello world",
         "the buffer must be untouched"
     );
-    assert_eq!(doc.buffer.version(), version_before);
+    assert_eq!(doc.buffer().version(), version_before);
     assert!(messages::log_text(&app).contains("edit failed"));
 }
 
@@ -439,7 +447,7 @@ fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
     edit::delete_left(&mut app, id);
 
     let doc = app.doc(id).expect("doc");
-    assert_eq!(doc.buffer.content(), "");
+    assert_eq!(doc.buffer().content(), "");
     let cursors = doc.cursors().all();
     assert_eq!(
         cursors.len(),
@@ -469,7 +477,7 @@ fn a_mutating_command_against_a_read_only_document_posts_the_reason_once_even_wh
     edit::insert_char(&mut app, id, 'y');
 
     assert_eq!(
-        app.doc(id).expect("doc").buffer.content(),
+        app.doc(id).expect("doc").buffer().content(),
         "hello",
         "a read-only document must never be mutated"
     );

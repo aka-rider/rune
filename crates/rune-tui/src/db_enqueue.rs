@@ -139,7 +139,7 @@ fn resolve_drift(
 
     let new_buffer_content = app
         .doc(id)
-        .map(|d| d.buffer.content().to_string())
+        .map(|d| d.buffer().content().to_string())
         .unwrap_or_default();
     let mut diverged = app
         .doc(id)
@@ -265,7 +265,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize, pre_conten
 // here again.
 fn rebase_move(app: &mut App, id: DocumentId, pre_content: &str) {
     let current = match app.doc(id) {
-        Some(doc) => doc.buffer.content().to_string(),
+        Some(doc) => doc.buffer().content().to_string(),
         None => return,
     };
     let bridged = pre_content != current;

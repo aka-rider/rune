@@ -198,7 +198,7 @@ fn gather_overrides(app: &App, root: &Path) -> Vec<(PathBuf, String)> {
             if !resolved.starts_with(root) {
                 return None;
             }
-            let content = doc.buffer.content();
+            let content = doc.buffer().content();
             if content.len() as u64 > index::MAX_INDEX_FILE_BYTES {
                 return None;
             }

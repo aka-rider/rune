@@ -184,7 +184,7 @@ fn merge_discard_adoption_in_one_tab_advances_the_shared_baseline_for_both() {
     assert!(session.deliver_db_all().is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
     assert_eq!(
-        session.app().doc(id_a).unwrap().buffer.content(),
+        session.app().doc(id_a).unwrap().buffer().content(),
         "disk changed underneath"
     );
 

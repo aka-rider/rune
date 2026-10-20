@@ -32,7 +32,7 @@ fn enter_disk_conflict_guard(disk_bytes: &[u8]) -> (Session, DocumentId) {
 
     assert!(session.key(ch('!')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(session.deliver_db().is_none());
@@ -84,7 +84,7 @@ fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
 
@@ -92,7 +92,10 @@ fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
 
     assert!(session.app().guard.is_none());
     assert_eq!(session.app().merge, MergeState::Inactive);
-    assert_eq!(session.app().doc(doc_id).unwrap().buffer.content(), before);
+    assert_eq!(
+        session.app().doc(doc_id).unwrap().buffer().content(),
+        before
+    );
     assert!(
         footer::footer_text(session.app()).contains("\u{21c4} disk changed  ^M merge"),
         "the footer must fall through to the disk-changed hint, got: {}",
@@ -170,7 +173,7 @@ fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {
     assert!(session.deliver_db_all().is_none());
 
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "disk changed twice",
         "Discard must adopt the LATEST disk bytes, not a stale snapshot"
     );
@@ -183,7 +186,7 @@ fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {
 
     assert!(session.key(sup('z')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
 }

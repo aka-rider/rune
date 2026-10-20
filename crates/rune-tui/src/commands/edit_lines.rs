@@ -46,12 +46,12 @@ fn per_selected_line_edits(
     let before = cursors_before.all().to_vec();
 
     let mut infos: Vec<(Edit, CursorId)> = Vec::new();
-    for block in touching_line_blocks(&before, &doc.buffer) {
+    for block in touching_line_blocks(&before, doc.buffer()) {
         let Some(owner) = block.cursors.first() else {
             continue;
         };
         for line in block.lines {
-            if let Some(edit) = build(line, &doc.buffer) {
+            if let Some(edit) = build(line, doc.buffer()) {
                 infos.push((edit, owner.id));
             }
         }
@@ -197,7 +197,7 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
     let view = doc.view();
     let cursors_before = doc.cursors().clone();
     let Some(Deletion { edits, landings }) =
-        plan_deletion(cursors_before.all(), &doc.buffer, &view)
+        plan_deletion(cursors_before.all(), doc.buffer(), &view)
     else {
         messages::error(app, "delete line failed: a line fell outside the buffer");
         return;

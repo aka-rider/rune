@@ -41,7 +41,7 @@ pub fn app_for(content: &str, path: &str) -> Session {
 /// (`Motion::LineEnd`), not the end of the document, and a document-end walk
 /// needs to cross line boundaries too.
 fn place_caret(session: &mut Session, offset: usize) {
-    let len = session.app().active_doc().buffer.content().len();
+    let len = session.app().active_doc().buffer().content().len();
     let target = offset.min(len);
     let mut guard = 0usize;
     loop {
@@ -71,7 +71,7 @@ fn place_caret(session: &mut Session, offset: usize) {
 /// refreshes the block tree itself, so an edit BEFORE a fence is equally
 /// safe — the sibling regression test below covers exactly that.
 pub fn type_one_char_at_end(session: &mut Session, effects: &mut Effects) {
-    let end = session.app().active_doc().buffer.content().len();
+    let end = session.app().active_doc().buffer().content().len();
     place_caret(session, end);
     app::update(
         session.app_mut(),
@@ -150,7 +150,7 @@ pub fn span_reply(spans: Vec<(Range<usize>, ScopeId)>) -> HighlightReply {
 /// renderer runs, over the whole buffer instead of one viewport window.
 pub fn all_spans(app: &App) -> Vec<(Range<usize>, ScopeId)> {
     let doc = app.active_doc();
-    highlight::visible_spans(doc, 0..doc.buffer.content().len())
+    highlight::visible_spans(doc, 0..doc.buffer().content().len())
 }
 
 /// Whether the active document's region at `index` is backed by a retained

@@ -20,13 +20,13 @@ pub(super) fn apply(rows: &mut [Vec<Cell>], app: &App, doc: &Document, view: &Vi
     let Ok(matcher) = &state.pattern else {
         return;
     };
-    if state.doc != app.active || state.buffer_version != doc.buffer.version() {
+    if state.doc != app.active || state.buffer_version != doc.buffer().version() {
         return;
     }
     let Some(window) = super::overlay::visible_byte_range(rows) else {
         return;
     };
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     let boxed: Vec<bool> = crate::row_meta::row_meta(view, app)
         .iter()
         .map(|meta| meta.boxed)

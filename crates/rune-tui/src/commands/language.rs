@@ -12,7 +12,7 @@ pub fn set_language(app: &mut App, id: DocumentId, choice: LanguageChoice, effec
     let kind = match choice {
         LanguageChoice::Auto => {
             doc.kind_pinned = false;
-            kind_for(doc.path(), doc.buffer.content())
+            kind_for(doc.path(), doc.buffer().content())
         }
         LanguageChoice::Markdown => {
             doc.kind_pinned = true;
@@ -66,17 +66,17 @@ mod tests {
     fn switching_to_a_language_reparses_at_the_same_buffer_version() {
         let mut app = app_with("fn main() {}\n");
         let id = app.active;
-        let before_version = app.doc(id).unwrap().buffer.version();
+        let before_version = app.doc(id).unwrap().buffer().version();
         let rust = LangId::from_name("rust").expect("rust is a known language");
         let mut effects = Effects::default();
 
         set_language(&mut app, id, LanguageChoice::Lang(rust), &mut effects);
 
         let doc = app.doc(id).unwrap();
-        assert_eq!(doc.buffer.version(), before_version);
+        assert_eq!(doc.buffer().version(), before_version);
         assert_eq!(doc.kind, DocumentKind::Code(rust));
         assert!(doc.kind_pinned);
-        assert_eq!(doc.doc.built_version(), doc.buffer.version());
+        assert_eq!(doc.doc.built_version(), doc.buffer().version());
     }
 
     #[test]

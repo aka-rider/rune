@@ -336,7 +336,7 @@ fn handle_diff_left_click(
     let Some(doc) = app.doc_mut(right) else {
         return;
     };
-    let offset = line_offset(&doc.buffer, target_line);
+    let offset = line_offset(doc.buffer(), target_line);
     doc.set_cursors(CursorSet::new(offset));
     nav_scroll::scroll_to_byte_offset(doc, offset);
 }
@@ -344,7 +344,7 @@ fn handle_diff_left_click(
 fn diff_left_click_target(app: &App, row: u16, col: u16) -> Option<(DocumentId, usize)> {
     let diff = app.diff.as_ref()?;
     let (offset, _) = hit_test(app, &diff.left, row, col)?;
-    let left_line = diff.left.buffer.offset_to_line_col(offset).line;
+    let left_line = diff.left.buffer().offset_to_line_col(offset).line;
     let right_line = right_line_for_left_line(&diff.alignment, left_line);
     Some((diff.right, right_line))
 }
@@ -376,12 +376,12 @@ pub(crate) fn place_click_cursor(
             true
         }
         2 => {
-            let (start, end) = word_range_at(&doc.buffer, offset);
+            let (start, end) = word_range_at(doc.buffer(), offset);
             select_range(doc, start, end);
             false
         }
         _ => {
-            let (start, end) = line_range_incl_newline(&doc.buffer, offset);
+            let (start, end) = line_range_incl_newline(doc.buffer(), offset);
             select_range(doc, start, end);
             false
         }

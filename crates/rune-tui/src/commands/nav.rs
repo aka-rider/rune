@@ -237,7 +237,7 @@ pub(crate) fn move_cursors(
         .cursors()
         .all()
         .iter()
-        .map(|&c| step(&view, &doc.buffer, c, extend))
+        .map(|&c| step(&view, doc.buffer(), c, extend))
         .collect();
     doc.set_cursors(CursorSet::new_from(&new_cursors));
 }
@@ -282,7 +282,7 @@ pub fn match_bracket(doc: &mut Document, extend: Extend) {
 
 pub fn select_all(doc: &mut Document) {
     let mut c = doc.cursors().primary();
-    c.position = BufferOffset(doc.buffer.len());
+    c.position = BufferOffset(doc.buffer().len());
     c.anchor = BufferOffset(0);
     c.desired_col = VisualCol(0);
     doc.set_cursors(CursorSet::new_from(&[c]));

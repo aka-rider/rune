@@ -208,7 +208,7 @@ fn typing_prose_with_former_leader_letters_inserts_literal_text_only() {
         for ch in word.chars() {
             press(&mut app, KeyCode::Char(ch), NONE);
         }
-        assert_eq!(app.active_doc().buffer.content(), format!("hello{word}"));
+        assert_eq!(app.active_doc().buffer().content(), format!("hello{word}"));
         assert_eq!(app.focus(), Pane::Editor);
         assert!(!app.splits.left.is_shown());
     }
@@ -234,7 +234,7 @@ fn cmd_x_is_still_cut_never_a_focus_chord() {
 
     assert!(!app.splits.left.is_shown());
     assert_eq!(app.focus(), Pane::Editor);
-    assert_eq!(app.active_doc().buffer.content(), " world");
+    assert_eq!(app.active_doc().buffer().content(), " world");
 }
 
 /// Escape's cascade, step 1: multiple cursors collapse to the primary and

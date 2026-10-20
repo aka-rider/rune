@@ -130,7 +130,7 @@ fn help_tab_table_stays_boxed_when_the_cursor_lands_inside_it() {
 
     // Land the cursor on a real data row of the `## Global` table, just
     // past its `| --- | --- |` separator.
-    let content = app.active_doc().buffer.content().to_string();
+    let content = app.active_doc().buffer().content().to_string();
     let separator = "| --- | --- |\n";
     let data_row_start = content
         .find(separator)
@@ -222,12 +222,12 @@ fn ctrl_shift_p_on_the_help_tab_refuses_and_posts_a_message() {
 fn a_printable_key_in_reading_view_never_mutates_the_buffer() {
     let mut app = app_basic("hello world");
     app.active_doc_mut().read_only = ReadOnly::Reading;
-    let before = app.active_doc().buffer.content().to_string();
+    let before = app.active_doc().buffer().content().to_string();
 
     send(&mut app, plain(KeyCode::Char('x')));
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         before,
         "a printable key must not mutate a reading-view document"
     );
@@ -306,7 +306,7 @@ fn ctrl_shift_p_while_the_title_holds_focus_does_not_derail_an_in_progress_renam
     let mut app = rename_common::app_with(&mem);
     let (version, content) = {
         let d = app.active_doc();
-        (d.buffer.version(), Arc::from(d.buffer.content()))
+        (d.buffer().version(), Arc::from(d.buffer().content()))
     };
     app.active_doc_mut().begin_save(version, content);
 
@@ -401,15 +401,15 @@ fn ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view() {
 
     send(&mut app, plain(KeyCode::End));
     send(&mut app, plain(KeyCode::Char('!')));
-    assert_eq!(app.active_doc().buffer.content(), "hello!");
+    assert_eq!(app.active_doc().buffer().content(), "hello!");
 
     app.active_doc_mut().read_only = ReadOnly::Reading;
-    let content_before = app.active_doc().buffer.content().to_string();
+    let content_before = app.active_doc().buffer().content().to_string();
     let dirty_before = app.active_doc().is_dirty();
 
     send(&mut app, sup('z'));
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         content_before,
         "⌘Z must not mutate a reading-view document"
     );
@@ -421,7 +421,7 @@ fn ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view() {
 
     send(&mut app, sup_shift('z'));
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         content_before,
         "⌘⇧Z must not mutate a reading-view document"
     );

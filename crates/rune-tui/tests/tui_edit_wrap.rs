@@ -40,7 +40,7 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
     let view = app.active_doc_mut().view();
     let bp = app
         .active_doc_mut()
-        .buffer
+        .buffer()
         .offset_to_line_col(after_down.position.get());
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
@@ -56,7 +56,7 @@ const INLINE_CODE_WIDTH: u16 = 37;
 
 fn wrap_row_of(app: &mut App, pos: usize) -> usize {
     let view = app.active_doc_mut().view();
-    let bp = app.active_doc_mut().buffer.offset_to_line_col(pos);
+    let bp = app.active_doc_mut().buffer().offset_to_line_col(pos);
     let sp = view.syntax.buffer_to_syntax(bp);
     view.wrap.syntax_to_wrap(sp).row
 }
@@ -368,7 +368,7 @@ fn app_with_wide_table(caret: usize) -> App {
 }
 
 fn line_of(app: &mut App, pos: usize) -> usize {
-    app.active_doc_mut().buffer.offset_to_line_col(pos).line
+    app.active_doc_mut().buffer().offset_to_line_col(pos).line
 }
 
 /// The table's last source line carries several wrap segments once the

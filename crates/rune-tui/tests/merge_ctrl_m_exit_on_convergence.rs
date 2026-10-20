@@ -89,7 +89,7 @@ fn ctrl_m_closes_an_active_merge_once_the_disk_reconverges_with_a_hunk_still_unr
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     external_write(session.app().vfs.as_ref(), converged.as_bytes());

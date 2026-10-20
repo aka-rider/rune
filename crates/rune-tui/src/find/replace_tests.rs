@@ -47,7 +47,7 @@ fn replace_field(app: &App) -> &FieldState {
 }
 
 fn content(app: &App) -> &str {
-    app.active_doc().buffer.content()
+    app.active_doc().buffer().content()
 }
 
 #[test]
@@ -94,13 +94,13 @@ fn reading_mode_refuses_a_replace_without_claiming_success() {
     press(&mut app, key(KeyCode::Char('P'), CTRL));
     assert!(app.active_doc().is_read_only(), "reading view is on");
     open_replace_for(&mut app, "dog", "bird");
-    let version = app.active_doc().buffer.version();
+    let version = app.active_doc().buffer().version();
 
     press(&mut app, enter());
     press(&mut app, shift_enter());
 
     assert_eq!(content(&app), "dog cat dog");
-    assert_eq!(app.active_doc().buffer.version(), version);
+    assert_eq!(app.active_doc().buffer().version(), version);
     let newest = crate::messages::newest_text(&app).unwrap_or_default();
     assert!(!newest.contains("replaced"), "{newest:?}");
     assert!(newest.contains("reading view"), "{newest:?}");
@@ -189,12 +189,12 @@ fn enter_in_replace_with_an_invalid_regex_says_no_match_instead_of_swallowing_th
     );
     open_replace(&mut app);
     type_str(&mut app, "x");
-    let version = app.active_doc().buffer.version();
+    let version = app.active_doc().buffer().version();
 
     press(&mut app, enter());
 
     assert_eq!(content(&app), "dog [cat]");
-    assert_eq!(app.active_doc().buffer.version(), version);
+    assert_eq!(app.active_doc().buffer().version(), version);
     assert_eq!(
         crate::messages::newest_text(&app),
         Some("no match to replace")
@@ -205,13 +205,13 @@ fn enter_in_replace_with_an_invalid_regex_says_no_match_instead_of_swallowing_th
 fn replace_all_with_nothing_to_replace_says_so() {
     let mut app = app_with("cat");
     open_replace_for(&mut app, "dog", "x");
-    let version = app.active_doc().buffer.version();
+    let version = app.active_doc().buffer().version();
 
     press(&mut app, shift_enter());
     press(&mut app, enter());
 
     assert_eq!(content(&app), "cat");
-    assert_eq!(app.active_doc().buffer.version(), version);
+    assert_eq!(app.active_doc().buffer().version(), version);
     assert_eq!(
         crate::messages::newest_text(&app),
         Some("no match to replace")

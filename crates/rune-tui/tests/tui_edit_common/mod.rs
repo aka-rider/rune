@@ -124,7 +124,7 @@ pub fn with_carets_at(path: &str, marked: &str) -> App {
 
 pub fn marked(app: &mut App) -> String {
     let doc = app.active_doc_mut();
-    let mut text = doc.buffer.content().to_string();
+    let mut text = doc.buffer().content().to_string();
     let mut carets: Vec<usize> = doc
         .cursors()
         .all()

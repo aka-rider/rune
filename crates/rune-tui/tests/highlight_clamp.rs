@@ -27,9 +27,9 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
     let content = "日本語\n";
     let mut session = app_for(content, "/x/main.rs");
     let id = session.app().active;
-    let len = session.app().doc(id).expect("doc").buffer.content().len();
+    let len = session.app().doc(id).expect("doc").buffer().content().len();
     assert_eq!(len, 10);
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     let keyword = scope_table().resolve("keyword").expect("known scope");
 
     let mut effects = Effects::default();
@@ -53,7 +53,7 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
         .app()
         .doc(id)
         .expect("doc")
-        .buffer
+        .buffer()
         .content()
         .to_string();
     for (range, _) in &spans {
@@ -79,7 +79,7 @@ fn a_stored_span_is_re_clamped_after_the_buffer_shrinks() {
     let mut session = app_for("fn main() {}\n", "/x/main.rs");
     let id = session.app().active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
 
     let mut effects = Effects::default();
     app::update(
@@ -95,14 +95,15 @@ fn a_stored_span_is_re_clamped_after_the_buffer_shrinks() {
     {
         let app = session.app_mut();
         let doc = app.doc_mut(id).expect("doc");
-        doc.buffer = doc.buffer.delete(2, 13).expect("in-bounds delete");
+        let edited = doc.buffer().delete(2, 13).expect("in-bounds delete");
+        doc.install(edited, doc.cursors().clone());
     }
 
     let content = session
         .app()
         .doc(id)
         .expect("doc")
-        .buffer
+        .buffer()
         .content()
         .to_string();
     for (range, _) in all_spans(session.app()) {

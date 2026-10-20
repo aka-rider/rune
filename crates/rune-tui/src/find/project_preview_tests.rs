@@ -13,7 +13,7 @@ use crate::viewport::ScrollMode;
 
 fn expected_display_row(doc: &mut Document, offset: usize) -> usize {
     let view = doc.view();
-    let bp = doc.buffer.offset_to_line_col(offset);
+    let bp = doc.buffer().offset_to_line_col(offset);
     let sp = view.syntax.buffer_to_syntax(bp);
     let wrap_row = WrapRow(view.wrap.syntax_to_wrap(sp).row);
     view.display.wrap_to_display(wrap_row).0

@@ -75,7 +75,7 @@ fn apply_plan(app: &mut App, id: DocumentId, plan: Plan) {
     let Some(doc) = app.doc(id) else { return };
     let Plan { edits, placed } = plan;
     if edits.is_empty() {
-        let landed: Vec<Cursor> = placed.iter().map(|p| p.land(&doc.buffer)).collect();
+        let landed: Vec<Cursor> = placed.iter().map(|p| p.land(doc.buffer())).collect();
         if let Some(doc) = app.doc_mut(id) {
             doc.set_cursors(CursorSet::new_from(&landed));
         }
@@ -108,8 +108,8 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
 
 fn clone_lines(app: &mut App, id: DocumentId, selection: SelectionStays) {
     let Some(doc) = app.doc(id) else { return };
-    let blocks = overlapping_line_blocks(doc.cursors().all(), &doc.buffer);
-    match plan_clones(&doc.buffer, &blocks, selection) {
+    let blocks = overlapping_line_blocks(doc.cursors().all(), doc.buffer());
+    match plan_clones(doc.buffer(), &blocks, selection) {
         Ok(plan) => apply_plan(app, id, plan),
         Err(refusal) => refusal.report(app),
     }
@@ -191,8 +191,8 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
 
 fn move_lines(app: &mut App, id: DocumentId, shift: &Shift) {
     let Some(doc) = app.doc(id) else { return };
-    let blocks = touching_line_blocks(doc.cursors().all(), &doc.buffer);
-    match plan_moves(&doc.buffer, &blocks, shift) {
+    let blocks = touching_line_blocks(doc.cursors().all(), doc.buffer());
+    match plan_moves(doc.buffer(), &blocks, shift) {
         Ok(plan) => apply_plan(app, id, plan),
         Err(refusal) => refusal.report(app),
     }

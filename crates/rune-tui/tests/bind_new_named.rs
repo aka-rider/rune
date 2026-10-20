@@ -132,7 +132,7 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
         "the document must come out of the create bound to the file's own row"
     );
     assert_eq!(
-        session.app().doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer().content(),
         UNPUBLISHED_BODY,
         "the user's typed body must never be clobbered by the hand-off's Load"
     );
@@ -176,7 +176,7 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
         rune_tui::messages::newest_text(session.app())
     );
     assert!(
-        session.app().doc(id).unwrap().buffer.content() == UNPUBLISHED_BODY,
+        session.app().doc(id).unwrap().buffer().content() == UNPUBLISHED_BODY,
         "the buffer must stay exactly as typed"
     );
     let doc_db = session

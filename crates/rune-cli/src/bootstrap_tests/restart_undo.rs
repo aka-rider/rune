@@ -77,9 +77,9 @@ fn a_file_relaunched_after_a_crash_undoes_the_dead_sessions_edits_step_by_step()
     .expect("relaunch should succeed");
 
     let id = app.active;
-    assert_eq!(app.active_doc().buffer.content(), "hello world!");
+    assert_eq!(app.active_doc().buffer().content(), "hello world!");
     rune_tui::commands::edit::undo(&mut app, id);
-    assert_eq!(app.active_doc().buffer.content(), "hello world");
+    assert_eq!(app.active_doc().buffer().content(), "hello world");
     rune_tui::commands::edit::undo(&mut app, id);
-    assert_eq!(app.active_doc().buffer.content(), "hello");
+    assert_eq!(app.active_doc().buffer().content(), "hello");
 }

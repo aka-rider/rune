@@ -206,7 +206,7 @@ fn load_ack_installs_document_db_as_some() {
         "the ack must pop its own db_ops entry"
     );
     assert_eq!(
-        session.app().doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer().content(),
         "hello",
         "no divergence to recover: the buffer stays exactly what was read off disk"
     );
@@ -230,12 +230,12 @@ fn ack_for_a_document_edited_during_the_round_trip_leaves_the_buffer_unchanged()
     // bumps the buffer's version past what was recorded at enqueue time.
     assert!(session.key(END).is_none());
     assert!(session.type_("!").is_none());
-    assert_eq!(session.app().doc(id).unwrap().buffer.content(), "hello!");
+    assert_eq!(session.app().doc(id).unwrap().buffer().content(), "hello!");
 
     assert!(session.deliver_db().is_none());
 
     assert_eq!(
-        session.app().doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer().content(),
         "hello!",
         "the ack must never clobber a keystroke typed during the round trip"
     );
@@ -268,7 +268,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
     let id = app.active;
 
     let op_id = 1u64;
-    let issued_version = app.doc(id).unwrap().buffer.version();
+    let issued_version = app.doc(id).unwrap().buffer().version();
     app.db_ops.insert(
         op_id,
         PendingOp::load(id, issued_version, LoadPurpose::Recover),
@@ -313,7 +313,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
         !app.doc(id).unwrap().is_store_bound(),
         "no baseline observation means no DocDb binding"
     );
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "hello");
     assert!(
         rune_tui::messages::newest_text(&app)
             .is_some_and(|s| s.contains("no baseline observation")),
@@ -370,7 +370,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
     let app = session_b.app();
     let id = app.active;
     assert_eq!(
-        app.doc(id).unwrap().buffer.content(),
+        app.doc(id).unwrap().buffer().content(),
         disk_content,
         "a refused hydration must leave the buffer exactly as it was on disk"
     );

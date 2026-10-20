@@ -46,7 +46,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         RowSource::Detached(doc) => (doc, None),
     };
     let viewport = &doc.viewport;
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
         .map(|row| {
             if let Some(image_ref) = row.image.clone()
@@ -138,7 +138,7 @@ pub fn build_rows(app: &App, source: RowSource<'_>, view: &ViewSnapshots) -> Vec
         &mut rows,
         view,
         doc.cursors(),
-        &doc.buffer,
+        doc.buffer(),
         viewport.scroll_row,
         &app.theme,
     );
@@ -260,7 +260,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
             diff::paint_backgrounds(
                 &mut rows,
                 &diff_view.alignment,
-                app.active_doc().buffer.content(),
+                app.active_doc().buffer().content(),
                 |r| r.right_lines.clone(),
                 |k| matches!(k, RegionKind::Changed | RegionKind::RightOnly),
                 app.theme.chrome.merge_ours_bg,
@@ -313,7 +313,7 @@ fn draw_diff_left(app: &App, area: Rect, frame: &mut Frame) {
         diff::paint_backgrounds(
             &mut rows,
             &diff_view.alignment,
-            diff_view.left.buffer.content(),
+            diff_view.left.buffer().content(),
             |r| r.left_lines.clone(),
             |k| matches!(k, RegionKind::Changed | RegionKind::LeftOnly),
             app.theme.chrome.merge_theirs_bg,
@@ -356,7 +356,7 @@ fn blank_rows(width: u16, height: u16) -> Vec<Vec<Cell>> {
 // unstyled, bounded to `area.height` lines.
 fn draw_pending(doc: &Document, area: ratatui::layout::Rect, frame: &mut Frame) {
     let lines: Vec<ratatui::text::Line> = doc
-        .buffer
+        .buffer()
         .content()
         .lines()
         .take(area.height as usize)

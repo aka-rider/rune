@@ -29,7 +29,7 @@ pub(crate) fn per_cursor_selection_edits(
     let mut infos: Vec<(Edit, CursorId)> = Vec::new();
     for (i, c) in all.iter().enumerate() {
         let Some(doc) = app.doc(id) else { return };
-        let buf = &doc.buffer;
+        let buf = &doc.buffer();
         let edit = if c.has_selection() {
             let (start, end) = c.selection_range();
             Edit {
@@ -226,7 +226,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
 
     let pre_content = app
         .doc(id)
-        .map(|doc| doc.buffer.content().to_string())
+        .map(|doc| doc.buffer().content().to_string())
         .unwrap_or_default();
     let mut reached = None;
     for _ in 0..count {
@@ -238,12 +238,11 @@ pub fn undo(app: &mut App, id: DocumentId) {
         let cursors_before: Vec<Cursor> = step.cursors_before.clone();
         let deltas = crate::merge::ranges::inverse_deltas(&edits);
 
-        match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
+        match rune_core::undo::apply_inverse(doc.buffer(), &edits) {
             Ok(new_buf) => {
                 let target = token.target();
                 let Some(doc) = app.doc_mut(id) else { break };
-                doc.buffer = new_buf;
-                doc.set_cursors(CursorSet::new_from(&cursors_before));
+                doc.install(new_buf, CursorSet::new_from(&cursors_before));
                 doc.journal.commit(token);
                 reached = Some(target);
                 for ae in &edits {
@@ -289,7 +288,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
 
     let pre_content = app
         .doc(id)
-        .map(|doc| doc.buffer.content().to_string())
+        .map(|doc| doc.buffer().content().to_string())
         .unwrap_or_default();
     let mut reached = None;
     for _ in 0..count {
@@ -301,12 +300,11 @@ pub fn redo(app: &mut App, id: DocumentId) {
         let cursors_after: Vec<Cursor> = step.cursors_after.clone();
         let deltas = crate::merge::ranges::forward_deltas(&edits);
 
-        match rune_core::undo::reapply(&doc.buffer, &edits) {
+        match rune_core::undo::reapply(doc.buffer(), &edits) {
             Ok(new_buf) => {
                 let target = token.target();
                 let Some(doc) = app.doc_mut(id) else { break };
-                doc.buffer = new_buf;
-                doc.set_cursors(CursorSet::new_from(&cursors_after));
+                doc.install(new_buf, CursorSet::new_from(&cursors_after));
                 doc.journal.commit(token);
                 reached = Some(target);
                 for ae in edits.iter().rev() {

@@ -97,7 +97,7 @@ fn esc_does_not_restore_an_origin_cursor_into_a_buffer_edited_since() {
     for _ in 0.."hello world".len() {
         press(&mut app, backspace());
     }
-    assert_eq!(app.active_doc().buffer.content(), "", "test setup");
+    assert_eq!(app.active_doc().buffer().content(), "", "test setup");
     open_find(&mut app);
     assert!(find(&app).focused, "test setup: the panel has focus again");
 

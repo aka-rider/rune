@@ -337,7 +337,7 @@ impl App {
 pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let journal_pos_before = app.active_doc().journal.pos();
     let active_before = app.active;
-    let buffer_version_before = app.active_doc().buffer.version();
+    let buffer_version_before = app.active_doc().buffer().version();
     let frame_width_before = app.frame_width();
     let focus_before = app.focus();
     let nav_index_before = app.nav_history.index();

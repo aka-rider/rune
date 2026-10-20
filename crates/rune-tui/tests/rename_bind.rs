@@ -38,7 +38,7 @@ use rename_common::{
 #[test]
 fn ctrl_r_focuses_the_title_and_typing_never_touches_the_buffer() {
     let (mut session, _mem) = bound_session();
-    let before = session.app().active_doc().buffer.content().to_string();
+    let before = session.app().active_doc().buffer().content().to_string();
 
     open_title(&mut session);
     assert_eq!(
@@ -50,7 +50,7 @@ fn ctrl_r_focuses_the_title_and_typing_never_touches_the_buffer() {
     assert!(session.type_("xyz").is_none());
     assert_eq!(session.app().title.text(), "axyz.md");
     assert_eq!(
-        session.app().active_doc().buffer.content(),
+        session.app().active_doc().buffer().content(),
         before,
         "a keystroke aimed at the file name must never reach the buffer"
     );

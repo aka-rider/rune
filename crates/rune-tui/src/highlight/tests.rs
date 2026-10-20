@@ -20,7 +20,7 @@ fn schedule_highlight_skips_resolving_sources_while_one_is_already_in_flight() {
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
 
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = app.doc(id).expect("doc").buffer().version();
     app.doc_mut(id).expect("doc").highlight.in_flight = Some(version);
 
     let mut effects = Effects::default();
@@ -76,7 +76,7 @@ fn first_paint_highlights_small_file_synchronously() {
             .is_some_and(|r| r.tree.is_some()),
         "a trivial rust source must parse within the generous first-paint budget"
     );
-    assert_eq!(doc.highlight.version, doc.buffer.version());
+    assert_eq!(doc.highlight.version, doc.buffer().version());
 
     let mut effects = Effects::default();
     schedule_highlight(&mut app, id, &mut effects);

@@ -30,7 +30,7 @@ fn schedules_a_highlight_cmd(effects: &Effects) -> bool {
 fn install(session: &mut Session, spans: Vec<(std::ops::Range<usize>, rune_syntax::ScopeId)>) {
     let app = session.app_mut();
     let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
+    let version = app.doc(id).expect("doc").buffer().version();
     let mut effects = Effects::default();
     app::update(
         app,
@@ -51,7 +51,7 @@ fn none_result_leaves_spans_byte_identical() {
     install(&mut session, vec![(0..2, keyword)]);
     let before = all_spans(session.app());
     assert_eq!(before, vec![(0..2, keyword)]);
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
 
     let mut effects = Effects::default();
     app::update(
@@ -74,7 +74,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
     let keyword = scope_table().resolve("keyword").expect("known scope");
     install(&mut session, vec![(0..2, keyword)]);
     let before = all_spans(session.app());
-    let stale_version = session.app().doc(id).expect("doc").buffer.version();
+    let stale_version = session.app().doc(id).expect("doc").buffer().version();
 
     // Advance the buffer past `stale_version` without going through a real
     // edit command — a direct field write is the same convention
@@ -83,10 +83,11 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
     {
         let app = session.app_mut();
         let doc = app.doc_mut(id).expect("doc");
-        doc.buffer = doc
-            .buffer
+        let edited = doc
+            .buffer()
             .insert(0, "x")
             .expect("in-bounds insert should apply");
+        doc.install(edited, doc.cursors().clone());
     }
 
     let mut effects = Effects::default();
@@ -112,7 +113,7 @@ fn a_timed_out_document_surfaces_a_message() {
     let content = "fn main() {}\n";
     let mut session = app_for(content, "/x/main.rs");
     let id = session.app().active;
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     assert_eq!(
         session.app().doc(id).expect("doc").highlight.version,
         0,
@@ -162,7 +163,7 @@ fn a_timed_out_markdown_fence_surfaces_the_same_message() {
     let content = "```rust\nfn main() {}\n```\n";
     let mut session = app_for(content, "/x/notes.md");
     let id = session.app().active;
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
 
     let mut effects = Effects::default();
     app::update(
@@ -195,7 +196,7 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
     let keyword = scope_table().resolve("keyword").expect("known scope");
     install(&mut session, vec![(0..2, keyword)]);
 
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     assert_eq!(
         session.app().doc(id).expect("doc").highlight.version,
         version,
@@ -238,7 +239,7 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
     let content = "fn main() {}\n";
     let mut session = app_for(content, "/x/main.rs");
     let id = session.app().active;
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     session
         .app_mut()
         .doc_mut(id)
@@ -281,7 +282,7 @@ fn a_payload_less_region_slot_carries_its_existing_colours_forward() {
     install(&mut session, vec![(0..2, keyword)]);
     let before = all_spans(session.app());
 
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     let mut effects = Effects::default();
     app::update(
         session.app_mut(),
@@ -313,7 +314,7 @@ fn span_cap_truncation_surfaces_a_status_line() {
     let content = "fn main() {}\n";
     let mut session = app_for(content, "/x/main.rs");
     let id = session.app().active;
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     let keyword = scope_table().resolve("keyword").expect("known scope");
 
     let mut effects = Effects::default();
@@ -355,7 +356,7 @@ fn timeout_outranks_truncation_in_the_status_line() {
     let content = "fn main() {}\n";
     let mut session = app_for(content, "/x/main.rs");
     let id = session.app().active;
-    let version = session.app().doc(id).expect("doc").buffer.version();
+    let version = session.app().doc(id).expect("doc").buffer().version();
     session
         .app_mut()
         .doc_mut(id)

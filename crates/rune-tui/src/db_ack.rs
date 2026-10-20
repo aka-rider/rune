@@ -320,7 +320,7 @@ fn bind_document_row(
                     doc_db.synced_content = prior.synced_content;
                 }
                 BindMode::Restarted | BindMode::Seeded { .. } => {
-                    doc_db.diverged = doc.buffer.content() != row_content;
+                    doc_db.diverged = doc.buffer().content() != row_content;
                     doc_db.synced_content = row_content.to_string();
                     doc_db.undo_offset = pos - mode.seeded_len();
                     doc_db.undo_floor = 0;
@@ -340,7 +340,7 @@ fn bind_document_row(
                 (Some(base), true) => base,
                 _ => {
                     pending.clear();
-                    doc.buffer.content().to_string()
+                    doc.buffer().content().to_string()
                 }
             };
             let mut bridged = 0;
@@ -448,7 +448,7 @@ pub fn adopt_scratch_doc(
     if !recovered.is_empty()
         && let Some(doc) = app.doc_mut(id)
     {
-        let disk_content = doc.buffer.content().to_string();
+        let disk_content = doc.buffer().content().to_string();
         if let crate::document::Hydration::Refused(reason) =
             doc.hydrate(&disk_content, recovered, journaled_cursors)
         {

@@ -27,7 +27,7 @@ fn selected(content: &str, anchor: usize, position: usize) -> App {
 }
 
 fn text(app: &App) -> String {
-    app.doc(app.active).unwrap().buffer.content().to_string()
+    app.doc(app.active).unwrap().buffer().content().to_string()
 }
 
 fn selections(app: &App) -> Vec<(usize, usize)> {
@@ -354,7 +354,7 @@ fn move_line_up_preserves_crlf_terminators_between_two_crlf_lines() {
 fn a_lone_cr_file_has_a_single_line_so_move_up_and_down_are_both_no_ops() {
     let mut app = app_with("A\rB", 1);
     let id = app.active;
-    assert_eq!(app.doc(id).unwrap().buffer.line_count(), 1);
+    assert_eq!(app.doc(id).unwrap().buffer().line_count(), 1);
     move_line_up(&mut app, id);
     move_line_down(&mut app, id);
     assert_eq!(text(&app), "A\rB");

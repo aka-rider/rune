@@ -198,7 +198,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(outcome, ExecOutcome::Done);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "HELLO world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "HELLO world");
     }
 
     #[test]

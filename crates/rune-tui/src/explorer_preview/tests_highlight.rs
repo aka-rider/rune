@@ -131,7 +131,7 @@ fn a_highlight_reply_for_the_previous_preview_file_cannot_paint_the_next_one() {
         .as_ref()
         .expect("preview")
         .doc
-        .buffer
+        .buffer()
         .version();
 
     app.explorer.nav.move_by(1, app.explorer.entries.len()); // "b.md"

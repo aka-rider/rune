@@ -75,7 +75,7 @@ fn build_5k_line_rust_fixture() -> String {
 
 fn type_one_char_at_end(app: &mut App, ch: char, effects: &mut Effects) {
     let id = app.active;
-    let end = app.doc(id).expect("doc").buffer.content().len();
+    let end = app.doc(id).expect("doc").buffer().content().len();
     app.doc_mut(id)
         .expect("doc")
         .set_cursors(rune_core::cursor::CursorSet::new(end));
@@ -422,7 +422,7 @@ fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {
     let doc = app.active_doc();
     let at = doc.cursors().primary().position.get();
     assert_eq!(
-        doc.buffer.byte(at),
+        doc.buffer().byte(at),
         Some(b'('),
         "the caret must sit ON the unmatched bracket, or this gate measures nothing"
     );
@@ -431,7 +431,7 @@ fn render_frame_cost_under_budget_with_the_caret_on_an_unmatched_bracket() {
         "the bracket pass is gated on an insertion point, or this gate measures nothing"
     );
     assert_eq!(
-        rune_core::bracket::bracket_pair(doc.buffer.content(), at),
+        rune_core::bracket::bracket_pair(doc.buffer().content(), at),
         None,
         "the fixture's bracket must stay unmatched — that is the scan-to-EOF worst case"
     );
@@ -490,7 +490,7 @@ fn render_frame_cost_under_budget_with_a_common_word_selected_on_a_5k_line_code_
     let doc = app.active_doc();
     let (from, to) = doc.cursors().primary().selection_range();
     assert_eq!(
-        doc.buffer.slice(from.get(), to.get()),
+        doc.buffer().slice(from.get(), to.get()),
         Some("let"),
         "the key walk must have selected exactly `let`, or this gate measures nothing"
     );

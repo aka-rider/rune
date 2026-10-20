@@ -18,9 +18,9 @@ pub(crate) fn recompute(app: &mut App) {
     let doc = app.active_doc();
     let matches = pattern
         .as_ref()
-        .map(|matcher| matcher.hits(doc.buffer.content()))
+        .map(|matcher| matcher.hits(doc.buffer().content()))
         .unwrap_or_default();
-    let version = doc.buffer.version();
+    let version = doc.buffer().version();
     let active = app.active;
     if let Some(state) = app.find_mut() {
         state.pattern = pattern;
@@ -97,7 +97,7 @@ pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
         return false;
     };
     let matches = Matcher::compile(&query, options)
-        .map(|matcher| matcher.hits(app.active_doc().buffer.content()))
+        .map(|matcher| matcher.hits(app.active_doc().buffer().content()))
         .unwrap_or_default();
     let concealed = current_concealed(app);
     let cursor = app.active_doc().cursors().primary().selection_start().get();

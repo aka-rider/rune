@@ -57,13 +57,13 @@ fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
 
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let text = extract_copy_text(&doc.buffer, doc.cursors());
+    let text = extract_copy_text(doc.buffer(), doc.cursors());
     write_to_clipboard_or_report(app, &text, effects);
 }
 
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let text = extract_copy_text(&doc.buffer, doc.cursors());
+    let text = extract_copy_text(doc.buffer(), doc.cursors());
     write_to_clipboard_or_report(app, &text, effects);
     edit::delete_selection_or_line(app, id);
 }
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(effects.raw_bytes(), vec![expected_osc52("hello")]);
         assert!(effects.cmds.is_empty(), "copy must never spawn a Cmd");
         assert_eq!(
-            app.doc(id).unwrap().buffer.content(),
+            app.doc(id).unwrap().buffer().content(),
             "hello world",
             "copy must never mutate the buffer"
         );
@@ -187,12 +187,12 @@ mod tests {
         cut(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw_bytes(), vec![expected_osc52("hello")]);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), " world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), " world");
         assert_eq!(app.doc(id).unwrap().journal.len(), 1);
 
         edit::undo(&mut app, id);
         assert_eq!(
-            app.doc(id).unwrap().buffer.content(),
+            app.doc(id).unwrap().buffer().content(),
             "hello world",
             "undo must restore what cut removed"
         );
@@ -235,7 +235,7 @@ mod tests {
             "an over-cap cut must post a message reporting the failure"
         );
         assert_eq!(
-            app.doc(id).unwrap().buffer.content(),
+            app.doc(id).unwrap().buffer().content(),
             "",
             "the delete must still proceed even when the clipboard write is refused"
         );
@@ -249,7 +249,7 @@ mod tests {
         cut(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw_bytes(), vec![expected_osc52("second\n")]);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "first\nthird");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "first\nthird");
     }
 
     #[test]
@@ -258,13 +258,13 @@ mod tests {
         let id = app.active;
         selecting(&mut app, id, 0, 5);
         app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
-        let before_version = app.doc(id).unwrap().buffer.version();
+        let before_version = app.doc(id).unwrap().buffer().version();
 
         let mut effects = Effects::default();
         cut(&mut app, id, &mut effects);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello world");
-        assert_eq!(app.doc(id).unwrap().buffer.version(), before_version);
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "hello world");
+        assert_eq!(app.doc(id).unwrap().buffer().version(), before_version);
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
@@ -287,7 +287,7 @@ mod tests {
         let id = app.active;
         handle_paste_content(&mut app, id, "b");
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "abc");
         assert_eq!(
             app.doc(id).unwrap().cursors().primary().position,
             rune_core::coords::BufferOffset(2)
@@ -317,10 +317,10 @@ mod tests {
             &mut effects2,
         );
 
-        assert_eq!(paste_app.doc(paste_id).unwrap().buffer.content(), "abc");
+        assert_eq!(paste_app.doc(paste_id).unwrap().buffer().content(), "abc");
         assert_eq!(
-            paste_app.doc(paste_id).unwrap().buffer.content(),
-            read_app.doc(read_id).unwrap().buffer.content(),
+            paste_app.doc(paste_id).unwrap().buffer().content(),
+            read_app.doc(read_id).unwrap().buffer().content(),
             "Msg::Paste and Msg::ClipboardRead must produce identical results"
         );
         assert_eq!(
@@ -351,13 +351,13 @@ mod tests {
             &mut crate::runtime::Effects::default(),
         );
         let id = app.active;
-        let before = app.doc(id).unwrap().buffer.content().to_string();
+        let before = app.doc(id).unwrap().buffer().content().to_string();
 
         let mut effects = Effects::default();
         app::update(&mut app, Msg::Paste("b".to_string()), &mut effects);
 
         assert_eq!(
-            app.doc(id).unwrap().buffer.content(),
+            app.doc(id).unwrap().buffer().content(),
             before,
             "the document buffer must be untouched while the panel is focused"
         );
@@ -371,7 +371,7 @@ mod tests {
         app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
         handle_paste_content(&mut app, id, "b");
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "ac");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "ac");
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
@@ -394,7 +394,7 @@ mod tests {
             app::update(&mut app, Msg::Paste("b".to_string()), &mut effects);
 
             assert_eq!(
-                app.doc(app.active).unwrap().buffer.content(),
+                app.doc(app.active).unwrap().buffer().content(),
                 "ac",
                 "{pane:?} focused must never let bracketed paste reach the editor's document"
             );
@@ -412,7 +412,7 @@ mod tests {
         let id = app.active;
         handle_paste_content(&mut app, id, "");
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "ac");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "ac");
         assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 }

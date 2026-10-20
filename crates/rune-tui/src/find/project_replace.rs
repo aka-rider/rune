@@ -188,7 +188,7 @@ pub(crate) fn apply_to_document(app: &mut App, id: DocumentId) -> FileOutcome {
     let cursors_before = doc.cursors().clone();
     let cursor = cursors_before.primary().id;
     let edits: Vec<(Edit, CursorId)> = pattern
-        .replacements(doc.buffer.content(), &replacement)
+        .replacements(doc.buffer().content(), &replacement)
         .into_iter()
         .map(|(range, insert)| {
             (

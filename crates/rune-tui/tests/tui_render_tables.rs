@@ -43,7 +43,7 @@ const RIGHT: KeyInput = KeyInput {
 /// `offset`, one `Right` press per grapheme step — the real navigation path,
 /// never a `CursorSet::new` poke.
 fn place_caret(session: &mut Session, offset: usize) {
-    let target = offset.min(session.app().active_doc().buffer.content().len());
+    let target = offset.min(session.app().active_doc().buffer().content().len());
     let mut guard = 0usize;
     while session
         .app()
@@ -169,7 +169,7 @@ fn caret_row_below_a_table_matches_wrap_to_display_of_its_wrap_row() {
     let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor);
+    let buffer_point = app.active_doc().buffer().offset_to_line_col(cursor);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let expected_display_row = view.display.wrap_to_display(WrapRow(wrap_point.row));

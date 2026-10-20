@@ -100,7 +100,7 @@ fn enter_on_a_file_opens_a_second_document_and_focuses_editor() {
         session.app().active_doc().path(),
         Some(Path::new("/root/b.md"))
     );
-    assert_eq!(session.app().active_doc().buffer.content(), "b content");
+    assert_eq!(session.app().active_doc().buffer().content(), "b content");
 }
 
 /// A directory entry whose filename is
@@ -147,7 +147,7 @@ fn enter_on_a_non_utf8_named_file_opens_the_byte_exact_path() {
         "the opened document's path must be the real, byte-exact path"
     );
     assert_eq!(
-        session.app().active_doc().buffer.content(),
+        session.app().active_doc().buffer().content(),
         "non-utf8-named content"
     );
 }
@@ -337,7 +337,10 @@ fn enter_on_a_symlinked_file_opens_the_document_bound_to_the_target() {
         Some(Path::new("/root/real.md")),
         "the opened document is bound to the target, not to the link's own name"
     );
-    assert_eq!(session.app().active_doc().buffer.content(), "real content");
+    assert_eq!(
+        session.app().active_doc().buffer().content(),
+        "real content"
+    );
 }
 
 #[test]

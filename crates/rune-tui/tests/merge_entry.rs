@@ -31,7 +31,7 @@ fn merge_on_a_diverged_document_installs_the_merged_result_as_one_journal_step()
 
     assert!(session.key(ch('!')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(session.deliver_db().is_none());
@@ -39,7 +39,7 @@ fn merge_on_a_diverged_document_installs_the_merged_result_as_one_journal_step()
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     let journal_pos_before_merge = session.app().doc(doc_id).unwrap().journal.pos();
@@ -57,12 +57,12 @@ fn merge_on_a_diverged_document_installs_the_merged_result_as_one_journal_step()
 
     let doc = session.app().doc(doc_id).unwrap();
     assert!(
-        !doc.buffer.content().contains("<<<<<<<"),
+        !doc.buffer().content().contains("<<<<<<<"),
         "the pane install must hold no conflict markers: {:?}",
-        doc.buffer.content()
+        doc.buffer().content()
     );
     assert_eq!(
-        doc.buffer.content(),
+        doc.buffer().content(),
         "!hello",
         "the conflict shows the ours text in place"
     );
@@ -79,7 +79,7 @@ fn merge_on_a_diverged_document_installs_the_merged_result_as_one_journal_step()
         .expect("merge entry must install the pane view");
     assert_eq!(diff.right, doc_id);
     assert_eq!(
-        diff.left.buffer.content(),
+        diff.left.buffer().content(),
         "disk changed this",
         "the left pane must hold the disk (theirs) text"
     );
@@ -91,7 +91,7 @@ fn merge_on_a_diverged_document_installs_the_merged_result_as_one_journal_step()
 
     assert!(session.key(sup('z')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         pre_merge_bytes,
         "one undo must restore the pre-merge buffer byte-for-byte"
     );
@@ -113,8 +113,8 @@ fn merge_on_a_disk_ahead_clean_document_installs_disk_bytes_with_no_markers() {
     assert!(session.deliver_db().is_none());
 
     let doc = session.app().doc(doc_id).unwrap();
-    assert_eq!(doc.buffer.content(), "hello world");
-    assert!(!doc.buffer.content().contains("<<<<<<<"));
+    assert_eq!(doc.buffer().content(), "hello world");
+    assert!(!doc.buffer().content().contains("<<<<<<<"));
     assert_eq!(
         doc.journal.pos(),
         journal_pos_before_merge + 1,
@@ -142,7 +142,7 @@ fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
     assert!(session.deliver_db().is_none());
 
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "hello",
         "a UTF-8 refusal must never touch the buffer"
     );

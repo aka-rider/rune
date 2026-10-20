@@ -218,7 +218,7 @@ pub(crate) fn after_update(
 ) {
     crate::find::project_replace::settle(app, effects);
     let content_changed =
-        app.active != active_before || app.active_doc().buffer.version() != buffer_version_before;
+        app.active != active_before || app.active_doc().buffer().version() != buffer_version_before;
     if content_changed {
         crate::highlight::schedule_highlight(app, app.active, effects);
     }
@@ -254,7 +254,7 @@ fn handle_bootstrap_view_ready(
     let Some(doc) = app.live_doc_mut(doc_id) else {
         return;
     };
-    if doc.buffer.version() != version {
+    if doc.buffer().version() != version {
         return;
     }
     doc.doc = *machine;
@@ -275,7 +275,7 @@ fn handle_highlighted(
         doc.highlight.in_flight = None;
         pending = doc.highlight.pending;
         doc.highlight.pending = false;
-        let live_version = doc.buffer.version();
+        let live_version = doc.buffer().version();
         match result {
             PassOutcome::Replace(reply) if version == live_version => {
                 crate::highlight::apply_reply(doc, version, reply);

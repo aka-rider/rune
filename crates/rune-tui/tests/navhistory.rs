@@ -112,7 +112,7 @@ fn an_entry_below_an_insertion_still_lands_on_the_same_text() {
     press(&mut app, back_key());
 
     let landed = app.active_doc().cursors().primary().position.get();
-    let buffer = app.active_doc().buffer.content();
+    let buffer = app.active_doc().buffer().content();
     assert_eq!(&buffer[landed..landed + "TARGET".len()], "TARGET");
 }
 

@@ -47,7 +47,11 @@ fn cursoring_onto_an_already_open_document_shows_it_without_closing_it_on_move_a
     }
     let mut app = app_with(&mem);
     let opened = workspace::open_path(&mut app, std::path::Path::new("/root/a.md")).unwrap();
-    app.doc_mut(opened).unwrap().buffer = rune_core::buffer::Buffer::new("content\nedited");
+    let doc = app.doc_mut(opened).unwrap();
+    doc.install(
+        rune_core::buffer::Buffer::new("content\nedited"),
+        doc.cursors().clone(),
+    );
     load_entries(&mut app, &["a.md", "b.md"]);
     let mut effects = Effects::default();
 
@@ -186,11 +190,11 @@ fn an_oversized_file_renders_a_placeholder_with_no_banner() {
     run_cmds(&mut app, &mut effects);
 
     let preview = app.explorer.preview.as_ref().expect("a placeholder");
-    assert!(preview.doc.buffer.content().contains("huge.md"));
+    assert!(preview.doc.buffer().content().contains("huge.md"));
     assert!(
         preview
             .doc
-            .buffer
+            .buffer()
             .content()
             .contains("too large to preview")
     );
@@ -215,8 +219,8 @@ fn a_binary_file_renders_a_placeholder_with_no_banner() {
     run_cmds(&mut app, &mut effects);
 
     let preview = app.explorer.preview.as_ref().expect("a placeholder");
-    assert!(preview.doc.buffer.content().contains("x.bin"));
-    assert!(preview.doc.buffer.content().contains("not valid UTF-8"));
+    assert!(preview.doc.buffer().content().contains("x.bin"));
+    assert!(preview.doc.buffer().content().contains("not valid UTF-8"));
     assert!(preview.doc.path().is_none(), "a placeholder is never bound");
     assert!(
         !crate::messages::is_open(&app),

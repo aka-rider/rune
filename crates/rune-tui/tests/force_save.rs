@@ -33,7 +33,7 @@ fn enter_disk_conflict_guard(disk_bytes: &[u8]) -> (Session, DocumentId) {
 
     assert!(session.key(ch('!')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(session.deliver_db().is_none());
@@ -69,7 +69,7 @@ fn disk_conflict_guard_save_anyway_force_saves_and_preserves_the_displaced_bytes
         "a force-save must never re-raise the conflict it was answering"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(
@@ -157,7 +157,7 @@ fn disk_conflict_guard_save_anyway_succeeds_even_if_the_disk_moves_again_before_
          no matter how many times the disk moved in between"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(!session.app().doc(doc_id).unwrap().is_dirty());
@@ -202,7 +202,7 @@ fn disk_conflict_guard_save_anyway_recreates_the_file_when_it_vanished_meanwhile
 
     assert!(session.app().guard.is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(!session.app().doc(doc_id).unwrap().is_dirty());
@@ -250,7 +250,7 @@ fn disk_conflict_prompt_survives_refused_force() {
 
     assert!(session.key(ch('!')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(session.deliver_db().is_none());
@@ -321,7 +321,7 @@ fn a_baseline_left_unconfirmed_by_lost_bookkeeping_does_not_conflict_the_next_sa
 
     assert!(session.key(ch('!')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "!hello"
     );
     assert!(session.deliver_db().is_none());

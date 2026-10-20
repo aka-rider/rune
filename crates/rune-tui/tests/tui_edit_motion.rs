@@ -73,7 +73,7 @@ fn editor_keeps_rendering_after_deleting_the_whole_document() {
     press(&mut app, KeyCode::Backspace, Mods::NONE);
     press(&mut app, KeyCode::Char('x'), Mods::NONE);
 
-    assert_eq!(app.active_doc_mut().buffer.content(), "x");
+    assert_eq!(app.active_doc_mut().buffer().content(), "x");
     assert_eq!(
         app.active_doc_mut().viewport.scroll_row,
         DisplayRow(0),

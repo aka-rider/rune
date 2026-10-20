@@ -100,7 +100,7 @@ pub(crate) fn handle_merge_prep_ack(
         app.merge = MergeState::Inactive;
         return;
     };
-    let ours_text = active.buffer.content().to_string();
+    let ours_text = active.buffer().content().to_string();
 
     let hunks = match &ancestor_text {
         Some(text) => rune_merge::merge_hunks(
@@ -146,7 +146,7 @@ pub(crate) fn handle_merge_prep_ack(
         }
         let installed_matches_theirs = app
             .doc(doc)
-            .is_some_and(|d| d.buffer.content() == theirs_text);
+            .is_some_and(|d| d.buffer().content() == theirs_text);
         super::set_last_sync(
             app,
             doc,
@@ -292,7 +292,7 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
         return false;
     };
     let cursors_before = document.cursors().clone();
-    let old_len = document.buffer.content().len();
+    let old_len = document.buffer().content().len();
     let edit = Edit {
         start: 0,
         end: old_len,

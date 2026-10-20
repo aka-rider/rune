@@ -69,7 +69,7 @@ fn diverged_load_ack_installs_the_bridged_draft_dirty_with_the_disk_changed_hint
     let app = session_b.app();
     let doc = app.active_doc();
     assert_eq!(
-        doc.buffer.content(),
+        doc.buffer().content(),
         "UNSAVED session A's content",
         "must bridge from A's own baseline, never silently drop A's draft"
     );
@@ -135,7 +135,7 @@ fn bridged_load_without_disk_divergence_posts_a_plain_recovery_message() {
     let app = session_b.app();
     let doc = app.active_doc();
     assert_eq!(
-        doc.buffer.content(),
+        doc.buffer().content(),
         "UNSAVED shared content",
         "the bridged draft must still be adopted"
     );

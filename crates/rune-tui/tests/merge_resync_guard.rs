@@ -40,7 +40,7 @@ fn enter_three_conflict_merge() -> (Session, DocumentId) {
     assert!(session.key(bare(KeyCode::Home)).is_none());
     assert!(session.key(ch('X')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "Xone\ntwo\nthree\nfour\nXfive\nsix\nseven\neight\nXnine\n"
     );
     assert!(session.deliver_db_all().is_none());
@@ -154,7 +154,7 @@ fn undo_and_redo_round_trip_a_take_byte_for_byte() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert!(session.key(take_theirs()).is_none());
@@ -162,14 +162,14 @@ fn undo_and_redo_round_trip_a_take_byte_for_byte() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert!(post_take_bytes.starts_with("one disk\n"));
 
     assert!(session.key(sup('z')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         pre_take_bytes,
         "undo must restore the pre-take bytes byte-for-byte"
     );
@@ -177,7 +177,7 @@ fn undo_and_redo_round_trip_a_take_byte_for_byte() {
 
     assert!(session.key(ctrl('y')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         post_take_bytes,
         "redo must reapply the take byte-for-byte"
     );
@@ -201,7 +201,7 @@ fn undo_across_the_install_abandons_the_merge_and_keeps_the_save_gate() {
         "unwinding the install must retire the merge"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         PRE_MERGE,
         "the undo must land on the pre-merge bytes"
     );
@@ -256,7 +256,7 @@ fn redo_after_an_install_unwind_does_not_resurrect_a_phantom_session() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
 
@@ -277,7 +277,7 @@ fn redo_after_an_install_unwind_does_not_resurrect_a_phantom_session() {
         "no pane view may come back without a live session"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         working_form,
         "redo still restores the working-form bytes as an ordinary edit"
     );
@@ -319,7 +319,7 @@ fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert!(
@@ -339,7 +339,7 @@ fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
         "auto-exit must tear the pane view down"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         bytes_before,
         "auto-exit must never touch the buffer"
     );

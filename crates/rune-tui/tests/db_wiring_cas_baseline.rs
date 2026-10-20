@@ -158,7 +158,7 @@ fn external_disk_change_under_a_dirty_tab_surfaces_as_diverged_without_touching_
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert_eq!(dirty_buffer, "!hello");
@@ -175,7 +175,7 @@ fn external_disk_change_under_a_dirty_tab_surfaces_as_diverged_without_touching_
         "an edited buffer under a moved disk must classify as Diverged, never silently reconciled"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         dirty_buffer,
         "the probe must never overwrite the user's own unsaved edit"
     );
@@ -199,7 +199,7 @@ fn probe_after_a_lost_materialize_record_recognizes_its_own_bytes_as_clean_not_d
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
 
@@ -220,7 +220,7 @@ fn probe_after_a_lost_materialize_record_recognizes_its_own_bytes_as_clean_not_d
         "the session's own lost-bookkeeping echo must classify as Clean, not a conflict"
     );
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         content,
         "a probe must never rewrite the buffer even when it heals the disk fact"
     );
@@ -242,7 +242,7 @@ fn resaving_the_sessions_own_lost_bookkeeping_echo_does_not_manufacture_a_disk_c
         .app()
         .doc(doc_id)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
 

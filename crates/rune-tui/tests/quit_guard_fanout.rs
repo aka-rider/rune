@@ -23,8 +23,8 @@ fn two_dirty_docs_guard_save_quits_only_after_both_ack() {
     let b_path = resolved(&app, "/b.md");
     let id_b = app.open_document_bound(Buffer::new("second"), b_path);
     dirty_common::force_dirty(&mut app, id_b);
-    let version_a = app.doc(id_a).unwrap().buffer.version();
-    let version_b = app.doc(id_b).unwrap().buffer.version();
+    let version_a = app.doc(id_a).unwrap().buffer().version();
+    let version_b = app.doc(id_b).unwrap().buffer().version();
 
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));
@@ -84,7 +84,7 @@ fn closing_one_awaited_document_mid_flight_still_lets_the_quit_resolve() {
     let b_path = resolved(&app, "/b.md");
     let id_b = app.open_document_bound(Buffer::new("second"), b_path);
     dirty_common::force_dirty(&mut app, id_b);
-    let version_a = app.doc(id_a).unwrap().buffer.version();
+    let version_a = app.doc(id_a).unwrap().buffer().version();
 
     press(&mut app, ctrl_c());
     press(&mut app, key(KeyCode::Char('s')));

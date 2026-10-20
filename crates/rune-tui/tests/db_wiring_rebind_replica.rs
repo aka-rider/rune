@@ -162,7 +162,7 @@ fn merge_install_after_a_lost_create_race_rebind_keeps_recovery_replayable() {
     );
 
     type_text(&mut app, "!");
-    let buffer_content = app.doc(id).unwrap().buffer.content().to_string();
+    let buffer_content = app.doc(id).unwrap().buffer().content().to_string();
 
     let probe_op = app
         .db
@@ -226,7 +226,7 @@ fn typing_after_a_lost_create_race_rebind_keeps_recovery_replayable() {
     lose_create_race_and_rebind(&mut app, &bridge);
 
     type_text(&mut app, " plus more typing");
-    let buffer_content = app.doc(id).unwrap().buffer.content().to_string();
+    let buffer_content = app.doc(id).unwrap().buffer().content().to_string();
 
     app.db.take().expect("store still wired").shutdown();
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;

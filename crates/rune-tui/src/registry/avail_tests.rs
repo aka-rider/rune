@@ -83,14 +83,14 @@ fn read_only_document_greys_cut_and_uppercase_below_available_rows() {
     if let Some(state) = app.palette_mut() {
         state.nav.cursor = cut_idx;
     }
-    let version_before = app.active_doc().buffer.version();
+    let version_before = app.active_doc().buffer().version();
     let enter = KeyInput {
         code: KeyCode::Enter,
         mods: Mods::NONE,
     };
     let _ = crate::palette::keys::handle_key(&mut app, enter, &mut effects);
 
-    assert_eq!(app.active_doc().buffer.version(), version_before);
+    assert_eq!(app.active_doc().buffer().version(), version_before);
     assert_eq!(
         app.palette().and_then(|s| s.refusal.clone()),
         ReadOnly::Reading.refusal_message().map(str::to_string)
@@ -164,8 +164,8 @@ fn reload_refusal_matches_between_the_row_and_the_palette_pick() {
 fn save_in_flight_refusal_matches_between_chord_and_palette() {
     let mut app = app_with("hello");
     let mut effects = Effects::default();
-    let version = app.active_doc().buffer.version();
-    let content: Arc<str> = Arc::from(app.active_doc().buffer.content());
+    let version = app.active_doc().buffer().version();
+    let content: Arc<str> = Arc::from(app.active_doc().buffer().content());
     app.active_doc_mut().begin_save(version, content);
 
     let ctrl_s = KeyInput {
@@ -215,8 +215,8 @@ fn focus_title_stays_available_while_a_rename_is_in_flight() {
 fn close_while_saving_still_defers_instead_of_refusing() {
     let mut app = app_with("hello");
     let mut effects = Effects::default();
-    let version = app.active_doc().buffer.version();
-    let content: Arc<str> = Arc::from(app.active_doc().buffer.content());
+    let version = app.active_doc().buffer().version();
+    let content: Arc<str> = Arc::from(app.active_doc().buffer().content());
     app.active_doc_mut().begin_save(version, content);
 
     let ctrl_w = KeyInput {

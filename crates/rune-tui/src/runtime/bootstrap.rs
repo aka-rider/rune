@@ -73,7 +73,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         super::discharge(&mut effects, &mut sink, &tx, &mut save_handles)?;
     }
 
-    if app.active_doc().buffer.content().len() < LARGE_DOC_BOOTSTRAP_BYTES {
+    if app.active_doc().buffer().content().len() < LARGE_DOC_BOOTSTRAP_BYTES {
         app.sync_view();
 
         let mut effects = Effects::default();
@@ -85,8 +85,8 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         let doc = app.active_doc();
         let cmd = bootstrap_view_cmd(
             app.active,
-            doc.buffer.version(),
-            doc.buffer.content().to_string(),
+            doc.buffer().version(),
+            doc.buffer().content().to_string(),
             doc.viewport.width,
             app.icons(),
             doc.kind,

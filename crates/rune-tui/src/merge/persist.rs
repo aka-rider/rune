@@ -111,7 +111,7 @@ pub(crate) fn resume_from_store(
         return;
     };
     let Some(document) = app.doc(doc) else { return };
-    let buffer_len = document.buffer.content().len();
+    let buffer_len = document.buffer().content().len();
     let install_pos = document.journal.pos();
     if payload.blocks.len() != payload.conflicts.len()
         || !ranges_well_formed(&payload.blocks, buffer_len)
@@ -130,7 +130,7 @@ pub(crate) fn resume_from_store(
         return;
     }
 
-    let content = document.buffer.content().to_string();
+    let content = document.buffer().content().to_string();
     let Some(theirs_text) = reconstruct_theirs(&content, &pairs) else {
         messages::error(app, UNREADABLE);
         return;
@@ -156,7 +156,7 @@ pub(crate) fn resume_from_store(
         },
     };
     if let Some(d) = app.doc_mut(doc) {
-        let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer.content(), target);
+        let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer().content(), target);
         d.set_cursors(rune_core::cursor::CursorSet::new(clamped));
     }
     messages::info(app, format!("merge resumed — {unresolved} conflict(s)"));

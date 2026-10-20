@@ -133,7 +133,7 @@ fn an_explorer_round_trip_leaves_an_edited_documents_journal_intact() {
         &mut effects,
     );
     let journal_before = app.doc(edited).unwrap().journal.pos();
-    let content_before = app.doc(edited).unwrap().buffer.content().to_string();
+    let content_before = app.doc(edited).unwrap().buffer().content().to_string();
     assert!(journal_before > 0, "test setup: a.md has undo history");
 
     load_entries(&mut app, &["a.md", "b.md"]);
@@ -151,7 +151,7 @@ fn an_explorer_round_trip_leaves_an_edited_documents_journal_intact() {
 
     assert_eq!(app.active, edited, "arrowing back reactivates the real tab");
     assert_eq!(app.doc(edited).unwrap().journal.pos(), journal_before);
-    assert_eq!(app.doc(edited).unwrap().buffer.content(), content_before);
+    assert_eq!(app.doc(edited).unwrap().buffer().content(), content_before);
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn undo_while_a_preview_is_showing_reaches_the_real_document_only() {
         }),
         &mut effects,
     );
-    assert_eq!(app.doc(edited).unwrap().buffer.content(), "xcontent");
+    assert_eq!(app.doc(edited).unwrap().buffer().content(), "xcontent");
 
     load_entries(&mut app, &["a.md", "b.md"]);
     app.set_focus_pane(crate::pane::Pane::Explorer, &mut effects);
@@ -187,7 +187,7 @@ fn undo_while_a_preview_is_showing_reaches_the_real_document_only() {
         .as_ref()
         .expect("b.md previewed")
         .doc
-        .buffer
+        .buffer()
         .content()
         .to_string();
 
@@ -195,12 +195,12 @@ fn undo_while_a_preview_is_showing_reaches_the_real_document_only() {
     crate::commands::edit::undo(&mut app, active);
 
     assert_eq!(
-        app.doc(edited).unwrap().buffer.content(),
+        app.doc(edited).unwrap().buffer().content(),
         "content",
         "^z undoes the document the user is editing"
     );
     let preview = app.explorer.preview.as_ref().expect("preview still live");
-    assert_eq!(preview.doc.buffer.content(), preview_content);
+    assert_eq!(preview.doc.buffer().content(), preview_content);
     assert_eq!(
         preview.doc.journal.pos(),
         0,

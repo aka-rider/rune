@@ -14,7 +14,7 @@ fn typing_inserts_characters_in_order_and_moves_the_caret() {
     for ch in "hi!".chars() {
         press(&mut app, KeyCode::Char(ch), Mods::NONE);
     }
-    assert_eq!(app.active_doc_mut().buffer.content(), "hi!");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hi!");
     assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 3);
 }
 
@@ -22,7 +22,7 @@ fn typing_inserts_characters_in_order_and_moves_the_caret() {
 fn typing_a_non_latin_character_inserts_it_unmodified() {
     let mut app = app_for("", 0);
     press(&mut app, KeyCode::Char('\u{4e2d}'), Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "\u{4e2d}");
+    assert_eq!(app.active_doc_mut().buffer().content(), "\u{4e2d}");
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn an_alt_carrying_char_event_refuses_and_warns_instead_of_inserting() {
     press(&mut app, KeyCode::Char('x'), ALT);
 
     assert_eq!(
-        app.active_doc_mut().buffer.content(),
+        app.active_doc_mut().buffer().content(),
         "",
         "an unresolved \u{2325} chord must never insert the char termina reports for it"
     );
@@ -62,7 +62,7 @@ fn typing_over_a_selection_replaces_it() {
     assert!(app.active_doc_mut().cursors().primary().has_selection());
 
     press(&mut app, KeyCode::Char('X'), Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "X world");
+    assert_eq!(app.active_doc_mut().buffer().content(), "X world");
     let c = app.active_doc_mut().cursors().primary();
     assert_eq!(c.position.get(), 1);
     assert!(!c.has_selection());
@@ -72,7 +72,7 @@ fn typing_over_a_selection_replaces_it() {
 fn backspace_key_removes_the_char_to_the_left() {
     let mut app = app_for("abc", 1);
     press(&mut app, KeyCode::Backspace, Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "bc");
+    assert_eq!(app.active_doc_mut().buffer().content(), "bc");
     assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 0);
 }
 
@@ -80,7 +80,7 @@ fn backspace_key_removes_the_char_to_the_left() {
 fn delete_key_removes_the_char_to_the_right() {
     let mut app = app_for("abc", 0);
     press(&mut app, KeyCode::Delete, Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "bc");
+    assert_eq!(app.active_doc_mut().buffer().content(), "bc");
     assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 0);
 }
 
@@ -88,24 +88,24 @@ fn delete_key_removes_the_char_to_the_right() {
 fn enter_inserts_a_newline_preserving_indentation() {
     let mut app = app_for("  indented", 10);
     press(&mut app, KeyCode::Enter, Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "  indented\n  ");
+    assert_eq!(app.active_doc_mut().buffer().content(), "  indented\n  ");
 }
 
 #[test]
 fn shift_enter_inserts_a_plain_newline() {
     let mut app = app_for("  - item", 8);
     press(&mut app, KeyCode::Enter, SHIFT);
-    assert_eq!(app.active_doc_mut().buffer.content(), "  - item\n  ");
+    assert_eq!(app.active_doc_mut().buffer().content(), "  - item\n  ");
 }
 
 #[test]
 fn tab_indents_the_current_line_shift_tab_outdents_it() {
     let mut app = app_for("hello", 2);
     press(&mut app, KeyCode::Tab, Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "\thello");
+    assert_eq!(app.active_doc_mut().buffer().content(), "\thello");
 
     press(&mut app, KeyCode::Tab, SHIFT);
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello");
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn a_termina_backtab_event_dedents_the_current_line() {
     app::update(&mut app, Msg::Key(input), &mut effects);
     app.sync_view();
 
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello");
 }
 
 #[test]
@@ -136,45 +136,45 @@ fn tab_indents_every_line_of_a_shift_selected_block_and_keeps_the_selection() {
     press(&mut app, KeyCode::End, SHIFT);
     press(&mut app, KeyCode::Tab, Mods::NONE);
     assert_eq!(
-        app.active_doc_mut().buffer.content(),
+        app.active_doc_mut().buffer().content(),
         "\tone\n\ttwo\n\tthree"
     );
     assert!(app.active_doc_mut().cursors().primary().has_selection());
 
     press(&mut app, KeyCode::Tab, SHIFT);
-    assert_eq!(app.active_doc_mut().buffer.content(), "one\ntwo\nthree");
+    assert_eq!(app.active_doc_mut().buffer().content(), "one\ntwo\nthree");
 }
 
 #[test]
 fn undo_restores_byte_exact_content_and_redo_reapplies_it() {
     let mut app = app_for("hello", 5);
     press(&mut app, KeyCode::Char('!'), Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello!");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello!");
 
     press(&mut app, KeyCode::Char('z'), SUP);
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello");
 
     press(&mut app, KeyCode::Char('z'), SUP_SHIFT);
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello!");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello!");
 }
 
 #[test]
 fn undo_redo_never_split_a_cjk_or_emoji_char() {
     let mut app = app_for("你好", "你".len());
-    let original = app.active_doc_mut().buffer.content().to_string();
+    let original = app.active_doc_mut().buffer().content().to_string();
 
     press(&mut app, KeyCode::Char('\u{1f389}'), Mods::NONE);
-    assert_eq!(app.active_doc_mut().buffer.content(), "你\u{1f389}好");
+    assert_eq!(app.active_doc_mut().buffer().content(), "你\u{1f389}好");
 
     press(&mut app, KeyCode::Char('z'), SUP);
     assert_eq!(
-        app.active_doc_mut().buffer.content(),
+        app.active_doc_mut().buffer().content(),
         original,
         "undo must restore the original content byte-exact, including CJK"
     );
 
     press(&mut app, KeyCode::Char('z'), SUP_SHIFT);
-    assert_eq!(app.active_doc_mut().buffer.content(), "你\u{1f389}好");
+    assert_eq!(app.active_doc_mut().buffer().content(), "你\u{1f389}好");
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn undo_redo_restore_the_recorded_cursor_position() {
     assert_eq!(app.active_doc_mut().cursors().primary().position.get(), 3);
 
     press(&mut app, KeyCode::Char('z'), SUP);
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello");
     assert_eq!(
         app.active_doc_mut().cursors().primary().position.get(),
         2,
@@ -203,7 +203,7 @@ fn undo_redo_restore_the_recorded_cursor_position() {
 fn undo_with_an_empty_journal_is_a_no_op() {
     let mut app = app_for("hello", 0);
     press(&mut app, KeyCode::Char('z'), SUP);
-    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hello");
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn down_then_up_over_a_concealing_heading_lands_where_a_fresh_caret_would() {
 
     let mut baseline = app_for(content, 0);
     press(&mut baseline, KeyCode::Char('X'), Mods::NONE);
-    let baseline_content = baseline.active_doc_mut().buffer.content().to_string();
+    let baseline_content = baseline.active_doc_mut().buffer().content().to_string();
 
     let mut roundtrip = app_for(content, 0);
     press(&mut roundtrip, KeyCode::Down, Mods::NONE);
@@ -239,7 +239,7 @@ fn down_then_up_over_a_concealing_heading_lands_where_a_fresh_caret_would() {
         "the round trip must resettle the caret back to byte 0, not inside the revealed text"
     );
     press(&mut roundtrip, KeyCode::Char('X'), Mods::NONE);
-    let roundtrip_content = roundtrip.active_doc_mut().buffer.content().to_string();
+    let roundtrip_content = roundtrip.active_doc_mut().buffer().content().to_string();
 
     assert_eq!(
         roundtrip_content, baseline_content,
@@ -260,7 +260,7 @@ fn an_unbound_non_char_key_warns_instead_of_vanishing() {
 
     press(&mut app, KeyCode::F2, unbound);
 
-    assert_eq!(app.active_doc_mut().buffer.content(), "hi");
+    assert_eq!(app.active_doc_mut().buffer().content(), "hi");
     assert!(rune_tui::messages::posts(&app) > posts_before);
     assert!(
         rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("not bound")),

@@ -13,14 +13,14 @@ fn pin_caret_to_first_visible_line(doc: &mut Document) {
     let view = doc.view();
     let wrap_row = view.display.display_to_wrap(doc.viewport.scroll_row);
     let syntax_point = view.wrap.wrap_to_syntax(
-        doc.buffer.content(),
+        doc.buffer().content(),
         WrapPoint {
             row: wrap_row.0,
             col: 0,
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    let offset = doc.buffer.caret_offset(buffer_point);
+    let offset = doc.buffer().caret_offset(buffer_point);
     doc.set_cursors(CursorSet::new(offset));
 }
 

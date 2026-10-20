@@ -73,11 +73,11 @@ fn probe_missing_file_keeps_store() {
             .app()
             .doc(doc_id)
             .unwrap()
-            .buffer
+            .buffer()
             .content()
             .contains('!'),
         "editing must keep working after the failed probe, got {:?}",
-        session.app().doc(doc_id).unwrap().buffer.content()
+        session.app().doc(doc_id).unwrap().buffer().content()
     );
     assert!(session.deliver_db().is_none());
     assert!(

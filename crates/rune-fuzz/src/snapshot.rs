@@ -218,7 +218,7 @@ impl Snapshot {
     /// borrows through the same active-document access pattern as the rest
     /// of this function.
     pub fn capture(app: &mut App, with_cells: bool) -> Snapshot {
-        let buf = &app.active_doc().buffer;
+        let buf = &app.active_doc().buffer();
         let line_count = buf.line_count();
         let mut line_starts = Vec::with_capacity(line_count);
         let mut line_ends = Vec::with_capacity(line_count);
@@ -261,8 +261,8 @@ impl Snapshot {
                 save_in_flight_by_doc.insert(doc_id, d.save_in_flight());
                 display_name_by_doc.insert(doc_id, d.display_name.clone());
                 saved_version_by_doc.insert(doc_id, d.saved_version);
-                buffer_len_by_doc.insert(doc_id, d.buffer.content().len());
-                version_by_doc.insert(doc_id, d.buffer.version());
+                buffer_len_by_doc.insert(doc_id, d.buffer().content().len());
+                version_by_doc.insert(doc_id, d.buffer().version());
             }
         }
         let nav_places = app
@@ -272,7 +272,7 @@ impl Snapshot {
             .map(|place| {
                 let on_char_boundary = app
                     .doc(place.doc)
-                    .is_none_or(|d| d.buffer.content().is_char_boundary(place.offset));
+                    .is_none_or(|d| d.buffer().content().is_char_boundary(place.offset));
                 (place.doc, place.offset, on_char_boundary)
             })
             .collect();
@@ -288,14 +288,14 @@ impl Snapshot {
         // `visible_spans` clamps and sorts identically whatever window it is
         // handed.
         let highlight_spans =
-            rune_tui::highlight::visible_spans(shown, 0..shown.buffer.content().len())
+            rune_tui::highlight::visible_spans(shown, 0..shown.buffer().content().len())
                 .into_iter()
                 .map(|(range, _scope)| (range.start, range.end))
                 .collect();
         let painted = Painted {
             doc: app.shown(),
-            content: shown.buffer.content().to_string(),
-            version: shown.buffer.version(),
+            content: shown.buffer().content().to_string(),
+            version: shown.buffer().version(),
             cursors: shown.cursors().all().to_vec(),
             caret_visible: shown.has_insertion_point(),
             reading_link_focus: shown.reading_link_focus,
@@ -309,8 +309,8 @@ impl Snapshot {
         let doc = app.active_doc();
         let geometry = layout::geometry(app.frame_area(), app);
         Snapshot {
-            content: doc.buffer.content().to_string(),
-            version: doc.buffer.version(),
+            content: doc.buffer().content().to_string(),
+            version: doc.buffer().version(),
             saved_version: doc.saved_version,
             is_dirty: app.is_dirty(),
             cursors: doc.cursors().all().to_vec(),

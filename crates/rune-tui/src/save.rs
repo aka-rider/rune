@@ -66,7 +66,7 @@ pub(crate) fn trigger_save(
     let Some(doc) = app.doc(id) else {
         return SaveStart::Refused;
     };
-    let version = doc.buffer.version();
+    let version = doc.buffer().version();
     let Some(path) = doc.path().map(std::path::Path::to_path_buf) else {
         app.focus_title();
         messages::info(
@@ -78,7 +78,7 @@ pub(crate) fn trigger_save(
 
     let has_binding = app.db.is_some() && doc.is_store_bound();
     if !has_binding {
-        let content: Arc<str> = Arc::from(doc.buffer.content());
+        let content: Arc<str> = Arc::from(doc.buffer().content());
         materialize::save_directly(app, id, path, version, content, &clearance, effects);
         return SaveStart::InFlight;
     }

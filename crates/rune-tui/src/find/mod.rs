@@ -113,7 +113,7 @@ pub(crate) fn open(app: &mut App, kind: FilterKind, expand_replace: bool, effect
             pattern: Matcher::compile("", MatchOptions::default()),
             origin,
             doc: app.active,
-            buffer_version: app.active_doc().buffer.version(),
+            buffer_version: app.active_doc().buffer().version(),
             matches: Vec::new(),
             current: None,
             filter: Filter::ThisFile,
@@ -183,7 +183,7 @@ fn expand_replace_field(app: &mut App, effects: &mut Effects) {
 
 fn selection_seed(doc: &Document) -> Option<String> {
     let (start, end) = doc.cursors().primary().selection_range();
-    let text = doc.buffer.slice(start.get(), end.get())?;
+    let text = doc.buffer().slice(start.get(), end.get())?;
     (!text.is_empty() && !text.contains('\n')).then(|| text.to_string())
 }
 
@@ -249,7 +249,7 @@ pub(crate) fn restore_origin(app: &mut App, origin: &Origin) {
     let Some(doc) = app.doc_mut(origin.doc) else {
         return;
     };
-    if doc.buffer.version() != origin.buffer_version {
+    if doc.buffer().version() != origin.buffer_version {
         return;
     }
     doc.set_cursors(origin.cursors.clone());
@@ -262,7 +262,7 @@ pub(crate) fn sync(app: &mut App) {
         return;
     };
     let stale =
-        state.doc != app.active || state.buffer_version != app.active_doc().buffer.version();
+        state.doc != app.active || state.buffer_version != app.active_doc().buffer().version();
     if stale {
         follow::recompute(app);
     }

@@ -32,7 +32,7 @@ use rename_common::{
 fn a_read_only_document_refuses_to_rename() {
     let (mut session, _mem) = bound_session();
     session.app_mut().active_doc_mut().read_only = ReadOnly::Always;
-    let before = session.app().active_doc().buffer.content().to_string();
+    let before = session.app().active_doc().buffer().content().to_string();
 
     assert!(session.key(plain_key(KeyCode::F2)).is_none());
 
@@ -45,7 +45,7 @@ fn a_read_only_document_refuses_to_rename() {
         rune_tui::messages::newest_text(session.app()),
         Some("this document is read-only")
     );
-    assert_eq!(session.app().active_doc().buffer.content(), before);
+    assert_eq!(session.app().active_doc().buffer().content(), before);
 }
 
 /// Decision 12: the Help document is read-only, so its title can never gain
@@ -87,7 +87,7 @@ fn a_save_in_flight_refuses_to_rename() {
         session.app().active_doc().save_in_flight(),
         "test setup: the save must be in flight"
     );
-    let before = session.app().active_doc().buffer.content().to_string();
+    let before = session.app().active_doc().buffer().content().to_string();
 
     commit_name(&mut session, "b");
 
@@ -109,7 +109,7 @@ fn a_save_in_flight_refuses_to_rename() {
 #[test]
 fn an_empty_name_refuses_to_rename() {
     let (mut session, mem) = bound_session();
-    let before = session.app().active_doc().buffer.content().to_string();
+    let before = session.app().active_doc().buffer().content().to_string();
 
     open_title(&mut session);
     assert!(session.key(plain_key(KeyCode::Right)).is_none()); // unlock: cursor sits at the split
@@ -146,7 +146,7 @@ fn a_slash_never_enters_the_field() {
 #[test]
 fn an_unchanged_name_refuses_to_rename() {
     let (mut session, mem) = bound_session();
-    let before = session.app().active_doc().buffer.content().to_string();
+    let before = session.app().active_doc().buffer().content().to_string();
 
     open_title(&mut session);
     assert!(session.key(plain_key(KeyCode::Enter)).is_none());

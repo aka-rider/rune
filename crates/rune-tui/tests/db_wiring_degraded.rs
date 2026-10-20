@@ -109,7 +109,7 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
     // keystroke typed so far, regardless of exactly when the writer died
     // relative to these presses.
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         typed,
         "a store failure must never roll back the in-memory buffer"
     );

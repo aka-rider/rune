@@ -45,14 +45,14 @@ pub(crate) fn install_text(app: &mut App, right: DocumentId, text: String, left_
     let Some(right_doc) = app.doc(right) else {
         return;
     };
-    let right_content = right_doc.buffer.content().to_string();
-    let right_version = right_doc.buffer.version();
+    let right_content = right_doc.buffer().content().to_string();
+    let right_version = right_doc.buffer().version();
     let restore_wrap = right_doc.viewport.wrap_mode;
     let mut left = Document::new(Buffer::new(&text));
     left.read_only = ReadOnly::Always;
     left.focused = false;
     left.display_name = Some(left_name);
-    let alignment = rune_merge::align(left.buffer.content(), &right_content);
+    let alignment = rune_merge::align(left.buffer().content(), &right_content);
     app.diff = Some(DiffView {
         left,
         right,
@@ -113,8 +113,8 @@ pub fn sync(app: &mut App) {
     };
     let right_scroll = right_doc.viewport.scroll_row;
     let right_height = right_doc.viewport.height as usize;
-    let right_version = right_doc.buffer.version();
-    let right_content = right_doc.buffer.content().to_string();
+    let right_version = right_doc.buffer().version();
+    let right_content = right_doc.buffer().content().to_string();
     let right_heights = right_doc
         .view
         .as_ref()
@@ -131,7 +131,7 @@ pub fn sync(app: &mut App) {
     diff.left.view = Some(view);
 
     if diff.right_version != right_version {
-        diff.alignment = rune_merge::align(diff.left.buffer.content(), &right_content);
+        diff.alignment = rune_merge::align(diff.left.buffer().content(), &right_content);
         diff.right_version = right_version;
     }
 
@@ -165,7 +165,7 @@ pub fn sync(app: &mut App) {
 
     let left_scroll = diff.left.viewport.scroll_row.0;
     let left_height = diff.left.viewport.height as usize;
-    let left_content = diff.left.buffer.content().to_string();
+    let left_content = diff.left.buffer().content().to_string();
 
     diff.intraline_left.clear();
     diff.intraline_right.clear();

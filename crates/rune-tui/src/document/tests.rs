@@ -386,3 +386,16 @@ fn hydrate_seats_a_journaled_caret_inside_a_crlf_pair_after_the_pair() {
 
     assert_eq!(doc.cursors().primary().position, BufferOffset(3));
 }
+
+#[test]
+fn install_snaps_a_caret_inside_a_crlf_pair_of_the_new_buffer_after_the_pair() {
+    let mut doc = Document::new(Buffer::new("abc"));
+
+    doc.install(
+        Buffer::new("a\r\nb"),
+        CursorSet::new_from(&[test_cursor(2, 2)]),
+    );
+
+    assert_eq!(doc.cursors().primary().position, BufferOffset(3));
+    assert_eq!(doc.buffer().content(), "a\r\nb");
+}

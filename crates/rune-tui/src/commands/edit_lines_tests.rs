@@ -25,7 +25,7 @@ fn indent_inserts_a_leading_tab() {
     let mut app = app_with("hello", 2);
     let id = app.active;
     indent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "\thello");
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn tab_indents_every_line_the_selection_touches() {
     let id = app.active;
     selecting(&mut app, id, 0, 5);
     indent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "\ta\n\tb\n\tc");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "\ta\n\tb\n\tc");
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn a_selection_ending_at_column_zero_does_not_indent_that_line() {
     let id = app.active;
     selecting(&mut app, id, 0, 4);
     indent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "\ta\n\tb\nc");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "\ta\n\tb\nc");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn indent_keeps_the_caret_column_when_there_is_no_selection() {
     let mut app = app_with("hello", 2);
     let id = app.active;
     indent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "\thello");
     assert_eq!(app.doc(id).unwrap().cursors().primary().position.get(), 3);
 }
 
@@ -71,7 +71,7 @@ fn outdent_dedents_every_selected_line() {
     let id = app.active;
     selecting(&mut app, id, 0, 5);
     outdent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "a\nb");
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn outdent_puts_a_caret_inside_removed_indentation_at_the_line_start() {
     let mut app = app_with("\thello", 1);
     let id = app.active;
     outdent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "hello");
     assert_eq!(app.doc(id).unwrap().cursors().primary().position.get(), 0);
 }
 
@@ -89,7 +89,7 @@ fn outdent_over_a_selection_with_no_indentation_is_a_no_op() {
     let id = app.active;
     selecting(&mut app, id, 0, 3);
     outdent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "a\nb");
     assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     let primary = app.doc(id).unwrap().cursors().primary();
     assert_eq!((primary.anchor.get(), primary.position.get()), (0, 3));
@@ -104,7 +104,7 @@ fn indenting_a_selection_is_one_undo_step() {
     indent(&mut app, id);
     assert_eq!(app.doc(id).unwrap().journal.len(), steps_before + 1);
     undo(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "a\nb\nc");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "a\nb\nc");
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn two_cursors_on_one_line_still_indent_it_once() {
         desired_col: VisualCol(0),
     }));
     indent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "\tab");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "\tab");
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn outdent_removes_one_leading_tab() {
     let mut app = app_with("\thello", 3);
     let id = app.active;
     outdent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "hello");
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn outdent_removes_up_to_four_leading_spaces() {
     let mut app = app_with("    hello", 5);
     let id = app.active;
     outdent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "hello");
 }
 
 #[test]
@@ -142,12 +142,12 @@ fn outdent_on_a_line_with_no_indentation_is_a_no_op() {
     let mut app = app_with("hello", 0);
     let id = app.active;
     outdent(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "hello");
     assert_eq!(app.doc(id).unwrap().journal.len(), 0);
 }
 
 fn content(app: &App) -> String {
-    app.doc(app.active).unwrap().buffer.content().to_string()
+    app.doc(app.active).unwrap().buffer().content().to_string()
 }
 
 fn carets(app: &App) -> Vec<usize> {

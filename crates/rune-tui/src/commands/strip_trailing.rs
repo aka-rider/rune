@@ -13,7 +13,7 @@ pub(crate) fn strip_trailing_whitespace(app: &mut App, id: DocumentId) {
         return;
     }
     let Some(doc) = app.doc(id) else { return };
-    let deletions = trailing_whitespace_edits(doc.buffer.content());
+    let deletions = trailing_whitespace_edits(doc.buffer().content());
     if deletions.is_empty() {
         return;
     }

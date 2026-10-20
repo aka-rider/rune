@@ -82,7 +82,7 @@ fn run_the_save_cmd(app: &mut App, effects: &mut Effects) {
 }
 
 fn content(app: &App, id: DocumentId) -> String {
-    app.doc(id).unwrap().buffer.content().to_string()
+    app.doc(id).unwrap().buffer().content().to_string()
 }
 
 fn resolved_merge_session(app: &mut App, id: DocumentId) {
@@ -168,12 +168,12 @@ fn saving_a_document_with_nothing_to_strip_preserves_the_redo_tail() {
     let (mut app, _mem, id) = app_with("clean\n");
     edit::insert_char(&mut app, id, 'X');
     edit::undo(&mut app, id);
-    let version_before = app.doc(id).unwrap().buffer.version();
+    let version_before = app.doc(id).unwrap().buffer().version();
 
     let (start, _effects) = save_interactively(&mut app, id);
 
     assert_eq!(start, SaveStart::NotDirty);
-    assert_eq!(app.doc(id).unwrap().buffer.version(), version_before);
+    assert_eq!(app.doc(id).unwrap().buffer().version(), version_before);
 
     edit::redo(&mut app, id);
 

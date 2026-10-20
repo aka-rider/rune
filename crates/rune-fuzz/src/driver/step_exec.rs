@@ -69,7 +69,7 @@ fn highlight_reply_step(
     result: rune_tui::highlight::HighlightReply,
     span_count: usize,
 ) -> (Msg, MsgTag) {
-    let live = state.app.active_doc().buffer.version();
+    let live = state.app.active_doc().buffer().version();
     let delivered_version = version.resolve(live);
     let doc = state.app.active;
     let msg = Msg::Highlighted {
@@ -130,7 +130,7 @@ fn arm_save_cmd(state: &mut State, prev: &Snapshot, outcome: &mut Outcome, cmd: 
         .app
         .documents
         .iter()
-        .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
+        .map(|(&id, doc)| (id, doc.buffer().content().as_bytes().to_vec()))
         .collect();
     state.pending_save = Some((cmd, per_doc_bytes));
     false

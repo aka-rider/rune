@@ -54,7 +54,7 @@ const RIGHT: KeyInput = KeyInput {
 /// it partway through the walk; the guard only catches a fixture that broke
 /// that guarantee.
 fn place_caret(session: &mut Session, offset: usize) {
-    let target = offset.min(session.app().active_doc().buffer.content().len());
+    let target = offset.min(session.app().active_doc().buffer().content().len());
     let mut guard = 0usize;
     while session
         .app()

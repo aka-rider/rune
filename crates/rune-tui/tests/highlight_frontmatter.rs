@@ -24,7 +24,7 @@ const FRONTMATTER_AND_FENCE: &str = "---\na: 1\n---\n\n```rust\nfn f() {}\n```\n
 /// offsets is what lets a claim about a token survive the document moving
 /// underneath it.
 fn span_texts(app: &App) -> Vec<(String, ScopeId)> {
-    let content = app.active_doc().buffer.content().to_string();
+    let content = app.active_doc().buffer().content().to_string();
     all_spans(app)
         .into_iter()
         .filter_map(|(range, scope)| content.get(range).map(|text| (text.to_string(), scope)))
@@ -87,7 +87,7 @@ fn frontmatter_spans_stay_inside_the_frontmatter() {
     session.app_mut().sync_view();
     settle_highlight(&mut session);
 
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     let body = updated
         .find("title")
         .expect("fixture has a frontmatter body");
@@ -178,7 +178,7 @@ fn destroying_the_frontmatter_delimiter_recolours_every_region() {
         "the surviving region must carry a parse of its own"
     );
 
-    let updated = session.app().active_doc().buffer.content().to_string();
+    let updated = session.app().active_doc().buffer().content().to_string();
     let fence_body = updated.find("fn f()").expect("the fence body survives");
     let painted = span_texts(session.app());
     let selected: Vec<&str> = painted.iter().map(|(text, _)| text.as_str()).collect();

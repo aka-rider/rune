@@ -183,7 +183,7 @@ fn stale_confirm_timeout_is_ignored() {
 #[test]
 fn control_bytes_with_no_modifier_are_never_inserted() {
     let mut app = test_app();
-    let before = app.active_doc().buffer.content().to_string();
+    let before = app.active_doc().buffer().content().to_string();
 
     for raw in ['\u{1}', '\u{7f}', '\u{1b}'] {
         let mut effects = Effects::default();
@@ -195,7 +195,7 @@ fn control_bytes_with_no_modifier_are_never_inserted() {
     }
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         before,
         "a raw control byte must never be inserted into the document"
     );
@@ -211,7 +211,7 @@ fn printable_ascii_and_unicode_chars_are_still_insertable() {
         &mut effects,
     );
     assert!(
-        app.active_doc().buffer.content().contains('汉'),
+        app.active_doc().buffer().content().contains('汉'),
         "genuine Unicode text entry must not be blocked by the control-byte guard"
     );
 }

@@ -263,7 +263,7 @@ fn tab_in_an_editable_document_still_indents_and_does_not_move_link_focus() {
     send(&mut app, plain(KeyCode::Tab));
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         "\t[a](http://example.com)\nworld\n"
     );
     assert_eq!(app.active_doc().reading_link_focus, None);

@@ -99,7 +99,7 @@ fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
 
     let first_pass: Vec<Cursor> = original
         .iter()
-        .map(|&c| move_row(&view, &doc.buffer, c, delta, extend))
+        .map(|&c| move_row(&view, doc.buffer(), c, delta, extend))
         .collect();
     doc.set_cursors(CursorSet::new_from(&first_pass));
 
@@ -108,8 +108,8 @@ fn move_row_cursors(doc: &mut Document, extend: Extend, delta: isize) {
         .iter()
         .zip(&first_pass)
         .map(|(&c, &moved)| {
-            if has_source_geometry(&settled, &doc.buffer, c.position.get()) {
-                move_row(&settled, &doc.buffer, c, delta, extend)
+            if has_source_geometry(&settled, doc.buffer(), c.position.get()) {
+                move_row(&settled, doc.buffer(), c, delta, extend)
             } else {
                 moved
             }
@@ -138,7 +138,7 @@ pub fn page_down(doc: &mut Document, extend: Extend) {
 
 fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> WrapRow {
     let primary = doc.cursors().primary();
-    let bp = doc.buffer.offset_to_line_col(primary.position.get());
+    let bp = doc.buffer().offset_to_line_col(primary.position.get());
     let sp = view.syntax.buffer_to_syntax(bp);
     WrapRow(view.wrap.syntax_to_wrap(sp).row)
 }
@@ -194,8 +194,8 @@ fn scroll_to(doc: &mut Document, target_row: DisplayRow) {
 
 fn display_row_of_byte(doc: &mut Document, target: usize) -> DisplayRow {
     let view = doc.view();
-    let clamped = target.min(doc.buffer.content().len());
-    let bp = doc.buffer.offset_to_line_col(clamped);
+    let clamped = target.min(doc.buffer().content().len());
+    let bp = doc.buffer().offset_to_line_col(clamped);
     let sp = view.syntax.buffer_to_syntax(bp);
     let wrap_row = WrapRow(view.wrap.syntax_to_wrap(sp).row);
     view.display.wrap_to_display(wrap_row)
@@ -290,7 +290,7 @@ mod tests {
     fn centre_cursor_puts_the_cursor_row_in_the_middle() {
         let mut doc = doc_with_lines(100, 20);
         let offset = doc
-            .buffer
+            .buffer()
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
         doc.set_cursors(CursorSet::new(offset));
@@ -302,7 +302,7 @@ mod tests {
     fn cursor_to_top_scrolls_the_cursor_row_to_row_zero() {
         let mut doc = doc_with_lines(100, 20);
         let offset = doc
-            .buffer
+            .buffer()
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
         doc.set_cursors(CursorSet::new(offset));
@@ -314,7 +314,7 @@ mod tests {
     fn cursor_to_bottom_scrolls_the_cursor_row_to_the_last_visible_row() {
         let mut doc = doc_with_lines(100, 20);
         let offset = doc
-            .buffer
+            .buffer()
             .line_start(50)
             .expect("line 50 exists in a 100-line fixture");
         doc.set_cursors(CursorSet::new(offset));

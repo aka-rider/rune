@@ -72,7 +72,7 @@ fn an_external_rename_reported_via_renamed_from_reunites_the_tab_under_the_new_n
         Some(rune_tui::db::Db::new(store, Arc::clone(&bridge), false)),
     );
     let id = app.active;
-    let issued_version = app.doc(id).unwrap().buffer.version();
+    let issued_version = app.doc(id).unwrap().buffer().version();
     let op_id = app
         .db
         .as_ref()

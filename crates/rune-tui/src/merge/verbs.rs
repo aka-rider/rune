@@ -55,7 +55,7 @@ fn position_status(session: &MergeSession, idx: usize) -> String {
 
 fn caret_to(app: &mut App, doc: DocumentId, byte: usize) {
     if let Some(d) = app.doc_mut(doc) {
-        let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer.content(), byte);
+        let clamped = rune_core::buffer::clamp_to_char_boundary(d.buffer().content(), byte);
         d.set_cursors(CursorSet::new(clamped));
     }
 }
@@ -104,7 +104,7 @@ fn block_bytes(app: &App, doc: DocumentId, idx: usize) -> Option<String> {
     };
     let range = session.conflicts.get(idx)?.block.range.clone();
     app.doc(doc)?
-        .buffer
+        .buffer()
         .content()
         .get(range)
         .map(str::to_string)
@@ -160,7 +160,7 @@ fn after_resolution(app: &mut App, doc: DocumentId) {
 
     let content = app
         .doc(doc)
-        .map(|d| d.buffer.content().to_string())
+        .map(|d| d.buffer().content().to_string())
         .unwrap_or_default();
     super::persist::enqueue_merge_progress(app, doc, &content, &pairs);
 
@@ -251,7 +251,7 @@ pub(crate) fn take_ours(app: &mut App) {
                     };
                     let content = app
                         .doc(doc)
-                        .map(|d| d.buffer.content().to_string())
+                        .map(|d| d.buffer().content().to_string())
                         .unwrap_or_default();
                     super::persist::enqueue_merge_progress(app, doc, &content, &pairs);
                 } else {

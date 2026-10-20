@@ -16,13 +16,13 @@ fn preview_for(content: &str, needle: &str, replacement: &str) -> App {
 #[test]
 fn typing_in_replace_previews_every_visible_match_without_editing() {
     let mut app = preview_for("dog cat dog cat dog", "dog", "bird");
-    let version = app.active_doc().buffer.version();
+    let version = app.active_doc().buffer().version();
 
     let (_, row) = document_row(&mut app, "bird cat bird cat bird");
 
     assert!(!row.contains("dog"), "{row:?}");
-    assert_eq!(app.active_doc().buffer.content(), "dog cat dog cat dog");
-    assert_eq!(app.active_doc().buffer.version(), version);
+    assert_eq!(app.active_doc().buffer().content(), "dog cat dog cat dog");
+    assert_eq!(app.active_doc().buffer().version(), version);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn an_empty_replacement_previews_match_width_blanks_instead_of_deleting() {
     for x in third_dog..third_dog + 3 {
         assert_eq!(bg_at(&mut app, x, y), other, "column {x}: {row:?}");
     }
-    assert_eq!(app.active_doc().buffer.content(), "dog cat dog cat dog");
+    assert_eq!(app.active_doc().buffer().content(), "dog cat dog cat dog");
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn an_empty_replacement_previews_a_wide_match_as_that_many_blank_columns() {
     for x in blank..blank + 4 {
         assert_eq!(bg_at(&mut app, x, y), current, "column {x}: {row:?}");
     }
-    assert_eq!(app.active_doc().buffer.content(), "日本 cat");
+    assert_eq!(app.active_doc().buffer().content(), "日本 cat");
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn typing_after_an_empty_replacement_swaps_the_blank_preview_for_the_typed_text(
     type_str(&mut app, "c");
 
     document_row(&mut app, "c cat c");
-    assert_eq!(app.active_doc().buffer.content(), "dog cat dog");
+    assert_eq!(app.active_doc().buffer().content(), "dog cat dog");
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn a_stale_match_set_never_previews_onto_a_newer_buffer() {
     let geo = crate::layout::geometry(app.frame_area(), &app);
     click(&mut app, geo.editor.x, geo.editor.y);
     press(&mut app, char_key('q'));
-    assert_eq!(app.active_doc().buffer.content(), "qdog cat dog");
+    assert_eq!(app.active_doc().buffer().content(), "qdog cat dog");
     let field = geo
         .find_panel
         .and_then(|p| p.replace_field)

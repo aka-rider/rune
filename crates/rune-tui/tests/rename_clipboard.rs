@@ -35,7 +35,7 @@ use rename_common::{app_with, ctrl, plain, seeded_vfs, send, sup};
 fn cmd_c_in_the_title_copies_the_window_not_the_whole_name() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
-    let before = app.active_doc().buffer.content().to_string();
+    let before = app.active_doc().buffer().content().to_string();
 
     send(&mut app, plain(KeyCode::F2));
     assert_eq!(app.title.text(), "a.md");
@@ -52,7 +52,7 @@ fn cmd_c_in_the_title_copies_the_window_not_the_whole_name() {
         "locked, ⌘C must copy the stem alone, never 'a.md'"
     );
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         before,
         "copying the title must never touch the document buffer"
     );

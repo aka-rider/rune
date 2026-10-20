@@ -67,7 +67,10 @@ fn prebind_edits_replay_at_bind() {
     // must still hold only the one Load op.
     assert!(session.key(END).is_none());
     assert!(session.type_("abc").is_none());
-    assert_eq!(session.app().doc(id).unwrap().buffer.content(), "helloabc");
+    assert_eq!(
+        session.app().doc(id).unwrap().buffer().content(),
+        "helloabc"
+    );
     assert_eq!(
         session.app().db_ops.len(),
         1,
@@ -87,7 +90,10 @@ fn prebind_edits_replay_at_bind() {
         session.app().doc(id).unwrap().is_store_bound(),
         "the Load ack must install DocDb"
     );
-    assert_eq!(session.app().doc(id).unwrap().buffer.content(), "helloabc");
+    assert_eq!(
+        session.app().doc(id).unwrap().buffer().content(),
+        "helloabc"
+    );
     assert_eq!(
         session.app().doc(id).unwrap().journal.len(),
         3,
@@ -117,7 +123,7 @@ fn prebind_edits_replay_at_bind() {
     // (or fail outright once the desync ran past the end of `local_seq`).
     assert!(session.key(UNDO).is_none());
     assert!(session.deliver_db().is_none());
-    assert_eq!(session.app().doc(id).unwrap().buffer.content(), "helloab");
+    assert_eq!(session.app().doc(id).unwrap().buffer().content(), "helloab");
     assert!(
         !session.app().db.as_ref().unwrap().degraded,
         "an undo resolving cleanly must never degrade the store"

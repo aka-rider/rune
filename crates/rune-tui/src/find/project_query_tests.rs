@@ -193,7 +193,7 @@ fn a_dirty_open_buffer_is_found_when_the_disk_copy_lacks_the_text() {
         .expect("open the disk file");
     type_into(&mut app, "needle", &mut effects);
     assert!(
-        app.active_doc().buffer.content().contains("needle"),
+        app.active_doc().buffer().content().contains("needle"),
         "test setup: the buffer is dirty with text the disk lacks"
     );
 
@@ -326,7 +326,7 @@ fn a_reply_never_reminted_by_typing_keeps_its_generation_until_the_debounce_fire
     assert_eq!(find(&app).find.editor.text(), "h");
     assert_eq!(project(&app).query_generation, minted);
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         "hello",
         "typing into the panel must never reach the editor"
     );

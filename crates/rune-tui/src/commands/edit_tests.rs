@@ -23,7 +23,7 @@ fn backspace_on_a_reversed_selection_removes_exactly_the_highlighted_range() {
 
     delete_left(&mut app, id);
 
-    assert_eq!(app.doc(id).unwrap().buffer.content(), " world");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), " world");
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn typing_over_a_reversed_selection_replaces_exactly_the_highlighted_range() {
 
     insert_char(&mut app, id, 'x');
 
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "x world");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "x world");
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn typing_over_a_forward_selection_replaces_exactly_the_highlighted_range() {
 
     insert_char(&mut app, id, 'x');
 
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "x world");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "x world");
 }
 
 /// End-to-end regression for the illegal-edit-set hazard
@@ -81,7 +81,7 @@ fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
     app.doc_mut(id).unwrap().set_cursors(two);
 
     delete_right(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "cd");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "cd");
     assert_eq!(app.doc(id).unwrap().journal.len(), 1);
     let step_edit_starts: Vec<usize> = app
         .doc(id)
@@ -98,14 +98,14 @@ fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
     );
 
     undo(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "abcd");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "abcd");
 
     // Panics here (debug_assert in `undo::reapply`) if the two
     // cursors' adjacent delete-right ranges were journaled as two
     // AppliedEdits sharing a post-edit `start` instead of being
     // coalesced into one.
     redo(&mut app, id);
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "cd");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "cd");
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn backspace_at_the_start_of_a_line_removes_the_whole_crlf_pair() {
 
     delete_left(&mut app, id);
 
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "abcdef");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "abcdef");
 }
 
 #[test]
@@ -125,5 +125,5 @@ fn delete_right_at_the_end_of_a_line_removes_the_whole_crlf_pair() {
 
     delete_right(&mut app, id);
 
-    assert_eq!(app.doc(id).unwrap().buffer.content(), "abcdef");
+    assert_eq!(app.doc(id).unwrap().buffer().content(), "abcdef");
 }

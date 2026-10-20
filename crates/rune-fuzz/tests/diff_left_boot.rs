@@ -20,7 +20,11 @@ fn a_scripted_install_diff_left_action_installs_the_diff_view() {
     let mut session = driver::Session::open(driver::DOC_PATH, "right side content");
     assert_eq!(session.act(Action::InstallDiffLeft { seed_index: 3 }), None);
     assert_eq!(
-        session.app().diff.as_ref().map(|d| d.left.buffer.content()),
+        session
+            .app()
+            .diff
+            .as_ref()
+            .map(|d| d.left.buffer().content()),
         Some(expected_left)
     );
 }

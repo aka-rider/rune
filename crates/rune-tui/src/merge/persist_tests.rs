@@ -244,7 +244,7 @@ fn resume_rebuilds_the_left_pane_from_the_buffer_and_stored_theirs() {
     assert_eq!(diff.right, doc);
     let content = "x".repeat(40);
     let expected = format!("{}yours{}b", &content[..5], &content[20..30]);
-    assert_eq!(diff.left.buffer.content(), expected);
+    assert_eq!(diff.left.buffer().content(), expected);
 }
 
 #[test]

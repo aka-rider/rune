@@ -61,7 +61,7 @@ fn enter_two_conflict_merge_at(db_path: &Path, mem: &Arc<Mem>) -> (Session, Docu
     assert!(session.key(bare(KeyCode::End)).is_none());
     assert!(session.key(ch('Z')).is_none());
     assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer.content(),
+        session.app().doc(doc_id).unwrap().buffer().content(),
         "Xone\ntwo\nthree\nfour\nfiveZ\n"
     );
     assert!(session.deliver_db_all().is_none());
@@ -158,7 +158,7 @@ fn merge_resumes_after_restart() {
         rune_tui::messages::log_text(session_b.app())
     );
     assert_eq!(
-        session_b.app().doc(doc_b).unwrap().buffer.content(),
+        session_b.app().doc(doc_b).unwrap().buffer().content(),
         "Xone\ntwo\nthree\nfour\nfiveZ\n",
         "the working form re-hydrates byte-for-byte, markers-free"
     );
@@ -184,7 +184,7 @@ fn merge_resumes_after_restart() {
         "resolving the survivor completes the resumed merge"
     );
     assert_eq!(
-        session_b.app().doc(doc_b).unwrap().buffer.content(),
+        session_b.app().doc(doc_b).unwrap().buffer().content(),
         "Xone\ntwo\nthree\nfour\nfive disk\n",
         "the survivor's take-disk lands in the buffer"
     );
@@ -240,7 +240,7 @@ fn journaled_edit_past_the_install_abandons_the_merge_on_restart() {
         .app()
         .doc(doc_b)
         .unwrap()
-        .buffer
+        .buffer()
         .content()
         .to_string();
     assert_eq!(
@@ -281,7 +281,7 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
         Some(Db::new(store_b, Arc::clone(&bridge_b), false)),
     );
     let doc_b = app_b.active;
-    let issued_version = app_b.doc(doc_b).unwrap().buffer.version();
+    let issued_version = app_b.doc(doc_b).unwrap().buffer().version();
 
     let op_id = app_b
         .db
@@ -312,13 +312,13 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
         "no resume message may be posted for a skipped hydration"
     );
     assert_eq!(
-        app_b.doc(doc_b).unwrap().buffer.content(),
+        app_b.doc(doc_b).unwrap().buffer().content(),
         disk,
         "a binding-only load must not touch the buffer"
     );
 
     // The row stayed active: the next FULL load re-offers and re-enters.
-    let issued_version = app_b.doc(doc_b).unwrap().buffer.version();
+    let issued_version = app_b.doc(doc_b).unwrap().buffer().version();
     let op_id = app_b
         .db
         .as_ref()

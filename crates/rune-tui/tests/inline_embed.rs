@@ -104,7 +104,7 @@ fn a_caret_on_the_image_row_leaves_every_placeholder_cells_fg_intact() {
     let end_of_line = app
         .doc(id)
         .expect("doc")
-        .buffer
+        .buffer()
         .content()
         .find('\n')
         .expect("newline");
@@ -189,7 +189,7 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
 
     // Move the caret onto the image's own line — well inside its byte
     // range, so this line reveals to raw markdown source.
-    let content = app.doc(id).expect("doc").buffer.content().to_string();
+    let content = app.doc(id).expect("doc").buffer().content().to_string();
     let image_line_start = content.find("![caption]").expect("image line");
     {
         let doc = app.doc_mut(id).expect("doc");
@@ -218,12 +218,11 @@ fn moving_the_caret_onto_the_line_keeps_the_image_live_deleting_the_line_despawn
         let new_content = "text before\n\n";
         let edits = rune_core::buffer::SortedEdits::single(rune_core::buffer::Edit {
             start: 0,
-            end: doc.buffer.len(),
+            end: doc.buffer().len(),
             insert: new_content.to_string(),
         });
-        let (new_buffer, _applied) = doc.buffer.apply_edits(&edits).expect("edit applies");
-        doc.buffer = new_buffer;
-        doc.set_cursors(CursorSet::new(0));
+        let (new_buffer, _applied) = doc.buffer().apply_edits(&edits).expect("edit applies");
+        doc.install(new_buffer, CursorSet::new(0));
     }
     // Reparse BEFORE the next `update` call: `sync_embeds` reads
     // `doc.doc.blocks()`, which only a `view()`/`sync_view()` call

@@ -89,7 +89,7 @@ fn typing_while_folded_edits_the_buffer_at_correct_offsets() {
     app::update(&mut app, Msg::Key(key('!')), &mut effects);
     app.sync_view();
 
-    assert_eq!(app.active_doc().buffer.content(), "a\n!b\nc");
+    assert_eq!(app.active_doc().buffer().content(), "a\n!b\nc");
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn resize_round_trip_preserves_buffer_hunk_cursor_and_focus() {
     app::update(&mut app, Msg::Key(sup_shift('j')), &mut effects);
     app.sync_view();
 
-    let content_before = app.active_doc().buffer.content().to_string();
+    let content_before = app.active_doc().buffer().content().to_string();
     let hunk_before = app.diff.as_ref().expect("diff active").hunk_cur;
     assert_eq!(app.focus(), Pane::Editor);
 
@@ -114,7 +114,7 @@ fn resize_round_trip_preserves_buffer_hunk_cursor_and_focus() {
         None,
         "the narrow resize must fold"
     );
-    assert_eq!(app.active_doc().buffer.content(), content_before);
+    assert_eq!(app.active_doc().buffer().content(), content_before);
     assert_eq!(
         app.diff.as_ref().expect("diff active").hunk_cur,
         hunk_before
@@ -130,7 +130,7 @@ fn resize_round_trip_preserves_buffer_hunk_cursor_and_focus() {
             .is_some(),
         "widening back must restore the side-by-side pane"
     );
-    assert_eq!(app.active_doc().buffer.content(), content_before);
+    assert_eq!(app.active_doc().buffer().content(), content_before);
     assert_eq!(
         app.diff.as_ref().expect("diff active").hunk_cur,
         hunk_before
@@ -146,13 +146,13 @@ fn typing_edits_file_b_only() {
     app::update(&mut app, Msg::Key(key('!')), &mut effects);
     app.sync_view();
 
-    assert_eq!(app.active_doc().buffer.content(), "!hello");
+    assert_eq!(app.active_doc().buffer().content(), "!hello");
     assert_eq!(
         app.diff
             .as_ref()
             .expect("diff active")
             .left
-            .buffer
+            .buffer()
             .content(),
         "left original"
     );
@@ -314,7 +314,7 @@ fn undo_of_an_edit_restores_the_previous_alignment() {
 
     app::update(&mut app, Msg::Key(key('!')), &mut effects);
     app.sync_view();
-    assert_eq!(app.active_doc().buffer.content(), "!a\nb");
+    assert_eq!(app.active_doc().buffer().content(), "!a\nb");
 
     let mut effects = Effects::default();
     app::update(
@@ -329,7 +329,7 @@ fn undo_of_an_edit_restores_the_previous_alignment() {
         &mut effects,
     );
     app.sync_view();
-    assert_eq!(app.active_doc().buffer.content(), "a\nb");
+    assert_eq!(app.active_doc().buffer().content(), "a\nb");
 
     let buf = testgrid::draw(&app, WIDE_ENOUGH, HEIGHT);
     let grid = testgrid::grid(&app, WIDE_ENOUGH, HEIGHT);

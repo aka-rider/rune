@@ -27,7 +27,10 @@ fn discard_install_replaces_the_buffer_with_theirs_verbatim_and_never_touches_an
         rune_db::ObsId::new(42).expect("nonzero"),
     );
 
-    assert_eq!(app.doc(doc).unwrap().buffer.content(), "disk replacement\n");
+    assert_eq!(
+        app.doc(doc).unwrap().buffer().content(),
+        "disk replacement\n"
+    );
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(messages::newest_text(&app), Some("disk changes adopted"));
 }
@@ -130,7 +133,7 @@ fn absent_ancestor_notifies_and_localizes_via_the_2way_path() {
         1,
         "expected exactly one localized conflict, not a whole-file collapse"
     );
-    let buffer = app.doc(doc).unwrap().buffer.content().to_string();
+    let buffer = app.doc(doc).unwrap().buffer().content().to_string();
     assert!(
         buffer.starts_with("shared-start\n"),
         "clean prefix lost: {buffer:?}"
@@ -150,11 +153,11 @@ fn a_save_in_flight_cancels_the_landing_instead_of_installing_a_resolver() {
         generation: crate::generation::Generation::ZERO,
         intent: MergeIntent::Merge,
     };
-    let content: Arc<str> = Arc::from(app.doc(doc).unwrap().buffer.content());
-    let version = app.doc(doc).unwrap().buffer.version();
+    let content: Arc<str> = Arc::from(app.doc(doc).unwrap().buffer().content());
+    let version = app.doc(doc).unwrap().buffer().version();
     let _ticket = app.doc_mut(doc).unwrap().begin_save(version, content);
     assert!(app.doc(doc).unwrap().save_in_flight());
-    let before = app.doc(doc).unwrap().buffer.content().to_string();
+    let before = app.doc(doc).unwrap().buffer().content().to_string();
 
     let mut effects = Effects::default();
     handle_merge_prep_ack(
@@ -170,7 +173,7 @@ fn a_save_in_flight_cancels_the_landing_instead_of_installing_a_resolver() {
 
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(
-        app.doc(doc).unwrap().buffer.content(),
+        app.doc(doc).unwrap().buffer().content(),
         before,
         "no working form may be installed under an in-flight save"
     );
@@ -264,7 +267,7 @@ fn failed_install_leaves_expect_obs_and_last_sync_untouched() {
     );
 
     assert_eq!(app.merge, MergeState::Inactive);
-    assert_eq!(app.doc(doc).unwrap().buffer.content(), "hello");
+    assert_eq!(app.doc(doc).unwrap().buffer().content(), "hello");
     assert_eq!(app.doc(doc).unwrap().last_sync, None);
     assert_eq!(
         app.file_binding(1).unwrap().expect_obs,
@@ -285,7 +288,7 @@ fn begin_refuses_while_a_save_is_in_flight() {
     let doc = app.active;
     if let Some(d) = app.doc_mut(doc) {
         d.last_sync = Some(SyncKind::Diverged);
-        d.begin_save(d.buffer.version(), Arc::from(d.buffer.content()));
+        d.begin_save(d.buffer().version(), Arc::from(d.buffer().content()));
     }
 
     let mut effects = Effects::default();

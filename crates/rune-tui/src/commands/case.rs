@@ -19,8 +19,8 @@ fn has_actionable_range(app: &App, id: DocumentId) -> bool {
             let (start, end) = c.selection_range();
             start != end
         } else {
-            let (start, end) = nav::word_range_at(&doc.buffer, c.position.get());
-            start != end && nav::is_word_at(&doc.buffer, start)
+            let (start, end) = nav::word_range_at(doc.buffer(), c.position.get());
+            start != end && nav::is_word_at(doc.buffer(), start)
         }
     })
 }
@@ -98,7 +98,7 @@ mod tests {
 
         uppercase(&mut app, id);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "HELLO world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "HELLO world");
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod tests {
 
         lowercase(&mut app, id);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "hello world");
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
 
         uppercase(&mut app, id);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "FOO BAR");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "FOO BAR");
     }
 
     #[test]
@@ -140,7 +140,7 @@ mod tests {
 
         uppercase(&mut app, id);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "HELLO world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "HELLO world");
         let steps = app.doc(id).unwrap().journal.steps();
         assert_eq!(
             steps.len(),
@@ -162,7 +162,7 @@ mod tests {
 
         uppercase(&mut app, id);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "foo, bar");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "foo, bar");
         assert!(messages::log_text(&app).contains("no word under cursor"));
     }
 
@@ -174,7 +174,7 @@ mod tests {
 
         uppercase(&mut app, id);
 
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "hello world");
     }
 
     #[test]
@@ -184,9 +184,9 @@ mod tests {
         selecting(&mut app, id, 0, 5);
 
         uppercase(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "HELLO world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "HELLO world");
 
         crate::commands::edit::undo(&mut app, id);
-        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello world");
+        assert_eq!(app.doc(id).unwrap().buffer().content(), "hello world");
     }
 }

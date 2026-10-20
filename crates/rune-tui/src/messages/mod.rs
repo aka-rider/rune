@@ -421,7 +421,7 @@ fn copy_selection(app: &mut App, effects: &mut Effects) {
     if !app.messages.doc.cursors().primary().has_selection() {
         return;
     }
-    let text = extract_copy_text(&app.messages.doc.buffer, app.messages.doc.cursors());
+    let text = extract_copy_text(app.messages.doc.buffer(), app.messages.doc.cursors());
     write_to_clipboard_or_report(app, &text, effects);
 }
 

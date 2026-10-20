@@ -140,11 +140,11 @@ fn a_document_targeted_clipboard_read_lands_on_its_captured_document_even_after_
     );
 
     assert!(
-        app.doc(first).unwrap().buffer.content().contains('X'),
+        app.doc(first).unwrap().buffer().content().contains('X'),
         "the reply must land on the document it was requested for"
     );
     assert_eq!(
-        app.doc(second).unwrap().buffer.content(),
+        app.doc(second).unwrap().buffer().content(),
         "b content",
         "the now-active document must be untouched by a reply targeted elsewhere"
     );

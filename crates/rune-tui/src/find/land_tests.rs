@@ -293,13 +293,13 @@ fn the_preview_rejects_edits_and_keystrokes_go_to_the_panel() {
     deliver_preview(&mut app, &mut effects);
     let preview = app.explorer.preview.as_ref().expect("a preview");
     let id = preview.id;
-    let before = preview.doc.buffer.content().to_string();
+    let before = preview.doc.buffer().content().to_string();
 
     crate::commands::edit::insert_char(&mut app, id, 'X');
     press_into(&mut app, char_key('Y'), &mut effects);
 
     let preview = app.explorer.preview.as_ref().expect("still previewing");
-    assert_eq!(preview.doc.buffer.content(), before);
+    assert_eq!(preview.doc.buffer().content(), before);
     assert!(!preview.doc.is_dirty());
     assert_eq!(find(&app).find.editor.text(), "needleY");
 }
@@ -322,7 +322,7 @@ fn typing_into_a_previewed_file_promotes_it_so_escape_cannot_drop_the_words() {
     assert!(
         app.doc(id)
             .expect("a real tab")
-            .buffer
+            .buffer()
             .content()
             .contains('Z')
     );

@@ -105,7 +105,7 @@ fn arrowing_onto_a_file_paints_it_while_the_active_document_stays_put() {
         app.active, open,
         "browsing never renames the active document"
     );
-    assert_eq!(app.active_doc().buffer.content(), OPEN_BODY);
+    assert_eq!(app.active_doc().buffer().content(), OPEN_BODY);
 }
 
 #[test]

@@ -128,12 +128,12 @@ fn typing_in_the_replace_field_never_moves_the_cursor_or_touches_the_buffer() {
     open_find(&mut app);
     type_str(&mut app, "dog");
     open_replace(&mut app);
-    let before = app.active_doc().buffer.content().to_string();
+    let before = app.active_doc().buffer().content().to_string();
     type_str(&mut app, "cat");
 
     assert_eq!(app.replace_draft(), Some("cat"));
     assert_eq!(find(&app).find.editor.text(), "dog");
-    assert_eq!(app.active_doc().buffer.content(), before);
+    assert_eq!(app.active_doc().buffer().content(), before);
     assert_eq!(selection_start(&app), 0);
 }
 
@@ -141,13 +141,13 @@ fn typing_in_the_replace_field_never_moves_the_cursor_or_touches_the_buffer() {
 fn paste_appends_to_the_draft_and_never_touches_the_buffer() {
     let mut app = app_with("hello world");
     open_find(&mut app);
-    let before = app.active_doc().buffer.content().to_string();
+    let before = app.active_doc().buffer().content().to_string();
 
     paste(&mut app, "wor\nld");
 
     assert_eq!(find(&app).find.editor.text(), "wor");
     assert_eq!(find(&app).matches, vec![6..9]);
-    assert_eq!(app.active_doc().buffer.content(), before);
+    assert_eq!(app.active_doc().buffer().content(), before);
 }
 
 #[test]
@@ -211,5 +211,5 @@ fn paste_with_a_kept_panel_goes_to_the_document() {
     paste(&mut app, "term");
 
     assert_eq!(find(&app).find.editor.text(), "");
-    assert_eq!(app.active_doc().buffer.content(), "termhello");
+    assert_eq!(app.active_doc().buffer().content(), "termhello");
 }

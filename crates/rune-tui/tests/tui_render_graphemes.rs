@@ -36,7 +36,7 @@ fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     let app = session.app();
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         content,
         "buffer bytes must round-trip verbatim across the ZWJ sequence"
     );
@@ -66,7 +66,7 @@ fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
     let app = session.app();
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         content,
         "buffer bytes must round-trip verbatim across the skin-tone modifier"
     );
@@ -248,7 +248,7 @@ fn lone_zero_width_cluster_derives_zero_width_matching_ratatui() {
         let app = session.app();
 
         assert_eq!(
-            app.active_doc().buffer.content(),
+            app.active_doc().buffer().content(),
             content,
             "{label}: buffer bytes must round-trip verbatim"
         );

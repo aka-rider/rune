@@ -25,7 +25,7 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
         return None;
     }
     let wrap_row = view.display.display_to_wrap(display_row);
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
 
     // An embed row showing placeholder pixels has no per-cell `buf_offset`
     // to walk toward, so a click anywhere on it resolves to the row's own
@@ -53,7 +53,7 @@ fn offset_at(app: &App, doc: &Document, view: &ViewSnapshots, row: u16, col: u16
 }
 
 fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: WrapRow) -> usize {
-    let content = doc.buffer.content();
+    let content = doc.buffer().content();
     let syntax_point = view.wrap.wrap_to_syntax(
         content,
         WrapPoint {
@@ -62,7 +62,7 @@ fn row_start_offset(doc: &Document, view: &ViewSnapshots, wrap_row: WrapRow) -> 
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    doc.buffer.caret_offset(buffer_point)
+    doc.buffer().caret_offset(buffer_point)
 }
 
 fn offset_at_ordinary(
@@ -110,12 +110,12 @@ fn offset_at_ordinary(
         },
     );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    doc.buffer.caret_offset(buffer_point)
+    doc.buffer().caret_offset(buffer_point)
 }
 
 fn desired_col_at(doc: &Document, view: &ViewSnapshots, offset: usize) -> usize {
-    let bp = doc.buffer.offset_to_line_col(offset);
+    let bp = doc.buffer().offset_to_line_col(offset);
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
-    view.wrap.visual_col(doc.buffer.content(), wp.row, wp.col)
+    view.wrap.visual_col(doc.buffer().content(), wp.row, wp.col)
 }

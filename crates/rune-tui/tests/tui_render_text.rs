@@ -107,7 +107,7 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
     let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
+    let buffer_point = app.active_doc().buffer().offset_to_line_col(cursor_offset);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let expected_visual_col = view
@@ -151,7 +151,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     let app = session.app();
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
+    let buffer_point = app.active_doc().buffer().offset_to_line_col(cursor_offset);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let expected_visual_col = view

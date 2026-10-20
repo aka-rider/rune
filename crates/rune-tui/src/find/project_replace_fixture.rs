@@ -126,7 +126,7 @@ impl Fixture {
         self.app
             .doc(id)
             .expect("doc exists")
-            .buffer
+            .buffer()
             .content()
             .to_string()
     }

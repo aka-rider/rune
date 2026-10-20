@@ -157,7 +157,7 @@ fn resolve_region_sources(app: &mut App, doc_id: DocumentId) -> Vec<RegionSource
     let view = doc.view();
     #[cfg(test)]
     test_support::record_resolve_call();
-    region_sources(doc.buffer.content(), &view.code_regions)
+    region_sources(doc.buffer().content(), &view.code_regions)
 }
 
 #[cfg(test)]
@@ -234,7 +234,7 @@ pub(crate) fn schedule_highlight(app: &mut App, doc_id: DocumentId, effects: &mu
     let Some(doc) = app.live_doc(doc_id) else {
         return;
     };
-    let version = doc.buffer.version();
+    let version = doc.buffer().version();
     if doc.highlight.in_flight.is_some() {
         if let Some(doc) = app.live_doc_mut(doc_id) {
             doc.highlight.pending = true;
@@ -304,7 +304,7 @@ pub(crate) fn first_paint_highlight(app: &mut App) {
     let Some(doc) = app.live_doc(shown) else {
         return;
     };
-    let version = doc.buffer.version();
+    let version = doc.buffer().version();
     if doc.highlight.version == version {
         return;
     }

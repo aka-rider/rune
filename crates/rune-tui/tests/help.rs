@@ -66,7 +66,7 @@ fn help_content_covers_every_registry_section() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(f1()), &mut effects);
 
-    let content = app.active_doc().buffer.content().to_string();
+    let content = app.active_doc().buffer().content().to_string();
     assert!(
         content.contains("## Global"),
         "missing ## Global:\n{content}"
@@ -110,7 +110,7 @@ fn help_document_rejects_edits_and_never_goes_dirty() {
          return to via ⌃P, which would make this document editable again"
     );
 
-    let content_before = app.active_doc().buffer.content().to_string();
+    let content_before = app.active_doc().buffer().content().to_string();
     let printable = KeyInput {
         code: KeyCode::Char('x'),
         mods: Mods::NONE,
@@ -119,7 +119,7 @@ fn help_document_rejects_edits_and_never_goes_dirty() {
     app::update(&mut app, Msg::Key(printable), &mut effects2);
 
     assert_eq!(
-        app.active_doc().buffer.content(),
+        app.active_doc().buffer().content(),
         content_before,
         "a printable key must not mutate a read-only document"
     );

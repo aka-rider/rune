@@ -256,7 +256,7 @@ mod tests {
         let id = app.active;
         let (version, content) = {
             let doc = app.doc(id).expect("doc open");
-            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+            (doc.buffer().version(), Arc::from(doc.buffer().content()))
         };
         let ticket = app
             .doc_mut(id)

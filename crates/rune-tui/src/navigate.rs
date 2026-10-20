@@ -63,7 +63,7 @@ fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
 
 fn follow_same_doc(app: &mut App, anchor: &Anchor) {
     let doc = app.active_doc();
-    let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
+    let Some(offset) = anchor_offset(&doc.catalogue, doc.buffer(), anchor) else {
         messages::warn(
             app,
             format!("no match for anchor \"{}\"", anchor_label(anchor)),
@@ -93,7 +93,7 @@ pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
         return;
     };
     doc.sync_catalogue();
-    let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
+    let Some(offset) = anchor_offset(&doc.catalogue, doc.buffer(), anchor) else {
         messages::warn(
             app,
             format!("no match for anchor \"{}\"", anchor_label(anchor)),

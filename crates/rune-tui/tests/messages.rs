@@ -87,7 +87,7 @@ fn the_editor_keeps_focus_and_a_character_still_reaches_the_buffer() {
     app::update(session.app_mut(), key(KeyCode::Char('x')), &mut effects2);
 
     assert_eq!(
-        session.app().doc(id).unwrap().buffer.content(),
+        session.app().doc(id).unwrap().buffer().content(),
         "xhello",
         "a character typed after a message posts must still reach the buffer"
     );
@@ -194,7 +194,7 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
         .collect::<Vec<_>>()
         .join("\n");
     let mut session = app_for(&content);
-    let end = session.app().active_doc().buffer.len();
+    let end = session.app().active_doc().buffer().len();
     session
         .app_mut()
         .active_doc_mut()
@@ -209,7 +209,7 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
     let doc = app.active_doc();
     let view = doc.view.as_ref().expect("synced view");
     let buffer_point = doc
-        .buffer
+        .buffer()
         .offset_to_line_col(doc.cursors().primary().position.get());
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);

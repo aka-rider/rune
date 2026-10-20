@@ -93,7 +93,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     crate::commands::strip_trailing::leave_reading_then_strip(app, id);
     let (version, content) = app.doc(id).map_or_else(
         || (0, Arc::from("")),
-        |d| (d.buffer.version(), Arc::<str>::from(d.buffer.content())),
+        |d| (d.buffer().version(), Arc::<str>::from(d.buffer().content())),
     );
     let bytes = content.as_bytes().to_vec();
     let generation = app.next_rename_gen.mint();

@@ -50,7 +50,7 @@ impl Reconciled {
             .app()
             .doc(self.doc)
             .unwrap()
-            .buffer
+            .buffer()
             .content()
             .to_string()
     }
@@ -86,7 +86,7 @@ fn merged() -> Reconciled {
     assert!(session.key(ch('Z')).is_none());
     assert!(session.deliver_db_all().is_none());
     assert_eq!(
-        session.app().doc(doc).unwrap().buffer.content(),
+        session.app().doc(doc).unwrap().buffer().content(),
         BEFORE_MERGE
     );
     let pre_merge_journal_pos = session.app().doc(doc).unwrap().journal.pos();

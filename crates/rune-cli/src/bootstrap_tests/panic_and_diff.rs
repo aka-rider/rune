@@ -39,7 +39,7 @@ fn diff_launch_opens_file_b_normally_and_installs_file_a_read_only() {
     .expect("bootstrap should succeed");
 
     assert_eq!(app.documents.len(), 1, "fileB is the only ordinary tab");
-    assert_eq!(app.active_doc().buffer.content(), "right content");
+    assert_eq!(app.active_doc().buffer().content(), "right content");
     assert!(
         app.active_doc()
             .path()
@@ -47,7 +47,7 @@ fn diff_launch_opens_file_b_normally_and_installs_file_a_read_only() {
     );
 
     let diff = app.diff.as_ref().expect("diff view must be installed");
-    assert_eq!(diff.left.buffer.content(), "left content");
+    assert_eq!(diff.left.buffer().content(), "left content");
     assert_eq!(diff.left.read_only, rune_tui::document::ReadOnly::Always);
     assert_eq!(diff.right, app.active);
 }
@@ -124,6 +124,6 @@ fn diff_launch_with_a_missing_right_file_is_recovery_backed_like_an_ordinary_lau
     )
     .expect("bootstrap should succeed even though fileB does not exist yet");
 
-    assert_eq!(app.active_doc().buffer.content(), "");
+    assert_eq!(app.active_doc().buffer().content(), "");
     assert!(app.diff.is_some());
 }

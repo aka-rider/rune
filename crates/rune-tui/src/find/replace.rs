@@ -27,7 +27,7 @@ pub(crate) fn replace_current(app: &mut App) {
         select_next_or_report(app);
         return;
     };
-    let content = app.active_doc().buffer.content();
+    let content = app.active_doc().buffer().content();
     let insert = state
         .pattern
         .as_ref()
@@ -70,7 +70,7 @@ pub(crate) fn replace_all(app: &mut App) {
     else {
         return;
     };
-    let content = app.active_doc().buffer.content();
+    let content = app.active_doc().buffer().content();
     let edits: Vec<Edit> = state
         .pattern
         .as_ref()

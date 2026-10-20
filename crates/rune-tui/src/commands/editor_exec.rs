@@ -113,7 +113,7 @@ pub(crate) fn run(
 fn at_buffer_top(app: &App) -> bool {
     let doc = app.active_doc();
     let offset = doc.cursors().primary().position.get();
-    doc.buffer.offset_to_line_col(offset).line == 0
+    doc.buffer().offset_to_line_col(offset).line == 0
 }
 
 #[cfg(test)]
@@ -153,7 +153,7 @@ mod tests {
 
         crate::dispatch::handle_key(&mut app, ctrl('x'), &mut effects);
 
-        assert_eq!(app.doc(id).expect("doc").buffer.content(), " world");
+        assert_eq!(app.doc(id).expect("doc").buffer().content(), " world");
         assert!(
             !effects.raw_bytes().is_empty(),
             "^X must still write the cut text to the system clipboard"

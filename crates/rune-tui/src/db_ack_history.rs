@@ -44,7 +44,7 @@ fn seeding_verdict(
     if !unchanged_since_issue || !doc.accepts_history() {
         return Err(Declined::EditedWhileLoading);
     }
-    if doc.buffer.content() != load_result.disk_content {
+    if doc.buffer().content() != load_result.disk_content {
         return Err(Declined::FileChangedWhileLoading);
     }
     if !app.documents_bound_to(load_result.doc_id.0).is_empty() {
@@ -59,7 +59,7 @@ pub(super) fn restore(
     load_result: &LoadResult,
     issued_version: Option<u64>,
 ) -> Option<Restored> {
-    let unchanged_since_issue = issued_version == Some(app.doc(id)?.buffer.version());
+    let unchanged_since_issue = issued_version == Some(app.doc(id)?.buffer().version());
     let verdict = seeding_verdict(app, id, load_result, unchanged_since_issue);
     let doc = app.doc_mut(id)?;
     let history = &load_result.history;

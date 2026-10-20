@@ -170,7 +170,7 @@ fn move_hunk(app: &mut App, dir: isize) {
         diff.hunk_cur = region_idx;
     }
     if let Some(doc) = app.doc(right) {
-        let byte = line_offset(&doc.buffer, target_line);
+        let byte = line_offset(doc.buffer(), target_line);
         if let Some(doc) = app.doc_mut(right) {
             nav_scroll::scroll_to_byte_offset(doc, byte);
         }
@@ -196,9 +196,9 @@ fn current_hunk_replacement(app: &App) -> HunkReplacement {
     };
     let right_lines = region.right_lines.clone();
     let left_lines = region.left_lines.clone();
-    let left_start = line_offset(&diff.left.buffer, left_lines.start);
-    let left_end = line_offset(&diff.left.buffer, left_lines.end);
-    let Some(insert) = diff.left.buffer.content().get(left_start..left_end) else {
+    let left_start = line_offset(diff.left.buffer(), left_lines.start);
+    let left_end = line_offset(diff.left.buffer(), left_lines.end);
+    let Some(insert) = diff.left.buffer().content().get(left_start..left_end) else {
         return HunkReplacement::RangeInvalid;
     };
     HunkReplacement::Some(diff.right, right_lines, insert.to_string())
@@ -219,8 +219,8 @@ fn take_theirs(app: &mut App) {
     let Some(right_doc) = app.doc(right) else {
         return;
     };
-    let right_start = line_offset(&right_doc.buffer, right_lines.start);
-    let right_end = line_offset(&right_doc.buffer, right_lines.end);
+    let right_start = line_offset(right_doc.buffer(), right_lines.start);
+    let right_end = line_offset(right_doc.buffer(), right_lines.end);
     let cursors_before = right_doc.cursors().clone();
     let edit = Edit {
         start: right_start,

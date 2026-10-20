@@ -293,7 +293,7 @@ mod tests {
         let extra = app.open_document(Buffer::new("second"));
         let (version, content) = {
             let doc = app.doc(id).unwrap();
-            (doc.buffer.version(), Arc::from(doc.buffer.content()))
+            (doc.buffer().version(), Arc::from(doc.buffer().content()))
         };
         let ticket = app.doc_mut(id).unwrap().begin_save(version, content);
 

@@ -107,7 +107,7 @@ fn previewing_a_symlink_and_then_opening_it_yields_exactly_one_document() {
         session.app().active_doc().path(),
         Some(Path::new("/root/b.md"))
     );
-    assert_eq!(session.app().active_doc().buffer.content(), "b content");
+    assert_eq!(session.app().active_doc().buffer().content(), "b content");
 }
 
 #[test]

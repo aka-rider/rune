@@ -24,7 +24,7 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
         return;
     }
 
-    let content = doc.buffer.content().to_string();
+    let content = doc.buffer().content().to_string();
     let starts = rune_md::parse::line_starts(&content);
     let mut anchors: HashMap<usize, &ImageM> = HashMap::new();
     rune_md::snapshot::collect_standalone_images(doc.doc.blocks(), &content, &starts, &mut anchors);

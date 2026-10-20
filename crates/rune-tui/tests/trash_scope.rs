@@ -51,13 +51,13 @@ fn ctrl_o() -> KeyInput {
 fn sup_backspace_in_the_editor_does_not_raise_trash() {
     let mem = explorer_common::seeded_vfs();
     let mut session = app_with(&mem);
-    let content_before = session.app().active_doc().buffer.content().to_string();
+    let content_before = session.app().active_doc().buffer().content().to_string();
 
     send(&mut session, sup_backspace());
 
     assert!(session.app().guard.is_none());
     assert_eq!(
-        session.app().active_doc().buffer.content(),
+        session.app().active_doc().buffer().content(),
         content_before,
         "the chord must do nothing visible in the editor"
     );
