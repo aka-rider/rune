@@ -74,17 +74,6 @@ the rest will rot the same way the day their chord moves. Fix: one chokepoint th
 message's chord from its `GlobalCommand` (or pane command), and tests that assert the label comes
 from the table.
 
-## `replace_history` and `command_history` tables were added in place
-
-`CONSTITUTION.md` names a nullable column as the one schema change that may land under the same
-`rune-vN.db` filename; a new table is supposed to ship as a new file. `command_history` set the
-precedent of appending a `CREATE TABLE IF NOT EXISTS` to `SCHEMA` without a `SCHEMA_VERSION`
-bump, and `replace_history` (the Replace field's own history, same shape as `search_history`)
-followed it, because a bump would strand every unsaved document's recovery journal in the old
-file for the sake of a history table nobody depends on. Decide whether the rule or the precedent
-wins: either the constitution admits "a new table with no foreign keys" as an additive change,
-or both tables move to `rune-v3.db` together with a migration that carries the journals across.
-
 ## `^⇧P` is swallowed silently while the find panel has focus
 
 `commands::reading::toggle` returns without a word unless the editor or the palette owns focus,

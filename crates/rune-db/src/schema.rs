@@ -381,3 +381,7 @@ mod tests;
 #[cfg(test)]
 #[path = "schema_identifier_versioning_tests.rs"]
 mod identifier_versioning_tests;
+
+#[cfg(test)]
+#[path = "schema_foreign_key_tests.rs"]
+mod foreign_key_tests;
