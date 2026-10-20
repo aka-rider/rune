@@ -10,6 +10,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
 jobs:
   changed:
     runs-on: ubuntu-latest
@@ -19,12 +23,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: gate
+        shell: bash
         run: |
+          set -euo pipefail
           if [ "${{ inputs.force }}" = "true" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            changed=true
           else
-            echo "changed=$(scripts/ci/nightly.sh changed)" >> "$GITHUB_OUTPUT"
+            changed="$(scripts/ci/nightly.sh changed)"
           fi
+          case "$changed" in
+          true | false) echo "changed=$changed" >> "$GITHUB_OUTPUT" ;;
+          *)
+            echo "nightly gate printed '$changed', expected true or false" >&2
+            exit 1
+            ;;
+          esac
 
   full:
     needs: changed
@@ -42,8 +55,11 @@ jobs:
 
   mark:
     needs: full
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - run: scripts/ci/nightly.sh mark
