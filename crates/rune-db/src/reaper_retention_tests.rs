@@ -5,7 +5,10 @@
 
 use super::*;
 use crate::journal_append::EditBatch;
+use crate::load::load;
 use rune_core::undo::EditKind;
+use rune_vfs::{Mem, VfsTestExt};
+use std::path::Path;
 
 fn edit_at(conn: &mut Connection, session_id: SessionId, doc_id: DocId, at: SystemTime) {
     let tx = conn.transaction().expect("tx");
@@ -76,7 +79,7 @@ fn only_the_documents_a_later_session_superseded_are_reaped() {
     let dead = seed_session(&conn, 111);
     let kept_doc = seed_doc(&conn);
     conn.execute(
-        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/other', 'x', 'x')",
+        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/other', 'x', '1970-01-01T00:00:00.000000000Z')",
         [],
     )
     .expect("second doc");
@@ -220,7 +223,7 @@ fn an_unparsable_edit_time_does_not_stop_other_sessions_from_being_reaped() {
         .expect("corrupt the edit time");
     let expired = seed_session(&conn, 112);
     conn.execute(
-        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/other', 'x', 'x')",
+        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/other', 'x', '1970-01-01T00:00:00.000000000Z')",
         [],
     )
     .expect("second doc");
@@ -237,4 +240,131 @@ fn an_unparsable_edit_time_does_not_stop_other_sessions_from_being_reaped() {
 
     assert!(reaped.is_err());
     assert_eq!(count_events(&conn, expired, expired_doc), 0);
+}
+
+fn second_doc(conn: &Connection) -> DocId {
+    conn.execute(
+        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/second', 'x', '1970-01-01T00:00:00.000000000Z')",
+        [],
+    )
+    .expect("second doc");
+    DocId(conn.last_insert_rowid())
+}
+
+#[test]
+fn a_document_with_unsaved_edits_does_not_keep_its_sessions_other_documents_from_being_superseded()
+{
+    let mut conn = open();
+    let dead = seed_session(&conn, 111);
+    let parked = seed_doc(&conn);
+    let superseded = second_doc(&conn);
+    for doc in [parked, superseded] {
+        edit_at(&mut conn, dead, doc, t0());
+        materialize_footprint(&mut conn, dead, doc);
+    }
+    edit_at(&mut conn, dead, parked, t0());
+    let later = seed_session(&conn, 222);
+    edit_at(&mut conn, later, superseded, t0());
+
+    reap_dead_111(&mut conn, t0());
+
+    assert_eq!(
+        (
+            count_events(&conn, dead, parked),
+            count_events(&conn, dead, superseded)
+        ),
+        (2, 0),
+        "the unsaved edits stay, the saved and superseded history goes"
+    );
+    assert!(sessions_row_exists(&conn, dead));
+}
+
+#[test]
+fn a_document_with_unsaved_edits_does_not_keep_its_sessions_other_documents_from_expiring() {
+    let mut conn = open();
+    let dead = seed_session(&conn, 111);
+    let parked = seed_doc(&conn);
+    let expiring = second_doc(&conn);
+    for doc in [parked, expiring] {
+        edit_at(&mut conn, dead, doc, t0());
+        materialize_footprint(&mut conn, dead, doc);
+    }
+    edit_at(&mut conn, dead, parked, t0());
+
+    reap_dead_111(&mut conn, t0() + HISTORY_TTL + Duration::from_secs(1));
+
+    assert_eq!(
+        (
+            count_events(&conn, dead, parked),
+            count_events(&conn, dead, expiring)
+        ),
+        (2, 0),
+        "unsaved edits never expire; the saved history does"
+    );
+}
+
+#[test]
+fn opening_a_document_without_editing_it_restarts_the_clock_of_its_history() {
+    const PATH: &str = "/doc.md";
+    let mut conn = open();
+    let vfs = Mem::new();
+    vfs.save_atomic(Path::new(PATH), b"one").expect("seed disk");
+    let written = seed_session(&conn, 111);
+    let opened = |conn: &mut Connection, session, now| {
+        load(
+            conn,
+            &vfs,
+            session,
+            &|pid, _| pid != 111,
+            Path::new(PATH),
+            now,
+        )
+        .expect("load")
+    };
+    let doc = opened(&mut conn, written, t0()).doc_id;
+    edit_at(&mut conn, written, doc, t0());
+    vfs.save_atomic(Path::new(PATH), b"xone").expect("save");
+    let seq = retry::with_retry(&mut conn, |tx| {
+        crate::journal::current_seq(tx, written, doc)
+    })
+    .expect("current_seq")
+    .0;
+    let hash =
+        retry::with_retry(&mut conn, |tx| crate::blob::put_blob(tx, b"xone")).expect("put_blob");
+    crate::adopt::record_adoption(
+        &mut conn,
+        doc,
+        written,
+        observation::ObservationMeta {
+            blob_hash: &hash,
+            seq: Some(seq),
+            origin: crate::obs_origin::ObsOrigin::Save,
+            confirmed: crate::confirmation::Confirmation::Confirmed,
+        },
+        &observation::StatFacts::default(),
+        t0(),
+        None,
+    )
+    .expect("record_adoption");
+    let reader = seed_session(&conn, 222);
+    let adopting = opened(
+        &mut conn,
+        reader,
+        t0() + Duration::from_secs(99 * 24 * 3600),
+    );
+    assert_eq!(adopting.recovered.content, "xone");
+
+    reap_dead_sessions(
+        &mut conn,
+        &|_, _| false,
+        None,
+        t0() + Duration::from_secs(100 * 24 * 3600),
+    )
+    .expect("reap");
+
+    assert_eq!(
+        count_events(&conn, reader, doc),
+        1,
+        "history last edited 100 days ago but opened yesterday is kept"
+    );
 }

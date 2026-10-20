@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 fn seed_doc(conn: &Connection) -> DocId {
     conn.execute(
-        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
+        "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', '1970-01-01T00:00:00.000000000Z')",
         [],
     )
     .expect("seed doc");

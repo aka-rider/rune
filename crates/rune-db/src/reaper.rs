@@ -29,10 +29,6 @@ pub fn reap_dead_sessions(
         if !dead_since_reboot && is_alive(pid, &started_at) {
             continue;
         }
-        let reapable = retry::with_retry(conn, |tx| session_is_reapable(tx, id))?;
-        if !reapable {
-            continue;
-        }
         unjudgeable.extend(retry::with_retry(conn, |tx| {
             reap_session_footprint(tx, id, now)
         })?);
@@ -66,15 +62,6 @@ fn footprint_docs(tx: &Transaction<'_>, session_id: SessionId) -> Result<Vec<Doc
     rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)
 }
 
-fn session_is_reapable(tx: &Transaction<'_>, session_id: SessionId) -> Result<bool, Error> {
-    for doc_id in footprint_docs(tx, session_id)? {
-        if doc_footprint_is_unmaterialized(tx, session_id, doc_id)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
 fn doc_footprint_is_unmaterialized(
     tx: &Transaction<'_>,
     session_id: SessionId,
@@ -102,9 +89,8 @@ fn doc_footprint_is_unmaterialized(
 }
 
 enum Retention {
-    Superseded,
-    Fresh,
-    Expired,
+    Keep,
+    Reap,
     Unjudgeable(String),
 }
 
@@ -114,29 +100,33 @@ fn retention(
     doc_id: DocId,
     now: SystemTime,
 ) -> Result<Retention, Error> {
-    if most_recent_session_for_doc(tx, doc_id)? != Some(session_id) {
-        return Ok(Retention::Superseded);
+    if doc_footprint_is_unmaterialized(tx, session_id, doc_id)? {
+        return Ok(Retention::Keep);
     }
-    let newest_edit: Option<String> = tx.query_row(
-        "SELECT MAX(at) FROM events WHERE session_id=?1 AND doc_id=?2",
+    if most_recent_session_for_doc(tx, doc_id)? != Some(session_id) {
+        return Ok(Retention::Reap);
+    }
+    let (newest_edit, last_opened): (Option<String>, String) = tx.query_row(
+        "SELECT (SELECT MAX(at) FROM events WHERE session_id=?1 AND doc_id=?2), last_seen_at \
+         FROM documents WHERE id=?2",
         params![session_id, doc_id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let Some(at) = newest_edit else {
-        return Ok(Retention::Expired);
-    };
-    Ok(match parse_rfc3339_nanos(&at) {
-        None => Retention::Unjudgeable(format!(
-            "session {session_id} doc {doc_id} edit time {at:?}"
-        )),
-        Some(edited)
-            if now
-                .duration_since(edited)
-                .is_ok_and(|age| age > HISTORY_TTL) =>
-        {
-            Retention::Expired
-        }
-        Some(_) => Retention::Fresh,
+    let mut last_used: Option<SystemTime> = None;
+    for stamp in newest_edit.iter().chain([&last_opened]) {
+        let Some(used) = parse_rfc3339_nanos(stamp) else {
+            return Ok(Retention::Unjudgeable(format!(
+                "session {session_id} doc {doc_id} use time {stamp:?}"
+            )));
+        };
+        last_used = last_used.max(Some(used));
+    }
+    let expired =
+        last_used.is_some_and(|used| now.duration_since(used).is_ok_and(|age| age > HISTORY_TTL));
+    Ok(if expired {
+        Retention::Reap
+    } else {
+        Retention::Keep
     })
 }
 
@@ -148,12 +138,12 @@ fn reap_session_footprint(
     let mut unjudgeable = Vec::new();
     for doc_id in footprint_docs(tx, session_id)? {
         match retention(tx, session_id, doc_id, now)? {
-            Retention::Fresh => continue,
+            Retention::Keep => continue,
             Retention::Unjudgeable(why) => {
                 unjudgeable.push(why);
                 continue;
             }
-            Retention::Superseded | Retention::Expired => {}
+            Retention::Reap => {}
         }
         tx.execute(
             "DELETE FROM events WHERE session_id=?1 AND doc_id=?2",
@@ -166,12 +156,14 @@ fn reap_session_footprint(
     }
     tx.execute(
         "DELETE FROM session_documents WHERE session_id=?1 \
-         AND NOT EXISTS(SELECT 1 FROM events WHERE session_id=?1 AND doc_id=session_documents.doc_id)",
+         AND NOT EXISTS(SELECT 1 FROM events WHERE session_id=?1 AND doc_id=session_documents.doc_id) \
+         AND NOT EXISTS(SELECT 1 FROM snapshots WHERE session_id=?1 AND doc_id=session_documents.doc_id)",
         params![session_id],
     )?;
     tx.execute(
         "DELETE FROM sessions WHERE id=?1 \
          AND NOT EXISTS(SELECT 1 FROM events WHERE session_id=?1) \
+         AND NOT EXISTS(SELECT 1 FROM snapshots WHERE session_id=?1) \
          AND NOT EXISTS(SELECT 1 FROM observations WHERE session_id=?1) \
          AND NOT EXISTS(SELECT 1 FROM merges WHERE session_id=?1)",
         params![session_id],
