@@ -272,8 +272,8 @@ scroll/ensure-visible maths all subtract it.
 `.forgejo/workflows/` was written against the Forgejo docs, not a live runner. To check on the first pushes
 and fix in the workflows (then bump "Nightly checked" in `CLAUDE.md`):
 
-- Runner labels `ubuntu-latest` (a Docker runner with a C compiler, `make`, `curl`) and `macos-arm64`
-  (a `:host` runner on an Apple Silicon machine with a C toolchain) must be registered on the forge.
+- Runner label `ubuntu-latest` (an x86_64 Docker runner with a C compiler, `make`, `curl`) must be registered
+  on the forge.
 - The runner's `runner.timeout` and the server's `[actions] ENDLESS_TASK_TIMEOUT` both default to 3h. The
   nightly job needs 200 minutes (150 of fuzzing), so both must be raised to at least 4h.
 - No dependency cache: `scripts/ci/setup.sh` and the cargo build start cold on Docker runners. Persistent
@@ -282,10 +282,26 @@ and fix in the workflows (then bump "Nightly checked" in `CLAUDE.md`):
 - `make perf-guard` is not in `ci-basic` or `ci-nightly`: its wall-clock budgets will flake on shared runners.
 - `make mutants` has no CI job (`.cargo/mutants.toml` mentions a PR-scoped `--in-diff` job).
 - `.github/workflows/test.yml` is manual-only now; delete it when the forge has been the gate for a while.
-- The `macos-arm64` host runner has no container, so it needs `node` on its PATH for `actions/checkout`, and the
-  forge's `DEFAULT_ACTIONS_URL` must resolve `actions/checkout`.
+- The forge's `DEFAULT_ACTIONS_URL` must resolve `actions/checkout`.
 - No fuzz round has been timed on a runner. Measure one `make test-fuzz` (RC=512) and tune the 20-minute kill in
   the `ci` profile of `.config/nextest.toml` and `FUZZ_MINUTES` to fit.
+
+## macOS is not tested anywhere in CI
+
+The forge has no macOS runner, so it runs Linux build, lint, test and fuzz only. The only macOS build in CI
+is GitHub's release job (`dist` on `macos-15`, `aarch64-apple-darwin`). macOS tests and fuzzing run locally
+on a Mac, so a macOS-only regression can reach a release unseen. Follow-up, pick one:
+
+- Register a macOS runner on the forge and put `macos-arm64` back in the `ci.yml` and `nightly.yml` jobs.
+- Add a GitHub macOS test job (`make ci-basic`) that runs at release time, before `dist` publishes.
+
+A Linux cross build is not a substitute, and it needs an Apple SDK. `trash` links Foundation (through
+`objc2-foundation`), `libobjc` and `libiconv`, and zig bundles none of their `.tbd` stubs: the link fails
+with `unable to find dynamic system library 'objc'`. `cargo zigbuild --release --target aarch64-apple-darwin
+-p rune-cli` with `SDKROOT` pointing at an unpacked `MacOSX14.5.sdk` links fine on zig 0.15.2 and fails on
+zig 0.14.1 (it prefixes the sysroot onto absolute `-L` paths). All the C code (32 tree-sitter grammars,
+bundled SQLite, zstd, onig) compiles with `zig cc` without an SDK. The Apple SDK license limits it to
+Apple-branded hardware, which is why `make cross-compile-from-linux-to-macos` stays a manual local target.
 
 ## Forge CI: monitoring from the console
 

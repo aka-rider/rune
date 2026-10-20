@@ -41,7 +41,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 
 Run locally: `make build` · `make lint` · `make fmt`. These run on the forge (see below), not on a workstation: `make test` · `make test-fuzz` (session fuzzer; `RC=` cases, `RS=` pinned seed) · `make test-grammars` (32 tree-sitter grammars). On demand: `make bench` · `make perf-guard`.
 
-**Forge CI**: remote `forge` (Forgejo, self-hosted, free) runs the full macOS + Linux matrix, tests, and fuzzing; GitHub (`origin`) is for releases only. Push the feature branch to `forge` and watch the run with the forgejo console utility; the Constitution's testing article is binding on this. Everything the workflows run is a Makefile target (`make ci-setup`, `make ci-basic` ~15 min per push, `make ci-nightly` ~3 h, only when `main` changed). Workflow YAML stays thin: `.forgejo/workflows/` is the real CI, `.github/workflows/test.yml` is a manual-only mirror.
+**Forge CI**: remote `forge` (Forgejo, self-hosted, free) runs Linux build, lint, tests, and fuzzing (no macOS runner: macOS is built at release by GitHub and tested locally on a Mac); GitHub (`origin`) is for releases only. Push the feature branch to `forge` and watch the run with the forgejo console utility; the Constitution's testing article is binding on this. Everything the workflows run is a Makefile target (`make ci-setup`, `make ci-basic` ~15 min per push, `make ci-nightly` ~3 h, only when `main` changed). Workflow YAML stays thin: `.forgejo/workflows/` is the real CI, `.github/workflows/test.yml` is a manual-only mirror.
 
 ## Hygiene
 
@@ -49,7 +49,7 @@ Nightly checked: pending (no live forge run yet)
 
 The date is when the facts below were last verified against reality. "pending" means no live forge run has verified them yet. When it is older than a week, recheck every item, fix what drifted, and bump the date in the same commit.
 
-- Forgejo runner labels in `.forgejo/workflows/` (`ubuntu-latest`, `macos-arm64`) match the labels actually registered on the forge.
+- Forgejo runner labels in `.forgejo/workflows/` (`ubuntu-latest`) match the labels actually registered on the forge.
 - The `forge` remote URL, and that `nightly-ok` still marks the last passing nightly.
 - The forgejo console utility is installed and its commands still match what is written here.
 - The Platform line above matches what the release matrix ships.
