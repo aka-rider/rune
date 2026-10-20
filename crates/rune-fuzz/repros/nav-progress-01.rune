@@ -1,0 +1,34 @@
+content # Wide\n\n| Name | Description | Notes |\n| :--- | :--- | ---: |\n| Alpha | a rather long description that overflows an ordinary terminal | 1 |\n| Beta | another quite long description cell with \u{65e5}\u{672c}\u{8a9e} and \u{1f642} inside | 22 |\n\nafter the table\n\nmore text\n
+key char:F --c-
+type a
+key enter ----
+key char:g --c-
+key tab s---
+key enter ----
+key char:R --c-
+type a
+key enter s---
+key escape ----
+key down -a-u
+type hello world
+key char:c ---u
+paste \u{2764}\u{fe0f} heart FE0F
+paste \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+type \n\n\n \n\n\n
+type 
+type 
+key char:[ --c-
+key backspace ----
+mouse down:left 1 2 ---
+mouse drag:left 0 0 ---
+mouse up:left 0 0 ---
+key char:t --c-
+key escape ----
+key char:h ----
+highlight live 0
+key pagedown ----
+key left -a--
+key right -a--
+key up ----
+key up ----

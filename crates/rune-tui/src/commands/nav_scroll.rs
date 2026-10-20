@@ -1,6 +1,7 @@
 use rune_core::coords::{BufferOffset, DisplayRow, WrapPoint, WrapRow};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
 use crate::keymap::Extend;
@@ -21,6 +22,17 @@ fn has_source_geometry(
     position: usize,
 ) -> bool {
     !view.wrap.is_table_row(wrap_row_at(view, buf, position))
+}
+
+// The end of a soft-wrapped row is the same byte as the start of the next
+// row, which the caret belongs to; a vertical move that clamps to that end
+// would land on the row below its target and stall, so it stops one grapheme
+// short.
+fn last_grapheme_start(content: &str, offset: usize) -> usize {
+    content
+        .get(..offset)
+        .and_then(|head| head.grapheme_indices(true).next_back())
+        .map_or(0, |(start, _)| start)
 }
 
 /// Visual-line up/down via the wrap conversions, preserving `c.desired_col`
@@ -55,7 +67,10 @@ fn move_row(
 
     let sp2 = view.wrap.wrap_to_syntax(buf.content(), wp2);
     let bp2 = view.syntax.syntax_to_buffer(sp2);
-    let offset2 = BufferOffset(buf.caret_offset(bp2));
+    let mut offset2 = BufferOffset(buf.caret_offset(bp2));
+    if wrap_row_at(view, buf, offset2.get()) > wp2.row {
+        offset2 = BufferOffset(last_grapheme_start(buf.content(), offset2.get()));
+    }
 
     Cursor {
         position: offset2,
@@ -337,5 +352,28 @@ mod tests {
         scroll_to_document_bottom(&mut doc);
         let total = doc.view().display.total_rows();
         assert_eq!(doc.viewport.scroll_row, DisplayRow(total - 20));
+    }
+
+    #[test]
+    fn line_up_from_the_first_column_of_a_wrapped_row_moves_up_instead_of_stalling() {
+        let line = "hello world\u{2764}\u{fe0f} heart FE0F\u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}\u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}";
+        let mut doc = Document::new(Buffer::new(format!("{line}\n")));
+        doc.viewport.set_size(41, 10);
+        let second_row_start = "hello world\u{2764}\u{fe0f} heart ".len();
+        let cursor = Cursor {
+            position: BufferOffset(second_row_start),
+            anchor: BufferOffset(second_row_start),
+            desired_col: rune_core::coords::VisualCol(40),
+            id: rune_core::cursor::CursorId::FIRST,
+        };
+        doc.set_cursors(CursorSet::new_from(&[cursor]));
+
+        line_up(&mut doc, Extend::No);
+
+        let landed = doc.cursors().primary().position.get();
+        assert!(
+            landed < second_row_start,
+            "Up must leave the second row, landed at {landed}"
+        );
     }
 }
