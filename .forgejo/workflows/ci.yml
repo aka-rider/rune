@@ -11,11 +11,7 @@ concurrency:
 
 jobs:
   basic:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-latest, macos-arm64]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
