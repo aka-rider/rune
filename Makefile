@@ -11,7 +11,7 @@ J ?= 2
 # Extra cargo-mutants args, e.g. MUTANTS_ARGS='--iterate'.
 MUTANTS_ARGS ?=
 # nextest profile (see .config/nextest.toml), not a cargo profile. CI passes
-# PROFILE=ci. Applies to the `test` target only.
+# PROFILE=ci. Applies to the `test` and `test-fuzz` targets.
 PROFILE ?= default
 # Wall-clock budget of `make ci-fuzz`: repeated `test-fuzz` rounds until spent.
 FUZZ_MINUTES ?= 5
@@ -66,7 +66,7 @@ perf-guard:
 # Debug profile on purpose: keeps the buffer/undo/render debug_asserts armed.
 test-fuzz:
 	PROPTEST_CASES=$(RC) PROPTEST_RNG_SEED=$(RS) \
-	    $(CARGO) nextest run -p rune-fuzz --test human_session \
+	    $(CARGO) nextest run --profile $(PROFILE) -p rune-fuzz --test human_session \
 	    --run-ignored only -E 'test(=human_session)'
 
 # The heavy per-grammar property test: every one of the 32 tree-sitter
@@ -80,7 +80,7 @@ ci-setup:
 	scripts/ci/setup.sh
 
 ci-fuzz:
-	scripts/ci/fuzz-budget.sh $(FUZZ_MINUTES)
+	PROFILE=$(PROFILE) scripts/ci/fuzz-budget.sh $(FUZZ_MINUTES)
 
 # Pushed-branch gate (~15 min): everything `make fmt lint test` checks, plus a short fuzz.
 ci-basic: PROFILE = ci

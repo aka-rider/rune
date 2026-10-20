@@ -25,3 +25,9 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 [[profile.ci.overrides]]
 filter = 'binary_id(=rune-db::multiprocess)'
 slow-timeout = { period = "120s", terminate-after = 5 }
+
+# One `make test-fuzz` round (RC=512 sessions) is expected to take minutes;
+# 20 minutes is a hang.
+[[profile.ci.overrides]]
+filter = 'binary_id(=rune-fuzz::human_session)'
+slow-timeout = { period = "300s", terminate-after = 4 }
