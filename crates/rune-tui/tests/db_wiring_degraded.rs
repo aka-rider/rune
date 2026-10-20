@@ -38,6 +38,34 @@ fn ch(c: char) -> KeyInput {
     }
 }
 
+fn kill_writer_and_confirm_dead(session: &mut Session) {
+    let doc_id = rune_db::DocId(
+        session
+            .app()
+            .active_doc()
+            .doc_db()
+            .expect("the seed document is store-bound after setup")
+            .db_id,
+    );
+    let db = session.app().db.as_ref().expect("app has a store");
+    db.store
+        .kill_writer_for_test()
+        .expect("enqueue the kill op");
+
+    let max_attempts = 4 * rune_db::QUEUE_DEPTH;
+    for attempt in 0..=max_attempts {
+        match db.store.probe_blocking_for_test(doc_id) {
+            Ok(_) => assert!(
+                attempt < max_attempts,
+                "writer never confirmed dead after {max_attempts} blocking probes — \
+                 it should have dequeued the kill op long before this"
+            ),
+            Err(rune_db::Error::WriterGone) => return,
+            Err(e) => panic!("unexpected error while awaiting writer death: {e}"),
+        }
+    }
+}
+
 /// Type -> kill the store writer via the test hook
 /// (`Store::kill_writer_for_test`) -> the persistent degraded banner
 /// appears in `footer::footer_text`'s output, and the buffer's content is
@@ -53,34 +81,12 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
     assert_eq!(session.snapshot().content, "hi!");
     assert!(session.app().db_banner.is_none());
 
-    session
-        .app()
-        .db
-        .as_ref()
-        .expect("app has a store")
-        .store
-        .kill_writer_for_test()
-        .expect("enqueue the kill op");
+    kill_writer_and_confirm_dead(&mut session);
 
-    // Keep typing until the (now-dying) writer's enqueue failure surfaces
-    // the banner. Bounded spin, not a wall-clock sleep (repo convention):
-    // the kill op must first be DEQUEUED by the writer thread before it
-    // takes effect, so exactly how many further enqueues still succeed is
-    // a genuine race, not something a fixed count can predict up front.
-    let mut typed = String::from("hi!");
-    let mut saw_banner = false;
-    for i in 0..2000 {
-        let c = if i % 2 == 0 { 'a' } else { 'b' };
-        assert!(session.key(ch(c)).is_none());
-        typed.push(c);
-        if session.app().db_banner.is_some() {
-            saw_banner = true;
-            break;
-        }
-    }
-
+    assert!(session.key(ch('a')).is_none());
+    let typed = String::from("hi!a");
     assert!(
-        saw_banner,
+        session.app().db_banner.is_some(),
         "the degraded banner must appear once the writer is confirmed gone"
     );
     let app = session.app();
@@ -133,46 +139,7 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     assert!(session.type_("!").is_none());
     assert!(session.app().db_banner.is_none());
 
-    let doc_id = rune_db::DocId(
-        session
-            .app()
-            .active_doc()
-            .doc_db()
-            .expect("the seed document is store-bound after setup")
-            .db_id,
-    );
-    let db = session.app().db.as_ref().expect("app has a store");
-    db.store
-        .kill_writer_for_test()
-        .expect("enqueue the kill op");
-
-    // Condition-driven wait, not a spin and not a wall-clock sleep: the
-    // kill op only takes effect once the writer thread DEQUEUES it, and
-    // the one signal that has happened is the writer dropping its side of
-    // the queue — which is exactly what wakes a blocking send. Each `Ok`
-    // means the probe was accepted (a live writer drained a slot, or a
-    // freed slot absorbed it); the writer is FIFO-bound to reach the kill
-    // op after finitely many of those, so this loop terminates by writer
-    // progress alone. Exhausting the cap means the writer survived without
-    // ever reaching the kill op — a real failure to report loudly, not a
-    // hang.
-    let max_attempts = 4 * rune_db::QUEUE_DEPTH;
-    let mut writer_confirmed_gone = false;
-    for attempt in 0..=max_attempts {
-        match db.store.probe_blocking_for_test(doc_id) {
-            Ok(_) => assert!(
-                attempt < max_attempts,
-                "writer never confirmed dead after {max_attempts} blocking probes — \
-                 it should have dequeued the kill op long before this"
-            ),
-            Err(rune_db::Error::WriterGone) => {
-                writer_confirmed_gone = true;
-                break;
-            }
-            Err(e) => panic!("unexpected error while awaiting writer death: {e}"),
-        }
-    }
-    assert!(writer_confirmed_gone, "writer death was never confirmed");
+    kill_writer_and_confirm_dead(&mut session);
 
     // Exactly ONE super+s now: `trigger_save`'s `materialize_now` enqueues
     // against a writer already confirmed gone, so this single call's

@@ -259,3 +259,12 @@ filled to its height by tab rows (or hidden while the results list takes over th
 2+ matching files) does not list it; the title bar and the editor still show the previewed file.
 Reserving a row for the preview would mean the tab window (`painted_tabs`, `entry_rows`) and the
 scroll/ensure-visible maths all subtract it.
+
+## The fuzz driver waits forever for an ack a dead store writer will never send
+
+After every update, `await_db_ops_settled` in `rune-fuzz` blocks until each outstanding store op has
+been acked. When the writer thread exits with ops still queued (`Store::kill_writer_for_test` drops the
+receiver without replying), those acks never arrive and the step hangs with no CPU use. The only caller
+today is `db_wiring_degraded`, which now confirms the writer dead before typing, so no op can be
+accepted after the kill. Any new test or fuzz fault that kills the writer must do the same, or the
+writer must reply `Err` to every op still queued when it exits, as `fatal` already does after a panic.
