@@ -102,6 +102,7 @@ pub(crate) fn open(app: &mut App, kind: FilterKind, expand_replace: bool, effect
     let origin = Origin::capture(app);
     let seed = selection_seed(app.active_doc()).unwrap_or_default();
     let history_generation = app.next_search_history_gen.mint();
+    let history_key = scope::wanted_key(app, origin.doc);
     let replace_history_generation = app.next_replace_history_gen.mint();
     app.open_find(
         FindState {
@@ -119,11 +120,12 @@ pub(crate) fn open(app: &mut App, kind: FilterKind, expand_replace: bool, effect
             filter: Filter::ThisFile,
             glob_fields: globs::GlobFields::default(),
             history_generation,
+            history_key,
             replace_history_generation,
         },
         clearance,
     );
-    scope::request_history(app, history_generation, effects);
+    scope::request_history(app, effects);
     project::apply_filter(app, kind, effects);
     if expand_replace {
         expand_replace_field(app, effects);
@@ -147,8 +149,9 @@ fn refocus(app: &mut App, kind: FilterKind, expand_replace: bool, effects: &mut 
         return;
     };
     if switched || !state.focused || state.focus != Control::Find {
-        take_focus(app, effects);
-        if let Some(state) = app.find_mut() {
+        if take_focus(app, effects)
+            && let Some(state) = app.find_mut()
+        {
             state.focus = Control::Find;
         }
         return;
@@ -163,7 +166,9 @@ pub(crate) fn requery(app: &mut App) {
 }
 
 fn expand_replace_field(app: &mut App, effects: &mut Effects) {
-    take_focus(app, effects);
+    if !take_focus(app, effects) {
+        return;
+    }
     let Some(state) = app.find_mut() else {
         return;
     };
@@ -215,21 +220,27 @@ pub(crate) fn escape(app: &mut App) -> bool {
     true
 }
 
-pub(crate) fn take_focus(app: &mut App, effects: &mut Effects) {
-    if app.find().is_none() {
-        return;
+pub(crate) fn take_focus(app: &mut App, effects: &mut Effects) -> bool {
+    if app.find().is_none() || app.clear_title_for_overlay(effects).is_none() {
+        return false;
     }
-    app.blur_title(effects);
     if let Some(state) = app.find_mut() {
         state.focused = true;
+    }
+    true
+}
+
+pub(crate) fn recapture_origin(app: &mut App) {
+    let origin = Origin::capture(app);
+    if let Some(state) = app.find_mut() {
+        state.origin = origin;
     }
 }
 
 pub(crate) fn accept_location(app: &mut App) {
-    let origin = Origin::capture(app);
+    recapture_origin(app);
     if let Some(state) = app.find_mut() {
         state.focused = false;
-        state.origin = origin;
     }
 }
 

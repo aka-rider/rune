@@ -9,7 +9,7 @@ use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
 use crate::document::{DocumentId, Replica};
 use crate::find::matcher::Matcher;
-use crate::find::project::ProjectResults;
+use crate::find::project::{Freshness, ProjectResults};
 use crate::find::replace::collapsed_after_the_last_edit;
 use crate::find::{FindState, history, project};
 use crate::messages;
@@ -18,6 +18,7 @@ use crate::runtime::Effects;
 use crate::workspace;
 
 pub(crate) struct Walk {
+    pub origin: DocumentId,
     pub pattern: Matcher,
     pub replacement: String,
     pub queued: Vec<DocumentId>,
@@ -31,8 +32,9 @@ pub(crate) struct Walk {
 }
 
 impl Walk {
-    fn new(pattern: Matcher, replacement: String, total: usize) -> Walk {
+    fn new(origin: DocumentId, pattern: Matcher, replacement: String, total: usize) -> Walk {
         Walk {
+            origin,
             pattern,
             replacement,
             queued: Vec::new(),
@@ -105,6 +107,17 @@ fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
         messages::info(app, "replace in progress");
         return;
     }
+    if app
+        .find()
+        .and_then(FindState::project)
+        .is_some_and(|project| project.freshness != Freshness::Fresh)
+    {
+        messages::info(
+            app,
+            "search results are still updating \u{2014} replace once they settle",
+        );
+        return;
+    }
     let Some(replacement) = app
         .find()
         .and_then(|state| state.replace.as_ref())
@@ -112,17 +125,21 @@ fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
     else {
         return;
     };
-    let pattern = app
-        .find()
-        .and_then(|state| state.pattern.as_ref().ok())
-        .filter(|_| !paths.is_empty())
-        .cloned();
-    let Some(pattern) = pattern else {
+    let started = app.find().and_then(|state| {
+        let pattern = state.pattern.as_ref().ok().filter(|_| !paths.is_empty())?;
+        Some((state.origin.doc, pattern.clone()))
+    });
+    let Some((origin, pattern)) = started else {
         messages::info(app, "no match to replace");
         return;
     };
     if let Some(project) = app.find_mut().and_then(FindState::project_mut) {
-        project.walk = Some(Box::new(Walk::new(pattern, replacement, paths.len())));
+        project.walk = Some(Box::new(Walk::new(
+            origin,
+            pattern,
+            replacement,
+            paths.len(),
+        )));
     }
     for path in paths {
         let outcome = replace_in_file(app, &path, effects);
@@ -267,27 +284,22 @@ fn keep_unchanged(app: &mut App, id: DocumentId, kept: fn(&mut Walk) -> &mut Vec
 }
 
 fn finish(app: &mut App, effects: &mut Effects) {
-    let Some((walk, query, options, origin)) = app.find_mut().and_then(|state| {
+    let Some((walk, query, options)) = app.find_mut().and_then(|state| {
         let walk = state.project_mut()?.walk.take()?;
-        Some((
-            walk,
-            state.find.editor.text().to_string(),
-            state.options,
-            state.origin.doc,
-        ))
+        Some((walk, state.find.editor.text().to_string(), state.options))
     }) else {
         return;
     };
-    let origin_evicted = !app.documents.contains_key(&origin);
+    let origin_evicted = !app.documents.contains_key(&walk.origin);
     let text = summary(&walk, origin_evicted);
+    if walk.done > 0 {
+        history::persist_query(app, &query, options);
+        history::persist_replacement(app, &walk.replacement);
+    }
     if walk.stopped_at_limit {
         messages::warn(app, text);
     } else {
         messages::info(app, text);
-    }
-    if walk.done > 0 {
-        history::persist_query(app, &query, options);
-        history::persist_replacement(app, &walk.replacement);
     }
     project::dispatch_query(app, effects);
 }

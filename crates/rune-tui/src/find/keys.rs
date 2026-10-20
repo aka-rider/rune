@@ -104,7 +104,12 @@ fn commit_field_edit(app: &mut App, target: Control, edit: impl FnOnce(&mut Fiel
     field.leave_history();
     match target {
         Control::Find => crate::find::requery(app),
-        Control::Include | Control::Exclude => project::restart_debounce(app),
+        Control::Include | Control::Exclude => {
+            if let Some(state) = app.find_mut() {
+                state.glob_fields.refresh();
+            }
+            project::restart_debounce(app);
+        }
         Control::Replace | Control::Results => {}
     }
 }
@@ -211,7 +216,9 @@ pub(crate) fn click(
     point: Position,
     effects: &mut Effects,
 ) {
-    crate::find::take_focus(app, effects);
+    if !crate::find::take_focus(app, effects) {
+        return;
+    }
     if panel.find_field.contains(point) {
         focus_control(app, Control::Find);
         return;

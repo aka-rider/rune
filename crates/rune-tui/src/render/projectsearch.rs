@@ -127,6 +127,7 @@ mod tests {
             pending_center: None,
             landed_in_origin: false,
             walk: None,
+            freshness: crate::find::project::Freshness::Fresh,
         }
     }
 

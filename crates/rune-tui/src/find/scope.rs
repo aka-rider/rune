@@ -1,7 +1,7 @@
 use rune_db::DocId;
 
 use crate::app::App;
-use crate::generation::SearchHistoryGen;
+use crate::document::DocumentId;
 use crate::messages;
 use crate::runtime::{CmdError, Effects};
 
@@ -44,55 +44,93 @@ impl HistoryScope {
     }
 }
 
-pub(crate) fn origin_doc_id(app: &App) -> Option<DocId> {
-    let origin = app.find()?.origin.doc;
-    app.doc(origin)?.doc_db().map(|doc_db| DocId(doc_db.db_id))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryKey {
+    Unrequested,
+    All,
+    Doc(DocId),
+    Unstored,
+}
+
+pub(crate) fn stored_id(app: &App, doc: DocumentId) -> Option<DocId> {
+    app.doc(doc)?.doc_db().map(|doc_db| DocId(doc_db.db_id))
+}
+
+pub(crate) fn wanted_key(app: &App, origin: DocumentId) -> HistoryKey {
+    if app.db.is_none() {
+        return HistoryKey::Unrequested;
+    }
+    match app.history_scope() {
+        HistoryScope::All => HistoryKey::All,
+        HistoryScope::Doc => stored_id(app, origin).map_or(HistoryKey::Unstored, HistoryKey::Doc),
+    }
 }
 
 pub(crate) fn unstored(app: &App) -> bool {
-    app.db.is_some() && app.history_scope() == HistoryScope::Doc && origin_doc_id(app).is_none()
+    app.find()
+        .is_some_and(|state| wanted_key(app, state.origin.doc) == HistoryKey::Unstored)
 }
 
-pub(crate) fn request_history(app: &App, generation: SearchHistoryGen, effects: &mut Effects) {
-    let Some(db) = app.db.as_ref() else {
+pub(crate) fn request_history(app: &App, effects: &mut Effects) {
+    let (Some(db), Some(state)) = (app.db.as_ref(), app.find()) else {
         return;
     };
-    let doc = match app.history_scope() {
-        HistoryScope::All => None,
-        HistoryScope::Doc => match origin_doc_id(app) {
-            Some(doc_id) => Some(doc_id),
-            None => return,
-        },
+    let doc = match state.history_key {
+        HistoryKey::Unrequested | HistoryKey::Unstored => return,
+        HistoryKey::All => None,
+        HistoryKey::Doc(doc_id) => Some(doc_id),
     };
     effects.cmds.push(crate::runtime::load_search_history_cmd(
         db.store.reader_query(),
-        generation,
+        state.history_generation,
         doc,
     ));
 }
 
-fn reload_history(app: &mut App, effects: &mut Effects) {
+pub(crate) fn reconcile_history(app: &mut App, effects: &mut Effects) {
+    let Some(origin) = app.find().map(|state| state.origin.doc) else {
+        return;
+    };
+    let wanted = wanted_key(app, origin);
+    if app.find().is_some_and(|state| state.history_key == wanted) {
+        return;
+    }
     let generation = app.next_search_history_gen.mint();
     let Some(state) = app.find_mut() else {
         return;
     };
     state.history_generation = generation;
+    state.history_key = wanted;
     state.find.history.clear();
     state.find.leave_history();
-    request_history(app, generation, effects);
+    request_history(app, effects);
 }
 
 pub(crate) fn toggle(app: &mut App, effects: &mut Effects) {
     let scope = app.history_scope().toggled();
     app.history_scope_choice = Some(scope);
-    reload_history(app, effects);
+    reconcile_history(app, effects);
     messages::info(app, format!("search history: {}", scope.describe()));
     let result = app.scope_persistence.touch(app.db.as_ref(), &scope, |db| {
         db.store.set_ui_setting(SETTING_KEY, scope.setting_value())
     });
-    if let Some(Err(e)) = result {
-        messages::error(app, format!("search history scope not saved: {e}"));
+    match result {
+        Some(Err(e)) => messages::error(app, format!("search history scope not saved: {e}")),
+        Some(Ok(_)) => {}
+        None => report_unsaved_choice(app),
     }
+}
+
+fn report_unsaved_choice(app: &mut App) {
+    let reason = match app.db.as_ref() {
+        None => "there is no recovery store",
+        Some(db) if db.degraded => "the recovery store is degraded",
+        Some(_) => return,
+    };
+    messages::warn(
+        app,
+        format!("search history scope not saved: {reason}, so the choice lasts until you quit"),
+    );
 }
 
 pub(crate) fn load_cmd(app: &App, effects: &mut Effects) {
@@ -130,5 +168,5 @@ pub(crate) fn handle_loaded(
         return;
     };
     app.history_scope_choice = Some(scope);
-    reload_history(app, effects);
+    reconcile_history(app, effects);
 }

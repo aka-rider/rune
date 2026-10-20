@@ -19,6 +19,7 @@ struct Rig {
     bridge: Arc<DbBridge>,
     a: DocumentId,
     b: DocumentId,
+    rows: [i64; 2],
 }
 
 fn alt_h() -> KeyInput {
@@ -48,11 +49,17 @@ fn rig() -> Rig {
     app.db = Some(Db::new(store, Arc::clone(&bridge), false));
     let a = app.active;
     let b = app.open_document(Buffer::new("alpha beta"));
-    for (doc, row) in [a, b].into_iter().zip(rows) {
+    for (doc, row) in [a, b].into_iter().zip(rows.iter().copied()) {
         app.doc_mut(doc).expect("doc exists").replica =
             Replica::Bound(DocDb::new(row, PublishMode::CreateOnly, rune_db::Seq(0)));
     }
-    Rig { app, bridge, a, b }
+    Rig {
+        app,
+        bridge,
+        a,
+        b,
+        rows: [rows[0], rows[1]],
+    }
 }
 
 fn settle_history(app: &mut App, effects: Effects) {
@@ -73,6 +80,14 @@ fn pending_writes(app: &App) -> usize {
 }
 
 impl Rig {
+    fn row(&self, doc: DocumentId) -> i64 {
+        if doc == self.a {
+            self.rows[0]
+        } else {
+            self.rows[1]
+        }
+    }
+
     fn await_writes(&mut self) {
         while pending_writes(&self.app) > 0 {
             let evt = self.bridge.wait_for_bootstrap_event(|_| true);
@@ -96,6 +111,15 @@ impl Rig {
         type_str(&mut self.app, query);
         press(&mut self.app, enter());
         self.await_writes();
+    }
+
+    fn click_into_the_editor(&mut self) {
+        let geo = crate::layout::geometry(self.app.frame_area(), &self.app);
+        click(&mut self.app, geo.editor.x, geo.editor.y);
+        assert!(
+            !find(&self.app).focused,
+            "test setup: the panel stays open but unfocused"
+        );
     }
 
     fn toggle_scope(&mut self) {
@@ -304,4 +328,127 @@ fn binding() -> Replica {
         base: String::new(),
         pending: Vec::new(),
     }
+}
+
+fn switch_tab_via_the_tabs_pane(rig: &mut Rig, target: DocumentId) {
+    let mut effects = Effects::default();
+    crate::pane_global::focus_tabs(&mut rig.app, &mut effects);
+    let want = rig
+        .app
+        .documents
+        .order()
+        .iter()
+        .position(|&id| id == target)
+        .expect("the target tab is listed");
+    while rig.app.tabs.nav.cursor != want {
+        let step = if rig.app.tabs.nav.cursor < want {
+            down()
+        } else {
+            up()
+        };
+        press(&mut rig.app, step);
+    }
+    let effects = press(&mut rig.app, enter());
+    settle_history(&mut rig.app, effects);
+}
+
+#[test]
+fn switching_tabs_under_an_open_panel_swaps_in_the_new_documents_history() {
+    let mut rig = rig();
+    rig.commit_in(rig.a, "alpha");
+    rig.commit_in(rig.b, "beta");
+    rig.open_in(rig.a);
+    assert_eq!(rig.history(), vec!["alpha".to_string()]);
+    rig.click_into_the_editor();
+
+    let b = rig.b;
+    switch_tab_via_the_tabs_pane(&mut rig, b);
+
+    assert_eq!(find(&rig.app).origin.doc, rig.b);
+    assert_eq!(rig.history(), vec!["beta".to_string()]);
+    assert_eq!(
+        rig.app.doc_search_history.last_persisted,
+        Some((rune_db::DocId(rig.row(rig.b)), "beta".to_string())),
+        "the history shown and the list a commit feeds are the same document's"
+    );
+}
+
+#[test]
+fn closing_the_origin_document_under_an_open_panel_repoints_the_panel_and_its_history() {
+    let mut rig = rig();
+    rig.commit_in(rig.b, "beta");
+    rig.open_in(rig.a);
+    rig.click_into_the_editor();
+
+    let mut effects = Effects::default();
+    crate::workspace::request_close(&mut rig.app, rig.a, &mut effects);
+    crate::app::update(&mut rig.app, Msg::PumpGraphics, &mut effects);
+    settle_history(&mut rig.app, effects);
+
+    assert_eq!(rig.app.active, rig.b);
+    assert_eq!(find(&rig.app).origin.doc, rig.b, "no dead origin is kept");
+    assert_eq!(rig.history(), vec!["beta".to_string()]);
+}
+
+#[test]
+fn a_document_stored_after_the_panel_opened_gets_its_history_loaded() {
+    let mut rig = rig();
+    rig.commit_in(rig.a, "alpha");
+    let row = rig.row(rig.a);
+    rig.app.doc_mut(rig.a).expect("doc").replica = binding();
+    rig.open_in(rig.a);
+    assert!(rig.history().is_empty(), "nothing loads while unstored");
+
+    rig.app.doc_mut(rig.a).expect("doc").replica =
+        Replica::Bound(DocDb::new(row, PublishMode::CreateOnly, rune_db::Seq(0)));
+    let effects = press(&mut rig.app, key(KeyCode::Char('x'), CTRL));
+    settle_history(&mut rig.app, effects);
+
+    assert_eq!(rig.history(), vec!["alpha".to_string()]);
+}
+
+#[test]
+fn committing_in_an_unstored_document_says_so_right_away() {
+    let mut rig = rig();
+    rig.app.doc_mut(rig.a).expect("doc").replica = binding();
+    rig.open_in(rig.a);
+    type_str(&mut rig.app, "alpha");
+
+    press(&mut rig.app, enter());
+
+    assert_eq!(
+        crate::messages::newest_text(&rig.app),
+        Some(UNSTORED_NOTICE)
+    );
+}
+
+#[test]
+fn toggling_the_scope_without_a_store_says_the_choice_is_not_saved() {
+    let mut app = app_with("alpha");
+    open_find(&mut app);
+
+    press(&mut app, alt_h());
+
+    assert_eq!(app.history_scope(), HistoryScope::All);
+    assert!(
+        crate::messages::newest_text(&app)
+            .is_some_and(|text| text.starts_with("search history scope not saved")),
+        "{:?}",
+        crate::messages::newest_text(&app)
+    );
+}
+
+#[test]
+fn toggling_the_scope_with_a_store_does_not_cry_wolf() {
+    let mut rig = rig();
+    rig.open_in(rig.a);
+
+    rig.toggle_scope();
+    rig.toggle_scope();
+    rig.await_writes();
+
+    assert_eq!(
+        crate::messages::newest_text(&rig.app),
+        Some("search history: this document")
+    );
 }

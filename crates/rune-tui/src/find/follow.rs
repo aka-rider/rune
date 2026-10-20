@@ -6,7 +6,7 @@ use crate::app::App;
 use crate::commands::mouse::select_range;
 use crate::document::Document;
 use crate::find::matcher::Matcher;
-use crate::find::{FilterKind, FindState, Origin, history, land};
+use crate::find::{FilterKind, FindState, history, land};
 use crate::messages;
 use crate::viewport::ScrollMode;
 
@@ -120,9 +120,8 @@ pub(crate) fn select_match(app: &mut App, range: Range<usize>) {
 }
 
 fn commit_origin(app: &mut App, idx: usize) {
-    let origin = Origin::capture(app);
+    crate::find::recapture_origin(app);
     if let Some(state) = app.find_mut() {
-        state.origin = origin;
         state.current = Some(idx);
     }
 }

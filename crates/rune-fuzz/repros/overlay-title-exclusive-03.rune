@@ -1,0 +1,11 @@
+content hello
+key char:f --c-
+mouse down:left 60 12 ---
+mouse up:left 60 12 ---
+key enter ----
+key up ----
+key up ----
+key right ----
+key char:a --c-
+key backspace ----
+key char:f --c-

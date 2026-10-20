@@ -4,7 +4,10 @@ use crate::document::DocumentId;
 use crate::find::project_replace_fixture::{
     A, B, C, FILES, StoreKind, assert_all_replaced, assert_disk_untouched, fixture,
 };
-use crate::find::test_support::{ALT, CTRL, SUP, esc_key, key, press_into};
+use crate::find::test_support::{
+    ALT, CTRL, SUP, deliver_query, esc_key, fire_debounce, key, press_into, shift_tab, tab,
+    type_into,
+};
 use crate::keymap::KeyCode;
 use crate::runtime::Msg;
 use crate::workspace;
@@ -261,7 +264,7 @@ fn a_queued_file_whose_load_fails_is_left_unchanged_and_named() {
 }
 
 #[test]
-fn pressing_all_again_before_the_results_refresh_counts_only_files_it_edited() {
+fn pressing_all_again_before_the_results_refresh_is_refused_until_they_do() {
     let mut fx = fixture(StoreKind::Absent);
     fx.prepare("dog", "cat");
     fx.replace_all();
@@ -270,7 +273,14 @@ fn pressing_all_again_before_the_results_refresh_counts_only_files_it_edited() {
     fx.replace_all();
 
     assert_all_replaced(&fx);
-    assert_eq!(fx.newest(), "replaced in 0 files, 3 already had no matches");
+    assert_eq!(
+        fx.newest(),
+        "search results are still updating \u{2014} replace once they settle"
+    );
+
+    deliver_query(&mut fx.app, &mut fx.effects);
+    fx.replace_all();
+    assert_eq!(fx.newest(), "no match to replace");
 }
 
 #[test]
@@ -284,4 +294,36 @@ fn the_panel_stays_open_and_focused_after_replace_all() {
     assert!(state.focused);
     assert!(state.project().is_some());
     assert_eq!(state.focus, crate::find::Control::Replace);
+}
+
+#[test]
+fn replace_all_refuses_while_a_glob_edit_has_not_been_searched_yet() {
+    let mut fx = fixture(StoreKind::Absent);
+    fx.prepare("dog", "cat");
+    press_into(&mut fx.app, tab(), &mut fx.effects);
+    type_into(&mut fx.app, "*", &mut fx.effects);
+    press_into(&mut fx.app, shift_tab(), &mut fx.effects);
+
+    fx.replace_all();
+
+    assert_eq!(
+        fx.newest(),
+        "search results are still updating \u{2014} replace once they settle"
+    );
+    assert!(
+        fx.doc_for(A).is_none(),
+        "nothing was replaced from the stale list"
+    );
+
+    fire_debounce(&mut fx.app, &mut fx.effects);
+    fx.replace_all();
+    assert_eq!(
+        fx.newest(),
+        "search results are still updating \u{2014} replace once they settle",
+        "a query in flight still counts as stale"
+    );
+
+    deliver_query(&mut fx.app, &mut fx.effects);
+    fx.replace_all();
+    assert_all_replaced(&fx);
 }

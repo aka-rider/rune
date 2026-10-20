@@ -210,20 +210,21 @@ fn find_esc_closes_yields_to_a_modal_that_owns_the_key() {
 }
 
 #[test]
-fn find_esc_closes_yields_to_a_pane_whose_own_escape_returns_focus_first() {
+fn find_esc_closes_yields_only_to_a_title_rename_in_progress() {
     let ctx = key_ctx(KeyCode::Escape, Mods::NONE);
+    let mut title = panel_snapshot(true);
+    title.focus_target = FocusTarget::Title;
+    assert_eq!(find_esc_closes(&title, &panel_snapshot(true), &ctx), None);
+
     for target in [
         FocusTarget::Messages,
-        FocusTarget::Title,
         FocusTarget::Explorer,
         FocusTarget::Tabs,
     ] {
         let mut prev = panel_snapshot(true);
         prev.focus_target = target;
-        assert_eq!(
-            find_esc_closes(&prev, &panel_snapshot(true), &ctx),
-            None,
-            "{target:?}"
-        );
+        let v = find_esc_closes(&prev, &panel_snapshot(true), &ctx)
+            .unwrap_or_else(|| panic!("Esc in {target:?} must close the panel"));
+        assert_eq!(v.id, "FIND-ESC-CLOSES");
     }
 }

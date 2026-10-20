@@ -174,8 +174,8 @@ fn readout(app: &App, state: &FindState, theme: &Theme) -> Option<(String, Style
         Err(error) => Some(error.0.clone()),
         Ok(_) => state
             .globs()
-            .and_then(|globs| globs.path_filter().err())
-            .map(|error| error.0),
+            .and_then(|globs| globs.error())
+            .map(|error| error.0.clone()),
     };
     if let Some(error) = error {
         let flat: Vec<&str> = error.split_whitespace().collect();

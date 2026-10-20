@@ -120,6 +120,13 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     crate::materialize_ack::retire_quit_wait(app, id);
     crate::rename::forget_document(app, id);
 
+    if app
+        .find()
+        .is_some_and(|state| app.doc(state.origin.doc).is_none())
+    {
+        crate::find::recapture_origin(app);
+    }
+
     if active_changed {
         let name = crate::title::name_for(app.active_doc());
         app.title.seed(&name);

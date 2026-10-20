@@ -56,7 +56,13 @@ pub(crate) fn persist_query(app: &mut App, query: &str, options: MatchOptions) {
 }
 
 fn persist_for_origin_doc(app: &mut App, query: &str) {
-    let Some(doc_id) = crate::find::scope::origin_doc_id(app) else {
+    let Some(origin) = app.find().map(|state| state.origin.doc) else {
+        return;
+    };
+    let Some(doc_id) = crate::find::scope::stored_id(app, origin) else {
+        if app.db.as_ref().is_some_and(|db| !db.degraded) {
+            messages::info(app, crate::find::scope::UNSTORED_NOTICE);
+        }
         return;
     };
     let result =

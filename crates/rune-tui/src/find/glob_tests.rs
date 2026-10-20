@@ -325,3 +325,17 @@ fn include_and_exclude_text_survives_toggling_this_file_on_and_off() {
     displays.sort();
     assert_eq!(displays, vec!["a.md", "a/e.md", "b/a/f.md"]);
 }
+
+#[test]
+fn drawing_frames_does_not_recompile_the_globs() {
+    let (mut app, mut effects) = workspace_with_query(&TREE);
+    fill_globs(&mut app, "*.md", "docs/**", &mut effects);
+    project_grid(&mut app);
+    let compiled = globs::compilations();
+
+    for _ in 0..3 {
+        project_grid(&mut app);
+    }
+
+    assert_eq!(globs::compilations(), compiled);
+}

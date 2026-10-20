@@ -5,7 +5,7 @@ use rune_core::undo::EditKind;
 
 use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
-use crate::find::{Origin, follow, history};
+use crate::find::{follow, history};
 use crate::messages;
 
 pub(crate) fn replace_current(app: &mut App) {
@@ -51,7 +51,7 @@ pub(crate) fn replace_current(app: &mut App) {
     history::persist_replacement(app, &replacement);
     follow::recompute(app);
     if app.find().is_some_and(|state| state.matches.is_empty()) {
-        settle_origin(app);
+        crate::find::recapture_origin(app);
         messages::info(app, "no more matches");
     } else {
         follow::advance(app, true);
@@ -99,7 +99,7 @@ pub(crate) fn replace_all(app: &mut App) {
     history::persist_query(app, &query, options);
     history::persist_replacement(app, &replacement);
     follow::recompute(app);
-    settle_origin(app);
+    crate::find::recapture_origin(app);
 }
 
 fn select_next_or_report(app: &mut App) {
@@ -138,11 +138,4 @@ pub(crate) fn collapsed_after_the_last_edit(
         desired_col: VisualCol(0),
         id: ids.first().copied().unwrap_or(CursorId::FIRST),
     }]
-}
-
-fn settle_origin(app: &mut App) {
-    let origin = Origin::capture(app);
-    if let Some(state) = app.find_mut() {
-        state.origin = origin;
-    }
 }

@@ -217,6 +217,7 @@ pub(crate) fn after_update(
     effects: &mut Effects,
 ) {
     crate::find::project_replace::settle(app, effects);
+    crate::find::scope::reconcile_history(app, effects);
     let content_changed =
         app.active != active_before || app.active_doc().buffer().version() != buffer_version_before;
     if content_changed {
@@ -313,7 +314,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
-    let _ = match crate::focus::target(app) {
+    let target = crate::focus::target(app);
+    if key.code == KeyCode::Escape
+        && key.mods == Mods::NONE
+        && matches!(
+            target,
+            FocusTarget::Editor | FocusTarget::Explorer | FocusTarget::Tabs | FocusTarget::Messages
+        )
+        && crate::find::escape(app)
+    {
+        return;
+    }
+
+    let _ = match target {
         FocusTarget::Find => crate::find::keys::handle_key(app, key, effects),
         FocusTarget::FileSearch => crate::filesearch::keys::handle_key(app, key, effects),
         FocusTarget::Palette => crate::palette::keys::handle_key(app, key, effects),
@@ -332,10 +345,6 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 }
 
 fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
-    if key.code == KeyCode::Escape && key.mods == Mods::NONE && crate::find::escape(app) {
-        return keymap::KeyOutcome::Consumed;
-    }
-
     if crate::diff_view::keys::intercept(app, key) {
         return keymap::KeyOutcome::Consumed;
     }

@@ -1,25 +1,65 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::find::FieldState;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct GlobFields {
     pub include: FieldState,
     pub exclude: FieldState,
+    compiled: Result<Arc<PathFilter>, GlobError>,
+}
+
+impl Default for GlobFields {
+    fn default() -> GlobFields {
+        let include = FieldState::default();
+        let exclude = FieldState::default();
+        let compiled = compile_fields(&include, &exclude);
+        GlobFields {
+            include,
+            exclude,
+            compiled,
+        }
+    }
 }
 
 impl GlobFields {
-    pub(crate) fn path_filter(&self) -> Result<PathFilter, GlobError> {
-        let compile = |label: &str, field: &FieldState| {
-            compile_set(field.editor.text()).map_err(|e| GlobError(format!("{label}: {e}")))
-        };
-        Ok(PathFilter {
-            include: compile("include", &self.include)?,
-            exclude: compile("exclude", &self.exclude)?,
-        })
+    pub(crate) fn refresh(&mut self) {
+        self.compiled = compile_fields(&self.include, &self.exclude);
     }
+
+    pub(crate) fn path_filter(&self) -> Result<Arc<PathFilter>, GlobError> {
+        self.compiled.clone()
+    }
+
+    pub(crate) fn error(&self) -> Option<&GlobError> {
+        self.compiled.as_ref().err()
+    }
+}
+
+fn compile_fields(
+    include: &FieldState,
+    exclude: &FieldState,
+) -> Result<Arc<PathFilter>, GlobError> {
+    let compile = |label: &str, field: &FieldState| {
+        compile_set(field.editor.text()).map_err(|e| GlobError(format!("{label}: {e}")))
+    };
+    Ok(Arc::new(PathFilter {
+        include: compile("include", include)?,
+        exclude: compile("exclude", exclude)?,
+    }))
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMPILATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn compilations() -> usize {
+    COMPILATIONS.with(std::cell::Cell::get)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +90,8 @@ impl PathFilter {
 }
 
 fn compile_set(text: &str) -> Result<Option<GlobSet>, globset::Error> {
+    #[cfg(test)]
+    COMPILATIONS.with(|count| count.set(count.get() + 1));
     let mut builder = GlobSetBuilder::new();
     let mut any = false;
     for pattern in split_patterns(text) {
@@ -107,7 +149,7 @@ mod tests {
 
     const ROOT: &str = "/root";
 
-    fn filter(include: &str, exclude: &str) -> PathFilter {
+    fn filter(include: &str, exclude: &str) -> Arc<PathFilter> {
         let fields = fields(include, exclude);
         fields.path_filter().expect("valid globs")
     }
@@ -116,6 +158,7 @@ mod tests {
         let mut fields = GlobFields::default();
         fields.include.editor.set_text(include);
         fields.exclude.editor.set_text(exclude);
+        fields.refresh();
         fields
     }
 

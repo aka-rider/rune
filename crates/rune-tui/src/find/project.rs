@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use crate::app::App;
 use crate::commands::mouse::WHEEL_ROWS;
 use crate::find::project_replace::{self, Walk};
-use crate::find::{Control, Filter, FilterKind, FindState, Origin, history, land};
+use crate::find::{Control, Filter, FilterKind, FindState, history, land};
 use crate::listnav::List;
 use crate::messages;
 use crate::pointer::{MouseButton, MouseInput, MouseKind};
@@ -17,6 +17,13 @@ use crate::runtime::{Effects, Msg, TimerKey, TimerMsgKey};
 pub(crate) const MIN_QUERY_CHARS: usize = 2;
 const DEBOUNCE_INTERVAL: Duration = Duration::from_millis(120);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Freshness {
+    Fresh,
+    Debouncing,
+    Querying,
+}
+
 pub(crate) struct ProjectResults {
     pub results: Vec<FileHit>,
     pub truncated: bool,
@@ -25,6 +32,7 @@ pub(crate) struct ProjectResults {
     pub pending_center: Option<(PathBuf, usize)>,
     pub landed_in_origin: bool,
     pub walk: Option<Box<Walk>>,
+    pub freshness: Freshness,
 }
 
 impl ProjectResults {
@@ -37,6 +45,7 @@ impl ProjectResults {
             pending_center: None,
             landed_in_origin: false,
             walk: None,
+            freshness: Freshness::Fresh,
         }
     }
 
@@ -113,10 +122,11 @@ pub(crate) fn toggle_this_file(app: &mut App, effects: &mut Effects) {
     set_filter(app, next, effects);
 }
 
-pub(crate) fn restart_debounce(app: &App) {
-    if !active(app) {
+pub(crate) fn restart_debounce(app: &mut App) {
+    let Some(project) = results_mut(app) else {
         return;
-    }
+    };
+    project.freshness = Freshness::Debouncing;
     app.timers.arm(
         TimerKey::from(TimerMsgKey::ProjectSearchDebounce),
         DEBOUNCE_INTERVAL,
@@ -173,6 +183,7 @@ pub(crate) fn dispatch_query(app: &mut App, effects: &mut Effects) {
         return;
     };
     project.query_generation = generation;
+    project.freshness = Freshness::Querying;
     effects.cmds.push(crate::runtime::project_query_cmd(
         entries, overrides, matcher, generation,
     ));
@@ -183,6 +194,7 @@ fn abandon_query(app: &mut App) {
     if let Some(state) = app.find_mut() {
         if let Some(project) = state.project_mut() {
             project.query_generation = generation;
+            project.freshness = Freshness::Fresh;
             project.clear();
         }
         state.settle_focus();
@@ -222,6 +234,9 @@ pub(crate) fn handle_queried(
     }
     project.results = results;
     project.truncated = truncated;
+    if project.freshness == Freshness::Querying {
+        project.freshness = Freshness::Fresh;
+    }
     project.list = List { cursor: 0, top: 0 };
     if let Some(state) = app.find_mut() {
         state.settle_focus();
@@ -320,10 +335,7 @@ pub(crate) fn open_hit(app: &mut App, effects: &mut Effects) {
         return;
     };
     land::land_at(app, id, range);
-    let origin = Origin::capture(app);
-    if let Some(state) = app.find_mut() {
-        state.origin = origin;
-    }
+    crate::find::recapture_origin(app);
     history::persist_query(app, &query, options);
 }
 
@@ -354,7 +366,9 @@ fn click_row(app: &mut App, visible_row: usize, effects: &mut Effects) {
         return;
     }
     project.list.cursor = absolute;
-    crate::find::take_focus(app, effects);
+    if !crate::find::take_focus(app, effects) {
+        return;
+    }
     if let Some(state) = app.find_mut() {
         state.focus = Control::Results;
     }

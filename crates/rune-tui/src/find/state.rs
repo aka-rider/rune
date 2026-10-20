@@ -117,6 +117,7 @@ pub(crate) struct FindState {
     pub filter: Filter,
     pub glob_fields: globs::GlobFields,
     pub history_generation: crate::generation::SearchHistoryGen,
+    pub history_key: crate::find::scope::HistoryKey,
     pub replace_history_generation: crate::generation::ReplaceHistoryGen,
 }
 
