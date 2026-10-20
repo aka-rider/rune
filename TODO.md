@@ -223,13 +223,21 @@ cursor beyond the right edge of an unwrapped line is painted nowhere and nothing
 multi-cursor edit can change text the user cannot see. Candidate fix: reveal the cursor the last command
 moved or added, not only the primary one.
 
-## Persistent undo: redo tail is not capped
+## Persistent undo: neither the redo tail nor a long session's history is capped on disk
 
-`rune-db`'s `history::read_lineage` caps a stored history at 1000 steps by pruning the oldest
-`done` steps, never past the undo position (a prune beyond it would orphan the position). A
-session parked deep in undo (more than 1000 undone steps) therefore keeps a redo tail above the
-cap. Fix when it matters: also delete the far end of the tail (`events` with `seq` above the
-1000th kept step) in the same load-time transaction.
+`rune-db`'s `history::replay` only hides everything older than the newest 1000 `done` steps (never
+past the undo position) from the lineage it returns; it deletes nothing. Rows are deleted only by
+`history::trim_to_cap`, and its sole caller is `succession::adopt_dead_lineage`, so the cap is
+enforced once per restart. Two consequences:
+
+- A session parked deep in undo (more than 1000 undone steps) keeps its whole redo tail.
+- A single long session's `events` table grows without bound. Every reopen of a document in it reads
+  and verifies every row after the snapshot nearest the cap floor, so the cost of a reopen and the
+  size of the store grow with the length of the session.
+
+Fix: trim in the same load-time transaction that computes the lineage, which is only safe while no
+binding has numbered undo positions against the rows (see `trim_to_cap`), or make the writer trim
+as it appends. Delete the far end of the redo tail the same way.
 
 ## Persistent undo: untitled drafts do not carry their history across a restart
 
@@ -259,15 +267,6 @@ filled to its height by tab rows (or hidden while the results list takes over th
 2+ matching files) does not list it; the title bar and the editor still show the previewed file.
 Reserving a row for the preview would mean the tab window (`painted_tabs`, `entry_rows`) and the
 scroll/ensure-visible maths all subtract it.
-
-## The fuzz driver waits forever for an ack a dead store writer will never send
-
-After every update, `await_db_ops_settled` in `rune-fuzz` blocks until each outstanding store op has
-been acked. When the writer thread exits with ops still queued (`Store::kill_writer_for_test` drops the
-receiver without replying), those acks never arrive and the step hangs with no CPU use. The only caller
-today is `db_wiring_degraded`, which now confirms the writer dead before typing, so no op can be
-accepted after the kill. Any new test or fuzz fault that kills the writer must do the same, or the
-writer must reply `Err` to every op still queued when it exits, as `fatal` already does after a panic.
 
 ## Forge CI: runners, labels, and limits are unverified
 

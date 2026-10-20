@@ -44,6 +44,8 @@ use crate::ids::BindingToken;
 use crate::ids::SessionId;
 use crate::token_state::DocUndoState;
 use crate::writer_exec as exec;
+#[cfg(feature = "test-support")]
+use crate::writer_lifecycle::reject_queued;
 use crate::writer_lifecycle::{IDLE_TIMEOUT, fatal, run_idle_maintenance};
 pub(crate) use crate::writer_ops::OpKind;
 pub use crate::writer_ops::{DbEvent, OnEvent, OpOutcome, QUEUE_DEPTH};
@@ -131,9 +133,9 @@ fn writer_loop(
             Ok(op) => {
                 #[cfg(feature = "test-support")]
                 if matches!(op.kind, OpKind::KillWriterForTest) {
-                    // Drop `receiver` (by returning) rather than processing or
-                    // replying — see the variant's doc comment.
-                    return;
+                    // Drop `receiver` (by returning) rather than processing the
+                    // ops behind the kill — see the variant's doc comment.
+                    return reject_queued(receiver, on_event, "writer killed");
                 }
                 let id = op.id;
                 let kind = op.kind;

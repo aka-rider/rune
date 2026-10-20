@@ -15,6 +15,8 @@ use crate::ids::SessionId;
 use crate::retry;
 use crate::store::LivenessCheckFn;
 use crate::writer::{DbEvent, OnEvent, OpKind, WriteOp, WriterHandle};
+#[cfg(feature = "test-support")]
+use crate::writer_ops::QUEUE_DEPTH;
 
 /// How long the writer thread waits on an empty queue before treating
 /// itself as idle (plan WP6.S1: "N quiet seconds (constant, e.g. 5s)").
@@ -89,17 +91,32 @@ pub(crate) fn fatal(receiver: &mpsc::Receiver<WriteOp>, on_event: &OnEvent, cont
         })
     }));
     while let Ok(op) = receiver.recv() {
-        #[cfg(feature = "test-support")]
-        if matches!(op.kind, OpKind::KillWriterForTest) {
-            continue; // already fatal — nothing left to simulate killing
-        }
-        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
-            on_event(DbEvent::Err {
-                id: op.id,
-                error: "writer in fatal state".to_string(),
-            })
-        }));
+        reject(op, on_event, "writer in fatal state");
     }
+}
+
+/// Replies `Err` to every op already queued, so no waiter hangs on an ack the
+/// writer is about to stop sending. Bounded by the queue capacity: a sender
+/// that keeps feeding the queue after the kill must not keep this drain from
+/// ever ending.
+#[cfg(feature = "test-support")]
+pub(crate) fn reject_queued(receiver: &mpsc::Receiver<WriteOp>, on_event: &OnEvent, reason: &str) {
+    for op in receiver.try_iter().take(QUEUE_DEPTH) {
+        reject(op, on_event, reason);
+    }
+}
+
+fn reject(op: WriteOp, on_event: &OnEvent, reason: &str) {
+    #[cfg(feature = "test-support")]
+    if matches!(op.kind, OpKind::KillWriterForTest) {
+        return;
+    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        on_event(DbEvent::Err {
+            id: op.id,
+            error: reason.to_string(),
+        })
+    }));
 }
 
 /// Runs on every quiet period (plan WP6.S1). Best-effort: a failure here is

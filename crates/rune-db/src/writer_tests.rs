@@ -227,3 +227,47 @@ pub(super) fn execute_test_op(kind: OpKind) -> Result<OpOutcome, Error> {
         _ => Ok(OpOutcome::None),
     }
 }
+
+#[test]
+fn killing_the_writer_answers_every_op_queued_behind_the_kill_with_an_error() {
+    let events: Arc<Mutex<Vec<DbEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let events_for_cb = Arc::clone(&events);
+    let on_event: OnEvent = Box::new(move |evt| {
+        events_for_cb
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(evt);
+    });
+    let (block_tx, block_rx) = mpsc::channel::<()>();
+    let handle = spawn(open_ready_connection(), test_vfs(), on_event);
+    for (id, kind) in [
+        (0, OpKind::TestBlock(block_rx)),
+        (1, OpKind::Noop),
+        (2, OpKind::KillWriterForTest),
+        (3, OpKind::Noop),
+        (4, OpKind::Noop),
+    ] {
+        handle
+            .try_send(WriteOp { id, kind })
+            .expect("enqueue while the writer is stalled");
+    }
+
+    block_tx.send(()).expect("release the stalled writer");
+    handle.shutdown(SessionId(1), Arc::new(|_pid, _started_at| false));
+
+    let events = events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let answered = |wanted: u64| {
+        events.iter().find_map(|event| match event {
+            DbEvent::Ok { id, .. } if *id == wanted => Some(true),
+            DbEvent::Err { id, .. } if *id == wanted => Some(false),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        [1, 3, 4].map(answered),
+        [Some(true), Some(false), Some(false)],
+        "the op before the kill ran; the ops behind it were refused, not dropped: {events:?}"
+    );
+}

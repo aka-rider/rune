@@ -67,7 +67,8 @@ pub(crate) enum OpKind {
     /// public test-support surface): makes the writer thread exit its
     /// receive loop immediately, dropping its `Receiver` and thereby
     /// closing the channel from the receive side — every LATER `try_send`
-    /// then observes `Error::WriterGone`, simulating the writer thread
+    /// then observes `Error::WriterGone`, after every op still queued behind
+    /// this one got an `Err` reply instead of a silence, simulating the writer thread
     /// having died (a panic that somehow escaped `catch_unwind`, the
     /// process being killed) without requiring a real crash. Deliberately
     /// NOT `#[cfg(test)]`: `rune-tui`'s own integration tests (a DIFFERENT
