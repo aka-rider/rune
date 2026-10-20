@@ -284,6 +284,10 @@ and fix in the workflows (then bump "Nightly checked" in `CLAUDE.md`):
 - `make perf-guard` is not in `ci-basic` or `ci-nightly`: its wall-clock budgets will flake on shared runners.
 - `make mutants` has no CI job (`.cargo/mutants.toml` mentions a PR-scoped `--in-diff` job).
 - `.github/workflows/test.yml` is manual-only now; delete it when the forge has been the gate for a while.
+- The `macos-arm64` host runner has no container, so it needs `node` on its PATH for `actions/checkout`, and the
+  forge's `DEFAULT_ACTIONS_URL` must resolve `actions/checkout`.
+- No fuzz round has been timed on a runner. Measure one `make test-fuzz` (RC=512) and tune the 20-minute kill in
+  the `ci` profile of `.config/nextest.toml` and `FUZZ_MINUTES` to fit.
 
 ## Forge CI: monitoring from the console
 
