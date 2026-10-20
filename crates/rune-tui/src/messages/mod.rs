@@ -221,9 +221,12 @@ pub fn posts(app: &App) -> u64 {
     app.messages.posts
 }
 
+pub fn log(app: &App) -> &[Message] {
+    &app.messages.entries
+}
+
 pub fn log_text(app: &App) -> String {
-    app.messages
-        .entries
+    log(app)
         .iter()
         .map(|m| m.text.as_str())
         .collect::<Vec<_>>()

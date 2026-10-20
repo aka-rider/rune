@@ -30,6 +30,7 @@ use crate::obs_origin::ObsOrigin;
 use crate::observation;
 use crate::retry;
 use crate::snapshot::Recovered;
+use crate::succession::{Adoption, adopt_dead_lineage};
 use crate::sync::SyncState;
 
 /// The outcome of [`load`]: the raw disk bytes, the journal-reconstructed
@@ -154,9 +155,16 @@ pub fn load_from_read(
     // replayable lineage is adopted first, so everything after sees it as
     // this session's own history.
     let had_history = retry::with_retry(conn, |tx| has_history(tx, session_id, doc_id))?;
-    let adopted = !had_history
-        && crate::succession::adopt_dead_lineage(conn, liveness_check, session_id, doc_id, now)?;
-    let has_hist = had_history || adopted;
+    let adoption = if had_history {
+        Adoption::NothingToAdopt
+    } else {
+        adopt_dead_lineage(conn, liveness_check, session_id, doc_id, now)?
+    };
+    let has_hist = had_history || matches!(adoption, Adoption::Adopted);
+    let declined_loss = match adoption {
+        Adoption::Lost(loss) => Some(loss),
+        Adoption::Adopted | Adoption::NothingToAdopt => None,
+    };
     let position_repaired = has_hist
         && retry::with_retry(conn, |tx| {
             crate::snapshot::repair_stranded_position(tx, session_id, doc_id)
@@ -274,9 +282,10 @@ pub fn load_from_read(
     };
 
     let (history, lineage_loss) = retry::with_retry(conn, |tx| {
-        read_lineage(tx, session_id, doc_id, &recovered.content)
+        read_lineage(tx, session_id, doc_id, &recovered.content, now)
     })?;
     let history_losses: Vec<HistoryLoss> = [
+        declined_loss,
         lineage_loss,
         position_repaired.then_some(HistoryLoss::PositionRepaired),
         redo_tail_dropped.then_some(HistoryLoss::RedoTailDropped),

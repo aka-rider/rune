@@ -35,12 +35,35 @@ pub(crate) fn create_snapshot(
     content: &str,
     seq: Seq,
 ) -> Result<i64, Error> {
+    insert_snapshot(tx, session_id, now, doc_id, content, seq, None)
+}
+
+pub(crate) fn create_rebase_snapshot(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    now: SystemTime,
+    doc_id: DocId,
+    content: &str,
+    seq: Seq,
+) -> Result<i64, Error> {
+    insert_snapshot(tx, session_id, now, doc_id, content, seq, Some(1))
+}
+
+fn insert_snapshot(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    now: SystemTime,
+    doc_id: DocId,
+    content: &str,
+    seq: Seq,
+    rebased: Option<i64>,
+) -> Result<i64, Error> {
     let hash = put_blob(tx, content.as_bytes())?;
     let at = format_rfc3339_nanos(now);
     tx.execute(
-        "INSERT INTO snapshots(doc_id, session_id, blob_hash, seq, created_at) \
-         VALUES(?1, ?2, ?3, ?4, ?5)",
-        params![doc_id, session_id, hash, seq, at],
+        "INSERT INTO snapshots(doc_id, session_id, blob_hash, seq, created_at, rebased) \
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        params![doc_id, session_id, hash, seq, at, rebased],
     )?;
     Ok(tx.last_insert_rowid())
 }
@@ -117,6 +140,37 @@ pub(crate) fn newest_anchor_at(
          ORDER BY seq DESC, id DESC LIMIT 1",
         params![doc_id, session_id, target],
     )
+}
+
+pub(crate) fn newest_rebase_anchor_at(
+    conn: &Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+    target: Seq,
+) -> Result<Option<Anchor>, Error> {
+    anchor_row(
+        conn,
+        doc_id,
+        "SELECT seq, blob_hash FROM snapshots \
+         WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3 AND rebased IS NOT NULL \
+         ORDER BY seq DESC, id DESC LIMIT 1",
+        params![doc_id, session_id, target],
+    )
+}
+
+pub(crate) fn has_rebase_at(
+    conn: &Connection,
+    session_id: SessionId,
+    doc_id: DocId,
+    seq: Seq,
+) -> Result<bool, Error> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM snapshots \
+         WHERE doc_id=?1 AND session_id=?2 AND seq=?3 AND rebased IS NOT NULL)",
+        params![doc_id, session_id, seq],
+        |r| r.get(0),
+    )
+    .map_err(Error::from)
 }
 
 pub(crate) fn oldest_anchor(

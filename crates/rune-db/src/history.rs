@@ -75,14 +75,46 @@ struct Window {
     rows: Vec<EditRow>,
 }
 
+/// The lineage of `session_id`'s `doc_id` for a tab that shows `shown`. A
+/// history that is lost is lost once: a rebase snapshot of `shown` is
+/// written at the current position, so the next read starts there instead
+/// of failing on the same rows again. No row is deleted, and the snapshot is
+/// written only when the journal itself recovers `shown` at that position,
+/// so it can never change what recovery returns.
 pub(crate) fn read_lineage(
     tx: &Transaction<'_>,
     session_id: SessionId,
     doc_id: DocId,
     shown: &str,
+    now: SystemTime,
 ) -> Result<(Lineage, Option<HistoryLoss>), Error> {
     let Replay { lineage, loss, .. } = replay(tx, session_id, doc_id, shown)?;
+    if loss.is_some() {
+        rebase_at(tx, session_id, doc_id, shown, lineage.position_seq(), now)?;
+    }
     Ok((lineage, loss))
+}
+
+fn rebase_at(
+    tx: &Transaction<'_>,
+    session_id: SessionId,
+    doc_id: DocId,
+    shown: &str,
+    position: Seq,
+    now: SystemTime,
+) -> Result<(), Error> {
+    if snapshot::has_rebase_at(tx, session_id, doc_id, position)? {
+        return Ok(());
+    }
+    let journal_agrees = match snapshot::recover_document(tx, session_id, doc_id) {
+        Ok(recovered) => recovered.content == shown,
+        Err(e) if e.is_stored_data_damage() => false,
+        Err(e) => return Err(e),
+    };
+    if journal_agrees {
+        snapshot::create_rebase_snapshot(tx, session_id, now, doc_id, shown, position)?;
+    }
+    Ok(())
 }
 
 /// Reads the durable history of `session_id`'s `doc_id` as a replayable
@@ -91,7 +123,8 @@ pub(crate) fn read_lineage(
 /// elsewhere may already number its undo positions against those rows. A
 /// history that cannot be read or does not replay is reported as a loss
 /// and replaced by an empty lineage at the current position; it is never
-/// pruned.
+/// pruned. The replay starts at the newest rebase snapshot, so rows below
+/// one are never read.
 pub(crate) fn replay(
     tx: &Transaction<'_>,
     session_id: SessionId,
@@ -145,13 +178,14 @@ fn capped_floor(
     session_id: SessionId,
     doc_id: DocId,
     position: Seq,
+    base: Seq,
 ) -> Result<Option<Seq>, Error> {
     let oldest_kept_candidate: Option<Seq> = tx
         .query_row(
             "SELECT seq FROM events WHERE doc_id=?1 AND session_id=?2 \
-             AND seq > COALESCE((SELECT MIN(seq) FROM snapshots WHERE doc_id=?1 AND session_id=?2), 0) \
+             AND seq > ?4 \
              ORDER BY seq DESC LIMIT 1 OFFSET ?3",
-            params![doc_id, session_id, MAX_STEPS],
+            params![doc_id, session_id, MAX_STEPS, base],
             |r| r.get(0),
         )
         .optional()?;
@@ -164,10 +198,20 @@ fn read_window(
     doc_id: DocId,
     position: Seq,
 ) -> Result<Option<Window>, Error> {
-    let floor_seq = capped_floor(tx, session_id, doc_id, position)?;
+    let base = match snapshot::newest_rebase_anchor_at(tx, session_id, doc_id, position)? {
+        Some(rebase) => Some(rebase),
+        None => snapshot::oldest_anchor(tx, session_id, doc_id)?,
+    };
+    let floor_seq = capped_floor(
+        tx,
+        session_id,
+        doc_id,
+        position,
+        base.as_ref().map_or(Seq(0), |anchor| anchor.seq),
+    )?;
     let anchor = match floor_seq {
         Some(floor) => snapshot::newest_anchor_at(tx, session_id, doc_id, floor)?,
-        None => snapshot::oldest_anchor(tx, session_id, doc_id)?.or(Some(Anchor {
+        None => Some(base.unwrap_or(Anchor {
             seq: Seq(0),
             content: String::new(),
         })),

@@ -49,6 +49,15 @@ fn insert(start: usize, text: &str) -> AppliedEdit {
     }
 }
 
+fn delete_claiming(start: usize, deleted: &str) -> AppliedEdit {
+    AppliedEdit {
+        start,
+        end: start + deleted.len(),
+        deleted: deleted.to_string(),
+        insert: String::new(),
+    }
+}
+
 impl Fixture {
     fn append(&mut self, edit: AppliedEdit, before: &[Cursor], after: &[Cursor]) -> Seq {
         let tx = self.conn.transaction().expect("tx");
@@ -84,7 +93,8 @@ impl Fixture {
 
     fn read(&mut self, shown: &str) -> (Lineage, Option<HistoryLoss>) {
         let tx = self.conn.transaction().expect("tx");
-        let read = read_lineage(&tx, self.session, self.doc, shown).expect("read_lineage");
+        let read = read_lineage(&tx, self.session, self.doc, shown, SystemTime::now())
+            .expect("read_lineage");
         tx.commit().expect("commit");
         read
     }
@@ -99,6 +109,16 @@ impl Fixture {
     fn current_seq(&mut self) -> Seq {
         let tx = self.conn.transaction().expect("tx");
         crate::journal::current_seq(&tx, self.session, self.doc).expect("current_seq")
+    }
+
+    fn snapshot_count(&self) -> i64 {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM snapshots WHERE doc_id=?1 AND session_id=?2",
+                params![self.doc, self.session],
+                |r| r.get(0),
+            )
+            .expect("count")
     }
 
     fn event_count(&self) -> i64 {
@@ -225,16 +245,75 @@ fn a_history_that_replays_to_other_content_than_shown_is_unreplayable() {
 #[test]
 fn an_unreplayable_history_keeps_its_redo_tail_on_disk() {
     let mut f = fixture("ab");
-    let seqs = f.type_text(2, "cd");
-    f.undo_to(seqs[0]);
+    let bad = f.append(delete_claiming(0, "Z"), &[], &[]);
+    let tail = f.append(insert(1, "c"), &[], &[]);
+    f.undo_to(bad);
 
-    let (lineage, loss) = f.read("abXX");
+    let (lineage, loss) = f.read("b");
 
     assert_eq!(loss, Some(HistoryLoss::Unreplayable));
-    assert_eq!(lineage.base_seq, seqs[0]);
-    assert_eq!(f.current_seq(), seqs[0]);
+    assert_eq!(lineage.base_seq, bad);
+    assert_eq!(f.current_seq(), bad);
     assert_eq!(f.event_count(), 2, "the redo tail is the user's words");
-    assert_eq!(f.recovered_at(seqs[1]), "abcd");
+    assert_eq!(f.recovered_at(tail), "bc");
+}
+
+#[test]
+fn an_unreplayable_history_is_lost_once_and_the_steps_typed_after_it_are_kept() {
+    let mut f = fixture("ab");
+    let bad = f.append(delete_claiming(0, "Z"), &[], &[]);
+    let snapshots = f.snapshot_count();
+
+    let (_, first) = f.read("b");
+    let rows = f.event_count();
+    let typed = f.append(insert(0, "x"), &[], &[]);
+    let (lineage, second) = f.read("xb");
+
+    assert_eq!(first, Some(HistoryLoss::Unreplayable));
+    assert_eq!(f.snapshot_count(), snapshots + 1, "one rebase snapshot");
+    assert_eq!(second, None, "the loss is reported once");
+    assert_eq!(lineage.base_seq, bad);
+    assert_eq!(
+        lineage.done.iter().map(|s| s.seq).collect::<Vec<_>>(),
+        vec![typed]
+    );
+    assert_eq!(f.event_count(), rows + 1, "the bad row is kept");
+    assert_eq!(f.recovered_at(typed), "xb");
+}
+
+#[test]
+fn an_unreadable_row_is_lost_once_and_the_steps_typed_after_it_are_kept() {
+    let mut f = fixture("ab");
+    let seqs = f.type_text(2, "cd");
+    let tx = f.conn.transaction().expect("tx");
+    create_snapshot(&tx, f.session, SystemTime::now(), f.doc, "abc", seqs[0]).expect("snapshot");
+    tx.commit().expect("commit");
+    f.conn
+        .execute("UPDATE events SET edits='{' WHERE seq=?1", params![seqs[0]])
+        .expect("corrupt an old row");
+
+    let (_, first) = f.read("abcd");
+    let typed = f.append(insert(4, "e"), &[], &[]);
+    let (lineage, second) = f.read("abcde");
+
+    assert_eq!(first, Some(HistoryLoss::Unreadable));
+    assert_eq!(second, None);
+    assert_eq!(
+        lineage.done.iter().map(|s| s.seq).collect::<Vec<_>>(),
+        vec![typed]
+    );
+}
+
+#[test]
+fn a_loss_never_writes_a_snapshot_that_disagrees_with_the_journal() {
+    let mut f = fixture("hello");
+    f.append(insert(5, "!"), &[], &[]);
+    let snapshots = f.snapshot_count();
+
+    let (_, loss) = f.read("hello?");
+
+    assert_eq!(loss, Some(HistoryLoss::Unreplayable));
+    assert_eq!(f.snapshot_count(), snapshots);
 }
 
 #[test]

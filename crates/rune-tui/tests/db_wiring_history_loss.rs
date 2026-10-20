@@ -31,6 +31,16 @@ fn event_count(h: &Harness) -> i64 {
         .expect("count events")
 }
 
+fn rebase_snapshot_count(h: &Harness) -> i64 {
+    let conn = rune_db::open_raw_connection_at_path_for_test(&h.db_path).expect("raw connection");
+    conn.query_row(
+        "SELECT COUNT(*) FROM snapshots WHERE rebased IS NOT NULL",
+        [],
+        |r| r.get(0),
+    )
+    .expect("count snapshots")
+}
+
 fn tamper(h: &Harness, sql: &str) {
     let conn = rune_db::open_raw_connection_at_path_for_test(&h.db_path).expect("raw connection");
     let changed = conn.execute(sql, []).expect("tamper with the store");
@@ -61,6 +71,7 @@ fn a_history_that_does_not_replay_opens_with_its_text_keeps_every_row_and_warns(
         "UPDATE events SET edits = replace(edits, '\"Deleted\":\"o\"', '\"Deleted\":\"X\"')",
     );
     let rows = event_count(&h);
+    assert_eq!(rebase_snapshot_count(&h), 0);
 
     h.close_and_reopen();
 
@@ -71,6 +82,47 @@ fn a_history_that_does_not_replay_opens_with_its_text_keeps_every_row_and_warns(
         log(&h)
     );
     assert_eq!(event_count(&h), rows, "nothing is deleted from the store");
+    assert_eq!(
+        rebase_snapshot_count(&h),
+        1,
+        "the loss is recorded as one rebase snapshot"
+    );
+}
+
+#[test]
+fn steps_typed_after_a_lost_history_survive_the_next_reopen_and_the_loss_is_reported_once() {
+    const LOSS: &str = "earlier undo history could not be replayed";
+    let mut h = Harness::open("history-loss-once", b"hello");
+    assert!(
+        h.session
+            .key(KeyInput {
+                code: KeyCode::End,
+                mods: Mods::NONE
+            })
+            .is_none()
+    );
+    assert!(h.session.key(BACKSPACE).is_none());
+    h.settle();
+    h.save();
+    tamper(
+        &h,
+        "UPDATE events SET edits = replace(edits, '\"Deleted\":\"o\"', '\"Deleted\":\"X\"')",
+    );
+    h.close_and_reopen();
+    assert!(log(&h).contains(LOSS), "{}", log(&h));
+    h.type_at_end("!");
+    h.save();
+    assert_eq!(rebase_snapshot_count(&h), 1);
+
+    h.close_and_reopen();
+
+    assert_eq!(h.content(), "hell!");
+    assert_eq!(log(&h).matches(LOSS).count(), 1, "{}", log(&h));
+    assert_eq!(rebase_snapshot_count(&h), 1, "no second rebase snapshot");
+    h.undo();
+    assert_eq!(h.content(), "hell", "the step typed after the loss undoes");
+    h.undo();
+    assert_eq!(h.content(), "hell", "nothing older is reachable");
 }
 
 #[test]
@@ -87,6 +139,7 @@ fn a_history_with_an_unreadable_old_row_opens_with_its_text_and_warns() {
     rune_fuzz::driver::wait_for_db_op(&db.bridge, op);
     tamper(&h, "UPDATE events SET edits = '{'");
     let rows = event_count(&h);
+    assert_eq!(rebase_snapshot_count(&h), 0);
 
     h.close_and_reopen();
 
@@ -97,6 +150,11 @@ fn a_history_with_an_unreadable_old_row_opens_with_its_text_and_warns() {
         log(&h)
     );
     assert_eq!(event_count(&h), rows, "nothing is deleted from the store");
+    assert_eq!(
+        rebase_snapshot_count(&h),
+        1,
+        "the loss is recorded as one rebase snapshot"
+    );
 }
 
 #[test]

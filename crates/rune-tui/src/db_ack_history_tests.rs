@@ -125,23 +125,35 @@ fn a_second_tab_on_a_row_already_bound_elsewhere_is_not_seeded_with_its_lineage(
 }
 
 #[test]
-fn every_kind_of_history_loss_is_reported_to_the_user() {
+fn every_kind_of_history_loss_is_reported_to_the_user_at_its_severity() {
+    use crate::messages::Severity::{Info, Warn};
     use rune_db::HistoryLoss::{PositionRepaired, RedoTailDropped, Unreadable, Unreplayable};
-    let mut app = app_on("hello");
-    let id = app.active;
-    let mut load_result = load_with_one_step(5, "hello", "hello");
-    load_result.history = rune_db::Lineage::default();
-    load_result.history_losses = vec![Unreplayable, Unreadable, PositionRepaired, RedoTailDropped];
-
-    load_ack(&mut app, id, load_result);
-
-    let log = messages::log_text(&app);
-    for expected in [
-        "could not be replayed",
-        "could not be read",
-        "stored undo position was out of range",
-        "earlier redo steps no longer apply",
+    for (loss, expected, severity) in [
+        (Unreplayable, "could not be replayed", Warn),
+        (Unreadable, "could not be read", Warn),
+        (
+            PositionRepaired,
+            "stored undo position was out of range",
+            Warn,
+        ),
+        (RedoTailDropped, "earlier redo steps no longer apply", Info),
     ] {
-        assert!(log.contains(expected), "missing {expected:?} in {log}");
+        let mut app = app_on("hello");
+        let id = app.active;
+        let mut load_result = load_with_one_step(5, "hello", "hello");
+        load_result.history = rune_db::Lineage::default();
+        load_result.history_losses = vec![loss];
+
+        load_ack(&mut app, id, load_result);
+
+        let reported = messages::log(&app)
+            .iter()
+            .find(|m| m.text.contains(expected));
+        assert_eq!(
+            reported.map(|m| m.severity),
+            Some(severity),
+            "{loss:?} in {}",
+            messages::log_text(&app)
+        );
     }
 }

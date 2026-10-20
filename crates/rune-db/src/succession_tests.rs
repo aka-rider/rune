@@ -9,6 +9,7 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::undo::EditKind;
 use rune_vfs::{Mem, VfsTestExt};
 
+use crate::history::HistoryLoss;
 use crate::ids::{DocId, Seq, SessionId};
 use crate::journal::{append_edit, current_seq, move_undo_pos};
 use crate::journal_append::EditBatch;
@@ -164,6 +165,7 @@ fn a_clean_dead_session_is_adopted_with_its_redo_tail_and_undo_position() {
         vec![second],
         "the redo tail must survive the restart"
     );
+    assert_eq!(result.history_losses, Vec::new());
     assert_eq!(w.position(b, doc), first);
     assert_eq!(result.sync.kind, SyncKind::Clean);
     assert_eq!((w.events_of(a), w.events_of(b)), (0, 2));
@@ -244,7 +246,7 @@ fn a_live_most_recent_session_keeps_its_history() {
 }
 
 #[test]
-fn an_unreplayable_dead_lineage_falls_back_to_inheriting_the_draft() {
+fn an_unreplayable_dead_lineage_falls_back_to_inheriting_the_draft_and_says_its_history_is_lost() {
     let mut w = World::new("hello");
     let a = w.session();
     let doc = w.load(a, &alive).doc_id;
@@ -278,6 +280,7 @@ fn an_unreplayable_dead_lineage_falls_back_to_inheriting_the_draft() {
         result.recovered.content, "ello",
         "the draft is still inherited"
     );
+    assert_eq!(result.history_losses, vec![HistoryLoss::Unreplayable]);
     assert_eq!(result.history.done.len(), 1, "as one bridge step");
     assert_eq!((w.events_of(a), w.events_of(b)), (1, 1));
 }
@@ -293,7 +296,8 @@ impl World {
 }
 
 #[test]
-fn a_dead_lineage_with_unreadable_old_rows_falls_back_to_inheriting_the_draft() {
+fn a_dead_lineage_with_unreadable_old_rows_falls_back_to_inheriting_the_draft_and_says_its_history_is_lost()
+ {
     let mut w = World::new("one");
     let a = w.session();
     let doc = w.load(a, &alive).doc_id;
@@ -309,6 +313,7 @@ fn a_dead_lineage_with_unreadable_old_rows_falls_back_to_inheriting_the_draft() 
 
     assert_eq!(result.recovered.content, "yxone");
     assert_eq!(result.history.done.len(), 1, "as one bridge step");
+    assert_eq!(result.history_losses, vec![HistoryLoss::Unreadable]);
 }
 
 #[test]
@@ -353,10 +358,7 @@ fn an_undo_position_stranded_below_every_snapshot_is_repaired_to_the_newest_text
     let result = w.load(a, &alive);
 
     assert_eq!(result.recovered.content, "yxone");
-    assert_eq!(
-        result.history_losses,
-        vec![crate::history::HistoryLoss::PositionRepaired]
-    );
+    assert_eq!(result.history_losses, vec![HistoryLoss::PositionRepaired]);
     assert_eq!(w.position(a, doc), second);
     assert_eq!(w.events_of(a), 2, "repairing the position deletes nothing");
     assert_eq!(
@@ -380,10 +382,7 @@ fn an_outside_change_that_cuts_off_a_redo_tail_says_so() {
     let result = w.load(a, &alive);
 
     assert_eq!(result.recovered.content, "rewritten elsewhere");
-    assert_eq!(
-        result.history_losses,
-        vec![crate::history::HistoryLoss::RedoTailDropped]
-    );
+    assert_eq!(result.history_losses, vec![HistoryLoss::RedoTailDropped]);
 }
 
 #[test]
@@ -399,4 +398,27 @@ fn an_outside_change_with_nothing_to_redo_loses_nothing() {
 
     assert_eq!(result.recovered.content, "rewritten elsewhere");
     assert_eq!(result.history_losses, Vec::new());
+}
+
+#[test]
+fn a_lost_history_stays_lost_only_once_across_a_restart() {
+    let mut w = World::new("one");
+    let a = w.session();
+    let doc = w.load(a, &alive).doc_id;
+    let first = w.type_at_start(a, doc, "x");
+    let second = w.type_at_start(a, doc, "y");
+    w.snapshot(a, doc, "yxone", second);
+    w.conn
+        .execute("UPDATE events SET edits='{' WHERE seq=?1", params![first])
+        .expect("corrupt a row below the newest snapshot");
+    let reopened = w.load(a, &alive);
+    let third = w.type_at_start(a, doc, "z");
+
+    let b = w.session();
+    let restarted = w.load(b, &always_dead);
+
+    assert_eq!(reopened.history_losses, vec![HistoryLoss::Unreadable]);
+    assert_eq!(restarted.recovered.content, "zyxone");
+    assert_eq!(restarted.history_losses, Vec::new());
+    assert_eq!(done_seqs(&restarted), vec![third]);
 }

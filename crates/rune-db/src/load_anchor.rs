@@ -389,7 +389,7 @@ mod tests {
             "the draft must survive even without H0"
         );
         let (history, history_loss) = retry::with_retry(&mut conn, |tx| {
-            crate::history::read_lineage(tx, session_b, doc_id, draft)
+            crate::history::read_lineage(tx, session_b, doc_id, draft, SystemTime::now())
         })
         .expect("read_lineage");
         assert_eq!(history_loss, None);

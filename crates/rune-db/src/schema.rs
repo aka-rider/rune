@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
 	session_id INTEGER NOT NULL REFERENCES sessions(id)  ON DELETE CASCADE,
 	blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
 	seq        INTEGER NOT NULL DEFAULT 0 CHECK(seq >= 0),
-	created_at TEXT    NOT NULL
+	created_at TEXT    NOT NULL,
+	rebased    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_doc     ON snapshots(doc_id, id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_session ON snapshots(session_id);
