@@ -251,3 +251,7 @@ pub(crate) fn commit_edits_with_followers(
 #[cfg(test)]
 #[path = "edit_core_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "edit_core_batch_tests.rs"]
+mod batch_tests;
