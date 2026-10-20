@@ -55,12 +55,8 @@ pub fn load_search_history_cmd(
     Cmd::search_history(move || {
         let result = reader
             .query(request)
-            .map(|reply| match reply {
-                rune_db::ReaderReply::RecentSearches(entries)
-                | rune_db::ReaderReply::RecentDocSearches(entries) => entries,
-                _ => Vec::new(),
-            })
-            .map_err(CmdError::from);
+            .map_err(CmdError::from)
+            .and_then(search_entries);
         Some(Msg::RecentsLoaded {
             generation: generation.raw(),
             result: RecentsResult::Search(result),
@@ -75,11 +71,8 @@ pub fn load_replace_history_cmd(
     Cmd::search_history(move || {
         let result = reader
             .query(rune_db::ReaderRequestKind::RecentReplacements { limit: 200 })
-            .map(|reply| match reply {
-                rune_db::ReaderReply::RecentReplacements(entries) => entries,
-                _ => Vec::new(),
-            })
-            .map_err(CmdError::from);
+            .map_err(CmdError::from)
+            .and_then(replacement_entries);
         Some(Msg::RecentsLoaded {
             generation: generation.raw(),
             result: RecentsResult::Replace(result),
@@ -100,4 +93,51 @@ pub fn load_history_scope_cmd(reader: rune_db::ReaderQuery) -> Cmd {
             });
         Some(Msg::HistoryScopeLoaded(result))
     })
+}
+
+fn search_entries(reply: rune_db::ReaderReply) -> Result<Vec<String>, CmdError> {
+    match reply {
+        rune_db::ReaderReply::RecentSearches(entries)
+        | rune_db::ReaderReply::RecentDocSearches(entries) => Ok(entries),
+        _ => Err(CmdError::Refused("unexpected reader reply".to_string())),
+    }
+}
+
+fn replacement_entries(reply: rune_db::ReaderReply) -> Result<Vec<String>, CmdError> {
+    match reply {
+        rune_db::ReaderReply::RecentReplacements(entries) => Ok(entries),
+        _ => Err(CmdError::Refused("unexpected reader reply".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rune_db::ReaderReply;
+
+    use super::*;
+
+    #[test]
+    fn a_search_history_load_refuses_a_reply_of_the_wrong_kind() {
+        let wrong = ReaderReply::RecentReplacements(vec!["x".to_string()]);
+        assert!(matches!(search_entries(wrong), Err(CmdError::Refused(_))));
+    }
+
+    #[test]
+    fn a_replace_history_load_refuses_a_reply_of_the_wrong_kind() {
+        let wrong = ReaderReply::RecentSearches(vec!["x".to_string()]);
+        assert!(matches!(
+            replacement_entries(wrong),
+            Err(CmdError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn both_search_reply_kinds_carry_their_entries_through() {
+        for reply in [
+            ReaderReply::RecentSearches(vec!["a".to_string()]),
+            ReaderReply::RecentDocSearches(vec!["a".to_string()]),
+        ] {
+            assert_eq!(search_entries(reply).ok(), Some(vec!["a".to_string()]));
+        }
+    }
 }
