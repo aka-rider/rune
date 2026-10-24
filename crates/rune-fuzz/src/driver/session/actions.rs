@@ -7,7 +7,6 @@ use rune_tui::runtime::{Msg, PasteTarget, TimerMsgKey};
 
 use crate::action::Action;
 use crate::guard;
-use crate::invariant::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::MsgTag;
 
@@ -189,21 +188,15 @@ fn install_diff_left(
     let left_content = crate::generate::diff_left_content(seed_index);
     let left_name = "fuzz-diff-left.md".to_string();
     let result = guard::catching_panic(|| {
-        rune_tui::diff_view::install(&mut state.app, left_content.as_bytes().to_vec(), left_name)
+        rune_tui::diff_view::install(
+            &mut state.app,
+            rune_core::codec::encode(left_content).into_owned(),
+            left_name,
+        );
     });
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             *prev = Snapshot::capture(&mut state.app, false);
-        }
-        Ok(Err(rune_tui::diff_view::DiffInstallError::InvalidUtf8)) => {
-            outcome.violation = Some(Violation::new(
-                "DIFF-INSTALL-UTF8",
-                "diff_view::install refused the generator's own diff-left seed content as \
-                 invalid UTF-8"
-                    .to_string(),
-            ));
-            outcome.final_snapshot = Some(prev.clone());
-            outcome.final_ctx = None;
         }
         Err(violation) => {
             outcome.violation = Some(violation);

@@ -2,6 +2,8 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
+use rune_core::codec;
+
 use crate::Error;
 use crate::ids::{DocId, ObsId, SessionId};
 use crate::inherit::is_session_alive;
@@ -70,7 +72,7 @@ pub(crate) fn merge_open(
                 set_state(tx, row_id, MergeRowState::Abandoned)?;
             }
         }
-        let marker_hash = crate::blob::put_blob(tx, args.marker_content.as_bytes())?;
+        let marker_hash = crate::blob::put_blob(tx, &codec::encode(args.marker_content))?;
         tx.execute(
             "INSERT INTO merges(doc_id, session_id, base_obs, theirs_obs, marker_hash, blocks, state, created_at) \
              VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -105,7 +107,7 @@ pub(crate) fn merge_progress(
         let Some(row_id) = target else {
             return Ok(());
         };
-        let marker_hash = crate::blob::put_blob(tx, marker_content.as_bytes())?;
+        let marker_hash = crate::blob::put_blob(tx, &codec::encode(marker_content))?;
         tx.execute(
             "UPDATE merges SET session_id=?1, marker_hash=?2, blocks=?3 WHERE id=?4",
             params![session_id, marker_hash, blocks_json, row_id],

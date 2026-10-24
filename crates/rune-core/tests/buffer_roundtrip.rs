@@ -276,11 +276,10 @@ fn default_buffer_then_insert_has_correct_line_index() {
     assert_eq!(b.caret_offset(BufferPoint { line: 1, col: 2 }), 8);
 }
 
-/// `Buffer::from_bytes` refuses invalid UTF-8. Moved here from the vfs
-/// round-trip suite (WP1, rune-vfs split) — this exercises `Buffer`, not
-/// the vfs, so it belongs with the rest of the buffer tests.
+/// `Buffer::from_bytes` accepts invalid UTF-8 and `disk_bytes` returns it
+/// byte-for-byte.
 #[test]
-fn buffer_refuses_invalid_utf8() {
-    let result = Buffer::from_bytes(vec![0xff, 0xfe]);
-    assert!(result.is_err(), "invalid UTF-8 should be refused");
+fn buffer_accepts_invalid_utf8_and_round_trips_it() {
+    let b = Buffer::from_bytes(vec![0xff, 0xfe]);
+    assert_eq!(b.disk_bytes().as_ref(), [0xff, 0xfe]);
 }

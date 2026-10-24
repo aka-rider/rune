@@ -85,6 +85,11 @@ pub(in crate::generate) static SEEDS: &[(&str, &str)] = &[
         "/fuzz/opaque.bin",
         "二进制内容 🙂 # not a heading\n\tliteral tab\n你好\n",
     ),
+    (DOC_PATH, "caf\u{10ffe9} latin-1\n"),
+    (
+        DOC_PATH,
+        "# raw\n\nlone \u{10ffff} then truncated euro \u{10ffe2}\u{10ff82}\n\n- item\u{10ff80}\n",
+    ),
 ];
 
 /// `Action::Paste`/`Action::ClipboardReply` payloads, verbatim by code
@@ -92,8 +97,7 @@ pub(in crate::generate) static SEEDS: &[(&str, &str)] = &[
 /// `Paste`/`ClipboardReply` insert bytes with NO filtering
 /// with no filtering, so this is the only place byte-hostile
 /// content — CRLF, tab, ZWSP, a real ZWJ family sequence — can reach the
-/// buffer and exercise the byte-verbatim edge (G3). Invalid UTF-8 is
-/// out of scope: the Rust `Buffer` is a `String` and cannot represent it.
+/// buffer and exercise the byte-verbatim edge (G3).
 pub(in crate::generate) static PASTE_PALETTE: &[&str] = &[
     "",
     "hello world",
@@ -143,6 +147,7 @@ pub static TYPE_PALETTE: &[&str] = &[
     "\"quoted\" 'text'",
     "12345.6789",
     "𝓒𝓾𝓻𝓼𝓲𝓿𝓮",
+    "native \u{10ff80} \u{10ffff}",
 ];
 
 /// Markdown structural fragments for the `MarkdownWrite` cluster. The

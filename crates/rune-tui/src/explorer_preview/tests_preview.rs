@@ -206,7 +206,7 @@ fn an_oversized_file_renders_a_placeholder_with_no_banner() {
 }
 
 #[test]
-fn a_binary_file_renders_a_placeholder_with_no_banner() {
+fn a_binary_file_previews_with_raw_byte_glyphs_and_no_banner() {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(std::path::Path::new("/root/x.bin"), &[0xFF, 0xFE, 0x00])
         .unwrap();
@@ -218,13 +218,11 @@ fn a_binary_file_renders_a_placeholder_with_no_banner() {
     after_cursor_move(&mut app, &mut effects);
     run_cmds(&mut app, &mut effects);
 
-    let preview = app.explorer.preview.as_ref().expect("a placeholder");
-    assert!(preview.doc.buffer().content().contains("x.bin"));
-    assert!(preview.doc.buffer().content().contains("not valid UTF-8"));
-    assert!(preview.doc.path().is_none(), "a placeholder is never bound");
+    let preview = app.explorer.preview.as_ref().expect("a preview");
+    assert_eq!(preview.doc.buffer().content(), "\u{10FFFF}\u{10FFFE}\0");
     assert!(
         !crate::messages::is_open(&app),
-        "no message pane for a failed preview"
+        "no message pane for a raw-byte preview"
     );
 }
 

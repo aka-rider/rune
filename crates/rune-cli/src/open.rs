@@ -16,7 +16,7 @@ use crate::db_bootstrap::{
     DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_store_only,
     bootstrap_untitled_db,
 };
-use crate::loader::{LoadError, LoadedFile, load_sighting};
+use crate::loader::{LoadedFile, load_sighting};
 use crate::{AppGuard, exit_code};
 
 /// `-w`'s own validation: `dir` (already absolutized by
@@ -139,18 +139,10 @@ fn open_first_text(
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     // One sighting decides both "does this path exist" and, if so, the
     // buffer's text — never a separate `vfs.stat` plus a separate read of
-    // the same path, and `load_sighting` hands back text already validated
-    // as UTF-8, so there is no second decode/validation branch here.
+    // the same path.
     let loaded = match load_sighting(vfs.as_ref(), &path) {
         Ok(loaded) => loaded,
-        Err(LoadError::InvalidUtf8) => {
-            eprintln!(
-                "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
-                path.display()
-            );
-            return Err(std::process::ExitCode::from(exit_code::DATA_ERR));
-        }
-        Err(LoadError::Io(e)) => {
+        Err(e) => {
             eprintln!("rune: failed to read {}: {e}", path.display());
             return Err(std::process::ExitCode::from(exit_code::IO_ERR));
         }
@@ -173,18 +165,31 @@ fn open_first_text(
     // chokepoint (`Document::hydrate`) `db::handle_load_ack` uses, once
     // `App::new` exists to hold it. Pre-replacing the buffer here would skip
     // that chokepoint's suspicion check entirely.
-    let (buffer, mut db_bootstrap) = match loaded {
-        Some(LoadedFile { sighting, text }) => (
-            rune_core::buffer::Buffer::new(text),
-            bootstrap_db(Arc::clone(vfs), &path, home, sighting),
-        ),
+    let (buffer, mut db_bootstrap, raw_bytes) = match loaded {
+        Some(LoadedFile { sighting, text }) => {
+            let raw_bytes = rune_core::codec::count_raw_bytes(&text);
+            (
+                rune_core::buffer::Buffer::new(text),
+                bootstrap_db(Arc::clone(vfs), &path, home, sighting),
+                raw_bytes,
+            )
+        }
         None => (
             rune_core::buffer::Buffer::new(""),
             bootstrap_new_file(Arc::clone(vfs), &path, home),
+            0,
         ),
     };
 
-    let app = App::new(buffer, Some(path), Arc::clone(vfs), db_bootstrap.db.take());
+    let mut app = App::new(
+        buffer,
+        Some(path.clone()),
+        Arc::clone(vfs),
+        db_bootstrap.db.take(),
+    );
+    if raw_bytes > 0 {
+        workspace::warn_raw_bytes(&mut app, &path, raw_bytes);
+    }
     Ok((app, db_bootstrap))
 }
 

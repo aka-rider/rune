@@ -52,7 +52,7 @@ pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violati
     {
         return None;
     }
-    if ctx.disk.as_deref() == Some(next.content.as_bytes()) {
+    if ctx.disk.as_deref() == Some(rune_core::codec::encode(&next.content).as_ref()) {
         return None;
     }
     Some(Violation::new(

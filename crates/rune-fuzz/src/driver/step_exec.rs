@@ -130,7 +130,7 @@ fn arm_save_cmd(state: &mut State, prev: &Snapshot, outcome: &mut Outcome, cmd: 
         .app
         .documents
         .iter()
-        .map(|(&id, doc)| (id, doc.buffer().content().as_bytes().to_vec()))
+        .map(|(&id, doc)| (id, doc.buffer().disk_bytes().into_owned()))
         .collect();
     state.pending_save = Some((cmd, per_doc_bytes));
     false

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use rune_core::assert_invariant;
 use rune_core::buffer::Buffer;
+use rune_core::codec;
 use rune_core::coords::DisplayRow;
 use rune_merge::{AlignmentMap, RegionKind};
 use rune_syntax::wrap::WrapMode;
@@ -15,11 +16,6 @@ pub mod rows;
 
 const INTRALINE_BUDGET: Duration = Duration::from_millis(4);
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum DiffInstallError {
-    InvalidUtf8,
-}
-
 pub struct DiffView {
     pub left: Document,
     pub right: DocumentId,
@@ -31,14 +27,8 @@ pub struct DiffView {
     restore_wrap: WrapMode,
 }
 
-pub fn install(
-    app: &mut App,
-    left_bytes: Vec<u8>,
-    left_name: String,
-) -> Result<(), DiffInstallError> {
-    let text = String::from_utf8(left_bytes).map_err(|_| DiffInstallError::InvalidUtf8)?;
-    install_text(app, app.active, text, left_name);
-    Ok(())
+pub fn install(app: &mut App, left_bytes: Vec<u8>, left_name: String) {
+    install_text(app, app.active, codec::decode(left_bytes), left_name);
 }
 
 pub(crate) fn install_text(app: &mut App, right: DocumentId, text: String, left_name: String) {

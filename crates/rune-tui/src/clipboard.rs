@@ -50,13 +50,14 @@ pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
 }
 
 fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
-    String::from_utf8(stdout).map_or_else(
-        |_| Msg::Posted {
-            severity: crate::messages::Severity::Error,
-            text: "pbpaste produced bytes that are not valid UTF-8".to_string(),
-        },
-        |text| Msg::ClipboardRead { text, target },
-    )
+    Msg::ClipboardRead {
+        text: rune_core::codec::decode(stdout),
+        target,
+    }
+}
+
+pub(crate) fn paste_text_from_terminal(text: String) -> String {
+    rune_core::codec::decode(text.into_bytes())
 }
 
 #[cfg(test)]
@@ -95,14 +96,21 @@ mod tests {
     }
 
     #[test]
-    fn decode_pbpaste_stdout_rejects_invalid_utf8_instead_of_substituting() {
-        let invalid = vec![0xff, 0xfe, 0xfd];
-        assert!(matches!(
-            decode_pbpaste_stdout(invalid, PasteTarget::Title(doc_id())),
-            Msg::Posted {
-                severity: crate::messages::Severity::Error,
-                ..
-            }
-        ));
+    fn decode_pbpaste_stdout_carries_invalid_utf8_as_raw_bytes() {
+        let msg = decode_pbpaste_stdout(vec![0xff, b'a'], PasteTarget::Title(doc_id()));
+        let Msg::ClipboardRead { text, .. } = msg else {
+            unreachable!("expected a ClipboardRead message, got {msg:?}");
+        };
+        assert_eq!(text, "\u{10FFFF}a");
+    }
+
+    #[test]
+    fn terminal_paste_of_a_native_reserved_codepoint_is_escaped_to_its_own_bytes() {
+        let text = paste_text_from_terminal("\u{10FF80}".to_string());
+        assert_eq!(text.chars().count(), 4);
+        assert_eq!(
+            rune_core::codec::encode(&text).as_ref(),
+            "\u{10FF80}".as_bytes()
+        );
     }
 }

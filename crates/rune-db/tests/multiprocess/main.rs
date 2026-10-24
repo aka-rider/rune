@@ -42,7 +42,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::panic
+    clippy::panic,
+    clippy::disallowed_methods
 )]
 
 use std::env;

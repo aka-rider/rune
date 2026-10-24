@@ -95,7 +95,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
         || (0, Arc::from("")),
         |d| (d.buffer().version(), Arc::<str>::from(d.buffer().content())),
     );
-    let bytes = content.as_bytes().to_vec();
+    let bytes = rune_core::codec::encode(&content).into_owned();
     let generation = app.next_rename_gen.mint();
     let path_for_state = path.clone();
 

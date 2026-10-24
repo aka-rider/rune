@@ -5,6 +5,8 @@
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use rune_core::codec;
+
 use crate::Error;
 #[cfg(test)]
 use crate::ids::Seq;
@@ -84,7 +86,7 @@ pub(crate) enum Inherited {
 }
 
 fn unsaved_against(baseline: Option<&Observation>, draft: &str) -> bool {
-    baseline.is_none_or(|b| b.blob_hash.as_str() != observation::hash_bytes(draft.as_bytes()))
+    baseline.is_none_or(|b| b.blob_hash.as_str() != observation::hash_bytes(&codec::encode(draft)))
 }
 
 /// Looks for a DIFFERENT, now-confirmed-dead session's unsaved content for
@@ -131,7 +133,7 @@ pub(crate) fn find_inheritable_draft(
     let Some(recovered_draft) = recovered_draft else {
         return Ok(Inherited::Disk);
     };
-    if observation::hash_bytes(recovered_draft.content.as_bytes()) == disk_hash {
+    if observation::hash_bytes(&codec::encode(&recovered_draft.content)) == disk_hash {
         return Ok(Inherited::Disk); // never actually diverged from disk
     }
     if !unsaved_against(other_baseline.as_ref(), &recovered_draft.content) {

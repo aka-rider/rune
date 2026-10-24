@@ -227,8 +227,7 @@ fn diff_view_hints_show_only_while_a_diff_view_is_active_on_the_focused_document
         "no diff hint before a diff view exists: {entries:?}"
     );
 
-    crate::diff_view::install(&mut app, b"left text".to_vec(), "fileA.md".to_string())
-        .expect("fixture is valid UTF-8");
+    crate::diff_view::install(&mut app, b"left text".to_vec(), "fileA.md".to_string());
     let entries = default_hint_entries(&app);
     assert!(
         entries.iter().any(|(_, help, _)| *help == "next hunk"),

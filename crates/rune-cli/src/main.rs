@@ -5,10 +5,9 @@
 //! a single-file launch always has, every remaining one opens as its own
 //! tab, and the first stays the active document. No file opens an empty
 //! untitled document; a nonexistent path opens an empty buffer (created on
-//! first save via `RENAME_EXCL`); invalid UTF-8 is refused at load, before
-//! the TUI is ever entered — a document must be valid text before the
-//! runtime ever touches it; a panic
-//! anywhere in the run loop is caught here, after the terminal has already
+//! first save via `RENAME_EXCL`); invalid UTF-8 bytes load as raw-byte glyphs
+//! and are written back unchanged; a panic anywhere in the run loop is
+//! caught here, after the terminal has already
 //! been restored by `term::Guard`'s `Drop` running during unwind.
 //!
 //! [`bootstrap`] does everything up to (but not including) the interactive
@@ -18,6 +17,8 @@
 //! ready for `runtime::run` — otherwise. [`launch`] wraps it with the
 //! interactive run loop and is what `main` calls with the real `Disk` vfs
 //! and process environment.
+
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 use std::any::Any;
 use std::env;
@@ -40,14 +41,12 @@ mod open;
 
 /// `sysexits.h`-flavored exit codes: `EX_USAGE` (a malformed command line —
 /// an unrecognised flag, a missing `-w` value, or `-w` pointing somewhere
-/// that isn't a directory), `EX_DATAERR` (the file's bytes are not valid
-/// data for this program — invalid UTF-8), `EX_IOERR` (the file exists but
+/// that isn't a directory), `EX_IOERR` (the file exists but
 /// couldn't be read, or the current directory itself couldn't be read),
 /// `EX_SOFTWARE` (an internal error — a recovered panic or a runtime I/O
 /// failure).
 pub(crate) mod exit_code {
     pub(crate) const USAGE: u8 = 64;
-    pub(crate) const DATA_ERR: u8 = 65;
     pub(crate) const IO_ERR: u8 = 74;
     pub(crate) const SOFTWARE: u8 = 70;
 }
@@ -189,16 +188,8 @@ fn install_diff_left(app: &mut AppGuard, vfs: &dyn Vfs, left: &Path) -> Result<(
         || left.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    match rune_tui::diff_view::install(app, bytes, left_name) {
-        Ok(()) => Ok(()),
-        Err(rune_tui::diff_view::DiffInstallError::InvalidUtf8) => {
-            eprintln!(
-                "rune: {} is not valid UTF-8 — refusing to open",
-                left.display()
-            );
-            Err(ExitCode::from(exit_code::DATA_ERR))
-        }
-    }
+    rune_tui::diff_view::install(app, bytes, left_name);
+    Ok(())
 }
 
 fn parse_launch(

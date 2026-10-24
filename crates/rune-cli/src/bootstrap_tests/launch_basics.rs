@@ -315,3 +315,27 @@ fn launch_missing_positional_resolves_the_path_exactly_once() {
         "a missing positional must still resolve its path exactly once"
     );
 }
+
+#[test]
+fn launch_invalid_utf8_file_opens_with_raw_byte_glyphs_and_a_warning() {
+    let vfs = Mem::new();
+    vfs.save_atomic(Path::new("/vault/bad.md"), &[b'a', 0xff, b'b'])
+        .expect("seed bad.md");
+    let home = ScratchHome::new("invalid-utf8");
+
+    let app = bootstrap(
+        &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
+        vec![OsString::from("/vault/bad.md")].into_iter(),
+        Path::new("/"),
+        Some(&home.0),
+    )
+    .expect("invalid UTF-8 must not fail the launch");
+
+    let raw = rune_core::codec::raw_byte_char(0xff).expect("raw byte char");
+    assert_eq!(app.active_doc().buffer().content(), format!("a{raw}b"));
+    let warning = rune_tui::messages::newest_text(&app).expect("a warning must be posted");
+    assert!(
+        warning.contains("bad.md: 1 invalid UTF-8 byte(s)"),
+        "{warning}"
+    );
+}

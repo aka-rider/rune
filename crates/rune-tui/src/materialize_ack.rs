@@ -132,8 +132,9 @@ fn record_outcome(
         Err(e) => {
             if published {
                 if let Some(binding) = app.doc_file_binding_mut(id) {
-                    binding.pending_rebaseline_hash =
-                        Some(rune_db::hash_bytes(target.content.as_bytes()));
+                    binding.pending_rebaseline_hash = Some(rune_db::hash_bytes(
+                        &rune_core::codec::encode(target.content),
+                    ));
                 }
                 reactions::resolve_committed_ack(app, id);
             } else {

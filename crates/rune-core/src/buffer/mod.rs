@@ -1,4 +1,7 @@
+use std::borrow::Cow;
 use std::fmt;
+
+use crate::codec;
 
 mod lineindex;
 mod trailing;
@@ -40,7 +43,6 @@ pub struct AppliedEdit {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BufferError {
-    InvalidUtf8,
     EditsNotSortedOrOverlapping,
     OutOfBounds {
         start: usize,
@@ -61,7 +63,6 @@ pub enum BufferError {
 impl fmt::Display for BufferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BufferError::InvalidUtf8 => write!(f, "invalid UTF-8 sequence"),
             BufferError::EditsNotSortedOrOverlapping => {
                 write!(f, "edits must be non-overlapping and sorted descending")
             }
@@ -110,9 +111,12 @@ impl Buffer {
         }
     }
 
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Buffer, BufferError> {
-        let content = String::from_utf8(bytes).map_err(|_| BufferError::InvalidUtf8)?;
-        Ok(Buffer::new(content))
+    pub fn from_bytes(bytes: Vec<u8>) -> Buffer {
+        Buffer::new(codec::decode(bytes))
+    }
+
+    pub fn disk_bytes(&self) -> Cow<'_, [u8]> {
+        codec::encode(&self.content)
     }
 
     pub fn is_empty(&self) -> bool {

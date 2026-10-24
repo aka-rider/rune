@@ -128,31 +128,23 @@ fn merge_on_a_disk_ahead_clean_document_installs_disk_bytes_with_no_markers() {
 }
 
 #[test]
-fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
+fn merge_adopts_a_disk_file_that_is_not_valid_utf8_byte_for_byte() {
     let (mut session, doc_id, draft_id) = open_hello();
+    let external: &[u8] = &[0xff, 0xfe, 0x00, 0x01];
 
-    external_write(session.app().vfs.as_ref(), &[0xff, 0xfe, 0x00, 0x01]);
+    external_write(session.app().vfs.as_ref(), external);
     reprobe(&mut session, draft_id, doc_id);
-    assert!(matches!(
+    assert_eq!(
         session.app().doc(doc_id).unwrap().last_sync,
-        Some(SyncKind::DiskAhead) | Some(SyncKind::Diverged)
-    ));
+        Some(SyncKind::DiskAhead)
+    );
 
     assert!(session.key(ctrl('m')).is_none());
     assert!(session.deliver_db().is_none());
 
-    assert_eq!(
-        session.app().doc(doc_id).unwrap().buffer().content(),
-        "hello",
-        "a UTF-8 refusal must never touch the buffer"
-    );
-    assert!(
-        rune_tui::messages::newest_text(session.app())
-            .unwrap_or_default()
-            .contains("not valid UTF-8"),
-        "expected a UTF-8 refusal status, got {:?}",
-        rune_tui::messages::newest_text(session.app())
-    );
+    let buffer = session.app().doc(doc_id).unwrap().buffer();
+    assert_eq!(buffer.content(), "\u{10FFFF}\u{10FFFE}\0\u{1}");
+    assert_eq!(buffer.disk_bytes().as_ref(), external);
     assert_eq!(session.app().merge, MergeState::Inactive);
 }
 

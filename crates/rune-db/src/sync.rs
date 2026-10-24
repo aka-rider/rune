@@ -6,6 +6,8 @@
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use rune_core::codec;
+
 use crate::Error;
 #[cfg(test)]
 use crate::ids::Seq;
@@ -171,7 +173,7 @@ pub fn sync_with_theirs(
     let pos = crate::journal::current_seq(tx, session_id, doc_id)?;
     let ours_content = crate::snapshot::recover_document(tx, session_id, doc_id)?.content;
     let ours = Version {
-        hash: BlobHash(observation::hash_bytes(ours_content.as_bytes())),
+        hash: BlobHash(observation::hash_bytes(&codec::encode(&ours_content))),
         obs: None,
     };
 

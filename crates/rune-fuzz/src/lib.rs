@@ -4,7 +4,7 @@
 //! every settled message: action model -> driver -> snapshot/step-context
 //! -> pure invariant checkers.
 //!
-//! # Invariant roster (54 total)
+//! # Invariant roster (53 total)
 //!
 //! Each entry: id, one-line meaning. See `invariant/mod.rs` for the
 //! checker-shape taxonomy (L0/L1/L2) and the per-domain file split. This
@@ -142,8 +142,6 @@
 //!   keystroke closes the panel instead of leaving it open.
 //! - `MERGE-UNDO-NEVER-COMPLETES` — an undo that retires an `Active` merge
 //!   never re-classifies the document reconciled on the same step.
-//! - `DIFF-INSTALL-UTF8` — `diff_view::install` never refuses the
-//!   generator's own diff-left seed content as invalid UTF-8.
 //! - `SEED-PATH-SILENT-REBIND` — the seed document's file path changes only
 //!   on a `RenameDone` or a save/materialize ack.
 pub mod action;

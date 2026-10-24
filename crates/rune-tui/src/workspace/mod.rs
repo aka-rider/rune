@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_core::buffer::{Buffer, BufferError};
+use rune_core::buffer::Buffer;
+use rune_core::codec;
 
 use crate::app::App;
 use crate::db_enqueue as db;
@@ -26,7 +27,7 @@ pub fn resolve_or_report(app: &mut App, path: &Path, verb: &str) -> Option<Resol
 pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
     match resolve_and_read(app, path) {
         ReadOutcome::Reactivated(id) => Some(id),
-        ReadOutcome::Read { resolved, bytes } => open_bytes(app, &resolved, bytes),
+        ReadOutcome::Read { resolved, bytes } => Some(open_bytes(app, &resolved, bytes)),
         ReadOutcome::Failed => None,
     }
 }
@@ -38,7 +39,7 @@ pub fn open_path_checked(app: &mut App, path: &Path, effects: &mut Effects) -> O
             if !crate::opentabs::limit::ensure_room(app, effects) {
                 return None;
             }
-            open_bytes(app, &resolved, bytes)
+            Some(open_bytes(app, &resolved, bytes))
         }
         ReadOutcome::Failed => None,
     }
@@ -142,42 +143,41 @@ pub(crate) fn handle_file_opened(
     if !crate::opentabs::limit::ensure_room(app, effects) {
         return;
     }
-    let Some(id) = open_bytes(app, &resolved, bytes) else {
-        return;
-    };
+    let id = open_bytes(app, &resolved, bytes);
     app.set_focus_pane(Pane::Editor, effects);
     if let Some(anchor) = anchor {
         crate::navigate::land_anchor(app, id, &anchor);
     }
 }
 
-fn open_bytes(app: &mut App, resolved: &ResolvedPath, bytes: Vec<u8>) -> Option<DocumentId> {
+pub fn warn_raw_bytes(app: &mut App, path: &Path, raw_bytes: usize) {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("this file");
+    messages::warn(
+        app,
+        format!(
+            "{name}: {raw_bytes} invalid UTF-8 byte(s) shown as <xx> \u{2014} written back unchanged"
+        ),
+    );
+}
+
+fn open_bytes(app: &mut App, resolved: &ResolvedPath, bytes: Vec<u8>) -> DocumentId {
     if crate::document_support::is_image_path(resolved) {
-        return Some(open_image_bytes(app, resolved, &bytes));
+        return open_image_bytes(app, resolved, &bytes);
     }
 
-    let buffer = match Buffer::from_bytes(bytes) {
-        Ok(buffer) => buffer,
-        Err(BufferError::InvalidUtf8) => {
-            messages::error(
-                app,
-                format!(
-                    "{}: not valid UTF-8 \u{2014} refusing to open",
-                    resolved.display()
-                ),
-            );
-            return None;
-        }
-        Err(e) => {
-            messages::error(app, format!("could not open {}: {e}", resolved.display()));
-            return None;
-        }
-    };
+    let buffer = Buffer::from_bytes(bytes);
+    let raw_bytes = codec::count_raw_bytes(buffer.content());
+    if raw_bytes > 0 {
+        warn_raw_bytes(app, resolved, raw_bytes);
+    }
 
     let id = app.open_document_bound(buffer, resolved.clone());
     let _ = db::load_document(app, id, resolved, db::LoadIntent::Recover);
     switch_to(app, id);
-    Some(id)
+    id
 }
 
 fn open_image_bytes(app: &mut App, resolved: &ResolvedPath, bytes: &[u8]) -> DocumentId {

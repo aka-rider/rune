@@ -358,7 +358,7 @@ fn a_diff_view_refuses_the_toggle_and_keeps_both_sides_wrapping() {
     let text = format!("{}\n", long_line(30));
     let mut app = app_for(&text, 0);
     app.frame = Some(rune_tui::app::FrameSize::new(WIDTH, HEIGHT));
-    rune_tui::diff_view::install(&mut app, text.clone().into_bytes(), "a.md".into()).unwrap();
+    rune_tui::diff_view::install(&mut app, text.clone().into_bytes(), "a.md".into());
     app.sync_view();
     let wrapped = rows_containing(&render_to_test_backend(&app), "w0");
 
@@ -382,7 +382,7 @@ fn opening_a_diff_over_an_unwrapped_document_wraps_it_and_closing_restores_the_c
     toggle_wrap(&mut app);
     assert_eq!(rows_containing(&render_to_test_backend(&app), "w0"), 1);
 
-    rune_tui::diff_view::install(&mut app, text.clone().into_bytes(), "a.md".into()).unwrap();
+    rune_tui::diff_view::install(&mut app, text.clone().into_bytes(), "a.md".into());
     app.sync_view();
     assert!(rows_containing(&render_to_test_backend(&app), "w0") >= 2);
 

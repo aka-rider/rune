@@ -94,6 +94,16 @@ mod tests {
     }
 
     #[test]
+    fn a_line_ending_in_a_raw_byte_loses_nothing_to_the_strip() {
+        let loaded = Buffer::from_bytes(b"caf\xE9\ncaf\xE9  \n".to_vec());
+        let after = stripped(loaded.content());
+        assert_eq!(
+            Buffer::new(after).disk_bytes().as_ref(),
+            b"caf\xE9\ncaf\xE9\n"
+        );
+    }
+
+    #[test]
     fn tabs_spaces_and_mixed_runs_all_go() {
         assert_eq!(
             stripped("tabs\t\t\nspaces   \nmixed \t \t\n"),

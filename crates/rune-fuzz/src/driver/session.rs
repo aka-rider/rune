@@ -141,7 +141,7 @@ impl Session {
     pub fn open(path: &str, content: &str) -> Session {
         let path = PathBuf::from(path);
         let mem = Arc::new(Mem::new());
-        let _ = mem.save_atomic(&path, content.as_bytes());
+        let _ = mem.save_atomic(&path, &rune_core::codec::encode(content));
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
         let (bridge, db) = open_store(&vfs);
@@ -153,7 +153,7 @@ impl Session {
         let content = mem
             .read(&path)
             .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .map(rune_core::codec::decode)
             .unwrap_or_default();
         let bridge = Arc::clone(&db.bridge);
         Session::boot(mem, path, content, bridge, Some(db))

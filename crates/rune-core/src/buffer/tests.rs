@@ -6,12 +6,16 @@ use super::*;
 
 #[test]
 fn from_bytes() {
-    let b = Buffer::from_bytes(b"Hello \xe2\x98\xba World".to_vec())
-        .expect("valid utf-8 should not error");
+    let b = Buffer::from_bytes(b"Hello \xe2\x98\xba World".to_vec());
     assert_eq!(b.content(), "Hello \u{263a} World");
+    assert_eq!(b.disk_bytes().as_ref(), b"Hello \xe2\x98\xba World");
+}
 
-    let err = Buffer::from_bytes(vec![0xff, 0xfe]);
-    assert_eq!(err, Err(BufferError::InvalidUtf8));
+#[test]
+fn from_bytes_accepts_invalid_utf8_and_writes_it_back_unchanged() {
+    let b = Buffer::from_bytes(vec![0xff, 0xfe]);
+    assert_eq!(b.content(), "\u{10FFFF}\u{10FFFE}");
+    assert_eq!(b.disk_bytes().as_ref(), [0xff, 0xfe]);
 }
 
 #[test]
@@ -129,7 +133,6 @@ fn clamp_to_char_boundary_snaps_down_and_clamps_to_content_len() {
 #[test]
 fn buffer_error_display_messages_are_never_empty() {
     let cases = [
-        BufferError::InvalidUtf8,
         BufferError::EditsNotSortedOrOverlapping,
         BufferError::OutOfBounds {
             start: 1,

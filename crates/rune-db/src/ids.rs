@@ -121,6 +121,7 @@ impl FromSql for ObsId {
 }
 
 impl ToSql for BlobHash {
+    #[allow(clippy::disallowed_methods)]
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::Borrowed(ValueRef::Text(self.0.as_bytes())))
     }

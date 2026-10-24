@@ -95,10 +95,7 @@ fn resolved_target(app: &App, path: &Path) -> Option<crate::resolved::ResolvedPa
 }
 
 fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>, effects: &mut Effects) {
-    let Ok(buffer) = Buffer::from_bytes(bytes) else {
-        apply_failed(app, path, "not valid UTF-8", effects);
-        return;
-    };
+    let buffer = Buffer::from_bytes(bytes);
     let Some(resolved) = resolved_target(app, path) else {
         apply_failed(app, path, "could not resolve this path", effects);
         return;

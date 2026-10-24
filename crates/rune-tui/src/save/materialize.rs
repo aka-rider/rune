@@ -94,7 +94,7 @@ pub(super) fn save_directly(
     _clearance: &SaveClearance,
     effects: &mut Effects,
 ) {
-    let bytes = content.as_bytes().to_vec();
+    let bytes = rune_core::codec::encode(&content).into_owned();
     let Some(doc) = app.doc_mut(id) else { return };
     let ticket = doc.begin_save(version, content);
     let vfs = Arc::clone(&app.vfs);
@@ -165,7 +165,8 @@ pub(crate) fn run_materialize_vfs(
     bound_path: Option<&str>,
     mode: SaveMode,
 ) -> MaterializeVfsOutcome {
-    let data = content.as_bytes();
+    let encoded = rune_core::codec::encode(content);
+    let data = encoded.as_ref();
 
     let resolved = match vfs.resolve(path) {
         Ok(r) => r,

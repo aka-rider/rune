@@ -15,6 +15,7 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, Transaction, params};
 
+use rune_core::codec;
 use rune_vfs::Vfs;
 
 use crate::Error;
@@ -133,13 +134,6 @@ pub fn load_from_read(
     let doc_ref: DocRef = document::open_path(conn, vfs, path, now)?;
     let doc_id = doc_ref.id;
 
-    // Hashing and blob storage operate on the raw disk bytes UNCONDITIONALLY
-    // — a load must still durably record what's actually on disk even if it
-    // turns out not to be valid UTF-8 (blob.rs's module doc: disk-sourced
-    // content is never gated on decode success). Only the `content: String`
-    // this function ultimately returns for the edit buffer requires the
-    // file to be genuinely valid text — that check happens below, AFTER
-    // this sighting is already durably recorded.
     let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &data))?;
 
     // Folds the suspicious-shrink gate against `doc_id`'s own confirmed
@@ -175,12 +169,7 @@ pub fn load_from_read(
         crate::journal::current_seq(tx, session_id, doc_id)
     })?;
 
-    // Content re-enters the String-typed edit buffer HERE: this is
-    // session-editable content, which must be valid UTF-8 (rune-core's
-    // `Buffer` has no other representation) — a load of genuinely non-text
-    // content is a real, surfaced error, never silently mangled or dropped.
-    let content = String::from_utf8(data)
-        .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
+    let content = codec::decode(data);
 
     let (recovered, redo_tail_dropped) = if !has_hist {
         // Cross-session crash recovery (v10, B2/R2) for a dead session whose
@@ -208,7 +197,7 @@ pub fn load_from_read(
         let recovered = retry::with_retry(conn, |tx| {
             crate::snapshot::recover_document(tx, session_id, doc_id)
         })?;
-        let recovered_hash = observation::hash_bytes(recovered.content.as_bytes());
+        let recovered_hash = observation::hash_bytes(&codec::encode(&recovered.content));
         if hash == recovered_hash {
             // Reload, hash-equality: heal-adopt only when there is something to
             // heal (an ordinary clean tab switch also lands here).
@@ -294,7 +283,7 @@ pub fn load_from_read(
     .flatten()
     .collect();
 
-    let recovered_hash = observation::hash_bytes(recovered.content.as_bytes());
+    let recovered_hash = observation::hash_bytes(&codec::encode(&recovered.content));
     let resumable_merge = retry::with_retry(conn, |tx| {
         crate::merge_state::resume_candidate(tx, liveness_check, doc_id, &recovered_hash)
     })?;
@@ -327,3 +316,7 @@ mod tests;
 #[cfg(test)]
 #[path = "load_reopen_tests.rs"]
 mod reopen_tests;
+
+#[cfg(test)]
+#[path = "load_raw_byte_tests.rs"]
+mod raw_byte_tests;

@@ -202,7 +202,7 @@ pub(crate) fn record_materialize_outcome(
 /// caller-supplied `stat`, for the `Conflict{Fresh}` outcomes. `data` is
 /// disk-sourced — the target's live content on a CAS refusal, or a racer's
 /// displaced bytes on a swap-race; this capture happens unconditionally,
-/// never gated on UTF-8 validity (see `blob.rs`'s module doc). The blob put
+/// never gated on UTF-8 validity. The blob put
 /// and its referencing observation insert commit as ONE
 /// transaction (`observe_from_stat_tx`) — never two, closing the
 /// cross-process GC race [rune-db 2]. No `vfs` call: `stat` is the

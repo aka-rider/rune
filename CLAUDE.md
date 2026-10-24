@@ -36,6 +36,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 - **snapshot (display)** — the `SyntaxSnapshot` a buffer parses to; distinct from a *document* snapshot in the recovery store. Say which one you mean.
 - **highlight overlay** — a `(Range<usize>, ScopeId)` list from `rune-ts` painted onto cell styles at render time, never emitted as a `SyntaxSpan`; distinct from *snapshot (display)* (the emitted syntax model) and from a *document* snapshot (the recovery store).
 - **help document** — virtual read-only tab generated from the keymap; never dirty.
+- **raw byte** — a disk byte that is not valid UTF-8, carried in the buffer as one reserved codepoint (U+10FF80 + byte − 0x80) and rendered `<xx>`; `rune_core::codec` is the only place that maps between the two (not "invalid char", "replacement character", "lossy").
 
 ## Build & Test
 

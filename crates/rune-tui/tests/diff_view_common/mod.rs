@@ -20,8 +20,7 @@ pub fn app_with_diff(right_text: &str, left_text: &str, width: u16) -> App {
         &mut app,
         left_text.as_bytes().to_vec(),
         "fileA.md".to_string(),
-    )
-    .expect("fixture is valid UTF-8");
+    );
     app.frame = Some(rune_tui::app::FrameSize::new(width, HEIGHT));
     app.sync_view();
     app

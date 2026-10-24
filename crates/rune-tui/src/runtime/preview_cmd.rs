@@ -13,19 +13,13 @@ pub fn read_preview_cmd(
     generation: crate::generation::PreviewGen,
 ) -> Cmd {
     Cmd::read_file(move || {
-        let result = (|| -> Result<Vec<u8>, CmdError> {
-            let bytes = match rune_vfs::get(vfs.as_ref(), &path, MAX_PREVIEW_BYTES) {
-                Ok(sighting) => sighting.bytes,
-                Err(rune_vfs::GetRefusal::TooLarge { .. }) => {
-                    return Err(CmdError::Refused("too large to preview".to_string()));
-                }
-                Err(e) => return Err(CmdError::from(e)),
-            };
-            if std::str::from_utf8(&bytes).is_err() {
-                return Err(CmdError::Refused("not valid UTF-8".to_string()));
+        let result = match rune_vfs::get(vfs.as_ref(), &path, MAX_PREVIEW_BYTES) {
+            Ok(sighting) => Ok(sighting.bytes),
+            Err(rune_vfs::GetRefusal::TooLarge { .. }) => {
+                Err(CmdError::Refused("too large to preview".to_string()))
             }
-            Ok(bytes)
-        })();
+            Err(e) => Err(CmdError::from(e)),
+        };
         Some(Msg::FileOpened {
             path,
             result,

@@ -13,6 +13,7 @@
 
 pub mod bracket;
 pub mod buffer;
+pub mod codec;
 pub mod coords;
 pub mod cursor;
 pub mod undo;

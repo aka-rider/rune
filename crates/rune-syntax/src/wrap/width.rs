@@ -5,6 +5,7 @@
 //! below, with `rune-tui`'s renderer and this module's sibling `query`
 //! submodule — none of them may re-derive these numbers independently.
 
+use rune_core::codec;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Halfwidth Katakana Voiced Sound Mark (dakuten) — `unicode-width` reports
@@ -16,6 +17,7 @@ const HALFWIDTH_KATAKANA_VOICED_SOUND_MARK: char = '\u{FF9E}';
 /// Halfwidth Katakana Semi-Voiced Sound Mark (handakuten) — the
 /// `U+FF9F` counterpart to the mark above, same rationale.
 const HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK: char = '\u{FF9F}';
+const RAW_BYTE_GLYPH_WIDTH: usize = 4;
 
 /// `ControlAwareWidth` — the single source of truth for a rune's display
 /// width, shared by the wrap/coordinate layer and the cell renderer. Rule:
@@ -36,6 +38,9 @@ const HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK: char = '\u{FF9F}';
 pub fn control_aware_width(r: char) -> usize {
     if r == '\n' || r == '\r' {
         return 0;
+    }
+    if codec::is_raw_byte(r) {
+        return RAW_BYTE_GLYPH_WIDTH;
     }
     if r == HALFWIDTH_KATAKANA_VOICED_SOUND_MARK || r == HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK {
         return 1;
@@ -125,6 +130,9 @@ pub fn grapheme_width(cluster: &str) -> usize {
     let Some(first) = chars.next() else {
         return 0;
     };
+    if codec::is_raw_byte(first) {
+        return RAW_BYTE_GLYPH_WIDTH + chars.map(control_aware_width).sum::<usize>();
+    }
     if chars.next().is_none() {
         return control_aware_width(first);
     }
@@ -206,6 +214,19 @@ mod tests {
     fn control_aware_width_defers_to_unicode_width_for_everything_else() {
         assert_eq!(control_aware_width('a'), 1);
         assert_eq!(control_aware_width('世'), 2);
+    }
+
+    #[test]
+    fn control_aware_width_gives_every_raw_byte_the_four_columns_of_its_glyph() {
+        assert_eq!(control_aware_width('\u{10FF80}'), 4);
+        assert_eq!(control_aware_width('\u{10FFFF}'), 4);
+        assert_eq!(control_aware_width('\u{10FF7F}'), 1);
+    }
+
+    #[test]
+    fn grapheme_width_of_a_raw_byte_cluster_ignores_a_combining_mark_attached_to_it() {
+        assert_eq!(grapheme_width("\u{10FFFF}"), 4);
+        assert_eq!(grapheme_width("\u{10FFFF}\u{0301}"), 4);
     }
 
     #[test]

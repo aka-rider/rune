@@ -168,12 +168,18 @@ fn the_left_document_is_read_only() {
 }
 
 #[test]
-fn install_refuses_invalid_utf8() {
+fn install_decodes_invalid_utf8() {
     let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
-    let err = diff_view::install(&mut app, vec![0xff, 0xfe], "fileA.md".to_string())
-        .expect_err("invalid UTF-8 must be refused");
-    assert_eq!(err, diff_view::DiffInstallError::InvalidUtf8);
-    assert!(app.diff.is_none());
+    diff_view::install(&mut app, vec![0xff, 0xfe], "fileA.md".to_string());
+    assert_eq!(
+        app.diff
+            .as_ref()
+            .expect("diff active")
+            .left
+            .buffer()
+            .content(),
+        "\u{10FFFF}\u{10FFFE}"
+    );
 }
 
 #[test]

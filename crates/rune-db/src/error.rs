@@ -34,19 +34,11 @@ impl fmt::Display for SessionEstablishReason {
     }
 }
 
-/// Why [`Error::CorruptPayload`] failed — the three ways a journal/snapshot
+/// Why [`Error::CorruptPayload`] failed — the two ways a journal/snapshot
 /// row can be corrupt, kept distinct so a caller can inspect the underlying
 /// decode error rather than only ever seeing its rendered message.
 #[derive(Debug)]
 pub enum CorruptPayloadReason {
-    /// A snapshot blob's bytes are not valid UTF-8 — this crate's
-    /// `Buffer`/`AppliedEdit` model is `String`-based throughout (see
-    /// `snapshot.rs`'s module doc).
-    NonUtf8Blob {
-        hash: String,
-        doc_id: DocId,
-        source: std::string::FromUtf8Error,
-    },
     /// An `events`/`snapshots` JSON payload (edits or cursors) failed to
     /// serialize or parse.
     Json(serde_json::Error),
@@ -58,14 +50,6 @@ pub enum CorruptPayloadReason {
 impl fmt::Display for CorruptPayloadReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CorruptPayloadReason::NonUtf8Blob {
-                hash,
-                doc_id,
-                source,
-            } => write!(
-                f,
-                "snapshot blob {hash} for doc {doc_id}: non-utf8 content: {source}"
-            ),
             CorruptPayloadReason::Json(e) => write!(f, "{e}"),
             CorruptPayloadReason::InvalidCursorId { id } => {
                 write!(f, "cursor id {id} must be non-zero")
@@ -78,7 +62,7 @@ impl fmt::Display for CorruptPayloadReason {
 /// replay onto the buffer it was replaying against — an out-of-range or
 /// malformed `AppliedEdit` batch. Wraps `rune_core::buffer::BufferError`,
 /// surfacing the failure as corruption rather than silently clamping or
-/// skipping it (see `snapshot.rs`'s module doc).
+/// skipping it.
 #[derive(Debug)]
 pub struct ReplayFailure {
     pub doc_id: DocId,
@@ -158,13 +142,7 @@ pub enum Error {
     NotFound(String),
     /// A WP4 business-rule refusal with no dedicated variant (e.g.
     /// `Materialize`'s "no path bound (untitled document)",
-    /// `ResolveAbandon`'s "not a resolve adoption" refusal), or `load.rs`'s
-    /// own non-UTF-8 disk read (this crate's `Buffer`/`AppliedEdit` model
-    /// is `String`-based throughout and cannot tolerate arbitrary bytes —
-    /// see `load.rs`'s doc comment). `probe.rs`/`materialize.rs` no longer
-    /// hit this case: their disk-sourced reads never need to decode as text
-    /// at all (`blob.rs`'s module doc) — only `load.rs`'s return path,
-    /// which must produce a genuine `String` for the edit buffer, still can.
+    /// `ResolveAbandon`'s "not a resolve adoption" refusal).
     Invalid(String),
 }
 
@@ -210,7 +188,6 @@ impl std::error::Error for Error {
             Error::Sqlite(e) => Some(e),
             Error::Io(e) => Some(e),
             Error::SessionEstablish(SessionEstablishReason::Sqlite(e)) => Some(e),
-            Error::CorruptPayload(CorruptPayloadReason::NonUtf8Blob { source, .. }) => Some(source),
             Error::CorruptPayload(CorruptPayloadReason::Json(e)) => Some(e),
             Error::ReplayFailed(failure) => Some(&failure.source),
             _ => None,

@@ -32,6 +32,8 @@
 //! platform-gated primitive (`sysctl` on Darwin, `/proc` on Linux) behind
 //! the same `proc_started_at`/`boot_time` signatures.
 
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 mod adopt;
 mod blob;
 mod bracket;

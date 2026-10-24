@@ -1,0 +1,11 @@
+content caf\u{10ffe9} truncated \u{10ffe2}\u{10ff82} lone \u{10ffff}\n
+key end ----
+type native \u{10ff80}
+key char:s ---u
+deliver
+deliver-db-all
+key up ----
+type x
+key char:s ---u
+deliver
+deliver-db-all

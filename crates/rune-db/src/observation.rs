@@ -255,8 +255,7 @@ fn confirmed_sighting_parent(
 /// ([rune-db 2]).
 #[derive(Clone, Copy, Debug)]
 pub struct ObserveInput<'a> {
-    /// Disk-sourced bytes to store as a blob — see `blob.rs`'s module doc
-    /// on why this is never gated on UTF-8 validity.
+    /// Disk-sourced bytes to store as a blob, never gated on UTF-8 validity.
     pub data: &'a [u8],
     /// The journal position this sighting correlates to; `None` means
     /// uncorrelated (never ancestor-eligible).

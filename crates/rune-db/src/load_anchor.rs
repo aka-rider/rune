@@ -26,6 +26,7 @@ use std::time::SystemTime;
 use rusqlite::{Connection, Transaction};
 
 use rune_core::buffer::AppliedEdit;
+use rune_core::codec;
 use rune_core::cursor::Cursor;
 use rune_core::undo::EditKind;
 
@@ -136,9 +137,7 @@ fn bridge_edit_tx(
 /// preserves the draft via the disk-anchored bridge, it just can't honor
 /// H0 as the undo baseline. Every other error from the blob read (a real
 /// SQLite/IO failure) propagates instead of silently changing recovery
-/// semantics. A `baseline` blob that IS present but not valid UTF-8 also
-/// falls back — `load`'s `!has_history` branch has no way to bridge a
-/// non-text H0 into a `String`-typed buffer.
+/// semantics.
 fn anchor_diverged(
     conn: &mut Connection,
     ctx: &LoadContext<'_>,
@@ -151,9 +150,7 @@ fn anchor_diverged(
             Err(Error::NotFound(_) | Error::BlobHashMismatch { .. }) => return Ok(None),
             Err(e) => return Err(e),
         };
-        let Ok(h0_content) = String::from_utf8(h0_bytes) else {
-            return Ok(None);
-        };
+        let h0_content = codec::decode(h0_bytes);
 
         crate::snapshot::create_snapshot(
             tx,

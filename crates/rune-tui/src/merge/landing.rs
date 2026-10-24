@@ -1,4 +1,5 @@
 use rune_core::buffer::Edit;
+use rune_core::codec;
 use rune_core::cursor::{CursorId, CursorSet};
 use rune_core::undo::EditKind;
 #[cfg(test)]
@@ -15,8 +16,6 @@ use crate::runtime::Effects;
 use super::session::{Block, BlockOrigin, Conflict, ConflictBlock, MergeSession, Resolution};
 use super::state::MergeIntent;
 use super::state::MergeState;
-
-const UTF8_REFUSAL: &str = "merge unavailable — the file on disk is not valid UTF-8";
 
 pub(crate) fn handle_merge_prep_ack(
     app: &mut App,
@@ -73,28 +72,14 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     };
 
-    let Ok(theirs_text) = String::from_utf8(theirs_bytes) else {
-        app.merge = MergeState::Inactive;
-        messages::error(app, UTF8_REFUSAL);
-        return;
-    };
+    let theirs_text = codec::decode(theirs_bytes);
 
     if intent == MergeIntent::Discard {
         discard_install(app, doc, &theirs_text, theirs_obs);
         return;
     }
 
-    let ancestor_text = match ancestor {
-        None => None,
-        Some((_rung, bytes)) => match String::from_utf8(bytes) {
-            Ok(text) => Some(text),
-            Err(_) => {
-                app.merge = MergeState::Inactive;
-                messages::error(app, UTF8_REFUSAL);
-                return;
-            }
-        },
-    };
+    let ancestor_text = ancestor.map(|(_rung, bytes)| codec::decode(bytes));
 
     let Some(active) = app.doc(doc) else {
         app.merge = MergeState::Inactive;
@@ -118,7 +103,10 @@ pub(crate) fn handle_merge_prep_ack(
     };
     let Ok((buffer_text, pane_theirs_text, mut pairs)) = build_pane_install(&hunks) else {
         app.merge = MergeState::Inactive;
-        messages::error(app, UTF8_REFUSAL);
+        messages::error(
+            app,
+            "merge failed \u{2014} internal error: a merge hunk was not valid text",
+        );
         return;
     };
 
@@ -199,24 +187,24 @@ fn merge_result_would_erase_nonempty_ours(buffer_text: &str, ours_text: &str) ->
     buffer_text.is_empty() && !ours_text.is_empty()
 }
 
-struct MergeUtf8Error;
+struct HunkNotText;
 
 fn build_pane_install(
     hunks: &[rune_merge::Hunk],
-) -> Result<(String, String, Vec<ConflictBlock>), MergeUtf8Error> {
+) -> Result<(String, String, Vec<ConflictBlock>), HunkNotText> {
     let mut merged = String::new();
     let mut theirs_doc = String::new();
     let mut pairs = Vec::new();
     for hunk in hunks {
         match hunk {
             rune_merge::Hunk::Clean(bytes) => {
-                let text = std::str::from_utf8(bytes).map_err(|_| MergeUtf8Error)?;
+                let text = std::str::from_utf8(bytes).map_err(|_| HunkNotText)?;
                 merged.push_str(text);
                 theirs_doc.push_str(text);
             }
             rune_merge::Hunk::Conflict { ours, theirs } => {
-                let ours = std::str::from_utf8(ours).map_err(|_| MergeUtf8Error)?;
-                let theirs = std::str::from_utf8(theirs).map_err(|_| MergeUtf8Error)?;
+                let ours = std::str::from_utf8(ours).map_err(|_| HunkNotText)?;
+                let theirs = std::str::from_utf8(theirs).map_err(|_| HunkNotText)?;
                 let start = merged.len();
                 merged.push_str(ours);
                 theirs_doc.push_str(theirs);

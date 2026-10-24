@@ -1,11 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods)]
 
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
 const EX_USAGE: i32 = 64;
-const EX_DATAERR: i32 = 65;
 const EX_SOFTWARE: i32 = 70;
 const EX_IOERR: i32 = 74;
 
@@ -89,13 +88,17 @@ fn launch_dash_w_not_a_directory_exits_usage() {
 }
 
 #[test]
-fn launch_invalid_utf8_file_exits_dataerr() {
+fn launch_invalid_utf8_file_is_opened_not_refused() {
     let scratch = ScratchDir::new("bad-utf8");
     let file = scratch.path("bad.md");
     std::fs::write(&file, [0xff, 0xfe]).expect("seed invalid utf-8 file");
 
     let output = rune().arg(&file).output().expect("run rune <bad file>");
-    assert_eq!(output.status.code(), Some(EX_DATAERR));
+    assert_eq!(
+        output.status.code(),
+        Some(EX_SOFTWARE),
+        "without a tty the launch must get past loading and fail at terminal setup"
+    );
 }
 
 #[cfg(unix)]
@@ -181,11 +184,11 @@ fn launch_exit_code_matrix() {
         );
     }
 
-    let scratch = ScratchDir::new("matrix-bad-utf8");
+    let scratch = ScratchDir::new("matrix-invalid-utf8");
     let file = scratch.path("bad.md");
     std::fs::write(&file, [0xff, 0xfe]).expect("seed invalid utf-8 file");
     let output = rune().arg(&file).output().expect("run rune <bad file>");
-    assert_eq!(output.status.code(), Some(EX_DATAERR));
+    assert_eq!(output.status.code(), Some(EX_SOFTWARE));
 
     let output = rune().arg(&scratch.0).output().expect("run rune <dir>");
     assert_ne!(

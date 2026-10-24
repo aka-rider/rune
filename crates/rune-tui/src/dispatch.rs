@@ -19,7 +19,10 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             crate::focus::reconcile(app, effects);
             crate::graphics::refit_on_resize(app, effects);
         }
-        Msg::Paste(text) => clipboard::route_bracketed_paste(app, &text, effects),
+        Msg::Paste(text) => {
+            let text = crate::clipboard::paste_text_from_terminal(text);
+            clipboard::route_bracketed_paste(app, &text, effects);
+        }
         Msg::ClipboardRead { text, target } => match target {
             PasteTarget::Title(doc) => crate::title::keys::paste(app, doc, &text),
             PasteTarget::Document(id) => clipboard::handle_paste_content(app, id, &text),

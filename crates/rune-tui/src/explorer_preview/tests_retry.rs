@@ -12,10 +12,11 @@ use crate::runtime::Msg;
 #[test]
 fn a_failed_placeholder_is_not_promotable_and_enter_posts_the_real_error() {
     let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/x.bin"), &[0xFF, 0xFE, 0x00])
-        .unwrap();
+    let fifo = std::path::Path::new("/root/x.fifo");
+    mem.save_atomic(fifo, b"").unwrap();
+    mem.set_kind(fifo, rune_vfs::FileKind::Other).unwrap();
     let mut app = app_with(&mem);
-    load_entries(&mut app, &["x.bin"]);
+    load_entries(&mut app, &["x.fifo"]);
     let mut effects = Effects::default();
     app.explorer.nav.move_by(1, app.explorer.entries.len());
     after_cursor_move(&mut app, &mut effects);
@@ -44,7 +45,7 @@ fn a_failed_placeholder_is_not_promotable_and_enter_posts_the_real_error() {
         "the ordinary open path posts the real read failure loudly"
     );
     assert!(
-        crate::messages::log_text(&app).contains("x.bin"),
+        crate::messages::log_text(&app).contains("x.fifo"),
         "the real error names the file"
     );
 }
@@ -52,12 +53,13 @@ fn a_failed_placeholder_is_not_promotable_and_enter_posts_the_real_error() {
 #[test]
 fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
     let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/bad.bin"), &[0xFF, 0xFE, 0x00])
-        .unwrap();
+    let fifo = std::path::Path::new("/root/bad.fifo");
+    mem.save_atomic(fifo, b"").unwrap();
+    mem.set_kind(fifo, rune_vfs::FileKind::Other).unwrap();
     mem.save_atomic(std::path::Path::new("/root/b.md"), b"content")
         .unwrap();
     let mut app = app_with(&mem);
-    load_entries(&mut app, &["b.md", "bad.bin"]);
+    load_entries(&mut app, &["b.md", "bad.fifo"]);
     let mut effects = Effects::default();
 
     app.explorer.nav.move_by(2, app.explorer.entries.len());
@@ -66,7 +68,7 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
     run_cmds(&mut app, &mut effects);
     assert_eq!(
         app.explorer.preview_failed,
-        Some(PathBuf::from("/root/bad.bin"))
+        Some(PathBuf::from("/root/bad.fifo"))
     );
 
     after_cursor_move(&mut app, &mut effects);
@@ -95,17 +97,18 @@ fn moving_off_a_failed_preview_and_back_dedupes_then_retries_exactly_once() {
 #[test]
 fn a_stale_err_reply_for_a_path_the_cursor_has_left_is_ignored() {
     let mem = Arc::new(Mem::new());
-    mem.save_atomic(std::path::Path::new("/root/a.bin"), &[0xFF, 0xFE, 0x00])
-        .unwrap();
+    let fifo = std::path::Path::new("/root/a.fifo");
+    mem.save_atomic(fifo, b"").unwrap();
+    mem.set_kind(fifo, rune_vfs::FileKind::Other).unwrap();
     mem.save_atomic(std::path::Path::new("/root/b.md"), b"content")
         .unwrap();
     let mut app = app_with(&mem);
-    load_entries(&mut app, &["a.bin", "b.md"]);
+    load_entries(&mut app, &["a.fifo", "b.md"]);
     let mut effects = Effects::default();
 
-    app.explorer.nav.move_by(1, app.explorer.entries.len()); // "a.bin"
+    app.explorer.nav.move_by(1, app.explorer.entries.len()); // "a.fifo"
     after_cursor_move(&mut app, &mut effects);
-    let stale_cmd = effects.cmds.pop().expect("a.bin read queued");
+    let stale_cmd = effects.cmds.pop().expect("a.fifo read queued");
 
     app.explorer.nav.move_by(1, app.explorer.entries.len()); // "b.md"
     after_cursor_move(&mut app, &mut effects);

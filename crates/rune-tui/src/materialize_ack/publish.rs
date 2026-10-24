@@ -214,7 +214,7 @@ fn handle_put_outcome(
                 messages::warn(app, super::stray_temp_warning(temp));
             }
             let outcome = MaterializeOutcome::Committed {
-                data: content.as_bytes().to_vec(),
+                data: rune_core::codec::encode(content).into_owned(),
                 confirmed: sighted.is_confirmed(),
                 stat: rune_db::stat_facts_from(sighted.stat()),
             };
@@ -238,7 +238,7 @@ fn handle_put_outcome(
                 messages::warn(app, super::stray_temp_warning(temp));
             }
             let outcome = MaterializeOutcome::Raced {
-                data: content.as_bytes().to_vec(),
+                data: rune_core::codec::encode(content).into_owned(),
                 confirmed: sighted.is_confirmed(),
                 stat: rune_db::stat_facts_from(sighted.stat()),
                 displaced_stat: rune_db::stat_facts_from(displaced.sighted.stat()),

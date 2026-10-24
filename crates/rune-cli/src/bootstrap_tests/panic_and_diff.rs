@@ -78,7 +78,7 @@ fn diff_launch_with_a_missing_left_file_exits_with_the_io_error_code() {
 }
 
 #[test]
-fn diff_launch_with_invalid_utf8_in_the_left_file_exits_with_the_data_error_code() {
+fn diff_launch_with_invalid_utf8_in_the_left_file_installs_the_diff_with_raw_byte_glyphs() {
     let vfs = Mem::new();
     vfs.save_atomic(Path::new("/vault/a.md"), &[0xff, 0xfe])
         .expect("seed a.md with invalid utf-8");
@@ -86,7 +86,7 @@ fn diff_launch_with_invalid_utf8_in_the_left_file_exits_with_the_data_error_code
         .expect("seed b.md");
     let home = ScratchHome::new("diff-left-bad-utf8");
 
-    let result = bootstrap(
+    let app = bootstrap(
         &(Arc::new(vfs) as Arc<dyn Vfs + Send + Sync>),
         vec![
             OsString::from("--diff"),
@@ -96,12 +96,15 @@ fn diff_launch_with_invalid_utf8_in_the_left_file_exits_with_the_data_error_code
         .into_iter(),
         Path::new("/"),
         Some(&home.0),
-    );
-    let Err(code) = result else {
-        panic!("invalid UTF-8 in fileA must fail the launch");
-    };
+    )
+    .expect("invalid UTF-8 in fileA must not fail the launch");
 
-    assert_eq!(code, ExitCode::from(exit_code::DATA_ERR));
+    let diff = app.diff.as_ref().expect("diff view must be installed");
+    let expected: String = [0xff, 0xfe]
+        .into_iter()
+        .map(|b| rune_core::codec::raw_byte_char(b).expect("raw byte char"))
+        .collect();
+    assert_eq!(diff.left.buffer().content(), expected);
 }
 
 #[test]

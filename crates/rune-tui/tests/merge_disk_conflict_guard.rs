@@ -190,3 +190,17 @@ fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {
         "!hello"
     );
 }
+
+#[test]
+fn disk_conflict_guard_discard_adopts_a_non_utf8_disk_file_byte_for_byte() {
+    let external: &[u8] = &[b'c', b'a', b'f', 0xe9];
+    let (mut session, doc_id) = enter_disk_conflict_guard(external);
+
+    assert!(session.key(ch('d')).is_none());
+    assert!(session.deliver_db_all().is_none());
+
+    let buffer = session.app().doc(doc_id).unwrap().buffer();
+    assert_eq!(buffer.content(), "caf\u{10FFE9}");
+    assert_eq!(buffer.disk_bytes().as_ref(), external);
+    assert_eq!(session.app().merge, MergeState::Inactive);
+}

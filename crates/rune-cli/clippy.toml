@@ -1,0 +1,14 @@
+disallowed-methods = [
+    { path = "alloc::string::String::from_utf8", reason = "the CLI never decodes or encodes document bytes itself: use rune_core::codec::decode" },
+    { path = "alloc::string::String::from_utf8_lossy", reason = "the CLI never decodes or encodes document bytes itself: use rune_core::codec::decode" },
+    { path = "core::str::from_utf8", reason = "the CLI never decodes or encodes document bytes itself: use rune_core::codec::decode" },
+    { path = "str::as_bytes", reason = "the CLI never decodes or encodes document bytes itself: use rune_core::codec::encode" },
+    { path = "alloc::string::String::as_bytes", reason = "the CLI never decodes or encodes document bytes itself: use rune_core::codec::encode" },
+    { path = "alloc::string::String::into_bytes", reason = "the CLI never decodes or encodes document bytes itself: use rune_core::codec::encode" },
+]
+
+disallowed-types = [
+    "ignore::WalkBuilder",
+    "ignore::Walk",
+    "walkdir::WalkDir",
+]

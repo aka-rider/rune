@@ -12,6 +12,7 @@ use std::time::SystemTime;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use rune_core::buffer::Buffer;
+use rune_core::codec;
 use rune_core::cursor::Cursor;
 use rune_core::undo::reapply;
 
@@ -58,7 +59,7 @@ fn insert_snapshot(
     seq: Seq,
     rebased: Option<i64>,
 ) -> Result<i64, Error> {
-    let hash = put_blob(tx, content.as_bytes())?;
+    let hash = put_blob(tx, &codec::encode(content))?;
     let at = format_rfc3339_nanos(now);
     tx.execute(
         "INSERT INTO snapshots(doc_id, session_id, blob_hash, seq, created_at, rebased) \
@@ -78,24 +79,8 @@ pub struct Recovered {
     pub cursors: Vec<Cursor>,
 }
 
-/// The text a snapshot's blob holds. The blob is always session-authored
-/// buffer content (written by `create_snapshot` from a `&str`) re-entering
-/// the String-typed edit buffer here — a decode failure means a genuinely
-/// corrupt snapshot, which must surface as an error, never be silently
-/// coerced (blob.rs module doc).
-pub(crate) fn snapshot_content(
-    conn: &Connection,
-    doc_id: DocId,
-    hash: String,
-) -> Result<String, Error> {
-    let bytes = get_blob(conn, &hash)?;
-    String::from_utf8(bytes).map_err(|e| {
-        Error::CorruptPayload(crate::error::CorruptPayloadReason::NonUtf8Blob {
-            hash,
-            doc_id,
-            source: e,
-        })
-    })
+pub(crate) fn snapshot_content(conn: &Connection, hash: &str) -> Result<String, Error> {
+    Ok(codec::decode(get_blob(conn, hash)?))
 }
 
 pub(crate) struct Anchor {
@@ -105,7 +90,6 @@ pub(crate) struct Anchor {
 
 fn anchor_row(
     conn: &Connection,
-    doc_id: DocId,
     query: &str,
     params: &[&dyn rusqlite::ToSql],
 ) -> Result<Option<Anchor>, Error> {
@@ -115,7 +99,7 @@ fn anchor_row(
     row.map(|(seq, hash)| {
         Ok(Anchor {
             seq,
-            content: snapshot_content(conn, doc_id, hash)?,
+            content: snapshot_content(conn, &hash)?,
         })
     })
     .transpose()
@@ -134,7 +118,6 @@ pub(crate) fn newest_anchor_at(
 ) -> Result<Option<Anchor>, Error> {
     anchor_row(
         conn,
-        doc_id,
         "SELECT seq, blob_hash FROM snapshots \
          WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3 \
          ORDER BY seq DESC, id DESC LIMIT 1",
@@ -150,7 +133,6 @@ pub(crate) fn newest_rebase_anchor_at(
 ) -> Result<Option<Anchor>, Error> {
     anchor_row(
         conn,
-        doc_id,
         "SELECT seq, blob_hash FROM snapshots \
          WHERE doc_id=?1 AND session_id=?2 AND seq <= ?3 AND rebased IS NOT NULL \
          ORDER BY seq DESC, id DESC LIMIT 1",
@@ -180,7 +162,6 @@ pub(crate) fn oldest_anchor(
 ) -> Result<Option<Anchor>, Error> {
     anchor_row(
         conn,
-        doc_id,
         "SELECT seq, blob_hash FROM snapshots WHERE doc_id=?1 AND session_id=?2 \
          ORDER BY seq ASC, id ASC LIMIT 1",
         params![doc_id, session_id],

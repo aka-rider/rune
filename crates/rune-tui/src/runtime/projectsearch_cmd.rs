@@ -82,9 +82,7 @@ fn read_one(
     if sighting.bytes.contains(&0) {
         return ReadOutcome::Skipped(path);
     }
-    let Ok(text) = String::from_utf8(sighting.bytes) else {
-        return ReadOutcome::Skipped(path);
-    };
+    let text = rune_core::codec::decode(sighting.bytes);
     let display = crate::filesearch::display_relative(root, &path);
     ReadOutcome::Indexed(IndexEntry {
         path,
