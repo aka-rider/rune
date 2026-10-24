@@ -323,3 +323,10 @@ Today a human merges to `main` on the forge and `cut-release.yml` runs on GitHub
   workflows are cargo-dist generated for GitHub and stay there; only the trigger moves.
 - `nightly.sh mark` pushes a tag with the workflow token, which needs write access to the repository.
   If Forgejo's default token cannot push tags, give the workflow a repository secret with a deploy key.
+
+## Flaky test: `find::scope_tests::closing_the_origin_document_under_an_open_panel_repoints_the_panel_and_its_history`
+
+Failed twice in about ten full `cargo test -p rune-tui` runs while other cargo builds loaded the machine, and passed
+in isolation: the final `rig.history() == ["beta"]` assertion saw a different history. `settle_history` runs the
+`SearchHistory` cmds inline, so the race is between those and the store thread's own writes. Find the unordered
+step and make the test wait on the event it needs, not on timing.
