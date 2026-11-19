@@ -205,7 +205,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
 fn handle_keyboard_flags_report(app: &mut App, flags: termina::escape::csi::KittyKeyboardFlags) {
     app.keyboard_flags = Some(flags);
     if !crate::term::sup_chords_reliable(app.keyboard_flags) {
-        crate::messages::warn_if_new(
+        crate::messages::warn(
             app,
             "this terminal never confirmed key disambiguation \u{2014} \u{2318} chords marked \u{26a0} in Help (F1) may not reach rune here",
         );
@@ -368,7 +368,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         } else {
             "key not bound here"
         };
-        crate::messages::warn_if_new(app, hint);
+        crate::messages::warn(app, hint);
         return keymap::KeyOutcome::Consumed;
     };
 

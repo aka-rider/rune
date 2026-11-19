@@ -101,11 +101,11 @@ fn display_name(path: &Path) -> String {
 
 pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     if app.rename.in_flight() {
-        messages::warn_if_new(app, "a rename is already in progress");
+        messages::warn(app, "a rename is already in progress");
         return Commit::Refused;
     }
     if app.trash.in_flight() {
-        messages::warn_if_new(app, "can't rename while a trash is in progress");
+        messages::warn(app, "can't rename while a trash is in progress");
         return Commit::Refused;
     }
 
@@ -123,13 +123,13 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // A save's `Cmd` closure captures the old path at trigger time; a
     // rename racing it would resurrect the file under that stale name.
     if doc.save_in_flight() {
-        messages::warn_if_new(app, "can't rename while a save is in flight");
+        messages::warn(app, "can't rename while a save is in flight");
         return Commit::Refused;
     }
 
     let typed = app.title.text().to_string();
     if !title::is_valid_name(&typed) {
-        messages::error_if_new(app, "that name can't be used for a file");
+        messages::error(app, "that name can't be used for a file");
         return Commit::Refused;
     }
 

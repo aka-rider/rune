@@ -1,5 +1,7 @@
+mod doc;
 mod render;
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use ratatui::layout::Rect;
@@ -16,6 +18,8 @@ use crate::keymap::{Command, KeyCode, KeyInput};
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
+
+use doc::{rebuild_doc, sanitize};
 
 pub use render::draw;
 
@@ -45,6 +49,7 @@ impl Severity {
 pub struct Message {
     pub severity: Severity,
     pub text: String,
+    pub count: NonZeroUsize,
 }
 
 pub struct MessageLog {
@@ -82,61 +87,28 @@ impl Default for MessageLog {
     }
 }
 
-fn sanitize(text: &str) -> String {
-    // C1 controls (U+0080-U+009F) decode from UTF-8 as ordinary two-byte
-    // sequences, unlike C0/DEL which are single-byte, so a filesystem path
-    // or error string can carry one without it looking like a raw control
-    // byte on the wire.
-    text.chars()
-        .filter(|&c| {
-            c == '\n'
-                || !(('\u{0}'..='\u{1f}').contains(&c)
-                    || c == '\u{7f}'
-                    || ('\u{80}'..='\u{9f}').contains(&c))
-        })
-        .collect()
-}
-
-fn build_markdown(entries: &[Message]) -> (String, Vec<(std::ops::Range<usize>, Severity)>) {
-    if entries.is_empty() {
-        return (EMPTY_TEXT.to_string(), Vec::new());
-    }
-    let mut text = String::new();
-    let mut ranges = Vec::with_capacity(entries.len());
-    for (i, entry) in entries.iter().enumerate() {
-        if i > 0 {
-            text.push_str("\n\n");
-        }
-        let start = text.len();
-        text.push_str(entry.severity.glyph());
-        text.push_str(&entry.text);
-        ranges.push((start..text.len(), entry.severity));
-    }
-    (text, ranges)
-}
-
-fn rebuild_doc(app: &mut App) {
-    let (text, ranges) = build_markdown(&app.messages.entries);
-    let focused = app.messages.doc.focused;
-    let scroll_row = app.messages.doc.viewport.scroll_row;
-    let width = app.messages.doc.viewport.width;
-    let mut doc = Document::new(Buffer::new(text));
-    doc.read_only = ReadOnly::Always;
-    doc.focused = focused;
-    doc.viewport.scroll_row = scroll_row;
-    doc.viewport.width = width;
-    app.messages.doc = doc;
-    app.messages.ranges = ranges;
+fn is_newest(app: &App, severity: Severity, sanitized: &str) -> bool {
+    newest(app).is_some_and(|m| m.severity == severity && m.text == sanitized)
 }
 
 pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
     let text = sanitize(&text.into());
-    app.messages.entries.push(Message { severity, text });
-    app.messages.posts = app.messages.posts.wrapping_add(1);
-    if app.messages.entries.len() > MAX_ENTRIES {
-        let overflow = app.messages.entries.len() - MAX_ENTRIES;
-        app.messages.entries.drain(0..overflow);
+    if is_newest(app, severity, &text) {
+        if let Some(newest) = app.messages.entries.last_mut() {
+            newest.count = newest.count.saturating_add(1);
+        }
+    } else {
+        app.messages.entries.push(Message {
+            severity,
+            text,
+            count: NonZeroUsize::MIN,
+        });
+        if app.messages.entries.len() > MAX_ENTRIES {
+            let overflow = app.messages.entries.len() - MAX_ENTRIES;
+            app.messages.entries.drain(0..overflow);
+        }
     }
+    app.messages.posts = app.messages.posts.wrapping_add(1);
     rebuild_doc(app);
     app.messages.open = true;
     app.messages.armed = None;
@@ -153,22 +125,6 @@ pub fn warn(app: &mut App, text: impl Into<String>) {
 
 pub fn error(app: &mut App, text: impl Into<String>) {
     post(app, Severity::Error, text);
-}
-
-fn post_if_new(app: &mut App, severity: Severity, text: impl Into<String>) {
-    let text = text.into();
-    if newest(app).is_some_and(|m| m.severity == severity && m.text == text) {
-        return;
-    }
-    post(app, severity, text);
-}
-
-pub fn warn_if_new(app: &mut App, text: impl Into<String>) {
-    post_if_new(app, Severity::Warn, text);
-}
-
-pub fn error_if_new(app: &mut App, text: impl Into<String>) {
-    post_if_new(app, Severity::Error, text);
 }
 
 pub fn toggle(app: &mut App, effects: &mut Effects) {

@@ -27,7 +27,7 @@ impl App {
         let Some(message) = read_only.refusal_message() else {
             return false;
         };
-        messages::warn_if_new(self, message);
+        messages::warn(self, message);
         true
     }
 }

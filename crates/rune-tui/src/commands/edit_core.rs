@@ -64,7 +64,7 @@ fn apply_owned_and_followers(
     let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
         if let Some(message) = doc.read_only.refusal_message() {
-            messages::warn_if_new(app, message);
+            messages::warn(app, message);
         }
         return false;
     }

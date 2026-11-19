@@ -37,7 +37,7 @@ fn a_reply_confirming_both_requested_bits_lands_silently() {
 }
 
 #[test]
-fn a_reply_missing_a_requested_bit_posts_one_warning() {
+fn a_reply_missing_a_requested_bit_posts_a_warning_and_a_duplicate_reply_counts_it() {
     let mut app = app_for("", 0);
 
     report(&mut app, KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES);
@@ -46,6 +46,7 @@ fn a_reply_missing_a_requested_bit_posts_one_warning() {
         Some(KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES)
     );
     let posts_after_first = rune_tui::messages::posts(&app);
+    let lines_after_first = rune_tui::messages::log(&app).len();
     assert!(
         rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("disambiguation")),
         "expected a disambiguation warning, got {:?}",
@@ -54,8 +55,14 @@ fn a_reply_missing_a_requested_bit_posts_one_warning() {
 
     report(&mut app, KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES);
     assert_eq!(
-        rune_tui::messages::posts(&app),
-        posts_after_first,
-        "the same warning must not repost on a duplicate reply"
+        rune_tui::messages::log(&app).len(),
+        lines_after_first,
+        "a duplicate reply must fold into the same line"
     );
+    assert_eq!(
+        rune_tui::messages::newest(&app).map(|m| m.count.get()),
+        Some(2),
+        "the duplicate reply must raise the counter"
+    );
+    assert_eq!(rune_tui::messages::posts(&app), posts_after_first + 1);
 }

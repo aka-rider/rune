@@ -1,6 +1,7 @@
 //! Shared setup helpers for the message-log pane's test suite, split across
-//! `messages.rs` (state/keyboard/timer coverage) and `messages_mouse.rs`
-//! (drag/click/copy coverage), following the `merge_common` pattern every
+//! `messages.rs` (state/keyboard/timer coverage), `messages_repeat.rs`
+//! (repeat-counter coverage) and `messages_mouse.rs` (drag/click/copy
+//! coverage), following the `merge_common` pattern every
 //! other split-out test suite in this directory already uses. Each
 //! consumer pulls this in via `mod messages_common;`.
 #![allow(dead_code)]

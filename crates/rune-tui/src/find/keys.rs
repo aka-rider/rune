@@ -27,7 +27,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) ->
     }
     match panel_cmd {
         Some(cmd) => apply(app, cmd, effects),
-        None => messages::warn_if_new(
+        None => messages::warn(
             app,
             format!(
                 "key not bound in the find panel \u{2014} {} closes it",
