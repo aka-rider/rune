@@ -5,7 +5,9 @@ mod tui_edit_common;
 use rune_core::coords::DisplayRow;
 use rune_tui::keymap::{KeyCode, Mods};
 
-use tui_edit_common::{ALT, SHIFT, SUP, app_for, full_text, press, render_to_test_backend};
+use tui_edit_common::{
+    ALT, SHIFT, SUP, SUP_SHIFT, app_for, full_text, press, render_to_test_backend,
+};
 
 #[test]
 fn char_right_then_left_returns_to_start() {
@@ -52,6 +54,55 @@ fn shift_right_extends_a_selection_plain_right_collapses_it() {
     press(&mut app, KeyCode::Right, Mods::NONE);
     let c = app.active_doc_mut().cursors().primary();
     assert!(!c.has_selection(), "a plain move consumes the selection");
+}
+
+#[test]
+fn cmd_shift_left_and_right_select_to_line_start_and_end() {
+    let mut app = app_for("hello\nworld wide", 9);
+    press(&mut app, KeyCode::Left, SUP_SHIFT);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (9, 6));
+
+    press(&mut app, KeyCode::Right, SUP_SHIFT);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (9, 16));
+}
+
+#[test]
+fn cmd_left_and_right_collapse_to_line_start_and_end() {
+    let mut app = app_for("hello\nworld wide", 9);
+    press(&mut app, KeyCode::Left, SUP_SHIFT);
+    press(&mut app, KeyCode::Left, SUP);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (6, 6));
+
+    press(&mut app, KeyCode::Right, SUP);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (16, 16));
+}
+
+#[test]
+fn cmd_shift_up_and_down_select_to_document_bounds() {
+    let mut app = app_for("one\ntwo\nthree", 6);
+    press(&mut app, KeyCode::Up, SUP_SHIFT);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (6, 0));
+
+    press(&mut app, KeyCode::Down, SUP_SHIFT);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (6, 13));
+}
+
+#[test]
+fn cmd_up_and_down_jump_to_document_bounds_without_selecting() {
+    let mut app = app_for("one\ntwo\nthree", 6);
+    press(&mut app, KeyCode::Up, SUP);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (0, 0));
+
+    press(&mut app, KeyCode::Down, SUP);
+    let c = app.active_doc_mut().cursors().primary();
+    assert_eq!((c.anchor.get(), c.position.get()), (13, 13));
 }
 
 #[test]

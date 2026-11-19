@@ -18,6 +18,8 @@ pub enum Motion {
     WordRight,
     LineStart,
     LineEnd,
+    DocStart,
+    DocEnd,
     PageUp,
     PageDown,
     MatchBracket,

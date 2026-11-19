@@ -165,6 +165,30 @@ pub(crate) static ROWS: &[CommandSpec] = &[
         false,
     ),
     row(
+        Command::Motion(Motion::DocStart, Extend::No),
+        "document start",
+        "document start",
+        false,
+    ),
+    row(
+        Command::Motion(Motion::DocEnd, Extend::No),
+        "document end",
+        "document end",
+        false,
+    ),
+    row(
+        Command::Motion(Motion::DocStart, Extend::Yes),
+        "select to document start",
+        "select to document start",
+        false,
+    ),
+    row(
+        Command::Motion(Motion::DocEnd, Extend::Yes),
+        "select to document end",
+        "select to document end",
+        false,
+    ),
+    row(
         Command::Motion(Motion::PageUp, Extend::No),
         "page up",
         "page up",

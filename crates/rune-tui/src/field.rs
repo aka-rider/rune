@@ -107,11 +107,11 @@ impl TextField {
             Command::Motion(Motion::WordRight, extend) => {
                 self.step_right(&window, extend == Extend::Yes, nav::word_right_offset)
             }
-            Command::Motion(Motion::LineStart, extend) => {
+            Command::Motion(Motion::LineStart | Motion::DocStart, extend) => {
                 self.move_to(window.start, extend == Extend::Yes);
                 KeyOutcome::Consumed
             }
-            Command::Motion(Motion::LineEnd, extend) => {
+            Command::Motion(Motion::LineEnd | Motion::DocEnd, extend) => {
                 self.move_to(window.end, extend == Extend::Yes);
                 KeyOutcome::Consumed
             }
@@ -377,6 +377,20 @@ mod tests {
             (0, 6)
         );
         assert_eq!(field.selected_text(), "lessrc");
+    }
+
+    #[test]
+    fn doc_start_and_doc_end_stop_at_the_window_edges_of_a_partial_window() {
+        let mut field = TextField::new("lessrc.md");
+        field.set_cursor(4, 4);
+        let outcome = field.apply(Command::Motion(Motion::DocStart, Extend::No), 2..6);
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert_eq!(field.cursor().position.get(), 2);
+
+        field.set_cursor(4, 4);
+        let outcome = field.apply(Command::Motion(Motion::DocEnd, Extend::No), 2..6);
+        assert_eq!(outcome, KeyOutcome::Consumed);
+        assert_eq!(field.cursor().position.get(), 6);
     }
 
     #[test]

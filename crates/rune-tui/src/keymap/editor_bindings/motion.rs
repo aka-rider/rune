@@ -73,6 +73,34 @@ pub(crate) const LINE_END: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const LINE_START_SUP: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Left, SUP),
+    cmd: Command::Motion(Motion::LineStart, Extend::No),
+    help: "line start",
+    secondary: true,
+};
+
+pub(crate) const LINE_END_SUP: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Right, SUP),
+    cmd: Command::Motion(Motion::LineEnd, Extend::No),
+    help: "line end",
+    secondary: true,
+};
+
+pub(crate) const DOC_START: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Up, SUP),
+    cmd: Command::Motion(Motion::DocStart, Extend::No),
+    help: "document start",
+    secondary: false,
+};
+
+pub(crate) const DOC_END: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Down, SUP),
+    cmd: Command::Motion(Motion::DocEnd, Extend::No),
+    help: "document end",
+    secondary: false,
+};
+
 pub(crate) const PAGE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::PageUp, NONE),
     cmd: Command::Motion(Motion::PageUp, Extend::No),

@@ -50,6 +50,8 @@ pub(crate) fn run(
         Command::Motion(Motion::LineEnd, extend) => {
             nav_line::line_end(app.active_doc_mut(), extend)
         }
+        Command::Motion(Motion::DocStart, extend) => nav::doc_start(app.active_doc_mut(), extend),
+        Command::Motion(Motion::DocEnd, extend) => nav::doc_end(app.active_doc_mut(), extend),
         Command::Motion(Motion::PageUp, extend) => {
             nav_scroll::page_up(app.active_doc_mut(), extend)
         }

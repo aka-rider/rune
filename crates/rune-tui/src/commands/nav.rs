@@ -266,6 +266,18 @@ pub fn word_right(doc: &mut Document, extend: Extend) {
     });
 }
 
+pub fn doc_start(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        update_horizontal(view, buf, c, 0, extend)
+    });
+}
+
+pub fn doc_end(doc: &mut Document, extend: Extend) {
+    move_cursors(doc, extend, |view, buf, c, extend| {
+        update_horizontal(view, buf, c, buf.len(), extend)
+    });
+}
+
 pub fn match_bracket(doc: &mut Document, extend: Extend) {
     move_cursors(doc, extend, |view, buf, c, extend| {
         let text = buf.content();

@@ -79,6 +79,11 @@ Either configure the terminal emulator, or use fallback: ⌘⇧+... or Ctrl+...
 
 For example, select all: ⌘+a, ⌘⇧+a, ^a
 
+Terminal.app and iTerm2 reserve ⇧Home, ⇧End, ⇧PgUp and ⇧PgDn for scrollback by default, so rune never receives them.
+Use ⌘⇧← / ⌘⇧→ to select to line start / end and ⌘⇧↑ / ⌘⇧↓ to select to document start / end,
+or unbind those keys in the terminal profile.
+Plain ⌘← / ⌘→ and ⌘↑ / ⌘↓ move to the line and document bounds.
+
 Some keybindings may not work with non-English input sources.
 For instance, rune receives ⌘+м instead of ⌘+v (Ukrainian keyboard), this is a terminal limitation.
 

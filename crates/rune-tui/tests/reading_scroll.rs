@@ -180,6 +180,63 @@ fn shift_arrows_scroll_and_select_nothing_in_a_read_only_document() {
     );
 }
 
+fn scrolled_help_doc() -> App {
+    let mut app = help_doc();
+    for _ in 0..5 {
+        send(&mut app, plain(KeyCode::Down));
+    }
+    assert_ne!(app.active_doc().viewport.scroll_row, DisplayRow(0));
+    app
+}
+
+#[test]
+fn shift_home_and_end_scroll_to_the_document_ends_and_select_nothing_in_a_read_only_document() {
+    let mut app = scrolled_help_doc();
+    let total = app.active_doc_mut().view().display.total_rows();
+    let height = app.active_doc().viewport.height as usize;
+
+    send(&mut app, shifted(KeyCode::Home));
+    assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
+    assert!(!app.active_doc().cursors().primary().has_selection());
+
+    send(&mut app, shifted(KeyCode::End));
+    assert_eq!(
+        app.active_doc().viewport.scroll_row,
+        DisplayRow(total - height)
+    );
+    assert!(!app.active_doc().cursors().primary().has_selection());
+}
+
+#[test]
+fn cmd_up_and_down_scroll_to_the_document_ends_with_or_without_shift_in_a_read_only_document() {
+    let mut app = scrolled_help_doc();
+    let total = app.active_doc_mut().view().display.total_rows();
+    let height = app.active_doc().viewport.height as usize;
+    let cmd = |code, shift| {
+        Msg::Key(KeyInput {
+            code,
+            mods: Mods {
+                shift,
+                sup: true,
+                ..Mods::NONE
+            },
+        })
+    };
+
+    for shift in [false, true] {
+        send(&mut app, cmd(KeyCode::Up, shift));
+        assert_eq!(app.active_doc().viewport.scroll_row, DisplayRow(0));
+        assert!(!app.active_doc().cursors().primary().has_selection());
+
+        send(&mut app, cmd(KeyCode::Down, shift));
+        assert_eq!(
+            app.active_doc().viewport.scroll_row,
+            DisplayRow(total - height)
+        );
+        assert!(!app.active_doc().cursors().primary().has_selection());
+    }
+}
+
 #[test]
 fn a_keyboard_scroll_collapses_a_mouse_selection_in_a_read_only_document() {
     let content = "one two three\nfour five six\nseven eight nine\n";

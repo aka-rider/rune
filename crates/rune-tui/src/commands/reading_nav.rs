@@ -74,11 +74,11 @@ pub fn intercept(app: &mut App, command: Command) -> bool {
             nav_scroll::scroll_lines(app.active_doc_mut(), step);
             true
         }
-        Command::Motion(Motion::LineStart, _) => {
+        Command::Motion(Motion::LineStart | Motion::DocStart, _) => {
             nav_scroll::scroll_to_document_top(app.active_doc_mut());
             true
         }
-        Command::Motion(Motion::LineEnd, _) => {
+        Command::Motion(Motion::LineEnd | Motion::DocEnd, _) => {
             nav_scroll::scroll_to_document_bottom(app.active_doc_mut());
             true
         }

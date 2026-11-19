@@ -73,6 +73,34 @@ pub(crate) const SELECT_LINE_END: Binding<Command> = Binding {
     secondary: false,
 };
 
+pub(crate) const SELECT_LINE_START_SUP: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Left, SUP_SHIFT),
+    cmd: Command::Motion(Motion::LineStart, Extend::Yes),
+    help: "select to line start",
+    secondary: true,
+};
+
+pub(crate) const SELECT_LINE_END_SUP: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Right, SUP_SHIFT),
+    cmd: Command::Motion(Motion::LineEnd, Extend::Yes),
+    help: "select to line end",
+    secondary: true,
+};
+
+pub(crate) const SELECT_DOC_START: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Up, SUP_SHIFT),
+    cmd: Command::Motion(Motion::DocStart, Extend::Yes),
+    help: "select to document start",
+    secondary: false,
+};
+
+pub(crate) const SELECT_DOC_END: Binding<Command> = Binding {
+    key: KeyPattern::new(KeyCode::Down, SUP_SHIFT),
+    cmd: Command::Motion(Motion::DocEnd, Extend::Yes),
+    help: "select to document end",
+    secondary: false,
+};
+
 pub(crate) const SELECT_PAGE_UP: Binding<Command> = Binding {
     key: KeyPattern::new(KeyCode::PageUp, SHIFT),
     cmd: Command::Motion(Motion::PageUp, Extend::Yes),
