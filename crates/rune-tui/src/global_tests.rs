@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use super::*;
 
 #[test]
@@ -399,7 +401,7 @@ fn ctrl_shifted_p_reaches_toggle_read_only_through_from_termina() {
     use termina::event::{KeyCode as TerminaKeyCode, KeyEvent, Modifiers};
 
     let event = KeyEvent::new(TerminaKeyCode::Char('P'), Modifiers::CONTROL);
-    let input = crate::keymap::from_termina(event);
+    let input = crate::keymap::from_termina(event).expect("ctrl+shift+p is a supported key");
     assert_eq!(
         input.and_then(|key| crate::binding::resolve_in(GLOBAL_BINDINGS, key)),
         Some(GlobalCommand::ToggleReadOnly)

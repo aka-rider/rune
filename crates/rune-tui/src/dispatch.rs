@@ -11,6 +11,7 @@ use crate::{explorer, explorer_keys, materialize_ack, opentabs};
 pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
+        Msg::UnsupportedKey => crate::messages::warn(app, "key not supported by rune"),
         Msg::PumpGraphics => {}
         Msg::Mouse(input) => mouse::handle(app, input, effects),
         Msg::Resize(width, height) => {

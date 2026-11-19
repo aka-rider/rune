@@ -119,7 +119,8 @@ fn a_termina_backtab_event_dedents_the_current_line() {
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     })
-    .unwrap();
+    .expect("backtab is a supported key")
+    .expect("a press is a key input");
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(input), &mut effects);

@@ -5,7 +5,7 @@ pub mod vim;
 
 pub use crate::binding::{Binding, KeyOutcome, KeyPattern, resolve_in};
 pub use crate::global::{GLOBAL_BINDINGS, GlobalCommand};
-pub use keyinput::{KeyCode, KeyInput, Mods, from_termina};
+pub use keyinput::{KeyCode, KeyInput, Mods, UnsupportedKey, from_termina};
 pub use vim::{BindingSet, VIM_BINDINGS, VimCommand};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,11 +190,78 @@ mod tests {
             modifiers: TM::ALT,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
-        });
+        })
+        .unwrap();
         assert_eq!(
             input.and_then(resolve),
             Some(Command::Motion(Motion::WordLeft, Extend::No))
         );
+    }
+
+    #[test]
+    fn shift_home_and_end_from_termina_select_to_line_start_and_end() {
+        use termina::event::{
+            KeyCode as TK, KeyEvent, KeyEventKind, KeyEventState, Modifiers as TM,
+        };
+
+        for (code, motion) in [(TK::Home, Motion::LineStart), (TK::End, Motion::LineEnd)] {
+            let input = from_termina(KeyEvent {
+                code,
+                modifiers: TM::SHIFT,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })
+            .unwrap();
+            assert_eq!(
+                input.and_then(resolve),
+                Some(Command::Motion(motion, Extend::Yes))
+            );
+        }
+    }
+
+    #[test]
+    fn a_termina_key_rune_has_no_code_for_is_reported_as_unsupported() {
+        use termina::event::{
+            KeyCode as TK, KeyEvent, KeyEventKind, KeyEventState, MediaKeyCode, Modifiers as TM,
+        };
+
+        for code in [
+            TK::Insert,
+            TK::Function(5),
+            TK::CapsLock,
+            TK::Media(MediaKeyCode::Play),
+        ] {
+            let result = from_termina(KeyEvent {
+                code,
+                modifiers: TM::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            });
+            assert_eq!(result, Err(UnsupportedKey), "{code:?}");
+        }
+    }
+
+    #[test]
+    fn releasing_a_key_or_pressing_a_bare_modifier_is_not_a_key_press() {
+        use termina::event::{
+            KeyCode as TK, KeyEvent, KeyEventKind, KeyEventState, ModifierKeyCode, Modifiers as TM,
+        };
+
+        let release = from_termina(KeyEvent {
+            code: TK::Insert,
+            modifiers: TM::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        });
+        assert_eq!(release, Ok(None));
+
+        let bare_shift = from_termina(KeyEvent {
+            code: TK::Modifier(ModifierKeyCode::LeftShift),
+            modifiers: TM::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+        assert_eq!(bare_shift, Ok(None));
     }
 
     #[test]
@@ -296,7 +363,8 @@ mod tests {
                 modifiers,
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
-            });
+            })
+            .unwrap();
             assert_eq!(input, Some(key(KeyCode::Tab, shift)));
             assert_eq!(input.and_then(resolve), Some(Command::Outdent));
         }

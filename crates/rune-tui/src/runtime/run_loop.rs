@@ -158,7 +158,10 @@ fn translate_event(event: termina::Event) -> Option<Msg> {
     use termina::escape::csi::{Csi, Keyboard};
 
     match event {
-        termina::Event::Key(key) => keymap::from_termina(key).map(Msg::Key),
+        termina::Event::Key(key) => match keymap::from_termina(key) {
+            Ok(input) => input.map(Msg::Key),
+            Err(keymap::UnsupportedKey) => Some(Msg::UnsupportedKey),
+        },
         termina::Event::Paste(text) => Some(Msg::Paste(text)),
         termina::Event::WindowResized(size) => Some(Msg::Resize(size.cols, size.rows)),
         termina::Event::Mouse(mouse) => crate::pointer::from_termina(mouse).map(Msg::Mouse),
@@ -186,6 +189,30 @@ mod translate_event_tests {
     fn a_focus_change_stays_silent() {
         assert!(translate_event(termina::Event::FocusIn).is_none());
         assert!(translate_event(termina::Event::FocusOut).is_none());
+    }
+
+    #[test]
+    fn a_key_rune_cannot_represent_becomes_an_unsupported_key_message() {
+        use termina::event::{KeyCode, KeyEvent, Modifiers};
+
+        let event = termina::Event::Key(KeyEvent::new(KeyCode::Insert, Modifiers::NONE));
+        assert!(matches!(translate_event(event), Some(Msg::UnsupportedKey)));
+    }
+
+    #[test]
+    fn an_unsupported_key_message_posts_visible_feedback() {
+        use std::sync::Arc;
+
+        use rune_core::buffer::Buffer;
+        use rune_vfs::Mem;
+
+        let mut app = crate::app::App::new(Buffer::new(""), None, Arc::new(Mem::new()), None);
+        let mut effects = crate::runtime::Effects::default();
+        crate::app::update(&mut app, Msg::UnsupportedKey, &mut effects);
+        assert_eq!(
+            crate::messages::newest_text(&app),
+            Some("key not supported by rune")
+        );
     }
 
     #[test]

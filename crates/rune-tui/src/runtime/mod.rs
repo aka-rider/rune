@@ -86,6 +86,7 @@ pub struct SaveOutcomeDetail {
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
+    UnsupportedKey,
     PumpGraphics,
     Paste(String),
     Resize(u16, u16),

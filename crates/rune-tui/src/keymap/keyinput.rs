@@ -44,14 +44,19 @@ pub struct KeyInput {
     pub mods: Mods,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnsupportedKey;
+
 // termina's own docs say code handling shortcuts should usually check
 // `kind == KeyEventKind::Press`; this treats `Repeat` the same as `Press`
-// so a held arrow key keeps moving, and drops `Release` entirely.
-pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
+// so a held arrow key keeps moving, and drops `Release` entirely. A bare
+// modifier press is not a command and also yields `Ok(None)`; every other
+// key rune has no code for is an `UnsupportedKey` the caller must report.
+pub fn from_termina(event: termina::event::KeyEvent) -> Result<Option<KeyInput>, UnsupportedKey> {
     use termina::event::{KeyCode as TK, KeyEventKind, Modifiers as TM};
 
     if !matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-        return None;
+        return Ok(None);
     }
 
     let shift_tab = matches!(event.code, TK::BackTab);
@@ -74,7 +79,18 @@ pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
         TK::Delete => KeyCode::Delete,
         TK::Function(1) => KeyCode::F1,
         TK::Function(2) => KeyCode::F2,
-        _ => return None,
+        TK::Modifier(_) => return Ok(None),
+        TK::Function(_)
+        | TK::Insert
+        | TK::KeypadBegin
+        | TK::CapsLock
+        | TK::ScrollLock
+        | TK::NumLock
+        | TK::PrintScreen
+        | TK::Pause
+        | TK::Menu
+        | TK::Null
+        | TK::Media(_) => return Err(UnsupportedKey),
     };
 
     let m = event.modifiers;
@@ -84,5 +100,5 @@ pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
         ctrl: m.contains(TM::CONTROL),
         sup: m.contains(TM::SUPER),
     };
-    Some(KeyInput { code, mods })
+    Ok(Some(KeyInput { code, mods }))
 }
