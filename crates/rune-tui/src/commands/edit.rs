@@ -214,7 +214,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
         .doc(id)
         .is_some_and(|doc| doc.journal.undo_peek().is_none())
     {
-        messages::info(app, "nothing to undo");
+        messages::warn(app, "nothing to undo");
         return;
     }
 
@@ -275,7 +275,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
         .doc(id)
         .is_some_and(|doc| doc.journal.redo_peek().is_none())
     {
-        messages::info(app, "nothing to redo");
+        messages::warn(app, "nothing to redo");
         return;
     }
 

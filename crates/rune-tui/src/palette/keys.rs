@@ -5,6 +5,7 @@ use crate::binding::{Binding, KeyPattern, resolve_in};
 use crate::clipboard::pbpaste_cmd;
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::listnav::ListCommand;
+use crate::pane_refusal::report_refusal;
 use crate::queryline;
 use crate::registry::{self, ArgKind, Availability, CommandId, ExecOutcome};
 use crate::runtime::{Effects, PasteTarget};
@@ -338,7 +339,7 @@ fn run_and_persist(
 ) {
     match registry::execute(app, id, arg, effects) {
         ExecOutcome::Done => persist_command(app, name),
-        ExecOutcome::Refused(reason) => crate::messages::error(app, reason),
+        ExecOutcome::Refused(reason) => report_refusal(app, reason),
     }
 }
 

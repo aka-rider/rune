@@ -35,7 +35,7 @@ fn materialize_rungs(app: &mut App, id: DocumentId) -> Result<(), SaveStart> {
     }
     refuse_while_saving(app, id)?;
     if app.rename.in_flight() {
-        messages::error(app, "can't save while a rename is in flight");
+        messages::warn(app, "can't save while a rename is in flight");
         return Err(SaveStart::Refused);
     }
     refuse_while_merging(app, id)

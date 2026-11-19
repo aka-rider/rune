@@ -34,7 +34,7 @@ pub(crate) fn replace_current(app: &mut App) {
         .ok()
         .and_then(|matcher| matcher.replacement_at(content, &range, &replacement));
     let Some(insert) = insert else {
-        messages::info(app, "no match to replace");
+        messages::warn(app, "no match to replace");
         return;
     };
     let query = state.find.editor.text().to_string();
@@ -52,7 +52,7 @@ pub(crate) fn replace_current(app: &mut App) {
     follow::recompute(app);
     if app.find().is_some_and(|state| state.matches.is_empty()) {
         crate::find::recapture_origin(app);
-        messages::info(app, "no more matches");
+        messages::warn(app, "no more matches");
     } else {
         follow::advance(app, true);
     }
@@ -86,7 +86,7 @@ pub(crate) fn replace_all(app: &mut App) {
     let query = state.find.editor.text().to_string();
     let options = state.options;
     if edits.is_empty() {
-        messages::info(app, "no match to replace");
+        messages::warn(app, "no match to replace");
         return;
     }
     let count = apply(app, edits);
@@ -103,7 +103,7 @@ pub(crate) fn replace_all(app: &mut App) {
 
 fn select_next_or_report(app: &mut App) {
     if app.find().is_some_and(|state| state.matches.is_empty()) {
-        messages::info(app, "no match to replace");
+        messages::warn(app, "no match to replace");
     } else {
         follow::advance(app, true);
     }

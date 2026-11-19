@@ -73,7 +73,7 @@ fn escape_cancels_with_trash_cancelled() {
     );
 }
 
-/// A dirty document refuses the trash outright — no guard raised, an error
+/// A dirty document refuses the trash outright — no guard raised, a warning
 /// posted instead.
 #[test]
 fn dirty_doc_is_refused_with_no_guard() {
@@ -87,7 +87,7 @@ fn dirty_doc_is_refused_with_no_guard() {
     assert!(session.app().guard.is_none());
     assert_eq!(
         messages::newest(session.app()).map(|m| m.severity),
-        Some(Severity::Error)
+        Some(Severity::Warn)
     );
 }
 
@@ -130,7 +130,7 @@ fn explorer_directory_selection_is_refused() {
     assert!(session.app().guard.is_none());
     assert_eq!(
         messages::newest(session.app()).map(|m| m.severity),
-        Some(Severity::Error)
+        Some(Severity::Warn)
     );
 }
 
@@ -265,7 +265,7 @@ fn second_trash_while_one_in_flight_is_refused() {
     );
     assert_eq!(
         messages::newest(session.app()).map(|m| m.severity),
-        Some(Severity::Error)
+        Some(Severity::Warn)
     );
 
     let msg = cmd.run().expect("Trash Cmd replies with a Msg");

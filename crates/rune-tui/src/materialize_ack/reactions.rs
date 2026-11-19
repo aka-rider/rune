@@ -145,7 +145,7 @@ fn handle_refused_ack(app: &mut App, id: DocumentId, effects: &mut Effects) {
             || target.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        messages::error(app, format!("{name} already exists"));
+        messages::warn(app, format!("{name} already exists"));
         app.refocus_title();
     } else {
         messages::error(app, super::SAVE_REFUSED_DISK_CHANGED);

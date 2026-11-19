@@ -295,12 +295,12 @@ fn report_no_results(app: &mut App) {
         .find()
         .map_or_default(|state| state.find.editor.text().to_string());
     if query.chars().count() < MIN_QUERY_CHARS {
-        messages::info(
+        messages::warn(
             app,
             format!("type at least {MIN_QUERY_CHARS} characters to search the project"),
         );
     } else {
-        messages::info(app, format!("no matches for \"{query}\" in the project"));
+        messages::warn(app, format!("no matches for \"{query}\" in the project"));
     }
 }
 

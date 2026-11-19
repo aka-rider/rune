@@ -5,7 +5,7 @@ use crate::messages;
 use crate::pane_bar_policy::{self, BarPolicy};
 use crate::pane_global;
 use crate::pane_quit::handle_quit_key;
-use crate::pane_refusal::registry_refusal;
+use crate::pane_refusal::{registry_refusal, report_refusal};
 use crate::runtime::Effects;
 use crate::save;
 
@@ -84,7 +84,7 @@ fn run_if_available(
     action: impl FnOnce(&mut App, &mut Effects),
 ) {
     if let Some(reason) = registry_refusal(app, crate::registry::CommandId::Global(cmd)) {
-        messages::error(app, reason);
+        report_refusal(app, reason);
     } else {
         action(app, effects);
     }
@@ -102,7 +102,7 @@ fn search_step(app: &mut App, forward: bool, effects: &mut Effects) {
     } else if app.find().is_some() {
         crate::find::follow::advance(app, forward);
     } else if !crate::find::follow::advance_closed(app, forward) {
-        messages::info(app, "no previous search");
+        messages::warn(app, "no previous search");
     }
 }
 

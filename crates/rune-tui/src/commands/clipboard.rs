@@ -15,7 +15,7 @@ pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &
         return;
     }
     if text.len() > OSC52_MAX_PAYLOAD_BYTES {
-        messages::error(
+        messages::warn(
             app,
             format!(
                 "selection too large to copy to the system clipboard \

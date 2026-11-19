@@ -50,7 +50,7 @@ pub fn back(app: &mut App, effects: &mut Effects) {
                 match peek_current(&app.nav_history) {
                     Some(next) => place = next,
                     None => {
-                        messages::info(app, "no earlier location");
+                        messages::warn(app, "no earlier location");
                         return;
                     }
                 }

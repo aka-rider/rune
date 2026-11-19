@@ -6,7 +6,7 @@ use crate::commands::{
 use crate::keymap::{self, Command, Extend, Motion, QuitKey};
 use crate::navigate;
 use crate::pane;
-use crate::pane_refusal::registry_refusal;
+use crate::pane_refusal::{registry_refusal, report_refusal};
 use crate::registry::CommandId;
 use crate::runtime::{Effects, PasteTarget};
 use crate::save;
@@ -22,7 +22,7 @@ pub(crate) fn run(
     }
 
     if let Some(reason) = registry_refusal(app, CommandId::Editor(command)) {
-        crate::messages::warn(app, reason);
+        report_refusal(app, reason);
         return keymap::KeyOutcome::Consumed;
     }
 

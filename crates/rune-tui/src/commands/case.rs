@@ -27,7 +27,7 @@ fn has_actionable_range(app: &App, id: DocumentId) -> bool {
 
 fn apply_case(app: &mut App, id: DocumentId, op: CaseOp) {
     if !has_actionable_range(app, id) {
-        messages::info(app, "no word under cursor");
+        messages::warn(app, "no word under cursor");
         return;
     }
     per_cursor_selection_edits(

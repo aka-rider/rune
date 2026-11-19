@@ -92,7 +92,7 @@ pub(crate) fn open(app: &mut App, kind: FilterKind, expand_replace: bool, effect
     }
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
         let merge_key = crate::global::label_for(GlobalCommand::Merge);
-        messages::info(app, format!("finish the merge first ({merge_key})"));
+        messages::warn(app, format!("finish the merge first ({merge_key})"));
         return;
     }
     let Some(clearance) = app.clear_title_for_overlay(effects) else {

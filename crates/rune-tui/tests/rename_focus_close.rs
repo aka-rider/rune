@@ -11,7 +11,7 @@ use std::path::Path;
 
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::KeyCode;
-use rune_tui::messages;
+use rune_tui::messages::{self, Severity};
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
 use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
@@ -254,13 +254,12 @@ fn a_save_is_refused_while_a_rename_is_in_flight() {
     );
 }
 
-/// The save-refused-during-rename message (finding 2) must stay on screen
-/// until the user dismisses it: nothing was written, so an auto-collapsing
-/// `warn` would leave the refusal with no trace once its 5s window elapses.
-/// Bare-`App`: whether the auto-collapse timer was armed is only visible on
-/// the very `Effects` the refusal produced.
+/// A save refused for an in-flight rename is a refusal, so it posts a
+/// warning: the pane opens and, like any warning, arms the auto-collapse
+/// timer. Bare-`App`: whether the timer was armed is only visible on the
+/// very `Effects` the refusal produced.
 #[test]
-fn a_save_refused_during_a_rename_leaves_the_message_pane_open() {
+fn a_save_refused_during_a_rename_posts_a_warning_that_auto_collapses() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
 
@@ -275,19 +274,16 @@ fn a_save_refused_during_a_rename_leaves_the_message_pane_open() {
     send(&mut app, plain(KeyCode::Char('X')));
     send(&mut app, sup('s'));
 
-    // Checked immediately after the refusal's own `update` call returns
-    // (dispatch's `after_update` reconciler arms the timer within that same
-    // call, directly on `App::timers`, before anything else can run) — a
-    // later, separate check after some OTHER action would see the timer
-    // already armed by that later action's own reconciler and pass either
-    // way, regardless of the message's severity.
-    assert!(
-        !messages::is_collapse_armed(&app),
-        "a save refused for an in-flight rename must never arm the \
-         auto-collapse timer"
+    assert_eq!(
+        messages::newest(&app).map(|m| m.severity),
+        Some(Severity::Warn)
     );
     assert!(
         messages::is_open(&app),
-        "the pane must still be open right after the refusal"
+        "the pane must be open right after the refusal"
+    );
+    assert!(
+        messages::is_collapse_armed(&app),
+        "a warning arms the auto-collapse timer within the update that posted it"
     );
 }

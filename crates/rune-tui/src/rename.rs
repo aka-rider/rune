@@ -129,7 +129,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
 
     let typed = app.title.text().to_string();
     if !title::is_valid_name(&typed) {
-        messages::error(app, "that name can't be used for a file");
+        messages::warn(app, "that name can't be used for a file");
         return Commit::Refused;
     }
 
@@ -365,7 +365,7 @@ pub fn forget_document(app: &mut App, doc: DocumentId) {
 
 fn draft_collision_refusal(app: &mut App, target: &Path) {
     app.rename = RenameState::Idle;
-    messages::error(app, format!("{} already exists", display_name(target)));
+    messages::warn(app, format!("{} already exists", display_name(target)));
 }
 
 #[path = "rename_collision.rs"]

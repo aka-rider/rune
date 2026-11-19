@@ -316,11 +316,11 @@ fn control_hint(app: &mut App) {
         "press {} to open the result",
         label_for(FindCommand::Commit)
     );
-    messages::info(app, text);
+    messages::warn(app, text);
 }
 
 fn glob_history_hint(app: &mut App) {
-    messages::info(
+    messages::warn(
         app,
         "path globs keep no history \u{2014} separate several patterns with commas",
     );
@@ -340,5 +340,5 @@ fn list_key_hint(app: &mut App, cmd: FindCommand) {
             label_for(FindCommand::ToggleThisFile)
         )
     };
-    messages::info(app, text);
+    messages::warn(app, text);
 }

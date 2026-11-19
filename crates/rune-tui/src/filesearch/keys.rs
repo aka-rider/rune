@@ -123,7 +123,7 @@ fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Eff
 
 pub(super) fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some(path) = selected_path(app) else {
-        crate::messages::info(app, "no file selected");
+        crate::messages::warn(app, "no file selected");
         return;
     };
     let departed = app.filesearch().and_then(|state| state.return_to.raw());

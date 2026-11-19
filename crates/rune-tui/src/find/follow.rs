@@ -127,10 +127,10 @@ fn commit_origin(app: &mut App, idx: usize) {
 fn report_no_target(app: &mut App, query: &str, match_count: usize) {
     if match_count == 0 {
         if !query.trim().is_empty() {
-            messages::info(app, format!("no matches for \"{query}\""));
+            messages::warn(app, format!("no matches for \"{query}\""));
         }
     } else {
-        messages::info(app, format!("all {match_count} matches are concealed"));
+        messages::warn(app, format!("all {match_count} matches are concealed"));
     }
 }
 

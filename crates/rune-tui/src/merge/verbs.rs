@@ -67,7 +67,7 @@ pub(crate) fn nav(app: &mut App, dir: isize) {
     let doc = *doc;
     let order = nav_order(session);
     if order.is_empty() {
-        messages::info(app, "no hunks");
+        messages::warn(app, "no hunks");
         return;
     }
     let pos = order.iter().position(|&i| i == session.cur);
@@ -174,7 +174,7 @@ fn after_resolution(app: &mut App, doc: DocumentId) {
 
 pub(crate) fn take_theirs(app: &mut App) {
     let Some((doc, idx)) = current(app) else {
-        messages::info(app, "no hunk to take");
+        messages::warn(app, "no hunk to take");
         return;
     };
     let (theirs, resolution) = match &app.merge {
@@ -195,7 +195,7 @@ pub(crate) fn take_theirs(app: &mut App) {
     };
     if current_bytes == theirs {
         if resolution.is_resolved() {
-            messages::info(app, "already disk's version");
+            messages::warn(app, "already disk's version");
         } else {
             set_resolution(app, idx, Resolution::TookTheirs);
             after_resolution(app, doc);
@@ -215,7 +215,7 @@ pub(crate) fn take_theirs(app: &mut App) {
 
 pub(crate) fn take_ours(app: &mut App) {
     let Some((doc, idx)) = current(app) else {
-        messages::info(app, "no hunk to keep");
+        messages::warn(app, "no hunk to keep");
         return;
     };
     let (ours, origin, resolution) = match &app.merge {
@@ -258,7 +258,7 @@ pub(crate) fn take_ours(app: &mut App) {
                     after_resolution(app, doc);
                 }
             }
-            BlockOrigin::AutoApplied => messages::info(app, "already yours"),
+            BlockOrigin::AutoApplied => messages::warn(app, "already yours"),
         }
         return;
     }

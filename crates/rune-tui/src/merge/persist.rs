@@ -100,7 +100,7 @@ pub(crate) fn resume_from_store(
     } = &app.merge
         && *active_doc != doc
     {
-        messages::error(
+        messages::warn(
             app,
             "merge not resumed — another document's merge is already active",
         );

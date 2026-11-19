@@ -14,7 +14,7 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
         return;
     }
     if app.documents.len() == 1 && app.doc(id).is_some_and(Document::is_blank_draft) {
-        crate::messages::info(app, "nothing to close");
+        crate::messages::warn(app, "nothing to close");
         return;
     }
     if app.doc(id).is_some_and(Document::is_dirty) {

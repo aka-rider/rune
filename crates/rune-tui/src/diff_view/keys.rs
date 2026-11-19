@@ -145,7 +145,7 @@ fn move_hunk(app: &mut App, dir: isize) {
     };
     let hunks = hunk_indices(diff);
     if hunks.is_empty() {
-        messages::info(app, "no hunks");
+        messages::warn(app, "no hunks");
         return;
     }
     let cur_pos = hunks.iter().position(|&idx| idx == diff.hunk_cur);
@@ -207,7 +207,7 @@ fn current_hunk_replacement(app: &App) -> HunkReplacement {
 fn take_theirs(app: &mut App) {
     let (right, right_lines, insert) = match current_hunk_replacement(app) {
         HunkReplacement::None => {
-            messages::info(app, "no hunk to take");
+            messages::warn(app, "no hunk to take");
             return;
         }
         HunkReplacement::RangeInvalid => {
@@ -243,7 +243,7 @@ fn take_theirs(app: &mut App) {
 }
 
 fn take_ours(app: &mut App) {
-    messages::info(app, "already yours");
+    messages::warn(app, "already yours");
 }
 
 #[cfg(test)]

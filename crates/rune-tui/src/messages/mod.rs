@@ -29,6 +29,12 @@ const EMPTY_TEXT: &str = "\u{b7} no messages";
 
 pub const AUTO_COLLAPSE: Duration = Duration::from_secs(5);
 
+/// Error is a real failure: an I/O error, a store failure, corrupt or unreadable
+/// data, a broken internal invariant, or a disk, link or store condition the
+/// user may need to act on. Warn is a refusal: rune could not or would not do
+/// what the user asked, by design (read-only, nothing to undo, no match, an
+/// invalid or taken name, already in progress, a limit, an unbound key). Info
+/// is status about something that happened: saved, recovered, replaced N.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
     Info,

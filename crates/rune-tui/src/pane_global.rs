@@ -53,7 +53,7 @@ pub(crate) fn tab_switch(app: &mut App, idx: usize, effects: &mut Effects) {
 pub(crate) fn trash(app: &mut App, effects: &mut Effects) {
     if app.filesearch().is_some() {
         crate::filesearch::cancel(app, effects);
-        messages::info(
+        messages::warn(
             app,
             "file finder closed \u{2014} open the file before trashing it",
         );

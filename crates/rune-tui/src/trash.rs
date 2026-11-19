@@ -33,11 +33,11 @@ impl TrashState {
 
 pub(crate) fn request_trash(app: &mut App, effects: &mut Effects) {
     if app.trash.in_flight() {
-        messages::error(app, "a trash is already in progress");
+        messages::warn(app, "a trash is already in progress");
         return;
     }
     if app.rename.in_flight() {
-        messages::error(app, IN_FLIGHT_RENAME_REFUSAL);
+        messages::warn(app, IN_FLIGHT_RENAME_REFUSAL);
         return;
     }
 
@@ -93,7 +93,7 @@ fn target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
         return selected_row_target(app);
     }
     let Some(path) = app.active_doc().resolved_path().cloned() else {
-        messages::error(app, "nothing to trash \u{2014} draft has no file");
+        messages::warn(app, "nothing to trash \u{2014} draft has no file");
         return None;
     };
     let resolved = workspace::resolve_or_report(app, &path, "trash")?;
@@ -107,13 +107,13 @@ fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
         .get(app.explorer.nav.cursor)
         .map(|e| (e.path.clone(), e.kind, e.link));
     let Some((path, kind, link)) = row else {
-        messages::error(app, "nothing to trash \u{2014} no file selected");
+        messages::warn(app, "nothing to trash \u{2014} no file selected");
         return None;
     };
     match link {
         rune_vfs::Link::To | rune_vfs::Link::Broken => Some((path, TrashSubject::Symlink)),
         rune_vfs::Link::No if kind == rune_vfs::FileKind::Dir => {
-            messages::error(app, "cannot trash a directory");
+            messages::warn(app, "cannot trash a directory");
             None
         }
         rune_vfs::Link::No => Some((path, TrashSubject::File)),
@@ -122,11 +122,11 @@ fn selected_row_target(app: &mut App) -> Option<(PathBuf, TrashSubject)> {
 
 pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
     if app.trash.in_flight() {
-        messages::error(app, "a trash is already in progress");
+        messages::warn(app, "a trash is already in progress");
         return;
     }
     if app.rename.in_flight() {
-        messages::error(app, IN_FLIGHT_RENAME_REFUSAL);
+        messages::warn(app, IN_FLIGHT_RENAME_REFUSAL);
         return;
     }
     if refuse_if_dirty(app, &path) {
@@ -143,7 +143,7 @@ fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
     if let Some(id) = workspace::existing_document_for_spelling(app, path)
         && app.doc(id).is_some_and(Document::is_dirty)
     {
-        messages::error(app, "unsaved changes \u{2014} save before trashing");
+        messages::warn(app, "unsaved changes \u{2014} save before trashing");
         return true;
     }
     false

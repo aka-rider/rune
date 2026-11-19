@@ -104,7 +104,7 @@ pub(crate) fn replace_selected(app: &mut App, effects: &mut Effects) {
 
 fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
     if walk(app).is_some() {
-        messages::info(app, "replace in progress");
+        messages::warn(app, "replace in progress");
         return;
     }
     if app
@@ -112,7 +112,7 @@ fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
         .and_then(FindState::project)
         .is_some_and(|project| project.freshness != Freshness::Fresh)
     {
-        messages::info(
+        messages::warn(
             app,
             "search results are still updating \u{2014} replace once they settle",
         );
@@ -130,7 +130,7 @@ fn start_walk(app: &mut App, paths: Vec<PathBuf>, effects: &mut Effects) {
         Some((state.origin.doc, pattern.clone()))
     });
     let Some((origin, pattern)) = started else {
-        messages::info(app, "no match to replace");
+        messages::warn(app, "no match to replace");
         return;
     };
     if let Some(project) = app.find_mut().and_then(FindState::project_mut) {

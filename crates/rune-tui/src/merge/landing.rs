@@ -56,7 +56,7 @@ pub(crate) fn handle_merge_prep_ack(
     if !prep.sync.kind.is_disk_divergent() {
         super::set_last_sync(app, doc, prep.sync.kind);
         app.merge = MergeState::Inactive;
-        messages::info(app, "file on disk matches — nothing to merge");
+        messages::warn(app, "file on disk matches — nothing to merge");
         return;
     }
 
