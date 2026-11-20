@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent CI toolchain bootstrap shared by the Forgejo and GitHub workflows:
-# rustup + the pinned toolchain with clippy and rustfmt, then cargo-nextest.
+# rustup + the toolchain that rust-toolchain.toml pins (with clippy and rustfmt),
+# then cargo-nextest.
 set -euo pipefail
 
 if ! command -v rustup >/dev/null; then
@@ -12,7 +13,7 @@ if ! command -v rustup >/dev/null; then
     fi
 fi
 
-rustup toolchain install --profile minimal --component clippy --component rustfmt
+rustup toolchain install
 rustc --version
 cargo --version
 
