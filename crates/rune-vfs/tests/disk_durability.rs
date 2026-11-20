@@ -5,7 +5,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use rune_vfs::{Disk, MAX_SYMLINK_HOPS, Vfs, published_not_durable};
@@ -34,23 +33,27 @@ impl Drop for Scratch {
     }
 }
 
+/// Publishes a directory onto a destination spelled `<dir>/../<name>`: the
+/// rename resolves that parent to `root` and succeeds, but the rename also
+/// moves `<dir>` away, so the lexical parent `Disk` then fsyncs
+/// (`<dir>/..`) no longer exists. This fails the parent fsync on a real
+/// filesystem whatever the uid, unlike a permission bit that root ignores.
+/// Returns the publish result and where the published directory now lives.
+fn publish_that_orphans_its_own_parent_path(root: &Path) -> (std::io::Result<()>, PathBuf) {
+    let dir = root.join("locked");
+    fs::create_dir(&dir).expect("mkdir dir");
+    fs::write(dir.join("doc.md"), b"hello").expect("seed doc");
+
+    let result = Disk.rename_excl(&dir, &dir.join("..").join("published"));
+
+    (result, root.join("published"))
+}
+
 #[test]
 fn a_publish_whose_destination_dir_cannot_be_reopened_reports_published_not_durable() {
     let scratch = Scratch::new("fsync-fail");
-    let root = scratch.path();
-    let locked = root.join("locked");
-    fs::create_dir(&locked).expect("mkdir locked");
-    let dest = locked.join("doc.md");
 
-    let temp = Disk.write_durable(&dest, b"hello").expect("write_durable");
-    // Write+execute (needed to rename within the dir) but NOT read (needed to
-    // reopen the dir for the post-rename fsync): the rename itself must still
-    // succeed, but the durability confirmation that follows it must fail.
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o300)).expect("chmod locked");
-
-    let result = Disk.rename_excl(&temp, &dest);
-
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).expect("restore perms");
+    let (result, published) = publish_that_orphans_its_own_parent_path(scratch.path());
 
     let err = result.expect_err("the parent fsync must fail when the dir can't be reopened");
     assert!(
@@ -58,7 +61,7 @@ fn a_publish_whose_destination_dir_cannot_be_reopened_reports_published_not_dura
         "the rename already took effect; this must be marked published_not_durable"
     );
     assert_eq!(
-        fs::read(&dest).expect("the rename physically succeeded"),
+        fs::read(published.join("doc.md")).expect("the rename physically succeeded"),
         b"hello"
     );
 }
@@ -89,18 +92,11 @@ fn rename_excl_onto_a_bare_relative_filename_fsyncs_the_cwd_not_an_empty_path() 
 #[test]
 fn rename_excl_onto_a_real_nonempty_parent_fsyncs_that_parent_not_the_cwd() {
     let scratch = Scratch::new("real-parent");
-    let root = scratch.path();
-    let locked = root.join("locked");
-    fs::create_dir(&locked).expect("mkdir locked");
-    let dest = locked.join("doc.md");
-    let temp = Disk.write_durable(&dest, b"hello").expect("write_durable");
 
-    // The CWD (unrelated to `locked`) is left fully accessible. If
-    // `parent_to_fsync` mistakenly fsyncs the CWD instead of `locked`, this
-    // publish would wrongly report success.
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o300)).expect("chmod locked");
-    let result = Disk.rename_excl(&temp, &dest);
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).expect("restore perms");
+    // The CWD (unrelated to the orphaned parent) stays fully accessible. If
+    // `parent_to_fsync` mistakenly fsyncs the CWD instead of the destination's
+    // parent, this publish would wrongly report success.
+    let (result, _) = publish_that_orphans_its_own_parent_path(scratch.path());
 
     let err = result.expect_err(
         "a nonempty, real parent directory must be the fsync target — \
