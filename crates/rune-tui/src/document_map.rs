@@ -17,8 +17,7 @@ impl DocumentMap {
     pub fn new(id: DocumentId, doc: Document) -> DocumentMap {
         let by_path = doc
             .resolved_path()
-            .map(|path| BTreeMap::from([(path.clone(), id)]))
-            .unwrap_or_default();
+            .map_or_default(|path| BTreeMap::from([(path.clone(), id)]));
         DocumentMap {
             anchor: (id, doc),
             rest: BTreeMap::new(),

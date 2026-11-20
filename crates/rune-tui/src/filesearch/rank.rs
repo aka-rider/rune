@@ -84,8 +84,7 @@ fn indices_for(
     // `Pattern::indices` appends per-atom output without sorting or
     // deduping it, so multi-atom results are sorted/deduped here.
     candidate_by(recents, walk, idx)
-        .map(|c| fuzzymatch::indices(&c.display, pattern, matcher, charbuf))
-        .unwrap_or_default()
+        .map_or_default(|c| fuzzymatch::indices(&c.display, pattern, matcher, charbuf))
 }
 
 fn display_of<'a>(recents: &'a [Candidate], walk: &'a [Candidate], idx: usize) -> &'a str {

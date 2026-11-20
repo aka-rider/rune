@@ -50,8 +50,7 @@ fn syntax_line_grapheme_bounds(
 ) -> Vec<usize> {
     let text: String = lines
         .get(line)
-        .map(|l| l.spans.iter().map(|s| s.text(content)).collect())
-        .unwrap_or_default();
+        .map_or_default(|l| l.spans.iter().map(|s| s.text(content)).collect());
     let mut bounds: Vec<usize> = text.grapheme_indices(true).map(|(i, _)| i).collect();
     bounds.push(text.len());
     bounds
@@ -116,7 +115,7 @@ proptest! {
                     break;
                 }
             }
-            let expected = lines.get(line).map(|l| l.spans.iter().map(|s| s.text(buf.content())).collect::<String>()).unwrap_or_default();
+            let expected = lines.get(line).map_or_default(|l| l.spans.iter().map(|s| s.text(buf.content())).collect::<String>());
             prop_assert_eq!(joined, expected);
         }
     }

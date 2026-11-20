@@ -293,8 +293,7 @@ pub(crate) fn step_hit(app: &mut App, forward: bool, effects: &mut Effects) {
 fn report_no_results(app: &mut App) {
     let query = app
         .find()
-        .map(|state| state.find.editor.text().to_string())
-        .unwrap_or_default();
+        .map_or_default(|state| state.find.editor.text().to_string());
     if query.chars().count() < MIN_QUERY_CHARS {
         messages::info(
             app,

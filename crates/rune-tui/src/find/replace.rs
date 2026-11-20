@@ -75,8 +75,7 @@ pub(crate) fn replace_all(app: &mut App) {
         .pattern
         .as_ref()
         .ok()
-        .map(|matcher| matcher.replacements(content, &replacement))
-        .unwrap_or_default()
+        .map_or_default(|matcher| matcher.replacements(content, &replacement))
         .into_iter()
         .map(|(range, insert)| Edit {
             start: range.start,

@@ -16,8 +16,7 @@ pub(super) fn layout(diff: &DiffView, other_wrap: &WrapSnapshot) -> RowLayout {
         .left
         .view
         .as_ref()
-        .map(|v| rows::line_heights(&v.wrap))
-        .unwrap_or_default();
+        .map_or_default(|v| rows::line_heights(&v.wrap));
     let right_heights = rows::line_heights(other_wrap);
     rows::layout_rows(&diff.alignment, &left_heights, &right_heights)
 }

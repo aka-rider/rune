@@ -165,10 +165,7 @@ fn install_resolver_display_name(
     app: &mut App,
     doc: crate::document::DocumentId,
 ) -> Option<String> {
-    let file_name = app
-        .doc(doc)
-        .map(|d| d.file_name().to_string())
-        .unwrap_or_default();
+    let file_name = app.doc(doc).map_or_default(|d| d.file_name().to_string());
     let saved_display_name = app.doc(doc).and_then(|d| d.display_name.clone());
     if let Some(d) = app.doc_mut(doc) {
         d.display_name = Some(format!("{file_name}: editor <-> disk"));

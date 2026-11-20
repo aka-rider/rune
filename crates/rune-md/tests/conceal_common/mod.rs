@@ -36,6 +36,5 @@ pub fn synced_at(
 pub fn joined_line(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> String {
     lines
         .get(line)
-        .map(|l| l.spans.iter().map(|s| s.text(content)).collect::<String>())
-        .unwrap_or_default()
+        .map_or_default(|l| l.spans.iter().map(|s| s.text(content)).collect::<String>())
 }

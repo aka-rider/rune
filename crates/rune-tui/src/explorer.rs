@@ -178,8 +178,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         let suffix = if is_dir { "/" } else { "" };
         let style = row_style(app, entry);
         let icon = crate::fileicons::icon(app.icon_tier, entry)
-            .map(|glyph| format!("{glyph} "))
-            .unwrap_or_default();
+            .map_or_default(|glyph| format!("{glyph} "));
         lines.push(Line::from(Span::styled(
             format!("{prefix}{icon}{}{suffix}", entry.name),
             style,

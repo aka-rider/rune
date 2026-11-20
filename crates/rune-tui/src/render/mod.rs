@@ -240,12 +240,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
                 )
             } else {
                 let left_scroll = diff_view.left.viewport.scroll_row.0;
-                let left_rows = diff_view
-                    .left
-                    .view
-                    .as_ref()
-                    .map(|v| build_rows(app, RowSource::Detached(&diff_view.left), v))
-                    .unwrap_or_default();
+                let left_rows =
+                    diff_view.left.view.as_ref().map_or_default(|v| {
+                        build_rows(app, RowSource::Detached(&diff_view.left), v)
+                    });
                 diff::augment_fold(
                     &rows,
                     &left_rows,

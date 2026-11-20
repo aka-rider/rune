@@ -171,6 +171,5 @@ pub(crate) fn label_for(cmd: FindCommand) -> String {
     FIND_BINDINGS
         .iter()
         .find(|b| !b.secondary && b.cmd == cmd)
-        .map(Binding::label)
-        .unwrap_or_default()
+        .map_or_default(Binding::label)
 }

@@ -23,8 +23,7 @@ fn assert_clean(result: &driver::RunResult) {
         result
             .violation
             .as_ref()
-            .map(|v| format!("{}: {}", v.id, v.message))
-            .unwrap_or_default()
+            .map_or_default(|v| format!("{}: {}", v.id, v.message))
     );
 }
 

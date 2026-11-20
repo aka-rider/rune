@@ -53,10 +53,7 @@ fn near_zero_resize_then_filesearch_paste_lands_in_query_not_document() {
 
     step(&mut app, Msg::Paste("hello world".to_string()));
 
-    let query = app
-        .filesearch()
-        .map(|s| s.query.clone())
-        .unwrap_or_default();
+    let query = app.filesearch().map_or_default(|s| s.query.clone());
     assert_eq!(
         query, "hello world",
         "pasted text should have landed in the file-search query"
@@ -75,10 +72,7 @@ fn normal_size_filesearch_paste_lands_in_query_too() {
     step(&mut app, Msg::Key(OPEN_FILESEARCH));
     step(&mut app, Msg::Paste("hello world".to_string()));
 
-    let query = app
-        .filesearch()
-        .map(|s| s.query.clone())
-        .unwrap_or_default();
+    let query = app.filesearch().map_or_default(|s| s.query.clone());
     assert_eq!(query, "hello world");
     assert_eq!(app.active_doc().buffer().content(), "");
 }
@@ -89,18 +83,12 @@ fn a_paste_swallowed_by_any_focus_target_is_caught() {
     step(&mut app, Msg::Resize(1, 2));
     step(&mut app, Msg::Key(OPEN_FILESEARCH));
 
-    let before_query = app
-        .filesearch()
-        .map(|s| s.query.clone())
-        .unwrap_or_default();
+    let before_query = app.filesearch().map_or_default(|s| s.query.clone());
     let before_doc = app.active_doc().buffer().content().to_string();
 
     step(&mut app, Msg::Paste("hello world".to_string()));
 
-    let after_query = app
-        .filesearch()
-        .map(|s| s.query.clone())
-        .unwrap_or_default();
+    let after_query = app.filesearch().map_or_default(|s| s.query.clone());
     let after_doc = app.active_doc().buffer().content().to_string();
 
     let doc_grew = after_doc.len() > before_doc.len();

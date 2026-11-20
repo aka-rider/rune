@@ -160,8 +160,7 @@ fn after_resolution(app: &mut App, doc: DocumentId) {
 
     let content = app
         .doc(doc)
-        .map(|d| d.buffer().content().to_string())
-        .unwrap_or_default();
+        .map_or_default(|d| d.buffer().content().to_string());
     super::persist::enqueue_merge_progress(app, doc, &content, &pairs);
 
     match (target, status) {
@@ -251,8 +250,7 @@ pub(crate) fn take_ours(app: &mut App) {
                     };
                     let content = app
                         .doc(doc)
-                        .map(|d| d.buffer().content().to_string())
-                        .unwrap_or_default();
+                        .map_or_default(|d| d.buffer().content().to_string());
                     super::persist::enqueue_merge_progress(app, doc, &content, &pairs);
                 } else {
                     set_resolution(app, idx, Resolution::KeptOurs);

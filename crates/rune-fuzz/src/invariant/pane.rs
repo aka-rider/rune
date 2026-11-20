@@ -167,7 +167,7 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
         .main
         .union(geo.footer)
         .union(geo.messages.unwrap_or_default())
-        .union(geo.find_panel.map(|p| p.outer).unwrap_or_default());
+        .union(geo.find_panel.map_or_default(|p| p.outer));
 
     let mut rects: Vec<(&str, Rect)> = vec![
         ("footer", geo.footer),

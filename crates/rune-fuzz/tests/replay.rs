@@ -117,8 +117,7 @@ fn every_checked_in_repro_replays_clean() {
             result
                 .violation
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default()
+                .map_or_default(ToString::to_string)
         );
     }
 }

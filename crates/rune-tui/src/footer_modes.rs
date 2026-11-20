@@ -63,8 +63,7 @@ pub(crate) fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>>
         GuardKind::DirtyClose | GuardKind::DirtyQuit => {
             let name = app
                 .doc(prompt.doc)
-                .map(|doc| doc.file_name().to_string())
-                .unwrap_or_default();
+                .map_or_default(|doc| doc.file_name().to_string());
             spans.push(Span::styled(
                 format!("unsaved changes in {name} \u{2014} "),
                 app.theme.chrome.footer_hint,
@@ -88,8 +87,7 @@ pub(crate) fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>>
         GuardKind::DiskConflict => {
             let name = app
                 .doc(prompt.doc)
-                .map(|doc| doc.file_name().to_string())
-                .unwrap_or_default();
+                .map_or_default(|doc| doc.file_name().to_string());
             spans.push(Span::styled(
                 format!("{name} changed on disk \u{2014} "),
                 app.theme.chrome.footer_hint,

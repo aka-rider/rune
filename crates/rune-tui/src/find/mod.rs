@@ -282,12 +282,11 @@ pub(crate) fn sync(app: &mut App) {
 pub(crate) fn reveal_offsets(app: &App) -> Vec<usize> {
     app.find()
         .filter(|state| state.doc == app.active)
-        .map(|state| {
+        .map_or_default(|state| {
             state
                 .matches
                 .iter()
                 .flat_map(|m| [m.start, m.end.saturating_sub(1).max(m.start)])
                 .collect()
         })
-        .unwrap_or_default()
 }

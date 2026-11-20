@@ -88,8 +88,7 @@ fn delete_right_with_adjacent_cursors_journals_one_edit_and_redoes_cleanly() {
         .unwrap()
         .journal
         .undo_peek()
-        .map(|(step, _)| step.edits.iter().map(|e| e.start).collect())
-        .unwrap_or_default();
+        .map_or_default(|(step, _)| step.edits.iter().map(|e| e.start).collect());
     assert_eq!(
         step_edit_starts.len(),
         1,

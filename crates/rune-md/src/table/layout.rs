@@ -422,8 +422,7 @@ pub(crate) fn constrain_widths(
             .iter()
             .enumerate()
             .max_by_key(|&(i, w)| (*w, std::cmp::Reverse(i)))
-            .map(|(i, _)| i)
-            .unwrap_or_default();
+            .map_or_default(|(i, _)| i);
         if let Some(r) = result.get_mut(widest) {
             *r += leftover;
         }

@@ -50,8 +50,7 @@ impl Document {
         }
         let embed_dims = self
             .embeds()
-            .map(crate::graphics::EmbedSet::to_image_dims)
-            .unwrap_or_default();
+            .map_or_default(crate::graphics::EmbedSet::to_image_dims);
         self.doc.set_embed_dims(embed_dims);
         let reveal_offsets = self.reveal_probe_offsets();
         self.doc

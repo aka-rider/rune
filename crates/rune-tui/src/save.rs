@@ -99,7 +99,7 @@ pub(crate) fn trigger_save(
         }
         let generation = app.next_save_confirm_gen.mint();
         app.pending_save_confirm = Some((id, generation));
-        let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
+        let name = app.doc(id).map_or_default(crate::title::name_for);
         let save_key = crate::global::label_for(crate::global::GlobalCommand::Save);
         messages::error(
             app,
@@ -204,13 +204,11 @@ fn preserve_displaced(vfs: &dyn Vfs, path: &Path, displaced: &[u8]) -> SaveRace 
 fn conflict_sibling_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|n| n.to_string_lossy().into_owned());
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
+        .map_or_default(|d| d.as_nanos());
     path.with_file_name(format!("{file_name}.conflict-{pid}-{nanos}"))
 }
 

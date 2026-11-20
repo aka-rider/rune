@@ -139,22 +139,19 @@ fn resolve_drift(
 
     let new_buffer_content = app
         .doc(id)
-        .map(|d| d.buffer().content().to_string())
-        .unwrap_or_default();
+        .map_or_default(|d| d.buffer().content().to_string());
     let mut diverged = app
         .doc(id)
         .and_then(crate::document::Document::doc_db)
         .is_some_and(|d| d.diverged);
     let shared = app
         .file_binding(db_id)
-        .map(|f| f.shared_content.clone())
-        .unwrap_or_default();
+        .map_or_default(|f| f.shared_content.clone());
     if !diverged {
         let synced = app
             .doc(id)
             .and_then(crate::document::Document::doc_db)
-            .map(|d| d.synced_content.clone())
-            .unwrap_or_default();
+            .map_or_default(|d| d.synced_content.clone());
         diverged = synced != shared;
     }
 

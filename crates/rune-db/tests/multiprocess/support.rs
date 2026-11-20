@@ -26,8 +26,7 @@ pub(crate) fn temp_dir(label: &str) -> PathBuf {
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
+            .map_or_default(|d| d.as_nanos())
     ));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir

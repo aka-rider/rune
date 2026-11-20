@@ -300,8 +300,7 @@ pub(crate) fn temp_name(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
     let basename = path
         .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
+        .map_or_default(|n| n.to_string_lossy().to_string());
     let pid = process::id();
     let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     parent.join(format!(".{basename}.rune-tmp-{pid}-{n}"))

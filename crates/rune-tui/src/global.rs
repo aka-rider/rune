@@ -355,7 +355,7 @@ pub fn hint_for(cmd: GlobalCommand) -> Option<(String, &'static str)> {
 }
 
 pub(crate) fn label_for(cmd: GlobalCommand) -> String {
-    hint_for(cmd).map(|(label, _)| label).unwrap_or_default()
+    hint_for(cmd).map_or_default(|(label, _)| label)
 }
 
 fn canonical(cmd: GlobalCommand) -> Option<&'static Binding<GlobalCommand>> {

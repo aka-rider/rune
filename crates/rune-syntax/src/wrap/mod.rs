@@ -297,15 +297,14 @@ fn slice_spans(
                     *scope,
                     sliced.to_string(),
                     range.clone(),
-                    // `get` + `unwrap_or_default` rather than a raw index:
+                    // `get` + `map_or_default` rather than a raw index:
                     // the clamp above guarantees this `Some`s, but the
                     // fallback stays as defense-in-depth rather than an
                     // indexing panic if that guarantee is ever
                     // violated.
                     cell_map
                         .get(clamped_start..clamped_end)
-                        .map(<[Option<u32>]>::to_vec)
-                        .unwrap_or_default(),
+                        .map_or_default(<[Option<u32>]>::to_vec),
                 )
             }
         };

@@ -15,7 +15,7 @@ pub(super) fn handle_committed_ack(
     {
         app.rebind_document_path(id, path);
         if app.active == id {
-            let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
+            let name = app.doc(id).map_or_default(crate::title::name_for);
             app.title.seed(&name);
         }
     }

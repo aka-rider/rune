@@ -35,8 +35,7 @@ pub fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, Do
 pub fn joined_line(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> String {
     lines
         .get(line)
-        .map(|l| l.spans.iter().map(|s| s.text(content)).collect::<String>())
-        .unwrap_or_default()
+        .map_or_default(|l| l.spans.iter().map(|s| s.text(content)).collect::<String>())
 }
 
 pub fn display_width(text: &str) -> usize {

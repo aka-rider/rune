@@ -337,8 +337,7 @@ mod tests {
         let lines = result_lines(&app, state, 5, 40);
         let text: String = lines
             .first()
-            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
-            .unwrap_or_default();
+            .map_or_default(|l| l.spans.iter().map(|s| s.content.as_ref()).collect());
         assert_eq!(text, "no matches");
     }
 

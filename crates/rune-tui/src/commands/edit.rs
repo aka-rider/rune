@@ -226,8 +226,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
 
     let pre_content = app
         .doc(id)
-        .map(|doc| doc.buffer().content().to_string())
-        .unwrap_or_default();
+        .map_or_default(|doc| doc.buffer().content().to_string());
     let mut reached = None;
     for _ in 0..count {
         let Some(doc) = app.doc(id) else { break };
@@ -288,8 +287,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
 
     let pre_content = app
         .doc(id)
-        .map(|doc| doc.buffer().content().to_string())
-        .unwrap_or_default();
+        .map_or_default(|doc| doc.buffer().content().to_string());
     let mut reached = None;
     for _ in 0..count {
         let Some(doc) = app.doc(id) else { break };

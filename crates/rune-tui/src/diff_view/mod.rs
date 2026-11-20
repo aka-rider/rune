@@ -108,8 +108,7 @@ pub fn sync(app: &mut App) {
     let right_heights = right_doc
         .view
         .as_ref()
-        .map(|v| rows::line_heights(&v.wrap))
-        .unwrap_or_default();
+        .map_or_default(|v| rows::line_heights(&v.wrap));
     let deadline = Some(app.clock.now() + INTRALINE_BUDGET);
     let area = app.frame_area();
     let left_collapsed = crate::layout::geometry(area, app).diff_left.is_none();
@@ -129,8 +128,7 @@ pub fn sync(app: &mut App) {
         .left
         .view
         .as_ref()
-        .map(|v| rows::line_heights(&v.wrap))
-        .unwrap_or_default();
+        .map_or_default(|v| rows::line_heights(&v.wrap));
     let layout = rows::layout_rows(&diff.alignment, &left_heights, &right_heights);
     diff.left.viewport.scroll_row = if left_collapsed {
         let plan = rows::plan_fold(&layout, right_scroll.0, right_height);

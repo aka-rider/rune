@@ -63,7 +63,7 @@ fn node_deps<'a>(metadata: &'a Value, id: &str) -> Vec<&'a str> {
         .expect("resolve.nodes array")
         .iter()
         .find(|n| n["id"] == id)
-        .map(|n| {
+        .map_or_default(|n| {
             n["dependencies"]
                 .as_array()
                 .expect("node dependencies array")
@@ -71,7 +71,6 @@ fn node_deps<'a>(metadata: &'a Value, id: &str) -> Vec<&'a str> {
                 .map(|d| d.as_str().expect("dependency id is a string"))
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 #[test]

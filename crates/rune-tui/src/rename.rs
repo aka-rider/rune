@@ -333,7 +333,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, CmdError>, effects
 fn bind_to(app: &mut App, doc_id: DocumentId, to: ResolvedPath, effects: &mut Effects) {
     app.rebind_document_path(doc_id, to.clone());
     if app.active == doc_id {
-        let name = app.doc(doc_id).map(title::name_for).unwrap_or_default();
+        let name = app.doc(doc_id).map_or_default(title::name_for);
         app.title.seed(&name);
     }
     crate::explorer::refresh_for(app, to.as_path(), effects);

@@ -27,8 +27,7 @@ pub(crate) fn follow_workspace(app: &mut App) {
         scanned = state
             .pattern
             .as_ref()
-            .map(|matcher| matcher.hits(origin_doc.buffer().content()))
-            .unwrap_or_default();
+            .map_or_default(|matcher| matcher.hits(origin_doc.buffer().content()));
         &scanned
     };
     let concealed = follow::concealed_in(origin_doc);

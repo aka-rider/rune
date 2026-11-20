@@ -132,10 +132,7 @@ fn info_card_lines(app: &App, doc: &Document) -> Vec<String> {
         || "dimensions unknown".to_string(),
         |d| format!("{}x{}", d.w, d.h),
     );
-    let size = doc
-        .image()
-        .map(|i| human_size(i.bytes_len))
-        .unwrap_or_default();
+    let size = doc.image().map_or_default(|i| human_size(i.bytes_len));
     vec![
         name,
         format,

@@ -18,8 +18,7 @@ pub(crate) fn recompute(app: &mut App) {
     let doc = app.active_doc();
     let matches = pattern
         .as_ref()
-        .map(|matcher| matcher.hits(doc.buffer().content()))
-        .unwrap_or_default();
+        .map_or_default(|matcher| matcher.hits(doc.buffer().content()));
     let version = doc.buffer().version();
     let active = app.active;
     if let Some(state) = app.find_mut() {
@@ -97,8 +96,7 @@ pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
         return false;
     };
     let matches = Matcher::compile(&query, options)
-        .map(|matcher| matcher.hits(app.active_doc().buffer().content()))
-        .unwrap_or_default();
+        .map_or_default(|matcher| matcher.hits(app.active_doc().buffer().content()));
     let concealed = current_concealed(app);
     let cursor = app.active_doc().cursors().primary().selection_start().get();
     let found = step_index(&matches, cursor, forward, |m| is_concealed(&concealed, m))
@@ -143,8 +141,7 @@ pub(crate) fn current_concealed(app: &App) -> Vec<Range<usize>> {
 pub(crate) fn concealed_in(doc: &Document) -> Vec<Range<usize>> {
     doc.view
         .as_ref()
-        .map(|view| concealed_ranges(&view.wrap))
-        .unwrap_or_default()
+        .map_or_default(|view| concealed_ranges(&view.wrap))
 }
 
 pub(crate) fn concealed_ranges(wrap: &WrapSnapshot) -> Vec<Range<usize>> {

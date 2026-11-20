@@ -153,8 +153,7 @@ impl Session {
         let content = mem
             .read(&path)
             .ok()
-            .map(rune_core::codec::decode)
-            .unwrap_or_default();
+            .map_or_default(rune_core::codec::decode);
         let bridge = Arc::clone(&db.bridge);
         Session::boot(mem, path, content, bridge, Some(db))
     }

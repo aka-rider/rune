@@ -293,11 +293,7 @@ mod tests {
         let buf = testgrid::draw_with(W, 3, |frame| {
             overlay(&app, Rect::new(0, 0, W, 3), true, frame)
         });
-        let sym = |x: u16| {
-            buf.cell((x, 2))
-                .map(|c| c.symbol().to_string())
-                .unwrap_or_default()
-        };
+        let sym = |x: u16| buf.cell((x, 2)).map_or_default(|c| c.symbol().to_string());
         assert_eq!(
             (sym(W - 3), sym(W - 2), sym(W - 1)),
             ("─".to_string(), "─".to_string(), "╯".to_string()),
@@ -323,8 +319,7 @@ mod tests {
         });
         let style = buf
             .cell((x, 2))
-            .map(ratatui::buffer::Cell::style)
-            .unwrap_or_default();
+            .map_or_default(ratatui::buffer::Cell::style);
         assert_eq!(style.fg, expected.fg);
         assert_eq!(style.add_modifier, expected.add_modifier);
         assert_eq!(

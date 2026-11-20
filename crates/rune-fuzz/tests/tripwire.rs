@@ -136,8 +136,7 @@ fn clean_session_trips_nothing() {
         result
             .violation
             .as_ref()
-            .map(|v| format!("{}: {}", v.id, v.message))
-            .unwrap_or_default()
+            .map_or_default(|v| format!("{}: {}", v.id, v.message))
     );
 
     // Defeats a no-op driver: `violation.is_none()` alone is vacuously true
@@ -232,8 +231,7 @@ fn seed_discarded_by_dirty_close_guard_skips_undo_total() {
         result
             .violation
             .as_ref()
-            .map(|v| format!("{}: {}", v.id, v.message))
-            .unwrap_or_default()
+            .map_or_default(|v| format!("{}: {}", v.id, v.message))
     );
 }
 
@@ -269,8 +267,7 @@ fn stale_save_ack_after_help_toggle_is_attributed_to_its_own_document() {
         result
             .violation
             .as_ref()
-            .map(|v| format!("{}: {}", v.id, v.message))
-            .unwrap_or_default()
+            .map_or_default(|v| format!("{}: {}", v.id, v.message))
     );
 }
 
@@ -293,7 +290,6 @@ fn ordinary_same_document_save_still_clean() {
         result
             .violation
             .as_ref()
-            .map(|v| format!("{}: {}", v.id, v.message))
-            .unwrap_or_default()
+            .map_or_default(|v| format!("{}: {}", v.id, v.message))
     );
 }

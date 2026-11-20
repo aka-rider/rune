@@ -204,8 +204,7 @@ fn install_regions(doc: &mut Document, version: u64, reply: HighlightReply) {
                 let (tree, spans) = carried
                     .get_mut(i)
                     .filter(|c| c.source == source)
-                    .map(|c| (c.tree.take(), std::mem::take(&mut c.spans)))
-                    .unwrap_or_default();
+                    .map_or_default(|c| (c.tree.take(), std::mem::take(&mut c.spans)));
                 RegionHighlight {
                     map: result.map,
                     source,

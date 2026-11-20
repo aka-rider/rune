@@ -77,8 +77,7 @@ fn undo_redo_total_clean_script_via_driver_trips_nothing() {
         result
             .violation
             .as_ref()
-            .map(|v| format!("{}: {}", v.id, v.message))
-            .unwrap_or_default()
+            .map_or_default(|v| format!("{}: {}", v.id, v.message))
     );
 }
 

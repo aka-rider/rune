@@ -140,8 +140,7 @@ pub(crate) fn test_temp_dir(label: &str) -> std::path::PathBuf {
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
+            .map_or_default(|d| d.as_nanos())
     ));
     std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create temp dir: {e}"));
     dir
