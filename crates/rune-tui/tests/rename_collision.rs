@@ -3,7 +3,7 @@
 //! later), the stale-ticket drop, and the close-while-colliding cleanup —
 //! TODO.md's 500-line budget split of the original `rename.rs`, driven
 //! through `rune_fuzz::Session` on the `Cmd`-route shape
-//! (`rename_common::unbound_session`), where `[R]eplace` has no store
+//! (`rename_common::storeless_session`), where `[R]eplace` has no store
 //! capture to offer. The store-backed `[R]eplace` path lives in
 //! `rename_replace.rs`. The stale-ticket test stays on a bare `App`: it
 //! must hold TWO rename `Cmd`s at once, which the session driver's
@@ -30,14 +30,14 @@ use rune_tui::{footer, messages, workspace};
 use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
-    app_with, collide, collide_pending, plain_key, rename_to, seeded_vfs, send, unbound_session,
+    app_with, collide, collide_pending, plain_key, rename_to, seeded_vfs, send, storeless_session,
 };
 
 /// A collision with no Guard up raises the guard, enters `Collision`, and
 /// the footer names the target.
 #[test]
 fn a_collision_raises_the_guard_and_the_footer_names_the_target() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     collide(&mut session, &mem);
 
     assert!(matches!(
@@ -66,7 +66,7 @@ fn a_collision_raises_the_guard_and_the_footer_names_the_target() {
 /// earlier message must still be in the log.
 #[test]
 fn a_pending_error_message_does_not_suppress_the_collision_guard() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     collide_pending(&mut session, &mem);
 
     messages::error(session.app_mut(), "something else went wrong");
@@ -93,7 +93,7 @@ fn a_pending_error_message_does_not_suppress_the_collision_guard() {
 /// displace it.
 #[test]
 fn an_error_message_posted_after_the_guard_does_not_cancel_the_collision() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     collide(&mut session, &mem);
     assert!(matches!(
         session.app().rename,
@@ -114,7 +114,7 @@ fn an_error_message_posted_after_the_guard_does_not_cancel_the_collision() {
 /// holding the typed name (not the old committed one).
 #[test]
 fn escape_on_the_collision_guard_returns_to_the_title_with_the_typed_name() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     collide(&mut session, &mem);
 
     assert!(session.key(plain_key(KeyCode::Escape)).is_none());
@@ -130,7 +130,7 @@ fn escape_on_the_collision_guard_returns_to_the_title_with_the_typed_name() {
 /// it cancelled via a status message.
 #[test]
 fn escape_on_the_rename_collision_guard_sets_a_cancellation_status() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     collide(&mut session, &mem);
 
     assert!(session.key(plain_key(KeyCode::Escape)).is_none());
@@ -146,7 +146,7 @@ fn escape_on_the_rename_collision_guard_sets_a_cancellation_status() {
 /// disk is untouched. The footer must not offer `[R]eplace` either.
 #[test]
 fn replace_is_refused_and_unoffered_without_a_store() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     collide(&mut session, &mem);
 
     assert!(
@@ -210,7 +210,7 @@ fn a_stale_rename_reply_is_dropped() {
 /// machine and its prompt.
 #[test]
 fn closing_the_renaming_document_clears_the_machine_and_the_prompt() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     // A second document, so the last-document floor doesn't refuse.
     mem.save_atomic(Path::new("/root/c.md"), b"c content")
         .expect("seed c.md");

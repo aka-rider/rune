@@ -94,7 +94,9 @@ fn rename_ack_does_not_refocus_title_under_overlay() {
     session.key(palette_chord());
     assert!(session.app().palette().is_some(), "the palette must open");
 
-    session.deliver();
+    assert!(session.deliver_db_all().is_none());
+    assert!(session.deliver().is_none());
+    assert!(session.deliver_db_all().is_none());
 
     assert_eq!(
         session.app().focus(),
@@ -102,8 +104,10 @@ fn rename_ack_does_not_refocus_title_under_overlay() {
         "an async rename reply must not plant title focus under an open overlay"
     );
     assert!(
-        rune_tui::messages::newest_text(session.app()).is_some(),
-        "the collision must still be reported"
+        rune_tui::messages::newest_text(session.app())
+            .is_some_and(|m| m.contains("already exists")),
+        "the collision must still be reported, got {:?}",
+        rune_tui::messages::newest_text(session.app())
     );
 }
 

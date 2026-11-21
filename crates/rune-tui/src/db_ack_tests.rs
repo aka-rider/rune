@@ -197,12 +197,20 @@ fn handle_load_ack_messages_a_non_diverged_adoption() {
         resumable_merge: None,
     };
 
+    let issue = LoadIssue {
+        issued_version,
+        purpose: LoadPurpose::Recover,
+        path: app
+            .doc(id)
+            .and_then(|doc| doc.resolved_path())
+            .cloned()
+            .expect("the load target is file-backed"),
+    };
     handle_load_ack(
         &mut app,
         id,
         load_result,
-        Some(issued_version),
-        LoadPurpose::Recover,
+        issue,
         &mut crate::runtime::Effects::default(),
     );
 
@@ -257,14 +265,22 @@ fn binding_only_load_does_not_rehydrate() {
         resumable_merge: None,
     };
 
+    let issue = LoadIssue {
+        issued_version,
+        purpose: LoadPurpose::Rebaseline {
+            expect_row: Some(3),
+        },
+        path: app
+            .doc(id)
+            .and_then(|doc| doc.resolved_path())
+            .cloned()
+            .expect("the load target is file-backed"),
+    };
     handle_load_ack(
         &mut app,
         id,
         load_result,
-        Some(issued_version),
-        LoadPurpose::Rebaseline {
-            expect_row: Some(3),
-        },
+        issue,
         &mut crate::runtime::Effects::default(),
     );
 
@@ -335,12 +351,20 @@ fn load_ack_for(nlink: u64) -> (App, DocumentId) {
     );
     let id = app.active;
     let issued_version = app.doc(id).expect("doc exists").buffer().version();
+    let issue = LoadIssue {
+        issued_version,
+        purpose: LoadPurpose::Recover,
+        path: app
+            .doc(id)
+            .and_then(|doc| doc.resolved_path())
+            .cloned()
+            .expect("the load target is file-backed"),
+    };
     handle_load_ack(
         &mut app,
         id,
         load_result,
-        Some(issued_version),
-        LoadPurpose::Recover,
+        issue,
         &mut crate::runtime::Effects::default(),
     );
     (app, id)
@@ -385,7 +409,7 @@ fn a_failed_load_detaches_the_replica_so_later_edits_are_not_buffered_forever() 
     let op_id = *app
         .db_ops
         .iter()
-        .find(|(_, pending)| pending.doc == id && pending.issued_version.is_some())
+        .find(|(_, pending)| pending.doc == id && pending.load.is_some())
         .expect("the load op is recorded")
         .0;
 

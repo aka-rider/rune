@@ -18,7 +18,7 @@ use rune_core::coords::BufferOffset;
 use rune_db::{DbEvent, LoadResult, OpOutcome, SyncKind, SyncState, Version};
 use rune_fuzz::Session;
 use rune_tui::app::{self, App};
-use rune_tui::db::{Db, LoadPurpose, PendingOp};
+use rune_tui::db::{Db, LoadIssue, LoadPurpose, PendingOp};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
@@ -271,7 +271,18 @@ fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
     let issued_version = app.doc(id).unwrap().buffer().version();
     app.db_ops.insert(
         op_id,
-        PendingOp::load(id, issued_version, LoadPurpose::Recover),
+        PendingOp::load(
+            id,
+            LoadIssue {
+                issued_version,
+                purpose: LoadPurpose::Recover,
+                path: app
+                    .doc(id)
+                    .and_then(|doc| doc.resolved_path())
+                    .cloned()
+                    .unwrap(),
+            },
+        ),
     );
 
     let load_result = LoadResult {

@@ -12,7 +12,8 @@ use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
 /// `SAVE-INFLIGHT-SM` — `save_in_flight` goes false->true only on a save
-/// key OR a modal-captured `s`/`S` key while the dirty-close Guard is up,
+/// key, on the `Db` ack that binds a draft whose name awaited that binding,
+/// OR a modal-captured `s`/`S` key while the dirty-close Guard is up,
 /// where "save key" covers BOTH stateless resolutions dispatch consults:
 /// `keymap::resolve`'s `Command::Save` (the tag's own `command`, the editor
 /// pane's stage-3 resolver) and the global chord table's `GlobalCommand::
@@ -79,7 +80,7 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
         // `title::keys::handle_key`'s `Enter`/`Down` arm ALWAYS blurs the
         // title regardless of modifiers, and that blur is the one commit
         // chokepoint for a pathless draft's name (`save::bind_new_now`,
-        // reached through both `rename::begin` and `rename_create::commit`)
+        // reached through `rename_create::commit_or_await`)
         // — a legitimate `save_in_flight` arming with no `Command::Save`/
         // global-chord tag of its own, since the key that caused it was
         // Enter, not a save chord. Scoped to `prev.focus == Title` so an
@@ -91,7 +92,13 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
                 MsgTag::Key { input, .. }
                     if matches!(input.code, KeyCode::Enter | KeyCode::Down)
             );
-        if !armed_by_save_key && !armed_by_guard_save_key && !armed_by_title_commit_key {
+        let armed_by_bind_ack = prev.rename_awaits_bind == Some(next.active)
+            && matches!(ctx.msg, MsgTag::Db { doc, .. } if doc == Some(next.active));
+        if !armed_by_save_key
+            && !armed_by_guard_save_key
+            && !armed_by_title_commit_key
+            && !armed_by_bind_ack
+        {
             return Some(Violation::new(
                 "SAVE-INFLIGHT-SM",
                 format!(

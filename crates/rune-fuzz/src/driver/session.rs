@@ -166,6 +166,15 @@ impl Session {
         Session::boot(mem, path, content, bridge, Some(db))
     }
 
+    pub fn open_without_store(path: &str, mem: Arc<Mem>) -> Session {
+        let path = PathBuf::from(path);
+        let content = mem
+            .read(&path)
+            .ok()
+            .map_or_default(rune_core::codec::decode);
+        Session::boot(mem, path, content, DbBridge::bootstrap(), None)
+    }
+
     fn new_app(
         vfs: Arc<dyn Vfs + Send + Sync>,
         db: Option<rune_tui::db::Db>,

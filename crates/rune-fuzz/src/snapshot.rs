@@ -190,6 +190,7 @@ pub struct Snapshot {
     pub nav_current: usize,
     pub buffer_len_by_doc: BTreeMap<DocumentId, usize>,
     pub version_by_doc: BTreeMap<DocumentId, u64>,
+    pub rename_awaits_bind: Option<DocumentId>,
 }
 
 /// `Snapshot.status`'s builder: the footer's own text, plus the message
@@ -373,6 +374,10 @@ impl Snapshot {
             nav_current,
             buffer_len_by_doc,
             version_by_doc,
+            rename_awaits_bind: match &app.rename {
+                rune_tui::rename::RenameState::AwaitingBind { doc, .. } => Some(*doc),
+                _ => None,
+            },
         }
     }
 }

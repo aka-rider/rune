@@ -5,7 +5,7 @@ use rune_core::undo::EditKind;
 use rune_db::EditBatch;
 
 use crate::app::App;
-use crate::db::{LoadPurpose, PendingOp};
+use crate::db::{LoadIssue, LoadPurpose, PendingOp};
 use crate::document::{DocumentId, Replica, ReplicaStep};
 
 // While a `Load`/`CreateScratch` op is still in flight (`Binding`), an edit

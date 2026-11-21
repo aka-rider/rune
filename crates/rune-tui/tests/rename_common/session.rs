@@ -4,6 +4,7 @@ use std::sync::Arc;
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
 use rune_fuzz::Session;
 use rune_tui::db::{Db, DbBridge, DocDb, PublishMode};
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
@@ -66,11 +67,22 @@ pub fn bound_session() -> (Session, Arc<Mem>) {
 }
 
 /// The `Cmd`-route shape: `/root/a.md` opened through `workspace::open_path`
-/// with its `Load` ack deliberately NOT delivered — exactly an
-/// Explorer-opened document's own state before the ack lands. An unbound
-/// document's rename takes the no-store `rename_excl` `Cmd`, discharged
-/// with `Session::deliver`.
-pub fn unbound_session() -> (Session, Arc<Mem>) {
+/// in a session with no recovery store at all, so its rename takes the
+/// plain `rename_excl` `Cmd`, discharged with `Session::deliver`.
+pub fn storeless_session() -> (Session, Arc<Mem>) {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
+        .expect("seed the session's own bootstrap document");
+    let mut session = Session::open_without_store("/root/seed.md", Arc::clone(&mem));
+    workspace::open_path(session.app_mut(), Path::new(DOC_PATH)).expect("open a.md");
+    session.app_mut().active_doc_mut().focused = true;
+    (session, mem)
+}
+
+/// `/root/a.md` opened through `workspace::open_path` with its `Load` ack
+/// NOT delivered — an Explorer-opened document's own state before the ack
+/// lands, so a rename committed now waits for that ack.
+pub fn loading_session() -> (Session, Arc<Mem>) {
     let mem = seeded_vfs();
     mem.save_atomic(Path::new("/root/seed.md"), b"seed")
         .expect("seed the session's own bootstrap document");
@@ -80,9 +92,21 @@ pub fn unbound_session() -> (Session, Arc<Mem>) {
     (session, mem)
 }
 
+/// A pathless draft with no recovery store at all, so a name commit takes
+/// the plain exclusive-create `Cmd` route, discharged with `Session::deliver`.
+pub fn storeless_draft_session() -> (Session, Arc<Mem>) {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
+        .expect("seed the session's own bootstrap document");
+    let mut session = Session::open_without_store("/root/seed.md", Arc::clone(&mem));
+    workspace::new_untitled_document(session.app_mut());
+    session.app_mut().active_doc_mut().focused = true;
+    (session, mem)
+}
+
 /// A pathless draft minted through the real `workspace::new_untitled_document`
 /// flow, active and focused, its `CreateScratch` ack NOT delivered — so a
-/// name commit takes the no-store exclusive-create `Cmd` route.
+/// name commit waits for that ack before it creates anything.
 pub fn draft_session() -> (Session, Arc<Mem>) {
     let mem = Arc::new(Mem::new());
     mem.save_atomic(Path::new("/root/seed.md"), b"seed")
@@ -259,4 +283,67 @@ pub fn collide_pending(session: &mut Session, mem: &Arc<Mem>) {
 pub fn collide(session: &mut Session, mem: &Arc<Mem>) {
     collide_pending(session, mem);
     assert!(session.deliver().is_none());
+}
+
+pub fn awaits_bind(session: &Session, doc: DocumentId) -> bool {
+    matches!(session.app().rename, RenameState::AwaitingBind { doc: waiting, .. } if waiting == doc)
+}
+
+/// Kills the store's writer thread and waits until a blocking probe of
+/// `bound`'s row confirms it is gone, so the next store op fails for real.
+pub fn kill_writer_and_confirm_dead(session: &Session, bound: DocumentId) {
+    let doc_id = rune_db::DocId(
+        session
+            .app()
+            .doc(bound)
+            .and_then(|doc| doc.doc_db())
+            .expect("store-bound")
+            .db_id,
+    );
+    let db = session.app().db.as_ref().expect("app has a store");
+    db.store
+        .kill_writer_for_test()
+        .expect("enqueue the kill op");
+    let max_attempts = 4 * rune_db::QUEUE_DEPTH;
+    for attempt in 0..=max_attempts {
+        match db.store.probe_blocking_for_test(doc_id) {
+            Ok(_) => assert!(attempt < max_attempts, "writer never confirmed dead"),
+            Err(rune_db::Error::WriterGone) => return,
+            Err(e) => panic!("unexpected error while awaiting writer death: {e}"),
+        }
+    }
+}
+
+/// Kills the writer, then edits the store-bound `bound` tab so the failed
+/// journal append degrades the store and raises the recovery-disabled banner.
+pub fn kill_store_through(session: &mut Session, bound: DocumentId) {
+    kill_writer_and_confirm_dead(session, bound);
+    let tab = session
+        .app()
+        .documents
+        .order()
+        .iter()
+        .position(|&id| id == bound)
+        .expect("the bound document has a tab");
+    assert!(session.switch_tab_by_index(tab).is_none());
+    assert!(session.type_("x").is_none());
+    assert!(
+        session
+            .app()
+            .db_banner
+            .as_deref()
+            .is_some_and(|banner| banner.contains("recovery disabled")),
+        "got {:?}",
+        session.app().db_banner
+    );
+}
+
+pub fn store_bound_other_than(session: &Session, doc: DocumentId) -> DocumentId {
+    session
+        .app()
+        .documents
+        .iter()
+        .find(|(id, other)| **id != doc && other.is_store_bound())
+        .map(|(id, _)| *id)
+        .expect("the seed document is store-bound")
 }

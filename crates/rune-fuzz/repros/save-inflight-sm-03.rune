@@ -1,0 +1,15 @@
+content seed
+key char:n --c-
+type draft body
+key f2 ----
+type fresh
+key enter ----
+deliver-db-all
+deliver
+deliver-db-all
+type  and more
+deliver-db-all
+key char:s ---u
+deliver-db
+deliver
+deliver-db-all

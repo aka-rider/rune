@@ -56,7 +56,7 @@ fn promoting_the_preview_enqueues_recovery_store_hydration() {
     assert!(
         app.db_ops
             .values()
-            .any(|op| op.doc == id && op.issued_version.is_some()),
+            .any(|op| op.doc == id && op.load.is_some()),
         "promotion must enqueue a Load op hydrating the document through the recovery store"
     );
 }

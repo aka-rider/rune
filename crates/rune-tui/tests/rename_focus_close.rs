@@ -20,7 +20,7 @@ use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
     app_with, bound_session, commit_name, plain, plain_key, rename_to, seeded_vfs, send, set_name,
-    sup, sup_key, unbound_session,
+    storeless_session, sup, sup_key,
 };
 
 fn tab_for(session: &rune_fuzz::Session, path: &str) -> (DocumentId, usize) {
@@ -191,7 +191,7 @@ fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
 /// through the real VFS with nothing surfaced.
 #[test]
 fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     mem.save_atomic(Path::new("/root/b.md"), b"b content")
         .expect("seed b.md");
     workspace::open_path(session.app_mut(), Path::new("/root/b.md")).expect("open b.md");
@@ -230,7 +230,7 @@ fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
 /// of moving away from and leaving the new name holding stale bytes.
 #[test]
 fn a_save_is_refused_while_a_rename_is_in_flight() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
 
     commit_name(&mut session, "b");
     assert!(matches!(

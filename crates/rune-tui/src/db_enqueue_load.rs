@@ -69,8 +69,17 @@ fn load_document_inner(
     let enqueued = db.store.load(path.as_path());
     match enqueued {
         Ok(op_id) => {
-            app.db_ops
-                .insert(op_id, PendingOp::load(id, issued_version, purpose));
+            app.db_ops.insert(
+                op_id,
+                PendingOp::load(
+                    id,
+                    LoadIssue {
+                        issued_version,
+                        purpose,
+                        path: path.clone(),
+                    },
+                ),
+            );
             // A document with no binding yet starts buffering: every edit
             // committed before this op's ack lands must reach the store
             // eventually, not be dropped.

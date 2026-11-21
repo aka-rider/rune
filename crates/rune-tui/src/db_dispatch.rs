@@ -49,14 +49,14 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::Load(load_result),
         } => with_pending_op(app, op_id, |app, pending| {
-            crate::db_ack::handle_load_ack(
-                app,
-                pending.doc,
-                *load_result,
-                pending.issued_version,
-                pending.load_purpose,
-                effects,
-            );
+            let Some(issue) = pending.load else {
+                crate::messages::error(
+                    app,
+                    "internal error: a recovery load answered an op that never asked for one",
+                );
+                return;
+            };
+            crate::db_ack::handle_load_ack(app, pending.doc, *load_result, issue, effects);
         }),
         DbEvent::Ok {
             id: op_id,
@@ -165,7 +165,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             if let Some(pending) = pending
                 && pending.doc_scoped
             {
-                let failed_load_was_binding = pending.issued_version.is_some()
+                let failed_load_was_binding = pending.load.is_some()
                     && app
                         .doc(pending.doc)
                         .is_some_and(|doc| matches!(doc.replica, Replica::Binding { .. }));

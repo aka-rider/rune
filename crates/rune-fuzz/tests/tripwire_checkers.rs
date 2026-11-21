@@ -162,6 +162,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         nav_current: 0,
         buffer_len_by_doc: std::collections::BTreeMap::new(),
         version_by_doc: std::collections::BTreeMap::new(),
+        rename_awaits_bind: None,
     }
 }
 

@@ -248,3 +248,78 @@ fn a_dirty_tab_at_the_old_name_keeps_both_tabs_and_warns() {
         )
     );
 }
+
+#[test]
+fn a_load_that_lands_after_its_file_was_renamed_never_binds_the_old_name() {
+    let (mut app, _seed, vfs) = app_bound_at_old_md("the user's words");
+    vfs.save_atomic(Path::new("/other.md"), b"other words")
+        .expect("seed other.md");
+    let b = crate::workspace::open_path(&mut app, Path::new("/other.md")).expect("other.md opens");
+    crate::materialize_ack::on_store_failure(&mut app, "the store stopped answering");
+
+    app.title.set_text("moved.md");
+    let mut effects = crate::runtime::Effects::default();
+    assert_eq!(
+        crate::rename::begin(&mut app, &mut effects),
+        crate::rename::Commit::Accepted
+    );
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|cmd| cmd.kind() == crate::runtime::CmdKind::Rename)
+        .expect("a detached document renames through the plain Cmd");
+    let reply = cmd.run().expect("the rename Cmd replies");
+    crate::app::update(&mut app, reply, &mut crate::runtime::Effects::default());
+    assert_eq!(
+        app.doc(b).expect("doc exists").path(),
+        Some(Path::new("/moved.md"))
+    );
+
+    pump_next_load_ack(&mut app);
+
+    let doc = app.doc(b).expect("the document stays open");
+    assert!(
+        !doc.is_store_bound(),
+        "a load computed for other.md must never bind the document now at moved.md"
+    );
+    assert_eq!(doc.buffer().content(), "other words");
+    assert_eq!(
+        messages::newest_text(&app),
+        Some(
+            "crash recovery unavailable for moved.md: internal error: its recovery data was loaded for its old name, other.md"
+        )
+    );
+}
+
+#[test]
+fn a_fresh_tab_whose_rename_awaits_its_load_is_never_retired_by_an_external_rename() {
+    let (mut app, a, vfs) = app_bound_at_old_md("the user's words");
+    vfs.rename_excl(Path::new("/old.md"), Path::new("/new.md"))
+        .expect("external rename");
+    let b = crate::workspace::open_path(&mut app, Path::new("/new.md")).expect("new.md opens");
+
+    app.title.set_text("renamed.md");
+    assert_eq!(
+        crate::rename::begin(&mut app, &mut crate::runtime::Effects::default()),
+        crate::rename::Commit::Accepted
+    );
+    assert!(matches!(app.rename, crate::rename::RenameState::AwaitingBind { doc, .. } if doc == b));
+
+    pump_next_load_ack(&mut app);
+
+    assert!(app.doc(a).is_some());
+    assert!(
+        app.doc(b).is_some(),
+        "the tab holding a pending rename must stay open"
+    );
+    assert!(
+        messages::log_text(&app).contains("so both tabs were kept"),
+        "got {:?}",
+        messages::log_text(&app)
+    );
+    assert!(
+        matches!(app.rename, crate::rename::RenameState::Committing { doc, .. } if doc == b),
+        "the awaited rename proceeds once the load lands, got {:?}",
+        app.rename
+    );
+}

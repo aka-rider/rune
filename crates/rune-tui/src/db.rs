@@ -105,9 +105,15 @@ pub enum LoadPurpose {
     Rebaseline { expect_row: Option<i64> },
 }
 
+pub struct LoadIssue {
+    pub issued_version: u64,
+    pub purpose: LoadPurpose,
+    pub path: crate::resolved::ResolvedPath,
+}
+
 pub struct PendingOp {
     pub doc: DocumentId,
-    pub issued_version: Option<u64>,
+    pub load: Option<LoadIssue>,
     // Each probe reads the whole file and inserts a fresh observation, so a
     // document already probing skips a redundant second one rather than
     // growing the store unboundedly for no new information.
@@ -121,7 +127,6 @@ pub struct PendingOp {
     // matches the document's current pending attempt, so a later attempt
     // superseding this one can't have a stale ack mistaken for the live one.
     pub merge_gen: Option<crate::generation::MergeGen>,
-    pub load_purpose: LoadPurpose,
     // True for an op that only reads one document's disk/journal state:
     // its failure means this document's read didn't land, never that the
     // store itself can no longer be trusted for recovery.
@@ -136,11 +141,10 @@ impl PendingOp {
     pub fn new(doc: DocumentId) -> PendingOp {
         PendingOp {
             doc,
-            issued_version: None,
+            load: None,
             is_probe: false,
             baseline_epoch: None,
             merge_gen: None,
-            load_purpose: LoadPurpose::Recover,
             doc_scoped: false,
             is_append: false,
         }
@@ -153,27 +157,21 @@ impl PendingOp {
         }
     }
 
-    pub fn load(doc: DocumentId, issued_version: u64, load_purpose: LoadPurpose) -> PendingOp {
+    pub fn load(doc: DocumentId, issue: LoadIssue) -> PendingOp {
         PendingOp {
-            doc,
-            issued_version: Some(issued_version),
-            is_probe: false,
-            baseline_epoch: None,
-            merge_gen: None,
-            load_purpose,
+            load: Some(issue),
             doc_scoped: true,
-            is_append: false,
+            ..PendingOp::new(doc)
         }
     }
 
     pub fn probe(doc: DocumentId, baseline_epoch: u32) -> PendingOp {
         PendingOp {
             doc,
-            issued_version: None,
+            load: None,
             is_probe: true,
             baseline_epoch: Some(baseline_epoch),
             merge_gen: None,
-            load_purpose: LoadPurpose::Recover,
             doc_scoped: true,
             is_append: false,
         }
@@ -182,11 +180,10 @@ impl PendingOp {
     pub fn prepare(doc: DocumentId, baseline_epoch: u32) -> PendingOp {
         PendingOp {
             doc,
-            issued_version: None,
+            load: None,
             is_probe: false,
             baseline_epoch: Some(baseline_epoch),
             merge_gen: None,
-            load_purpose: LoadPurpose::Recover,
             doc_scoped: false,
             is_append: false,
         }
@@ -195,11 +192,10 @@ impl PendingOp {
     pub fn move_undo_pos(doc: DocumentId) -> PendingOp {
         PendingOp {
             doc,
-            issued_version: None,
+            load: None,
             is_probe: false,
             baseline_epoch: None,
             merge_gen: None,
-            load_purpose: LoadPurpose::Recover,
             doc_scoped: true,
             is_append: false,
         }
@@ -215,11 +211,10 @@ impl PendingOp {
     pub fn merge_prep(doc: DocumentId, generation: crate::generation::MergeGen) -> PendingOp {
         PendingOp {
             doc,
-            issued_version: None,
+            load: None,
             is_probe: false,
             baseline_epoch: None,
             merge_gen: Some(generation),
-            load_purpose: LoadPurpose::Recover,
             doc_scoped: true,
             is_append: false,
         }

@@ -24,7 +24,7 @@ use rune_db::{EditBatch, SyncKind};
 use rune_fuzz::Session;
 use rune_fuzz::driver::wait_for_db_op;
 use rune_tui::app::App;
-use rune_tui::db::{Db, LoadPurpose, PendingOp};
+use rune_tui::db::{Db, LoadIssue, LoadPurpose, PendingOp};
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
@@ -294,8 +294,15 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
         op_id,
         PendingOp::load(
             doc_b,
-            issued_version,
-            LoadPurpose::Rebaseline { expect_row: None },
+            LoadIssue {
+                issued_version,
+                purpose: LoadPurpose::Rebaseline { expect_row: None },
+                path: app_b
+                    .doc(doc_b)
+                    .and_then(|doc| doc.resolved_path())
+                    .cloned()
+                    .unwrap(),
+            },
         ),
     );
     let evt = wait_for_db_op(&bridge_b, op_id);
@@ -328,7 +335,18 @@ fn binding_only_load_installs_nothing_and_leaves_the_row_active() {
         .expect("enqueue full load");
     app_b.db_ops.insert(
         op_id,
-        PendingOp::load(doc_b, issued_version, LoadPurpose::Recover),
+        PendingOp::load(
+            doc_b,
+            LoadIssue {
+                issued_version,
+                purpose: LoadPurpose::Recover,
+                path: app_b
+                    .doc(doc_b)
+                    .and_then(|doc| doc.resolved_path())
+                    .cloned()
+                    .unwrap(),
+            },
+        ),
     );
     let evt = wait_for_db_op(&bridge_b, op_id);
     let mut effects = Effects::default();

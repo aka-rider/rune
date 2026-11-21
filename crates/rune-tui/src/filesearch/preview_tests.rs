@@ -208,7 +208,7 @@ fn enter_on_a_previewed_row_promotes_rather_than_reopening() {
     assert!(
         app.db_ops
             .values()
-            .any(|op| op.doc == id && op.issued_version.is_some()),
+            .any(|op| op.doc == id && op.load.is_some()),
         "promotion must enqueue recovery-store hydration"
     );
 }

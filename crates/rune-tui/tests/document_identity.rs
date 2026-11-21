@@ -15,7 +15,7 @@ use rune_core::buffer::Buffer;
 use rune_db::{DbEvent, OpOutcome};
 use rune_fuzz::Session;
 use rune_tui::app::{self, App};
-use rune_tui::db::{LoadPurpose, PendingOp};
+use rune_tui::db::{LoadIssue, LoadPurpose, PendingOp};
 use rune_tui::resolved::ResolvedPath;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::workspace;
@@ -82,7 +82,18 @@ fn an_external_rename_reported_via_renamed_from_reunites_the_tab_under_the_new_n
         .expect("enqueue the open-time load");
     app.db_ops.insert(
         op_id,
-        PendingOp::load(id, issued_version, LoadPurpose::Recover),
+        PendingOp::load(
+            id,
+            LoadIssue {
+                issued_version,
+                purpose: LoadPurpose::Recover,
+                path: app
+                    .doc(id)
+                    .and_then(|doc| doc.resolved_path())
+                    .cloned()
+                    .unwrap(),
+            },
+        ),
     );
     pump_load_ack(&mut app, &bridge);
     assert!(app.doc(id).unwrap().is_store_bound(), "the tab is bound");

@@ -27,7 +27,8 @@ use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
     DOC_PATH, bound_draft_session, bound_session, commit_name, ctrl_key, draft_session,
-    drain_materialize_round_trip, name_draft, open_title, plain_key, set_name, unbound_session,
+    drain_materialize_round_trip, name_draft, open_title, plain_key, set_name,
+    storeless_draft_session, storeless_session,
 };
 
 // ── Focus and typing ────────────────────────────────────────────────────
@@ -86,12 +87,12 @@ fn up_at_the_top_of_the_editor_focuses_the_title() {
 
 // ── End to end, the Cmd route ───────────────────────────────────────────
 
-/// An unbound document's rename is one `rename_excl` `Cmd`: once its reply
+/// A store-free document's rename is one `rename_excl` `Cmd`: once its reply
 /// is delivered, the file moves, the tab and title show the new name, and
 /// `is_dirty()` is UNCHANGED — a rename is not a save.
 #[test]
 fn end_to_end_cmd_route_rename() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     // Make the document dirty, so "stays dirty" is actually observable.
     let active = session.app().active;
     dirty_common::force_dirty(session.app_mut(), active);
@@ -133,7 +134,7 @@ fn end_to_end_cmd_route_rename() {
 /// and the unconfirmed durability is WARNED about, never swallowed.
 #[test]
 fn a_durability_unconfirmed_rename_succeeds_and_warns() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
 
     commit_name(&mut session, "b");
     mem.fail_after(rune_vfs::OpKind::RenameExcl, std::io::ErrorKind::Other);
@@ -162,7 +163,7 @@ fn a_durability_unconfirmed_rename_succeeds_and_warns() {
 /// alone, and returns the machine to `Idle`.
 #[test]
 fn a_rename_io_failure_posts_an_error_message_and_changes_nothing() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
 
     commit_name(&mut session, "b");
     mem.fail_next(
@@ -186,7 +187,7 @@ fn a_rename_io_failure_posts_an_error_message_and_changes_nothing() {
 /// typing survives (the field is never reseeded on a failure path).
 #[test]
 fn a_failed_rename_returns_to_the_title_with_the_typed_name_and_its_undo_history() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
 
     commit_name(&mut session, "newname");
     mem.fail_next(
@@ -227,7 +228,7 @@ fn a_failed_rename_returns_to_the_title_with_the_typed_name_and_its_undo_history
 /// A second commit while one is in flight is REFUSED, never queued.
 #[test]
 fn a_second_commit_while_one_is_in_flight_is_refused() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
 
     commit_name(&mut session, "b");
     assert!(matches!(
@@ -279,11 +280,11 @@ fn a_draft_seeds_with_a_dotted_md_and_an_unlocked_gate() {
     );
 }
 
-/// Enter on an unbound pathless draft is a CREATE, not a rename: no
+/// Enter on a pathless draft with no store is a CREATE, not a rename: no
 /// `Rename` state survives, and the file is published no-clobber.
 #[test]
-fn naming_a_draft_creates_the_file() {
-    let (mut session, mem) = draft_session();
+fn naming_a_storeless_draft_creates_the_file() {
+    let (mut session, mem) = storeless_draft_session();
     assert!(session.type_("draft body").is_none());
 
     name_draft(&mut session, "fresh");
@@ -305,7 +306,7 @@ fn naming_a_draft_creates_the_file() {
 /// binds — and the unconfirmed durability is WARNED about, never swallowed.
 #[test]
 fn a_durability_unconfirmed_draft_create_succeeds_and_warns() {
-    let (mut session, mem) = draft_session();
+    let (mut session, mem) = storeless_draft_session();
     assert!(session.type_("draft body").is_none());
 
     name_draft(&mut session, "fresh");
@@ -330,7 +331,7 @@ fn a_durability_unconfirmed_draft_create_succeeds_and_warns() {
 /// file with a buffer that has no CAS baseline.
 #[test]
 fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
-    let (mut session, mem) = draft_session();
+    let (mut session, mem) = storeless_draft_session();
     assert!(session.type_("draft body").is_none());
     // The create target joins `explorer::initial_root` — computed from the
     // live app rather than hard-coded, so the seed collides with the very
@@ -363,8 +364,8 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
 
 /// Regression: naming a store-bound draft (F2 -> Enter, routed through
 /// `save::bind_new_now`'s materialize) must switch the title to the real
-/// filename via the SAME `DocumentMap::rebind` chokepoint the unbound
-/// route (`naming_a_draft_creates_the_file`, above) already goes through —
+/// filename via the SAME `DocumentMap::rebind` chokepoint the store-free
+/// route (`naming_a_storeless_draft_creates_the_file`, above) already goes through —
 /// not just update the path while leaving a stale `display_name` override
 /// (e.g. "Untitled 1") to shadow it forever.
 #[test]
@@ -389,7 +390,7 @@ fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
 }
 
 /// A9: naming a STORE-BOUND pathless draft into a collision must reach the
-/// very same footer-only refusal an unbound draft gets
+/// very same footer-only refusal a store-free draft gets
 /// (`a_colliding_draft_name_refuses_in_the_footer_with_no_guard`, above) —
 /// never the unanswerable `RenameCollision` Guard, since there is no CAS
 /// baseline for a target this draft has never claimed — and must leave the

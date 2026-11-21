@@ -17,8 +17,8 @@ use rune_tui::workspace;
 use rune_vfs::{Vfs, VfsTestExt};
 
 use rename_common::{
-    app_with, bound_session, ctrl, ctrl_key, plain, plain_key, seeded_vfs, send, set_name, sup_key,
-    type_new_name, unbound_session,
+    app_with, bound_session, ctrl, ctrl_key, plain, plain_key, seeded_vfs, send, set_name,
+    storeless_session, sup_key, type_new_name,
 };
 
 // ── Focus loss is the single commit chokepoint ─────────────────────
@@ -28,7 +28,7 @@ use rename_common::{
 /// `pane::handle_global_command` runs before the `FocusExplorer` arm.
 #[test]
 fn leaving_the_title_for_the_explorer_commits_the_rename() {
-    let (mut session, mem) = unbound_session();
+    let (mut session, mem) = storeless_session();
     set_name(&mut session, "b");
 
     assert!(session.key(ctrl_key('b')).is_none());

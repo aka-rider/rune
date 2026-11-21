@@ -194,7 +194,7 @@ fn cmd_s_on_a_lost_create_race_already_open_elsewhere_keeps_the_plain_refusal() 
             .app()
             .db_ops
             .values()
-            .any(|p| p.doc == id && p.issued_version.is_some()),
+            .any(|p| p.doc == id && p.load.is_some()),
         "no Load must have been enqueued for the colliding document"
     );
 }
@@ -261,7 +261,7 @@ fn rename_to_an_existing_name_never_hands_off_to_load() {
             .app()
             .db_ops
             .values()
-            .any(|p| p.doc == id && p.issued_version.is_some()),
+            .any(|p| p.doc == id && p.load.is_some()),
         "a rename-route EEXIST must never enqueue a Load for the old, never-existing name"
     );
     assert!(

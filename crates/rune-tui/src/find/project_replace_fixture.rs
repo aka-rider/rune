@@ -144,7 +144,7 @@ impl Fixture {
             .app
             .db_ops
             .iter()
-            .find(|(_, pending)| pending.doc == id && pending.issued_version.is_some())
+            .find(|(_, pending)| pending.doc == id && pending.load.is_some())
             .expect("a load op is in flight for the document")
             .0
     }

@@ -9,7 +9,7 @@ mod rename_common;
 
 use std::path::Path;
 
-use rune_tui::db::LoadPurpose;
+use rune_tui::db::{LoadIssue, LoadPurpose};
 use rune_tui::db_ack::handle_load_ack;
 use rune_tui::runtime::CmdKind;
 use rune_vfs::Vfs;
@@ -62,12 +62,20 @@ fn refused_hydration_detaches() {
         resumable_merge: None,
     };
 
+    let issue = LoadIssue {
+        issued_version,
+        purpose: LoadPurpose::Recover,
+        path: app
+            .doc(id)
+            .and_then(|doc| doc.resolved_path())
+            .cloned()
+            .expect("the load target is file-backed"),
+    };
     handle_load_ack(
         &mut app,
         id,
         load_result,
-        Some(issued_version),
-        LoadPurpose::Recover,
+        issue,
         &mut rune_tui::runtime::Effects::default(),
     );
 

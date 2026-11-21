@@ -221,6 +221,7 @@ pub(crate) fn after_update(
     effects: &mut Effects,
 ) {
     crate::find::project_replace::settle(app, effects);
+    crate::rename_create::settle_awaiting_bind(app, effects);
     crate::find::scope::reconcile_history(app, effects);
     let content_changed =
         app.active != active_before || app.active_doc().buffer().version() != buffer_version_before;

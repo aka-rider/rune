@@ -53,6 +53,10 @@ pub enum RenameState {
         seen: Stat,
         ticket: Ticket,
     },
+    AwaitingBind {
+        doc: DocumentId,
+        to: ResolvedPath,
+    },
 }
 
 impl RenameState {
@@ -61,21 +65,29 @@ impl RenameState {
             RenameState::Committing { ticket, .. } | RenameState::Capturing { ticket, .. } => {
                 Some(*ticket)
             }
-            RenameState::Idle | RenameState::Collision { .. } => None,
+            RenameState::Idle
+            | RenameState::Collision { .. }
+            | RenameState::AwaitingBind { .. } => None,
         }
     }
 
-    fn doc(&self) -> Option<DocumentId> {
+    pub(crate) fn doc(&self) -> Option<DocumentId> {
         match self {
             RenameState::Committing { doc, .. }
             | RenameState::Collision { doc, .. }
-            | RenameState::Capturing { doc, .. } => Some(*doc),
+            | RenameState::Capturing { doc, .. }
+            | RenameState::AwaitingBind { doc, .. } => Some(*doc),
             RenameState::Idle => None,
         }
     }
 
     pub(crate) fn in_flight(&self) -> bool {
-        self.ticket().is_some()
+        match self {
+            RenameState::Committing { .. }
+            | RenameState::Capturing { .. }
+            | RenameState::AwaitingBind { .. } => true,
+            RenameState::Idle | RenameState::Collision { .. } => false,
+        }
     }
 }
 
@@ -92,7 +104,7 @@ fn collision_doc(app: &App) -> Option<DocumentId> {
     }
 }
 
-fn display_name(path: &Path) -> String {
+pub(crate) fn display_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -147,32 +159,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     if to.as_path() == from {
         return Commit::Accepted;
     }
-
-    if app.db.is_some()
-        && app
-            .doc(id)
-            .and_then(|d| d.doc_db())
-            .is_some_and(|d| d.publish_mode.is_create_only())
-    {
-        let Ok(clearance) =
-            crate::save::gate::clear(app, id, crate::save::gate::SaveEntry::BindNew)
-        else {
-            return Commit::Refused;
-        };
-        crate::save::bind_new_now(app, id, to, &clearance);
-        return Commit::Accepted;
-    }
-
-    if let Some(ticket) = crate::rename_create::enqueue_rename(app, id, &from, &to, effects) {
-        app.rename = RenameState::Committing {
-            doc: id,
-            from,
-            to,
-            ticket,
-            draft_baseline: None,
-        };
-    }
-    Commit::Accepted
+    crate::rename_create::commit_or_await(app, id, to, effects)
 }
 
 fn target_path(from: &Path, name: &str) -> PathBuf {
@@ -339,7 +326,7 @@ fn bind_to(app: &mut App, doc_id: DocumentId, to: ResolvedPath, effects: &mut Ef
     crate::explorer::refresh_for(app, to.as_path(), effects);
 }
 
-fn return_to_title(app: &mut App, doc_id: DocumentId) {
+pub(crate) fn return_to_title(app: &mut App, doc_id: DocumentId) {
     if app.active == doc_id {
         app.refocus_title();
     }
@@ -349,10 +336,11 @@ pub fn forget_document(app: &mut App, doc: DocumentId) {
     if app.rename.doc() != Some(doc) {
         return;
     }
-    if app.rename.in_flight() {
-        return;
-    }
-    let had_prompt = matches!(app.rename, RenameState::Collision { .. });
+    let had_prompt = match app.rename {
+        RenameState::Committing { .. } | RenameState::Capturing { .. } => return,
+        RenameState::Collision { .. } => true,
+        RenameState::AwaitingBind { .. } | RenameState::Idle => false,
+    };
     app.rename = RenameState::Idle;
     if had_prompt {
         // `on_prompt_dismissed` is already a no-op once the state is
