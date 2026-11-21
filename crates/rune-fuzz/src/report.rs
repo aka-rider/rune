@@ -100,6 +100,15 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
             let _ = writeln!(out, "ctx.raw: {}", render_raw(&ctx.raw));
             let _ = writeln!(out, "ctx.disk: {}", render_disk(ctx.disk.as_deref()));
             let _ = writeln!(out, "ctx.saves_delivered_ok: {}", ctx.saves_delivered_ok);
+            if let Some(saved) = &ctx.delivered_save {
+                let _ = writeln!(
+                    out,
+                    "ctx.delivered_save: target={:?} bytes={:?} disk_at_target={}",
+                    saved.target,
+                    String::from_utf8_lossy(&saved.bytes),
+                    render_disk(saved.disk_at_target.as_deref()),
+                );
+            }
         }
         None => {
             let _ = writeln!(out, "<no step context captured>");

@@ -68,8 +68,8 @@ pub(super) fn apply(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcom
             step_and_check(state, prev, msg, tag, None, outcome);
         }
         Action::Deliver => {
-            if let Some((msg, tag, bytes)) = discharge_pending_save(state)
-                && step_and_check(state, prev, msg, tag, bytes, outcome)
+            if let Some((msg, tag, source)) = discharge_pending_save(state)
+                && step_and_check(state, prev, msg, tag, source, outcome)
             {
                 return;
             }

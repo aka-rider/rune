@@ -3,11 +3,13 @@ use rune_tui::runtime::Msg;
 
 use crate::step::MsgTag;
 
-use super::session::State;
+use super::session::{SaveSource, State};
 use super::store_ops::wait_for_db_op;
 
-pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Option<Vec<u8>>)> {
-    let (cmd, per_doc_bytes) = state.pending_save.take()?;
+pub(super) fn discharge_pending_save(
+    state: &mut State,
+) -> Option<(Msg, MsgTag, Option<SaveSource>)> {
+    let (cmd, mut per_doc_source) = state.pending_save.take()?;
     let msg = cmd.run()?;
     match &msg {
         Msg::SaveDone {
@@ -21,8 +23,8 @@ pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, 
                 version: *version,
                 ok: result.is_ok(),
             };
-            let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
-            Some((msg, tag, Some(bytes)))
+            let source = per_doc_source.remove(id);
+            Some((msg, tag, source))
         }
         Msg::MaterializeVfsDone { id, outcome, .. } => {
             let committed = match outcome {

@@ -60,7 +60,7 @@ pub fn merge_doc_active(next: &Snapshot) -> Option<Violation> {
 ///
 /// The arming EDGE is what fires, never the standing state: a save armed
 /// legitimately before the merge attempt began stays in flight across many
-/// later steps, and reading `save_in_flight`/`pending_save_bytes` as
+/// later steps, and reading `save_in_flight`/`save_parked` as
 /// absolutes accuses every one of them. The trigger is that edge from ANY
 /// route, not a `Command::Save` key — the guards' `[S]` answers and the quit
 /// fan-out arm saves with no save key in sight, which is exactly where a

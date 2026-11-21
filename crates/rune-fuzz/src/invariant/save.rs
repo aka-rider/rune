@@ -7,38 +7,39 @@ use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `SAVE-VERBATIM` — on a successful `SaveDone`, the bytes actually on
-/// disk must byte-equal the bytes THAT save was constructed with. Byte
+/// `SAVE-VERBATIM` — on a successful `SaveDone`, the file the save wrote
+/// must byte-equal the bytes THAT save was constructed with. Byte
 /// comparison, no normalization.
 ///
-/// Active-document-switch-safe: takes only `ctx`. `disk` is bound to the
-/// fixed path the session was seeded with (`driver.rs`'s `State::path`),
-/// never to whichever document is currently active. `delivered_save_bytes`
-/// is doc-scoped too, but NOT by construction the way this comment used to
-/// claim — the driver looks it up by the `SaveDone` ack's own `id` (see
-/// `MsgTag::SaveDone`'s docs), precisely because a naive "whatever's
-/// active" capture is exactly what TODO-fuzz-save-verbatim-help-doc-stale-
-/// ack.md's repro broke: a Guard modal's own `s` hotkey can save a
-/// document other than the active one, and the driver used to snapshot
-/// `Snapshot::content` (the ACTIVE document) instead of the document the
-/// save `Cmd` was actually constructed for.
+/// Takes only `ctx` and reads only `ctx.delivered_save`, which the driver
+/// fills from the `SaveDone` ack's own document: the bytes and the disk
+/// read of that document's own target path. It never reads `ctx.disk`
+/// (the seed document's file), because a save for a draft or any other
+/// document writes somewhere else. A `SaveDone` with no `delivered_save`
+/// is itself a violation: the driver armed no save for that document.
 pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     if !matches!(ctx.msg, MsgTag::SaveDone { ok: true, .. }) {
         return None;
     }
-    if ctx.disk.as_deref() == ctx.delivered_save_bytes.as_deref() {
+    let Some(saved) = &ctx.delivered_save else {
+        return Some(Violation::new(
+            "SAVE-VERBATIM",
+            "a successful SaveDone arrived for a document the driver armed no save for".to_string(),
+        ));
+    };
+    if saved.disk_at_target.as_deref() == Some(saved.bytes.as_slice()) {
         return None;
     }
     Some(Violation::new(
         "SAVE-VERBATIM",
         format!(
-            "disk bytes do not byte-equal the delivered save bytes: disk={:?} delivered={:?}",
-            ctx.disk
+            "disk bytes at the save target do not byte-equal the delivered save bytes: \
+             disk={:?} delivered={:?}",
+            saved
+                .disk_at_target
                 .as_ref()
                 .map(|b| trunc(&String::from_utf8_lossy(b), 80)),
-            ctx.delivered_save_bytes
-                .as_ref()
-                .map(|b| trunc(&String::from_utf8_lossy(b), 80)),
+            trunc(&String::from_utf8_lossy(&saved.bytes), 80),
         ),
     ))
 }
@@ -47,7 +48,7 @@ pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violati
     if !ctx.active_is_seed_doc
         || next.is_dirty
         || ctx.saves_delivered_ok == 0
-        || ctx.pending_save_bytes.is_some()
+        || ctx.save_parked
         || ctx.disk_diverged_since_publish
     {
         return None;
@@ -71,7 +72,7 @@ pub fn save_no_trailing_ws(next: &Snapshot, ctx: &StepCtx) -> Option<Violation> 
     if !ctx.active_is_seed_doc
         || next.is_dirty
         || ctx.saves_delivered_ok == 0
-        || ctx.pending_save_bytes.is_some()
+        || ctx.save_parked
         || ctx.disk_diverged_since_publish
     {
         return None;

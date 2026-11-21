@@ -125,6 +125,19 @@ pub enum MsgTag {
     PaletteRecentsLoaded,
 }
 
+/// One completed save, with the file it wrote. The bytes the save was handed
+/// and the disk read of the path it targeted travel together, so no checker
+/// can pair one document's bytes with another document's file.
+#[derive(Clone, Debug)]
+pub struct DeliveredSave {
+    /// The path that `Cmd` wrote.
+    pub target: std::path::PathBuf,
+    /// Bytes the save `Cmd` was handed when it was constructed.
+    pub bytes: Vec<u8>,
+    /// `mem.read(&target)`; `None` means the file does not exist.
+    pub disk_at_target: Option<Vec<u8>>,
+}
+
 /// Everything an invariant checker needs beyond `Snapshot`: what happened,
 /// what left the process, and what is on disk. Hand-constructible like
 /// `Snapshot`, so every checker — including ones added by a later work
@@ -141,15 +154,15 @@ pub struct StepCtx {
     /// consults the one-shot fault injector.
     pub disk: Option<Vec<u8>>,
     pub disk_before: Option<Vec<u8>>,
-    /// Bytes the pending `save_cmd` was handed at construction, if one is
-    /// deferred right now.
-    pub pending_save_bytes: Option<Vec<u8>>,
+    /// Whether a save `Cmd` is deferred right now, whichever document it
+    /// is for.
+    pub save_parked: bool,
     pub save_newly_parked: bool,
-    /// Bytes the save that JUST completed was handed — set only on a
-    /// `MsgTag::SaveDone` step, looked up by THAT ack's own `id`, never by
-    /// whichever document happens to be active when the ack lands (see
-    /// `MsgTag::SaveDone`'s own docs). Pins `SAVE-VERBATIM`.
-    pub delivered_save_bytes: Option<Vec<u8>>,
+    /// The save that JUST completed — set only on a `MsgTag::SaveDone`
+    /// step, looked up by THAT ack's own `id`, never by whichever document
+    /// happens to be active when the ack lands (see `MsgTag::SaveDone`'s
+    /// own docs). Pins `SAVE-VERBATIM`.
+    pub delivered_save: Option<DeliveredSave>,
     pub saves_delivered_ok: usize,
     /// Whether the ACTIVE document is still the one `disk`/`saves_delivered_
     /// ok` describe (`State::seed_doc`/`State::path`) — plan WP0 (`rr`

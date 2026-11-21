@@ -1,7 +1,17 @@
+use std::path::PathBuf;
+
 use rune_fuzz::invariant::{save_clean_matches_disk, save_no_trailing_ws, save_verbatim};
-use rune_fuzz::step::{MsgTag, StepCtx};
+use rune_fuzz::step::{DeliveredSave, MsgTag, StepCtx};
 
 use crate::support::{base_active_id, base_ctx, other_doc_id};
+
+fn delivered_save(bytes: &[u8], disk_at_target: Option<&[u8]>) -> DeliveredSave {
+    DeliveredSave {
+        target: PathBuf::from("/fuzz/target.md"),
+        bytes: bytes.to_vec(),
+        disk_at_target: disk_at_target.map(<[u8]>::to_vec),
+    }
+}
 
 #[test]
 fn save_verbatim_detects_a_disk_mismatch() {
@@ -11,8 +21,7 @@ fn save_verbatim_detects_a_disk_mismatch() {
         version: 2,
         ok: true,
     };
-    ctx.disk = Some(b"on disk".to_vec());
-    ctx.delivered_save_bytes = Some(b"what was saved".to_vec());
+    ctx.delivered_save = Some(delivered_save(b"what was saved", Some(b"on disk")));
     let v = save_verbatim(&ctx)
         .expect("disk bytes differing from delivered save bytes must trip SAVE-VERBATIM");
     assert_eq!(v.id, "SAVE-VERBATIM");
@@ -26,9 +35,49 @@ fn save_verbatim_accepts_matching_bytes() {
         version: 2,
         ok: true,
     };
-    ctx.disk = Some(b"exact bytes".to_vec());
-    ctx.delivered_save_bytes = Some(b"exact bytes".to_vec());
+    ctx.delivered_save = Some(delivered_save(b"exact bytes", Some(b"exact bytes")));
     assert_eq!(save_verbatim(&ctx), None);
+}
+
+#[test]
+fn save_verbatim_judges_a_non_seed_save_by_its_own_target_not_the_seed_file() {
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::SaveDone {
+        id: other_doc_id(),
+        version: 2,
+        ok: true,
+    };
+    ctx.disk = Some(b"seed document file".to_vec());
+    ctx.delivered_save = Some(delivered_save(b"r\n\n", Some(b"r\n\n")));
+    assert_eq!(save_verbatim(&ctx), None);
+}
+
+#[test]
+fn save_verbatim_detects_a_non_seed_save_whose_own_target_differs() {
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::SaveDone {
+        id: other_doc_id(),
+        version: 2,
+        ok: true,
+    };
+    ctx.disk = Some(b"r\n\n".to_vec());
+    ctx.delivered_save = Some(delivered_save(b"r\n\n", Some(b"")));
+    let v = save_verbatim(&ctx)
+        .expect("a non-seed save whose own file differs must trip SAVE-VERBATIM");
+    assert_eq!(v.id, "SAVE-VERBATIM");
+}
+
+#[test]
+fn save_verbatim_detects_a_save_done_with_no_armed_save() {
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::SaveDone {
+        id: other_doc_id(),
+        version: 2,
+        ok: true,
+    };
+    ctx.delivered_save = None;
+    let v = save_verbatim(&ctx).expect("a SaveDone nothing armed must trip SAVE-VERBATIM");
+    assert_eq!(v.id, "SAVE-VERBATIM");
 }
 
 #[test]
@@ -39,15 +88,17 @@ fn save_verbatim_ignores_a_failed_save_done() {
         version: 2,
         ok: false,
     };
-    ctx.disk = Some(b"whatever was there before".to_vec());
-    ctx.delivered_save_bytes = Some(b"different bytes".to_vec());
+    ctx.delivered_save = Some(delivered_save(
+        b"different bytes",
+        Some(b"whatever was there before"),
+    ));
     assert_eq!(save_verbatim(&ctx), None);
 }
 
 fn clean_ctx_after_one_save() -> StepCtx {
     let mut ctx = base_ctx();
     ctx.saves_delivered_ok = 1;
-    ctx.pending_save_bytes = None;
+    ctx.save_parked = false;
     ctx.disk_diverged_since_publish = false;
     ctx
 }
@@ -212,7 +263,7 @@ fn save_no_trailing_ws_is_inert_before_any_save_is_delivered() {
 #[test]
 fn save_no_trailing_ws_is_inert_while_a_save_is_still_pending() {
     let (next, mut ctx) = clean_after_one_save("alpha \n", b"alpha \n");
-    ctx.pending_save_bytes = Some(b"alpha\n".to_vec());
+    ctx.save_parked = true;
     assert_eq!(save_no_trailing_ws(&next, &ctx), None);
 }
 

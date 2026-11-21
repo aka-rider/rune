@@ -11,10 +11,14 @@
     clippy::panic
 )]
 
+use std::path::Path;
+use std::sync::Arc;
+
 use rune_fuzz::action::Action;
 use rune_fuzz::driver;
 use rune_fuzz::driver::Session;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::workspace;
 
 fn assert_clean(result: &driver::RunResult) {
     assert!(
@@ -170,6 +174,46 @@ fn diverge_disk_sets_the_flag_and_a_later_completed_seed_save_clears_it() {
     assert!(
         session.saves_delivered_ok() > 0,
         "the completed save must be counted"
+    );
+
+    let result = session.finish();
+    assert_clean(&result);
+}
+
+/// `SAVE-VERBATIM` judges a save by the file that save wrote, not by the seed
+/// document's file. A document opened beside the seed is edited and saved
+/// before the store acknowledges its load, so the save takes the plain path
+/// and its `SaveDone` names that document's own target. The driver must not
+/// report a violation, and the file must hold the saved bytes.
+#[test]
+fn a_plain_save_of_a_non_seed_document_is_judged_by_its_own_file() {
+    let mut session = Session::open("/fuzz/doc.md", "hello");
+    let vfs = Arc::clone(&session.app().vfs);
+    let notes = Path::new("/fuzz/notes.md");
+    let temp = vfs.write_durable(notes, b"notes").unwrap();
+    vfs.rename_excl(&temp, notes).unwrap();
+    let notes_id = workspace::open_path(session.app_mut(), notes).unwrap();
+    assert_eq!(
+        session.app().active,
+        notes_id,
+        "test setup: notes is active"
+    );
+
+    assert_eq!(session.type_("!"), None);
+    assert_eq!(session.key(SAVE_KEY), None);
+    assert_eq!(session.deliver(), None);
+
+    let typed = session
+        .app()
+        .doc(notes_id)
+        .expect("notes is still open")
+        .buffer()
+        .content()
+        .to_string();
+    assert_eq!(
+        vfs.read(notes).expect("read the notes file back"),
+        typed.as_bytes(),
+        "the save must have written the typed bytes to the notes file"
     );
 
     let result = session.finish();

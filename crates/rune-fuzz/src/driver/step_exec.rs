@@ -8,11 +8,11 @@ use crate::action::{HighlightVersion, PaletteGenClaim, highlight_spans_from_raw}
 use crate::guard;
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
-use crate::step::{MsgTag, StepCtx};
+use crate::step::{DeliveredSave, MsgTag, StepCtx};
 
 use super::checks;
 use super::seed_scope::{tag_delivers_seed_save, tag_publishes_seed_doc};
-use super::session::{Outcome, State};
+use super::session::{Outcome, SaveSource, State};
 
 fn palette_pending_save_command(app: &App, key: KeyInput) -> Option<Command> {
     let state = app.palette()?;
@@ -126,13 +126,19 @@ fn arm_save_cmd(state: &mut State, prev: &Snapshot, outcome: &mut Outcome, cmd: 
         outcome.final_ctx = None;
         return true;
     }
-    let per_doc_bytes = state
+    let per_doc_source = state
         .app
         .documents
         .iter()
-        .map(|(&id, doc)| (id, doc.buffer().disk_bytes().into_owned()))
+        .filter_map(|(&id, doc)| {
+            let source = SaveSource {
+                bytes: doc.buffer().disk_bytes().into_owned(),
+                path: doc.path()?.to_path_buf(),
+            };
+            Some((id, source))
+        })
         .collect();
-    state.pending_save = Some((cmd, per_doc_bytes));
+    state.pending_save = Some((cmd, per_doc_source));
     false
 }
 
@@ -141,7 +147,7 @@ pub(super) fn step_and_check(
     prev: &mut Snapshot,
     msg: Msg,
     tag: MsgTag,
-    delivered_save_bytes: Option<Vec<u8>>,
+    save_source: Option<SaveSource>,
     outcome: &mut Outcome,
 ) -> bool {
     state.steps += 1;
@@ -243,10 +249,11 @@ pub(super) fn step_and_check(
         outcome.merge_activated = true;
     }
     let disk = state.mem.read(&state.path).ok();
-    let pending_save_bytes = state
-        .pending_save
-        .as_ref()
-        .and_then(|(_, per_doc)| per_doc.values().next().cloned());
+    let delivered_save = save_source.map(|source| DeliveredSave {
+        disk_at_target: state.mem.read(&source.path).ok(),
+        target: source.path,
+        bytes: source.bytes,
+    });
     let save_newly_parked = !save_parked_before && state.pending_save.is_some();
 
     let ctx = StepCtx {
@@ -255,9 +262,9 @@ pub(super) fn step_and_check(
         raw: raw_bytes,
         disk,
         disk_before,
-        pending_save_bytes,
+        save_parked: state.pending_save.is_some(),
         save_newly_parked,
-        delivered_save_bytes,
+        delivered_save,
         saves_delivered_ok: state.saves_delivered_ok,
         active_is_seed_doc: state.app.active == state.seed_doc,
         disk_diverged_since_publish: state.disk_diverged_since_publish,

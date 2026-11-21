@@ -30,11 +30,19 @@ use super::discharge::{
 use super::step_exec::step_and_check;
 use super::store_ops::{drain_all_db_ops, drain_all_pending_setup, open_store};
 
+/// What a document looked like when a save `Cmd` was armed: the bytes that
+/// `Cmd` was handed and the path it writes. Captured together so the ack can
+/// be checked against its own file.
+pub(super) struct SaveSource {
+    pub(super) bytes: Vec<u8>,
+    pub(super) path: PathBuf,
+}
+
 pub(super) struct State {
     pub(super) app: App,
     pub(super) mem: Arc<Mem>,
     pub(super) path: PathBuf,
-    pub(super) pending_save: Option<(Cmd, std::collections::BTreeMap<DocumentId, Vec<u8>>)>,
+    pub(super) pending_save: Option<(Cmd, std::collections::BTreeMap<DocumentId, SaveSource>)>,
     pub(super) pending_rename: Option<Cmd>,
     pub(super) pending_trash: Option<Cmd>,
     pub(super) pending_highlights: std::collections::VecDeque<Cmd>,
@@ -398,9 +406,9 @@ impl Session {
 
                 if outcome.violation.is_none()
                     && !state.app.should_quit
-                    && let Some((msg, tag, bytes)) = discharge_pending_save(state)
+                    && let Some((msg, tag, source)) = discharge_pending_save(state)
                 {
-                    step_and_check(state, prev, msg, tag, bytes, outcome);
+                    step_and_check(state, prev, msg, tag, source, outcome);
                 }
 
                 if outcome.violation.is_none()
