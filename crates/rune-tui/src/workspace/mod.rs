@@ -7,6 +7,7 @@ use rune_core::codec;
 use crate::app::App;
 use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
+use crate::focus::FocusChange;
 use crate::graphics::{ImageState, ImageStatus};
 use crate::help;
 use crate::messages;
@@ -87,7 +88,9 @@ pub fn open_path_async(
     };
 
     if let Some(id) = existing_document_for(app, &resolved) {
-        app.blur_title(effects);
+        if app.blur_title(effects) == FocusChange::Refused {
+            return;
+        }
         switch_to(app, id);
         app.set_focus_pane(Pane::Editor, effects);
         if let Some(anchor) = anchor {
@@ -118,33 +121,33 @@ pub(crate) fn handle_file_opened(
         return;
     }
 
-    app.blur_title(effects);
+    // A kept title still gets the document: it is added as a background tab,
+    // so the user's open request survives and the title keeps the keyboard.
+    let title_kept = app.blur_title(effects) == FocusChange::Refused;
 
     let Some(resolved) = resolve_or_report(app, path, "open") else {
         return;
     };
 
-    if let Some(id) = existing_document_for(app, &resolved) {
-        switch_to(app, id);
-        app.set_focus_pane(Pane::Editor, effects);
-        if let Some(anchor) = anchor {
-            crate::navigate::land_anchor(app, id, &anchor);
-        }
-        return;
-    }
-
-    let bytes = match result {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            messages::error(app, format!("could not open {}: {e}", path.display()));
+    let id = if let Some(id) = existing_document_for(app, &resolved) {
+        id
+    } else {
+        let bytes = match result {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                messages::error(app, format!("could not open {}: {e}", path.display()));
+                return;
+            }
+        };
+        if !crate::opentabs::limit::ensure_room(app, effects) {
             return;
         }
+        add_tab(app, &resolved, bytes)
     };
-    if !crate::opentabs::limit::ensure_room(app, effects) {
-        return;
+    if !title_kept {
+        switch_to(app, id);
+        app.set_focus_pane(Pane::Editor, effects);
     }
-    let id = open_bytes(app, &resolved, bytes);
-    app.set_focus_pane(Pane::Editor, effects);
     if let Some(anchor) = anchor {
         crate::navigate::land_anchor(app, id, &anchor);
     }
@@ -164,8 +167,15 @@ pub fn warn_raw_bytes(app: &mut App, path: &Path, raw_bytes: usize) {
 }
 
 fn open_bytes(app: &mut App, resolved: &ResolvedPath, bytes: Vec<u8>) -> DocumentId {
+    let id = add_tab(app, resolved, bytes);
+    switch_to(app, id);
+    id
+}
+
+// Adds the document as a tab and leaves the active document alone.
+fn add_tab(app: &mut App, resolved: &ResolvedPath, bytes: Vec<u8>) -> DocumentId {
     if crate::document_support::is_image_path(resolved) {
-        return open_image_bytes(app, resolved, &bytes);
+        return add_image_tab(app, resolved, &bytes);
     }
 
     let buffer = Buffer::from_bytes(bytes);
@@ -176,11 +186,10 @@ fn open_bytes(app: &mut App, resolved: &ResolvedPath, bytes: Vec<u8>) -> Documen
 
     let id = app.open_document_bound(buffer, resolved.clone());
     let _ = db::load_document(app, id, resolved, db::LoadIntent::Recover);
-    switch_to(app, id);
     id
 }
 
-fn open_image_bytes(app: &mut App, resolved: &ResolvedPath, bytes: &[u8]) -> DocumentId {
+fn add_image_tab(app: &mut App, resolved: &ResolvedPath, bytes: &[u8]) -> DocumentId {
     let dims = rune_image::probe_dimensions(bytes).map(|(w, h, _)| rune_image::PixelSize { w, h });
     // Kitty image ids are terminal-global, so the whole-document image path
     // and the inline-embed path share one allocator keyed by this same
@@ -209,7 +218,6 @@ fn open_image_bytes(app: &mut App, resolved: &ResolvedPath, bytes: &[u8]) -> Doc
             next_generation: crate::generation::GenCounter::default(),
         });
     }
-    switch_to(app, doc_id);
     doc_id
 }
 
@@ -414,6 +422,49 @@ mod tests {
         assert!(
             messages::newest_text(&app).is_some(),
             "open failure must post a message"
+        );
+    }
+
+    #[test]
+    fn a_read_file_is_kept_as_a_background_tab_while_a_refused_title_holds_focus() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/root/new.md"), b"new body")
+            .unwrap();
+        let mut app = app_with_seed(&mem);
+        let active_before = app.active;
+        let tabs_before = app.documents.len();
+        app.focus_title();
+        app.title.set_text("bad/name");
+        let posts_before = messages::posts(&app);
+
+        let mut effects = Effects::default();
+        handle_file_opened(
+            &mut app,
+            Path::new("/root/new.md"),
+            Ok(b"new body".to_vec()),
+            None,
+            None,
+            &mut effects,
+        );
+
+        assert_eq!(
+            app.documents.len(),
+            tabs_before + 1,
+            "the read file is kept as a tab"
+        );
+        assert_eq!(
+            app.active, active_before,
+            "a kept title must not switch the document"
+        );
+        assert_eq!(
+            app.focus(),
+            Pane::Title,
+            "the invalid name keeps the keyboard"
+        );
+        assert_eq!(
+            messages::posts(&app),
+            posts_before + 1,
+            "the refusal posts once"
         );
     }
 }

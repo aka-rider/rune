@@ -149,15 +149,15 @@ impl App {
         self.focus = target.pane();
     }
 
-    pub fn set_focus(&mut self, next: VisiblePane, effects: &mut Effects) {
+    pub fn set_focus(&mut self, next: VisiblePane, effects: &mut Effects) -> FocusChange {
         let next = next.pane();
         if self.focus == next {
-            return;
+            return FocusChange::Moved;
         }
         if self.focus == Pane::Title
             && crate::title::on_blur(self, effects) == crate::rename::Commit::Refused
         {
-            return;
+            return FocusChange::Refused;
         }
         if self.focus == Pane::Explorer && next != Pane::Explorer {
             crate::explorer_search::clear_search(self);
@@ -167,20 +167,34 @@ impl App {
         }
         self.focus = next;
         crate::messages::refresh_focused_flag(self);
+        FocusChange::Moved
     }
 
-    pub fn set_focus_pane(&mut self, pane: Pane, effects: &mut Effects) {
+    pub fn set_focus_pane(&mut self, pane: Pane, effects: &mut Effects) -> FocusChange {
         let target = self
             .layout_mode()
             .focus_or_default(pane, crate::messages::is_open(self));
-        self.set_focus(target, effects);
+        self.set_focus(target, effects)
     }
 
-    pub fn blur_title(&mut self, effects: &mut Effects) {
+    /// Releases the title's keyboard hold, if it has one. Callers that are
+    /// about to move the document or a tab must stop on `Refused`.
+    #[must_use]
+    pub fn blur_title(&mut self, effects: &mut Effects) -> FocusChange {
         if self.focus == Pane::Title {
-            self.set_focus_pane(Pane::Editor, effects);
+            return self.set_focus_pane(Pane::Editor, effects);
         }
+        FocusChange::Moved
     }
+}
+
+/// Outcome of a focus request. `Refused` happens only while the title holds
+/// the keyboard and its commit vetoes the move. The commit path has already
+/// posted the reason, so callers decide only what else still applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusChange {
+    Moved,
+    Refused,
 }
 
 pub fn reconcile(app: &mut App, effects: &mut Effects) {

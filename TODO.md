@@ -87,10 +87,17 @@ a read-only document), or it should say why it refused.
 `find::take_focus` fixed a bug (OVERLAY-TITLE-EXCLUSIVE, repro `overlay-title-exclusive-03`) where a
 way of focusing Find left the title field holding focus too, so two widgets took the same keystrokes.
 It now refuses unless `clear_title_for_overlay` succeeds, that is, unless the title can be blurred.
-The other overlays call `clear_title_for_overlay` when they open (`filesearch::open`, `palette::open`),
-but nobody audited their other focus paths (a click, a pane switch, a re-focus chord, a refused
-rename) for the same class. Fix: for each overlay, list every place its focus is set, route them
-through one chokepoint like `take_focus`, and check that the fuzz invariant covers that overlay.
+
+Done: every title-blur caller that opens a document or a tab stops on a refused blur. The global
+gate skips the commands that move focus or switch the document (`moves_focus` in `pane_command.rs`,
+including search next and previous) while a refused title keeps the keyboard. A refused name posts
+its warning once, and the document never switches under the name being typed.
+
+Still open:
+
+- Audit: nobody audited the other focus paths of each overlay (a click, a pane switch, a re-focus
+  chord, a refused rename). Fix: for each overlay, list every place its focus is set, route them
+  through one chokepoint like `take_focus`, and check that the fuzz invariant covers that overlay.
 
 ## The fuzzer never sees project search results
 

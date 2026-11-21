@@ -120,7 +120,9 @@ fn focus(app: &mut App, pane: Pane) {
     match pane {
         Pane::Explorer => crate::pane::show_and_focus_explorer_on_active_file(app, &mut effects),
         Pane::Tabs => crate::pane_global::focus_tabs(app, &mut effects),
-        _ => app.set_focus_pane(pane, &mut effects),
+        _ => {
+            app.set_focus_pane(pane, &mut effects);
+        }
     }
     assert_eq!(app.focus(), pane, "test setup: the pane took focus");
 }

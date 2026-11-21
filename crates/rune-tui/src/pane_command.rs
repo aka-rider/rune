@@ -1,7 +1,9 @@
 use crate::app::App;
 use crate::find::FilterKind;
+use crate::focus::FocusChange;
 use crate::keymap::GlobalCommand;
 use crate::messages;
+use crate::pane::Pane;
 use crate::pane_bar_policy::{self, BarPolicy};
 use crate::pane_global;
 use crate::pane_quit::handle_quit_key;
@@ -15,11 +17,11 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         crate::focus::LayoutMode::Split { .. } | crate::focus::LayoutMode::ExplorerOnly
     );
 
-    // Never make this an early return on refusal: a refused commit leaves
-    // focus on the title, but every arm below must stay reachable regardless
-    // — quit, save, and close would otherwise be unreachable while an
-    // unusable name is typed.
-    app.blur_title(effects);
+    // The blur is never an early return: a refused commit leaves focus on the
+    // title, and quit, save, and close must stay reachable while an unusable
+    // name is typed. The refusal is already posted by now, so `moves_focus`
+    // alone decides which commands are skipped.
+    let title_kept = app.blur_title(effects) == FocusChange::Refused;
 
     match pane_bar_policy::bar_policy(cmd) {
         BarPolicy::CloseBars => app.close_all_overlays(effects),
@@ -27,12 +29,24 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         BarPolicy::LeaveOpen => {}
     }
 
+    if title_kept && moves_focus(cmd) {
+        return;
+    }
+
     match cmd {
-        GlobalCommand::ToggleLeft => pane_global::toggle_left(app, left_painted_before, effects),
-        GlobalCommand::FocusTitle => {
-            run_if_available(app, cmd, effects, |app, _| app.focus_title())
+        GlobalCommand::ToggleLeft => {
+            pane_global::toggle_left(app, left_painted_before, title_kept, effects);
         }
-        GlobalCommand::FocusTabs => pane_global::focus_tabs(app, effects),
+        GlobalCommand::FocusTitle => {
+            run_if_available(app, cmd, effects, |app, _| app.focus_title());
+        }
+        GlobalCommand::FocusTabs => {
+            if title_kept {
+                pane_global::reveal_tabs(app);
+            } else {
+                pane_global::focus_tabs(app, effects);
+            }
+        }
         GlobalCommand::Save => run_if_available(app, cmd, effects, |app, effects| {
             let _ = save::trigger_save(
                 app,
@@ -44,8 +58,16 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         }),
         GlobalCommand::Help => pane_global::help(app, effects),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
+        // Closing the active document discards a refused name typed into its
+        // title: `close_now` re-seeds the title from the document that takes over.
+        // Focus then goes back to the editor, but only once the document is gone,
+        // so a close that waits for a prompt keeps the refused name on the title.
         GlobalCommand::CloseFile => run_if_available(app, cmd, effects, |app, effects| {
-            crate::workspace::request_close(app, app.active, effects);
+            let closing = app.active;
+            crate::workspace::request_close(app, closing, effects);
+            if title_kept && app.doc(closing).is_none() {
+                app.set_focus_pane(Pane::Editor, effects);
+            }
         }),
         GlobalCommand::NewDocument => pane_global::new_document(app, effects),
         GlobalCommand::TabSwitch(idx) => pane_global::tab_switch(app, idx, effects),
@@ -74,6 +96,39 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::TogglePalette => pane_global::toggle_palette(app, effects),
         GlobalCommand::NavBack => crate::navhistory::back(app, effects),
         GlobalCommand::NavForward => crate::navhistory::forward(app, effects),
+    }
+}
+
+// Commands that move the keyboard to another overlay or pane, or switch the
+// document. While a refused title keeps the keyboard, running one would retry
+// the blur and post the refusal again, or switch the document under the name
+// being typed.
+fn moves_focus(cmd: GlobalCommand) -> bool {
+    match cmd {
+        GlobalCommand::Help
+        | GlobalCommand::NewDocument
+        | GlobalCommand::TabSwitch(_)
+        | GlobalCommand::ToggleMessages
+        | GlobalCommand::ToggleSearch
+        | GlobalCommand::SearchNext
+        | GlobalCommand::SearchPrev
+        | GlobalCommand::ToggleFileSearch
+        | GlobalCommand::ToggleProjectSearch
+        | GlobalCommand::ToggleReplace
+        | GlobalCommand::ToggleProjectReplace
+        | GlobalCommand::TogglePalette
+        | GlobalCommand::NavBack
+        | GlobalCommand::NavForward => true,
+        GlobalCommand::ToggleLeft
+        | GlobalCommand::FocusTitle
+        | GlobalCommand::FocusTabs
+        | GlobalCommand::Save
+        | GlobalCommand::QuitChord(_)
+        | GlobalCommand::CloseFile
+        | GlobalCommand::ToggleReadOnly
+        | GlobalCommand::Merge
+        | GlobalCommand::Trash
+        | GlobalCommand::TogglePin => false,
     }
 }
 
@@ -110,10 +165,11 @@ fn search_step(app: &mut App, forward: bool, effects: &mut Effects) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::pane::Pane;
     use crate::runtime::{CmdKind, Msg};
+    use crate::workspace::close;
     use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, Vfs, VfsTestExt};
+    use std::path::Path;
     use std::sync::Arc;
 
     fn app() -> App {
@@ -122,6 +178,65 @@ mod tests {
 
     fn fx() -> Effects {
         Effects::default()
+    }
+
+    #[test]
+    fn an_invalid_title_refuses_the_palette_with_one_post() {
+        let mut app = app();
+        app.focus_title();
+        app.title.set_text("bad/name");
+        let posts_before = messages::posts(&app);
+
+        let mut effects = Effects::default();
+        handle_global_command(&mut app, GlobalCommand::TogglePalette, &mut effects);
+
+        assert!(
+            app.palette().is_none(),
+            "a kept title must not open the palette"
+        );
+        assert_eq!(
+            app.focus(),
+            Pane::Title,
+            "the invalid name keeps the keyboard"
+        );
+        assert_eq!(
+            messages::posts(&app),
+            posts_before + 1,
+            "the refusal must post exactly once"
+        );
+    }
+
+    #[test]
+    fn close_file_on_a_refused_title_hands_focus_to_the_neighbour_editor() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(Path::new("/vault/first.md"), b"one")
+            .unwrap();
+        mem.save_atomic(Path::new("/vault/second.md"), b"two")
+            .unwrap();
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new(""), None, vfs, None);
+        let first = crate::workspace::open_path(&mut app, Path::new("/vault/first.md")).unwrap();
+        crate::workspace::open_path(&mut app, Path::new("/vault/second.md")).unwrap();
+        crate::workspace::switch_to(&mut app, first);
+        let neighbour = close::neighbor_of(&app, first).unwrap();
+        app.focus_title();
+        app.title.set_text("bad/name");
+
+        let mut effects = Effects::default();
+        handle_global_command(&mut app, GlobalCommand::CloseFile, &mut effects);
+
+        assert!(app.doc(first).is_none(), "CloseFile closes the document");
+        assert_eq!(app.active, neighbour, "the neighbour takes over");
+        assert_eq!(
+            app.focus(),
+            Pane::Editor,
+            "the keyboard goes back to the editor"
+        );
+        assert_eq!(
+            app.title.text(),
+            crate::title::name_for(app.active_doc()),
+            "the title shows the neighbour's name"
+        );
     }
 
     #[test]

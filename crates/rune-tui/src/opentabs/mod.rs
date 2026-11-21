@@ -75,13 +75,14 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         TabsCommand::Up => move_selection(app, -1),
         TabsCommand::Down => move_selection(app, 1),
         TabsCommand::Select => activate(app, effects),
-        TabsCommand::Leave => app.set_focus_pane(Pane::Editor, effects),
+        TabsCommand::Leave => {
+            app.set_focus_pane(Pane::Editor, effects);
+        }
     }
     KeyOutcome::Consumed
 }
 
 pub(crate) fn activate(app: &mut App, effects: &mut Effects) {
-    app.blur_title(effects);
     workspace::select_tab(app, app.tabs.nav.cursor);
     app.set_focus_pane(Pane::Editor, effects);
 }

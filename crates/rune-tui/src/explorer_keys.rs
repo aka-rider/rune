@@ -180,7 +180,6 @@ pub(crate) fn open_selected(app: &mut App, effects: &mut Effects) {
         return;
     }
 
-    app.blur_title(effects);
     if workspace::open_path_checked(app, &target, effects).is_some() {
         app.set_focus_pane(Pane::Editor, effects);
         crate::navhistory::record_departure_if_moved(app, departed);

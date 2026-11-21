@@ -1,18 +1,30 @@
 use crate::app::App;
 use crate::messages;
-use crate::pane::{Pane, show_and_focus_explorer_on_active_file};
+use crate::pane::{Pane, show_and_focus_explorer_on_active_file, show_explorer_on_active_file};
 use crate::runtime::Effects;
 
-pub(crate) fn toggle_left(app: &mut App, painted_before: bool, effects: &mut Effects) {
+pub(crate) fn toggle_left(
+    app: &mut App,
+    painted_before: bool,
+    title_kept: bool,
+    effects: &mut Effects,
+) {
     if painted_before {
         app.splits.left.hide();
         crate::focus::reconcile(app, effects);
+    } else if title_kept {
+        show_explorer_on_active_file(app, effects);
     } else {
         show_and_focus_explorer_on_active_file(app, effects);
     }
 }
 
 pub(crate) fn focus_tabs(app: &mut App, effects: &mut Effects) {
+    reveal_tabs(app);
+    app.set_focus_pane(Pane::Tabs, effects);
+}
+
+pub(crate) fn reveal_tabs(app: &mut App) {
     app.splits.left.show();
     let area = app.frame_area();
     let geo = crate::layout::geometry(area, app);
@@ -22,7 +34,6 @@ pub(crate) fn focus_tabs(app: &mut App, effects: &mut Effects) {
             .explorer
             .ensure_trail(budget, crate::layout::TABS_LIMITS);
     }
-    app.set_focus_pane(Pane::Tabs, effects);
 }
 
 // `handle_global_command`'s hoisted blur gate fires only for `Pane::Title`,

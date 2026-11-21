@@ -1,8 +1,8 @@
 use crate::app::App;
 use crate::filesearch::FileSearchState;
 use crate::find::FindState;
+use crate::focus::FocusChange;
 use crate::palette::PaletteState;
-use crate::pane::Pane;
 use crate::runtime::Effects;
 
 #[derive(Default)]
@@ -83,8 +83,7 @@ impl App {
         &mut self,
         effects: &mut Effects,
     ) -> Option<OverlayClearance> {
-        self.blur_title(effects);
-        (self.focus() != Pane::Title).then_some(OverlayClearance(()))
+        (self.blur_title(effects) == FocusChange::Moved).then_some(OverlayClearance(()))
     }
 
     // The finder closes through `filesearch::cancel` rather than a bare
